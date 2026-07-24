@@ -859,7 +859,8 @@ pytest Tests/Model_Artifacts/test_operation_leases.py \
   Tests/Model_Artifacts/test_operation_leases_process.py -v
 ```
 
-Expected: 12 passed.
+Expected: 14 passed, including the two cleanup-error regressions added during
+Task 2 review.
 
 - [ ] **Step 4: Commit native process proofs**
 
