@@ -8,6 +8,8 @@ from tldw_chatbook.Utils.egress import (
     check_url_or_raise,
     evaluate_url_policy,
     evaluate_url_policy_async,
+    host_of,
+    origin_set,
 )
 
 
@@ -174,6 +176,56 @@ async def test_async_variant_same_policy(monkeypatch):
     monkeypatch.setattr(egress, "_resolve_async", _fake)
     d = await evaluate_url_policy_async("http://h.example/")
     assert not d.allowed and d.reason == "metadata"
+
+
+# ---------------------------------------------------------------------------
+# Safe host extraction helpers
+# ---------------------------------------------------------------------------
+
+def test_host_of_valid_url():
+    """host_of returns lowercase hostname for a valid URL."""
+    assert host_of("https://Example.COM/path") == "example.com"
+    assert host_of("http://Sub.Domain.Example.org:8080/x") == "sub.domain.example.org"
+
+
+def test_host_of_malformed_ipv6_url():
+    """host_of returns empty string for malformed IPv6 URL instead of raising."""
+    # This URL has an invalid IPv6 literal that would raise ValueError in urlparse.hostname
+    assert host_of("http://[::1/x") == ""
+    assert host_of("http://[::1/path") == ""
+
+
+def test_host_of_no_host():
+    """host_of returns empty string when URL has no hostname."""
+    assert host_of("https:///nohost") == ""
+
+
+def test_origin_set_valid_url():
+    """origin_set returns frozenset with single lowercase hostname for valid URL."""
+    result = origin_set("https://Example.COM/path")
+    assert result == frozenset({"example.com"})
+
+
+def test_origin_set_malformed_url():
+    """origin_set returns empty frozenset for malformed/unparseable URL."""
+    # Malformed IPv6 should not raise
+    assert origin_set("http://[::1/x") == frozenset()
+    assert origin_set("https:///nohost") == frozenset()
+
+
+def test_origin_set_never_raises():
+    """origin_set never raises, even for very malformed URLs."""
+    bad_urls = [
+        "http://[::1/x",  # Invalid IPv6
+        "ht!tp://bad",  # Invalid scheme
+        "   ",  # Empty-ish
+        "",  # Empty
+        "not-a-url",  # No scheme
+    ]
+    for url in bad_urls:
+        # Should not raise
+        result = origin_set(url)
+        assert isinstance(result, frozenset)
 
 
 # ---------------------------------------------------------------------------

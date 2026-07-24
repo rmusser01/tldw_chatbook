@@ -75,9 +75,10 @@ def extract_article_for_ingest(url: str, options: Dict[str, Any]) -> Dict[str, A
         EgressFetchError,
         MAX_FETCH_BYTES_PAGE,
         guarded_fetch_httpx,
+        origin_set,
     )
 
-    origins = frozenset({(_urlparse(url).hostname or "").lower()})
+    origins = origin_set(url)
     try:
         with httpx.Client(
             timeout=30.0,

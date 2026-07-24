@@ -198,3 +198,17 @@ def test_blocked_url_is_permanent(monkeypatch):
     monkeypatch.setattr(egress, "_resolve", lambda host: ["169.254.169.254"])
     with pytest.raises(PermanentIngestError, match="egress"):
         extract_article_for_ingest("http://metadata-ish.example/x", {})
+
+
+def test_malformed_url_is_permanent():
+    """Malformed URLs (e.g., invalid IPv6) raise PermanentIngestError, not ValueError.
+
+    This regression test verifies that malformed URLs that urlparse.hostname
+    would reject with ValueError are caught and converted to PermanentIngestError
+    via the origin_set helper's safe handling.
+    """
+    # This URL has an invalid IPv6 literal that would raise ValueError.
+    # Before the fix, this would crash with an unhandled ValueError.
+    # After the fix, it raises PermanentIngestError (via egress guard).
+    with pytest.raises(PermanentIngestError, match="egress"):
+        extract_article_for_ingest("http://[::1/x", {})

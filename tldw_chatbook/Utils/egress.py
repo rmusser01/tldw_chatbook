@@ -265,6 +265,17 @@ def _host_of(url: str) -> str:
         return ""
 
 
+def host_of(url: str) -> str:
+    """Lowercase hostname of ``url``; "" if unparseable (never raises)."""
+    return _host_of(url)
+
+
+def origin_set(url: str) -> frozenset:
+    """Single-host trusted-origin set for a user-supplied ``url`` (empty if unparseable)."""
+    h = _host_of(url)
+    return frozenset({h}) if h else frozenset()
+
+
 def _hop_headers(headers, same_origin: bool) -> dict:
     hop = {str(k): v for k, v in dict(headers or {}).items()}
     if not same_origin:
