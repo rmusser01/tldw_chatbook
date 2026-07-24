@@ -122,3 +122,21 @@ def test_swap_rejects_bad_position(db):
         db.swap_message_attachment_with_scalar(mid, 0)
     with pytest.raises(ValueError):
         db.swap_message_attachment_with_scalar(mid, 3)   # no such row
+
+def test_swap_rejects_message_without_position_zero_image(db):
+    """swap raises ValueError when message has no position-0 image to swap."""
+    conv_id = db.add_conversation({"title": "t"})
+    # Create message without image_data (content-only)
+    mid = db.add_message({
+        "conversation_id": conv_id, "sender": "assistant", "content": "no image",
+    })
+    # Insert a table attachment row at position 1 directly via SQL
+    with db.transaction() as cur:
+        cur.execute(
+            "INSERT INTO message_attachments (message_id, position, data, mime_type) "
+            "VALUES (?, ?, ?, ?)",
+            (mid, 1, b"png1", "image/png"),
+        )
+    # swap should raise ValueError, not IntegrityError
+    with pytest.raises(ValueError, match="message has no position-0 image to swap"):
+        db.swap_message_attachment_with_scalar(mid, 1)

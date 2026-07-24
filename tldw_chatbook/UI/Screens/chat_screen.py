@@ -95,6 +95,7 @@ from ...Chat.console_prefill import (
     pinned_prefill_from_conversation_metadata,
 )
 from ...Chat.console_generate_image import (
+    clamp_initial_batch,
     generation_content_marker,
     parse_generate_image_args,
     run_generation_batch,
@@ -11759,7 +11760,7 @@ class ChatScreen(BaseAppScreen):
         saved_draft = composer.draft_text() if composer is not None else ""
         self._clear_console_composer_draft()
         try:
-            count = cfg.default_batch
+            count = clamp_initial_batch(cfg.default_batch, cfg.max_variants_per_message)
             batch = await asyncio.to_thread(
                 run_generation_batch,
                 backend=backend,

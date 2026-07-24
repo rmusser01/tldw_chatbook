@@ -2,6 +2,7 @@
 
 import pytest
 from tldw_chatbook.Chat.console_generate_image import (
+    clamp_initial_batch,
     parse_generate_image_args,
     generation_content_marker,
     run_generation_batch,
@@ -24,6 +25,21 @@ def test_parse_table(args, backend, prompt):
     """Test parse_generate_image_args against spec table."""
     parsed = parse_generate_image_args(args)
     assert (parsed.backend, parsed.prompt) == (backend, prompt)
+
+
+@pytest.mark.parametrize(
+    "default_batch,max_variants,expected",
+    [
+        (4, 8, 4),  # default is smaller
+        (12, 8, 8),  # cap is smaller
+        (5, 5, 5),  # equal
+        (1, 1, 1),  # both minimum
+    ],
+)
+def test_clamp_initial_batch(default_batch, max_variants, expected):
+    """Test clamp_initial_batch returns minimum of the two values."""
+    result = clamp_initial_batch(default_batch, max_variants)
+    assert result == expected
 
 
 def test_content_marker_no_trim():

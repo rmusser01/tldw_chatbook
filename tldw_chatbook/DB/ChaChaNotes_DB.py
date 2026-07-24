@@ -7544,8 +7544,8 @@ UPDATE db_schema_version
 
         Raises:
             ValueError: If ``position < 1``, the message does not exist
-                (or is soft-deleted), or no attachment row exists at
-                ``position``.
+                (or is soft-deleted), no attachment row exists at ``position``,
+                or the message has no position-0 image to swap.
             CharactersRAGDBError: On database errors.
         """
         if position < 1:
@@ -7565,6 +7565,8 @@ UPDATE db_schema_version
             ).fetchone()
             if not msg_row:
                 raise ValueError(f"Message {message_id} not found.")
+            if msg_row["image_data"] is None:
+                raise ValueError("message has no position-0 image to swap")
 
             attachment_row = cursor.execute(
                 "SELECT data, mime_type FROM message_attachments WHERE message_id = ? AND position = ?",

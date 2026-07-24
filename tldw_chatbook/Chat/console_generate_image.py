@@ -31,6 +31,19 @@ GENERATION_MARKER_PREFIX = "[image] "
 _MARKER_PROMPT_MAX_CHARS = 80
 
 
+def clamp_initial_batch(default_batch: int, max_variants: int) -> int:
+    """Clamp the initial batch count to not exceed the variant cap.
+
+    Args:
+        default_batch: Configured default batch size (≥ 1).
+        max_variants: Configured maximum variants per message (≥ 1).
+
+    Returns:
+        The minimum of the two values, preserving ≥ 1 semantics.
+    """
+    return min(default_batch, max_variants)
+
+
 @dataclass(frozen=True)
 class GenerateImageArgs:
     """One parsed ``/generate-image`` invocation.
