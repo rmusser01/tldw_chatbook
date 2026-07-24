@@ -561,16 +561,33 @@ async def test_e2e_install_skill_from_github_tree_url_real_services(tmp_path, mo
     seams are mocked: the httpx transport (``fetch_zip_bytes``'s own
     ``AsyncClient``) and DNS resolution (SSRF host-allow check).
 
-    ``GitHubAPIClient.get_branches`` (used to resolve the ``/tree/`` ref) is
-    deliberately left unmocked -- it owns its own internal ``httpx.AsyncClient``,
-    not the ``transport=`` override passed to ``install_skill_from_url``, and
-    has a bare-except fallback to ``["main", "master"]`` on ANY failure
-    (network unavailable, or -- as forced here via a deliberately-invalid
-    injected token -- a real 401 from the real GitHub API). Both outcomes
-    converge on branches == ["main", "master"], so the ref/subdir split
-    ("main", "skills/demo") is deterministic regardless of the sandbox's
-    network access, and the test never depends on GitHub's actual branch
-    list for obra/superpowers.
+    ``GitHubAPIClient.get_branches`` is monkeypatched directly on the class
+    (it owns its own internal ``httpx.AsyncClient``, not the ``transport=``
+    override passed to ``install_skill_from_url``, so the fake transport
+    below cannot reach it) to return ``["main", "master"]`` -- the exact
+    shape ``get_branches``'s real success path returns (a plain
+    ``list[str]`` of branch names; see ``GitHubAPIClient.get_branches`` in
+    ``tldw_chatbook/Utils/github_api_client.py``). This keeps the test fully
+    hermetic -- no live request to ``api.github.com`` for either the branch
+    listing or the zip download -- while still exercising the real
+    ``resolve_ref_and_subdir`` longest-prefix match, which resolves to
+    ``("main", "skills/demo")`` for the pasted ``/tree/main/skills/demo``
+    URL.
+
+    Policy enforcement is REAL, not a no-op: a real ``ServicePolicyEnforcer``
+    bound to the real ``CAPABILITY_REGISTRY``/``PolicyEngine`` is wired onto
+    both ``local_service`` and ``scope_service`` below, mirroring how
+    ``app.py`` (~:4536) wires one ``ServicePolicyEnforcer`` instance into
+    every scope-service layer, and how
+    ``test_skill_editor_opens_under_real_runtime_policy_enforcer`` in
+    ``Tests/Skills/test_skills_library_flow.py`` proves the equivalent gate
+    for the editor seam. This test therefore proves
+    ``skills.install_remote.launch.local`` (and the
+    ``skills.import.launch.local`` hop inside ``import_skill_file``)
+    genuinely resolve ALLOWED under the real engine's default local-source
+    policy -- not merely that ``enforce_install_remote()`` is a harmless
+    no-op when no enforcer is wired (that no-op path is already covered by
+    ``test_scope_service_public_enforce_passthrough`` above).
     """
     from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
     from tldw_chatbook.Skills_Interop.skill_remote_fetch import install_skill_from_url
@@ -598,13 +615,32 @@ async def test_e2e_install_skill_from_github_tree_url_real_services(tmp_path, mo
     trust_service.unlock_with_passphrase("e2e-passphrase", salt=b"7" * 32)
     trust_service.bootstrap_trust()
 
-    local_service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
-    # No policy_enforcer wired on either service -- _enforce/_enforce_policy
-    # are documented no-ops in that state (see
-    # test_scope_service_public_enforce_passthrough above), so
-    # enforce_install_remote() genuinely PASSES here rather than being
-    # bypassed by a fake.
-    scope_service = SkillsScopeService(local_service=local_service, server_service=None)
+    from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
+    from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+
+    # A REAL policy_enforcer, bound to the real CAPABILITY_REGISTRY/
+    # PolicyEngine (not left unset) -- wired onto BOTH local_service and
+    # scope_service, mirroring app.py's production wiring (~:4536) of one
+    # ServicePolicyEnforcer instance into every scope-service layer. Leaving
+    # this unset would make enforce_install_remote() trivially no-op (see
+    # test_scope_service_public_enforce_passthrough above) without ever
+    # reaching PolicyEngine.evaluate() -- exactly the gate-defect class
+    # test_skill_editor_opens_under_real_runtime_policy_enforcer (in
+    # Tests/Skills/test_skills_library_flow.py) guards against for the
+    # editor seam.
+    policy_enforcer = ServicePolicyEnforcer(
+        state_provider=lambda: RuntimeSourceState(active_source="local"),
+    )
+    local_service = LocalSkillsService(
+        store_dir=tmp_path,
+        trust_service=trust_service,
+        policy_enforcer=policy_enforcer,
+    )
+    scope_service = SkillsScopeService(
+        local_service=local_service,
+        server_service=None,
+        policy_enforcer=policy_enforcer,
+    )
 
     # GitHubAPIClient reads its token from the env var named by
     # [github].api_token_env_var ("GITHUB_API_TOKEN" by default -- confirmed
@@ -612,10 +648,37 @@ async def test_e2e_install_skill_from_github_tree_url_real_services(tmp_path, mo
     # constructs its own GitHubAPIClient() internally, so the
     # constructor-injection idiom Tests/Utils/test_github_api_client.py uses
     # isn't reachable from here; the env var is the clean seam. The value is
-    # deliberately garbage: it still proves auth-header presence on both
-    # GitHub-family hops, and its rejection by the real API is exactly what
-    # keeps the branch-listing hop's outcome deterministic (see docstring).
+    # deliberately non-real -- it is never sent to the real GitHub API (the
+    # branch listing below is monkeypatched, and the zip-fetch hops go
+    # through the fake ``transport=`` handler further down), but it still
+    # proves auth-header presence on both GitHub-family hops.
     monkeypatch.setenv("GITHUB_API_TOKEN", "e2e-secret-token")
+
+    # Mock GitHubAPIClient.get_branches directly on the class -- it owns its
+    # own internal httpx.AsyncClient, not the transport= override passed to
+    # install_skill_from_url below, so leaving it unmocked would send a real
+    # request (carrying the garbage token above) to
+    # api.github.com/repos/obra/superpowers/branches. Patching the method on
+    # the class works even though install_skill_from_url does a local
+    # `from ..Utils.github_api_client import GitHubAPIClient` and constructs
+    # its own instance internally: that import resolves to this same class
+    # object, so the patched method is picked up regardless of where/when it
+    # is imported. The fake return value matches get_branches's real
+    # success-path shape exactly -- a plain list[str] of branch names (see
+    # GitHubAPIClient.get_branches in tldw_chatbook/Utils/github_api_client.py,
+    # success branch: `[branch["name"] for branch in branches]`). "main" must
+    # be present so resolve_ref_and_subdir's longest-prefix match still
+    # yields ("main", "skills/demo") for the pasted /tree/main/skills/demo
+    # URL.
+    from tldw_chatbook.Utils.github_api_client import GitHubAPIClient
+
+    branch_calls: list[tuple[str, str]] = []
+
+    async def _fake_get_branches(self, owner: str, repo: str) -> list[str]:
+        branch_calls.append((owner, repo))
+        return ["main", "master"]
+
+    monkeypatch.setattr(GitHubAPIClient, "get_branches", _fake_get_branches)
 
     zip_bytes = _zipball(
         [
@@ -661,6 +724,12 @@ async def test_e2e_install_skill_from_github_tree_url_real_services(tmp_path, mo
         "api.github.com": "token e2e-secret-token",
         "codeload.github.com": "token e2e-secret-token",
     }
+
+    # The mocked branch listing was actually reached (not skipped) and asked
+    # for the right repo -- proves the ref/subdir split above is exercising
+    # resolve_ref_and_subdir's real longest-prefix logic against the fake
+    # data, not merely trusting an unreached mock.
+    assert branch_calls == [("obra", "superpowers")]
 
     assert result["name"] == "demo"
     assert result["backend"] == "local"
