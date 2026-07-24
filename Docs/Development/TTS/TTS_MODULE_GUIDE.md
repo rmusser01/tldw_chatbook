@@ -9,8 +9,9 @@ The TTS module in tldw_chatbook provides a flexible, extensible system for gener
 ### TTS adapter service
 
 The application owns one sealed `TTSAdapterRegistry` and one `TTSService`.
-New callers use canonical provider IDs and `TTSService.synthesize()`. Existing
-callers may temporarily use `generate_audio_stream()` with an enumerated legacy
+Native adapters use canonical provider IDs and `TTSService.synthesize()`.
+Until `audio_cpp` lands, all currently registered providers are compatibility
+adapters and callers use `generate_audio_stream()` with an enumerated legacy
 internal model ID.
 
 The temporary bridge has exactly six provider entries: `openai`, `elevenlabs`,

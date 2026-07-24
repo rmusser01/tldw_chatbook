@@ -48,6 +48,10 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
 
 def test_tts_guide_documents_exact_legacy_routes_and_working_example() -> None:
     guide = GUIDE_PATH.read_text(encoding="utf-8")
+    architecture = guide.split("### TTS adapter service", 1)[1].split(
+        "### Module Structure", 1
+    )[0]
+    normalized_architecture = " ".join(architecture.split())
     usage = guide.split("### Programmatic Usage", 1)[1].split(
         "### Event System Integration", 1
     )[0]
@@ -58,6 +62,15 @@ def test_tts_guide_documents_exact_legacy_routes_and_working_example() -> None:
         re.findall(r"^- `([^`]+)` → `([^`]+)`$", routes, re.MULTILINE)
     )
 
+    assert (
+        "Native adapters use canonical provider IDs and "
+        "`TTSService.synthesize()`." in normalized_architecture
+    )
+    assert (
+        "Until `audio_cpp` lands, all currently registered providers are "
+        "compatibility adapters and callers use `generate_audio_stream()` "
+        "with an enumerated legacy internal model ID." in normalized_architecture
+    )
     assert documented_routes == LEGACY_ROUTES
     assert 'internal_model_id = "openai_official_tts-1"' in usage
     assert "generate_audio_stream(request, internal_model_id)" in usage
