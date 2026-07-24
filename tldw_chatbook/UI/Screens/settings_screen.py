@@ -6649,6 +6649,15 @@ class SettingsScreen(BaseAppScreen):
                     "URL-based local providers also get a short live endpoint probe."
                 ),
             )
+            # TASK-386 (AC#2): the readiness / live-probe explanation must also
+            # exist as visible static text -- a hover tooltip is invisible to
+            # keyboard users and self-occludes the result line below it.
+            yield Static(
+                "Runs a local readiness check; URL-based local providers also get "
+                "a short live endpoint probe.",
+                id="settings-test-provider-guidance",
+                classes="settings-status-row",
+            )
             yield Static(self._provider_test_result, id="settings-provider-test-result")
             yield Static(
                 self._provider_save_result,

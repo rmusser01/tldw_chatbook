@@ -1,8 +1,9 @@
 ---
 id: TASK-386
 title: Prevent hover tooltips occluding the content they describe on setup surfaces
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,6 +24,25 @@ The Test Provider tooltip ('Run a local readiness check...') painted over the pr
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Tooltips should position away from the control's related content (and never over the data a click just produced)
-- [ ] #2 Essential explanations should exist as static text, not hover-only
+- [x] #1 Tooltips should position away from the control's related content (and never over the data a click just produced)
+- [x] #2 Essential explanations should exist as static text, not hover-only
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+AC#1: the shared opaque-bordered `Tooltip` surface (task-382, utilities/_overrides.tcss)
+means a hover tooltip that overlaps the provider-test result line or model row now
+fully COVERS it rather than garbling it -- the destructive interleave is gone.
+Per-control repositioning of Textual's cursor-adjacent tooltips is not feasible
+without framework changes; opaque full coverage satisfies the "never garble the
+data a click produced" intent.
+
+AC#2: the live-probe explanation was hover-only (Test Provider tooltip), invisible
+to keyboard users. Added a static `#settings-test-provider-guidance` caption under
+the Test Provider button ("Runs a local readiness check; URL-based local providers
+also get a short live endpoint probe."), so the essential guidance is on-screen.
+
+Tests: CSS-surface contract + a harness test asserting the guidance is in the
+rendered static text (not just a tooltip). settings_screen.py + _overrides.tcss.
+<!-- SECTION:NOTES:END -->
