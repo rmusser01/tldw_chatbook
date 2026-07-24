@@ -2436,6 +2436,13 @@ their own managers through `TTSService.close()`. Also delete the
 `on_unmount()` is the sole async TTS resource owner and already runs after quit
 is requested.
 
+Make the retained STTS handler cleanup real rather than leaving the existing
+`hasattr(..., "cleanup_tts_resources")` guard as a no-op. Track its
+fire-and-forget event tasks, cancel and join them idempotently, await the
+per-generation waiting-status task after cancellation, and remove only
+handler-created temporary playground audio. Generated audiobook paths are
+user-owned output and must never be deleted by handler cleanup.
+
 - [ ] **Step 6: Run ownership, service, STTS, and startup tests**
 
 Run: `pytest Tests/TTS/test_tts_app_ownership.py Tests/TTS/test_tts_registry_service.py Tests/TTS/test_tts_improvements.py Tests/Performance/test_app_startup_performance.py -q`
