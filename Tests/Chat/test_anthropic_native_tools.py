@@ -22,7 +22,10 @@ import json
 from unittest.mock import Mock, patch
 
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
-from tldw_chatbook.LLM_Calls.LLM_API_Calls import _anthropic_supports_caching
+from tldw_chatbook.LLM_Calls.LLM_API_Calls import (
+    _anthropic_supports_caching,
+    _anthropic_tools_payload,
+)
 
 
 def _anthropic_text_response(text="ok"):
@@ -93,14 +96,40 @@ def test_openai_tools_convert_to_anthropic_input_schema(mock_post):
 
 
 @patch("requests.Session.post")
-def test_anthropic_shaped_tools_pass_through_untouched(mock_post):
+def test_caching_model_native_tools_are_copied_and_get_cache_control(mock_post):
     native = [{"name": "t", "description": "d", "input_schema": {"type": "object"}}]
     sent = _call_anthropic(
         mock_post,
         [{"role": "user", "content": "hi"}],
         tools=native,
     )
-    assert sent["tools"] == native
+    assert sent["tools"] == [{**native[0], "cache_control": {"type": "ephemeral"}}]
+    assert sent["tools"][0] is not native[0]
+    assert "cache_control" not in native[0]
+
+
+def test_anthropic_converter_drops_invalid_shapes_with_bounded_diagnostics():
+    from loguru import logger as loguru_logger
+
+    messages = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        converted = _anthropic_tools_payload(
+            [
+                "not-a-dict",
+                {"name": "", "input_schema": {}},
+                {"name": "bad-schema", "input_schema": "not-a-dict"},
+                {"unrelated": "x" * 500},
+            ]
+        )
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert converted == []
+    assert len(messages) == 4
+    assert all(message.startswith("Anthropic:") for message in messages)
+    assert all("Cohere" not in message for message in messages)
+    assert max(len(message) for message in messages) <= 240
 
 
 @patch("requests.Session.post")
@@ -789,15 +818,11 @@ def test_caching_model_system_gets_cache_control(mock_post):
 
 @patch("requests.Session.post")
 def test_caching_model_last_tool_gets_cache_control(mock_post):
-    sent = _sent_anthropic(
-        mock_post, "claude-3-opus-20240229", tools=OPENAI_TOOLS
-    )
+    sent = _sent_anthropic(mock_post, "claude-3-opus-20240229", tools=OPENAI_TOOLS)
     assert sent["tools"], "tools should convert and survive"
     assert sent["tools"][-1]["cache_control"] == {"type": "ephemeral"}
     # <=4 breakpoints total (system optional + one tool here)
-    n = sum(
-        1 for t in sent["tools"] if "cache_control" in t
-    ) + (
+    n = sum(1 for t in sent["tools"] if "cache_control" in t) + (
         1 if isinstance(sent.get("system"), list) else 0
     )
     assert n <= 4
@@ -813,9 +838,17 @@ def test_non_caching_model_unchanged(mock_post):
 
 
 @patch("requests.Session.post")
+def test_non_caching_model_preserves_copied_native_tools(mock_post):
+    native = [{"name": "t", "description": "d", "input_schema": {"type": "object"}}]
+    sent = _sent_anthropic(mock_post, "claude-2.1", tools=native)
+
+    assert sent["tools"] == native
+    assert sent["tools"][0] is not native[0]
+    assert "cache_control" not in sent["tools"][0]
+
+
+@patch("requests.Session.post")
 def test_caching_model_no_tools_system_only(mock_post):
-    sent = _sent_anthropic(
-        mock_post, "claude-3-opus-20240229", system_message="Hi."
-    )
+    sent = _sent_anthropic(mock_post, "claude-3-opus-20240229", system_message="Hi.")
     assert isinstance(sent["system"], list)
     assert "tools" not in sent  # no tools passed -> no tools key
