@@ -38,7 +38,6 @@ Design notes:
 from __future__ import annotations
 
 import asyncio
-import os
 import queue
 import threading
 import time
@@ -132,11 +131,6 @@ _first_run_import_attempted = False
 _first_run_lock = threading.Lock()
 
 
-def _running_under_pytest() -> bool:
-    """True when executing inside a pytest run (monkeypatchable test seam)."""
-    return "PYTEST_CURRENT_TEST" in os.environ
-
-
 def _maybe_run_first_run_import() -> None:
     """Best-effort first-run "Imported settings" capture.
 
@@ -156,26 +150,23 @@ def _maybe_run_first_run_import() -> None:
     but flipping the flag must be atomic so only one thread ever proceeds
     past the check.
 
-    Skipped under pytest (``PYTEST_CURRENT_TEST``, the codebase-standard test
-    marker also used by ``Metrics/metrics_logger.py`` and
-    ``Utils/optional_deps.py``): ``ConfigProfileManager``'s default
-    ``profiles_dir`` comes from ``get_user_data_dir()``, whose
-    ``BASE_DATA_DIR_CLI`` fallback is a module-level ``Path.home()`` constant
-    baked in at import time — it predates, and is therefore NOT covered by,
-    the per-test ``HOME``/``XDG_*`` monkeypatches in ``Tests/conftest.py``.
-    Without this guard, the first unmocked ``get_shared_rag_service()`` call
-    anywhere in a pytest session would create a real
-    ``imported_settings`` profile under the developer's actual
-    ``~/.local/share/tldw_cli/.../rag_profiles/``. Tests that want to exercise
-    the real function call it directly (see ``Tests/RAG/test_first_run_import.py``).
+    No longer skipped under pytest (see task-519): the previous
+    ``PYTEST_CURRENT_TEST`` guard existed only because ``get_user_data_dir()``'s
+    default-dir fallback used to be a module-level ``Path.home()`` constant
+    baked in at import time, predating (and therefore ignoring) any per-test
+    ``HOME``/``XDG_*`` monkeypatch. Now that the fallback resolves at CALL
+    time, ``Tests/conftest.py``'s autouse ``isolate_test_environment`` fixture
+    pre-arms ``_first_run_import_attempted = True`` before each test instead,
+    so this function's once-per-process import path is exercised organically
+    by the real test suite (rather than skipped) while still never touching
+    the real user data dir. Tests that want to exercise the guarded call
+    itself reset the flag directly (see ``Tests/RAG/test_first_run_import.py``).
     """
     global _first_run_import_attempted
     with _first_run_lock:
         if _first_run_import_attempted:
             return
         _first_run_import_attempted = True
-    if _running_under_pytest():
-        return
     try:
         from .simplified.active_config import ensure_imported_profile
 

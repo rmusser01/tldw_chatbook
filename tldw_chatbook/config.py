@@ -4356,6 +4356,19 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
 
 # --- CLI Database and Log File Path Getters ---
 BASE_DATA_DIR_CLI = Path.home() / ".local" / "share" / "tldw_cli"  # Renamed for clarity
+# NOTE: BASE_DATA_DIR_CLI is a module-level constant frozen at IMPORT time
+# (kept for backward compatibility -- some callers reference it directly).
+# get_user_data_dir()'s fallback below does NOT use it; it resolves the
+# default at CALL time via _default_base_data_dir() instead, so per-test
+# HOME/XDG_DATA_HOME monkeypatches (applied well after this module is first
+# imported) are actually honored. See task-519.
+
+
+def _default_base_data_dir() -> Path:
+    """Resolve the default data dir at CALL time (honors post-import HOME/XDG_DATA_HOME — required for test isolation; see task-519)."""
+    xdg = os.environ.get("XDG_DATA_HOME")
+    base = Path(xdg).expanduser() if xdg else Path.home() / ".local" / "share"
+    return base / "tldw_cli"
 
 
 def get_api_key(api_name: str) -> Optional[str]:
@@ -4440,7 +4453,7 @@ def get_user_data_dir() -> Path:
     base_data_dir = (
         Path(configured_data_dir).expanduser()
         if configured_data_dir
-        else BASE_DATA_DIR_CLI
+        else _default_base_data_dir()
     )
     user_dir = base_data_dir / user_folder
     # Create directory if it doesn't exist
