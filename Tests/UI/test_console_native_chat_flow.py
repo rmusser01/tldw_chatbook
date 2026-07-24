@@ -2506,7 +2506,13 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 48)) as pilot:
+    # TASK-1: the row now carries a 9th always-visible action button (speak,
+    # right after copy) -- at this project's per-button min-width of 16 that
+    # no longer fits inside the previous 160-col reference width without the
+    # trailing buttons (delete included) landing off the right edge of the
+    # terminal, so this widened just enough to keep every button in-bounds
+    # and genuinely clickable.
+    async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         store = console._ensure_console_chat_store()
@@ -2536,6 +2542,12 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
             f"#console-message-action-copy-{message.id}", Button
         )
         await _wait_for_focus(console.app, pilot, copy_button)
+
+        await pilot.press("tab")
+        speak_button = console.query_one(
+            f"#console-message-action-speak-{message.id}", Button
+        )
+        await _wait_for_focus(console.app, pilot, speak_button)
 
         await pilot.press("tab")
         edit_button = console.query_one(
@@ -2929,7 +2941,11 @@ async def test_console_selected_message_delete_action_removes_message_from_trans
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 48)) as pilot:
+    # TASK-1: widened per the comment on test_console_message_action_
+    # keyboard_focus_stays_inside_action_row -- the row's now-9 buttons no
+    # longer fit inside 160 cols, which put the coordinate-clicked delete
+    # button off the right edge of the terminal.
+    async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         store = console._ensure_console_chat_store()
@@ -2976,7 +2992,9 @@ async def test_console_delete_confirmation_resets_when_selection_changes():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 48)) as pilot:
+    # TASK-1: widened for the same reason as the other two tests above --
+    # the row's now-9 buttons no longer fit inside 160 cols.
+    async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         store = console._ensure_console_chat_store()

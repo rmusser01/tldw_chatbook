@@ -58,6 +58,7 @@ class ConsoleMessageActionService:
 
     _COMPLETED_ACTIONS: tuple[tuple[str, str], ...] = (
         ("copy", "Copy"),
+        ("speak", "🔊"),
         ("edit", "Edit"),
         ("save-as", "Save as..."),
         ("regenerate", "♻"),
@@ -77,6 +78,14 @@ class ConsoleMessageActionService:
     @staticmethod
     def _has_image(message: ConsoleChatMessage) -> bool:
         return message.image_data is not None or bool(message.image_mime_type)
+
+    @staticmethod
+    def _speak_visible(message: ConsoleChatMessage) -> bool:
+        """Spec §1a: speak is offered for any completed message with
+        non-empty text (any role, generation-card marker text included) --
+        absent (not merely disabled) for a failed message or one with no
+        text yet (e.g. a still-pending assistant turn)."""
+        return message.status != "failed" and bool(message.content.strip())
 
     def __init__(
         self,
@@ -141,16 +150,25 @@ class ConsoleMessageActionService:
                 + list(self._IMAGE_VIEW_ACTIONS)
                 + list(self._SAVE_IMAGE_ACTIONS)
             )
+        if not self._speak_visible(message):
+            completed_actions = [
+                (action_id, label)
+                for action_id, label in completed_actions
+                if action_id != "speak"
+            ]
         if message.status == "failed" and self._is_assistant_message(message):
             # Retry regenerates a failed ASSISTANT response. A failed USER row —
             # e.g. the TASK-457(a) optimistic echo rejected before any provider
             # send — has nothing to regenerate, so it must not offer retry (the
-            # user re-sends from the composer instead).
+            # user re-sends from the composer instead). Speak is also absent
+            # here (spec §1a) -- a failed row's content is not a completed
+            # response worth reading aloud.
             return [
                 ConsoleMessageAction(action_id, label)
                 for action_id, label in self._base_actions_with(
                     self._FAILED_RETRY_ACTIONS
                 )
+                if action_id != "speak"
             ]
         return [
             ConsoleMessageAction(
@@ -231,6 +249,14 @@ class ConsoleMessageActionService:
                 status="completed",
                 visible_copy="Copied message to clipboard.",
                 clipboard_text=message.content,
+            )
+        if action_id == "speak":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Speaking message.",
+                target_message_id=message.id,
+                target_content=message.content,
             )
         if action_id == "retry" and message.status == "failed":
             return ConsoleActionResult(

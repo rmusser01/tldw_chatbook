@@ -25,10 +25,14 @@ import pytest
 from PIL import Image as PILImage
 from textual.widgets import Button
 
-from tldw_chatbook.Chat.console_chat_models import GenerationVariantMeta
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    GenerationVariantMeta,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_generate_image import BatchResult
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
+from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSRequestEvent
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -442,3 +446,53 @@ async def test_handle_console_message_action_routes_regenerate_for_generation_me
     assert handled is True
     appended = store.get_message(message.id)
     assert len(appended.generation_metadata) == 2
+
+
+# --- TASK-1: speak (TTS) action dispatch --------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_handle_console_message_action_routes_speak_to_tts_request_event():
+    """Speak posts the app's existing ``TTSRequestEvent`` -- no new TTS
+    machinery, no worker (spec §1a). Captured via a monkeypatched
+    ``post_message`` on the bare screen's stub ``app_instance``."""
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="The sky is blue today.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    posted: list = []
+    screen.app_instance.post_message = posted.append
+    button = Button("speak", id=f"console-message-action-speak-{message.id}")
+
+    handled = await screen.handle_console_message_action(Button.Pressed(button))
+
+    assert handled is True
+    assert len(posted) == 1
+    event = posted[0]
+    assert isinstance(event, TTSRequestEvent)
+    assert event.text == "The sky is blue today."
+    assert event.message_id == message.id
+
+
+@pytest.mark.asyncio
+async def test_handle_console_message_action_routes_speak_for_generation_message():
+    """Spec §1a: speak also works for a generation-card message, reading
+    its ``[image] ...`` marker text."""
+    store = ConsoleChatStore()
+    _session, message = _seed_generation_message(store, variant_count=1)
+    screen = _bare_generation_screen(store)
+    posted: list = []
+    screen.app_instance.post_message = posted.append
+    button = Button("speak", id=f"console-message-action-speak-{message.id}")
+
+    handled = await screen.handle_console_message_action(Button.Pressed(button))
+
+    assert handled is True
+    assert len(posted) == 1
+    assert posted[0].text == "[image] a red dragon"
+    assert posted[0].message_id == message.id

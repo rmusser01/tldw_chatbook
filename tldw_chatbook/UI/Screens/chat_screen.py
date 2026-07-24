@@ -12957,6 +12957,17 @@ class ChatScreen(BaseAppScreen):
             copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
             if callable(copy_to_clipboard):
                 copy_to_clipboard(result.clipboard_text)
+        if action_id == "speak" and result.status == "completed":
+            # No new TTS machinery -- hand off to the app's existing
+            # pipeline (validation, synthesis, playback, failure toast) the
+            # same way legacy chat does (spec §1a).
+            from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+                TTSRequestEvent,
+            )
+
+            self.app_instance.post_message(
+                TTSRequestEvent(text=message.content, message_id=message.id)
+            )
         if action_id == "edit" and result.status == "edit_requested":
             await self._open_console_message_edit_modal(
                 message_id=message_id,
@@ -13615,6 +13626,7 @@ class ChatScreen(BaseAppScreen):
             ("console-message-action-continue-", "continue"),
             ("console-message-action-delete-", "delete"),
             ("console-message-action-retry-", "retry"),
+            ("console-message-action-speak-", "speak"),
             ("console-message-action-copy-", "copy"),
             ("console-message-action-edit-", "edit"),
         )
