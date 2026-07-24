@@ -7,7 +7,6 @@ import asyncio
 import json
 import hashlib
 import time
-import pickle
 from pathlib import Path
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -209,8 +208,8 @@ class ToolResultCache:
 
         try:
             async with self._lock:
-                with open(self.persist_path, "rb") as f:
-                    loaded_cache = pickle.load(f)
+                with open(self.persist_path, "r", encoding="utf-8") as f:
+                    loaded_cache = json.load(f)
 
                 # Clear expired entries and validate format
                 current_time = time.time()
@@ -237,8 +236,8 @@ class ToolResultCache:
             cache_copy = dict(self.cache)
 
             # Save to disk
-            with open(self.persist_path, "wb") as f:
-                pickle.dump(cache_copy, f)
+            with open(self.persist_path, "w", encoding="utf-8") as f:
+                json.dump(cache_copy, f)
 
             logger.debug(
                 f"Saved {len(cache_copy)} cache entries to {self.persist_path}"
@@ -630,9 +629,9 @@ def get_tool_executor() -> ToolExecutor:
         # Determine cache persist path if enabled
         cache_persist_path = None
         if enable_cache and tools_config.get("cache_persist", True):
-            from ..config import USER_DATA_DIR
+            from ..config import get_user_data_dir
 
-            cache_dir = Path(USER_DATA_DIR) / "tool_cache"
+            cache_dir = get_user_data_dir() / "tool_cache"
             cache_persist_path = cache_dir / "tool_results.cache"
 
         # Create executor with settings
