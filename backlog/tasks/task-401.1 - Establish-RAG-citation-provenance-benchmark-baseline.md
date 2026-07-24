@@ -42,16 +42,24 @@ Record a reproducible pre-feature performance and storage baseline so citation p
 
 ## Implementation Notes
 
-Added the deterministic v1 corpus/manifest, network-free baseline and
-qualification runner, contract tests, machine-readable reference result, and
-benchmark report. The 30-sample/5-warmup ARM64 reference run passed all six
-budget families: first-token p95 0.914 ms, standard/maximum finalization p95
-0.040/2.284 ms, inspector cold/warm p95 0.421/0.193 ms, SQLite growth p95
-4,231,168 bytes for 4 MiB governed data, and migration median 91,593
-messages/second with zero duplicate restart rows. Exact and one-unit-over
-descriptors cover every frozen v1 count/byte limit without committing oversized
-payload files. External resolution remains explicitly separate and excluded
-from local pass/fail.
+Added the deterministic v1 corpus/manifest, baseline and qualification runner,
+contract tests, machine-readable reference result, and benchmark report.
+Corpus records now drive each measured seam and publish coverage plus stable
+input hashes. Qualification compares first-token p95 directly with the
+compatible committed v1 result and current in-process control. A fixed 20 ms
+mock first-token floor keeps sub-millisecond scheduler/SQLite noise from
+dominating the direct percentage comparison while retaining the independent 25
+ms ceiling. Exact and one-unit-over domain values run through executable
+validators for every frozen v1 count/byte limit; the 4 MiB trace is split into
+valid 64 KiB snapshots. External resolver latency has a separate, explicit
+network mode whose result is informational and excluded from local pass/fail.
+
+The updated 30-sample/5-warmup ARM64 reference run passed all six local budget
+families: first-token p95 22.112 ms, standard/maximum finalization p95
+0.036/2.217 ms, inspector cold/warm p95 0.382/0.077 ms, SQLite growth p95
+4,235,264 bytes for 4 MiB governed data, and migration median 109,293
+messages/second with zero duplicate restart rows. Qualification runs passed
+against the regenerated baseline without modifying it.
 
 ADR required: yes
 

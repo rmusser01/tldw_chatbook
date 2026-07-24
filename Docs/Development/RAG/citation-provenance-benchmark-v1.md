@@ -26,11 +26,29 @@ python Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
   --baseline Docs/Development/RAG/citation-provenance-baseline-v1.json
 ```
 
+External resolver latency is an explicit, informational measurement:
+
+```bash
+python Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
+  --mode external \
+  --provider external-http-v1 \
+  --external-target https://example.org/health \
+  --external-timeout-seconds 10 \
+  --samples 30 \
+  --warmups 5 \
+  --output /tmp/rag-citation-provenance-external.json
+```
+
 Baseline and qualification modes accept only the in-process
 `mock-local-v1` provider and no base URL. An absent baseline, or one with an
 incompatible fixture/result schema, is rejected. A structurally valid baseline
 from an environment outside the recorded envelope may still be measured, but
 the result cannot claim a passing qualification.
+
+Only external mode may perform network I/O. It requires the
+`external-http-v1` provider and an explicit absolute HTTP(S) target without URL
+credentials. Its output reports latency separately with `overall_pass: null`;
+it does not load, overwrite, or gate against the local baseline.
 
 ## Reference environment
 
@@ -65,18 +83,27 @@ useful for measurements but are not comparable enough to claim pass.
 - The mocked native first-token path runs through
   `ConsoleChatController.submit_draft` and
   `ConsoleChatController._stream_assistant_response`, including message
-  persistence and a deterministic two-chunk stream.
+  persistence and a deterministic two-chunk stream derived from the fixture
+  corpus. The mock applies a fixed 20 ms first-token floor so sub-millisecond
+  scheduler and SQLite noise does not dominate the 10% comparison; the
+  independent 25 ms regression ceiling remains enforced.
 - The pre-feature baseline has one current implementation, so its recorded
   candidate and unchanged no-provenance control are the same measured series.
   Pre-feature qualification also reuses that series because no provenance
   candidate exists yet. Later candidate tasks extend this runner with their
-  in-process candidate while retaining this unchanged control and normalize the
-  historical candidate/control ratio to current control speed.
+  in-process candidate while retaining this unchanged control. Qualification
+  compares candidate p95 directly with both the compatible committed v1
+  candidate p95 and the current in-process control; each comparison must stay
+  within both first-token ceilings.
+- Generation, finalization, inspector, database-growth, and migration workloads
+  consume the versioned corpus records and representative shape families. The
+  result records coverage and stable corpus-input hashes for the measured
+  seams.
 - Finalization hashes governed snapshots and serializes bounded immutable
   metadata. Inspector, database-growth, and migration measurements use local
   SQLite proxies.
-- External source resolution is not executed and never contributes to local
-  pass/fail.
+- External source resolution runs only in explicit external mode and never
+  contributes to local pass/fail.
 
 ## Frozen budgets
 
@@ -92,7 +119,10 @@ useful for measurements but are not comparable enough to claim pass.
 ## Frozen v1 bounds
 
 The corpus contains deterministic exact-limit and one-unit-over descriptors for
-every bound. Tests materialize and measure each descriptor.
+every bound. The runner materializes domain-shaped values and sends each pair
+through the applicable validator: exact values are accepted and one-unit-over
+values are rejected. The exact 4 MiB governed trace is split into 64 snapshots
+of 64 KiB so the aggregate case also satisfies the per-snapshot bound.
 
 | Value | Maximum |
 | --- | ---: |
@@ -118,13 +148,13 @@ All six families pass on the reference environment.
 
 | Metric | Median | p95 | Budget result |
 | --- | ---: | ---: | --- |
-| Mocked Console first token | 0.588 ms | 0.914 ms | Pass; baseline regression 0% / 0 ms |
-| Standard finalization | 0.028 ms | 0.040 ms | Pass |
-| Maximum finalization | 2.099 ms | 2.284 ms | Pass |
-| Inspector cold load | 0.325 ms | 0.421 ms | Pass |
-| Inspector warm load | 0.118 ms | 0.193 ms | Pass |
-| SQLite growth per 4 MiB governed answer | 4,227,072 bytes | 4,231,168 bytes | Pass; allowance 5,924,454 bytes |
-| Legacy migration | 91,593 messages/s | 124,179 messages/s | Pass; zero duplicate rows |
+| Mocked Console first token | 21.918 ms | 22.112 ms | Pass; baseline regression 0% / 0 ms |
+| Standard finalization | 0.028 ms | 0.036 ms | Pass |
+| Maximum finalization | 2.070 ms | 2.217 ms | Pass |
+| Inspector cold load | 0.234 ms | 0.382 ms | Pass |
+| Inspector warm load | 0.072 ms | 0.077 ms | Pass |
+| SQLite growth per 4 MiB governed answer | 4,227,072 bytes | 4,235,264 bytes | Pass; allowance 5,924,454 bytes |
+| Legacy migration | 109,293 messages/s | 122,913 messages/s | Pass; zero duplicate rows |
 
 The maximum trace proxy contains 4,194,304 governed bytes, a 65,536-byte
 largest snapshot, and 6,744 bytes of immutable aggregate JSON.
@@ -143,5 +173,5 @@ environment envelope, sample counts, and external-network exclusion are in
 - The deterministic mock isolates Chatbook overhead and is not a model/provider
   latency benchmark.
 - External refresh latency depends on resolver, authority, cache, and network.
-  It must be measured by an explicit separate workflow and never gates local
+  It is measured only by the explicit external workflow and never gates local
   answer rendering, finalization, persistence, or inspector opening.

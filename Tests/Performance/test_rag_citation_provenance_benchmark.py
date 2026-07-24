@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib.util
 import json
 import socket
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -126,11 +127,96 @@ def test_every_frozen_limit_has_exact_and_one_unit_over_cases() -> None:
     for name, limit in benchmark.LIMITS.items():
         cases = grouped[name]
         assert {case["expected"] for case in cases} == {"accept", "reject"}
-        measured = {
-            case["expected"]: benchmark.materialized_boundary_size(case)
-            for case in cases
-        }
-        assert measured == {"accept": limit, "reject": limit + 1}
+        exact = next(case for case in cases if case["expected"] == "accept")
+        over = next(case for case in cases if case["expected"] == "reject")
+
+        assert benchmark.validate_boundary_case(exact) == limit
+        with pytest.raises(ValueError, match=name):
+            benchmark.validate_boundary_case(over)
+
+
+def test_governed_trace_boundary_uses_individually_valid_snapshots() -> None:
+    benchmark = _load_benchmark()
+    corpus = _load_json(CORPUS_PATH)
+    governed_cases = [
+        case
+        for case in corpus["boundary_cases"]
+        if case["limit_name"] == "governed_trace_bytes"
+    ]
+
+    for case in governed_cases:
+        workload = benchmark.materialize_boundary(case)
+        snapshots = workload["governed_snapshots"]
+        assert sum(len(item.encode("utf-8")) for item in snapshots) == case["units"]
+        assert max(len(item.encode("utf-8")) for item in snapshots) <= 64 * 1024
+
+
+def test_boundary_materializers_are_domain_shaped() -> None:
+    benchmark = _load_benchmark()
+    corpus = _load_json(CORPUS_PATH)
+
+    materialized = {
+        case["limit_name"]: benchmark.materialize_boundary(case)
+        for case in corpus["boundary_cases"]
+        if case["expected"] == "accept"
+    }
+
+    assert isinstance(materialized["aggregate_json_bytes"]["trace"], dict)
+    assert "snapshot_text" in materialized["snapshot_utf8_bytes"]
+    assert "prompt_sets" in materialized["prompt_sets"]
+    assert "evidence" in materialized["evidence_per_prompt"]["prompt_set"]
+    assert "answer_attempts" in materialized["answer_attempts"]
+    assert "occurrences" in materialized["citation_occurrences"]["selected_answer"]
+    assert "candidates" in materialized["retrieval_candidates_per_run"]["run"]
+    assert isinstance(materialized["locator_json_bytes"]["locator"], dict)
+    assert isinstance(materialized["observation_json_bytes"]["observation"], dict)
+    assert "legacy_messages" in materialized["migration_batch_messages"]
+
+
+def test_generation_workload_cycles_genuine_single_evidence_corpus_cases() -> None:
+    benchmark = _load_benchmark()
+    corpus = _load_json(CORPUS_PATH)
+
+    workload = benchmark._workload_from_corpus(corpus)
+    cases = workload["generation_cases"]
+
+    assert len(cases) == len(corpus["sources"]) * len(corpus["answers"])
+    assert {case["source_id"] for case in cases} == {
+        source["id"] for source in corpus["sources"]
+    }
+    assert {case["answer_case"] for case in cases} == {
+        answer["case"] for answer in corpus["answers"]
+    }
+    assert all(case["evidence_count"] == 1 for case in cases)
+    for case in cases:
+        assert (
+            sum(source["text"] in case["prompt"] for source in corpus["sources"]) == 1
+        )
+
+
+@pytest.mark.asyncio
+async def test_deterministic_gateway_applies_first_token_latency_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = _load_benchmark()
+    observed_delays: list[float] = []
+
+    async def record_delay(delay: float) -> None:
+        observed_delays.append(delay)
+
+    monkeypatch.setattr(benchmark.asyncio, "sleep", record_delay)
+    gateway = benchmark._DeterministicGateway("Corpus answer")
+
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            SimpleNamespace(),
+            [{"role": "user", "content": "Corpus prompt"}],
+        )
+    ]
+
+    assert observed_delays == [benchmark.MOCK_FIRST_TOKEN_DELAY_SECONDS]
+    assert "".join(chunks) == "Corpus answer"
 
 
 def test_runner_defaults_to_five_warmups_and_at_least_thirty_samples() -> None:
@@ -326,6 +412,86 @@ async def test_local_runner_is_machine_readable_and_never_opens_a_socket(
         assert set(metric) == {"median", "p95"}
 
 
+@pytest.mark.asyncio
+async def test_runner_consumes_each_representative_corpus_family(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    benchmark = _load_benchmark()
+    corpus = _load_json(CORPUS_PATH)
+    monkeypatch.setattr(benchmark, "_load_fixture", lambda: corpus)
+
+    result = await benchmark.run_benchmark(
+        mode="baseline",
+        samples=1,
+        warmups=0,
+        scratch_root=tmp_path,
+    )
+
+    assert "corpus_coverage" in result["metrics"]
+    coverage = result["metrics"]["corpus_coverage"]
+    assert set(coverage["generation"]["answer_cases"]) == {
+        "unicode",
+        "repeated_markers",
+        "grouped_markers",
+        "repaired_answer",
+    }
+    assert set(coverage["generation"]["source_kinds"]) == {
+        "media",
+        "note",
+        "conversation",
+    }
+    assert coverage["generation"]["evidence_count"] == 1
+    assert coverage["finalization"]["evidence_counts"] == [8, 64]
+    assert coverage["inspector"]["evidence_count"] == 32
+    assert set(coverage["inspector"]["storage_modes"]) == {
+        "embedded",
+        "server_reference",
+        "ephemeral",
+        "redacted",
+    }
+    assert set(coverage["migration"]["record_types"]) == {
+        "EvidenceBundle",
+        "CitationRef",
+        "chat_rag_context_sidecar",
+    }
+
+
+@pytest.mark.asyncio
+async def test_changing_selected_corpus_cases_changes_exercised_seam_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    benchmark = _load_benchmark()
+    original = _load_json(CORPUS_PATH)
+    changed = copy.deepcopy(original)
+    changed["answers"][0]["body"] += " changed"
+    changed["sources"][0]["text"] += " changed"
+    changed["legacy_records"][0]["payload"]["query"] += " changed"
+
+    monkeypatch.setattr(benchmark, "_load_fixture", lambda: original)
+    original_result = await benchmark.run_benchmark(
+        mode="baseline",
+        samples=1,
+        warmups=0,
+        scratch_root=tmp_path / "original",
+    )
+    monkeypatch.setattr(benchmark, "_load_fixture", lambda: changed)
+    changed_result = await benchmark.run_benchmark(
+        mode="baseline",
+        samples=1,
+        warmups=0,
+        scratch_root=tmp_path / "changed",
+    )
+
+    for family in ("first_token", "finalization", "migration"):
+        assert "corpus_input_sha256" in original_result["metrics"][family]
+        assert (
+            original_result["metrics"][family]["corpus_input_sha256"]
+            != changed_result["metrics"][family]["corpus_input_sha256"]
+        )
+
+
 def test_qualification_budget_cannot_pass_on_an_incompatible_environment() -> None:
     benchmark = _load_benchmark()
     metrics = benchmark.empty_passing_metrics()
@@ -348,20 +514,20 @@ def test_qualification_budget_cannot_pass_on_an_incompatible_environment() -> No
     assert budgets["overall_pass"] is False
 
 
-def test_qualification_normalizes_historical_ttfb_to_its_current_control() -> None:
+def test_qualification_cannot_normalize_away_large_historical_regression() -> None:
     benchmark = _load_benchmark()
     environment = benchmark.environment_metadata()
     metrics = benchmark.empty_passing_metrics()
-    metrics["first_token"]["control_ms"] = {"median": 2.0, "p95": 2.0}
-    metrics["first_token"]["candidate_ms"] = {"median": 2.0, "p95": 2.0}
+    metrics["first_token"]["control_ms"] = {"median": 100.0, "p95": 100.0}
+    metrics["first_token"]["candidate_ms"] = {"median": 100.0, "p95": 100.0}
     baseline_metrics = benchmark.empty_passing_metrics()
     baseline_metrics["first_token"]["control_ms"] = {
-        "median": 0.5,
-        "p95": 0.5,
+        "median": 1.0,
+        "p95": 1.0,
     }
     baseline_metrics["first_token"]["candidate_ms"] = {
-        "median": 0.5,
-        "p95": 0.5,
+        "median": 1.0,
+        "p95": 1.0,
     }
     baseline = {
         "fixture_version": benchmark.FIXTURE_VERSION,
@@ -376,8 +542,90 @@ def test_qualification_normalizes_historical_ttfb_to_its_current_control() -> No
         environment=environment,
     )
 
-    assert budgets["checks"]["first_token"]["regressions"]["historical_v1"] == {
-        "milliseconds": 0.0,
-        "percent": 0.0,
+    historical = budgets["checks"]["first_token"]["regressions"]["historical_v1"]
+    assert historical["milliseconds"] == 99.0
+    assert historical["percent"] == 9900.0
+    assert budgets["checks"]["first_token"]["pass"] is False
+    assert budgets["overall_pass"] is False
+
+
+def test_qualification_passes_direct_compatible_historical_limits() -> None:
+    benchmark = _load_benchmark()
+    environment = benchmark.environment_metadata()
+    metrics = benchmark.empty_passing_metrics()
+    metrics["first_token"]["control_ms"] = {"median": 100.0, "p95": 100.0}
+    metrics["first_token"]["candidate_ms"] = {"median": 110.0, "p95": 110.0}
+    baseline_metrics = benchmark.empty_passing_metrics()
+    baseline_metrics["first_token"]["control_ms"] = {
+        "median": 100.0,
+        "p95": 100.0,
+    }
+    baseline_metrics["first_token"]["candidate_ms"] = {
+        "median": 100.0,
+        "p95": 100.0,
+    }
+    baseline = {
+        "fixture_version": benchmark.FIXTURE_VERSION,
+        "environment": environment,
+        "metrics": baseline_metrics,
+    }
+
+    budgets = benchmark.evaluate_budgets(
+        metrics,
+        baseline=baseline,
+        mode="qualification",
+        environment=environment,
+    )
+
+    assert budgets["checks"]["first_token"]["regressions"] == {
+        "historical_v1": {"milliseconds": 10.0, "percent": 10.0},
+        "in_process_control": {"milliseconds": 10.0, "percent": 10.0},
     }
     assert budgets["overall_pass"] is True
+
+
+def test_external_mode_requires_explicit_target_and_provider() -> None:
+    benchmark = _load_benchmark()
+
+    with pytest.raises(ValueError, match="target"):
+        benchmark.validate_args(benchmark.parse_args(["--mode", "external"]))
+    with pytest.raises(ValueError, match="provider"):
+        benchmark.validate_args(
+            benchmark.parse_args(
+                [
+                    "--mode",
+                    "external",
+                    "--external-target",
+                    "https://example.invalid/health",
+                ]
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_external_measurement_uses_injected_resolver_and_is_not_a_local_gate() -> (
+    None
+):
+    benchmark = _load_benchmark()
+    calls: list[str] = []
+
+    async def resolver(target: str, _timeout_seconds: float) -> None:
+        calls.append(target)
+
+    result = await benchmark.run_external_measurement(
+        target="https://example.invalid/health",
+        samples=2,
+        warmups=1,
+        timeout_seconds=1.0,
+        resolver=resolver,
+    )
+
+    assert calls == ["https://example.invalid/health"] * 3
+    assert result["external_network"]["measured"] is True
+    assert result["external_network"]["included_in_local_pass"] is False
+    assert set(result["external_network"]["latency_ms"]) == {"median", "p95"}
+    assert result["environment"]["provider"] == benchmark.EXTERNAL_PROVIDER
+    assert result["environment"]["network"] == "explicit-external-mode"
+    assert "supported_envelope" not in result["environment"]
+    assert result["budgets"]["overall_pass"] is None
+    assert result["budgets"]["checks"] == {}

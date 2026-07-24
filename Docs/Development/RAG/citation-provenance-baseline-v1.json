@@ -91,17 +91,56 @@
   },
   "fixture_version": "rag-citation-provenance-v1",
   "metrics": {
+    "corpus_coverage": {
+      "finalization": {
+        "evidence_counts": [
+          8,
+          64
+        ]
+      },
+      "generation": {
+        "answer_cases": [
+          "unicode",
+          "repeated_markers",
+          "grouped_markers",
+          "repaired_answer"
+        ],
+        "evidence_count": 1,
+        "source_kinds": [
+          "media",
+          "note",
+          "conversation"
+        ]
+      },
+      "inspector": {
+        "evidence_count": 32,
+        "storage_modes": [
+          "embedded",
+          "server_reference",
+          "ephemeral",
+          "redacted"
+        ]
+      },
+      "migration": {
+        "record_types": [
+          "EvidenceBundle",
+          "CitationRef",
+          "chat_rag_context_sidecar"
+        ]
+      }
+    },
     "database_growth": {
       "bytes": {
         "median": 4227072.0,
-        "p95": 4231168.0
+        "p95": 4235264.0
       },
       "governed_bytes_per_answer": 4194304
     },
     "finalization": {
+      "corpus_input_sha256": "75e9875b8128677026c22c4c20dddfe158a4603595a95db5ee767ffbe4d71ce2",
       "maximum_ms": {
-        "median": 2.098667,
-        "p95": 2.284417
+        "median": 2.069875,
+        "p95": 2.21675
       },
       "maximum_result": {
         "aggregate_json_bytes": 6744,
@@ -113,8 +152,8 @@
         "snapshots": 64
       },
       "standard_ms": {
-        "median": 0.027959,
-        "p95": 0.040458
+        "median": 0.02825,
+        "p95": 0.035625
       },
       "standard_shape": {
         "bytes_per_snapshot": 4096,
@@ -123,14 +162,15 @@
     },
     "first_token": {
       "candidate_ms": {
-        "median": 0.588354,
-        "p95": 0.913791
+        "median": 21.917896,
+        "p95": 22.111875
       },
       "comparison": "baseline-current-control",
       "control_ms": {
-        "median": 0.588354,
-        "p95": 0.913791
+        "median": 21.917896,
+        "p95": 22.111875
       },
+      "corpus_input_sha256": "3dbea4e8d42b65f25278d38880d70c019fd631169bc25cda8e81e4ba705ad0f2",
       "path": [
         "ConsoleChatController.submit_draft",
         "ConsoleChatController._stream_assistant_response"
@@ -142,24 +182,25 @@
     },
     "inspector_load": {
       "cold_ms": {
-        "median": 0.324979,
-        "p95": 0.421083
+        "median": 0.234417,
+        "p95": 0.382125
       },
       "warm_ms": {
-        "median": 0.117541,
-        "p95": 0.192583
+        "median": 0.071833,
+        "p95": 0.076625
       }
     },
     "migration": {
       "batch_messages": 100,
+      "corpus_input_sha256": "e4267edd0a7659fc382dd70fe5a9f3d27851d1f7257b032036ff1b0fecc27452",
       "duplicate_proxy_rows_after_restart": {
         "median": 0.0,
         "p95": 0.0
       },
       "interrupted_after_messages": 50,
       "messages_per_second": {
-        "median": 91593.178487,
-        "p95": 124178.713037
+        "median": 109292.504274,
+        "p95": 122913.089384
       }
     },
     "trace_size": {

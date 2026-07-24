@@ -18,6 +18,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator, NamedTuple, Sequence
+from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -30,8 +32,10 @@ CORPUS_PATH = FIXTURE_ROOT / "corpus_v1.json"
 FIXTURE_VERSION = "rag-citation-provenance-v1"
 RESULT_SCHEMA_VERSION = 1
 MOCK_PROVIDER = "mock-local-v1"
+EXTERNAL_PROVIDER = "external-http-v1"
 DEFAULT_SAMPLES = 30
 DEFAULT_WARMUPS = 5
+MOCK_FIRST_TOKEN_DELAY_SECONDS = 0.020
 
 LIMITS = {
     "aggregate_json_bytes": 256 * 1024,
@@ -94,8 +98,9 @@ class SampleWorkspace(NamedTuple):
 class _DeterministicGateway:
     """In-process provider gateway that records the first streamed token."""
 
-    def __init__(self) -> None:
+    def __init__(self, answer: str = "Synthetic answer [S1].") -> None:
         self.first_chunk_ns: int | None = None
+        self.answer = answer
 
     async def resolve_for_send(self, _selection: Any) -> Any:
         return SimpleNamespace(
@@ -108,9 +113,11 @@ class _DeterministicGateway:
         )
 
     async def stream_chat(self, _resolution: Any, _messages: Any) -> Any:
+        await asyncio.sleep(MOCK_FIRST_TOKEN_DELAY_SECONDS)
         self.first_chunk_ns = time.perf_counter_ns()
-        yield "Synthetic "
-        yield "answer [S1]."
+        midpoint = max(1, len(self.answer) // 2)
+        yield self.answer[:midpoint]
+        yield self.answer[midpoint:]
 
 
 class _SQLiteConsolePersistence:
@@ -196,7 +203,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--mode",
-        choices=("baseline", "qualification"),
+        choices=("baseline", "qualification", "external"),
         default="baseline",
     )
     parser.add_argument("--samples", type=int, default=DEFAULT_SAMPLES)
@@ -205,6 +212,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--provider", default=MOCK_PROVIDER)
     parser.add_argument("--base-url")
+    parser.add_argument("--external-target")
+    parser.add_argument("--external-timeout-seconds", type=float, default=10.0)
     return parser.parse_args(argv)
 
 
@@ -215,6 +224,15 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--samples must be at least 1")
     if args.warmups < 0:
         raise ValueError("--warmups cannot be negative")
+    if args.mode == "external":
+        if not args.external_target:
+            raise ValueError("external mode requires --external-target")
+        if args.provider != EXTERNAL_PROVIDER:
+            raise ValueError(f"external mode requires provider {EXTERNAL_PROVIDER!r}")
+        if args.external_timeout_seconds <= 0:
+            raise ValueError("--external-timeout-seconds must be positive")
+        _external_target_origin(args.external_target)
+        return
     if args.provider != MOCK_PROVIDER or args.base_url:
         raise ValueError(
             "local benchmark modes are network-free and require provider "
@@ -277,40 +295,285 @@ def _load_fixture() -> dict[str, Any]:
     return corpus
 
 
-def _json_payload_with_exact_size(target_bytes: int) -> str:
-    empty = json.dumps({"payload": ""}, separators=(",", ":"), ensure_ascii=False)
-    padding = target_bytes - len(empty.encode("utf-8"))
+def _json_bytes(value: Any) -> bytes:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+
+def _json_object_with_exact_size(
+    target_bytes: int, value: dict[str, Any]
+) -> dict[str, Any]:
+    payload = {**value, "padding": ""}
+    padding = target_bytes - len(_json_bytes(payload))
     if padding < 0:
         raise ValueError("target too small for a JSON object")
-    payload = json.dumps(
-        {"payload": "x" * padding}, separators=(",", ":"), ensure_ascii=False
-    )
-    if len(payload.encode("utf-8")) != target_bytes:
+    payload["padding"] = "x" * padding
+    if len(_json_bytes(payload)) != target_bytes:
         raise AssertionError("failed to materialize exact JSON byte size")
     return payload
 
 
 def materialize_boundary(case: dict[str, Any]) -> Any:
-    """Materialize one deterministic exact/over boundary descriptor."""
+    """Materialize one domain-shaped exact/over boundary descriptor."""
 
     units = int(case["units"])
-    kind = case["kind"]
-    if kind == "json_bytes":
-        return _json_payload_with_exact_size(units)
-    if kind in {"utf8_bytes", "characters"}:
-        return "x" * units
-    if kind == "count":
-        return tuple(range(units))
-    raise ValueError(f"unknown boundary kind: {kind}")
+    name = case["limit_name"]
+    if name == "aggregate_json_bytes":
+        return {
+            "trace": _json_object_with_exact_size(
+                units,
+                {
+                    "schema_version": 1,
+                    "trace_id": "ragcp-boundary-trace",
+                    "prompt_sets": [],
+                    "answer_attempts": [],
+                },
+            )
+        }
+    if name == "snapshot_utf8_bytes":
+        return {"snapshot_text": "x" * units}
+    if name == "governed_trace_bytes":
+        snapshots = []
+        remaining = units
+        while remaining:
+            chunk_size = min(remaining, LIMITS["snapshot_utf8_bytes"])
+            snapshots.append("x" * chunk_size)
+            remaining -= chunk_size
+        return {"governed_snapshots": snapshots}
+    if name == "prompt_sets":
+        return {"prompt_sets": [{"ordinal": index} for index in range(units)]}
+    if name == "evidence_per_prompt":
+        return {
+            "prompt_set": {
+                "evidence": [{"marker_ordinal": index} for index in range(units)]
+            }
+        }
+    if name == "answer_attempts":
+        return {"answer_attempts": [{"ordinal": index} for index in range(units)]}
+    if name == "citation_occurrences":
+        return {
+            "selected_answer": {
+                "occurrences": [{"ordinal": index} for index in range(units)]
+            }
+        }
+    if name == "retrieval_candidates_per_run":
+        return {"run": {"candidates": [{"rank": index} for index in range(units)]}}
+    if name == "locator_json_bytes":
+        return {
+            "locator": _json_object_with_exact_size(
+                units,
+                {"kind": "synthetic", "resolver_version": 1},
+            )
+        }
+    if name == "observation_json_bytes":
+        return {
+            "observation": _json_object_with_exact_size(
+                units,
+                {"availability": "available", "resolver_version": 1},
+            )
+        }
+    if name == "error_code_characters":
+        return {"error_code": "e" * units}
+    if name == "opaque_id_utf8_bytes":
+        return {"opaque_id": "o" * units}
+    if name == "answer_attempt_body_utf8_bytes":
+        return {"answer_attempt_body": "a" * units}
+    if name == "legacy_sidecar_bytes":
+        return {
+            "legacy_sidecar": _json_object_with_exact_size(
+                units,
+                {"schema_version": 1, "conversations": []},
+            )
+        }
+    if name == "migration_batch_messages":
+        return {
+            "legacy_messages": [
+                {"legacy_message_id": f"message-{index}"} for index in range(units)
+            ]
+        }
+    raise ValueError(f"unknown boundary limit: {name}")
 
 
 def materialized_boundary_size(case: dict[str, Any]) -> int:
-    """Measure a materialized boundary in its declared unit."""
+    """Measure a domain-shaped boundary through its validation field."""
 
     value = materialize_boundary(case)
-    if case["kind"] in {"json_bytes", "utf8_bytes"}:
-        return len(value.encode("utf-8"))
-    return len(value)
+    name = case["limit_name"]
+    if name == "aggregate_json_bytes":
+        return len(_json_bytes(value["trace"]))
+    if name == "snapshot_utf8_bytes":
+        return len(value["snapshot_text"].encode("utf-8"))
+    if name == "governed_trace_bytes":
+        return sum(
+            len(snapshot.encode("utf-8")) for snapshot in value["governed_snapshots"]
+        )
+    if name == "prompt_sets":
+        return len(value["prompt_sets"])
+    if name == "evidence_per_prompt":
+        return len(value["prompt_set"]["evidence"])
+    if name == "answer_attempts":
+        return len(value["answer_attempts"])
+    if name == "citation_occurrences":
+        return len(value["selected_answer"]["occurrences"])
+    if name == "retrieval_candidates_per_run":
+        return len(value["run"]["candidates"])
+    if name == "locator_json_bytes":
+        return len(_json_bytes(value["locator"]))
+    if name == "observation_json_bytes":
+        return len(_json_bytes(value["observation"]))
+    if name == "error_code_characters":
+        return len(value["error_code"])
+    if name == "opaque_id_utf8_bytes":
+        return len(value["opaque_id"].encode("utf-8"))
+    if name == "answer_attempt_body_utf8_bytes":
+        return len(value["answer_attempt_body"].encode("utf-8"))
+    if name == "legacy_sidecar_bytes":
+        return len(_json_bytes(value["legacy_sidecar"]))
+    if name == "migration_batch_messages":
+        return len(value["legacy_messages"])
+    raise ValueError(f"unknown boundary limit: {name}")
+
+
+def validate_boundary_case(case: dict[str, Any]) -> int:
+    """Accept exact v1 domain values and reject the same value at limit + 1."""
+
+    name = case["limit_name"]
+    measured = materialized_boundary_size(case)
+    if measured > LIMITS[name]:
+        raise ValueError(f"{name} exceeds frozen v1 limit")
+    return measured
+
+
+def _sha256_json(value: Any) -> str:
+    return hashlib.sha256(_json_bytes(value)).hexdigest()
+
+
+def _snapshot_from_seed(seed: str, size: int) -> str:
+    token = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    return (token * math.ceil(size / len(token)))[:size]
+
+
+def _snapshots_from_sources(
+    sources: Sequence[dict[str, Any]], *, count: int, size: int
+) -> tuple[str, ...]:
+    return tuple(
+        _snapshot_from_seed(
+            f"{sources[index % len(sources)]['id']}:{sources[index % len(sources)]['text']}",
+            size,
+        )
+        for index in range(count)
+    )
+
+
+def _validate_fixture_boundaries(corpus: dict[str, Any]) -> None:
+    for case in corpus["boundary_cases"]:
+        if case["expected"] == "accept":
+            validate_boundary_case(case)
+            continue
+        try:
+            validate_boundary_case(case)
+        except ValueError:
+            continue
+        raise AssertionError(f"over-bound fixture was accepted: {case['id']}")
+
+
+def _workload_from_corpus(corpus: dict[str, Any]) -> dict[str, Any]:
+    """Select and materialize the representative v1 corpus workload."""
+
+    _validate_fixture_boundaries(corpus)
+    sources = corpus["sources"]
+    answers = corpus["answers"]
+    shapes = {
+        int(shape["submitted_evidence_count"]): shape
+        for shape in corpus["evidence_shapes"]
+    }
+    for count in (1, 8, 32, 64):
+        if count not in shapes:
+            raise ValueError(f"corpus is missing evidence shape {count}")
+
+    source_inventory = [
+        {
+            "id": source["id"],
+            "kind": source["kind"],
+            "title": source["title"],
+            "text": source["text"],
+        }
+        for source in sources
+    ]
+    answer_inventory = [
+        {
+            "id": answer["id"],
+            "case": answer["case"],
+            "body": answer["body"],
+        }
+        for answer in answers
+    ]
+    generation_cases = [
+        {
+            "source_id": source["id"],
+            "answer_case": answer["case"],
+            "evidence_count": 1,
+            "prompt": (
+                "Summarize this synthetic local evidence:\n"
+                f"{source['kind']}: {source['title']} — {source['text']}"
+            ),
+            "answer": answer["body"],
+        }
+        for source in sources
+        for answer in answers
+    ]
+    generation_input = {
+        "shape": shapes[1],
+        "cases": generation_cases,
+    }
+    finalization_input = {
+        "shapes": [shapes[8], shapes[64]],
+        "sources": source_inventory,
+        "answers": answer_inventory,
+    }
+    legacy_input = corpus["legacy_records"]
+    return {
+        "generation_cases": generation_cases,
+        "database_answer": "\n".join(answer["body"] for answer in answers),
+        "standard_snapshots": _snapshots_from_sources(sources, count=8, size=4 * 1024),
+        "inspector_snapshots": _snapshots_from_sources(
+            sources, count=32, size=4 * 1024
+        ),
+        "maximum_snapshots": _snapshots_from_sources(
+            sources,
+            count=64,
+            size=LIMITS["snapshot_utf8_bytes"],
+        ),
+        "storage_cases": corpus["storage_cases"],
+        "legacy_records": legacy_input,
+        "generation_sha256": _sha256_json(generation_input),
+        "finalization_sha256": _sha256_json(finalization_input),
+        "migration_sha256": _sha256_json(legacy_input),
+        "coverage": {
+            "generation": {
+                "answer_cases": [answer["case"] for answer in answers],
+                "source_kinds": [source["kind"] for source in sources],
+                "evidence_count": 1,
+            },
+            "finalization": {"evidence_counts": [8, 64]},
+            "inspector": {
+                "evidence_count": 32,
+                "storage_modes": [
+                    storage_case["storage_mode"]
+                    for storage_case in corpus["storage_cases"]
+                ],
+            },
+            "migration": {
+                "record_types": [
+                    record["record_type"] for record in corpus["legacy_records"]
+                ]
+            },
+        },
+    }
 
 
 def environment_metadata() -> dict[str, Any]:
@@ -404,12 +667,17 @@ def _init_console_schema(db_path: Path) -> None:
         )
 
 
-async def _measure_console_ttfb_once(db_path: Path) -> float:
+async def _measure_console_ttfb_once(
+    db_path: Path,
+    *,
+    prompt: str = "Summarize the synthetic evidence.",
+    answer: str = "Synthetic answer [S1].",
+) -> float:
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
     persistence = _SQLiteConsolePersistence(db_path)
-    gateway = _DeterministicGateway()
+    gateway = _DeterministicGateway(answer)
     store = ConsoleChatStore(persistence=persistence)
     controller = ConsoleChatController(
         store=store,
@@ -422,7 +690,7 @@ async def _measure_console_ttfb_once(db_path: Path) -> float:
     )
     started_ns = time.perf_counter_ns()
     try:
-        result = await controller.submit_draft("Summarize the synthetic evidence.")
+        result = await controller.submit_draft(prompt)
     finally:
         persistence.close()
     if not result.accepted or gateway.first_chunk_ns is None:
@@ -436,11 +704,21 @@ async def _measure_first_token(
     samples: int,
     warmups: int,
     qualification: bool = False,
+    workload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     control: list[float] = []
     candidate: list[float] = []
     for index in range(warmups + samples):
-        control_ms = await _measure_console_ttfb_once(db_path)
+        if workload is None:
+            control_ms = await _measure_console_ttfb_once(db_path)
+        else:
+            generation_cases = workload["generation_cases"]
+            generation_case = generation_cases[index % len(generation_cases)]
+            control_ms = await _measure_console_ttfb_once(
+                db_path,
+                prompt=generation_case["prompt"],
+                answer=generation_case["answer"],
+            )
         candidate_ms = control_ms
         if index >= warmups:
             control.append(control_ms)
@@ -463,6 +741,9 @@ async def _measure_first_token(
             "ConsoleChatController.submit_draft",
             "ConsoleChatController._stream_assistant_response",
         ],
+        "corpus_input_sha256": (
+            workload["generation_sha256"] if workload is not None else None
+        ),
     }
 
 
@@ -497,9 +778,18 @@ def _finalize_snapshots(snapshots: Sequence[str]) -> dict[str, Any]:
     }
 
 
-def _measure_finalization(*, samples: int, warmups: int) -> dict[str, Any]:
-    standard_snapshots = tuple("s" * (4 * 1024) for _ in range(8))
-    maximum_snapshots = tuple("m" * LIMITS["snapshot_utf8_bytes"] for _ in range(64))
+def _measure_finalization(
+    *,
+    samples: int,
+    warmups: int,
+    standard_snapshots: Sequence[str] | None = None,
+    maximum_snapshots: Sequence[str] | None = None,
+    corpus_input_sha256: str | None = None,
+) -> dict[str, Any]:
+    standard_snapshots = standard_snapshots or tuple("s" * (4 * 1024) for _ in range(8))
+    maximum_snapshots = maximum_snapshots or tuple(
+        "m" * LIMITS["snapshot_utf8_bytes"] for _ in range(64)
+    )
     standard_times: list[float] = []
     maximum_times: list[float] = []
     maximum_result: dict[str, Any] | None = None
@@ -524,18 +814,15 @@ def _measure_finalization(*, samples: int, warmups: int) -> dict[str, Any]:
             "bytes_per_snapshot": LIMITS["snapshot_utf8_bytes"],
         },
         "maximum_result": maximum_result,
+        "corpus_input_sha256": corpus_input_sha256,
     }
 
 
-def _init_inspector_schema(db_path: Path) -> None:
-    metadata = json.dumps(
-        {
-            "source_kind": "note",
-            "title": "Synthetic inspector item",
-            "locator": None,
-        },
-        sort_keys=True,
-    )
+def _init_inspector_schema(
+    db_path: Path,
+    snapshots: Sequence[str],
+    storage_cases: Sequence[dict[str, Any]],
+) -> None:
     with sqlite3.connect(db_path) as connection:
         connection.executescript(
             """
@@ -552,7 +839,17 @@ def _init_inspector_schema(db_path: Path) -> None:
             INSERT INTO inspector_items(ordinal, snapshot_text, metadata_json)
             VALUES (?, ?, ?)
             """,
-            ((index, "i" * (4 * 1024), metadata) for index in range(64)),
+            (
+                (
+                    index,
+                    snapshot,
+                    json.dumps(
+                        storage_cases[index % len(storage_cases)],
+                        sort_keys=True,
+                    ),
+                )
+                for index, snapshot in enumerate(snapshots)
+            ),
         )
 
 
@@ -570,20 +867,22 @@ def _read_inspector(connection: sqlite3.Connection) -> int:
     return len(rows)
 
 
-def _measure_inspector(db_path: Path, *, samples: int, warmups: int) -> dict[str, Any]:
+def _measure_inspector(
+    db_path: Path, *, samples: int, warmups: int, expected_rows: int = 64
+) -> dict[str, Any]:
     cold_times: list[float] = []
     warm_times: list[float] = []
     for index in range(warmups + samples):
         started_ns = time.perf_counter_ns()
         with sqlite3.connect(db_path) as cold_connection:
-            if _read_inspector(cold_connection) != 64:
+            if _read_inspector(cold_connection) != expected_rows:
                 raise AssertionError("cold inspector read returned incomplete rows")
         cold_ms = (time.perf_counter_ns() - started_ns) / 1_000_000
 
         with sqlite3.connect(db_path) as warm_connection:
             _read_inspector(warm_connection)
             started_ns = time.perf_counter_ns()
-            if _read_inspector(warm_connection) != 64:
+            if _read_inspector(warm_connection) != expected_rows:
                 raise AssertionError("warm inspector read returned incomplete rows")
             warm_ms = (time.perf_counter_ns() - started_ns) / 1_000_000
         if index >= warmups:
@@ -619,14 +918,23 @@ def _init_growth_schema(db_path: Path) -> None:
 
 
 def _measure_database_growth(
-    db_path: Path, *, samples: int, warmups: int
+    db_path: Path,
+    *,
+    samples: int,
+    warmups: int,
+    snapshots: Sequence[str] | None = None,
+    answer_body: str = "Synthetic grounded answer [S1].",
+    corpus_input_sha256: str | None = None,
 ) -> dict[str, Any]:
-    snapshots = tuple("g" * LIMITS["snapshot_utf8_bytes"] for _ in range(64))
+    snapshots = snapshots or tuple(
+        "g" * LIMITS["snapshot_utf8_bytes"] for _ in range(64)
+    )
     aggregate = json.dumps(
         {
             "schema_version": 1,
             "snapshot_count": len(snapshots),
             "storage": "governed",
+            "corpus_input_sha256": corpus_input_sha256,
         },
         sort_keys=True,
     )
@@ -640,7 +948,7 @@ def _measure_database_growth(
                 INSERT INTO grounded_answers(body, aggregate_json)
                 VALUES (?, ?)
                 """,
-                ("Synthetic grounded answer [S1].", aggregate),
+                (answer_body, aggregate),
             )
             answer_id = int(cursor.lastrowid)
             connection.executemany(
@@ -663,13 +971,18 @@ def _measure_database_growth(
     }
 
 
-def _init_migration_schema(db_path: Path, sidecar_path: Path) -> None:
+def _init_migration_schema(
+    db_path: Path,
+    sidecar_path: Path,
+    legacy_records: Sequence[dict[str, Any]],
+) -> None:
     sidecar_path.write_text(
         json.dumps(
             {
                 "schema_version": 1,
                 "conversation_id": "legacy-benchmark",
                 "messages": 100,
+                "records": legacy_records,
             },
             sort_keys=True,
         )
@@ -692,16 +1005,19 @@ def _init_migration_schema(db_path: Path, sidecar_path: Path) -> None:
         )
 
 
-def _measure_migration_once(db_path: Path) -> tuple[float, int]:
-    payload = json.dumps(
-        {"answer": "Legacy synthetic answer [1].", "source_id": "legacy-source"}
-    )
+def _measure_migration_once(
+    db_path: Path, legacy_records: Sequence[dict[str, Any]]
+) -> tuple[float, int]:
+    payloads = [json.dumps(record, sort_keys=True) for record in legacy_records]
     with sqlite3.connect(db_path) as connection:
         connection.execute("DELETE FROM canonical_proxy_rows")
         connection.execute("DELETE FROM legacy_messages")
         connection.executemany(
             "INSERT INTO legacy_messages(legacy_message_id, payload_json) VALUES (?, ?)",
-            ((f"legacy-message-{index:03d}", payload) for index in range(100)),
+            (
+                (f"legacy-message-{index:03d}", payloads[index % len(payloads)])
+                for index in range(100)
+            ),
         )
         connection.commit()
 
@@ -758,11 +1074,24 @@ def _measure_migration_once(db_path: Path) -> tuple[float, int]:
     return 100 / elapsed_seconds, duplicate_count
 
 
-def _measure_migration(db_path: Path, *, samples: int, warmups: int) -> dict[str, Any]:
+def _measure_migration(
+    db_path: Path,
+    *,
+    samples: int,
+    warmups: int,
+    legacy_records: Sequence[dict[str, Any]] | None = None,
+    corpus_input_sha256: str | None = None,
+) -> dict[str, Any]:
+    legacy_records = legacy_records or (
+        {
+            "record_type": "CitationRef",
+            "payload": {"source_id": "legacy-source"},
+        },
+    )
     throughputs: list[float] = []
     duplicate_counts: list[float] = []
     for index in range(warmups + samples):
-        throughput, duplicates = _measure_migration_once(db_path)
+        throughput, duplicates = _measure_migration_once(db_path, legacy_records)
         if index >= warmups:
             throughputs.append(throughput)
             duplicate_counts.append(float(duplicates))
@@ -771,6 +1100,7 @@ def _measure_migration(db_path: Path, *, samples: int, warmups: int) -> dict[str
         "duplicate_proxy_rows_after_restart": summarize(duplicate_counts),
         "batch_messages": 100,
         "interrupted_after_messages": 50,
+        "corpus_input_sha256": corpus_input_sha256,
     }
 
 
@@ -841,15 +1171,8 @@ def evaluate_budgets(
     )
     if baseline is not None and compatibility["compatible"]:
         historical = baseline["metrics"]["first_token"]
-        historical_control_p95 = historical["control_ms"]["p95"]
-        historical_ratio = (
-            historical["candidate_ms"]["p95"] / historical_control_p95
-            if historical_control_p95
-            else 1.0
-        )
-        normalized_historical_p95 = current_control_p95 * historical_ratio
         regressions["historical_v1"] = _regression(
-            candidate_p95, normalized_historical_p95
+            candidate_p95, historical["candidate_ms"]["p95"]
         )
         historical = regressions["historical_v1"]
         first_token_pass = first_token_pass and (
@@ -912,6 +1235,81 @@ def evaluate_budgets(
     }
 
 
+def _external_target_origin(target: str) -> str:
+    parsed = urlsplit(target)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("external target must be an absolute HTTP(S) URL")
+    if parsed.username or parsed.password:
+        raise ValueError("external target must not contain credentials")
+    port = f":{parsed.port}" if parsed.port is not None else ""
+    return f"{parsed.scheme}://{parsed.hostname}{port}"
+
+
+async def _default_external_resolver(target: str, timeout_seconds: float) -> None:
+    def resolve() -> None:
+        request = Request(
+            target,
+            headers={"User-Agent": "tldw-chatbook-ragcp-benchmark-v1"},
+        )
+        with urlopen(request, timeout=timeout_seconds) as response:
+            response.read(1)
+
+    await asyncio.to_thread(resolve)
+
+
+async def run_external_measurement(
+    *,
+    target: str,
+    samples: int,
+    warmups: int,
+    timeout_seconds: float,
+    resolver: Any | None = None,
+) -> dict[str, Any]:
+    """Measure explicit external resolution without evaluating local budgets."""
+
+    if samples < 1 or warmups < 0:
+        raise ValueError("samples must be positive and warmups non-negative")
+    if timeout_seconds <= 0:
+        raise ValueError("external timeout must be positive")
+    target_origin = _external_target_origin(target)
+    resolve = resolver or _default_external_resolver
+    latencies: list[float] = []
+    for index in range(warmups + samples):
+        started_ns = time.perf_counter_ns()
+        await resolve(target, timeout_seconds)
+        elapsed_ms = (time.perf_counter_ns() - started_ns) / 1_000_000
+        if index >= warmups:
+            latencies.append(elapsed_ms)
+
+    environment = {
+        **environment_metadata(),
+        "provider": EXTERNAL_PROVIDER,
+        "network": "explicit-external-mode",
+    }
+    environment.pop("supported_envelope")
+    return {
+        "environment": environment,
+        "fixture_version": FIXTURE_VERSION,
+        "samples": samples,
+        "warmups": warmups,
+        "metrics": {},
+        "budgets": {
+            "definitions": BUDGETS,
+            "checks": {},
+            "environment_compatible": None,
+            "environment_incompatibilities": [],
+            "overall_pass": None,
+        },
+        "external_network": {
+            "measured": True,
+            "included_in_local_pass": False,
+            "latency_ms": summarize(latencies),
+            "target_origin": target_origin,
+            "note": "External latency is informational and never a local budget gate.",
+        },
+    }
+
+
 async def run_benchmark(
     *,
     mode: str,
@@ -926,7 +1324,8 @@ async def run_benchmark(
         raise ValueError(f"unsupported mode: {mode}")
     if samples < 1 or warmups < 0:
         raise ValueError("samples must be positive and warmups non-negative")
-    _load_fixture()
+    corpus = _load_fixture()
+    workload = _workload_from_corpus(corpus)
     temporary_root: tempfile.TemporaryDirectory[str] | None = None
     if scratch_root is None:
         temporary_root = tempfile.TemporaryDirectory(prefix="ragcp-run-")
@@ -943,23 +1342,50 @@ async def run_benchmark(
                 samples=samples,
                 warmups=warmups,
                 qualification=mode == "qualification",
+                workload=workload,
             )
         with sample_group_workspace(root, "finalization"):
-            finalization = _measure_finalization(samples=samples, warmups=warmups)
+            finalization = _measure_finalization(
+                samples=samples,
+                warmups=warmups,
+                standard_snapshots=workload["standard_snapshots"],
+                maximum_snapshots=workload["maximum_snapshots"],
+                corpus_input_sha256=workload["finalization_sha256"],
+            )
         with sample_group_workspace(root, "inspector") as workspace:
-            _init_inspector_schema(workspace.db_path)
+            _init_inspector_schema(
+                workspace.db_path,
+                workload["inspector_snapshots"],
+                workload["storage_cases"],
+            )
             inspector = _measure_inspector(
-                workspace.db_path, samples=samples, warmups=warmups
+                workspace.db_path,
+                samples=samples,
+                warmups=warmups,
+                expected_rows=len(workload["inspector_snapshots"]),
             )
         with sample_group_workspace(root, "database-growth") as workspace:
             _init_growth_schema(workspace.db_path)
             database_growth = _measure_database_growth(
-                workspace.db_path, samples=samples, warmups=warmups
+                workspace.db_path,
+                samples=samples,
+                warmups=warmups,
+                snapshots=workload["maximum_snapshots"],
+                answer_body=workload["database_answer"],
+                corpus_input_sha256=workload["finalization_sha256"],
             )
         with sample_group_workspace(root, "migration") as workspace:
-            _init_migration_schema(workspace.db_path, workspace.sidecar_path)
+            _init_migration_schema(
+                workspace.db_path,
+                workspace.sidecar_path,
+                workload["legacy_records"],
+            )
             migration = _measure_migration(
-                workspace.db_path, samples=samples, warmups=warmups
+                workspace.db_path,
+                samples=samples,
+                warmups=warmups,
+                legacy_records=workload["legacy_records"],
+                corpus_input_sha256=workload["migration_sha256"],
             )
     finally:
         if temporary_root is not None:
@@ -977,6 +1403,7 @@ async def run_benchmark(
         },
         "database_growth": database_growth,
         "migration": migration,
+        "corpus_coverage": workload["coverage"],
     }
     environment = environment_metadata()
     return {
@@ -1010,17 +1437,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = parse_args(argv)
         validate_args(args)
         baseline = None
-        if args.baseline is not None:
-            baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
-            _validate_baseline_document(baseline)
-        result = asyncio.run(
-            run_benchmark(
-                mode=args.mode,
-                samples=args.samples,
-                warmups=args.warmups,
-                baseline=baseline,
+        if args.mode == "external":
+            result = asyncio.run(
+                run_external_measurement(
+                    target=args.external_target,
+                    samples=args.samples,
+                    warmups=args.warmups,
+                    timeout_seconds=args.external_timeout_seconds,
+                )
             )
-        )
+        else:
+            if args.baseline is not None:
+                baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
+                _validate_baseline_document(baseline)
+            result = asyncio.run(
+                run_benchmark(
+                    mode=args.mode,
+                    samples=args.samples,
+                    warmups=args.warmups,
+                    baseline=baseline,
+                )
+            )
         rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"
         if args.output is None:
             sys.stdout.write(rendered)
@@ -1028,6 +1465,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(rendered, encoding="utf-8")
             print(f"Wrote {args.output}")
+        if args.mode == "external":
+            return 0
         return 0 if result["budgets"]["overall_pass"] else 2
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"benchmark error: {exc}", file=sys.stderr)
