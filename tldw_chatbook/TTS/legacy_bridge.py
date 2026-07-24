@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -149,15 +150,30 @@ class LegacyBackendHost:
         self._manager: TTSBackendManager | None = None
         self._manager_lock = asyncio.Lock()
         self._operation_locks: dict[str, asyncio.Lock] = {}
+        self._active_operations = 0
+        self._operations_drained = asyncio.Event()
+        self._operations_drained.set()
         self._closed = False
+        self._close_task: asyncio.Task[None] | None = None
 
     async def _get_manager(self) -> TTSBackendManager:
         async with self._manager_lock:
-            if self._closed:
-                raise RuntimeError("Legacy TTS host is closed")
             if self._manager is None:
                 self._manager = self._manager_factory(deepcopy(self._app_config))
             return self._manager
+
+    async def _admit_operation(self) -> None:
+        async with self._manager_lock:
+            if self._closed:
+                raise RuntimeError("Legacy TTS host is closed")
+            self._active_operations += 1
+            self._operations_drained.clear()
+
+    async def _release_operation(self) -> None:
+        async with self._manager_lock:
+            self._active_operations -= 1
+            if self._active_operations == 0:
+                self._operations_drained.set()
 
     async def generate(
         self,
@@ -165,31 +181,44 @@ class LegacyBackendHost:
         request: OpenAISpeechRequest,
         progress_sink: ProgressSink | None,
     ) -> AsyncIterator[bytes]:
-        lock = self._operation_locks.setdefault(
-            internal_model_id,
-            asyncio.Lock(),
-        )
-        async with lock:
-            manager = await self._get_manager()
-            backend = await manager.get_backend(internal_model_id)
-            if backend is None:
-                raise ValueError(f"TTS model '{request.model}' is not available")
-            backend.set_progress_callback(
-                _legacy_progress_callback(progress_sink)
-                if progress_sink is not None
-                else None
+        await self._admit_operation()
+        try:
+            lock = self._operation_locks.setdefault(
+                internal_model_id,
+                asyncio.Lock(),
             )
-            try:
-                async for chunk in backend.generate_speech_stream(request):
-                    yield bytes(chunk)
-            finally:
-                backend.set_progress_callback(None)
+            async with lock:
+                manager = await self._get_manager()
+                backend = await manager.get_backend(internal_model_id)
+                if backend is None:
+                    raise ValueError(f"TTS model '{request.model}' is not available")
+                backend.set_progress_callback(
+                    _legacy_progress_callback(progress_sink)
+                    if progress_sink is not None
+                    else None
+                )
+                try:
+                    async with aclosing(
+                        backend.generate_speech_stream(request)
+                    ) as stream:
+                        async for chunk in stream:
+                            yield bytes(chunk)
+                finally:
+                    backend.set_progress_callback(None)
+        finally:
+            await self._release_operation()
 
     async def close(self) -> None:
         async with self._manager_lock:
-            if self._closed:
-                return
-            self._closed = True
+            if self._close_task is None:
+                self._closed = True
+                self._close_task = asyncio.create_task(self._close_when_drained())
+            close_task = self._close_task
+        await asyncio.shield(close_task)
+
+    async def _close_when_drained(self) -> None:
+        await self._operations_drained.wait()
+        async with self._manager_lock:
             manager = self._manager
             self._manager = None
         if manager is not None:
@@ -235,7 +264,9 @@ class LegacyTTSAdapter:
         internal_id = request.options["_legacy_internal_model_id"]
         if not isinstance(legacy_request, OpenAISpeechRequest):
             raise TypeError("Legacy request must be OpenAISpeechRequest")
-        route = resolve_legacy_route(str(internal_id))
+        if not isinstance(internal_id, str):
+            raise TypeError("Legacy internal model ID must be str")
+        route = resolve_legacy_route(internal_id)
         if route.provider_id != self.provider_id:
             raise ValueError("Legacy route does not match provider")
         return TTSAudioResponse(
@@ -303,7 +334,7 @@ def legacy_provider_specs(
                     native=False,
                 ),
                 factory=create_adapter,
-                initial_config={"app_config": config_snapshot},
+                initial_config={"app_config": deepcopy(config_snapshot)},
             )
         )
     return tuple(specs)

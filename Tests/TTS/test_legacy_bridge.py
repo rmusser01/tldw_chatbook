@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from typing import Any
+from typing import Any, Protocol
 
 import pytest
 
@@ -24,6 +24,21 @@ from tldw_chatbook.TTS.legacy_bridge import (
 from tldw_chatbook.TTS.legacy_catalogs import legacy_catalog
 
 ProgressCallback = Callable[[Mapping[str, Any]], Awaitable[None]]
+
+
+class LegacyBackendDouble(Protocol):
+    progress_callback: ProgressCallback | None
+
+    def set_progress_callback(
+        self,
+        callback: ProgressCallback | None,
+    ) -> None: ...
+
+    def generate_speech_stream(
+        self,
+        request: OpenAISpeechRequest,
+    ) -> AsyncIterator[bytes]: ...
+
 
 EXPECTED_ROUTES = {
     "openai_official_tts-1": "openai",
@@ -215,10 +230,41 @@ class BlockingLegacyBackend(FakeLegacyBackend):
             self.active_generations -= 1
 
 
+class FinalizingLegacyBackend:
+    def __init__(self) -> None:
+        self.progress_callback: ProgressCallback | None = None
+        self.finalized = asyncio.Event()
+        self.finalized_with_callback = False
+        self.inner_stream: AsyncIterator[bytes] | None = None
+
+    def set_progress_callback(
+        self,
+        callback: ProgressCallback | None,
+    ) -> None:
+        self.progress_callback = callback
+
+    def generate_speech_stream(
+        self,
+        request: OpenAISpeechRequest,
+    ) -> AsyncIterator[bytes]:
+        del request
+
+        async def stream() -> AsyncIterator[bytes]:
+            try:
+                yield b"first"
+                yield b"second"
+            finally:
+                self.finalized_with_callback = self.progress_callback is not None
+                self.finalized.set()
+
+        self.inner_stream = stream()
+        return self.inner_stream
+
+
 class FakeLegacyManager:
     def __init__(
         self,
-        backend: FakeLegacyBackend | None,
+        backend: LegacyBackendDouble | None,
         config: Mapping[str, Any] | None = None,
     ) -> None:
         self.backend = backend
@@ -226,12 +272,55 @@ class FakeLegacyManager:
         self.backend_ids: list[str] = []
         self.close_calls = 0
 
-    async def get_backend(self, internal_model_id: str) -> FakeLegacyBackend | None:
+    async def get_backend(
+        self,
+        internal_model_id: str,
+    ) -> LegacyBackendDouble | None:
         self.backend_ids.append(internal_model_id)
         return self.backend
 
     async def close_all_backends(self) -> None:
         self.close_calls += 1
+
+
+class BlockingLookupLegacyManager(FakeLegacyManager):
+    def __init__(self, backend: LegacyBackendDouble) -> None:
+        super().__init__(backend)
+        self.lookup_started = asyncio.Event()
+        self.allow_lookup = asyncio.Event()
+
+    async def get_backend(
+        self,
+        internal_model_id: str,
+    ) -> LegacyBackendDouble | None:
+        self.backend_ids.append(internal_model_id)
+        self.lookup_started.set()
+        await self.allow_lookup.wait()
+        return self.backend
+
+
+class BlockingCloseLegacyManager(FakeLegacyManager):
+    def __init__(self, backend: LegacyBackendDouble) -> None:
+        super().__init__(backend)
+        self.close_started = asyncio.Event()
+        self.allow_close = asyncio.Event()
+        self.close_finished = asyncio.Event()
+
+    async def close_all_backends(self) -> None:
+        self.close_calls += 1
+        self.close_started.set()
+        await self.allow_close.wait()
+        self.close_finished.set()
+
+
+class FailingCloseLegacyManager(FakeLegacyManager):
+    def __init__(self, backend: LegacyBackendDouble) -> None:
+        super().__init__(backend)
+        self.close_error = RuntimeError("manager close failed")
+
+    async def close_all_backends(self) -> None:
+        self.close_calls += 1
+        raise self.close_error
 
 
 def speech_request(text: str = "hello") -> OpenAISpeechRequest:
@@ -245,7 +334,7 @@ def speech_request(text: str = "hello") -> OpenAISpeechRequest:
 
 def adapter_request(
     provider_id: str,
-    internal_model_id: str,
+    internal_model_id: object,
     *,
     legacy_request: object | None = None,
     extra_options: Mapping[str, Any] | None = None,
@@ -348,6 +437,22 @@ def test_provider_specs_and_catalogs_preserve_compatibility_values() -> None:
             assert model.voices == EXPECTED_VOICES[provider_id]
             assert model.supports_speed is True
             assert model.supports_options == EXPECTED_OPTIONS[provider_id]
+
+
+def test_each_provider_spec_owns_a_deep_config_snapshot() -> None:
+    source_config = {"app_tts": {"default_format": "wav"}}
+    specs = legacy_provider_specs(source_config)
+    snapshots = [spec.initial_config["app_config"] for spec in specs]
+
+    assert len({id(snapshot) for snapshot in snapshots}) == 6
+    assert len({id(snapshot["app_tts"]) for snapshot in snapshots}) == 6
+
+    snapshots[0]["app_tts"]["default_format"] = "mp3"
+
+    assert all(
+        snapshot["app_tts"]["default_format"] == "wav" for snapshot in snapshots[1:]
+    )
+    assert source_config["app_tts"]["default_format"] == "wav"
 
 
 @pytest.mark.asyncio
@@ -532,6 +637,147 @@ async def test_different_provider_hosts_generate_concurrently() -> None:
 
 
 @pytest.mark.asyncio
+async def test_close_blocks_new_operations_and_drains_backend_lookup() -> None:
+    manager = BlockingLookupLegacyManager(FakeLegacyBackend())
+    host = LegacyBackendHost(
+        provider_id="kokoro",
+        app_config={},
+        manager_factory=lambda _: manager,
+    )
+    generation = asyncio.create_task(
+        collect(
+            host.generate(
+                "local_kokoro_default_onnx",
+                speech_request(),
+                None,
+            )
+        )
+    )
+    await manager.lookup_started.wait()
+
+    close_task = asyncio.create_task(host.close())
+    await asyncio.sleep(0)
+    close_returned_during_lookup = close_task.done()
+    close_calls_during_lookup = manager.close_calls
+
+    with pytest.raises(RuntimeError, match="host is closed"):
+        await collect(
+            host.generate(
+                "local_kokoro_default_pytorch",
+                speech_request(),
+                None,
+            )
+        )
+
+    manager.allow_lookup.set()
+    assert await generation == b"audio"
+    await close_task
+
+    assert close_returned_during_lookup is False
+    assert close_calls_during_lookup == 0
+    assert manager.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_close_waits_for_active_stream_before_closing_manager() -> None:
+    backend = BlockingLegacyBackend()
+    manager = FakeLegacyManager(backend)
+    host = LegacyBackendHost(
+        provider_id="kokoro",
+        app_config={},
+        manager_factory=lambda _: manager,
+    )
+    generation = asyncio.create_task(
+        collect(
+            host.generate(
+                "local_kokoro_default_onnx",
+                speech_request(),
+                None,
+            )
+        )
+    )
+    await backend.started.wait()
+
+    close_task = asyncio.create_task(host.close())
+    await asyncio.sleep(0)
+    close_returned_during_stream = close_task.done()
+    close_calls_during_stream = manager.close_calls
+
+    backend.allow_finish.set()
+    assert await generation == b"audio"
+    await close_task
+
+    assert close_returned_during_stream is False
+    assert close_calls_during_stream == 0
+    assert manager.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_close_waiter_rejoins_shared_cleanup() -> None:
+    manager = BlockingCloseLegacyManager(FakeLegacyBackend())
+    host = LegacyBackendHost(
+        provider_id="kokoro",
+        app_config={},
+        manager_factory=lambda _: manager,
+    )
+    assert (
+        await collect(
+            host.generate(
+                "local_kokoro_default_onnx",
+                speech_request(),
+                None,
+            )
+        )
+        == b"audio"
+    )
+
+    first_close = asyncio.create_task(host.close())
+    await manager.close_started.wait()
+    first_close.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first_close
+
+    second_close = asyncio.create_task(host.close())
+    await asyncio.sleep(0)
+    second_returned_before_cleanup = second_close.done()
+    manager.allow_close.set()
+    await second_close
+
+    assert second_returned_before_cleanup is False
+    assert manager.close_finished.is_set() is True
+    assert manager.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_manager_close_is_observed_by_later_callers_once() -> None:
+    manager = FailingCloseLegacyManager(FakeLegacyBackend())
+    host = LegacyBackendHost(
+        provider_id="kokoro",
+        app_config={},
+        manager_factory=lambda _: manager,
+    )
+    assert (
+        await collect(
+            host.generate(
+                "local_kokoro_default_onnx",
+                speech_request(),
+                None,
+            )
+        )
+        == b"audio"
+    )
+
+    with pytest.raises(RuntimeError, match="manager close failed") as first:
+        await host.close()
+    with pytest.raises(RuntimeError, match="manager close failed") as second:
+        await host.close()
+
+    assert first.value is manager.close_error
+    assert second.value is manager.close_error
+    assert manager.close_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_adapter_maps_progress_and_partial_response_close_releases_backend() -> (
     None
 ):
@@ -584,6 +830,34 @@ async def test_adapter_maps_progress_and_partial_response_close_releases_backend
         )
         == b"audio"
     )
+
+
+@pytest.mark.asyncio
+async def test_partial_outer_close_finalizes_delegated_stream_first() -> None:
+    backend = FinalizingLegacyBackend()
+    adapter = LegacyTTSAdapter(
+        "kokoro",
+        LegacyBackendHost(
+            provider_id="kokoro",
+            app_config={},
+            manager_factory=lambda _: FakeLegacyManager(backend),
+        ),
+        legacy_catalog("kokoro"),
+    )
+    response = await adapter.synthesize(
+        adapter_request("kokoro", "local_kokoro_default_onnx"),
+        progress_sink([]),
+    )
+
+    assert await anext(response.byte_stream) == b"first"
+    assert backend.finalized.is_set() is False
+
+    stream_close = getattr(response.byte_stream, "aclose")
+    await stream_close()
+
+    assert backend.finalized.is_set() is True
+    assert backend.finalized_with_callback is True
+    assert backend.progress_callback is None
 
 
 @pytest.mark.asyncio
@@ -677,6 +951,35 @@ async def test_adapter_rejects_mismatched_request_provider_before_host_use() -> 
 
     with pytest.raises(ValueError, match="request does not match provider"):
         await adapter.synthesize(adapter_request("openai", "local_kokoro_default_onnx"))
+
+    assert manager_factory_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_adapter_rejects_stringable_non_string_internal_id() -> None:
+    manager_factory_calls = 0
+
+    class StringableRoute:
+        def __str__(self) -> str:
+            return "local_kokoro_default_onnx"
+
+    def create_manager(_: dict[str, Any]) -> FakeLegacyManager:
+        nonlocal manager_factory_calls
+        manager_factory_calls += 1
+        return FakeLegacyManager(FakeLegacyBackend())
+
+    adapter = LegacyTTSAdapter(
+        "kokoro",
+        LegacyBackendHost(
+            provider_id="kokoro",
+            app_config={},
+            manager_factory=create_manager,
+        ),
+        legacy_catalog("kokoro"),
+    )
+
+    with pytest.raises(TypeError, match="internal model ID must be str"):
+        await adapter.synthesize(adapter_request("kokoro", StringableRoute()))
 
     assert manager_factory_calls == 0
 
