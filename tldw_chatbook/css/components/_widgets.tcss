@@ -13,7 +13,14 @@ Collapsible {
     background: $surface;
 }
 
-Collapsible > .collapsible--header {
+/* NOTE: Textual's Collapsible title is the CollapsibleTitle widget type --
+ * there is no ".collapsible--header" component class on this Textual
+ * version (8.2.7). Rules keyed on that dead class never matched anything,
+ * so a focused title fell through to Textual's own CollapsibleTitle:focus
+ * default (a background/foreground pairing derived from the theme that can
+ * render as an unreadable solid block against this app's palette). Target
+ * the real widget type so the app's own focus treatment applies. */
+Collapsible > CollapsibleTitle {
     height: 2;
     min-height: 2;
     padding: 0 1;
@@ -21,12 +28,12 @@ Collapsible > .collapsible--header {
     color: $text;
 }
 
-Collapsible > .collapsible--header:hover {
+Collapsible > CollapsibleTitle:hover {
     background: $surface;
     color: $text;
 }
 
-Collapsible > .collapsible--header:focus {
+Collapsible > CollapsibleTitle:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
@@ -34,15 +41,15 @@ Collapsible > .collapsible--header:focus {
     outline: none;
 }
 
-Collapsible.-collapsed > .collapsible--header {
+Collapsible.-collapsed > CollapsibleTitle {
     border-bottom: none;
 }
 
-Collapsible.-collapsed > .collapsible--header:focus {
+Collapsible.-collapsed > CollapsibleTitle:focus {
     border-bottom: solid $ds-focus-accent;
 }
 
-Collapsible > .collapsible--header {
+Collapsible > CollapsibleTitle {
     border-bottom: solid $border;
 }
 

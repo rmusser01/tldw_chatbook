@@ -3704,6 +3704,22 @@ Button.settings-category-button.settings-secondary-search-match {
     content-align: left middle;
 }
 
+/* The Library/RAG detail card (Search/Embedding/Chunking/Vector store/
+ * Reranking groups) has the longest field labels in Settings ("Default
+ * results", "Embedding model ⚠", "Distance metric ⚠", "Reranker top-k", ...).
+ * The generic 12-column label width clips them to their first wrapped word
+ * (Static wraps at the column width but the row stays height:1, so only
+ * that first line paints) -- e.g. "Default results" rendered as just
+ * "Default", and "Reranker model"/"Reranker top-k" both rendered as the
+ * identical "Reranker". Widen the column for this card only so every RAG
+ * label fits on one line unambiguously; other Settings categories keep the
+ * base 12-column rhythm.
+ */
+#settings-library-rag-card .settings-input-label {
+    width: 20;
+    min-width: 20;
+}
+
 .settings-compact-input {
     width: 1fr;
     height: 1;
