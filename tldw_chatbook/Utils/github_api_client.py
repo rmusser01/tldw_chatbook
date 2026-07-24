@@ -198,20 +198,21 @@ class GitHubAPIClient:
             List of branch names
         """
         url = f"{self.base_url}/repos/{owner}/{repo}/branches"
+        params = {"per_page": 100}
 
         # Check cache first
-        cached_data = self._get_from_cache(url)
+        cached_data = self._get_from_cache(url, params)
         if cached_data is not None:
             return cached_data
 
         try:
-            response = await self.client.get(url)
+            response = await self.client.get(url, params=params)
             response.raise_for_status()
             branches = response.json()
             branch_names = [branch["name"] for branch in branches]
 
             # Cache the response
-            self._save_to_cache(url, branch_names)
+            self._save_to_cache(url, branch_names, params)
             return branch_names
         except Exception as e:
             logger.error(f"Failed to fetch branches: {e}")
