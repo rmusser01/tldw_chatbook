@@ -14,10 +14,12 @@ retrieval runs, the exact evidence submitted to each provider request, bounded
 answer and repair attempts, structural citation mappings, semantic trust
 results when available, and policy state.
 
-The sealed trace contains immutable identities, hashes, validation results, and
-opaque payload references. Exact submitted text and retained non-final attempt
-bodies live in separately governed payload records so revocation or secure
-purge can remove text without rewriting historical trace metadata.
+The sealed trace contains only non-sensitive opaque identities, marker
+ordinals, stage relationships, validation results, and governed payload
+references. Exact submitted text, source identity, title, lineage, locators,
+content hashes, and retained non-final attempt bodies live in separately
+governed payload records so revocation or secure purge can remove restricted
+metadata and text without rewriting historical trace metadata.
 
 Submitted and cited text will use authority-scoped `EvidenceSnapshot` records.
 Current source access will use versioned `SourceLocatorEnvelope` values resolved
@@ -32,9 +34,10 @@ and sidecar records remain compatibility inputs and synthesize partial
 
 Citation provenance will be a message-owned adjunct for Sync v2 and will
 synchronize only when the server advertises a compatible trace schema and
-snapshot mode. The optional RAG API `grounding_trace` field may carry the
-canonical trace while existing server document and citation arrays remain
-supported.
+snapshot mode. `tldw_server` owns the optional versioned
+`grounding_trace/v1` wire schema and producer semantics; Chatbook owns its
+bounded internal adapter. Existing server document and citation arrays remain
+supported as partial legacy provenance.
 
 ## Context
 
@@ -91,17 +94,33 @@ interfaces, source navigation, and privacy and authorization policy.
 - Ephemeral and seal-time-redacted evidence cannot produce a persisted fully
   grounded trust state. Later revocation preserves the seal-time record but
   changes current access and produces an explicit warning.
+- Completeness and active trust reduce deterministically from only the selected
+  answer attempt and its final prompt set; non-final attempts are diagnostic.
 - Content-addressed deduplication is limited to a compatible authority,
-  confidentiality, tenant, and source-governance scope.
+  confidentiality, tenant, and opaque revocation scope.
+- Revocation or secure purge replaces governed content and metadata with a
+  durable non-content tombstone that blocks cache, import, and sync
+  resurrection.
 - Structural validity, claim support, and current-source observations remain
   independent.
 - Current-source observations use separate bounded mutable storage and never
   rewrite the sealed historical trace.
-- Active message ownership is bound to the selected answer body hash. Editing,
-  importing, replacing, or conflict-resolving different text invalidates the
-  grounded association without deleting the historical trace.
+- Active message ownership is bound to a secret-scoped selected-answer body
+  fingerprint. Editing, importing, replacing, or conflict-resolving different
+  text invalidates the grounded association without deleting the historical
+  trace.
+- Local builders remain in memory until sealing. The message, trace, runs,
+  governed payloads, references, tombstone checks, and owner link persist in
+  one idempotent transaction.
+- Cross-database artifact ownership uses a durable outbox and owner lease so
+  crashes cannot orphan or prematurely collect provenance.
 - Inline `[S#]` markers and a compact Sources footer expose provenance without
   rewriting the answer.
+- Complete traces use `chatbook_s_v1` occurrence mappings with Unicode-codepoint
+  offsets. Legacy numeric server markers remain unchanged and partial.
+- Streaming answers remain provisional until validation and repair select the
+  final body; successful repair visibly replaces the provisional body in the
+  same message and retains the original governed attempt.
 - The shared inspector uses Console's right rail, existing Library detail
   regions, or a narrow full-screen fallback rather than default modal flow.
 - Current resolution is lazy and asynchronous; historical snapshots render
@@ -114,7 +133,8 @@ interfaces, source navigation, and privacy and authorization policy.
   messages; policies requiring derived-answer removal use an explicit wider
   secure purge or quarantine action.
 - Local provenance moves from sidecar-only storage to versioned SQLite tables
-  with atomic message ownership, bounded JSON, snapshot references, retention,
+  with an atomic sealed-aggregate transaction, bounded JSON, governed payload
+  references, revocation tombstones, retention, artifact outbox reconciliation,
   and migration journaling.
 - Citation snapshots are excluded from FTS and RAG indexing.
 - Legacy records remain readable as partial traces and are not silently
@@ -126,12 +146,18 @@ interfaces, source navigation, and privacy and authorization policy.
   advertised. The active Sync v2 server contract remains authoritative.
 - Server RAG responses may add `grounding_trace` without removing existing
   response fields.
+- The server publishes the wire schema and compatibility fixtures in a separate
+  server task; Chatbook pins them in consumer tests. A client-only change cannot
+  declare the complete server path delivered.
 - A valid supported server trace takes precedence over legacy arrays. Unsupported
   or malformed traces may fall back only to validated partial legacy
   provenance; tenant or authority mismatches are rejected.
 - Export is deterministic and policy-filtered. Source refresh is always an
   explicit separate action.
 - Academic and bibliographic citations remain separate typed records.
+- The resolver inventory includes all pinned server `DataSource` kinds,
+  including `claims` and structured `sql`; SQL is snapshot-only and is never
+  replayed or opened as a database path.
 - Implementation requires an epic and atomic Backlog tasks split by contract,
   persistence, migration, pipeline stage, UI surface, resolver family,
   artifact/export/import/sync surface, and qualification gate; this is not a
