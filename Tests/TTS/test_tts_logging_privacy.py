@@ -8,6 +8,10 @@ import pytest
 from loguru import logger
 
 import tldw_chatbook.TTS as tts
+from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
+    STTSEventHandler,
+    STTSSettingsSaveEvent,
+)
 from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
 from tldw_chatbook.TTS.legacy_bridge import LEGACY_ROUTES
 
@@ -102,3 +106,87 @@ async def test_openai_backend_never_logs_api_key_details(monkeypatch) -> None:
     assert secret[-10:] not in rendered
     assert hashlib.sha256(secret.encode()).hexdigest() not in rendered
     assert "API key length" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_stts_settings_save_logs_names_and_destinations_not_secrets(
+    monkeypatch,
+) -> None:
+    secrets = {
+        "openai_api_key": "sk-OpenAI-UniquePrefix-PrivateSuffix",
+        "elevenlabs_api_key": "xi-ElevenLabs-UniquePrefix-PrivateSuffix",
+    }
+    saved: list[tuple[str, str, str]] = []
+    messages: list[str] = []
+
+    class App:
+        def notify(self, message: str, *, severity: str) -> None:
+            messages.append(f"{severity}: {message}")
+
+    handler = STTSEventHandler(App())
+
+    async def initialize_stts() -> None:
+        return None
+
+    def save_setting(section: str, setting_name: str, value: str) -> None:
+        saved.append((section, setting_name, value))
+
+    monkeypatch.setattr(handler, "initialize_stts", initialize_stts)
+    monkeypatch.setattr("tldw_chatbook.config.save_setting_to_cli_config", save_setting)
+
+    sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
+    try:
+        await handler.handle_settings_save(STTSSettingsSaveEvent(secrets))
+    finally:
+        logger.remove(sink_id)
+
+    assert saved == [
+        ("API", "openai_api_key", secrets["openai_api_key"]),
+        ("API", "elevenlabs_api_key", secrets["elevenlabs_api_key"]),
+    ]
+    rendered = "\n".join(messages)
+    assert "Saved openai_api_key to [API].openai_api_key" in rendered
+    assert "Saved elevenlabs_api_key to [API].elevenlabs_api_key" in rendered
+    for secret in secrets.values():
+        assert secret not in rendered
+        assert secret[:12] not in rendered
+        assert secret[-12:] not in rendered
+        assert str(len(secret)) not in rendered
+        assert hashlib.sha256(secret.encode()).hexdigest() not in rendered
+    assert "length" not in rendered.lower()
+
+
+@pytest.mark.asyncio
+async def test_stts_settings_save_does_not_echo_secret_from_writer_error(
+    monkeypatch,
+) -> None:
+    secret = "sk-WriterError-UniquePrefix-PrivateSuffix"
+    messages: list[str] = []
+
+    class App:
+        def notify(self, message: str, *, severity: str) -> None:
+            messages.append(f"{severity}: {message}")
+
+    handler = STTSEventHandler(App())
+
+    def fail_to_save(section: str, setting_name: str, value: str) -> None:
+        raise RuntimeError(f"could not save {value}")
+
+    monkeypatch.setattr("tldw_chatbook.config.save_setting_to_cli_config", fail_to_save)
+
+    sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
+    try:
+        await handler.handle_settings_save(
+            STTSSettingsSaveEvent({"openai_api_key": secret})
+        )
+    finally:
+        logger.remove(sink_id)
+
+    rendered = "\n".join(messages)
+    assert "Failed to save openai_api_key to [API].openai_api_key" in rendered
+    assert secret not in rendered
+    assert secret[:12] not in rendered
+    assert secret[-12:] not in rendered
+    assert str(len(secret)) not in rendered
+    assert hashlib.sha256(secret.encode()).hexdigest() not in rendered
+    assert "length" not in rendered.lower()

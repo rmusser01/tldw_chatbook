@@ -583,6 +583,7 @@ class STTSEventHandler:
         if self._cleanup_task is not None:
             logger.debug("Ignoring STTS settings after cleanup started")
             return
+        active_destination: tuple[str, str, str] | None = None
         try:
             from tldw_chatbook.config import save_setting_to_cli_config
 
@@ -655,24 +656,28 @@ class STTSEventHandler:
                     # Handle both single tuple and list of tuples
                     if isinstance(mapping, list):
                         for section, setting_name in mapping:
+                            active_destination = (key, section, setting_name)
                             save_setting_to_cli_config(section, setting_name, value)
-                            logger.info(
-                                f"Saved {key} = {value} to [{section}].{setting_name}"
-                            )
+                            logger.info(f"Saved {key} to [{section}].{setting_name}")
+                            active_destination = None
                     else:
                         section, setting_name = mapping
+                        active_destination = (key, section, setting_name)
                         save_setting_to_cli_config(section, setting_name, value)
-                        logger.info(
-                            f"Saved {key} = {value} to [{section}].{setting_name}"
-                        )
+                        logger.info(f"Saved {key} to [{section}].{setting_name}")
+                        active_destination = None
 
             # Reinitialize TTS service with new settings
             await self.initialize_stts()
 
             self.app.notify("Settings saved successfully!", severity="information")
-        except Exception as e:
-            logger.error(f"Failed to save settings: {e}")
-            self.app.notify(f"Failed to save settings: {e}", severity="error")
+        except Exception:
+            message = "Failed to save settings"
+            if active_destination is not None:
+                key, section, setting_name = active_destination
+                message = f"Failed to save {key} to [{section}].{setting_name}"
+            logger.error(message)
+            self.app.notify(message, severity="error")
 
     async def _convert_audio_format(
         self, input_file: Path, output_format: str
