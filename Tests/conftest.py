@@ -367,12 +367,27 @@ def isolate_test_environment(monkeypatch, tmp_path):
         str(test_data_dir / "config" / "config.toml"),
     )
 
-    # Patch common data directory paths if they're imported
-    try:
-        from tldw_chatbook import config
+    # NOTE (task-519): this used to also try to
+    # `monkeypatch.setattr(config, "get_data_dir", ...)`, but `config` has no
+    # `get_data_dir` attribute -- that patch was a silent no-op. It's removed
+    # rather than fixed because it's no longer needed: `get_user_data_dir()`'s
+    # default-dir fallback now resolves HOME/XDG_DATA_HOME at CALL time (see
+    # `config._default_base_data_dir`), so the HOME/XDG_DATA_HOME env patches
+    # above are sufficient on their own.
 
-        if hasattr(config, "get_data_dir"):
-            monkeypatch.setattr(config, "get_data_dir", lambda: test_data_dir)
+    # Pre-arm SP2b's first-run-import once-flag so the RAG ingestion module's
+    # real (no-longer-pytest-gated, see task-519) first-run wiring never fires
+    # organically inside an unrelated test and creates a real
+    # "imported_settings" RAG profile under the (now-isolated, but still
+    # real-filesystem) data dir. Tests that specifically want to exercise
+    # `_maybe_run_first_run_import` reset this flag themselves (see
+    # `Tests/RAG/test_first_run_import.py`). Imported lazily/defensively so a
+    # test run that never touches the RAG stack doesn't pay for (or fail on)
+    # this import.
+    try:
+        from tldw_chatbook.RAG_Search import ingestion_indexing
+
+        monkeypatch.setattr(ingestion_indexing, "_first_run_import_attempted", True)
     except ImportError:
         pass
 
