@@ -144,6 +144,10 @@ from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
     LIBRARY_NAV_CONTEXT_INGEST,
+    WATCHLISTS_NAV_CONTEXT_BACKEND,
+    WATCHLISTS_NAV_CONTEXT_RUN_ID,
+    WATCHLISTS_NAV_CONTEXT_SECTION,
+    WATCHLISTS_SECTION_RUNS,
     get_tab_display_label,
 )
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
@@ -3600,8 +3604,12 @@ class TldwCli(
             return False
 
         if action.target_route == TAB_WATCHLISTS_COLLECTIONS:
-            self._stage_subscription_watchlist_run_context(action.target_id)
-            self.post_message(NavigateToScreen(TAB_WATCHLISTS_COLLECTIONS))
+            self.post_message(
+                NavigateToScreen(
+                    TAB_WATCHLISTS_COLLECTIONS,
+                    self._watchlists_run_navigation_context(action.target_id),
+                )
+            )
             return True
 
         if action.target_route == TAB_ARTIFACTS:
@@ -3645,16 +3653,6 @@ class TldwCli(
             invalidate_cache()
         self.notify(result.message, severity=result.severity)
         return result
-
-    def prepare_home_primary_action(self, action: Any) -> None:
-        """Stage route-specific context before Home primary-action navigation."""
-        if getattr(action, "action_id", None) == "review_notifications":
-            self.pending_watchlists_section = "rules"
-        elif (
-            getattr(action, "action_id", None) == "review_failed_work"
-            and getattr(action, "target_route", None) == "subscriptions"
-        ):
-            self.pending_watchlists_section = "runs"
 
     def approve_active_home_item(
         self, *, target_id: str | None = None
@@ -3770,9 +3768,18 @@ class TldwCli(
             target_route=target_route,
         )
         if result.status is HomeControlResultStatus.HANDLED and result.target_route:
-            if result.target_route == "subscriptions":
-                self._stage_subscription_watchlist_run_context(result.target_id or target_id)
-                self.post_message(NavigateToScreen(TAB_WATCHLISTS_COLLECTIONS))
+            if result.target_route in {
+                "subscriptions",
+                TAB_WATCHLISTS_COLLECTIONS,
+            }:
+                self.post_message(
+                    NavigateToScreen(
+                        TAB_WATCHLISTS_COLLECTIONS,
+                        self._watchlists_run_navigation_context(
+                            result.target_id or target_id
+                        ),
+                    )
+                )
             elif result.target_route == "library" and str(
                 result.target_id or target_id or ""
             ).startswith("local:ingest:"):
@@ -3789,10 +3796,21 @@ class TldwCli(
                 self.post_message(NavigateToScreen(result.target_route))
         return result
 
-    def _stage_subscription_watchlist_run_context(self, target_id: str | None) -> None:
-        if target_id and ":watchlist_run:" in str(target_id):
-            self.pending_watchlists_section = "runs"
-            self.pending_watchlists_run_id = str(target_id)
+    @staticmethod
+    def _watchlists_run_navigation_context(
+        target_id: str | None,
+    ) -> dict[str, object]:
+        """Build the destination-owned context for a Watchlists run deep link."""
+        context: dict[str, object] = {
+            WATCHLISTS_NAV_CONTEXT_SECTION: WATCHLISTS_SECTION_RUNS
+        }
+        if target_id:
+            target_id_text = str(target_id)
+            context[WATCHLISTS_NAV_CONTEXT_RUN_ID] = target_id_text
+            backend = target_id_text.partition(":watchlist_run:")[0]
+            if backend in {"local", "server"}:
+                context[WATCHLISTS_NAV_CONTEXT_BACKEND] = backend
+        return context
 
     def open_active_home_item_in_console(
         self,
