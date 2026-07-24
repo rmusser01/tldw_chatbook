@@ -3,6 +3,7 @@
 #
 # Imports
 import asyncio
+from collections.abc import Coroutine
 from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
@@ -16,11 +17,69 @@ from textual.widgets import Button, Select, RichLog, Static, ProgressBar
 #
 # Local imports
 from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
+from tldw_chatbook.TTS.adapter_types import TTSProgress
+from tldw_chatbook.TTS.legacy_bridge import legacy_provider_config
+from tldw_chatbook.TTS.TTS_Generation import _join_retained_task
+from tldw_chatbook.Utils.secure_temp_files import secure_delete_file
 from tldw_chatbook.config import get_cli_setting
 #
 #######################################################################################################################
 #
 # Event Messages
+
+_STTS_PROVIDER_SETTING_KEYS = (
+    ("openai", frozenset({"openai_api_key"})),
+    (
+        "elevenlabs",
+        frozenset(
+            {
+                "elevenlabs_api_key",
+                "ELEVENLABS_DEFAULT_MODEL",
+                "ELEVENLABS_OUTPUT_FORMAT",
+                "ELEVENLABS_VOICE_STABILITY",
+                "ELEVENLABS_SIMILARITY_BOOST",
+                "ELEVENLABS_STYLE",
+                "ELEVENLABS_USE_SPEAKER_BOOST",
+            }
+        ),
+    ),
+    (
+        "kokoro",
+        frozenset(
+            {
+                "KOKORO_DEVICE_DEFAULT",
+                "KOKORO_USE_ONNX",
+                "KOKORO_ONNX_MODEL_PATH_DEFAULT",
+                "KOKORO_ONNX_VOICES_JSON_DEFAULT",
+                "KOKORO_MAX_TOKENS",
+                "KOKORO_ENABLE_VOICE_MIXING",
+                "KOKORO_TRACK_PERFORMANCE",
+            }
+        ),
+    ),
+    (
+        "higgs",
+        frozenset(
+            {
+                "HIGGS_MODEL_PATH",
+                "HIGGS_VOICE_SAMPLES_DIR",
+                "HIGGS_DEVICE",
+                "HIGGS_ENABLE_FLASH_ATTN",
+                "HIGGS_DTYPE",
+                "HIGGS_MAX_REFERENCE_DURATION",
+                "HIGGS_DEFAULT_LANGUAGE",
+                "HIGGS_ENABLE_VOICE_CLONING",
+                "HIGGS_ENABLE_MULTI_SPEAKER",
+                "HIGGS_SPEAKER_DELIMITER",
+                "HIGGS_TRACK_PERFORMANCE",
+                "HIGGS_MAX_NEW_TOKENS",
+                "HIGGS_TEMPERATURE",
+                "HIGGS_TOP_P",
+                "HIGGS_REPETITION_PENALTY",
+            }
+        ),
+    ),
+)
 
 
 class STTSPlaygroundGenerateEvent(Message):
@@ -86,6 +145,9 @@ class STTSEventHandler:
         self._stts_service = None
         self._current_audio_file = None
         self._is_generating = False
+        self._active_tasks: set[asyncio.Task[Any]] = set()
+        self._playground_audio_files: set[Path] = set()
+        self._cleanup_task: asyncio.Task[None] | None = None
 
     async def initialize_stts(self) -> None:
         """Initialize S/TT/S service"""
@@ -124,14 +186,17 @@ class STTSEventHandler:
 
             self._stts_service = await get_tts_service(app_config)
             logger.info("S/TT/S service initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize S/TT/S service: {e}")
+        except Exception:
+            logger.error("Failed to initialize S/TT/S service")
             self._stts_service = None
 
     async def handle_playground_generate(
         self, event: STTSPlaygroundGenerateEvent
     ) -> None:
         """Handle TTS generation from playground"""
+        if self._cleanup_task is not None:
+            logger.debug("Ignoring TTS generation after STTS cleanup started")
+            return
         if self._is_generating:
             self.app.notify("TTS generation already in progress", severity="warning")
             return
@@ -152,16 +217,7 @@ class STTSEventHandler:
             logger.warning(f"Could not find TTSPlaygroundWidget: {e}")
             playground = None
 
-        # Run the generation in a worker to avoid blocking UI
-        if playground and hasattr(playground, "run_worker"):
-            # Use the widget's worker to keep UI responsive
-            # Run async function in a worker (not in a thread)
-            playground.run_worker(
-                self._generate_tts_worker(event, playground), exclusive=True
-            )
-        else:
-            # Fallback to direct async execution
-            await self._generate_tts_worker(event, playground)
+        await self._generate_tts_worker(event, playground)
 
     async def _generate_tts_worker(
         self, event: STTSPlaygroundGenerateEvent, playground=None
@@ -327,7 +383,7 @@ class STTSEventHandler:
                         )
 
             # Define progress callback
-            async def progress_callback(info: Dict[str, Any]) -> None:
+            async def progress_callback(info: TTSProgress) -> None:
                 """Update UI with generation progress"""
                 if playground:
 
@@ -337,26 +393,30 @@ class STTSEventHandler:
                             status_text = playground.query_one(
                                 "#generation-status-text", Static
                             )
-                            status_text.update(info.get("status", "Generating..."))
+                            status_text.update(info.status or "Generating...")
 
                             # Update progress bar
                             progress_bar = playground.query_one(
                                 "#generation-progress", ProgressBar
                             )
-                            progress = info.get("progress", 0) * 100
-                            progress_bar.update(progress=progress)
+                            if info.fraction is not None:
+                                progress_bar.update(progress=info.fraction * 100)
 
                             # Log additional details
                             log = playground.query_one("#tts-generation-log", RichLog)
-                            if "metrics" in info:
-                                metrics = info["metrics"]
-                                if "audio_duration" in metrics:
+                            audio_duration = info.metrics.get("audio_duration")
+                            if isinstance(audio_duration, (int, float)):
+                                log.write(
+                                    f"[dim]Generated {audio_duration:.1f}s of audio[/dim]"
+                                )
+                            elif info.processed is not None:
+                                if info.total is None:
                                     log.write(
-                                        f"[dim]Generated {metrics['audio_duration']:.1f}s of audio[/dim]"
+                                        f"[dim]Processed {info.processed} item(s)[/dim]"
                                     )
-                                elif "current_chunk" in info:
+                                else:
                                     log.write(
-                                        f"[dim]Processing chunk {info.get('current_chunk')}/{info.get('total_chunks', '?')}[/dim]"
+                                        f"[dim]Processed {info.processed}/{info.total} item(s)[/dim]"
                                     )
                         except Exception as e:
                             logger.debug(f"Progress update error: {e}")
@@ -365,17 +425,6 @@ class STTSEventHandler:
                         playground.call_from_thread(update_progress)
                     else:
                         update_progress()
-
-            # Set progress callback on the backend if supported
-            try:
-                backend = await self._stts_service.backend_manager.get_backend(
-                    internal_model_id
-                )
-                if backend and hasattr(backend, "set_progress_callback"):
-                    backend.set_progress_callback(progress_callback)
-                    logger.debug(f"Set progress callback for {internal_model_id}")
-            except Exception as e:
-                logger.debug(f"Could not set progress callback: {e}")
 
             # Generate audio with provider-specific settings
             audio_data = b""
@@ -413,11 +462,16 @@ class STTSEventHandler:
                             update_wait()
 
             # Start the waiting status task
-            status_task = asyncio.create_task(show_waiting_status())
+            status_task = asyncio.create_task(
+                show_waiting_status(),
+                name="stts_generation_status",
+            )
 
             try:
                 async for chunk in self._stts_service.generate_audio_stream(
-                    request, internal_model_id
+                    request,
+                    internal_model_id,
+                    progress_sink=progress_callback,
                 ):
                     audio_data += chunk
                     chunk_count += 1
@@ -444,8 +498,8 @@ class STTSEventHandler:
                         update_log(first_msg)
 
             finally:
-                # Make sure to cancel the status task
                 status_task.cancel()
+                await asyncio.gather(status_task, return_exceptions=True)
 
             # Save to temporary WAV file first
             import tempfile
@@ -456,6 +510,7 @@ class STTSEventHandler:
             ) as tmp_file:
                 tmp_file.write(audio_data)
                 wav_file = Path(tmp_file.name)
+            self._playground_audio_files.add(wav_file)
 
             # Convert to requested format if needed
             if requested_format != "wav":
@@ -473,18 +528,25 @@ class STTSEventHandler:
                         update_converting()
 
                 # Convert audio format
+                conversion_destination = wav_file.with_suffix(f".{requested_format}")
+                self._playground_audio_files.add(conversion_destination)
                 converted_file = await self._convert_audio_format(
                     wav_file, requested_format
                 )
                 if converted_file:
-                    # Delete the temporary WAV file
-                    try:
-                        wav_file.unlink()
-                    except (FileNotFoundError, PermissionError) as e:
-                        logger.warning(f"Failed to delete temporary WAV file: {e}")
-                        pass
+                    if secure_delete_file(wav_file) or not wav_file.exists():
+                        self._playground_audio_files.discard(wav_file)
+                    else:
+                        logger.warning(
+                            f"Failed to delete temporary WAV file: {wav_file}"
+                        )
                     self._current_audio_file = converted_file
                 else:
+                    if (
+                        secure_delete_file(conversion_destination)
+                        or not conversion_destination.exists()
+                    ):
+                        self._playground_audio_files.discard(conversion_destination)
                     # Conversion failed, use WAV file
                     logger.warning(
                         f"Failed to convert to {requested_format}, using WAV"
@@ -573,11 +635,20 @@ class STTSEventHandler:
 
     async def handle_settings_save(self, event: STTSSettingsSaveEvent) -> None:
         """Handle settings save"""
+        if self._cleanup_task is not None:
+            logger.debug("Ignoring STTS settings after cleanup started")
+            return
         try:
-            from tldw_chatbook.config import save_setting_to_cli_config
+            from tldw_chatbook.config import (
+                load_settings,
+                save_settings_to_cli_config,
+            )
 
             # Save each setting to the appropriate section
-            settings_map = {
+            settings_map: dict[
+                str,
+                tuple[str, str] | list[tuple[str, str]],
+            ] = {
                 # Default settings - save to both sections for compatibility
                 "default_provider": [
                     ("app_tts", "default_provider"),
@@ -603,20 +674,47 @@ class STTSEventHandler:
                 "openai_api_key": ("API", "openai_api_key"),
                 # ElevenLabs settings
                 "elevenlabs_api_key": ("API", "elevenlabs_api_key"),
-                "elevenlabs_voice_stability": ("app_tts", "ELEVENLABS_VOICE_STABILITY"),
-                "elevenlabs_similarity_boost": (
+                "ELEVENLABS_DEFAULT_MODEL": (
+                    "app_tts",
+                    "ELEVENLABS_DEFAULT_MODEL",
+                ),
+                "ELEVENLABS_OUTPUT_FORMAT": (
+                    "app_tts",
+                    "ELEVENLABS_OUTPUT_FORMAT",
+                ),
+                "ELEVENLABS_VOICE_STABILITY": (
+                    "app_tts",
+                    "ELEVENLABS_VOICE_STABILITY",
+                ),
+                "ELEVENLABS_SIMILARITY_BOOST": (
                     "app_tts",
                     "ELEVENLABS_SIMILARITY_BOOST",
                 ),
-                "elevenlabs_style": ("app_tts", "ELEVENLABS_STYLE"),
-                "elevenlabs_use_speaker_boost": (
+                "ELEVENLABS_STYLE": ("app_tts", "ELEVENLABS_STYLE"),
+                "ELEVENLABS_USE_SPEAKER_BOOST": (
                     "app_tts",
                     "ELEVENLABS_USE_SPEAKER_BOOST",
                 ),
                 # Kokoro settings
-                "kokoro_device": ("app_tts", "KOKORO_DEVICE"),
-                "kokoro_use_onnx": ("app_tts", "KOKORO_USE_ONNX"),
-                "kokoro_model_path": ("app_tts", "KOKORO_MODEL_PATH"),
+                "KOKORO_DEVICE_DEFAULT": ("app_tts", "KOKORO_DEVICE_DEFAULT"),
+                "KOKORO_USE_ONNX": ("app_tts", "KOKORO_USE_ONNX"),
+                "KOKORO_ONNX_MODEL_PATH_DEFAULT": (
+                    "app_tts",
+                    "KOKORO_ONNX_MODEL_PATH_DEFAULT",
+                ),
+                "KOKORO_ONNX_VOICES_JSON_DEFAULT": (
+                    "app_tts",
+                    "KOKORO_ONNX_VOICES_JSON_DEFAULT",
+                ),
+                "KOKORO_MAX_TOKENS": ("app_tts", "KOKORO_MAX_TOKENS"),
+                "KOKORO_ENABLE_VOICE_MIXING": (
+                    "app_tts",
+                    "KOKORO_ENABLE_VOICE_MIXING",
+                ),
+                "KOKORO_TRACK_PERFORMANCE": (
+                    "app_tts",
+                    "KOKORO_TRACK_PERFORMANCE",
+                ),
                 # Higgs settings
                 "HIGGS_MODEL_PATH": ("HiggsSettings", "model_path"),
                 "HIGGS_VOICE_SAMPLES_DIR": ("HiggsSettings", "voice_samples_dir"),
@@ -635,39 +733,77 @@ class STTSEventHandler:
                 "HIGGS_MAX_NEW_TOKENS": ("HiggsSettings", "max_new_tokens"),
                 "HIGGS_TEMPERATURE": ("HiggsSettings", "temperature"),
                 "HIGGS_TOP_P": ("HiggsSettings", "top_p"),
-                "HIGGS_TOP_K": ("HiggsSettings", "top_k"),
+                "HIGGS_REPETITION_PENALTY": (
+                    "HiggsSettings",
+                    "repetition_penalty",
+                ),
             }
 
-            # Save each setting
+            section_values: dict[str, dict[str, Any]] = {}
+            saved_destinations: list[tuple[str, str, str]] = []
+            persisted_keys: set[str] = set()
             for key, value in event.settings.items():
                 if key in settings_map:
                     mapping = settings_map[key]
-                    # Handle both single tuple and list of tuples
-                    if isinstance(mapping, list):
-                        for section, setting_name in mapping:
-                            save_setting_to_cli_config(section, setting_name, value)
-                            logger.info(
-                                f"Saved {key} = {value} to [{section}].{setting_name}"
-                            )
-                    else:
-                        section, setting_name = mapping
-                        save_setting_to_cli_config(section, setting_name, value)
-                        logger.info(
-                            f"Saved {key} = {value} to [{section}].{setting_name}"
-                        )
+                    destinations = mapping if isinstance(mapping, list) else [mapping]
+                    for section, setting_name in destinations:
+                        section_values.setdefault(section, {})[setting_name] = value
+                        saved_destinations.append((key, section, setting_name))
+                    persisted_keys.add(key)
 
-            # Reinitialize TTS service with new settings
-            await self.initialize_stts()
+            if section_values and save_settings_to_cli_config(section_values) is False:
+                raise RuntimeError("STTS settings batch save failed")
+            for key, section, setting_name in saved_destinations:
+                logger.info(f"Saved {key} to [{section}].{setting_name}")
+
+            effective_settings = load_settings()
+            candidate_providers = [
+                provider_id
+                for provider_id, setting_keys in _STTS_PROVIDER_SETTING_KEYS
+                if persisted_keys & setting_keys
+            ]
+            if candidate_providers:
+                service = self._stts_service
+                if service is None:
+                    service = await get_tts_service()
+                    self._stts_service = service
+                results = await asyncio.gather(
+                    *(
+                        service.reconfigure_provider(
+                            provider_id,
+                            legacy_provider_config(provider_id, effective_settings),
+                        )
+                        for provider_id in candidate_providers
+                    ),
+                    return_exceptions=True,
+                )
+                failed_providers = [
+                    provider_id
+                    for provider_id, result in zip(candidate_providers, results)
+                    if isinstance(result, BaseException)
+                ]
+                if failed_providers:
+                    logger.error(
+                        "Failed to reconfigure TTS providers: {}",
+                        ", ".join(failed_providers),
+                    )
+                    self.app.notify(
+                        "Settings saved, but some TTS providers could not be updated",
+                        severity="error",
+                    )
+                    return
 
             self.app.notify("Settings saved successfully!", severity="information")
-        except Exception as e:
-            logger.error(f"Failed to save settings: {e}")
-            self.app.notify(f"Failed to save settings: {e}", severity="error")
+        except Exception:
+            message = "Failed to save settings"
+            logger.error(message)
+            self.app.notify(message, severity="error")
 
     async def _convert_audio_format(
         self, input_file: Path, output_format: str
     ) -> Optional[Path]:
         """Convert audio file to a different format using ffmpeg"""
+        process: asyncio.subprocess.Process | None = None
         try:
             # Create output file with requested format
             output_file = input_file.with_suffix(f".{output_format}")
@@ -711,6 +847,14 @@ class STTSEventHandler:
                 logger.error(f"ffmpeg conversion failed: {stderr_text}")
                 return None
 
+        except asyncio.CancelledError:
+            if process is not None:
+                terminate_task = asyncio.create_task(
+                    self._terminate_conversion_process(process),
+                    name="stts_ffmpeg_terminate",
+                )
+                await _join_retained_task(terminate_task)
+            raise
         except FileNotFoundError:
             logger.error(
                 "ffmpeg not found. Please install ffmpeg for audio format conversion."
@@ -720,10 +864,33 @@ class STTSEventHandler:
             logger.error(f"Audio conversion failed: {e}")
             return None
 
+    @staticmethod
+    async def _terminate_conversion_process(
+        process: asyncio.subprocess.Process,
+    ) -> None:
+        """Terminate ffmpeg, escalating to kill if it does not exit promptly."""
+        if process.returncode is None:
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
+        try:
+            await asyncio.wait_for(process.wait(), timeout=2)
+        except TimeoutError:
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            await process.wait()
+
     async def handle_audiobook_generate(
         self, event: STTSAudioBookGenerateEvent
     ) -> None:
         """Handle audiobook generation"""
+        if self._cleanup_task is not None:
+            logger.debug("Ignoring audiobook generation after STTS cleanup started")
+            return
         try:
             from tldw_chatbook.TTS.audiobook_generator import (
                 AudioBookGenerator,
@@ -951,21 +1118,66 @@ class STTSEventHandler:
             logger.error(f"Failed to export audio: {e}")
             self.app.notify(f"Failed to export audio: {e}", severity="error")
 
+    def _start_event_task(self, coroutine: Coroutine[Any, Any, None]) -> None:
+        """Start and retain an event task until it finishes."""
+        if self._cleanup_task is not None:
+            coroutine.close()
+            logger.debug("Ignoring STTS event after cleanup started")
+            return
+        task = asyncio.create_task(coroutine)
+        self._active_tasks.add(task)
+        task.add_done_callback(self._active_tasks.discard)
+
+    async def cleanup_tts_resources(self) -> None:
+        """Join retained cleanup before propagating caller cancellation."""
+        if self._cleanup_task is None:
+            caller = asyncio.current_task()
+            self._cleanup_task = asyncio.create_task(
+                self._cleanup_owned_resources(caller),
+                name="stts_handler_cleanup",
+            )
+        await _join_retained_task(self._cleanup_task)
+
+    async def _cleanup_owned_resources(
+        self,
+        caller: asyncio.Task[Any] | None,
+    ) -> None:
+        """Cancel handler work and delete only playground-owned temporary audio."""
+        tasks = tuple(task for task in self._active_tasks if task is not caller)
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._active_tasks.difference_update(tasks)
+
+        owned_paths = tuple(self._playground_audio_files)
+        for path in owned_paths:
+            if secure_delete_file(path) or not path.exists():
+                self._playground_audio_files.discard(path)
+
+        if (
+            self._current_audio_file in owned_paths
+            and self._current_audio_file not in self._playground_audio_files
+        ):
+            self._current_audio_file = None
+        self._is_generating = False
+
     def on_stts_playground_generate_event(
         self, event: STTSPlaygroundGenerateEvent
     ) -> None:
         """Handle playground generate event"""
-        asyncio.create_task(self.handle_playground_generate(event))
+        self._start_event_task(self.handle_playground_generate(event))
 
     def on_stts_settings_save_event(self, event: STTSSettingsSaveEvent) -> None:
         """Handle settings save event"""
-        asyncio.create_task(self.handle_settings_save(event))
+        self._start_event_task(self.handle_settings_save(event))
 
     def on_stts_audiobook_generate_event(
         self, event: STTSAudioBookGenerateEvent
     ) -> None:
         """Handle audiobook generate event"""
-        asyncio.create_task(self.handle_audiobook_generate(event))
+        self._start_event_task(self.handle_audiobook_generate(event))
 
 
 #
