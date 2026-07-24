@@ -66,12 +66,12 @@ from ...Chat.provider_catalog import (
     PROVIDER_GROUP_ORDER,
 )
 from ...config import (
-    BASE_DATA_DIR_CLI,
     DEFAULT_CONFIG_FROM_TOML,
     DEFAULT_CONFIG_PATH,
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    _default_base_data_dir,
     coerce_bool_setting,
     coerce_int_setting,
     load_settings,
@@ -3869,6 +3869,13 @@ class SettingsScreen(BaseAppScreen):
         return safe_user_name if safe_user_name else "default_user"
 
     def _configured_user_data_dir_path(self) -> Path:
+        """Read-only mirror of get_user_data_dir()'s resolution logic (minus
+        the mkdir side effect), so the Settings display never diverges from
+        the path the app actually uses. Uses _default_base_data_dir() (the
+        same call-time HOME resolution as get_user_data_dir()'s fallback)
+        rather than the import-time-frozen BASE_DATA_DIR_CLI constant --
+        those two can disagree, e.g. under test-isolated HOME (task-519
+        review)."""
         configured_data_dir = self._read_cli_config_value_without_writes(
             "paths", "data_dir", None
         )
@@ -3879,7 +3886,7 @@ class SettingsScreen(BaseAppScreen):
         base_data_dir = (
             Path(str(configured_data_dir)).expanduser()
             if configured_data_dir
-            else BASE_DATA_DIR_CLI
+            else _default_base_data_dir()
         )
         return validate_path_simple(
             base_data_dir / self._configured_user_folder_name(),

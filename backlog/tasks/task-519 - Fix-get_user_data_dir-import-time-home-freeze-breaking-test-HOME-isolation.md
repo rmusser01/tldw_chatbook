@@ -4,7 +4,7 @@ title: Fix get_user_data_dir import-time home freeze breaking test HOME isolatio
 status: Done
 assignee: []
 created_date: '2026-07-23 23:30'
-updated_date: '2026-07-24 15:35'
+updated_date: '2026-07-24 15:56'
 labels:
   - testing
   - config
@@ -56,4 +56,14 @@ Scratch-HOME spot-proof: ran the previously-leaking consumers (test_settings_lib
 Regression: Tests/RAG/ 536 passed/8 skipped/0 failed. Tests/UI/ -k settings: 648 passed/7 failed (baseline -- unrelated nav-overlap + API-key-field prefill failures in test_tools_settings_window.py / test_destination_visual_parity_correction.py, confirmed pre-existing per the task dispatch's own documented baseline). Tests/test_config_delete_settings.py + Tests/UI/test_settings_configuration_hub.py: 255 passed/1 failed (test_theme_category_opens_without_crashing) -- reran in isolation and it passed, confirmed flaky under this machine's heavy concurrent multi-session pytest load, not a regression from this change.
 
 Files: tldw_chatbook/config.py, tldw_chatbook/RAG_Search/ingestion_indexing.py, Tests/conftest.py, Tests/RAG/test_first_run_import.py, Tests/test_user_data_dir_isolation.py (new).
+
+--- Review fix-up (2026-07-24) ---
+Two Important findings from merge-gate review, both fixed:
+
+(1) XDG_DATA_HOME precedence reverted -- `_default_base_data_dir()` is now HOME-only, matching the original pre-task-519 BASE_DATA_DIR_CLI semantics exactly (just resolved at call time instead of import time). Rationale: the original default NEVER consulted XDG_DATA_HOME. A real user with XDG_DATA_HOME exported (common on Linux desktops) already has their entire existing tldw_cli data tree under ~/.local/share/tldw_cli from every prior run before this task-519 branch existed. Had the default started honoring XDG_DATA_HOME, that user's very next launch would silently resolve to a brand-new, empty $XDG_DATA_HOME/tldw_cli directory with no migration and no warning -- their conversations/notes/media would appear to have vanished. Test-isolation only ever needed HOME (conftest's isolate_test_environment patches HOME, not XDG_DATA_HOME), so dropping XDG support costs nothing functionally while closing the migration hazard. Confirmed Path.home() itself already honors a live-monkeypatched HOME on this platform/Python (POSIX expanduser reads $HOME on every call, not cached at import), so _default_base_data_dir() uses os.environ.get("HOME") with a Path.home() fallback for extra robustness/documentation clarity, not because Path.home() was found to cache.
+    Tests/test_user_data_dir_isolation.py: replaced both XDG-precedence tests with their inverse (test_get_user_data_dir_ignores_xdg_data_home, test_default_base_data_dir_helper_ignores_xdg), asserting XDG_DATA_HOME set alongside a scratch HOME is ignored and resolution stays under HOME. RED-proof performed: temporarily restored the XDG-honoring implementation, both new tests failed as expected (asserted HOME path, got XDG path); reverted, tests pass.
+
+(2) Settings display consistency -- UI/Screens/settings_screen.py `_configured_user_data_dir_path()` (the "Storage paths" panel's default-branch resolution) was still importing and reading the frozen-at-import `BASE_DATA_DIR_CLI` constant, so in any context where HOME differs from process-start HOME (test harnesses today; any future divergence) the displayed path could disagree with what get_user_data_dir() actually resolves and uses. Switched it to call `_default_base_data_dir()` (the exact same call-time HOME-only helper the real getter's fallback uses) instead of the constant; removed the now-unused `BASE_DATA_DIR_CLI` import. Stays read-only/cheap (no mkdir, matching the existing method's contract). No existing test asserted on BASE_DATA_DIR_CLI or this method's default-branch value directly, so no test needed updating for this half.
+
+Verification: Tests/test_user_data_dir_isolation.py + Tests/RAG/test_first_run_import.py -- 12 passed. Tests/UI/ -k settings -- 648 passed, 7 failed (same documented pre-existing baseline: nav-overlap + API-key-field prefill tests, unrelated to this change). Tests/RAG/ -- 536 passed, 8 skipped, 0 failed (unchanged from documented baseline).
 <!-- SECTION:NOTES:END -->
