@@ -1,10 +1,11 @@
 ---
 id: TASK-490
 title: Harden persistent log and tool-cache file lifecycles
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-23 13:55'
-updated_date: '2026-07-23 14:23'
+updated_date: '2026-07-24 13:43'
 labels:
   - security
   - privacy
@@ -16,6 +17,7 @@ references:
   - backlog/decisions/022-local-private-data-boundary.md
 documentation:
   - Docs/superpowers/specs/2026-07-23-local-privacy-containment-design.md
+  - Docs/superpowers/plans/2026-07-24-private-persistent-artifact-lifecycles.md
 priority: high
 ---
 
@@ -35,3 +37,20 @@ Apply the private-path boundary to rotating application logs, the MCP execution 
 - [ ] #6 Eligible legacy `tool_results.cache` files are hardened and left inert; they are never deserialized or silently deleted.
 - [ ] #7 Behavioral tests cover traversal, absolute log names, rotation, read/count/write symlinks, unsafe parents, target replacement, cache corruption, legacy cache handling, POSIX modes, and Windows posture.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/022-local-private-data-boundary.md
+Reason: Implements ADR-022's accepted private persistent-artifact lifecycle without changing it.
+
+1. Add failing basename, mode, no-follow, rotation, cache-format, corruption, replacement, and platform-posture tests.
+2. Add descriptor-anchored private append and atomic replacement primitives.
+3. Secure the application rotating-file sink and fail closed per sink.
+4. Secure MCP log append/read/count/rotation.
+5. Replace pickle cache persistence with strict bounded versioned JSON.
+6. Run focused and broad verification, sentinel probes, self-review, and task closeout.
+
+Detailed plan: Docs/superpowers/plans/2026-07-24-private-persistent-artifact-lifecycles.md
+<!-- SECTION:PLAN:END -->
