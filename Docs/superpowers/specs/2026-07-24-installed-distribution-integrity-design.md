@@ -1,7 +1,7 @@
 # Installed Distribution Integrity Design
 
 Date: 2026-07-24
-Status: Approved for implementation
+Status: Implemented (2026-07-24)
 ADR:
 [ADR-025](../../../backlog/decisions/025-immutable-installed-distribution-assets.md)
 Backlog:
