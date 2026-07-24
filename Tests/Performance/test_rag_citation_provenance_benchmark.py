@@ -6,7 +6,10 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 import socket
+import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -20,6 +23,10 @@ BENCHMARK_PATH = (
 FIXTURE_ROOT = REPO_ROOT / "Tests" / "fixtures" / "rag_citation_provenance"
 MANIFEST_PATH = FIXTURE_ROOT / "manifest_v1.json"
 CORPUS_PATH = FIXTURE_ROOT / "corpus_v1.json"
+BASELINE_PATH = (
+    REPO_ROOT / "Docs" / "Development" / "RAG" / "citation-provenance-baseline-v1.json"
+)
+MISSING = object()
 
 
 def _load_benchmark() -> ModuleType:
@@ -47,6 +54,16 @@ def _walk_ids(value):
     elif isinstance(value, list):
         for child in value:
             yield from _walk_ids(child)
+
+
+def _replace_nested(document: dict, path: tuple[str, ...], value: object) -> None:
+    parent = document
+    for key in path[:-1]:
+        parent = parent[key]
+    if value is MISSING:
+        parent.pop(path[-1])
+    else:
+        parent[path[-1]] = value
 
 
 def test_manifest_references_versioned_files_with_matching_digests() -> None:
@@ -243,6 +260,111 @@ def test_sample_group_uses_isolated_temp_chachanotes_db_and_sidecar(
         assert workspace.sidecar_path.name == "chat_rag_context.json"
 
 
+def test_benchmark_host_state_context_isolates_and_restores_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    benchmark = _load_benchmark()
+    original = {
+        "HOME": "sentinel-home",
+        "XDG_CONFIG_HOME": "sentinel-config",
+        "XDG_DATA_HOME": "sentinel-data",
+        "TLDW_CONFIG_PATH": "sentinel-config.toml",
+        "TLDW_TEST_MODE": "sentinel-test-mode",
+        "OPENAI_API_KEY": "sentinel-secret",
+    }
+    for key, value in original.items():
+        monkeypatch.setenv(key, value)
+
+    with benchmark.isolated_benchmark_host_state(tmp_path / "benchmark-host"):
+        assert os.environ["TLDW_TEST_MODE"] == "1"
+        assert Path(os.environ["HOME"]).is_relative_to(tmp_path)
+        assert Path(os.environ["XDG_CONFIG_HOME"]).is_relative_to(tmp_path)
+        assert Path(os.environ["XDG_DATA_HOME"]).is_relative_to(tmp_path)
+        assert Path(os.environ["TLDW_CONFIG_PATH"]).is_relative_to(tmp_path)
+        assert "OPENAI_API_KEY" not in os.environ
+
+    assert {key: os.environ.get(key) for key in original} == original
+
+
+def test_cli_never_reads_or_writes_host_config_data_or_secrets(tmp_path: Path) -> None:
+    host_home = tmp_path / "sentinel-host"
+    host_config = host_home / ".config" / "tldw_cli" / "config.toml"
+    host_data = host_home / ".local" / "share" / "tldw_cli"
+    host_config.parent.mkdir(parents=True)
+    host_data.mkdir(parents=True)
+    secret = "sk-sentinel-host-secret-never-load"
+    host_config.write_text(
+        "\n".join(
+            [
+                "[general]",
+                'users_name = "sentinel_host_user"',
+                "[paths]",
+                f"data_dir = {json.dumps(str(host_data))}",
+                "[API]",
+                f"openai_api_key = {json.dumps(secret)}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    marker = host_data / "do-not-touch.txt"
+    marker.write_text("sentinel host data\n", encoding="utf-8")
+
+    def host_snapshot() -> dict[Path, bytes | None]:
+        return {
+            path.relative_to(host_home): path.read_bytes() if path.is_file() else None
+            for path in host_home.rglob("*")
+        }
+
+    before = host_snapshot()
+
+    process_temp = tmp_path / "runner-temp"
+    process_temp.mkdir()
+    output = process_temp / "baseline.json"
+    environment = {
+        **os.environ,
+        "HOME": str(host_home),
+        "XDG_CONFIG_HOME": str(host_config.parent.parent),
+        "XDG_DATA_HOME": str(host_data.parent.parent),
+        "TLDW_CONFIG_PATH": str(host_config),
+        "OPENAI_API_KEY": secret,
+        "TMPDIR": str(process_temp),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPATH": str(REPO_ROOT),
+    }
+    environment.pop("PYTEST_CURRENT_TEST", None)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(BENCHMARK_PATH),
+            "--mode",
+            "baseline",
+            "--samples",
+            "1",
+            "--warmups",
+            "0",
+            "--output",
+            str(output),
+        ],
+        cwd=REPO_ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    emitted = completed.stdout + completed.stderr
+    assert secret not in emitted
+    assert str(host_home) not in emitted
+    assert host_snapshot() == before
+    assert output.is_relative_to(process_temp)
+    assert _load_json(output)["budgets"]["overall_pass"] is True
+
+
 @pytest.mark.parametrize(
     "extra",
     [
@@ -392,6 +514,63 @@ def test_qualification_requires_present_compatible_committed_baseline(
 
     assert compatibility["compatible"] is False
     assert compatibility["reasons"]
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("metrics", "finalization", "standard_ms", "p95"), MISSING),
+        (("metrics", "first_token", "candidate_ms", "p95"), "slow"),
+        (("metrics", "database_growth", "bytes", "p95"), True),
+        (("metrics", "inspector_load", "cold_ms", "p95"), float("nan")),
+        (
+            ("metrics", "migration", "messages_per_second", "median"),
+            float("inf"),
+        ),
+        (("metrics", "trace_size", "aggregate_json_bytes"), float("-inf")),
+        (("metrics", "first_token", "candidate_ms", "p95"), 0.0),
+        (("metrics", "database_growth", "governed_bytes_per_answer"), -1),
+    ],
+)
+def test_corrupt_baseline_is_rejected_before_benchmark_with_sanitized_error(
+    path: tuple[str, ...],
+    value: object,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    benchmark = _load_benchmark()
+    baseline = _load_json(BASELINE_PATH)
+    _replace_nested(baseline, path, value)
+    corrupt_path = tmp_path / "corrupt-baseline.json"
+    corrupt_path.write_text(
+        json.dumps(baseline, allow_nan=True),
+        encoding="utf-8",
+    )
+
+    async def must_not_benchmark(**_kwargs):
+        raise AssertionError("benchmark ran before baseline validation")
+
+    monkeypatch.setattr(benchmark, "run_benchmark", must_not_benchmark)
+    exit_code = benchmark.main(
+        [
+            "--mode",
+            "qualification",
+            "--samples",
+            "1",
+            "--warmups",
+            "0",
+            "--baseline",
+            str(corrupt_path),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    assert captured.err.startswith("benchmark error: invalid qualification baseline")
+    assert "Traceback" not in captured.err
+    assert str(corrupt_path) not in captured.err
 
 
 @pytest.mark.asyncio
@@ -608,6 +787,129 @@ def test_qualification_passes_direct_compatible_historical_limits() -> None:
         "in_process_control": {"milliseconds": 10.0, "percent": 10.0},
     }
     assert budgets["overall_pass"] is True
+
+
+@pytest.mark.parametrize(
+    ("samples", "warmups", "eligible", "reasons"),
+    [
+        (1, 0, False, ["insufficient_samples", "insufficient_warmups"]),
+        (30, 5, True, []),
+    ],
+)
+def test_qualification_eligibility_requires_thirty_samples_and_five_warmups(
+    samples: int,
+    warmups: int,
+    eligible: bool,
+    reasons: list[str],
+) -> None:
+    benchmark = _load_benchmark()
+    environment = benchmark.environment_metadata()
+    metrics = benchmark.empty_passing_metrics()
+    baseline = {
+        "fixture_version": benchmark.FIXTURE_VERSION,
+        "environment": environment,
+        "metrics": benchmark.empty_passing_metrics(),
+    }
+
+    budgets = benchmark.evaluate_budgets(
+        metrics,
+        baseline=baseline,
+        mode="qualification",
+        environment=environment,
+        samples=samples,
+        warmups=warmups,
+    )
+
+    assert budgets["qualification_eligible"] is eligible
+    assert budgets["qualification_ineligibility_reasons"] == reasons
+    assert all(check["pass"] for check in budgets["checks"].values())
+    assert budgets["overall_pass"] is eligible
+
+
+@pytest.mark.parametrize(
+    ("changes", "failed_family"),
+    [
+        (
+            [(("first_token", "candidate_ms", "p95"), 1.100001)],
+            "first_token",
+        ),
+        (
+            [
+                (("first_token", "control_ms", "p95"), 1000.0),
+                (("first_token", "candidate_ms", "p95"), 1025.001),
+            ],
+            "first_token",
+        ),
+        (
+            [(("finalization", "standard_ms", "p95"), 75.001)],
+            "finalization",
+        ),
+        (
+            [(("finalization", "maximum_ms", "p95"), 250.001)],
+            "finalization",
+        ),
+        (
+            [(("inspector_load", "cold_ms", "p95"), 100.001)],
+            "inspector_load",
+        ),
+        (
+            [(("inspector_load", "warm_ms", "p95"), 25.001)],
+            "inspector_load",
+        ),
+        (
+            [(("trace_size", "aggregate_json_bytes"), (256 * 1024) + 1)],
+            "trace_size",
+        ),
+        (
+            [(("trace_size", "maximum_snapshot_bytes"), (64 * 1024) + 1)],
+            "trace_size",
+        ),
+        (
+            [(("trace_size", "governed_trace_bytes"), (4 * 1024 * 1024) + 1)],
+            "trace_size",
+        ),
+        (
+            [(("database_growth", "bytes", "p95"), 262145.351)],
+            "database_growth",
+        ),
+        (
+            [(("migration", "messages_per_second", "median"), 99.999)],
+            "migration",
+        ),
+        (
+            [
+                (
+                    (
+                        "migration",
+                        "duplicate_proxy_rows_after_restart",
+                        "p95",
+                    ),
+                    0.001,
+                )
+            ],
+            "migration",
+        ),
+    ],
+)
+def test_each_budget_sub_limit_rejects_a_just_over_candidate(
+    changes: list[tuple[tuple[str, ...], float]],
+    failed_family: str,
+) -> None:
+    benchmark = _load_benchmark()
+    metrics = benchmark.empty_passing_metrics()
+    for path, value in changes:
+        _replace_nested(metrics, path, value)
+
+    budgets = benchmark.evaluate_budgets(
+        metrics,
+        baseline=None,
+        mode="baseline",
+        samples=30,
+        warmups=5,
+    )
+
+    assert budgets["checks"][failed_family]["pass"] is False
+    assert budgets["overall_pass"] is False
 
 
 def test_external_mode_requires_explicit_target_and_provider() -> None:

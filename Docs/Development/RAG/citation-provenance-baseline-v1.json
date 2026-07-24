@@ -59,7 +59,9 @@
     },
     "environment_compatible": true,
     "environment_incompatibilities": [],
-    "overall_pass": true
+    "overall_pass": true,
+    "qualification_eligible": true,
+    "qualification_ineligibility_reasons": []
   },
   "environment": {
     "cpu": "arm",
@@ -139,8 +141,8 @@
     "finalization": {
       "corpus_input_sha256": "75e9875b8128677026c22c4c20dddfe158a4603595a95db5ee767ffbe4d71ce2",
       "maximum_ms": {
-        "median": 2.069875,
-        "p95": 2.21675
+        "median": 2.883979,
+        "p95": 3.765375
       },
       "maximum_result": {
         "aggregate_json_bytes": 6744,
@@ -152,8 +154,8 @@
         "snapshots": 64
       },
       "standard_ms": {
-        "median": 0.02825,
-        "p95": 0.035625
+        "median": 0.04225,
+        "p95": 0.11825
       },
       "standard_shape": {
         "bytes_per_snapshot": 4096,
@@ -162,13 +164,13 @@
     },
     "first_token": {
       "candidate_ms": {
-        "median": 21.917896,
-        "p95": 22.111875
+        "median": 22.786625,
+        "p95": 24.7295
       },
       "comparison": "baseline-current-control",
       "control_ms": {
-        "median": 21.917896,
-        "p95": 22.111875
+        "median": 22.786625,
+        "p95": 24.7295
       },
       "corpus_input_sha256": "3dbea4e8d42b65f25278d38880d70c019fd631169bc25cda8e81e4ba705ad0f2",
       "path": [
@@ -182,12 +184,12 @@
     },
     "inspector_load": {
       "cold_ms": {
-        "median": 0.234417,
-        "p95": 0.382125
+        "median": 0.287896,
+        "p95": 2.522042
       },
       "warm_ms": {
-        "median": 0.071833,
-        "p95": 0.076625
+        "median": 0.078792,
+        "p95": 0.246292
       }
     },
     "migration": {
@@ -199,8 +201,8 @@
       },
       "interrupted_after_messages": 50,
       "messages_per_second": {
-        "median": 109292.504274,
-        "p95": 122913.089384
+        "median": 74953.530193,
+        "p95": 100768.358735
       }
     },
     "trace_size": {

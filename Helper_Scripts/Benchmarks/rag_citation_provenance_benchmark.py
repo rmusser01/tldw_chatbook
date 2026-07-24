@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import json
 import math
+import os
 import platform
 import sqlite3
 import statistics
@@ -85,6 +86,30 @@ BUDGETS = {
         "maximum_duplicate_proxy_rows_after_restart": 0,
     },
 }
+
+_BASELINE_NON_NEGATIVE_METRIC_PATHS = (
+    ("first_token", "control_ms", "median"),
+    ("first_token", "control_ms", "p95"),
+    ("first_token", "candidate_ms", "median"),
+    ("finalization", "standard_ms", "median"),
+    ("finalization", "standard_ms", "p95"),
+    ("finalization", "maximum_ms", "median"),
+    ("finalization", "maximum_ms", "p95"),
+    ("inspector_load", "cold_ms", "median"),
+    ("inspector_load", "cold_ms", "p95"),
+    ("inspector_load", "warm_ms", "median"),
+    ("inspector_load", "warm_ms", "p95"),
+    ("trace_size", "aggregate_json_bytes"),
+    ("trace_size", "maximum_snapshot_bytes"),
+    ("trace_size", "governed_trace_bytes"),
+    ("database_growth", "bytes", "median"),
+    ("database_growth", "bytes", "p95"),
+    ("database_growth", "governed_bytes_per_answer"),
+    ("migration", "messages_per_second", "median"),
+    ("migration", "messages_per_second", "p95"),
+    ("migration", "duplicate_proxy_rows_after_restart", "median"),
+    ("migration", "duplicate_proxy_rows_after_restart", "p95"),
+)
 
 
 class SampleWorkspace(NamedTuple):
@@ -268,6 +293,46 @@ def sample_group_workspace(
         db_path.touch()
         sidecar_path.write_text("{}\n", encoding="utf-8")
         yield SampleWorkspace(root, db_path, sidecar_path)
+
+
+@contextmanager
+def isolated_benchmark_host_state(root: Path) -> Iterator[None]:
+    """Redirect production config/data access and temporarily hide host secrets."""
+
+    root = root.resolve()
+    home = root / "home"
+    config_root = root / "config"
+    data_root = root / "data"
+    for path in (home, config_root, data_root):
+        path.mkdir(parents=True, exist_ok=True)
+    overrides = {
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(config_root),
+        "XDG_DATA_HOME": str(data_root),
+        "TLDW_CONFIG_PATH": str(config_root / "tldw_cli" / "config.toml"),
+        "TLDW_TEST_CONFIG_ROOT": str(config_root),
+        "TLDW_TEST_MODE": "1",
+    }
+    secret_markers = ("API_KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
+    hidden = {
+        key
+        for key in os.environ
+        if key == "DATABASE_URL"
+        or any(marker in key.upper() for marker in secret_markers)
+    }
+    managed = set(overrides) | hidden
+    previous = {key: os.environ.get(key) for key in managed}
+    try:
+        for key in hidden:
+            os.environ.pop(key, None)
+        os.environ.update(overrides)
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def summarize(values: Sequence[float]) -> dict[str, float]:
@@ -637,19 +702,66 @@ def check_baseline_compatibility(
     return {"compatible": not reasons, "reasons": sorted(set(reasons))}
 
 
+def _require_baseline_metric_number(
+    metrics: dict[str, Any],
+    path: tuple[str, ...],
+    *,
+    strictly_positive: bool = False,
+) -> None:
+    current: Any = metrics
+    field = "metrics." + ".".join(path)
+    for key in path:
+        if not isinstance(current, dict) or key not in current:
+            raise ValueError(
+                f"invalid qualification baseline: missing numeric field {field}"
+            )
+        current = current[key]
+    if (
+        isinstance(current, bool)
+        or not isinstance(current, (int, float))
+        or (isinstance(current, float) and not math.isfinite(current))
+    ):
+        raise ValueError(
+            f"invalid qualification baseline: {field} must be a finite real number"
+        )
+    if strictly_positive:
+        if current <= 0:
+            raise ValueError(
+                f"invalid qualification baseline: {field} must be positive"
+            )
+    elif current < 0:
+        raise ValueError(
+            f"invalid qualification baseline: {field} must be non-negative"
+        )
+
+
 def _validate_baseline_document(baseline: dict[str, Any]) -> None:
     """Refuse structurally incompatible historical baselines."""
 
+    if not isinstance(baseline, dict):
+        raise ValueError("invalid qualification baseline: document must be an object")
     if baseline.get("fixture_version") != FIXTURE_VERSION:
-        raise ValueError("qualification baseline fixture version is incompatible")
+        raise ValueError(
+            "invalid qualification baseline: fixture version is incompatible"
+        )
     environment = baseline.get("environment")
     if (
         not isinstance(environment, dict)
         or environment.get("result_schema_version") != RESULT_SCHEMA_VERSION
     ):
-        raise ValueError("qualification baseline result schema is incompatible")
-    if not isinstance(baseline.get("metrics"), dict):
-        raise ValueError("qualification baseline has no metrics")
+        raise ValueError(
+            "invalid qualification baseline: result schema is incompatible"
+        )
+    metrics = baseline.get("metrics")
+    if not isinstance(metrics, dict):
+        raise ValueError("invalid qualification baseline: metrics must be an object")
+    for path in _BASELINE_NON_NEGATIVE_METRIC_PATHS:
+        _require_baseline_metric_number(metrics, path)
+    _require_baseline_metric_number(
+        metrics,
+        ("first_token", "candidate_ms", "p95"),
+        strictly_positive=True,
+    )
 
 
 def _init_console_schema(db_path: Path) -> None:
@@ -1155,6 +1267,8 @@ def evaluate_budgets(
     baseline: dict[str, Any] | None,
     mode: str,
     environment: dict[str, Any] | None = None,
+    samples: int = DEFAULT_SAMPLES,
+    warmups: int = DEFAULT_WARMUPS,
 ) -> dict[str, Any]:
     """Evaluate all six frozen budget families."""
 
@@ -1229,13 +1343,22 @@ def evaluate_budgets(
         },
         "migration": {"pass": migration_pass},
     }
+    qualification_ineligibility_reasons = []
+    if mode == "qualification" and samples < DEFAULT_SAMPLES:
+        qualification_ineligibility_reasons.append("insufficient_samples")
+    if mode == "qualification" and warmups < DEFAULT_WARMUPS:
+        qualification_ineligibility_reasons.append("insufficient_warmups")
+    qualification_eligible = not qualification_ineligibility_reasons
     environment_compatible = bool(compatibility["compatible"])
     return {
         "definitions": BUDGETS,
         "checks": checks,
+        "qualification_eligible": qualification_eligible,
+        "qualification_ineligibility_reasons": qualification_ineligibility_reasons,
         "environment_compatible": environment_compatible,
         "environment_incompatibilities": compatibility["reasons"],
         "overall_pass": environment_compatible
+        and qualification_eligible
         and all(check["pass"] for check in checks.values()),
     }
 
@@ -1301,6 +1424,8 @@ async def run_external_measurement(
         "budgets": {
             "definitions": BUDGETS,
             "checks": {},
+            "qualification_eligible": None,
+            "qualification_ineligibility_reasons": [],
             "environment_compatible": None,
             "environment_incompatibilities": [],
             "overall_pass": None,
@@ -1340,15 +1465,16 @@ async def run_benchmark(
         root.mkdir(parents=True, exist_ok=True)
 
     try:
-        with sample_group_workspace(root, "first-token") as workspace:
-            _init_console_schema(workspace.db_path)
-            first_token = await _measure_first_token(
-                workspace.db_path,
-                samples=samples,
-                warmups=warmups,
-                qualification=mode == "qualification",
-                workload=workload,
-            )
+        with isolated_benchmark_host_state(root / "host-state"):
+            with sample_group_workspace(root, "first-token") as workspace:
+                _init_console_schema(workspace.db_path)
+                first_token = await _measure_first_token(
+                    workspace.db_path,
+                    samples=samples,
+                    warmups=warmups,
+                    qualification=mode == "qualification",
+                    workload=workload,
+                )
         with sample_group_workspace(root, "finalization"):
             finalization = _measure_finalization(
                 samples=samples,
@@ -1422,6 +1548,8 @@ async def run_benchmark(
             baseline=baseline,
             mode=mode,
             environment=environment,
+            samples=samples,
+            warmups=warmups,
         ),
         "external_network": {
             "measured": False,

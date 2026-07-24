@@ -53,13 +53,22 @@ ms ceiling. Exact and one-unit-over domain values run through executable
 validators for every frozen v1 count/byte limit; the 4 MiB trace is split into
 valid 64 KiB snapshots. External resolver latency has a separate, explicit
 network mode whose result is informational and excluded from local pass/fail.
+The local runner now establishes isolated temporary config/data/home roots and
+hides inherited secrets before its first Chatbook import, then restores the
+environment. Qualification validates every evaluator-required baseline number
+before measurement and rejects missing, non-real, non-finite, zero-reference,
+or negative values with sanitized errors. Runs below 30 samples or five
+warmups remain available as quick diagnostics but are explicitly ineligible
+for a passing qualification.
 
 The updated 30-sample/5-warmup ARM64 reference run passed all six local budget
-families: first-token p95 22.112 ms, standard/maximum finalization p95
-0.036/2.217 ms, inspector cold/warm p95 0.382/0.077 ms, SQLite growth p95
-4,235,264 bytes for 4 MiB governed data, and migration median 109,293
+families: first-token p95 24.730 ms, standard/maximum finalization p95
+0.118/3.765 ms, inspector cold/warm p95 2.522/0.246 ms, SQLite growth p95
+4,235,264 bytes for 4 MiB governed data, and migration median 74,954
 messages/second with zero duplicate restart rows. Qualification runs passed
-against the regenerated baseline without modifying it.
+against the regenerated baseline: the final candidate first-token p95 was
+22.251 ms, and the baseline SHA-256 remained
+`0928c7037ba941bb5e624586c4def05075f2c7528f6d91a6ea9150194255c71f`.
 
 ADR required: yes
 
