@@ -686,3 +686,26 @@ async def test_dangling_active_profile_pointer_falls_back_to_user(
         seed = controller._load_greetings({"first_message": "Hello {{user}}."}, "Elara")
         assert seed == "Hello User."
         assert pane._user_label == "you"
+
+
+async def test_alias_tokens_substitute_character_name_without_active_profile(
+    _isolated_active_profile_config,
+):
+    """{{persona}}/{{character}} always resolve to the character's name, even
+    with no active user profile: T4's active-profile branching only ever
+    touches the user-side tokens, so the character-side aliases (task-437)
+    are unaffected (task-442 T5 alias pin)."""
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        PersonasPreviewController,
+    )
+
+    app = PreviewApp()
+    async with app.run_test():
+        controller = PersonasPreviewController(
+            _ControllerScreen(app, _ProfileService(["Sam"]))
+        )
+        seed = controller._load_greetings(
+            {"first_message": "Hello {{user}}, I am {{persona}}/{{character}}."},
+            "Elara",
+        )
+        assert seed == "Hello User, I am Elara/Elara."

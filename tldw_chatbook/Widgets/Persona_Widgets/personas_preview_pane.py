@@ -203,7 +203,9 @@ class PersonasPreviewPane(Vertical):
 
         Args:
             character: Display name for character/greeting lines (e.g. the card name).
-            user: Display name for the user's lines (unused until TASK-442).
+            user: Display name for the user's lines (e.g. the active user profile's
+                name, task-442); future lines only, already-rendered lines keep
+                their original prefix.
         """
         old_character = self._character_label
         if character:
