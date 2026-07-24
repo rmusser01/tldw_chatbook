@@ -1,11 +1,11 @@
 ---
 id: TASK-402
 title: Establish TTS adapter registry authority and legacy bridge
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 00:42'
-updated_date: '2026-07-24 08:08'
+updated_date: '2026-07-24 13:41'
 labels:
   - tts
   - architecture
@@ -28,12 +28,14 @@ Replace direct access to the wildcard TTS backend manager with one application-o
 <!-- AC:BEGIN -->
 - [x] #1 Application code owns one TTSService and one sealed TTSAdapterRegistry; the compatibility accessor returns only the bound service and can be explicitly reset.
 - [x] #2 The registry uses exact canonical provider IDs with an empty initial alias map, lazily materializes at most one adapter per provider under concurrency, and rejects duplicate or post-seal registration.
-- [x] #3 Operation leases keep adapter resources alive through complete or partial response consumption; identical configuration is a no-op, changed configuration retires only the selected provider, and shutdown is ordered, bounded, and idempotent.
+- [ ] #3 Operation leases keep adapter resources alive through complete or partial response consumption; identical configuration is a no-op, changed configuration retires only the selected provider, and shutdown is ordered, bounded, and idempotent.
 - [x] #4 OpenAI, ElevenLabs, Kokoro, Chatterbox, Higgs, and AllTalk remain available through isolated provider-scoped legacy hosts without exposing TTSBackendManager or concrete backends outside the bridge.
 - [x] #5 The enumerated legacy resolver covers every internal-model form used by current callers, and the existing generate_audio_stream signature routes through the registry and closes its response on success, failure, cancellation, and partial consumption.
 - [x] #6 Per-internal-backend legacy locks serialize construction, initialization, progress callback installation, stream consumption, and callback clearing; progress-sink failures do not fail synthesis while different providers may operate concurrently.
-- [x] #7 Focused registry, bridge, application-binding, lifecycle, concurrency, and compatibility tests pass without changing visible STTS behavior.
+- [ ] #7 Focused registry, bridge, application-binding, lifecycle, concurrency, and compatibility tests pass without changing visible STTS behavior.
 - [x] #8 New registry and bridge diagnostics log neither configuration values nor synthesis text, and regression coverage removes the existing OpenAI API-key-prefix disclosure.
+- [ ] #9 Saving provider-affecting STTS settings reloads the effective configuration and reconfigures only the affected materialized provider adapters without restarting the application.
+- [ ] #10 TTSService shutdown wakes and rejects blocked synthesis admissions, closes abandoned service-wrapped responses after the bounded drain, and leaves no synthesis waiter blocked after wait_closed completes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,9 +61,9 @@ Implemented the app-owned sealed TTSAdapterRegistry and TTSService binding with 
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [x] #1 Automated unit and compatibility tests cover all new registry, bridge, lifecycle, concurrency, cancellation, and privacy behavior.
+- [ ] #1 Automated unit and compatibility tests cover all new registry, bridge, lifecycle, concurrency, cancellation, and privacy behavior.
 - [x] #2 Focused static analysis, compilation, and diff hygiene checks pass.
 - [x] #3 The TTS module guide, accepted design, implementation plan, and ADR-023 are linked and consistent.
 - [x] #4 A self-review confirms no concrete backend or manager access remains outside the legacy bridge.
-- [x] #5 All acceptance criteria are checked and implementation notes summarize the completed change before status moves to Done.
+- [ ] #5 All acceptance criteria are checked and implementation notes summarize the completed change before status moves to Done.
 <!-- DOD:END -->

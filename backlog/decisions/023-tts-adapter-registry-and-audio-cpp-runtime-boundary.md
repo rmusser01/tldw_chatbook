@@ -98,7 +98,17 @@ policy, and a cross-module interface.
 - Response lifetime extends through async byte consumption, allowing registry
   retirement without closing in-flight resources.
 - Settings updates can replace one provider without restarting the application
-  or disturbing unrelated providers.
+  or disturbing unrelated providers. STTS settings saves reload the effective
+  configuration once after all writes succeed, map recognized
+  adapter-affecting event keys to exact provider IDs, and invoke targeted
+  reconfiguration. An unmaterialized provider receives updated lazy factory
+  input without being constructed; an unchanged effective configuration is a
+  no-op; and the compatibility accessor never consumes replacement
+  configuration.
+- Service shutdown seals admission before waiting on adapter cleanup, wakes
+  concurrency waiters, uses the registry timeout as its single drain deadline,
+  and closes every abandoned service-wrapped response after the bounded drain
+  so no synthesis task remains blocked after definitive shutdown.
 - audio.cpp reconfiguration is an exclusive handoff: new operations are blocked
   while active leases drain, the old adapter and owned child close before the
   new configuration becomes active, and the replacement remains lazy.

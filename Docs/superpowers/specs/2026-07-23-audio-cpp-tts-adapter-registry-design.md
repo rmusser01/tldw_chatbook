@@ -2,7 +2,7 @@
 
 **Status:** approved by the user on 2026-07-23; review amendments approved on 2026-07-23
 **Date:** 2026-07-23
-**Related task:** N/A — a Backlog task must be created or selected before implementation planning
+**Related task:** [TASK-402](<../../../backlog/tasks/task-402 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md>) — reopened for the approved review amendments
 **Canonical ADR:** [ADR-023](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
 **Upstream contract reviewed:** `0xShug0/audio.cpp` commit `d3d748179e5ace353386fbf17bcaedfacf482d75`
 
@@ -83,6 +83,32 @@ service. It does not construct an untracked singleton or silently retain the
 first configuration it receives. Tests and standalone utilities instantiate
 `TTSService` directly. Shutdown and test teardown explicitly clear the
 compatibility binding.
+
+After all requested STTS setting writes succeed, the handler derives candidate
+providers only from recognized adapter-affecting event keys, reloads the
+effective configuration once, and calls `reconfigure_provider()` once for each
+candidate provider:
+
+| Provider | Exact STTS event keys |
+|---|---|
+| `openai` | `openai_api_key` |
+| `elevenlabs` | `elevenlabs_api_key`, `elevenlabs_voice_stability`, `elevenlabs_similarity_boost`, `elevenlabs_style`, `elevenlabs_use_speaker_boost` |
+| `kokoro` | `kokoro_device`, `kokoro_use_onnx`, `kokoro_model_path` |
+| `higgs` | `HIGGS_MODEL_PATH`, `HIGGS_VOICE_SAMPLES_DIR`, `HIGGS_DEVICE`, `HIGGS_ENABLE_FLASH_ATTN`, `HIGGS_DTYPE`, `HIGGS_MAX_REFERENCE_DURATION`, `HIGGS_DEFAULT_LANGUAGE`, `HIGGS_ENABLE_VOICE_CLONING`, `HIGGS_ENABLE_MULTI_SPEAKER`, `HIGGS_SPEAKER_DELIMITER`, `HIGGS_TRACK_PERFORMANCE`, `HIGGS_MAX_NEW_TOKENS`, `HIGGS_TEMPERATURE`, `HIGGS_TOP_P`, `HIGGS_TOP_K` |
+
+The candidate set is based on successfully persisted recognized keys, not on a
+comparison of submitted UI values. The registry compares the normalized
+effective provider configuration with its stored configuration: equality is an
+`UNCHANGED` no-op; inequality updates the slot configuration. For an
+unmaterialized provider this updates its future lazy factory input without
+creating or retiring an adapter. For a materialized provider it retires only
+that provider's adapter.
+
+`default_provider`, `default_voice`, `default_model`, `default_format`, and
+`default_speed` are selection defaults and never add a provider to the
+candidate set. The replacement configuration uses the same legacy snapshot
+normalization as initial bootstrap, and the compatibility accessor remains
+configuration-blind.
 
 The service owns an instance-scoped, configurable concurrency semaphore. The
 initial default remains four concurrent TTS operations for compatibility with
@@ -549,16 +575,36 @@ An operation lease lasts through response consumption, not merely until
 `synthesize()` returns. Configuration invalidation therefore cannot close an
 HTTP client while a caller is reading its result.
 
-Application shutdown:
+Application shutdown uses the registry's configured shutdown timeout as its
+single drain deadline:
 
-1. Stops admitting new TTS operations.
-2. Gives Playground work and active adapter operations a bounded drain period.
-3. Cancels remaining work after the deadline.
-4. Closes retired and active adapters.
-5. Closes external HTTP clients.
-6. Terminates only owned managed children.
-7. Joins supervisor monitor and log-drain tasks.
-8. Clears the compatibility service binding.
+1. `TTSService.close()` seals service admission and wakes semaphore waiters.
+2. It immediately begins `TTSAdapterRegistry.close()`, which seals registry
+   lease admission and drains existing leases until that deadline.
+3. At the deadline the registry begins closing active and retired adapters even
+   if leases remain; there is no second drain period.
+4. When the bounded registry close returns, the service concurrently invokes
+   idempotent `aclose()` on every still-tracked service-wrapped response.
+   Response cleanup may overlap adapter cleanup after the deadline.
+5. Every response-close attempt runs even if another fails. Each wrapper
+   releases its lease and service concurrency slot in cleanup even when its
+   underlying response close raises.
+6. `TTSService.wait_closed()` joins the tracked response cleanup and the
+   registry's definitive adapter cleanup, which closes external HTTP clients,
+   terminates only owned managed children, and joins supervisor monitor and
+   log-drain tasks.
+7. Application teardown clears the compatibility service binding.
+
+A “service-wrapped response” means every `_ManagedAudioResponse` returned by
+`TTSService.synthesize()`, across native audio.cpp, legacy, and external
+providers; it does not mean only a managed-mode audio.cpp response. The service
+tracks each wrapper until its idempotent `aclose()` completes.
+
+A service-level close signal races concurrency admission. If shutdown wins,
+the semaphore acquire task is cancelled; if both finish concurrently, the
+newly acquired slot is released before the caller receives
+`TTSRegistryClosedError`. `wait_closed()` cannot complete while a synthesis
+waiter remains blocked on the service semaphore.
 
 Shutdown is idempotent and never waits indefinitely for native inference.
 
@@ -585,6 +631,11 @@ Shutdown is idempotent and never waits indefinitely for native inference.
 - Progress-sink exceptions do not fail synthesis.
 - Application binding, explicit reset, and configuration replacement without
   first-config retention.
+- Saving one provider's STTS settings retires only that materialized adapter
+  and leaves unrelated materialized adapters running.
+- An abandoned returned response plus a semaphore-blocked synthesis request
+  converges during shutdown: the response closes, the waiter fails closed, and
+  `wait_closed()` leaves no blocked synthesis admission.
 - Instance-scoped concurrency across independent event loops.
 
 ### audio.cpp contract tests
