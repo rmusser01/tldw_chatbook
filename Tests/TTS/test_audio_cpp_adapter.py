@@ -1341,6 +1341,66 @@ async def test_synthesize_rejects_every_local_request_category_before_http(
 
 
 @pytest.mark.asyncio
+async def test_separate_synthesis_failures_use_distinct_private_operation_ids() -> None:
+    sentinel_model = "OPERATION_MODEL_SENTINEL"
+    sentinel_text = "OPERATION_TEXT_SENTINEL"
+    sentinel_voice = "OPERATION_VOICE_SENTINEL"
+    remote_messages = iter(("REMOTE_OPERATION_BODY_ONE", "REMOTE_OPERATION_BODY_TWO"))
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model(sentinel_model)))
+        return _streaming_response(
+            _json_bytes(
+                {
+                    "error": {
+                        "message": next(remote_messages),
+                        "type": "server_busy",
+                    }
+                }
+            ),
+            status=503,
+        )
+
+    errors: list[TTSOperationError] = []
+    async with _adapter(respond) as adapter:
+        for _ in range(2):
+            with pytest.raises(TTSOperationError) as captured:
+                await adapter.synthesize(
+                    _speech_request(
+                        model_id=sentinel_model,
+                        text=sentinel_text,
+                        voice=sentinel_voice,
+                    )
+                )
+            errors.append(captured.value)
+
+    assert errors[0].operation_id != errors[1].operation_id
+    public_output = " ".join(
+        component
+        for error in errors
+        for component in (
+            repr(error.args),
+            str(error),
+            error.operation_id,
+            repr(_exception_graph(error)),
+        )
+    )
+    assert all(
+        value not in public_output
+        for value in (
+            sentinel_model,
+            sentinel_text,
+            sentinel_voice,
+            "REMOTE_OPERATION_BODY_ONE",
+            "REMOTE_OPERATION_BODY_TWO",
+        )
+    )
+
+
+@pytest.mark.asyncio
 async def test_oversized_text_is_rejected_before_whitespace_scanning() -> None:
     class OversizedText(str):
         def strip(self, chars: str | None = None) -> str:
@@ -1426,6 +1486,7 @@ async def test_synthesize_posts_exact_payload_and_reports_complete_progress(
 
     posts = [request for request in requests if request.url.path == "/v1/audio/speech"]
     assert len(posts) == 1
+    assert posts[0].method == "POST"
     expected_payload: dict[str, Any] = {
         "model": "model",
         "input": " Preserve exact whitespace ",
@@ -1979,9 +2040,9 @@ async def test_unexpected_speech_errors_are_generation_failures(
         ),
         (
             "no_models",
-            "not_configured",
-            "No audio.cpp TTS models are configured",
-            "configure_server",
+            "model_invalid",
+            "The requested audio.cpp model is unavailable",
+            "refresh_models",
         ),
         (
             "unavailable",
@@ -2076,6 +2137,54 @@ async def test_speech_transport_failure_stales_health_without_retry() -> None:
     )
     assert catalog.health == TRANSIENT_HEALTH
     assert posts == 1
+
+
+@pytest.mark.asyncio
+async def test_speech_body_transport_failure_closes_and_stales_without_retry() -> None:
+    transport_sentinel = "REMOTE_BODY_TRANSPORT_SENTINEL"
+    posts = 0
+    streams: list[TrackingStream] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal posts
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        posts += 1
+        stream = TrackingStream(
+            _wav()[:16],
+            httpx.ReadError(transport_sentinel, request=request),
+            b"UNREAD_REMOTE_BODY_SENTINEL",
+        )
+        streams.append(stream)
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "audio/wav"},
+            stream=stream,
+        )
+
+    async with _adapter(respond) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(_speech_request())
+        catalog = adapter._catalog
+
+    _assert_operation_error(
+        captured.value,
+        code="connection_unavailable",
+        message="The audio.cpp server is unavailable",
+        retryable=True,
+        recovery_action="retry",
+    )
+    assert catalog.health == TRANSIENT_HEALTH
+    assert catalog.revision == 1
+    assert catalog.models
+    assert posts == 1
+    assert len(streams) == 1
+    assert streams[0].read_count == 2
+    assert streams[0].close_count == 1
+    assert transport_sentinel not in repr(captured.value.args)
+    assert transport_sentinel not in repr(_exception_graph(captured.value))
 
 
 @pytest.mark.asyncio
@@ -2239,6 +2348,8 @@ async def test_synthesis_error_and_http_logs_never_retain_request_or_remote_valu
     sentinel_voice = "SYNTHESIS_VOICE_SENTINEL"
     sentinel_body = "SYNTHESIS_BODY_SENTINEL"
     sentinel_header = "SYNTHESIS_HEADER_SENTINEL"
+    sentinel_cookie = "SYNTHESIS_COOKIE_SENTINEL"
+    sentinel_reason = "SYNTHESIS_REASON_SENTINEL"
     outside_log = "OUTSIDE_SYNTHESIS_LOG_SENTINEL"
     request_active = asyncio.Event()
     release_request = asyncio.Event()
@@ -2256,18 +2367,27 @@ async def test_synthesis_error_and_http_logs_never_retain_request_or_remote_valu
             sentinel_voice,
         )
         logging.getLogger("httpcore.http11").debug(
-            "receive_response_headers.complete headers=%r",
-            ((b"x-private", sentinel_header.encode()),),
+            "receive_response_headers.complete headers=%r reason=%s",
+            (
+                (b"x-private", sentinel_header.encode()),
+                (b"set-cookie", sentinel_cookie.encode()),
+            ),
+            sentinel_reason,
         )
         request_active.set()
         await release_request.wait()
-        return _streaming_response(
-            (
+        return httpx.Response(
+            503,
+            headers={
+                "Set-Cookie": f"remote={sentinel_cookie}; Path=/",
+                "X-Private": sentinel_header,
+            },
+            extensions={"reason_phrase": sentinel_reason.encode("ascii")},
+            stream=TrackingStream(
                 b'{"error":{"message":"'
                 + sentinel_body.encode()
                 + b'","type":"server_error"}}'
             ),
-            status=503,
         )
 
     caplog.set_level(logging.DEBUG)
@@ -2286,6 +2406,7 @@ async def test_synthesis_error_and_http_logs_never_retain_request_or_remote_valu
         release_request.set()
         with pytest.raises(TTSOperationError) as captured:
             await generation
+        assert len(adapter._client.cookies) == 0
 
     _assert_operation_error(
         captured.value,
@@ -2311,6 +2432,8 @@ async def test_synthesis_error_and_http_logs_never_retain_request_or_remote_valu
             sentinel_voice,
             sentinel_body,
             sentinel_header,
+            sentinel_cookie,
+            sentinel_reason,
         )
     )
     assert outside_log in caplog.text

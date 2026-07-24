@@ -421,7 +421,9 @@ class AudioCppAdapter:
             elif outcome.kind == "refresh_models":
                 await self._refresh_catalog(force=True)
                 failure = self._readiness_failure()
-                if failure is None:
+                if failure is _NOT_CONFIGURED:
+                    failure = _MODEL_INVALID
+                elif failure is None:
                     failure = (
                         _GENERATION_FAILED
                         if self._catalog_contains(
