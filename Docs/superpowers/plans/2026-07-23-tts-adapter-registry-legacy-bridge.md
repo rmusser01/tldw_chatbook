@@ -2596,6 +2596,24 @@ git commit -m "docs(tts): publish adapter service boundary"
 - Consumes: all TASK-402 production and test changes.
 - Produces: verified task notes, checked acceptance criteria, and Done status.
 
+- [ ] **Step 0: Close final-review lifecycle and privacy regressions**
+
+Before repeating closeout verification, add failing tests and fixes proving:
+
+- cancelling `TTSAdapterLease.release()` while its registry callback is blocked
+  retains one definitive release task, permits later callers to join it, and
+  does not strand a retired adapter lease;
+- application shutdown first allows the legacy host's configured drain
+  interval, then cancels and joins any still-active legacy operation before
+  closing its manager, so `TTSService.wait_closed()` has a terminal bound even
+  when a stream consumer never drains normally; reconfiguration continues to
+  preserve in-flight operations;
+- saving STTS credentials logs only setting names and destinations, never the
+  submitted values, prefixes, suffixes, lengths, or hashes.
+
+Run the focused regression tests for each change before the full suites below,
+and obtain fresh correctness and quality review after they pass.
+
 - [ ] **Step 1: Run focused registry and bridge suites**
 
 Run:
