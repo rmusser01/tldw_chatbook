@@ -1,5 +1,5 @@
 ---
-id: TASK-547
+id: TASK-550
 title: 'Console /rewind: clear the stale persisted summary when its boundary is permanently gone'
 status: To Do
 assignee: []

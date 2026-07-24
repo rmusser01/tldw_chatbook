@@ -1,5 +1,5 @@
 ---
-id: TASK-545
+id: TASK-548
 title: >-
   Console /rewind: inspector next-send preview should reflect boundary
   compaction

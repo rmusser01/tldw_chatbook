@@ -1,5 +1,5 @@
 ---
-id: TASK-546
+id: TASK-549
 title: 'Console /rewind: guard the modal callback against a changed active session'
 status: To Do
 assignee: []
