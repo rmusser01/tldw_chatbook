@@ -2,6 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-24
+Amended: 2026-07-24
 Related Tasks:
 [TASK-496](../tasks/task-496%20-%20Enforce-evaluation-execution-and-run-state-contracts.md),
 [TASK-497](../tasks/task-497%20-%20Enforce-ToolExecutor-concurrency-and-cancellation-contracts.md)
@@ -43,6 +44,8 @@ call used. Five test tools reached five simultaneous executions when configured
 for two workers. `asyncio.CancelledError` bypassed its ordinary exception
 handlers and left the history record at `started`; batch gathering could also
 turn a child cancellation into a returned object instead of propagating it.
+The adjacent synchronous MCP tool bridge also leaked an unsubmitted coroutine
+when `run_coroutine_threadsafe()` rejected a closed target loop.
 
 These are runtime and cross-module service contracts. They need one explicit
 decision before the larger application-state decomposition changes ownership
@@ -82,16 +85,29 @@ native-async provider redesign and must not be inferred from this contract.
 
 Evaluation sample tasks acquire one semaphore. Results are written into slots
 by input index and returned in dataset order. Progress callbacks run centrally
-once per settled sample, in completion order, so callback or persistence
+once per durably stored sample, in completion order, so callback or persistence
 failures fail the run instead of being converted into duplicate sample errors.
-When the caller cancels or the central callback fails, outstanding sample tasks
+The public progress contract is
+`(completed, total, result)` and accepts either a synchronous callback or one
+returning an awaitable; an awaitable is always awaited. A separate
+`run_started_callback(run_id)` uses the same sync-or-awaitable rule and exposes
+the durable run identity after active-task registration but before sample work.
+Callbacks run on the owning event loop; application UI adapters use same-loop
+updates rather than thread-only marshalling.
+When the caller cancels or a central callback fails, outstanding sample tasks
 are cancelled and drained.
 
 An orchestrated run is `completed` only when all returned samples are
 error-free and every result was stored. Sample errors and storage mismatches
 produce `failed` with a count-based summary while retaining results and
 aggregate metrics. Caller cancellation attempts to persist `cancelled` without
-masking the original cancellation and always unregisters the run.
+masking the original cancellation and always unregisters the run. The public
+`cancel_evaluation(run_id)` operation targets the registered owning task,
+cancels and drains it, and returns only after normal cancellation cleanup. It
+does not remove the task or write terminal state independently of the owning
+run. Asynchronous orchestrator shutdown uses the same cancel-and-drain path
+before closing the database; synchronous close refuses to close while a run is
+active.
 
 Each `ToolExecutor` uses one positive `max_workers` semaphore around actual
 tool execution. Queue time is not part of `timeout_seconds`; timeout begins
@@ -100,11 +116,18 @@ execution capacity. The executor is owned by one application event-loop
 runtime, matching its current global use. Supporting one executor concurrently
 across multiple event loops remains out of scope.
 
-Ordinary tool exceptions and timeouts remain per-call error results. A
-cancelled call records `cancelled` with an end time and re-raises. Batch
-execution relies on the leaf call to contain ordinary failures, uses normal
-ordered gathering, and lets cancellation propagate. Reloading replaces the
-global executor without a retired thread-pool shutdown lifecycle.
+Ordinary tool exceptions and timeouts remain per-call error results. Each
+started call appends one payload-free terminal history record; a cancelled call
+records `cancelled` and re-raises. Batch execution relies on the leaf call to
+contain ordinary failures and preserves request order, but it explicitly owns
+the created child tasks. On parent cancellation or an unexpected child
+control-flow failure, it cancels every unfinished sibling, drains every child
+with `return_exceptions=True`, and then propagates the original exception.
+Cross-thread MCP submission keeps ownership of the coroutine until
+`run_coroutine_threadsafe()` succeeds and closes it if submission rejects
+before returning a future.
+Reloading replaces the global executor without a retired thread-pool shutdown
+lifecycle.
 
 ## Links
 

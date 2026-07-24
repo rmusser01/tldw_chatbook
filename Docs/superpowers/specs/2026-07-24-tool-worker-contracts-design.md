@@ -1,7 +1,7 @@
 # Tool Worker Contracts Design
 
 Date: 2026-07-24
-Status: Design approved; written specification review pending
+Status: Corrected and re-reviewed; implementation plan written
 ADR:
 [ADR-024](../../../backlog/decisions/024-bounded-evaluation-and-tool-worker-execution.md)
 Backlog:
@@ -11,10 +11,11 @@ Backlog:
 
 Make `ToolExecutor.max_workers` a real async concurrency limit and remove the
 unused thread pool. Tool timeouts remain contained error results. Cancellation
-becomes explicit control flow: every cancelled call receives a terminal history
-record and re-raises, and batch execution no longer swallows child
-cancellation. Existing async tool, cache, result-order, and ordinary
-error-isolation contracts remain intact.
+becomes explicit control flow: every begun call cancelled while queued or
+executing receives a terminal history record and re-raises, and batch execution
+no longer swallows child cancellation or abandons siblings. Existing async
+tool, cache, result-order, and ordinary error-isolation contracts remain
+intact.
 
 ## Verified Problems
 
@@ -27,6 +28,14 @@ error-isolation contracts remain intact.
 - `asyncio.gather(..., return_exceptions=True)` is redundant for ordinary tool
   errors, which leaf execution already converts to result dictionaries, and
   can treat child cancellation as batch data instead of control flow.
+- Plain `asyncio.gather()` would propagate a child cancellation but would not,
+  by itself, guarantee that every unfinished sibling is cancelled and drained.
+  The batch must explicitly own and clean up its child tasks.
+- `MCPToolProvider._execute()` constructs the control-plane coroutine inline as
+  an argument to `asyncio.run_coroutine_threadsafe()`. When the target loop is
+  already closed, submission raises before ownership transfers and the
+  coroutine is never closed. The existing closed-loop regression passes while
+  emitting `RuntimeWarning: coroutine ... was never awaited`.
 - `reload_tool_executor()` shuts down the unused pool, coupling reload to
   infrastructure that never executed tools.
 
@@ -38,6 +47,10 @@ error-isolation contracts remain intact.
 - Preserve per-call timeout and ordinary error results.
 - Record cancellation regardless of whether a call is queued or executing.
 - Propagate cancellation through single and batch APIs.
+- Cancel and drain every unfinished batch sibling on cancellation or unexpected
+  child control flow.
+- Close a cross-thread MCP execution coroutine when loop submission rejects it
+  before ownership transfers.
 - Preserve batch result order and cache behavior.
 - Remove dead pool construction, shutdown, and destructor code.
 
@@ -66,12 +79,12 @@ the existing async `Tool.execute()` abstraction.
 Validation and cache lookup keep their current behavior. Only an uncached,
 valid call enters the execution limiter.
 
-1. append the existing `started` history record;
+1. establish the call's start time and metadata;
 2. validate the tool and arguments;
 3. return a valid cached result without acquiring execution capacity;
 4. wait for the semaphore;
 5. once admitted, apply `timeout_seconds` to `tool.execute()`;
-6. record exactly one terminal status.
+6. append exactly one payload-free terminal history record.
 
 The timeout covers tool execution, not time waiting for capacity. A queued call
 can therefore wait longer than `timeout_seconds`; this avoids timing out work
@@ -82,28 +95,58 @@ Terminal history statuses are:
 - `success` for a completed execution;
 - `cached` for a cache hit;
 - `timeout` for `asyncio.TimeoutError`;
-- `error` for validation, parsing, or ordinary execution failure;
+- `parse_error` for invalid serialized arguments;
+- `error` for validation or ordinary execution failure;
 - `cancelled` for `asyncio.CancelledError`.
 
-Cancellation handling surrounds every awaited stage after the history record,
-including cache lock waits, limiter waits, and tool execution. It records
-`cancelled` and `end_time`, then re-raises. It does not return a normal error
-dictionary. The semaphore context releases capacity during cancellation.
+TASK-492 replaced the old mutable `started` record with one bounded,
+metadata-only terminal record per call. This task preserves that privacy and
+history contract; it does not reintroduce raw arguments/results or an
+indefinitely `started` record.
+
+Cancellation handling surrounds every awaited stage after call metadata is
+established, including cache lock waits, limiter waits, tool execution, and
+cache writes. A call whose coroutine has begun records `cancelled` and duration,
+then re-raises. It does not return a normal error dictionary. The semaphore
+context releases capacity during cancellation.
 
 ## Batch and Reload Contracts
 
-`execute_tool_calls()` creates the same ordered list of leaf coroutines and
-uses normal `asyncio.gather()` without `return_exceptions=True`.
+`execute_tool_calls()` creates an ordered list of explicit
+`asyncio.Task` objects and awaits them with normal `asyncio.gather()`.
 `execute_tool_call()` already converts ordinary failures into dictionaries, so
 successful and failed results remain isolated and returned in request order.
-Cancellation or another unexpected control-flow exception propagates from the
-batch.
+
+The batch owns every child it creates. In `finally`, it cancels each unfinished
+child and drains the complete child set with
+`asyncio.gather(..., return_exceptions=True)`. Therefore parent cancellation, a
+child `CancelledError`, or another unexpected child control-flow exception
+cannot leave siblings running or produce "Task exception was never retrieved"
+warnings. After cleanup, the original cancellation or unexpected exception
+propagates. The cleanup gather is only for draining; its collected values are
+never returned as tool results.
 
 `reload_tool_executor()` discards the global executor reference and constructs
 the configured replacement. It has no shutdown call or destructor because
 there is no owned thread pool. The caller remains responsible for not reloading
 while calls on the retired executor are still active, matching current
 behavior.
+
+## Cross-thread Submission Ownership
+
+`MCPToolProvider._execute()` remains synchronous and bounded. It creates the
+`execute_hub_tool()` coroutine into a named local before submission. Ownership
+transfers to the main event loop only when
+`asyncio.run_coroutine_threadsafe()` returns a future. If submission raises
+before that point, `_execute()` closes the still-local coroutine before
+returning its contained error result.
+
+Once a future exists, the bridge retains its existing best-effort
+`future.cancel()` behavior on outer timeout or bridge failure; the event loop
+then owns coroutine cancellation and result retrieval. The provider must not
+close a successfully submitted coroutine from the worker thread. The
+closed-loop regression runs with the unawaited-coroutine warning promoted to an
+error.
 
 ## Verification
 
@@ -114,11 +157,37 @@ Focused regression coverage will include:
 - queued calls beginning after capacity is released;
 - request-ordered results despite out-of-order completion;
 - ordinary failure isolation;
+- unexpected child failure cancels and drains unfinished siblings;
 - timeout history and subsequent-capacity release;
 - cancellation while queued and while executing, with terminal history and
   propagated `CancelledError`;
+- parent batch cancellation records cancellation for begun children, drains the
+  complete batch, and leaves no live child tasks or un-retrieved exceptions;
 - cache hits not consuming execution capacity;
+- terminal history remains bounded, payload-free, and one-record-per-started
+  call;
+- closed-loop MCP submission closes the unsubmitted coroutine and passes with
+  unawaited-coroutine warnings treated as errors;
 - global reload without an executor shutdown attribute.
 
 Focused tool tests, relevant chat/worker integration tests, Ruff, Python
 compilation, and repository diff checks gate completion.
+
+## Re-review Record
+
+The corrected contract was checked against `tool_executor.py`, the TASK-492
+history/privacy regressions, and the existing tool and agent-call sites. The
+second pass resolved:
+
+- the unused thread pool being mistaken for a concurrency boundary;
+- the obsolete mutable `started` history shape, which conflicts with
+  TASK-492's bounded terminal-only metadata history;
+- cancellation gaps around cache, limiter, execution, and cache-write awaits;
+- `return_exceptions=True` treating cancellation as result data;
+- plain `gather()` propagating without guaranteeing sibling cancellation and
+  drain; and
+- the MCP worker bridge leaking a coroutine when cross-thread submission fails
+  before ownership transfer.
+
+The implementation needs one semaphore and explicit task cleanup; it does not
+need another executor, scheduler, queue, or shutdown abstraction.
