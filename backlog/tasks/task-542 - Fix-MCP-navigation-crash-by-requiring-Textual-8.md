@@ -1,5 +1,5 @@
 ---
-id: TASK-503
+id: TASK-542
 title: Fix MCP navigation crash by requiring Textual 8
 status: Done
 assignee: []
@@ -50,7 +50,7 @@ Implemented the dependency-boundary repair without changing MCP runtime code. Th
 
 Verification: observed the dependency tests RED first (3 expected failures against the old declarations); after rebasing onto the latest `dev`, the normal-runtime suite passed 214 tests with 9 pre-existing MCPWorkbench._clear_tool_view coroutine warnings and the exact Textual 8.0.0 replay passed 209 tests with the same 9 warnings; workflow YAML parsed and all workflow contract tests passed; wheel build succeeded with Requires-Dist: textual<9,>=8.0.0; compileall and git diff --check passed. Independent code review found no Critical issues and no production-code defects; its documentation and test-hardening findings were applied.
 
-PR rebase note: renumbered from TASK-400 to TASK-503 after rebasing onto `dev`, where TASK-400 already identifies the Console staged-sources relocation.
+PR rebase note: renumbered from TASK-400 to TASK-503 after rebasing onto `dev`, then to TASK-542 (503 collided with the RAG SP3 task, which was created earlier and has a dependent).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
