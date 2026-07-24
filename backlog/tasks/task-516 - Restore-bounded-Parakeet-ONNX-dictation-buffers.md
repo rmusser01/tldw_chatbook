@@ -1,5 +1,5 @@
 ---
-id: TASK-415
+id: TASK-516
 title: Restore bounded Parakeet ONNX dictation buffers
 status: To Do
 assignee: []
@@ -9,7 +9,7 @@ labels:
   - dictation
   - onnx
 dependencies:
-  - TASK-414
+  - TASK-515
 references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
 documentation:

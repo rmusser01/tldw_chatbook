@@ -1,5 +1,5 @@
 ---
-id: TASK-413
+id: TASK-514
 title: Add generation-fenced local STT executor
 status: To Do
 assignee: []
@@ -9,9 +9,9 @@ labels:
   - processes
   - ingestion
 dependencies:
-  - TASK-404
-  - TASK-406
-  - TASK-411
+  - TASK-505
+  - TASK-507
+  - TASK-512
 references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
 documentation:

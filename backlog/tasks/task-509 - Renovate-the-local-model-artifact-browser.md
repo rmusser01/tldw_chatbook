@@ -1,5 +1,5 @@
 ---
-id: TASK-408
+id: TASK-509
 title: Renovate the local model artifact browser
 status: To Do
 assignee: []
@@ -9,7 +9,7 @@ labels:
   - artifacts
   - ui
 dependencies:
-  - TASK-407
+  - TASK-508
 references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
 documentation:

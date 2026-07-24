@@ -10,7 +10,7 @@ shared/exclusive API behind Chatbook-owned typed leases. Lock filenames are
 SHA-256 derivations of validated opaque artifact identities, acquisition is
 non-blocking with monotonic timeout/cancellation polling, and multi-artifact
 sets acquire in canonical order with reverse rollback. Spawned native process
-tests are the gate: failure on Windows, macOS, or Linux blocks TASK-406 and
+tests are the gate: failure on Windows, macOS, or Linux blocks TASK-507 and
 requires an ADR-025 amendment instead of a platform-specific fallback.
 
 **Tech Stack:** Python 3.11+, `portalocker==3.2.0`, standard-library
@@ -18,7 +18,7 @@ dataclasses/enums/hashlib/multiprocessing/pathlib/time, pytest, GitHub Actions.
 
 ## Global Constraints
 
-- Implement only TASK-404. Do not add artifact descriptors, downloads,
+- Implement only TASK-505. Do not add artifact descriptors, downloads,
   activation records, model browsers, STT providers, or inference workers.
 - The selected dependency is exactly `portalocker==3.2.0`, distributed as a
   `py3-none-any` wheel under BSD-3-Clause.
@@ -32,7 +32,7 @@ dataclasses/enums/hashlib/multiprocessing/pathlib/time, pytest, GitHub Actions.
 - Lease sets sort by `(artifact_id, revision, variant)`, acquire in that order,
   and release in reverse order after success or partial failure.
 - Locks are advisory on POSIX. Every Chatbook artifact reader/writer must use
-  this API; network-filesystem guarantees are outside TASK-404.
+  this API; network-filesystem guarantees are outside TASK-505.
 - Native Windows, macOS, and Linux tests are mandatory. A local pass on only one
   platform is insufficient to mark the task Done.
 - ADR required: yes
@@ -77,7 +77,7 @@ dataclasses/enums/hashlib/multiprocessing/pathlib/time, pytest, GitHub Actions.
 
 - `backlog/docs/model-artifact-operation-leases.md` — selected primitive,
   supported semantics, evidence commands, limitations, dependency/license, and
-  TASK-406 gate.
+  TASK-507 gate.
 
 ---
 
@@ -858,7 +858,7 @@ git commit -m "test: prove artifact lease process semantics"
 - Consumes: GitHub-hosted `ubuntu-latest`, `macos-latest`, and
   `windows-latest` runners with Python 3.11.
 - Produces: one focused required job that installs the authoritative package
-  metadata and executes only TASK-404 lease proofs.
+  metadata and executes only TASK-505 lease proofs.
 
 - [ ] **Step 1: Add a failing workflow-shape regression**
 
@@ -953,13 +953,13 @@ git commit -m "ci: gate model artifact lease semantics"
 
 - Create: `backlog/docs/model-artifact-operation-leases.md`
 - Modify:
-  `backlog/tasks/task-404 - Prove-cross-platform-model-artifact-operation-leases.md`
+  `backlog/tasks/task-505 - Prove-cross-platform-model-artifact-operation-leases.md`
 
 **Interfaces:**
 
 - Consumes: the committed local tests and successful native CI matrix.
 - Produces: durable primitive documentation and a completed prerequisite that
-  unblocks TASK-406.
+  unblocks TASK-507.
 
 - [ ] **Step 1: Write the selected-primitive documentation**
 
@@ -1002,7 +1002,7 @@ The suite proves:
 4. forced process termination releases the complete lease set; and
 5. partial set acquisition rolls back already acquired leases.
 
-TASK-406 remains blocked unless every native job passes for the same commit.
+TASK-507 remains blocked unless every native job passes for the same commit.
 
 ## Scope and limitations
 
@@ -1043,7 +1043,7 @@ gh pr checks --watch
 ```
 
 Expected: the `artifact-lease-spike` matrix passes on Ubuntu, macOS, and
-Windows. If any matrix entry fails, leave TASK-404 In Progress, keep TASK-406
+Windows. If any matrix entry fails, leave TASK-505 In Progress, keep TASK-507
 blocked, record the failure in the task notes, and amend ADR-025 before trying a
 different primitive.
 
@@ -1052,26 +1052,26 @@ different primitive.
 Run:
 
 ```bash
-backlog task edit 404 \
+backlog task edit 505 \
   --check-ac 1 --check-ac 2 --check-ac 3 \
   --check-ac 4 --check-ac 5 --check-ac 6 \
-  --notes "Implemented the portalocker 3.2.0-backed shared/exclusive lease API, canonical multi-artifact lease sets, timeout and cancellation behavior, partial-acquisition rollback, and native spawn-process proofs. The Ubuntu, macOS, and Windows artifact-lease-spike jobs passed for the same commit. ADR-025 remains the governing decision; TASK-406 may now start." \
+  --notes "Implemented the portalocker 3.2.0-backed shared/exclusive lease API, canonical multi-artifact lease sets, timeout and cancellation behavior, partial-acquisition rollback, and native spawn-process proofs. The Ubuntu, macOS, and Windows artifact-lease-spike jobs passed for the same commit. ADR-025 remains the governing decision; TASK-507 may now start." \
   -s Done
 ```
 
-Expected: TASK-404 is `Done`, all six acceptance criteria are checked, and
+Expected: TASK-505 is `Done`, all six acceptance criteria are checked, and
 Implementation Notes describe the chosen primitive and native evidence.
 
 - [ ] **Step 5: Commit documentation and completed task state**
 
 ```bash
 git add backlog/docs/model-artifact-operation-leases.md \
-  "backlog/tasks/task-404 - Prove-cross-platform-model-artifact-operation-leases.md"
+  "backlog/tasks/task-505 - Prove-cross-platform-model-artifact-operation-leases.md"
 git commit -m "docs: record model artifact lease proof"
 ```
 
 ## Execution stop condition
 
-Do not start TASK-406 in the same implementation run merely because local
-tests pass. TASK-404 completes only after the three native operating-system
-jobs pass for one commit; TASK-406 receives a separate plan and review gate.
+Do not start TASK-507 in the same implementation run merely because local
+tests pass. TASK-505 completes only after the three native operating-system
+jobs pass for one commit; TASK-507 receives a separate plan and review gate.

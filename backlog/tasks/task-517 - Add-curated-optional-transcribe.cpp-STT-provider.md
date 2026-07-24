@@ -1,5 +1,5 @@
 ---
-id: TASK-416
+id: TASK-517
 title: Add curated optional transcribe.cpp STT provider
 status: To Do
 assignee: []
@@ -9,10 +9,10 @@ labels:
   - gguf
   - native
 dependencies:
-  - TASK-407
-  - TASK-411
-  - TASK-412
-  - TASK-413
+  - TASK-508
+  - TASK-512
+  - TASK-513
+  - TASK-514
 references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
 documentation:

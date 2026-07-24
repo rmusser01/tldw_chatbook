@@ -1,5 +1,5 @@
 ---
-id: TASK-407
+id: TASK-508
 title: Add verified managed model downloads and recovery
 status: To Do
 assignee: []
@@ -9,7 +9,7 @@ labels:
   - artifacts
   - downloads
 dependencies:
-  - TASK-406
+  - TASK-507
 references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
 documentation:
