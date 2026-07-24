@@ -45,7 +45,7 @@ Summary: Aligned the Textual highlight-selector QA contract with the intentional
 
 Approach and base comparison:
 - The focused test failed identically on merge base ba6b45cdf4dd548796e072f5933cdcf44c8c0344 and the feature branch because the generated bundle no longer contains #embeddings-model-list ModelListItem.-highlight or #embeddings-collection-list CollectionListItem.-highlight.
-- Commit 551193f86 removed the unreachable legacy SearchWindow/Embeddings UI stack, including tldw_chatbook/Widgets/embeddings_list_items.py and tldw_chatbook/css/features/_embeddings.tcss, then rebuilt the generated bundle.
+- Commit 551193f86 removed the unreachable legacy SearchWindow/Embeddings UI and widgets, removed their rules from the still-existing tldw_chatbook/css/features/_embeddings.tcss source file, and then rebuilt the generated bundle.
 - Current production search found no ModelListItem or CollectionListItem definitions or uses.
 - Removed exactly those two retired expectations. The live ListView, chatbooks, and config-search selectors remain required, and source/generated scans still reject .--highlight.
 
