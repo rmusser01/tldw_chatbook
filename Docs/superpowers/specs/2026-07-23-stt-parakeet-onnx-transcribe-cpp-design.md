@@ -207,7 +207,10 @@ Capability metadata distinguishes at least:
 - Cancellation granularity.
 - Punctuation and capitalization.
 - Execution providers and precision variants.
-- Language-input mode: explicit hint, automatic detection, or automatic only.
+- Language-input mode: enforced explicit hint, routing-only caller assertion,
+  automatic detection, or automatic only.
+- Whether a requested language is enforced by the decoder or used only to
+  select a compatible model.
 
 ### Initial providers
 
@@ -218,6 +221,10 @@ and v3 ONNX bundles.
 
 - v2 is the English default.
 - v3 is used for explicit validated non-English languages.
+- The pinned v3 TDT adapter does not accept or enforce a language hint. Its
+  catalog entry therefore declares `language_routing=asserted_by_caller` and
+  `language_constraint=false`: the requested language selects v3, after which
+  v3 performs its own internal language selection.
 - INT8 is the default artifact.
 - F32 is optional and never downloaded as a side effect of selecting INT8.
 - Long input uses the runtime's VAD/long-form path.
@@ -225,7 +232,10 @@ and v3 ONNX bundles.
   dependency. Provider initialization uses managed local directories and
   remains offline; it never lets `onnx-asr` acquire a missing model implicitly.
 - Buffer input remains available for dictation compatibility.
-- Cancellation is cooperative between VAD/chunk boundaries.
+- Long-form cancellation is checked before every VAD segment batch. The
+  initial adapter sets the upstream VAD ASR batch size to one so cancellation
+  is never delayed by a queued multi-segment inference batch; later batching
+  changes require new cancellation-latency and throughput evidence.
 - Translation is unsupported.
 - The provider does not fabricate a detected language field.
 
@@ -276,7 +286,7 @@ The following table applies when the caller selects semantic
 | --- | --- |
 | Language omitted or unset | Resolve to `en`, then Parakeet v2 |
 | Explicit `en` | Parakeet v2 |
-| Explicit validated Parakeet v3 non-English language | Parakeet v3 |
+| Explicit validated Parakeet v3 non-English language | Select Parakeet v3; the decoder does not force the requested language |
 | `auto` | faster-whisper |
 | Explicit language outside the validated v3 set | faster-whisper |
 | Translation request | faster-whisper |
@@ -306,14 +316,23 @@ must pass capability checks:
 Normalized results keep separate fields:
 
 - `requested_language`: the value the caller supplied, including `auto`.
-- `effective_language`: the language constraint passed to the provider, or the
-  provider's resolved value when trustworthy.
+- `effective_language`: the language constraint actually enforced by the
+  provider, or the provider's resolved value when trustworthy.
 - `detected_language`: nullable provider-reported detection.
 
-Explicit Parakeet requests do not claim detection. `auto` requests may populate
-detected language from faster-whisper. If a future `onnx-asr` release exposes a
-reliable detected-language identity, adopting it requires a reviewed catalog
-and contract update; it does not silently change routing.
+For v2, an explicit or defaulted English request records
+`requested_language=en` and `effective_language=en`. For v3, an explicit
+request such as Spanish records `requested_language=es`,
+`effective_language=auto`, and `detected_language=null`, plus the stable
+`requested_language_not_enforced` warning. The request selected a model
+validated for Spanish, but the pinned decoder did not receive or enforce a
+Spanish constraint. UI copy says **Use Parakeet v3 for Spanish**, never
+**Force Spanish**.
+
+`auto` requests may populate detected language from faster-whisper. If a future
+`onnx-asr` release exposes a reliable detected-language identity or accepts an
+enforced hint, adopting it requires a reviewed catalog and contract update; it
+does not silently change routing or provenance semantics.
 
 ### Visible resolution
 
@@ -338,7 +357,8 @@ A normalized result carries:
 
 - Text and normalized segments.
 - Requested, effective, and detected language fields.
-- Provider, model, artifact revision, precision, and effective device.
+- Provider, model, root artifact revision, exact loaded dependency revisions,
+  precision, and effective device.
 - Timestamp granularity actually produced.
 - Duration and provider-neutral timing metrics.
 - Warnings that do not invalidate the transcript.
@@ -355,12 +375,12 @@ an in-memory result. The media database receives a versioned
 `transcription_provenance` document containing at least:
 
 - Schema version and transcription-attempt identity.
-- Provider, model, immutable artifact revision, precision, and effective
-  execution provider.
+- Provider, model, immutable root artifact revision, exact loaded artifact
+  dependencies, precision, and effective execution provider.
 - Requested, effective, and detected language.
 - Requested task and capabilities actually produced.
-- Retry relationship to the failed request when the transcript came from an
-  explicit retry.
+- Retry relationship and a bounded failed-attempt snapshot when the transcript
+  came from an explicit retry.
 
 The database migration adds nullable
 `Media.transcription_provenance_json TEXT` while continuing to populate
@@ -372,11 +392,20 @@ synthesize missing provenance. The legacy `Transcripts.whisper_model` field is
 not repurposed to hold structured provenance.
 
 Failed attempts remain job history rather than transcript records. A successful
-retry stores its `retry_of` job identity and effective faster-whisper
-provenance; it never overwrites the failed attempt's job history. The Library
-ingest-job persistence contract adds `retry_of_job_id` plus structured STT
-failure provenance because a retry count alone cannot reconstruct the attempt
-lineage.
+retry stores a generic `retry_of_attempt_id`, its effective faster-whisper
+provenance, and `retry_of_job_id` when the caller has a durable Library job. It
+never overwrites the failed attempt's job history.
+
+Because bounded job-history retention may later prune the failed job,
+`retry_of_job_id` is a best-effort navigation link rather than the canonical
+provenance record. The successful transcript embeds a versioned, bounded
+`failed_attempt` snapshot containing nullable attempt/job identity, provider,
+model, root and dependency artifact revisions, precision,
+requested/effective device, requested/effective language, task, and stable
+error code. It excludes raw exception text, local paths, audio, and unbounded
+logs. The Library ingest-job contract still stores structured failure
+provenance, but transcript lineage remains interpretable after job pruning and
+for non-Library callers.
 
 ## Audio preparation
 
@@ -421,13 +450,23 @@ separate spawn-context pool with exactly one heavy worker.
 
 The heavy worker retains at most one STT model identity:
 
-`(provider, model, artifact revision, precision, execution provider)`
+`(provider, model, root artifact revision, dependency-closure fingerprint, precision, execution provider)`
 
 Adjacent requests with the same identity reuse the loaded model. Before a
 different identity is dispatched, the controller terminates and recreates the
 heavy worker rather than trusting native allocators to release all memory
 in-process. The worker is also recycled after a native crash, force stop, and a
 configurable bounded number of completed jobs.
+
+The heavy worker, not the parent coordinator, owns the operation leases for the
+resident artifact and every loaded artifact in its dependency closure, including
+the VAD model. It acquires the lease set in stable artifact-ID order before
+loading the model and holds it across all same-identity requests for the full
+resident-model lifetime. The leases are released only when `close()` completes
+or the worker exits. Therefore an idle but resident model still blocks deletion
+of the root or a loaded dependency. Process exit releases the OS-backed leases
+after a crash or forced recycle; the parent never retains duplicate leases that
+could leak after worker death.
 
 This policy avoids per-file model loads and prevents a shared N-worker pool from
 eventually holding N copies of a multi-gigabyte model.
@@ -468,7 +507,7 @@ A worker exit during audio preparation is not blamed on the model.
 
 The unhealthy circuit key is:
 
-`(provider, model, artifact revision, precision, device)`
+`(provider, model, root artifact revision, dependency-closure fingerprint, precision, device)`
 
 One relevant native crash pauses matching queued work for the session to avoid
 a crash loop. Explicit retry clears the circuit once. A second crash pauses it
@@ -501,6 +540,22 @@ cooperative cancellation does not return after a grace period, the UI offers
 **Force stop**. Force stop terminates only the heavy pool, marks the active
 request cancelled, discards the resident model, and recreates the worker before
 the next job.
+
+Every heavy request, progress event, result, and error envelope carries the
+attempt/job identity and executor generation. Force stop first detaches the
+current generation from the writer path, then terminates and asynchronously
+joins that generation before creating the replacement. Callbacks from a
+detached generation are discarded, so an old success cannot reach the
+single-writer stage after cancellation. Each active attempt reaches exactly one
+terminal state.
+
+Audio preparation subprocesses such as FFmpeg are started under a
+platform-appropriate child-process group/tree owned by the heavy worker.
+Cooperative cancellation terminates that tree before cleaning its temporary
+directory. Forced worker teardown also terminates descendants—using a
+process-group/session boundary on POSIX and the equivalent job/process-group
+ownership on Windows—so killing the Python worker cannot leave a decoder
+running against deleted temporary files.
 
 ## Shared model artifact core
 
@@ -574,6 +629,19 @@ record; it never replaces a populated directory in place. The previous version
 remains available until no operation lease references it and the user or
 retention policy removes it.
 
+For an artifact with dependencies, the root active/readiness record names the
+exact dependency revisions and is written last, only after every immutable
+dependency version is installed and verified. This record is the atomic
+loadability boundary; the design does not claim a multi-directory filesystem
+transaction. Crash recovery recomputes root readiness from manifests and never
+exposes a partially activated dependency closure.
+
+The canonical ordered set of root/dependency artifact IDs, revisions, and
+variants produces a dependency-closure fingerprint. That fingerprint is part
+of resident-model identity; changing a VAD or other loaded dependency therefore
+recycles the worker. Result provenance records the individual dependency
+identities rather than only the fingerprint.
+
 The first version does not deduplicate identical file content across artifacts.
 
 ### Managed download
@@ -591,10 +659,11 @@ Download flow:
 6. Download into per-artifact staging directories with resume support.
 7. Verify every file's final byte size and SHA-256.
 8. Write and fsync each installed manifest.
-9. Atomically promote the versions and active-version records.
-10. Mark the requested artifact loadable only after every dependency is
-    installed. Dependencies shared by other installed artifacts remain
-    independently visible and usable.
+9. Promote each verified immutable version and its own active-version record.
+10. Atomically write the requested root artifact's readiness record last, only
+    after every exact dependency revision is installed and verified.
+    Dependencies shared by other installed artifacts remain independently
+    visible and usable.
 
 Failure or cancellation leaves the currently active artifact untouched.
 Incomplete staging is never loadable. A later cleanup removes only staging
@@ -610,14 +679,28 @@ Local import copies content into staging; managed artifacts never depend on an
 external path remaining present.
 
 - GGUF import validates regular-file status, safe resolution, magic/version,
-  readable metadata, and declared model compatibility before copying.
-- ONNX import accepts a bundle directory or supported manifest selection.
+  bounded readable metadata, and declared model compatibility before copying.
+  Validation does not load the model through the inference runtime in the UI
+  process.
+- The first release accepts local ONNX only as an offline import of an existing
+  Chatbook catalog descriptor. The selected bundle manifest identifies that
+  descriptor and enumerates every model and external-data file, but the catalog
+  remains authoritative for the required file set, byte sizes, and digests.
+  Every imported file must match it.
+- Unknown or modified ONNX graphs fail with `UnsupportedArtifact`; arbitrary
+  graph discovery is out of scope for this milestone.
 - Symlinks and irregular files are rejected.
 - ONNX external-data references must be relative, contained within the bundle,
   declared, and present. Absolute paths and `..` traversal are rejected.
 - Input metadata is checked again after copying to reduce time-of-check versus
   time-of-use risk.
 - Every copied file is hashed and the resulting provenance is local.
+
+Future arbitrary ONNX graph import requires a separately pinned optional
+`onnx` parser and a short-lived validation process that compares actual
+external-data references with the proposed manifest under file-count, byte,
+recursion, memory, and time limits. It must not parse an untrusted graph in the
+UI process or resident inference worker.
 
 The import screen shows the extra disk space required for the managed copy.
 
@@ -628,10 +711,13 @@ boundaries. Locks and leases therefore use a cross-platform interprocess
 primitive whose ownership is released by process exit.
 
 - Installation and activation take the artifact's mutation lock.
-- Loading acquires an operation lease for the exact immutable version.
+- The heavy worker acquires operation leases for the exact root artifact and
+  every loaded dependency before model load, in stable artifact-ID order, and
+  holds them for the full resident-model lifetime, including idle
+  same-identity reuse.
 - Deletion requires exclusive mutation ownership and no active operation
   leases.
-- A worker crash releases its OS-backed lease.
+- A worker crash releases its OS-backed leases.
 - The service never relies solely on an in-memory counter or a PID file.
 
 The implementation plan must select and test the concrete primitive on every
@@ -640,16 +726,20 @@ correct shared/exclusive behavior.
 
 This selection is a prerequisite technical spike, not an implementation detail
 to discover after the artifact service is built. On Windows, macOS, and Linux,
-the spike must prove that process A can hold a shared load lease, process B
-cannot delete the version, killing process A releases the lease, and process B
-can then obtain exclusive deletion ownership. The artifact-service task does
-not start until one primitive passes this proof.
+the spike must prove that process A can hold shared load leases for a root and
+dependency across multiple same-model requests and an idle-residency interval,
+process B cannot delete either version, killing process A releases both leases
+without a parent-held leak, and process B can then obtain exclusive deletion
+ownership. The artifact-service task does not start until one primitive passes
+this proof.
 
 ### Deletion and disk pressure
 
-Deletion is refused while an artifact version is leased. The UI identifies the
-active job without exposing unnecessary local paths. Installed and staging
-space are reported separately.
+Deletion is refused while an artifact version is leased. The UI reports whether
+the owner is an idle resident STT model or an active job without exposing
+unnecessary local paths. An idle owner can be unloaded by recycling the heavy
+worker; an active owner follows the normal cancellation/force-stop flow.
+Installed and staging space are reported separately.
 
 Preflight accounts for:
 
@@ -739,8 +829,14 @@ Chatbook's minimal base installation remains free of heavy STT runtimes.
   local paths.
 - Include the same Parakeet ONNX dependencies in the audio, video, and
   media-processing extras alongside faster-whisper.
-- Keep accelerator-specific ONNX Runtime packages opt-in to avoid mutually
-  exclusive or conflicting runtime packages.
+- The first release declares only the CPU ONNX Runtime profile in managed
+  Chatbook extras. `all-tools` explicitly selects this CPU baseline.
+- Do not layer accelerator-specific ONNX Runtime packages on top of a CPU
+  profile: upstream `onnx-asr` treats its CPU and GPU extras as mutually
+  exclusive. Compatible user-managed accelerator runtimes remain
+  opportunistic. Any future Chatbook accelerator extra must be a complete
+  alternative installation profile with its own lockfile, resolver CI, and
+  explicit incompatibility with CPU/all-tools profiles.
 - Add transcribe.cpp under its own optional extra.
 - Remove `parakeet-mlx`.
 - Retain NeMo dependencies only where still required by unrelated retained
@@ -762,7 +858,11 @@ Vulkan, ROCm, or other accelerators are opportunistic and must not be required
 for provider availability.
 
 Release lockfiles and CI pin exact native package builds. Pre-1.0 dependency
-upgrades require an explicit compatibility and benchmark review.
+upgrades require an explicit compatibility and benchmark review. Resolver CI
+installs every supported CPU extra alone and in documented combinations,
+including `all-tools`, and rejects documentation or profiles that combine
+mutually exclusive ONNX Runtime distributions. Direct ONNX Runtime consumers
+such as local TTS must share a compatible CPU pin in those combinations.
 
 ## Curated transcribe.cpp catalog
 
@@ -845,18 +945,21 @@ provider lists.
 8. Dispatch light work to the general pool and audio/video work to the
    one-process heavy pool.
 9. Lazily prepare provider-required audio.
-10. Acquire the exact artifact operation lease.
-11. Load or reuse the one resident model.
-12. Transcribe with progress and cancellation.
-13. Normalize result and provenance.
-14. Release artifact lease.
-15. Return a complete parsed payload to the existing single-writer stage.
+10. Attach the current executor generation and attempt/job identity.
+11. In the heavy worker, acquire the exact root and loaded-dependency operation
+    leases when the selected identity is not already resident.
+12. Load or reuse the one resident model; keep its lease while resident.
+13. Transcribe with progress and cancellation.
+14. Normalize result and provenance.
+15. Return a generation-fenced complete parsed payload to the existing
+    single-writer stage.
 16. Persist transcript content, compatibility model summary, and versioned
     provenance atomically, then mark the job complete.
 
 Failure before step 15 produces no media transcript write. Failure during the
 short writer transaction rolls back through the existing database transaction
-boundary.
+boundary. The artifact lease is not request-scoped: it is released when the
+resident model closes or its worker generation exits.
 
 ### Explicit retry
 
@@ -865,7 +968,8 @@ boundary.
 3. Create a new request linked to the failed job as a retry.
 4. Run faster-whisper package/model preflight.
 5. Enqueue only after requirements are satisfied.
-6. Persist the successful retry with faster-whisper provenance.
+6. Persist the successful retry with faster-whisper provenance plus the bounded
+   failed-attempt snapshot, so lineage survives job-history pruning.
 
 ## Testing strategy
 
@@ -878,6 +982,8 @@ Normal unit tests use provider and artifact fakes. They cover:
 - Preservation of saved `auto`.
 - Manual-provider override and capability failures.
 - Requested/effective/detected language semantics.
+- V3 routing-only language selection, `effective_language=auto`, and the
+  `requested_language_not_enforced` warning.
 - Translation routing.
 - Declared versus runtime capability mismatch.
 - Result normalization and provenance.
@@ -886,6 +992,9 @@ Normal unit tests use provider and artifact fakes. They cover:
 - Versioned, idempotent config migration.
 - Provider-registry uniqueness and removal aliases.
 - Progress phases and cancellation state transitions.
+- Executor-generation fencing, exactly one terminal state, and stale callback
+  rejection.
+- Retry provenance remaining intelligible after the failed job is pruned.
 
 ### Artifact integration tests
 
@@ -898,13 +1007,18 @@ A local HTTP fixture, not public network access, covers:
 - Corrupt active records.
 - Concurrent installs from separate processes.
 - Dependency-closure preflight and atomic visibility.
+- Root readiness written last and crash recovery hiding partial dependency
+  closures.
 - A missing or corrupt VAD dependency preventing Parakeet activation.
 - Shared operation leases and exclusive deletion.
+- An idle resident model retaining root and dependency leases across same-model
+  requests.
 - Worker death releasing a lease.
 - Atomic activation and rollback to the previous version.
 - Insufficient disk space.
 - GGUF validation and local copy.
-- Multi-file ONNX import.
+- Descriptor-backed offline multi-file ONNX import.
+- Rejection of unknown, modified, or manifestless ONNX graph import.
 - Missing external data.
 - Absolute and traversal external-data references.
 - Symlink and irregular-file rejection.
@@ -921,10 +1035,13 @@ Gated real-model jobs exercise:
 - Qwen3-ASR BF16 reference loading and rejection of explicit language hints.
 - File and bounded buffer input.
 - Long-form VAD.
+- Single-segment VAD batching and cancellation checks before every segment
+  batch.
 - Timestamp normalization where declared.
 - Same-model reuse.
 - Worker recycle on model identity change.
 - Cooperative cancellation and force stop.
+- Generation-fenced stale-result rejection and decoder subprocess-tree cleanup.
 - Native crash simulation.
 
 ### Platform tests
@@ -932,12 +1049,15 @@ Gated real-model jobs exercise:
 Every wheel-supported target runs:
 
 - Clean installation of the appropriate extras.
+- Clean resolution of every documented CPU extra combination, including
+  `all-tools`, without conflicting ONNX Runtime distributions.
 - Import/probe without startup-time native imports.
 - CPU inference smoke.
 - INT8 Parakeet v2 and v3 smoke.
 - One small transcribe.cpp curated-model smoke.
 - faster-whisper retry smoke.
 - Process creation, termination, and crash recovery.
+- No surviving FFmpeg/decoder descendants after cancellation or force stop.
 - Cross-process artifact locks and deletion leases.
 
 Accelerator tests run separately and never substitute for CPU coverage.
@@ -1032,6 +1152,11 @@ Before changing the shipped semantic default:
   process memory to the OS.
 - Cancellation, force stop, and native-crash recovery leave no partial media
   record or artifact activation.
+- Force-stop tests prove that detached-generation callbacks cannot persist a
+  result and that decoder subprocess descendants are gone before temporary
+  cleanup.
+- Same-model idle residency continues to block deletion of the root artifact
+  and loaded dependencies until model close or worker exit.
 
 Initial benchmark reports are committed or attached as versioned release
 artifacts. Later runtime, model, quantization, VAD, or decoder changes rerun the
@@ -1173,6 +1298,12 @@ record are simpler and safer.
 | Disk usage doubles during update/import | Up-front free-space calculation, immutable staging, visible installed/staging totals. |
 | Legacy config breaks after provider removal | Versioned idempotent migration, preserved language, one-time notice, migration fixtures. |
 | Artifact delete races inference | Interprocess operation lease and exclusive deletion lock. |
+| Resident model outlives request lease | Worker owns the root/dependency lease set for the full resident-model lifetime. |
+| Stale result arrives after force stop | Attempt and executor-generation fencing before the writer path. |
+| Decoder survives worker cancellation | Platform-owned subprocess tree is terminated before temporary cleanup. |
+| Retry ancestor is pruned | Successful provenance embeds a bounded failed-attempt snapshot. |
+| CPU and accelerator runtimes conflict | CPU-only managed v1 extras; future accelerators are alternative profiles. |
+| Untrusted ONNX graph exhausts the UI process | V1 imports only catalog-matching bundles; future arbitrary parsing is isolated and capped. |
 
 ## Implementation-planning boundary
 
@@ -1181,13 +1312,30 @@ Before implementation planning:
 1. Create or select atomic Backlog tasks in dependency order.
 2. Link [ADR-024](../../../backlog/decisions/024-shared-stt-artifacts-and-runtime-routing.md)
    from each affected task and plan.
-3. Split the work so the artifact core, coordinator/provider contract, heavy
-   pool, Parakeet ONNX provider, model-management UI, transcribe.cpp provider,
-   migration/removal, and benchmark gates are independently reviewable.
-4. Select the concrete cross-platform interprocess locking primitive and record
+3. Create one independently reviewable task/PR for each dependency-ordered
+   delivery slice:
+   1. Prove the cross-platform lease primitive.
+   2. Qualify Parakeet v2/v3 INT8 artifacts against F32.
+   3. Build shared artifact descriptors, activation/readiness, leases, and
+      deletion.
+   4. Add managed download, resume, verification, and recovery.
+   5. Renovate the browser for curated/remote/installed inventory.
+   6. Add bounded local GGUF import.
+   7. Add descriptor-backed local ONNX-bundle import.
+   8. Add coordinator and provider contracts.
+   9. Add durable transcript provenance and retry-lineage migration.
+   10. Add the generation-fenced heavy executor and subprocess-tree lifecycle.
+   11. Integrate Parakeet ONNX routing and batch ingestion.
+   12. Restore bounded dictation-buffer compatibility.
+   13. Add the curated optional transcribe.cpp provider.
+   14. Promote defaults, migrate configuration, and remove legacy Parakeet only
+       after every release gate passes.
+4. Record dependencies only on already-created lower-ID Backlog tasks; no task
+   depends on a future task.
+5. Select the concrete cross-platform interprocess locking primitive and record
    it in the implementation plan without weakening this design's crash-release
    requirement.
-5. Pin exact artifact revisions, filenames, sizes, hashes, and licenses only
+6. Pin exact artifact revisions, filenames, sizes, hashes, and licenses only
    after revalidating them against the upstream release at implementation time.
 
 No production code is authorized by this design document alone.
@@ -1200,6 +1348,11 @@ No production code is authorized by this design document alone.
 - [transcribe.cpp Whisper small](https://github.com/handy-computer/transcribe.cpp/blob/v0.1.3/docs/models/whisper-small.md)
 - [transcribe.cpp Canary 180M Flash](https://github.com/handy-computer/transcribe.cpp/blob/v0.1.3/docs/models/canary-180m-flash.md)
 - [onnx-asr](https://github.com/istupakov/onnx-asr)
-- [onnx-asr result contract](https://github.com/istupakov/onnx-asr/blob/main/src/onnx_asr/asr.py)
+- [onnx-asr v0.12.0 result and decoding contract](https://github.com/istupakov/onnx-asr/blob/v0.12.0/src/onnx_asr/asr.py)
+- [onnx-asr v0.12.0 Parakeet TDT adapter](https://github.com/istupakov/onnx-asr/blob/v0.12.0/src/onnx_asr/models/nemo.py)
+- [onnx-asr v0.12.0 VAD batching](https://github.com/istupakov/onnx-asr/blob/v0.12.0/src/onnx_asr/vad.py)
+- [onnx-asr v0.12.0 dependency profiles](https://github.com/istupakov/onnx-asr/blob/v0.12.0/pyproject.toml)
+- [ONNX external data](https://onnx.ai/onnx/repo-docs/ExternalData.html)
+- [ONNX external-data security](https://onnx.ai/onnx/repo-docs/ExternalDataSecurity.html)
 - [NVIDIA Parakeet TDT 0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2)
 - [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)

@@ -23,6 +23,13 @@ The policy applies to semantic `provider=default`. An exact user-selected
 provider/model is honored only when its declared and runtime capabilities
 satisfy the request.
 
+The pinned `onnx-asr` v3 TDT adapter does not enforce a caller-supplied
+language. An explicit supported language selects the validated v3 model but is
+not passed as a decoder constraint. Such results record the requested language,
+`effective_language=auto`, nullable detected language, and
+`requested_language_not_enforced`; the UI does not claim that v3 is forced to
+the requested language.
+
 Chatbook will adopt `transcribe.cpp` as an optional, exactly versioned GGUF
 provider with a curated initial catalog: Whisper small, Canary 180M Flash,
 Moonshine tiny, and Qwen3-ASR 0.6B. transcribe.cpp is not an automatic routing
@@ -48,31 +55,59 @@ content is called integrity verified only when the repository independently
 supplies the expected digest. STT is the first consumer. LLM artifact migration
 is outside this decision.
 
+Dependency closures become loadable through a root readiness record written
+last after every immutable dependency revision is verified; the design does not
+claim a multi-directory atomic transaction. Initial local ONNX import is an
+offline import path for bundles whose files, sizes, and digests match an
+existing Chatbook catalog descriptor. Unknown or modified graphs are rejected.
+Arbitrary graph inspection is deferred until it can run through a separately
+pinned parser in a resource-capped validation process.
+
 Newly persisted media transcripts will store a validated, versioned provenance
 document in nullable `Media.transcription_provenance_json`, written atomically
 with transcript content. `Media.transcription_model` remains a compatibility
-summary. The document records provider, model, immutable artifact revision,
-precision, effective execution provider, requested/effective/detected
-language, task, attempt identity, and explicit retry lineage. Existing records
-remain valid without synthesized provenance, and
-`Transcripts.whisper_model` is not repurposed. The Library ingest-job store also
-gains `retry_of_job_id` and structured STT failure provenance; a retry count
-alone is not sufficient to preserve attempt lineage.
+summary. The document records provider, model, immutable root artifact revision,
+exact loaded dependency revisions, precision, effective execution provider,
+requested/effective/detected language, task, attempt identity, and explicit
+retry lineage. Existing records remain valid without synthesized provenance,
+and `Transcripts.whisper_model` is not repurposed. The Library ingest-job store
+also gains `retry_of_job_id` and structured STT failure provenance; a retry
+count alone is not sufficient to preserve attempt lineage. Because bounded job
+history may prune the failed row, successful retry provenance also embeds a
+bounded, sanitized failed-attempt snapshot. The job link is navigational; the
+snapshot is the durable lineage record.
 
 An app-owned `LocalSTTExecutor` will run audio/video ingestion in a separate
 spawn-context heavy-media pool with exactly one worker and at most one resident
-STT model. Same-identity jobs reuse the model. A
-provider/model/precision/device change recycles the worker rather than relying
-on native libraries to release memory in-process. Library ingestion and
-dictation share the controller; neither parse workers nor facade instances
-create private heavy processes. Buffer transcription remains compatible
-without claiming true streaming. Dictation coalescing is capped by duration and
-bytes, pauses capture visibly on overflow, and never silently drops audio.
+STT model. Same-identity jobs reuse the model. A provider, model, root artifact,
+dependency-closure fingerprint, precision, or device change recycles the worker
+rather than relying on native libraries to release memory in-process. Library
+ingestion and dictation share the controller; neither parse workers nor facade
+instances create private heavy processes. Buffer transcription remains
+compatible without claiming true streaming. Dictation coalescing is capped by
+duration and bytes, pauses capture visibly on overflow, and never silently
+drops audio.
+
+The heavy worker acquires leases for the root artifact and every loaded
+dependency before model load and retains them for the entire resident-model
+lifetime, including idle same-model reuse. Deletion of the root or VAD
+dependency remains blocked until model close or worker exit. Every heavy
+request and callback carries an executor generation and attempt identity; force
+stop detaches the old generation before termination so stale results cannot
+reach the writer. Decoder subprocess descendants are owned and terminated as a
+platform process tree before temporary cleanup.
 
 Cross-platform shared/exclusive artifact locking is gated by a prerequisite
-technical spike that proves load-lease deletion blocking and automatic
-crash-release behavior on Windows, macOS, and Linux. Artifact-service
+technical spike that proves root/dependency load-lease deletion blocking and
+automatic crash release across multiple requests and idle residency on Windows,
+macOS, and Linux, without a parent-held lease leak. Artifact-service
 implementation does not proceed until a concrete primitive passes that proof.
+
+The first release manages only the CPU `onnx-asr` dependency profile.
+`all-tools` also selects that CPU baseline. Accelerator ONNX Runtime packages
+are not layered on top because upstream CPU and GPU profiles conflict; a future
+managed accelerator option must be a complete alternative installation profile
+with independent resolver and runtime qualification.
 
 Stock Parakeet v2/v3 INT8 artifacts must pass an early short- and long-form
 comparison against their F32 artifacts before being accepted as default
@@ -112,10 +147,15 @@ export/import contract.
 
 Parakeet v2 is English-only. Parakeet v3 supports a defined group of European
 languages and internally selects among them, but the reviewed `onnx-asr` result
-contract does not expose a reliable detected-language identity. Routing `auto`
-to v3 would prevent Chatbook from recognizing unsupported-language input or
-explaining a safe recovery. faster-whisper therefore remains the automatic and
-broad-language path.
+contract neither accepts an enforced language hint nor exposes a reliable
+detected-language identity. Routing `auto` to v3 would prevent Chatbook from
+recognizing unsupported-language input or explaining a safe recovery.
+faster-whisper therefore remains the automatic and broad-language path.
+
+The pinned `onnx-asr` package defines mutually exclusive CPU and GPU dependency
+profiles. Chatbook already has other optional ONNX Runtime consumers, so
+additive accelerator extras would create an installation contract that cannot
+be made reliable across all documented extra combinations.
 
 This work requires a canonical ADR because it changes provider/runtime
 boundaries, dependency policy, process ownership, model storage and trust,
@@ -151,7 +191,8 @@ own local binary artifacts and is not superseded by this decision.
 - `auto`, unsupported languages, and translation continue through
   faster-whisper.
 - Parakeet v3 routing is limited to languages passing Chatbook's evaluation
-  gates.
+  gates, but the requested language is transparently routing-only rather than
+  an enforced decoder constraint.
 - transcribe.cpp expands optional model-family breadth without determining
   default reliability.
 - Managed downloads require explicit consent and never occur in ingestion
@@ -164,16 +205,26 @@ own local binary artifacts and is not superseded by this decision.
   missing dependency cannot trigger an implicit provider download.
 - Artifact installs are immutable and versioned; an atomic small record selects
   the active version.
+- Dependency closures expose a root readiness record only after all exact
+  revisions are present; their canonical fingerprint participates in resident
+  model identity and their individual revisions are persisted as provenance.
 - Downloads and local imports may require space for staging or a managed copy.
-- Deletion is blocked while a worker holds an operation lease.
+- Initial local ONNX import is descriptor-backed; arbitrary graph parsing is
+  not performed in the UI or inference worker.
+- Deletion of the root or a loaded dependency is blocked for the complete
+  lifetime of a resident model while its worker holds operation leases.
 - Audio/video parsing moves to a dedicated one-process pool; light document
   parsing keeps its existing parallel pool.
 - Native model changes recycle the heavy process, trading process-start latency
   for predictable memory reclamation.
+- Force stop generation-fences the writer and terminates decoder subprocess
+  descendants before temporary cleanup.
 - Dictation buffer compatibility is retained through the app-owned executor,
   with bounded visible backpressure; true streaming and preemption are
   deferred.
 - Accelerator support is opportunistic; CPU inference is the release baseline.
+- Managed v1 extras install only the CPU ONNX Runtime profile; future managed
+  accelerator profiles must be mutually exclusive alternatives.
 - Accelerator initialization fallback begins in a fresh worker process.
 - The minimal Chatbook install remains free of STT runtimes, while audio,
   video, and media-processing extras include Parakeet ONNX and faster-whisper.
@@ -181,6 +232,8 @@ own local binary artifacts and is not superseded by this decision.
   migration. Historical transcript provenance is unchanged.
 - New transcripts receive versioned provenance through a database migration;
   old records remain readable with null provenance.
+- Successful retry provenance remains intelligible after failed-job pruning
+  because it contains a bounded failed-attempt snapshot.
 - Removal of old providers is blocked on reproducible quality, performance,
   memory, platform, migration, and recovery gates.
 - A future LLM migration can reuse the artifact service but requires its own
@@ -213,7 +266,13 @@ own local binary artifacts and is not superseded by this decision.
 - [transcribe.cpp v0.1.3](https://github.com/handy-computer/transcribe.cpp/releases/tag/v0.1.3)
 - [transcribe.cpp Qwen3-ASR 0.6B model notes](https://github.com/handy-computer/transcribe.cpp/blob/v0.1.3/docs/models/qwen3-asr-0.6b.md)
 - [onnx-asr](https://github.com/istupakov/onnx-asr)
+- [onnx-asr v0.12.0 result and decoding contract](https://github.com/istupakov/onnx-asr/blob/v0.12.0/src/onnx_asr/asr.py)
+- [onnx-asr v0.12.0 Parakeet TDT adapter](https://github.com/istupakov/onnx-asr/blob/v0.12.0/src/onnx_asr/models/nemo.py)
+- [onnx-asr v0.12.0 VAD batching](https://github.com/istupakov/onnx-asr/blob/v0.12.0/src/onnx_asr/vad.py)
+- [onnx-asr v0.12.0 dependency profiles](https://github.com/istupakov/onnx-asr/blob/v0.12.0/pyproject.toml)
 - [onnx-asr v0.12.0 local resolver](https://github.com/istupakov/onnx-asr/blob/v0.12.0/src/onnx_asr/resolver.py)
+- [ONNX external data](https://onnx.ai/onnx/repo-docs/ExternalData.html)
+- [ONNX external-data security](https://onnx.ai/onnx/repo-docs/ExternalDataSecurity.html)
 - [Community Parakeet v3 INT8 comparison requiring local verification](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)
 - [NVIDIA Parakeet TDT 0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2)
 - [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
