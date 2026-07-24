@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from tldw_chatbook.Chat import citation_source_locators as locator_models
 from tldw_chatbook.Chat.citation_source_locators import (
     AUTHORITY_IDS_PER_READ_AUTHORIZATION_MAX,
     EXTERNAL_OPAQUE_ID_UTF8_BYTES_MAX,
@@ -933,6 +934,106 @@ def test_inert_candidate_is_bounded_strict_and_cannot_be_constructed_native() ->
             candidate_id="oversize",
             binding_state=LocatorBindingState.INERT_IMPORTED,
         )
+
+
+def test_inert_candidate_accepts_exact_16_kib_and_rejects_one_byte_over() -> None:
+    overhead = len(b'{"value":""}')
+    exact = {
+        "value": "a" * (LOCATOR_ENVELOPE_JSON_BYTES_MAX - overhead),
+    }
+    candidate = parse_inert_locator_candidate(
+        exact,
+        candidate_id="candidate-exact",
+        binding_state=LocatorBindingState.INERT_IMPORTED,
+    )
+
+    assert len(candidate.candidate_json.encode("utf-8")) == (
+        LOCATOR_ENVELOPE_JSON_BYTES_MAX
+    )
+    with pytest.raises(ValueError, match="locator candidate"):
+        parse_inert_locator_candidate(
+            {"value": f"{exact['value']}a"},
+            candidate_id="candidate-over",
+            binding_state=LocatorBindingState.INERT_IMPORTED,
+        )
+
+
+def test_inert_candidate_preflight_rejects_gross_string_before_serialization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class GrossJSONString(str):
+        def __len__(self) -> int:
+            return 100 * 1024 * 1024
+
+    canonical_calls = 0
+
+    def unexpected_canonical_json(value: object) -> str:
+        nonlocal canonical_calls
+        canonical_calls += 1
+        raise AssertionError("canonical serialization must not run")
+
+    monkeypatch.setattr(
+        locator_models,
+        "_canonical_json",
+        unexpected_canonical_json,
+    )
+    with pytest.raises(ValueError, match="preflight"):
+        parse_inert_locator_candidate(
+            {"value": GrossJSONString("synthetic-gross-string")},
+            candidate_id="candidate-gross",
+            binding_state=LocatorBindingState.INERT_IMPORTED,
+        )
+
+    assert canonical_calls == 0
+
+
+def test_inert_candidate_preflight_rejects_hostile_json_trees_with_bounded_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DeceptiveJSONString(str):
+        def __len__(self) -> int:
+            return 0
+
+        def encode(
+            self,
+            encoding: str = "utf-8",
+            errors: str = "strict",
+        ) -> bytes:
+            return b""
+
+    deep: object = "leaf"
+    for _ in range(locator_models.INERT_LOCATOR_JSON_DEPTH_MAX + 1):
+        deep = [deep]
+    cycle: list[object] = []
+    cycle.append(cycle)
+    hostile_values = (
+        deep,
+        [0] * (locator_models.INERT_LOCATOR_JSON_ITEMS_MAX + 1),
+        [[] for _ in range(locator_models.INERT_LOCATOR_JSON_CONTAINERS_MAX + 1)],
+        {"k" * (locator_models.INERT_LOCATOR_JSON_KEY_UTF8_BYTES_MAX + 1): "v"},
+        {1: "non-string-key"},
+        {"value": object()},
+        {"value": float("nan")},
+        {"value": float("inf")},
+        {"value": DeceptiveJSONString("x" * (LOCATOR_ENVELOPE_JSON_BYTES_MAX + 1))},
+        cycle,
+    )
+
+    def unexpected_canonical_json(value: object) -> str:
+        raise AssertionError("hostile tree reached canonical serialization")
+
+    monkeypatch.setattr(
+        locator_models,
+        "_canonical_json",
+        unexpected_canonical_json,
+    )
+    for index, hostile in enumerate(hostile_values):
+        with pytest.raises(ValueError, match="preflight"):
+            parse_inert_locator_candidate(
+                hostile,
+                candidate_id=f"candidate-hostile-{index}",
+                binding_state=LocatorBindingState.INERT_LEGACY,
+            )
 
 
 def test_rebinding_requires_fresh_lookup_explicit_decision_and_matching_scope() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from enum import Enum
 import json
+import math
 import re
 from types import MappingProxyType
 from typing import Annotated, Any, Literal, Mapping, TypeVar
@@ -28,6 +29,10 @@ from .citation_trace_models import (
 LOCATOR_ENVELOPE_JSON_BYTES_MAX = 16 * 1024
 AUTHORITY_IDS_PER_READ_AUTHORIZATION_MAX = 32
 CURRENT_AUTHORITY_LOOKUP_TTL_MAX = timedelta(minutes=5)
+INERT_LOCATOR_JSON_DEPTH_MAX = 32
+INERT_LOCATOR_JSON_CONTAINERS_MAX = 256
+INERT_LOCATOR_JSON_ITEMS_MAX = 2048
+INERT_LOCATOR_JSON_KEY_UTF8_BYTES_MAX = 256
 _DRIVE_PATH = re.compile(r"^[A-Za-z]:")
 
 
@@ -585,6 +590,89 @@ def _canonical_json(value: Any) -> str:
     )
 
 
+def _preflight_inert_locator_json(value: Any) -> None:
+    """Reject hostile JSON trees before canonical serialization allocates."""
+
+    structural_bytes = 0
+    container_count = 0
+    item_count = 0
+    active_containers: set[int] = set()
+
+    def reject(reason: str) -> None:
+        raise ValueError(f"locator candidate preflight rejected {reason}")
+
+    def add_bytes(byte_count: int) -> None:
+        nonlocal structural_bytes
+        if byte_count > LOCATOR_ENVELOPE_JSON_BYTES_MAX - structural_bytes:
+            reject("oversized JSON")
+        structural_bytes += byte_count
+
+    def add_string(text: str, *, key: bool = False) -> None:
+        if len(text) > LOCATOR_ENVELOPE_JSON_BYTES_MAX - structural_bytes:
+            reject("oversized string")
+        byte_count = len(text.encode("utf-8"))
+        if key and byte_count > INERT_LOCATOR_JSON_KEY_UTF8_BYTES_MAX:
+            reject("oversized key")
+        add_bytes(byte_count + 2)
+
+    def walk(node: Any, depth: int) -> None:
+        nonlocal container_count, item_count
+        if depth > INERT_LOCATOR_JSON_DEPTH_MAX:
+            reject("excessive depth")
+        if node is None:
+            add_bytes(4)
+            return
+        if type(node) is bool:
+            add_bytes(4 if node else 5)
+            return
+        if type(node) is str:
+            add_string(node)
+            return
+        if type(node) is int:
+            magnitude = abs(node)
+            lower_digits = (
+                1 if magnitude < 10 else ((magnitude.bit_length() - 1) * 3) // 10 + 1
+            )
+            add_bytes(lower_digits + (1 if node < 0 else 0))
+            return
+        if type(node) is float:
+            if not math.isfinite(node):
+                reject("non-finite number")
+            add_bytes(1)
+            return
+        if type(node) not in {dict, list, tuple}:
+            reject("non-JSON value")
+
+        container_id = id(node)
+        if container_id in active_containers:
+            reject("cyclic container")
+        container_count += 1
+        if container_count > INERT_LOCATOR_JSON_CONTAINERS_MAX:
+            reject("too many containers")
+        child_count = len(node)
+        item_count += child_count
+        if item_count > INERT_LOCATOR_JSON_ITEMS_MAX:
+            reject("too many items")
+        add_bytes(2 + max(0, child_count - 1))
+
+        active_containers.add(container_id)
+        try:
+            if type(node) is dict:
+                for key, child in node.items():
+                    if type(key) is not str:
+                        reject("non-string key")
+                    add_string(key, key=True)
+                    add_bytes(1)
+                    walk(child, depth + 1)
+            else:
+                for child in node:
+                    walk(child, depth + 1)
+        finally:
+            active_containers.remove(container_id)
+
+    walk(value, 0)
+
+
 def canonical_locator_json(locator: SourceLocatorEnvelope) -> str:
     """Serialize a revalidated native locator deterministically."""
 
@@ -605,9 +693,10 @@ def parse_inert_locator_candidate(
         LocatorBindingState.INERT_LEGACY,
     }:
         raise ValueError("native locator data cannot be created by inert parsing")
+    _preflight_inert_locator_json(raw_candidate)
     try:
         candidate_json = _canonical_json(raw_candidate)
-    except (RecursionError, TypeError, ValueError) as exc:
+    except (OverflowError, RecursionError, TypeError, ValueError) as exc:
         raise ValueError("locator candidate must be bounded JSON data") from exc
     if len(candidate_json.encode("utf-8")) > LOCATOR_ENVELOPE_JSON_BYTES_MAX:
         raise ValueError(
