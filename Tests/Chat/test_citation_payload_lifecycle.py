@@ -12,7 +12,7 @@ from Tests.Chat.test_citation_trace_repository import (
     TEST_FINGERPRINT_CODEC,
     _authorization,
     _identity,
-    _persist,
+    _persist as _repository_persist,
     _repository,
     _sealed_write,
 )
@@ -32,6 +32,54 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 NOW = datetime(2026, 7, 24, 12, 0, tzinfo=UTC)
+FIXTURE_CREATED_AT = NOW - timedelta(days=1)
+
+
+def _persist(
+    db: CharactersRAGDB,
+    repository,
+    *,
+    message_id: str = "message-1",
+    sealed_write=None,
+) -> None:
+    """Persist a trace with timestamps anchored before the fixed test clock."""
+    _repository_persist(
+        db,
+        repository,
+        message_id=message_id,
+        sealed_write=sealed_write,
+    )
+
+    fixture_timestamp = FIXTURE_CREATED_AT.isoformat()
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            UPDATE conversations
+            SET created_at = ?, last_modified = ?
+            WHERE id = (
+                SELECT conversation_id
+                FROM messages
+                WHERE id = ?
+            )
+            """,
+            (fixture_timestamp, fixture_timestamp, message_id),
+        )
+        cursor.execute(
+            """
+            UPDATE messages
+            SET timestamp = ?, last_modified = ?
+            WHERE id = ?
+            """,
+            (fixture_timestamp, fixture_timestamp, message_id),
+        )
+        cursor.execute(
+            """
+            UPDATE rag_message_trace_owners
+            SET created_at = ?, updated_at = ?
+            WHERE message_id = ?
+            """,
+            (fixture_timestamp, fixture_timestamp, message_id),
+        )
 
 
 @pytest.fixture
