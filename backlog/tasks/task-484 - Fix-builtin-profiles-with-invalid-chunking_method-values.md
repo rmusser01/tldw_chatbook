@@ -2,7 +2,7 @@
 id: TASK-484
 title: >-
   Fix builtin RAG profiles with invalid chunking_method values
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-22 01:45'
 updated_date: '2026-07-22 01:45'
