@@ -172,6 +172,7 @@ from tldw_chatbook.Utils.egress import (  # noqa: E402
     check_url_or_raise_async,
     collect_navigation_chain,
     guarded_fetch_requests,
+    origin_set,
     validate_navigation_chain_async,
 )
 from tldw_chatbook.Web_Scraping.exceptions import (  # noqa: E402
@@ -1028,7 +1029,7 @@ def scrape_by_url_level(base_url: str, level: int) -> list:
 
 def scrape_from_sitemap(sitemap_url: str) -> list:
     """Scrape articles from a sitemap URL."""
-    origins = frozenset({(urlparse(sitemap_url).hostname or "").lower()})
+    origins = origin_set(sitemap_url)
     try:
         response = guarded_fetch_requests(
             sitemap_url,
@@ -1085,7 +1086,7 @@ def collect_internal_links(base_url: str) -> set:
         )
         return set()
 
-    origins = frozenset({(urlparse(base_url).hostname or "").lower()})
+    origins = origin_set(base_url)
 
     visited = set()
     to_visit = {base_url}
@@ -1750,7 +1751,7 @@ async def recursive_scrape(
             "installed (pip install tldw_chatbook[websearch])."
         )
 
-    origins = frozenset({(urlparse(base_url).hostname or "").lower()})
+    origins = origin_set(base_url)
 
     async def save_progress():
         temp_file = resume_file + ".tmp"

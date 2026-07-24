@@ -30,7 +30,7 @@ from .confluence_utils import (
     convert_confluence_to_markdown,
     extract_confluence_metadata,
 )
-from ...Utils.egress import MAX_FETCH_BYTES_PAGE, guarded_fetch_requests
+from ...Utils.egress import MAX_FETCH_BYTES_PAGE, guarded_fetch_requests, host_of
 #
 #######################################################################################################################
 #
@@ -57,7 +57,7 @@ class ConfluenceScraper(Scraper):
 
         # Trust this instance's own Confluence host for the egress guard —
         # never auto-trust arbitrary URLs discovered while scraping.
-        base_host = (urlparse(self.base_url).hostname or "").lower()
+        base_host = host_of(self.base_url)
         self.config.trusted_origins = frozenset(
             set(self.config.trusted_origins) | {base_host}
         )

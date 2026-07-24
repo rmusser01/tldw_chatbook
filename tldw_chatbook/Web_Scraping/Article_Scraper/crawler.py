@@ -65,6 +65,7 @@ from ...Utils.egress import (
     MAX_FETCH_BYTES_PAGE,
     MAX_FETCH_BYTES_SITEMAP,
     guarded_fetch_aiohttp,
+    origin_set,
 )
 #
 #######################################################################################################################
@@ -174,7 +175,7 @@ async def crawl_site(
 
     # Trust the crawl's own starting host (user-provided boundary) for the
     # egress guard — never auto-trust arbitrary URLs discovered mid-crawl.
-    origins = frozenset({(urlparse(base_url).hostname or "").lower()})
+    origins = origin_set(base_url)
 
     # Track statistics
     pages_crawled = 0
@@ -348,7 +349,7 @@ async def get_urls_from_sitemap(
     try:
         async with aiohttp.ClientSession() as session:
             fetch_start = time.time()
-            origins = frozenset({(urlparse(sitemap_url).hostname or "").lower()})
+            origins = origin_set(sitemap_url)
             response = await guarded_fetch_aiohttp(
                 sitemap_url,
                 session=session,

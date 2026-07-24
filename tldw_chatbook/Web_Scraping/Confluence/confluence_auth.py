@@ -18,7 +18,7 @@ from loguru import logger
 #
 # Local imports
 from ..cookie_scraping.cookie_cloner import get_cookies
-from ...Utils.egress import MAX_FETCH_BYTES_PAGE, check_url_or_raise, guarded_fetch_requests
+from ...Utils.egress import MAX_FETCH_BYTES_PAGE, check_url_or_raise, guarded_fetch_requests, origin_set
 #
 #######################################################################################################################
 #
@@ -260,7 +260,7 @@ class ConfluenceAuth:
         kwargs["headers"].setdefault("Content-Type", "application/json")
         kwargs.setdefault("timeout", 30)
 
-        trusted = frozenset({(urlparse(self.base_url).hostname or "").lower()})
+        trusted = origin_set(self.base_url)
         if method.upper() == "GET" and set(kwargs) <= {"headers", "timeout"}:
             response = guarded_fetch_requests(
                 url,
