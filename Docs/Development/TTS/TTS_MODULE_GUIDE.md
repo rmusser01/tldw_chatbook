@@ -6,14 +6,38 @@ The TTS module in tldw_chatbook provides a flexible, extensible system for gener
 
 ## Architecture
 
+### TTS adapter service
+
+The application owns one sealed `TTSAdapterRegistry` and one `TTSService`.
+New callers use canonical provider IDs and `TTSService.synthesize()`. Existing
+callers may temporarily use `generate_audio_stream()` with an enumerated legacy
+internal model ID.
+
+The temporary bridge has exactly six provider entries: `openai`, `elevenlabs`,
+`kokoro`, `chatterbox`, `higgs`, and `alltalk`. Each adapter lazily owns one
+provider-scoped `TTSBackendManager`; application and UI code must not access
+that manager or a concrete backend. The bridge is removed only after every
+retained provider has a native adapter and all legacy internal-model callers
+have migrated.
+
+New providers are implemented as native adapters; `audio_cpp` is the first
+planned native adapter. See
+[ADR-023](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
+and the approved
+[audio.cpp adapter design](../../superpowers/specs/2026-07-23-audio-cpp-tts-adapter-registry-design.md).
+
 ### Module Structure
 
 ```
 tldw_chatbook/TTS/
 ├── __init__.py              # Module exports
+├── adapter_types.py         # Provider-neutral adapter contracts
+├── adapter_registry.py      # Sealed app-scoped provider registry
+├── adapter_bootstrap.py     # Application service construction
+├── legacy_bridge.py         # Temporary provider-scoped compatibility adapters
 ├── audio_schemas.py         # Pydantic schemas for requests/responses
 ├── TTS_Generation.py        # Main TTS service orchestration
-├── TTS_Backends.py          # Backend manager and base class
+├── TTS_Backends.py          # Legacy bridge manager and base class
 ├── audio_service.py         # Audio format conversion service
 ├── text_processing.py       # Text normalization and chunking
 ├── backends/                # Backend implementations
@@ -33,29 +57,29 @@ tldw_chatbook/TTS/
 
 ### Core Components
 
-#### 1. TTSService (TTS_Generation.py)
+#### 1. TTSService (`TTS_Generation.py`)
 The main orchestration layer that:
-- Manages backend selection based on model/provider
-- Handles streaming audio generation
-- Coordinates text processing and audio conversion
-- Provides a unified interface for all backends
+- Routes canonical provider IDs through the sealed registry
+- Exposes provider-neutral synthesis, catalog, and reconfiguration operations
+- Retains adapter resources until each audio response is closed
+- Preserves the legacy byte-stream interface during migration
 
-#### 2. TTSBackendBase (TTS_Backends.py)
-Abstract base class that all backends must implement:
-```python
-class TTSBackendBase(ABC):
-    async def initialize(self)
-    async def generate_speech_stream(request: OpenAISpeechRequest) -> AsyncGenerator[bytes, None]
-    async def close(self)
-```
+#### 2. TTSAdapterRegistry (`adapter_registry.py`)
+The application-owned registry performs exact provider lookup, lazy adapter
+materialization, operation leasing, targeted reconfiguration, and bounded
+shutdown. Registration is sealed at construction time.
 
-#### 3. Audio Service (audio_service.py)
+`TTSBackendBase`, `TTSBackendManager`, and the class-global legacy backend
+registry are compatibility-bridge internals. They are not the extension point
+for new providers.
+
+#### 3. Audio Service (`audio_service.py`)
 Handles audio format conversion with:
 - `StreamingAudioWriter`: Real-time encoding for streaming
 - Support for MP3, Opus, AAC, FLAC, WAV, PCM
 - Async and sync conversion methods
 
-#### 4. Text Processing (text_processing.py)
+#### 4. Text Processing (`text_processing.py`)
 Provides text preparation for TTS:
 - `TextNormalizer`: Handles URLs, emails, phone numbers, units
 - `TextChunker`: Splits long texts respecting sentence boundaries
@@ -305,25 +329,23 @@ The S/TT/S tab provides a comprehensive TTS testing environment:
 ### Programmatic Usage
 
 ```python
-from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
+from tldw_chatbook.TTS import TTSRequest, get_tts_service
 
-# Initialize service
-tts_service = await get_tts_service(app_config)
+# The application binds the service before callers request it.
+tts_service = await get_tts_service()
 
-# Create request
-request = OpenAISpeechRequest(
-    model="tts-1",
-    input="Hello, world!",
+request = TTSRequest(
+    provider_id="openai",
+    model_id="tts-1",
+    text="Hello, world!",
     voice="alloy",
     response_format="mp3",
     speed=1.0
 )
 
-# Generate audio
-internal_model_id = "openai_official_tts-1"
-async for chunk in tts_service.generate_audio_stream(request, internal_model_id):
-    # Process audio chunks
-    audio_file.write(chunk)
+async with await tts_service.synthesize(request) as response:
+    async for chunk in response.byte_stream:
+        audio_file.write(chunk)
 ```
 
 ### Event System Integration
@@ -362,12 +384,16 @@ default_format = "mp3"       # Audio output format
 default_speed = 1.0          # Speech speed (0.25-4.0)
 ```
 
-### Provider Selection
-The system automatically selects backends based on the model:
+### Legacy Route Selection
+
+The compatibility bridge resolves these existing internal model IDs:
 - `tts-1`, `tts-1-hd` → OpenAI backend
 - `kokoro` → Local Kokoro backend
 - `eleven_*` models → ElevenLabs backend
 - `chatterbox` → Chatterbox backend
+
+New code selects a canonical provider and opaque model ID explicitly with
+`TTSRequest`; it does not infer a provider from the model name.
 
 ### Audio Formats
 Supported formats vary by provider:
@@ -431,7 +457,10 @@ extra_params = {
 }
 ```
 
-### Streaming with Chunk Processing
+### Legacy Streaming with Chunk Processing
+
+Concrete backend streaming is retained only inside the temporary bridge:
+
 ```python
 async for chunk in backend.generate_speech_stream(request):
     # Process chunks in real-time
@@ -557,16 +586,19 @@ class OpenAISpeechRequest(BaseModel):
     extra_params: Optional[Dict[str, Any]]  # Provider-specific parameters
 ```
 
-### Backend Methods
+### Native Adapter Methods
 
-#### initialize()
-Async initialization of the backend. Called once before first use.
+#### ensure_ready()
+Initialize or connect to provider resources lazily.
 
-#### generate_speech_stream()
-Main generation method returning an async generator of audio bytes.
+#### get_catalog()
+Return provider health, models, formats, voices, and supported controls.
+
+#### synthesize()
+Return a provider-neutral `TTSAudioResponse` with an asynchronous byte stream.
 
 #### close()
-Cleanup method for releasing resources.
+Release provider resources. The registry controls when adapter shutdown occurs.
 
 ## Future Enhancements
 
@@ -586,30 +618,17 @@ Cleanup method for releasing resources.
 
 ## Contributing
 
-### Adding a New Backend
+### Adding a Native Adapter
 
-1. Create new file in `backends/`:
-```python
-from tldw_chatbook.TTS.TTS_Backends import TTSBackendBase
+1. Implement the asynchronous adapter contract (`ensure_ready`,
+   `get_catalog`, `synthesize`, and `close`) using the provider-neutral request,
+   response, catalog, health, and progress types.
+2. Add one explicit provider specification to application service
+   construction.
+3. Add configuration validation, contract tests, and provider documentation.
 
-class MyBackend(TTSBackendBase):
-    async def initialize(self):
-        # Setup code
-        pass
-    
-    async def generate_speech_stream(self, request):
-        # Generation logic
-        yield audio_bytes
-```
-
-2. Register in `TTS_Backends.py`:
-```python
-elif backend_id == "my_backend":
-    self._backends[backend_id] = MyBackend(config)
-```
-
-3. Add configuration schema
-4. Update documentation
+Do not register new providers in `TTS_Backends.py` or subclass
+`TTSBackendBase`; those APIs exist only for the six-provider temporary bridge.
 
 ### Testing
 Run TTS-specific tests:
