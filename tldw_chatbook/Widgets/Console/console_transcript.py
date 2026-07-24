@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from time import monotonic
 
@@ -170,6 +171,66 @@ def _message_attachment_chips(message: ConsoleChatMessage) -> list[str]:
     return chips
 
 
+#: Inline markdown handled in-transcript: **bold** and `code`. Matched as closed
+#: pairs only, so an unclosed marker mid-stream stays literal until it closes.
+_INLINE_MD_RE = re.compile(r"\*\*(.+?)\*\*|`([^`]+)`")
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
+
+
+def _inline_markdown_spans(line: str) -> list:
+    """Split one line into Content segments, styling **bold**/`code` inline.
+
+    Text is always emitted literally (styles are applied via ``(text, style)``
+    tuples, never markup parsing), so message text can never inject Rich markup.
+
+    Args:
+        line: A single raw text line.
+
+    Returns:
+        A list of ``str`` / ``(str, style)`` segments for ``Content.assemble``.
+    """
+    out: list = []
+    pos = 0
+    for match in _INLINE_MD_RE.finditer(line):
+        if match.start() > pos:
+            out.append(line[pos : match.start()])
+        if match.group(1) is not None:
+            out.append((match.group(1), "bold"))
+        else:
+            out.append((match.group(2), "italic"))
+        pos = match.end()
+    if pos < len(line):
+        out.append(line[pos:])
+    return out or [line]
+
+
+def _markdown_body_spans(body: str) -> list:
+    """Render a safe subset of markdown (headings, **bold**, `code`) to segments.
+
+    TASK-372: assistant replies arrive as markdown and were shown raw (literal
+    ``###`` / ``**`` / backticks). Headings render as bold underline with the
+    ``#`` markers stripped; inline bold/code render via
+    ``_inline_markdown_spans``. All styling goes through ``(text, style)`` tuples
+    so nothing in the message is markup-parsed.
+
+    Args:
+        body: The raw message body text.
+
+    Returns:
+        A list of ``str`` / ``(str, style)`` segments for ``Content.assemble``.
+    """
+    segments: list = []
+    for index, line in enumerate(body.split("\n")):
+        if index:
+            segments.append("\n")
+        heading = _HEADING_RE.match(line)
+        if heading:
+            segments.append((heading.group(2), "bold underline"))
+        else:
+            segments.extend(_inline_markdown_spans(line))
+    return segments
+
+
 def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Content:
     """Return the compact transcript row renderable for a message.
 
@@ -194,12 +255,17 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
     if chips:
         chip_lines = "\n".join(chips)
         body = f"{body}\n{chip_lines}" if body else chip_lines
-    body_part: tuple[str, str] | str = body
     if _is_generating_placeholder_body(message, body):
-        body_part = (body, "dim")
-    if not selected and "\n" not in body and len(body) <= 120:
-        return Content.assemble((role_label, "dim"), "  ", body_part)
-    return Content.assemble((role_label, "dim"), "\n", body_part)
+        body_segments: list = [(body, "dim")]
+    elif message.role is ConsoleMessageRole.USER:
+        # The user's own text is shown verbatim -- don't restyle their input.
+        body_segments = [body]
+    else:
+        # TASK-372: render assistant markdown (headings/**bold**/`code`) with
+        # terminal emphasis instead of literal marker characters.
+        body_segments = _markdown_body_spans(body)
+    separator = "  " if not selected and "\n" not in body and len(body) <= 120 else "\n"
+    return Content.assemble((role_label, "dim"), separator, *body_segments)
 
 
 @dataclass(frozen=True)
