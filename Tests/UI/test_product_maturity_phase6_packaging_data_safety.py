@@ -378,9 +378,28 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
     for extra in ("dev", "embeddings_rag", "mcp", "web"):
         assert extra in project["optional-dependencies"]
 
-    package_data = pyproject["tool"]["setuptools"]["package-data"]
-    assert "tldw_chatbook.css" in package_data
-    assert "tldw_chatbook.Config_Files" in package_data
+    setuptools = pyproject["tool"]["setuptools"]
+    assert setuptools["include-package-data"] is False
+    assert (
+        "tldw_chatbook.Chunking.templates*"
+        in setuptools["packages"]["find"]["exclude"]
+    )
+
+    for owner in (
+        "tldw_chatbook.css",
+        "tldw_chatbook.Config_Files",
+        "tldw_chatbook.Chunking",
+        "tldw_chatbook.Evals",
+        "tldw_chatbook.Third_Party.aider",
+        "tldw_chatbook.Third_Party.textual_fspicker",
+    ):
+        assert owner in setuptools["package-data"]
+
+    assert pyproject["build-system"]["requires"] == ["setuptools>=77.0"]
+    assert project["license"] == "AGPL-3.0-or-later"
+    assert project["license-files"] == ["LICENSE"]
+    assert (REPO_ROOT / "MANIFEST.in").is_file()
+    assert not (REPO_ROOT / "Packaging" / "MANIFEST.in").exists()
 
     for required_copy in (
         "Local-first baseline",
@@ -408,7 +427,8 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
     assert "TLDW_CONFIG_PATH" in config
     assert "_get_effective_config_path" in config
     assert "_CONFIG_CACHE_SOURCE == config_path" in config
-    assert "atomic_write_text(DEFAULT_CONFIG_PATH" in config
+    assert "result = atomic_private_write_text(" in config
+    assert "_write_raw_cli_config_unlocked(\n    config_path: Path," in config
     assert "Do not use machine-specific absolute paths" in recovery_doc
 
     for required_migration_signal in (
