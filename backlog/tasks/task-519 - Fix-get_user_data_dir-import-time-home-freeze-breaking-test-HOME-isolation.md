@@ -2,7 +2,7 @@
 id: TASK-519
 title: >-
   Fix get_user_data_dir import-time home freeze breaking test HOME isolation
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-23 23:30'
 updated_date: '2026-07-23 23:30'
