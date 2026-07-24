@@ -37,14 +37,20 @@ from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
-def _meta(*, prompt: str = "a red dragon", backend: str = "swarmui", seed=42):
+def _meta(
+    *,
+    prompt: str = "a red dragon",
+    backend: str = "swarmui",
+    seed=42,
+    style: str | None = None,
+):
     return GenerationVariantMeta(
         prompt=prompt,
         negative_prompt="blurry",
         backend=backend,
         model=None,
         seed=seed,
-        style=None,
+        style=style,
         params={},
     )
 
@@ -92,9 +98,14 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
 
 
 def _fake_batch(*, calls: list, data: bytes = b"newimg") -> callable:
-    """Return a fake ``run_generation_batch`` recording every call's kwargs."""
+    """Return a fake ``run_generation_batch`` recording every call's kwargs.
 
-    def _run(*, backend, prompt, negative_prompt, seed, count, **_ignored):
+    Mirrors the real function's meta construction closely enough for
+    style-threading assertions: whatever ``style_name`` the caller passes
+    in lands on the returned variant's ``GenerationVariantMeta.style``.
+    """
+
+    def _run(*, backend, prompt, negative_prompt, seed, count, style_name=None, **_ignored):
         calls.append(
             {
                 "backend": backend,
@@ -102,6 +113,7 @@ def _fake_batch(*, calls: list, data: bytes = b"newimg") -> callable:
                 "negative_prompt": negative_prompt,
                 "seed": seed,
                 "count": count,
+                "style_name": style_name,
             }
         )
         meta = GenerationVariantMeta(
@@ -110,7 +122,7 @@ def _fake_batch(*, calls: list, data: bytes = b"newimg") -> callable:
             backend=backend,
             model=None,
             seed=seed,
-            style=None,
+            style=style_name,
             params={},
         )
         return BatchResult(successes=[(data, "image/png", meta)], errors=[])
@@ -388,6 +400,49 @@ def test_regenerate_success_appends_variant_and_browses_to_new_index(monkeypatch
     assert calls[0]["negative_prompt"] == "blurry"
     assert calls[0]["seed"] == -1
     assert calls[0]["count"] == 1
+
+
+def test_regenerate_success_inherits_style_from_position_zero_meta(monkeypatch):
+    """P2b pin: the appended variant carries the canonical (position-0)
+    variant's style, not None.
+
+    Regression coverage for a real bug found while writing this pin:
+    ``_regenerate_console_generation_variant`` rebuilds its request from
+    position-0's backend/prompt/negative but was dropping ``style``,
+    silently downgrading every regenerated card's "Style" field back to
+    "Custom" even when the canonical variant carried a named ``@style``.
+    """
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    styled_meta = _meta(seed=42, style="Anime Style")
+    message = store.append_generation_message(
+        session.id,
+        content="[image] a red dragon",
+        variants=[(b"img0", "image/png", styled_meta)],
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(max_variants_per_message=8),
+    )
+    calls: list = []
+    monkeypatch.setattr(
+        chat_screen_module,
+        "run_generation_batch",
+        _fake_batch(calls=calls, data=b"appended"),
+    )
+
+    import asyncio
+
+    asyncio.run(screen._regenerate_console_generation_variant(message.id))
+
+    assert len(calls) == 1
+    assert calls[0]["style_name"] == "Anime Style"
+    appended = store.get_message(message.id)
+    assert len(appended.generation_metadata) == 2
+    assert appended.generation_metadata[1].style == "Anime Style"
 
 
 # --- Full dispatch routing through handle_console_message_action --------------
