@@ -178,6 +178,102 @@ async def test_handle_chat_send_applies_staged_search_rag_context_to_provider_me
     assert "[User prompt]\nUser message" in provider_message
 
 
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl")
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessageEnhanced")
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage")
+async def test_world_info_indicator_reflects_current_send_not_previous(
+    mock_chat_message_class, mock_chat_message_enhanced_class, mock_ccl, mock_app
+):
+    """Regression test for task-413.
+
+    The [World Info: N entries activated] indicator must reflect the CURRENT
+    send's resolved world-info count, not a stale value carried over from the
+    previous send. Pre-fix, the indicator was mounted BEFORE
+    ``resolve_world_info_injection`` updated ``app.current_world_info_active``/
+    ``current_world_info_count`` for this send, so on send K it displayed send
+    K-1's values (and on the very first send, no indicator at all, since the
+    reactives hadn't been set yet).
+
+    We drive two sends with ``resolve_world_info_injection`` mocked to return
+    different matched-entry counts (3, then 5) and assert the indicator
+    mounted for each send carries that send's own count -- not the other
+    send's.
+    """
+
+    def _new_chat_message(*args, **kwargs):
+        # A fresh, distinguishable mock per ChatMessage(...) construction,
+        # tagging itself with its constructor args so we can identify the
+        # world-info indicator among the other mounted widgets.
+        msg = MagicMock()
+        msg._ctor_args = args
+        msg._ctor_kwargs = kwargs
+        msg.classes = kwargs.get("classes")
+        return msg
+
+    mock_chat_message_class.side_effect = _new_chat_message
+    mock_chat_message_enhanced_class.side_effect = _new_chat_message
+
+    chat_log_mount = mock_app.query_one("#chat-log").mount
+
+    def _indicator_calls():
+        return [
+            c
+            for c in chat_log_mount.call_args_list
+            if getattr(c.args[0], "classes", None) == "-world-info-indicator"
+        ]
+
+    # --- Send 1: world info resolves to 3 matched entries ---
+    with (
+        patch(
+            "tldw_chatbook.Character_Chat.world_info_resolver.resolve_world_info_injection",
+            return_value=("User message", 3),
+        ),
+        patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}),
+    ):
+        await handle_chat_send_button_pressed(mock_app, MagicMock())
+
+    ai_placeholder_1 = mock_app.current_ai_message_widget
+    send1_indicator_calls = _indicator_calls()
+    assert len(send1_indicator_calls) == 1, (
+        "Expected exactly one world-info indicator mounted for send 1"
+    )
+    send1_widget = send1_indicator_calls[0].args[0]
+    send1_text = str(send1_widget._ctor_args[0])
+    assert "3 entries activated" in send1_text
+    # Transcript position preserved: inserted before the AI placeholder even
+    # though it was constructed after it.
+    assert send1_indicator_calls[0].kwargs.get("before") is ai_placeholder_1
+
+    # Reset per-send call tracking, but keep the same #chat-log mock (and its
+    # accumulated history distinguishable) for send 2.
+    chat_log_mount.reset_mock()
+    mock_app.chat_wrapper.reset_mock()
+    mock_app.run_worker.reset_mock()
+
+    # --- Send 2: world info resolves to 5 matched entries (different count) ---
+    with (
+        patch(
+            "tldw_chatbook.Character_Chat.world_info_resolver.resolve_world_info_injection",
+            return_value=("User message", 5),
+        ),
+        patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}),
+    ):
+        await handle_chat_send_button_pressed(mock_app, MagicMock())
+
+    ai_placeholder_2 = mock_app.current_ai_message_widget
+    send2_indicator_calls = _indicator_calls()
+    assert len(send2_indicator_calls) == 1, (
+        "Expected exactly one world-info indicator mounted for send 2"
+    )
+    send2_widget = send2_indicator_calls[0].args[0]
+    send2_text = str(send2_widget._ctor_args[0])
+    # This is the crux of task-413: send 2's indicator must show send 2's own
+    # count (5), not send 1's stale count (3).
+    assert "5 entries activated" in send2_text
+    assert "3 entries" not in send2_text
+    assert send2_indicator_calls[0].kwargs.get("before") is ai_placeholder_2
+
+
 async def test_handle_new_conversation_button_pressed(mock_app):
     """Test that the new chat button clears state and UI."""
     # Set some state to ensure it's cleared

@@ -1012,14 +1012,17 @@ class PersonasScreen(BaseAppScreen):
         """Ordered ``(key, label)`` sort options for the character library.
 
         A "Relevance" option is prepended (and becomes the natural default) only
-        while a search is active, since relevance is search-scored.
+        while a CHARACTERS-mode search is active, since relevance is FTS
+        search-scored and only the character library searches via FTS —
+        personas page in-memory and previously showed a "Relevance" option
+        that was silently remapped to name_asc (task-463 #4).
         """
         base = [
             ("name_asc", _LIBRARY_SORT_LABELS["name_asc"]),
             ("modified_desc", _LIBRARY_SORT_LABELS["modified_desc"]),
             ("created_desc", _LIBRARY_SORT_LABELS["created_desc"]),
         ]
-        if self.state.search_query:
+        if self.state.search_query and self.state.active_mode == "characters":
             return [("relevance", _LIBRARY_SORT_LABELS["relevance"]), *base]
         return base
 
