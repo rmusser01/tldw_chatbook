@@ -20,8 +20,14 @@ _SELECTED = "console-transcript-message-selected"
 
 
 def _rules(css_text: str) -> list[tuple[str, str]]:
-    """Return (selector, body) pairs for every rule in the stylesheet."""
-    return re.findall(r"([^{}]+)\{([^}]*)\}", css_text)
+    """Return (selector, body) pairs for every rule in the stylesheet.
+
+    Comments are stripped first (mirroring ``test_non_obscuring_focus_contract``)
+    so braces inside ``/* ... */`` -- common in the generated bundle -- are not
+    mistaken for rule delimiters.
+    """
+    uncommented = re.sub(r"/\*.*?\*/", "", css_text, flags=re.DOTALL)
+    return re.findall(r"([^{}]+)\{([^}]*)\}", uncommented)
 
 
 def _selected_treatment_for(css_text: str, kind: str) -> str:
@@ -44,12 +50,24 @@ def _selected_treatment_for(css_text: str, kind: str) -> str:
 
 
 def test_selected_tool_and_system_messages_share_the_selected_treatment():
+    """A selected transcript row of any kind reads the same in source and bundle.
+
+    Guards TASK-385: the muted tool/system role rules must not out-cascade the
+    selection treatment, so selected tool/system rows re-assert the focus colour
+    and bold underline.
+    """
     for css_path in (AGENTIC, BUNDLE):
         css = css_path.read_text(encoding="utf-8")
 
         # Baseline: the canonical selected treatment the other kinds must match.
+        # Match the standalone `.console-transcript-message-selected` rule exactly
+        # (a selector-list token), never a compound `-tool…-selected` selector.
         selected = next(
-            (b for s, b in _rules(css) if s.strip().endswith(f".{_SELECTED}")),
+            (
+                b
+                for s, b in _rules(css)
+                if any(tok.strip() == f".{_SELECTED}" for tok in s.split(","))
+            ),
             "",
         )
         assert "bold underline" in selected, f"{css_path.name}: baseline selected rule missing"
