@@ -124,7 +124,9 @@ from .settings_appearance_defaults import (
 )
 from .settings_library_rag_defaults import (
     SettingsLibraryRagDefaults,
+    normalise_library_rag_chunking_method,
     normalise_library_rag_citation_style,
+    normalise_library_rag_distance_metric,
     normalise_library_rag_search_mode,
     validate_library_rag_defaults,
 )
@@ -2853,6 +2855,38 @@ class SettingsScreen(BaseAppScreen):
                     ("#settings-library-rag-max-context-size", "max_context_size"),
                 ):
                     self.query_one(selector, Input).value = str(values[key])
+                self.query_one(
+                    "#settings-library-rag-chunking-method", Select
+                ).value = normalise_library_rag_chunking_method(
+                    values["chunking_method"]
+                )
+                self.query_one(
+                    "#settings-library-rag-distance-metric", Select
+                ).value = normalise_library_rag_distance_metric(
+                    values["distance_metric"]
+                )
+                self.query_one(
+                    "#settings-library-rag-enable-reranking", Button
+                ).label = (
+                    "Enabled" if bool(values["enable_reranking"]) else "Disabled"
+                )
+                for selector, key in (
+                    ("#settings-library-rag-embedding-model", "embedding_model"),
+                    ("#settings-library-rag-embedding-device", "embedding_device"),
+                    (
+                        "#settings-library-rag-embedding-batch-size",
+                        "embedding_batch_size",
+                    ),
+                    (
+                        "#settings-library-rag-embedding-max-length",
+                        "embedding_max_length",
+                    ),
+                    ("#settings-library-rag-chunk-size", "chunk_size"),
+                    ("#settings-library-rag-chunk-overlap", "chunk_overlap"),
+                    ("#settings-library-rag-reranker-model", "reranker_model"),
+                    ("#settings-library-rag-reranker-top-k", "reranker_top_k"),
+                ):
+                    self.query_one(selector, Input).value = str(values[key])
             except QueryError:
                 pass
         finally:
@@ -2886,6 +2920,22 @@ class SettingsScreen(BaseAppScreen):
             return "default_search_mode"
         if message.startswith("Citation style"):
             return "citation_style"
+        if message.startswith("Embedding model"):
+            return "embedding_model"
+        if message.startswith("Embedding batch size"):
+            return "embedding_batch_size"
+        if message.startswith("Embedding max length"):
+            return "embedding_max_length"
+        if message.startswith("Chunk size"):
+            return "chunk_size"
+        if message.startswith("Chunk overlap"):
+            return "chunk_overlap"
+        if message.startswith("Chunking method"):
+            return "chunking_method"
+        if message.startswith("Distance metric"):
+            return "distance_metric"
+        if message.startswith("Reranker top-k"):
+            return "reranker_top_k"
         return None
 
     def _library_rag_field_selector(self, key: str) -> str | None:
@@ -2899,6 +2949,16 @@ class SettingsScreen(BaseAppScreen):
             "citation_style": "#settings-library-rag-citation-style",
             "snippet_max_chars": "#settings-library-rag-snippet-max-chars",
             "max_context_size": "#settings-library-rag-max-context-size",
+            "embedding_model": "#settings-library-rag-embedding-model",
+            "embedding_device": "#settings-library-rag-embedding-device",
+            "embedding_batch_size": "#settings-library-rag-embedding-batch-size",
+            "embedding_max_length": "#settings-library-rag-embedding-max-length",
+            "chunk_size": "#settings-library-rag-chunk-size",
+            "chunk_overlap": "#settings-library-rag-chunk-overlap",
+            "chunking_method": "#settings-library-rag-chunking-method",
+            "distance_metric": "#settings-library-rag-distance-metric",
+            "reranker_model": "#settings-library-rag-reranker-model",
+            "reranker_top_k": "#settings-library-rag-reranker-top-k",
         }.get(key)
 
     def _update_library_rag_validation_classes(self) -> None:
@@ -2913,6 +2973,16 @@ class SettingsScreen(BaseAppScreen):
             "citation_style",
             "snippet_max_chars",
             "max_context_size",
+            "embedding_model",
+            "embedding_device",
+            "embedding_batch_size",
+            "embedding_max_length",
+            "chunk_size",
+            "chunk_overlap",
+            "chunking_method",
+            "distance_metric",
+            "reranker_model",
+            "reranker_top_k",
         ):
             selector = self._library_rag_field_selector(key)
             if selector is None:
@@ -7450,6 +7520,13 @@ class SettingsScreen(BaseAppScreen):
             else "Disabled"
         )
 
+    def _library_rag_enable_reranking_label(self) -> str:
+        return (
+            "Enabled"
+            if bool(self._library_rag_setting_values()["enable_reranking"])
+            else "Disabled"
+        )
+
     @staticmethod
     def _library_rag_profile_select_options(grouped: dict) -> list[tuple[str, str]]:
         return [(f"{p['name']} (built-in)", p["id"]) for p in grouped["builtin"]] + [
@@ -7558,6 +7635,16 @@ class SettingsScreen(BaseAppScreen):
             "citation_style",
             "snippet_max_chars",
             "max_context_size",
+            "embedding_model",
+            "embedding_device",
+            "embedding_batch_size",
+            "embedding_max_length",
+            "chunk_size",
+            "chunk_overlap",
+            "chunking_method",
+            "distance_metric",
+            "reranker_model",
+            "reranker_top_k",
         ):
             selector = self._library_rag_field_selector(key)
             if selector is None:
@@ -7566,17 +7653,25 @@ class SettingsScreen(BaseAppScreen):
                 self.query_one(selector).disabled = bool(info["read_only"])
             except QueryError:
                 pass
-        try:
-            self.query_one(
-                "#settings-library-rag-include-citations", Button
-            ).disabled = bool(info["read_only"])
-        except QueryError:
-            pass
+        for selector in (
+            "#settings-library-rag-include-citations",
+            "#settings-library-rag-enable-reranking",
+        ):
+            try:
+                self.query_one(selector, Button).disabled = bool(info["read_only"])
+            except QueryError:
+                pass
 
     def _render_library_rag_detail(self) -> ComposeResult:
         values = self._library_rag_setting_values()
         search_mode = normalise_library_rag_search_mode(values["default_search_mode"])
         citation_style = normalise_library_rag_citation_style(values["citation_style"])
+        chunking_method = normalise_library_rag_chunking_method(
+            values["chunking_method"]
+        )
+        distance_metric = normalise_library_rag_distance_metric(
+            values["distance_metric"]
+        )
         # A built-in active profile is read-only: the editor fields render
         # disabled from the very first paint (not just after a later
         # set-active/clone/rename/delete action re-syncs them) -- this is the
@@ -7590,117 +7685,285 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(id="settings-library-rag-card", classes="settings-focus-card"):
             yield self._render_category_state_banner(SettingsCategoryId.LIBRARY_RAG)
             yield from self._render_library_rag_profile_block()
-            yield Static("Search defaults", classes="destination-section")
-            yield Static(
-                "Used by future Library-native Search/RAG and Console evidence handoff defaults.",
-                classes="settings-detail-row",
-            )
-            with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Search mode", classes="settings-input-label")
-                yield Select(
-                    [
-                        ("Plain keyword", "plain"),
-                        ("Semantic", "semantic"),
-                        ("Hybrid", "hybrid"),
-                    ],
-                    value=search_mode,
-                    id="settings-library-rag-search-mode",
-                    classes="settings-compact-select",
-                    allow_blank=False,
-                    compact=True,
+            with Collapsible(
+                title="Search", collapsed=False, id="settings-library-rag-search-group"
+            ):
+                yield Static(
+                    "Used by future Library-native Search/RAG and Console evidence handoff defaults.",
+                    classes="settings-detail-row",
+                )
+                with Horizontal(classes="settings-input-row settings-select-row"):
+                    yield Static("Search mode", classes="settings-input-label")
+                    yield Select(
+                        [
+                            ("Plain keyword", "plain"),
+                            ("Semantic", "semantic"),
+                            ("Hybrid", "hybrid"),
+                        ],
+                        value=search_mode,
+                        id="settings-library-rag-search-mode",
+                        classes="settings-compact-select",
+                        allow_blank=False,
+                        compact=True,
+                        disabled=field_disabled,
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Default results", classes="settings-input-label")
+                    yield Input(
+                        value=str(values["default_top_k"]),
+                        id="settings-library-rag-default-top-k",
+                        classes="settings-compact-input",
+                        placeholder="1 - 100",
+                        restrict=r"^[0-9]*$",
+                        disabled=field_disabled,
+                    )
+                yield Static("Retriever balance", classes="destination-section")
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Keyword results", classes="settings-input-label")
+                    yield Input(
+                        value=str(values["fts_top_k"]),
+                        id="settings-library-rag-fts-top-k",
+                        classes="settings-compact-input",
+                        placeholder="1 - 100",
+                        restrict=r"^[0-9]*$",
+                        disabled=field_disabled,
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Vector results", classes="settings-input-label")
+                    yield Input(
+                        value=str(values["vector_top_k"]),
+                        id="settings-library-rag-vector-top-k",
+                        classes="settings-compact-input",
+                        placeholder="1 - 100",
+                        restrict=r"^[0-9]*$",
+                        disabled=field_disabled,
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Hybrid alpha", classes="settings-input-label")
+                    yield Input(
+                        value=str(values["hybrid_alpha"]),
+                        id="settings-library-rag-hybrid-alpha",
+                        classes="settings-compact-input",
+                        placeholder="0.0 - 1.0",
+                        disabled=field_disabled,
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Min score", classes="settings-input-label")
+                    yield Input(
+                        value=str(values["score_threshold"]),
+                        id="settings-library-rag-score-threshold",
+                        classes="settings-compact-input",
+                        placeholder="0.0 - 1.0",
+                        disabled=field_disabled,
+                    )
+                yield Static("Citation and snippets", classes="destination-section")
+                yield Button(
+                    self._library_rag_include_citations_label(),
+                    id="settings-library-rag-include-citations",
+                    tooltip="Toggle citation metadata in future RAG answers where supported.",
                     disabled=field_disabled,
                 )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Default results", classes="settings-input-label")
-                yield Input(
-                    value=str(values["default_top_k"]),
-                    id="settings-library-rag-default-top-k",
-                    classes="settings-compact-input",
-                    placeholder="1 - 100",
-                    restrict=r"^[0-9]*$",
+                with Horizontal(classes="settings-input-row settings-select-row"):
+                    yield Static("Citation style", classes="settings-input-label")
+                    yield Select(
+                        [
+                            ("Inline", "inline"),
+                            ("Footnote", "footnote"),
+                            ("None", "none"),
+                        ],
+                        value=citation_style,
+                        id="settings-library-rag-citation-style",
+                        classes="settings-compact-select",
+                        allow_blank=False,
+                        compact=True,
+                        disabled=field_disabled,
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Snippet chars", classes="settings-input-label")
+                    yield Input(
+                        value=str(values["snippet_max_chars"]),
+                        id="settings-library-rag-snippet-max-chars",
+                        classes="settings-compact-input",
+                        placeholder="50 - 10000",
+                        restrict=r"^[0-9]*$",
+                        disabled=field_disabled,
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Context budget", classes="settings-input-label")
+                    yield Input(
+                        value=str(values["max_context_size"]),
+                        id="settings-library-rag-max-context-size",
+                        classes="settings-compact-input",
+                        placeholder="1000 - 1000000",
+                        restrict=r"^[0-9]*$",
+                        disabled=field_disabled,
+                    )
+            with Collapsible(
+                title="Embedding",
+                collapsed=True,
+                id="settings-library-rag-embedding-group",
+            ):
+                yield Static(
+                    "Changing the embedding model or its max length changes the "
+                    "vector fingerprint -- the index must be rebuilt to take effect.",
+                    classes="settings-detail-row",
+                )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static(
+                        "Embedding model ⚠ re-index", classes="settings-input-label"
+                    )
+                    yield Input(
+                        value=str(values["embedding_model"]),
+                        id="settings-library-rag-embedding-model",
+                        classes="settings-compact-input",
+                        placeholder="e.g. mxbai-embed-large-v1",
+                        disabled=field_disabled,
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Device", classes="settings-input-label")
+                    yield Input(
+                        value=str(values["embedding_device"]),
+                        id="settings-library-rag-embedding-device",
+                        classes="settings-compact-input",
+                        placeholder="auto, cpu, cuda, mps",
+                        disabled=field_disabled,
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Batch size", classes="settings-input-label")
+                    yield Input(
+                        value=str(values["embedding_batch_size"]),
+                        id="settings-library-rag-embedding-batch-size",
+                        classes="settings-compact-input",
+                        placeholder="> 0",
+                        restrict=r"^[0-9]*$",
+                        disabled=field_disabled,
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static(
+                        "Max length ⚠ re-index", classes="settings-input-label"
+                    )
+                    yield Input(
+                        value=str(values["embedding_max_length"]),
+                        id="settings-library-rag-embedding-max-length",
+                        classes="settings-compact-input",
+                        placeholder="> 0",
+                        restrict=r"^[0-9]*$",
+                        disabled=field_disabled,
+                    )
+            with Collapsible(
+                title="Chunking",
+                collapsed=True,
+                id="settings-library-rag-chunking-group",
+            ):
+                yield Static(
+                    "Chunk size, overlap, and method all change the vector "
+                    "fingerprint -- the index must be rebuilt to take effect.",
+                    classes="settings-detail-row",
+                )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static(
+                        "Chunk size ⚠ re-index", classes="settings-input-label"
+                    )
+                    yield Input(
+                        value=str(values["chunk_size"]),
+                        id="settings-library-rag-chunk-size",
+                        classes="settings-compact-input",
+                        placeholder="> 0 words",
+                        restrict=r"^[0-9]*$",
+                        disabled=field_disabled,
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static(
+                        "Chunk overlap ⚠ re-index", classes="settings-input-label"
+                    )
+                    yield Input(
+                        value=str(values["chunk_overlap"]),
+                        id="settings-library-rag-chunk-overlap",
+                        classes="settings-compact-input",
+                        placeholder="0 - chunk size",
+                        restrict=r"^[0-9]*$",
+                        disabled=field_disabled,
+                    )
+                with Horizontal(classes="settings-input-row settings-select-row"):
+                    yield Static(
+                        "Method ⚠ re-index", classes="settings-input-label"
+                    )
+                    yield Select(
+                        [
+                            ("Words", "words"),
+                            ("Sentences", "sentences"),
+                            ("Paragraphs", "paragraphs"),
+                        ],
+                        value=chunking_method,
+                        id="settings-library-rag-chunking-method",
+                        classes="settings-compact-select",
+                        allow_blank=False,
+                        compact=True,
+                        disabled=field_disabled,
+                    )
+            with Collapsible(
+                title="Vector store",
+                collapsed=True,
+                id="settings-library-rag-vector-store-group",
+            ):
+                yield Static(
+                    "Distance metric changes the vector fingerprint -- the index "
+                    "must be rebuilt to take effect.",
+                    classes="settings-detail-row",
+                )
+                with Horizontal(classes="settings-input-row settings-select-row"):
+                    yield Static(
+                        "Distance metric ⚠ re-index",
+                        classes="settings-input-label",
+                    )
+                    yield Select(
+                        [
+                            ("Cosine", "cosine"),
+                            ("Euclidean (L2)", "l2"),
+                            ("Inner product", "ip"),
+                        ],
+                        value=distance_metric,
+                        id="settings-library-rag-distance-metric",
+                        classes="settings-compact-select",
+                        allow_blank=False,
+                        compact=True,
+                        disabled=field_disabled,
+                    )
+            with Collapsible(
+                title="Reranking",
+                collapsed=True,
+                id="settings-library-rag-reranking-group",
+            ):
+                yield Static(
+                    "Enabling reranking creates the profile's reranker config; "
+                    "disabling it removes that config entirely.",
+                    classes="settings-detail-row",
+                )
+                yield Button(
+                    self._library_rag_enable_reranking_label(),
+                    id="settings-library-rag-enable-reranking",
+                    tooltip="Toggle LLM-based reranking of retrieved results for this profile.",
                     disabled=field_disabled,
                 )
-            yield Static("Retriever balance", classes="destination-section")
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Keyword results", classes="settings-input-label")
-                yield Input(
-                    value=str(values["fts_top_k"]),
-                    id="settings-library-rag-fts-top-k",
-                    classes="settings-compact-input",
-                    placeholder="1 - 100",
-                    restrict=r"^[0-9]*$",
-                    disabled=field_disabled,
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Vector results", classes="settings-input-label")
-                yield Input(
-                    value=str(values["vector_top_k"]),
-                    id="settings-library-rag-vector-top-k",
-                    classes="settings-compact-input",
-                    placeholder="1 - 100",
-                    restrict=r"^[0-9]*$",
-                    disabled=field_disabled,
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Hybrid alpha", classes="settings-input-label")
-                yield Input(
-                    value=str(values["hybrid_alpha"]),
-                    id="settings-library-rag-hybrid-alpha",
-                    classes="settings-compact-input",
-                    placeholder="0.0 - 1.0",
-                    disabled=field_disabled,
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Min score", classes="settings-input-label")
-                yield Input(
-                    value=str(values["score_threshold"]),
-                    id="settings-library-rag-score-threshold",
-                    classes="settings-compact-input",
-                    placeholder="0.0 - 1.0",
-                    disabled=field_disabled,
-                )
-            yield Static("Citation and snippets", classes="destination-section")
-            yield Button(
-                self._library_rag_include_citations_label(),
-                id="settings-library-rag-include-citations",
-                tooltip="Toggle citation metadata in future RAG answers where supported.",
-                disabled=field_disabled,
-            )
-            with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Citation style", classes="settings-input-label")
-                yield Select(
-                    [
-                        ("Inline", "inline"),
-                        ("Footnote", "footnote"),
-                        ("None", "none"),
-                    ],
-                    value=citation_style,
-                    id="settings-library-rag-citation-style",
-                    classes="settings-compact-select",
-                    allow_blank=False,
-                    compact=True,
-                    disabled=field_disabled,
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Snippet chars", classes="settings-input-label")
-                yield Input(
-                    value=str(values["snippet_max_chars"]),
-                    id="settings-library-rag-snippet-max-chars",
-                    classes="settings-compact-input",
-                    placeholder="50 - 10000",
-                    restrict=r"^[0-9]*$",
-                    disabled=field_disabled,
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Context budget", classes="settings-input-label")
-                yield Input(
-                    value=str(values["max_context_size"]),
-                    id="settings-library-rag-max-context-size",
-                    classes="settings-compact-input",
-                    placeholder="1000 - 1000000",
-                    restrict=r"^[0-9]*$",
-                    disabled=field_disabled,
-                )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Reranker model", classes="settings-input-label")
+                    yield Input(
+                        value=str(values["reranker_model"]),
+                        id="settings-library-rag-reranker-model",
+                        classes="settings-compact-input",
+                        placeholder="blank = reranker default",
+                        disabled=field_disabled,
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Reranker top-k", classes="settings-input-label")
+                    yield Input(
+                        value=str(values["reranker_top_k"]),
+                        id="settings-library-rag-reranker-top-k",
+                        classes="settings-compact-input",
+                        placeholder=">= 1",
+                        restrict=r"^[0-9]*$",
+                        disabled=field_disabled,
+                    )
             yield Static("Preview defaults", classes="destination-section")
             preview_summary, preview_retrieval, preview_context = (
                 self._library_rag_preview_rows()
@@ -9403,6 +9666,105 @@ class SettingsScreen(BaseAppScreen):
             return
         self._stage_library_rag_value(
             "max_context_size",
+            self._normalise_library_rag_int(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-embedding-model")
+    def handle_library_rag_embedding_model_changed(self, event: Input.Changed) -> None:
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value("embedding_model", str(event.value))
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-embedding-device")
+    def handle_library_rag_embedding_device_changed(self, event: Input.Changed) -> None:
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value("embedding_device", str(event.value))
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-embedding-batch-size")
+    def handle_library_rag_embedding_batch_size_changed(
+        self, event: Input.Changed
+    ) -> None:
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value(
+            "embedding_batch_size",
+            self._normalise_library_rag_int(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-embedding-max-length")
+    def handle_library_rag_embedding_max_length_changed(
+        self, event: Input.Changed
+    ) -> None:
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value(
+            "embedding_max_length",
+            self._normalise_library_rag_int(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-chunk-size")
+    def handle_library_rag_chunk_size_changed(self, event: Input.Changed) -> None:
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value(
+            "chunk_size",
+            self._normalise_library_rag_int(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-chunk-overlap")
+    def handle_library_rag_chunk_overlap_changed(self, event: Input.Changed) -> None:
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value(
+            "chunk_overlap",
+            self._normalise_library_rag_int(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Select.Changed, "#settings-library-rag-chunking-method")
+    def handle_library_rag_chunking_method_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value("chunking_method", str(event.value or "words"))
+        self._mark_library_rag_settings_staged()
+
+    @on(Select.Changed, "#settings-library-rag-distance-metric")
+    def handle_library_rag_distance_metric_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value("distance_metric", str(event.value or "cosine"))
+        self._mark_library_rag_settings_staged()
+
+    @on(Button.Pressed, "#settings-library-rag-enable-reranking")
+    def handle_library_rag_enable_reranking_changed(self, event: Button.Pressed) -> None:
+        event.stop()
+        next_value = not bool(self._library_rag_setting_values()["enable_reranking"])
+        self._stage_library_rag_value("enable_reranking", next_value)
+        event.button.label = "Enabled" if next_value else "Disabled"
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-reranker-model")
+    def handle_library_rag_reranker_model_changed(self, event: Input.Changed) -> None:
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value("reranker_model", str(event.value))
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-reranker-top-k")
+    def handle_library_rag_reranker_top_k_changed(self, event: Input.Changed) -> None:
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value(
+            "reranker_top_k",
             self._normalise_library_rag_int(event.value),
         )
         self._mark_library_rag_settings_staged()

@@ -6,6 +6,7 @@ All functions here are headless (no Textual imports) and testable.
 """
 from __future__ import annotations
 
+import copy
 from typing import Optional
 
 from loguru import logger
@@ -35,6 +36,10 @@ def load_rag_defaults_from_active_profile() -> SettingsLibraryRagDefaults:
     if profile is None:
         return SettingsLibraryRagDefaults()
     s = profile.rag_config.search
+    e = profile.rag_config.embedding
+    c = profile.rag_config.chunking
+    v = profile.rag_config.vector_store
+    rr = profile.reranking_config
     return SettingsLibraryRagDefaults(
         default_search_mode=s.default_search_mode,
         default_top_k=int(s.default_top_k),
@@ -46,13 +51,36 @@ def load_rag_defaults_from_active_profile() -> SettingsLibraryRagDefaults:
         citation_style=s.citation_style,
         snippet_max_chars=int(s.snippet_max_chars),
         max_context_size=int(s.max_context_size),
+        embedding_model=str(e.model),
+        embedding_device=str(e.device) if e.device else "auto",
+        embedding_batch_size=int(e.batch_size),
+        embedding_max_length=int(e.max_length),
+        chunk_size=int(c.chunk_size),
+        chunk_overlap=int(c.chunk_overlap),
+        chunking_method=str(c.chunking_method),
+        distance_metric=str(v.distance_metric),
+        # Rerank presence semantics: the service reads
+        # `profile.reranking_config is not None` (rag_factory.py), so THAT is
+        # the source of truth for whether reranking is on -- not
+        # `rag_config.search.enable_reranking`, which apply_defaults_to_profile
+        # only mirrors for display/consistency.
+        enable_reranking=rr is not None,
+        reranker_model=str(rr.model_name) if rr is not None else "",
+        reranker_top_k=int(rr.top_k_to_rerank) if rr is not None else int(s.reranker_top_k),
     )
 
 
 def apply_defaults_to_profile(
     profile: ProfileConfig, values: SettingsLibraryRagDefaults
 ) -> ProfileConfig:
-    """Map the category dataclass onto the profile's SearchConfig (pure)."""
+    """Map the category dataclass onto the profile's RAGConfig (pure).
+
+    Also applies rerank PRESENCE semantics: ``create_rag_service``
+    (rag_factory.py) decides whether reranking is on from
+    ``profile.reranking_config is not None`` -- so the ``enable_reranking``
+    toggle here controls whether that attribute exists at all, not just a
+    flag somewhere nobody reads.
+    """
     s = profile.rag_config.search
     s.default_search_mode = values.default_search_mode
     s.default_top_k = int(values.default_top_k)
@@ -64,7 +92,75 @@ def apply_defaults_to_profile(
     s.citation_style = values.citation_style
     s.snippet_max_chars = int(values.snippet_max_chars)
     s.max_context_size = int(values.max_context_size)
+
+    e = profile.rag_config.embedding
+    e.model = values.embedding_model
+    e.device = values.embedding_device
+    e.batch_size = int(values.embedding_batch_size)
+    e.max_length = int(values.embedding_max_length)
+
+    c = profile.rag_config.chunking
+    c.chunk_size = int(values.chunk_size)
+    c.chunk_overlap = int(values.chunk_overlap)
+    c.chunking_method = values.chunking_method
+
+    v = profile.rag_config.vector_store
+    v.distance_metric = values.distance_metric
+
+    if values.enable_reranking:
+        if profile.reranking_config is None:
+            from tldw_chatbook.RAG_Search.reranker import RerankingConfig
+            profile.reranking_config = RerankingConfig()
+        if values.reranker_model:
+            profile.reranking_config.model_name = values.reranker_model
+        profile.reranking_config.top_k_to_rerank = int(values.reranker_top_k)
+        profile.rag_config.search.enable_reranking = True
+    else:
+        profile.reranking_config = None
+        profile.rag_config.search.enable_reranking = False
+
     return profile
+
+
+def validate_full_config(values: SettingsLibraryRagDefaults) -> list[str]:
+    """Validate the full RAGConfig that saving ``values`` would produce.
+
+    Applies ``values`` onto a scratch (deep-copied) clone of the active
+    profile -- never the cached object other callers share -- and runs
+    ``RAGConfig.validate()`` (the first caller of that method anywhere in the
+    codebase), plus rerank-specific checks that ``RAGConfig.validate()``
+    doesn't cover.
+
+    Args:
+        values: Candidate Library/RAG defaults to validate.
+
+    Returns:
+        A list of human-readable validation messages; empty when the
+        resulting config is valid. When no profile is active, returns a
+        single explanatory message rather than raising.
+    """
+    profile = _active_profile()
+    if profile is None:
+        return ["No active profile is selected."]
+
+    scratch = copy.deepcopy(profile)
+    apply_defaults_to_profile(scratch, values)
+
+    errors = list(scratch.rag_config.validate())
+
+    try:
+        reranker_top_k = int(values.reranker_top_k)
+    except (TypeError, ValueError):
+        reranker_top_k = None
+    if reranker_top_k is None or reranker_top_k < 1:
+        errors.append("Reranker top-k must be at least 1.")
+    elif values.enable_reranking and reranker_top_k > int(values.default_top_k):
+        errors.append(
+            f"Reranker top-k ({reranker_top_k}) exceeds default results "
+            f"({values.default_top_k}); reranking will not see all requested results."
+        )
+
+    return errors
 
 
 def save_rag_defaults_to_active_profile(

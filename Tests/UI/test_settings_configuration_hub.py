@@ -899,7 +899,10 @@ async def test_settings_library_rag_renders_guided_defaults_and_validates(
         text = _visible_text(screen)
 
         assert "RAG" in text
-        assert "Search defaults" in text
+        # task-3/SP3: "Search defaults" became the "Search" Collapsible group
+        # title (with Embedding/Chunking/Vector store/Reranking groups added
+        # alongside it).
+        assert "Search" in text
         assert "Citation and snippets" in text
         assert "Preview defaults" in text
         assert "Semantic search | 10 results | Inline citations" in text
