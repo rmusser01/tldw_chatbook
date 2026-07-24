@@ -122,3 +122,18 @@ Verified facts (research 2026-07-24, worktree base dev 922308e44): `AgentRuns_DB
 **Type consistency:** `create_run(..., assistant_message_id: str|None=None)`, `set_run_assistant_message_id(run_id, assistant_message_id)`, `run_turn(...) -> (run_id, RunOutcome)`, `resume_marker_messages -> list[tuple[str|None, list[ConsoleChatMessage]]]`, `inject_resume_agent_markers(messages, anchored_blocks)` — consistent across Tasks 1–4. The stored/compared id is always the **persisted** id (`ConsoleChatMessage.persisted_message_id`).
 
 **Risk:** Task 2's `run_reply` return-shape change ripples to the `run_reply` fakes in `test_console_agent_swap.py` — update them. The off-path-hide changes the old "orphan → append" semantics for id-set runs (intended); the null-ordinal path preserves it for legacy data.
+
+---
+
+## Addendum (final whole-branch review, 2026-07-24): stopped-via-cancel limitation
+
+The persisted-id write fires on every terminal path **that returns through the finalizer**
+(success, failure, cancelled-outcome, and the post-outcome `stopped_now` race). A user Stop
+delivered via `stop_active_run` → `task.cancel()` is different: the `await asyncio.to_thread(...)`
+raises `CancelledError` before the `(run_id, outcome)` tuple is bound, so the `CancelledError`
+branch returns without ever knowing the run id — that run's `assistant_message_id` stays `NULL`
+and it falls back to the legacy ordinal placement on resume. This is NOT a regression (it is
+exactly the pre-Phase-C behavior for every run) and is benign on a linear resume; it only leaks
+stale markers via leftover-append when a stopped reply later becomes an off-path sibling.
+Follow-up filed: expose the most-recent run id via the bridge so the cancel branch can record it,
+plus a test exercising the real `task.cancel()` path.
