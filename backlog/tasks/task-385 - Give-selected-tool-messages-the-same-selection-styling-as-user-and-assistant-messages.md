@@ -1,8 +1,9 @@
 ---
 id: TASK-385
 title: Give selected tool messages the same selection styling as user and assistant messages
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux, keyboard]
 dependencies: []
@@ -23,5 +24,22 @@ Selecting a user or assistant message shows underline + lighter panel + action r
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 All selectable message kinds share the same selected treatment
+- [x] #1 All selectable message kinds share the same selected treatment
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Root cause was a CSS cascade collision, not a missing style. A selected transcript
+row carries both `.console-transcript-message-selected` and its role class. The
+single-class `.console-transcript-message-tool` (`dim italic` muted) and
+`-system` rules follow `-selected` in source order at EQUAL specificity, so for a
+selected tool/system row they won the cascade and stripped the selection
+treatment (`$ds-focus-fg` + `bold underline`) off the text — leaving only the
+action row as a selection cue. FIX = two-class compound selectors
+`.console-transcript-message-tool.console-transcript-message-selected` /
+`…-system…-selected` that out-specify the muted rules and re-assert the focus
+colour + bold underline, so every selectable message kind reads the same when
+selected. Regenerated bundle. CSS-source contract test (source + bundle) mirrors
+the `test_non_obscuring_focus_contract` pattern; full focus-contract suite green.
+<!-- SECTION:NOTES:END -->
