@@ -46,7 +46,9 @@ class PersonasCharacterWorldBooksWidget(Container):
         self._rows: list[dict[str, Any]] = []
 
     def compose(self) -> ComposeResult:
-        yield Static("World Books (embedded copies)", classes="destination-section")
+        yield Static(
+            "World Books (copied into this character)", classes="destination-section"
+        )
         yield Static(
             "No world books attached to this character yet.",
             id="personas-char-worldbooks-empty",

@@ -764,7 +764,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
         ``_run_library_skills_import``).
         """
         yield Input(
-            placeholder="SKILL.md file or skill folder path…",
+            placeholder="SKILL.md file or skill folder path… or GitHub/zip URL",
             id="library-skills-import-path",
             value=self.import_path,
         )

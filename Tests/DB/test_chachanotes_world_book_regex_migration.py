@@ -9,7 +9,7 @@ def test_world_book_entries_regex_migrate_v21_to_v22(tmp_path):
     conn.execute("DROP TRIGGER IF EXISTS world_book_entries_sync_create")
     conn.execute("DROP TRIGGER IF EXISTS world_book_entries_sync_update")
     conn.execute("ALTER TABLE world_book_entries DROP COLUMN regex")
-    # A v21 fixture must not retain tables introduced by the v24→v25 migration.
+    # A v21 fixture must not retain citation tables introduced at v26→v27.
     for table in (
         "rag_artifact_owner_operations",
         "rag_artifact_owner_leases",

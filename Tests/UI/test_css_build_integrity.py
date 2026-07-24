@@ -13,6 +13,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CSS_ROOT = _REPO_ROOT / "tldw_chatbook/css"
 _AGENTIC_SOURCE = _CSS_ROOT / "components/_agentic_terminal.tcss"
 _SETTINGS_SOURCE = _CSS_ROOT / "components/_settings_splash_theme.tcss"
+_SHARED_SOURCE = _CSS_ROOT / "components/_shared_components.tcss"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
 
 
@@ -73,9 +74,8 @@ def test_settings_splash_theme_rules_have_source_and_bundle_integrity() -> None:
     assert _SETTINGS_SOURCE.is_file()
     settings_source = _SETTINGS_SOURCE.read_text(encoding="utf-8")
     bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    # The live, feature-scoped theme-editor + splash-viewer selectors remain.
     required_selectors = (
-        ".card-list-container",
-        ".preview-panel",
         "#settings-theme-tree",
         ".settings-preview-grid",
         ".settings-splash-gallery",
@@ -92,6 +92,52 @@ def test_settings_splash_theme_rules_have_source_and_bundle_integrity() -> None:
     bundled_module = bundle.split(module_marker, 1)[1].split("/* ===== MODULE:", 1)[0]
     assert bundled_module.strip() == settings_source.strip()
     assert "(NOT FOUND)" not in bundle
+
+
+def test_splash_theme_module_has_no_bare_or_generic_component_selectors() -> None:
+    """The splash/theme module defines no app-wide component styles.
+
+    TASK-394 regression lock: no bare type selectors and none of the relocated
+    generic class names, in ANY selector position -- bare, compound (``.cls
+    Button``), or grouped (``.cls, .x``) -- so a leak can't slip back as a
+    compound selector.
+    """
+    source = re.sub(
+        r"/\*.*?\*/", "", _SETTINGS_SOURCE.read_text(encoding="utf-8"), flags=re.DOTALL
+    )
+    # No bare type selectors (a rule/group whose token is an uppercase widget
+    # name, e.g. VerticalScroll), including as the head of a grouped selector.
+    assert not re.search(r"(?m)^[A-Z][A-Za-z]+\s*[\{,]", source), (
+        "splash/theme module reintroduced a bare type selector"
+    )
+    # None of the relocated generic component classes -- matched as a selector
+    # token anywhere (not as the prefix of a longer name like `.preview-panel-demo`).
+    for cls in (
+        "setting-label",
+        "section-header",
+        "help-text",
+        "action-buttons",
+        "settings-section",
+        "card-list",
+        "preview-panel",
+        "preview-container",
+        "preview-content",
+    ):
+        assert not re.search(rf"\.{re.escape(cls)}(?![\w-])", source), (
+            f".{cls} must live in the shared component module, not splash/theme"
+        )
+
+
+def test_relocated_shared_component_rules_are_present() -> None:
+    """The moved generic rules live in _shared_components and reach the bundle."""
+    shared = _SHARED_SOURCE.read_text(encoding="utf-8")
+    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    for selector in (".setting-label", ".section-header", ".preview-panel", ".action-buttons"):
+        assert selector in shared
+        assert selector in bundle
+    # The app-wide scrollbar default now lives in core, not a feature module.
+    core_base = (_CSS_ROOT / "core/_base.tcss").read_text(encoding="utf-8")
+    assert re.search(r"(?m)^VerticalScroll\s*\{", core_base)
 
 
 def test_settings_category_rules_have_source_and_bundle_integrity() -> None:

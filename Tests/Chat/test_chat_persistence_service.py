@@ -414,7 +414,7 @@ class TestChatPersistenceService:
                 connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
             )
 
-    def test_repository_failure_rolls_back_message_attachments_feedback_and_trace(
+    def test_repository_failure_rolls_back_message_sidecars_feedback_and_trace(
         self,
         db_instance: CharactersRAGDB,
     ):
@@ -442,6 +442,14 @@ class TestChatPersistenceService:
                         "display_name": "source.txt",
                     }
                 ],
+                generation_metadata=[
+                    {
+                        "position": 1,
+                        "prompt": "source-grounded image",
+                        "backend": "swarmui",
+                        "seed": 7,
+                    }
+                ],
                 citation_write=_sealed_write(),
             )
 
@@ -450,6 +458,13 @@ class TestChatPersistenceService:
         assert (
             connection.execute(
                 "SELECT count(*) FROM message_attachments WHERE message_id = ?",
+                ("atomic-rollback-message",),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM message_generation_metadata WHERE message_id = ?",
                 ("atomic-rollback-message",),
             ).fetchone()[0]
             == 0
@@ -540,6 +555,67 @@ class TestChatPersistenceService:
                 connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
                 == expected
             )
+
+    def test_citation_retry_requires_exact_generation_metadata(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Citation image metadata", "character_id": None}
+        )
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=citation_repository(db_instance),
+        )
+        arguments = {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "Answer [S1].",
+            "message_id": "citation-generation-metadata",
+            "attachments": [
+                {
+                    "position": 0,
+                    "data": b"image",
+                    "mime_type": "image/png",
+                }
+            ],
+            "generation_metadata": [
+                {
+                    "position": 0,
+                    "prompt": "source-grounded image",
+                    "backend": "swarmui",
+                    "seed": 7,
+                }
+            ],
+            "citation_write": _sealed_write(),
+        }
+
+        assert service.create_message(**arguments) == "citation-generation-metadata"
+        assert service.create_message(**arguments) == "citation-generation-metadata"
+        metadata = db_instance.get_generation_metadata_for_messages(
+            ["citation-generation-metadata"]
+        )
+        assert metadata["citation-generation-metadata"][0]["seed"] == 7
+
+        changed_arguments = dict(arguments)
+        changed_arguments["generation_metadata"] = [
+            {
+                "position": 0,
+                "prompt": "source-grounded image",
+                "backend": "swarmui",
+                "seed": 8,
+            }
+        ]
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="message_identity_conflict",
+        ):
+            service.create_message(**changed_arguments)
+
+        metadata = db_instance.get_generation_metadata_for_messages(
+            ["citation-generation-metadata"]
+        )
+        assert metadata["citation-generation-metadata"][0]["seed"] == 7
 
     @pytest.mark.parametrize("mutation", ("body", "trace", "governed"))
     def test_uncertain_commit_retry_with_changed_immutable_input_fails_closed(
@@ -1522,6 +1598,139 @@ class TestChatPersistenceService:
         assert extra[0]["data"] == b"img-1"
         # The service-level batch read is a passthrough to the DB method.
         assert service.get_attachments_for_messages([msg_id]) == {msg_id: extra}
+
+    def test_create_message_with_generation_metadata_atomic(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        conv_id = db_instance.add_conversation({"title": "t"})
+        msg_id = service.create_message(
+            conversation_id=conv_id,
+            sender="assistant",
+            content="[image] x",
+            attachments=[
+                {"position": 0, "data": b"a", "mime_type": "image/png"},
+                {"position": 1, "data": b"b", "mime_type": "image/png"},
+            ],
+            generation_metadata=[
+                {
+                    "position": 0,
+                    "prompt": "x",
+                    "negative_prompt": "",
+                    "backend": "swarmui",
+                    "model": None,
+                    "seed": 1,
+                    "style": None,
+                    "params_json": "{}",
+                },
+                {
+                    "position": 1,
+                    "prompt": "x",
+                    "negative_prompt": "",
+                    "backend": "swarmui",
+                    "model": None,
+                    "seed": 2,
+                    "style": None,
+                    "params_json": "{}",
+                },
+            ],
+        )
+        got = db_instance.get_generation_metadata_for_messages([msg_id])
+        assert [r["seed"] for r in got[msg_id]] == [1, 2]
+
+    def test_create_message_rolls_back_row_when_generation_metadata_write_fails(
+        self, db_instance: CharactersRAGDB, monkeypatch
+    ):
+        """The message insert, attachment write, and sidecar-metadata write
+        must be one atomic unit: a metadata-write failure rolls back the
+        row and the attachments too."""
+        service = ChatPersistenceService(db_instance)
+        conv_id = db_instance.add_conversation({"title": "t"})
+
+        def _boom(message_id, rows):
+            raise RuntimeError("metadata write failed")
+
+        monkeypatch.setattr(
+            db_instance, "set_message_generation_metadata", _boom
+        )
+        with pytest.raises(RuntimeError, match="metadata write failed"):
+            service.create_message(
+                conversation_id=conv_id,
+                sender="assistant",
+                content="[image] x",
+                message_id="msg-atomic-metadata",
+                attachments=[
+                    {"position": 0, "data": b"a", "mime_type": "image/png"},
+                ],
+                generation_metadata=[
+                    {
+                        "position": 0,
+                        "prompt": "x",
+                        "negative_prompt": "",
+                        "backend": "swarmui",
+                        "model": None,
+                        "seed": 1,
+                        "style": None,
+                        "params_json": "{}",
+                    },
+                ],
+            )
+        assert db_instance.get_message_by_id("msg-atomic-metadata") is None
+
+    def test_append_message_attachment_wrapper_delegates_to_db(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        conv_id = db_instance.add_conversation({"title": "t"})
+        msg_id = db_instance.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": "assistant",
+                "content": "[image] x",
+                "image_data": b"png0",
+                "image_mime_type": "image/png",
+            }
+        )
+        pos = service.append_message_attachment(
+            msg_id,
+            data=b"png1",
+            mime_type="image/png",
+            generation_metadata={
+                "prompt": "x",
+                "negative_prompt": "",
+                "backend": "swarmui",
+                "model": None,
+                "seed": 42,
+                "style": None,
+                "params_json": "{}",
+            },
+        )
+        assert pos == 1
+        extra = db_instance.get_attachments_for_messages([msg_id])[msg_id]
+        assert extra[0]["data"] == b"png1"
+        got = db_instance.get_generation_metadata_for_messages([msg_id])
+        assert got[msg_id][0]["seed"] == 42
+
+    def test_keep_message_attachment_wrapper_delegates_to_db(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        conv_id = db_instance.add_conversation({"title": "t"})
+        msg_id = db_instance.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": "assistant",
+                "content": "[image] x",
+                "image_data": b"png0",
+                "image_mime_type": "image/png",
+            }
+        )
+        service.append_message_attachment(msg_id, data=b"png1", mime_type="image/png")
+        service.keep_message_attachment(msg_id, 1)
+        row = db_instance.get_message_by_id(msg_id)
+        assert row["image_data"] == b"png1"
+        extra = db_instance.get_attachments_for_messages([msg_id])[msg_id]
+        assert extra[0]["data"] == b"png0"
 
     def test_update_without_attachments_leaves_table_and_columns_alone(
         self, db_instance: CharactersRAGDB

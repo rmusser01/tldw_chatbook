@@ -1,4 +1,4 @@
-"""Persona profile create/edit form for the Personas workbench."""
+"""User profile create/edit form for the Personas workbench."""
 
 from __future__ import annotations
 
@@ -14,35 +14,35 @@ from ...tldw_api.character_persona_schemas import PersonaMode
 from .personas_pane_messages import (
     EditorContentChanged,
     PersonaProfileEditCancelled,
-    PersonaProfileSaveRequested,
+    UserProfileSaveRequested,
 )
 
 #: The `PersonaMode` literal's values, for the editor's mode `Select` options.
 PERSONA_MODES: tuple[str, ...] = get_args(PersonaMode)
-#: Default mode for a persona with none set, matching `PersonaProfileCreate`.
+#: Default mode for a persona with none set, matching `UserProfileCreate`.
 _DEFAULT_MODE = "session_scoped"
 
 
-class PersonaProfileEditorWidget(Container):
+class UserProfileEditorWidget(Container):
     """ds-field-row form: name, description, system prompt, personality
     traits, mode, and enabled toggle."""
 
     DEFAULT_CSS = """
-    PersonaProfileEditorWidget {
+    UserProfileEditorWidget {
         width: 100%;
         height: 100%;
     }
 
-    PersonaProfileEditorWidget #personas-editor-body {
+    UserProfileEditorWidget #personas-editor-body {
         height: 1fr;
     }
 
-    PersonaProfileEditorWidget .ds-toolbar {
+    UserProfileEditorWidget .ds-toolbar {
         height: 1;
         min-height: 1;
     }
 
-    PersonaProfileEditorWidget .ds-toolbar Button {
+    UserProfileEditorWidget .ds-toolbar Button {
         width: auto;
         min-width: 0;
         height: 1;
@@ -55,7 +55,7 @@ class PersonaProfileEditorWidget(Container):
     /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
        a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
        that never load the app stylesheet. */
-    PersonaProfileEditorWidget .is-invalid {
+    UserProfileEditorWidget .is-invalid {
         border: round red;
     }
     """
@@ -89,11 +89,11 @@ class PersonaProfileEditorWidget(Container):
         self._user_touched: bool = False
 
     def compose(self) -> ComposeResult:
-        yield Static("Persona Editor", classes="destination-section")
+        yield Static("User Profile Editor", classes="destination-section")
         with VerticalScroll(id="personas-editor-body"):
             with Vertical(classes="ds-field-row"):
                 yield Label("Name")
-                yield Input(id="personas-editor-name", placeholder="Persona name")
+                yield Input(id="personas-editor-name", placeholder="User profile name")
             with Vertical(classes="ds-field-row"):
                 yield Label("Description")
                 yield TextArea(id="personas-editor-description")
@@ -333,7 +333,7 @@ class PersonaProfileEditorWidget(Container):
         self._user_touched = True
         if any(level == "error" for _fid, _msg, level in self._run_validation()):
             return
-        self.post_message(PersonaProfileSaveRequested(self.collect()))
+        self.post_message(UserProfileSaveRequested(self.collect()))
 
     @on(Button.Pressed, "#personas-editor-cancel")
     def _cancel_pressed(self, event: Button.Pressed) -> None:
@@ -341,4 +341,4 @@ class PersonaProfileEditorWidget(Container):
         self.post_message(PersonaProfileEditCancelled())
 
 
-__all__ = ["PersonaProfileEditorWidget"]
+__all__ = ["UserProfileEditorWidget"]

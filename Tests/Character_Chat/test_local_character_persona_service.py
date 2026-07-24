@@ -15,8 +15,8 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     PersonaExemplarImportRequest,
     PersonaExemplarReviewRequest,
     PersonaExemplarUpdate,
-    PersonaProfileCreate,
-    PersonaProfileUpdate,
+    UserProfileCreate,
+    UserProfileUpdate,
     PresetCreate,
     PresetUpdate,
 )
@@ -332,31 +332,31 @@ def test_local_character_persona_service_supports_persona_session_metadata():
 def test_local_character_persona_service_persists_persona_profile_crud(tmp_path):
     db = FakeConversationDB()
     store_path = tmp_path / "personas.json"
-    service = LocalCharacterPersonaService(db, persona_store_path=store_path)
+    service = LocalCharacterPersonaService(db, user_profile_store_path=store_path)
 
-    created = service.create_persona_profile(
-        PersonaProfileCreate(
+    created = service.create_user_profile(
+        UserProfileCreate(
             id="guide",
             name="Guide",
             mode="session_scoped",
             system_prompt="Be precise.",
         )
     )
-    listed = service.list_persona_profiles()
-    updated = service.update_persona_profile(
+    listed = service.list_user_profiles()
+    updated = service.update_user_profile(
         "guide",
-        PersonaProfileUpdate(name="Guide v2", is_active=False),
+        UserProfileUpdate(name="Guide v2", is_active=False),
         expected_version=created["version"],
     )
-    active_only = service.list_persona_profiles(active_only=True)
-    deleted = service.delete_persona_profile(
+    active_only = service.list_user_profiles(active_only=True)
+    deleted = service.delete_user_profile(
         "guide", expected_version=updated["version"]
     )
-    visible_after_delete = service.list_persona_profiles()
-    restored = service.restore_persona_profile(
+    visible_after_delete = service.list_user_profiles()
+    restored = service.restore_user_profile(
         "guide", expected_version=updated["version"] + 1
     )
-    reloaded = LocalCharacterPersonaService(db, persona_store_path=store_path)
+    reloaded = LocalCharacterPersonaService(db, user_profile_store_path=store_path)
 
     assert created["record_id"] == "local:persona_profile:guide"
     assert created["backend"] == "local"
@@ -370,14 +370,14 @@ def test_local_character_persona_service_persists_persona_profile_crud(tmp_path)
     assert visible_after_delete == []
     assert restored["deleted"] is False
     assert restored["version"] == 4
-    assert reloaded.get_persona_profile("guide")["name"] == "Guide v2"
+    assert reloaded.get_user_profile("guide")["name"] == "Guide v2"
 
 
 def test_local_character_persona_service_persists_persona_exemplar_crud(tmp_path):
     db = FakeConversationDB()
     store_path = tmp_path / "personas.json"
-    service = LocalCharacterPersonaService(db, persona_store_path=store_path)
-    service.create_persona_profile(PersonaProfileCreate(id="guide", name="Guide"))
+    service = LocalCharacterPersonaService(db, user_profile_store_path=store_path)
+    service.create_user_profile(UserProfileCreate(id="guide", name="Guide"))
 
     created = service.create_persona_exemplar(
         "guide",
@@ -412,7 +412,7 @@ def test_local_character_persona_service_persists_persona_exemplar_crud(tmp_path
     visible_after_delete = service.list_persona_exemplars(
         "guide", include_disabled=True
     )
-    reloaded = LocalCharacterPersonaService(db, persona_store_path=store_path)
+    reloaded = LocalCharacterPersonaService(db, user_profile_store_path=store_path)
 
     assert created["record_id"] == "local:persona_exemplar:guide:ex-1"
     assert created["backend"] == "local"
@@ -439,7 +439,7 @@ def test_local_character_persona_service_persists_persona_exemplar_crud(tmp_path
 def test_local_character_persona_service_persists_character_exemplar_crud(tmp_path):
     db = FakeConversationDB()
     store_path = tmp_path / "personas.json"
-    service = LocalCharacterPersonaService(db, persona_store_path=store_path)
+    service = LocalCharacterPersonaService(db, user_profile_store_path=store_path)
 
     created = service.create_character_exemplar(
         7,
@@ -465,7 +465,7 @@ def test_local_character_persona_service_persists_character_exemplar_crud(tmp_pa
     hidden_after_delete = service.search_character_exemplars(
         7, CharacterExemplarSearchRequest(query="dry")
     )
-    reloaded = LocalCharacterPersonaService(db, persona_store_path=store_path)
+    reloaded = LocalCharacterPersonaService(db, user_profile_store_path=store_path)
 
     assert created["record_id"] == f"local:character_exemplar:7:{created['id']}"
     assert created["backend"] == "local"
@@ -498,7 +498,7 @@ def test_local_character_persona_service_wraps_chat_execution_adjuncts(tmp_path)
         }
     )
     store_path = tmp_path / "personas.json"
-    service = LocalCharacterPersonaService(db, persona_store_path=store_path)
+    service = LocalCharacterPersonaService(db, user_profile_store_path=store_path)
     chat = service.create_character_chat_session(
         CharacterChatSessionCreate(
             title="Ada Chat",
@@ -530,7 +530,7 @@ def test_local_character_persona_service_wraps_chat_execution_adjuncts(tmp_path)
         PresetUpdate(name="Local Tight Updated"),
     )
     deleted_preset = service.delete_chat_preset("local-tight")
-    reloaded = LocalCharacterPersonaService(db, persona_store_path=store_path)
+    reloaded = LocalCharacterPersonaService(db, user_profile_store_path=store_path)
 
     assert [item["text"] for item in greetings["greetings"]] == [
         "Hello from Ada.",

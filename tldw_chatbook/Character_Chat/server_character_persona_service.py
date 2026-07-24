@@ -11,11 +11,11 @@ from ..runtime_policy.types import PolicyDeniedError
 
 if TYPE_CHECKING:
     from ..tldw_api import (
-        PersonaProfileCreate,
-        PersonaProfileUpdate,
         PresetCreate,
         PresetUpdate,
         TLDWAPIClient,
+        UserProfileCreate,
+        UserProfileUpdate,
     )
 
 
@@ -147,7 +147,7 @@ class ServerCharacterPersonaService:
         client = self._require_client()
         return await client.restore_character(character_id, expected_version)
 
-    async def list_persona_profiles(
+    async def list_user_profiles(
         self,
         active_only: bool = False,
         include_deleted: bool = False,
@@ -163,20 +163,20 @@ class ServerCharacterPersonaService:
             offset=offset,
         )
 
-    async def get_persona_profile(self, persona_id: str) -> Any:
+    async def get_user_profile(self, persona_id: str) -> Any:
         self._enforce(self._persona_action_id("detail"))
         client = self._require_client()
         return await client.get_persona_profile(persona_id)
 
-    async def create_persona_profile(self, request_data: PersonaProfileCreate) -> Any:
+    async def create_user_profile(self, request_data: UserProfileCreate) -> Any:
         self._enforce(self._persona_action_id("create"))
         client = self._require_client()
         return await client.create_persona_profile(request_data)
 
-    async def update_persona_profile(
+    async def update_user_profile(
         self,
         persona_id: str,
-        request_data: PersonaProfileUpdate,
+        request_data: UserProfileUpdate,
         expected_version: Optional[int] = None,
     ) -> Any:
         self._enforce(self._persona_action_id("update"))
@@ -187,7 +187,7 @@ class ServerCharacterPersonaService:
             expected_version=expected_version,
         )
 
-    async def delete_persona_profile(
+    async def delete_user_profile(
         self, persona_id: str, expected_version: Optional[int] = None
     ) -> Any:
         self._enforce(self._persona_action_id("delete"))
@@ -196,7 +196,7 @@ class ServerCharacterPersonaService:
             persona_id, expected_version=expected_version
         )
 
-    async def restore_persona_profile(
+    async def restore_user_profile(
         self, persona_id: str, expected_version: int
     ) -> Any:
         self._enforce(self._persona_action_id("update"))

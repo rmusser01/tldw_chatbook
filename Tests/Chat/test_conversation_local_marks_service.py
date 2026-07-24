@@ -76,7 +76,7 @@ def test_local_marks_migrate_from_v16_to_v17_with_expected_schema(tmp_path):
     conn.execute("DROP TRIGGER IF EXISTS conversations_sync_delete")
     conn.execute("DROP TRIGGER IF EXISTS conversations_sync_undelete")
     conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
-    # A V16 fixture must not retain tables introduced by the V24->V25 migration.
+    # A V16 fixture must not retain citation tables introduced at V26->V27.
     for table in (
         "rag_artifact_owner_operations",
         "rag_artifact_owner_leases",

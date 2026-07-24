@@ -17,6 +17,7 @@ from tldw_chatbook.Tools.tool_executor import CalculatorTool, DateTimeTool
 from .agent_models import (
     DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
+    INSTALL_SKILL_TOOL_NAME,
     LOAD_TOOLS_NAME,
     RunBudget,
     SKILL_FILE_TOOL_NAME,
@@ -82,6 +83,33 @@ SKILL_FILE_TOOL_SCHEMA = ToolSchema(
             "path": {"type": "string"},
         },
         "required": ["skill_name", "path"],
+    },
+)
+
+INSTALL_SKILL_TOOL_SCHEMA = ToolSchema(
+    id="runtime:install_skill",
+    name=INSTALL_SKILL_TOOL_NAME,
+    description=(
+        "Install a skill from a GitHub repository/tree URL or a direct "
+        "https .zip URL. The user is asked to confirm before anything is "
+        "downloaded. On success the skill is installed but left pending the "
+        "user's review — it cannot run until the user approves it in "
+        "Library > Skills. If the repository contains multiple skills, the "
+        "tool returns the list of candidates; re-call with a URL that points "
+        "at one skill's subdirectory."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": (
+                    "A GitHub repo/tree URL or a direct https .zip URL for "
+                    "the skill to install."
+                ),
+            }
+        },
+        "required": ["url"],
     },
 )
 

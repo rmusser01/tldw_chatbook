@@ -1,4 +1,4 @@
--- ChaChaNotes v24 -> v25: canonical RAG citation provenance.
+-- ChaChaNotes v26 -> v27: canonical RAG citation provenance.
 -- DDL only. The migration runner owns the transaction, identity row, and
 -- schema-version update.
 

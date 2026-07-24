@@ -47,6 +47,15 @@
     min-height: 1;
 }
 
+/* task-523: red cue when the Roleplay Console handoff provider is unready.
+   `status-blocked` lands on the DestinationHeader (#personas-header); the
+   badge word is the child #workbench-header-status (also .ds-status-badge,
+   whose app-tier `color: $ds-text-primary` this id+class+descendant selector
+   outranks so the "Blocked" word actually turns red). */
+#personas-header.status-blocked .workbench-header-status {
+    color: $ds-status-blocked;
+}
+
 .workbench-command-strip,
 .workbench-mode-strip {
     height: 1;

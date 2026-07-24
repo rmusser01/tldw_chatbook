@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 from uuid import uuid4
 
 
@@ -194,6 +195,83 @@ class MessageAttachment:
     position: int
 
 
+@dataclass(frozen=True)
+class GenerationVariantMeta:
+    """Per-variant image-generation metadata (mirrors a ``message_generation_metadata`` row).
+
+    Position is deliberately NOT stored on the instance -- callers track it
+    externally via index alignment with the owning message's attachments:
+    index i of ``ConsoleChatMessage.generation_metadata`` always describes
+    ``attachments[i]`` (attachment position i). ``to_row``/``from_row``
+    convert to/from the DB sidecar row shape, which DOES carry an explicit
+    ``position`` column (``ChaChaNotes_DB.set_message_generation_metadata`` /
+    ``get_generation_metadata_for_messages``).
+    """
+
+    prompt: str
+    negative_prompt: str
+    backend: str
+    model: str | None
+    seed: int | None
+    style: str | None
+    params: dict[str, Any]
+
+    def to_row(self, position: int) -> dict[str, Any]:
+        """Convert to a ``message_generation_metadata`` row dict for ``position``.
+
+        Args:
+            position: The attachment position this variant's metadata
+                belongs to (not carried on the instance itself).
+
+        Returns:
+            A dict shaped for
+            ``CharactersRAGDB.set_message_generation_metadata``/
+            ``ChatPersistenceService.create_message(generation_metadata=...)``.
+        """
+        return {
+            "position": position,
+            "prompt": self.prompt,
+            "negative_prompt": self.negative_prompt,
+            "backend": self.backend,
+            "model": self.model,
+            "seed": self.seed,
+            "style": self.style,
+            "params_json": json.dumps(self.params),
+        }
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> "GenerationVariantMeta":
+        """Build from a DB sidecar row dict (``position``/``created_at`` ignored).
+
+        Args:
+            row: A row dict as returned by
+                ``get_generation_metadata_for_messages`` (or an equivalent
+                mapping built by a test fake).
+
+        Returns:
+            The decoded metadata. An unparseable ``params_json`` degrades to
+            an empty ``params`` dict rather than raising.
+        """
+        raw_params = row.get("params_json") or "{}"
+        try:
+            params = (
+                json.loads(raw_params)
+                if isinstance(raw_params, str)
+                else dict(raw_params)
+            )
+        except (TypeError, ValueError):
+            params = {}
+        return cls(
+            prompt=row["prompt"],
+            negative_prompt=row.get("negative_prompt", ""),
+            backend=row["backend"],
+            model=row.get("model"),
+            seed=row.get("seed"),
+            style=row.get("style"),
+            params=params,
+        )
+
+
 @dataclass
 class ConsoleChatMessage:
     """A native Console transcript message."""
@@ -219,6 +297,10 @@ class ConsoleChatMessage:
     image_mime_type: str | None = None
     attachment_label: str | None = None
     attachments: tuple["MessageAttachment", ...] = ()
+    #: Per-variant image-generation metadata, index-aligned with
+    #: ``attachments`` (index i describes attachment position i). An empty
+    #: tuple (the default) means this is NOT a generation message.
+    generation_metadata: tuple["GenerationVariantMeta", ...] = ()
 
 
 @dataclass(frozen=True)

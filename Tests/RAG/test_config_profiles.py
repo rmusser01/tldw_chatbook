@@ -9,6 +9,7 @@ from tldw_chatbook.RAG_Search.config_profiles import (
 from tldw_chatbook.RAG_Search.simplified.config import (
     RAGConfig, EmbeddingConfig, ChunkingConfig, VectorStoreConfig,
 )
+from tldw_chatbook.Chunking.Chunk_Lib import MAX_CHUNK_SIZE_PARAGRAPHS
 
 
 def _profile():
@@ -81,6 +82,64 @@ def test_high_accuracy_has_no_stray_method_attr(tmp_path):
     # '.method' is a typo of the real field 'chunking_method' -> must not exist as a stray attr
     assert "method" not in vars(chunking)
     assert chunking.chunking_method in {"words", "sentences", "paragraphs"}
+
+
+# Runtime-accepted chunking_method values, enumerated from the terminal
+# if/elif dispatch chain in Chunking/Chunk_Lib.py's Chunker.chunk_text
+# (the elif chunk_method == "..." branches immediately before the final
+# `else: raise InvalidChunkingMethodError(...)`). Any value not in this set
+# raises InvalidChunkingMethodError the moment the enhanced/full chunker
+# path (Chunker.chunk_text) is exercised for it -- see task-484.
+RUNTIME_VALID_CHUNKING_METHODS = {
+    "words", "sentences", "paragraphs", "tokens", "semantic",
+    "json", "ebook_chapters", "xml", "rolling_summarize",
+}
+
+
+def test_all_builtins_use_a_runtime_valid_chunking_method(tmp_path):
+    """Every builtin profile's chunking_method must be one Chunk_Lib actually accepts.
+
+    task-484: hybrid_full, technical_docs, and research_papers used to set
+    chunking_method to "hierarchical"/"structural", values Chunk_Lib's
+    Chunker.chunk_text does not accept -- it raises InvalidChunkingMethodError
+    for anything outside RUNTIME_VALID_CHUNKING_METHODS. ChunkingService.chunk_text
+    (RAG_Search/chunking_service.py) does not special-case those two values
+    either (only "words"/"sentences"/"paragraphs" get its in-process fast
+    path), so it delegates straight into Chunker.chunk_text and the raise
+    propagates (wrapped) up through indexing whenever a profile with an
+    invalid method is actually used.
+
+    This also asserts a size-sanity invariant for the "paragraphs" method
+    specifically: Chunker._chunk_text_by_paragraphs (Chunking/Chunk_Lib.py)
+    treats chunk_size/chunk_overlap as a PARAGRAPH COUNT, not a word count,
+    and hard-caps chunk_size at MAX_CHUNK_SIZE_PARAGRAPHS -- a word-scale
+    value like 512 raises ValueError the moment paragraph chunking actually
+    runs, so builtins using "paragraphs" must stay within that cap and keep
+    overlap < chunk_size (see task-484 review follow-up).
+
+    Raises:
+        AssertionError: If any builtin profile uses a chunking_method Chunk_Lib
+            rejects at runtime, or a "paragraphs"-method builtin has a
+            chunk_size/chunk_overlap combination that would raise inside
+            Chunker._chunk_text_by_paragraphs.
+    """
+    m = _mgr(tmp_path)
+    invalid = {}
+    paragraph_size_violations = {}
+    for name in m.list_profiles():
+        chunking = m.get_profile(name).rag_config.chunking
+        method = chunking.chunking_method
+        if method not in RUNTIME_VALID_CHUNKING_METHODS:
+            invalid[name] = method
+        if method == "paragraphs":
+            size, overlap = chunking.chunk_size, chunking.chunk_overlap
+            if not (0 < size <= MAX_CHUNK_SIZE_PARAGRAPHS and 0 <= overlap < size):
+                paragraph_size_violations[name] = (size, overlap)
+    assert invalid == {}, f"builtins with a runtime-invalid chunking_method: {invalid}"
+    assert paragraph_size_violations == {}, (
+        "paragraphs-method builtins with a chunk_size/chunk_overlap that would raise "
+        f"in Chunker._chunk_text_by_paragraphs: {paragraph_size_violations}"
+    )
 
 
 def test_builtins_are_read_only_with_ids(tmp_path):
@@ -849,3 +908,32 @@ def test_cached_default_manager_sees_mutations_from_other_default_dir_callers():
 
     mgr_b = get_profile_manager()
     assert mgr_b.get_profile(p.id) is not None
+
+
+# --- PR #829 review finding 5(b): save_profile must be transactional -- a
+# failed disk write must never leave the in-memory registry pointing at a
+# profile object that was never actually persisted. Before the fix,
+# save_profile registered `self._profiles[profile.id] = profile` BEFORE
+# calling `self._save_one(profile)`, so a raising `_save_one` still left the
+# new object registered (memory diverged from disk while callers were told
+# the save failed). ---
+
+
+def test_save_profile_does_not_register_when_the_disk_write_fails(tmp_path, monkeypatch):
+    m = _mgr(tmp_path)
+    p = ProfileConfig(
+        id="my_profile", name="Mine", description="d", profile_type="custom",
+        rag_config=RAGConfig(vector_store=VectorStoreConfig(type="memory")),
+        read_only=False,
+    )
+
+    def _raise(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(m, "_save_one", _raise)
+
+    with pytest.raises(OSError):
+        m.save_profile(p)
+
+    assert m.get_profile("my_profile") is None
+    assert "my_profile" not in m.list_profiles()

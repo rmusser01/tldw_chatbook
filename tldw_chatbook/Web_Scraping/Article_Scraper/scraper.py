@@ -41,6 +41,12 @@ import trafilatura
 from .config import ScraperConfig
 from .utils import convert_html_to_markdown, ContentMetadataHandler
 from ...Metrics.metrics_logger import log_counter, log_histogram
+from ...Utils.egress import (
+    EgressBlockedError,
+    check_url_or_raise_async,
+    collect_navigation_chain,
+    validate_navigation_chain_async,
+)
 
 #
 #######################################################################################################################
@@ -184,7 +190,11 @@ class Scraper:
                             "playwright-stealth not installed. Running without stealth."
                         )
 
-                await page.goto(
+                await check_url_or_raise_async(
+                    url, trusted_origins=self.config.trusted_origins
+                )
+
+                nav_response = await page.goto(
                     url,
                     wait_until="domcontentloaded",
                     timeout=self.config.request_timeout_ms,
@@ -198,6 +208,12 @@ class Scraper:
                     )
 
                 content = await page.content()
+
+                await validate_navigation_chain_async(
+                    collect_navigation_chain(nav_response),
+                    trusted_origins=self.config.trusted_origins,
+                )
+
                 await page.close()
 
                 # Log successful fetch
@@ -214,6 +230,10 @@ class Scraper:
                 )
 
                 return content
+            except EgressBlockedError as e:
+                logging.warning(f"Scrape navigation blocked by egress policy: {e}")
+                await page.close()
+                return ""
             except Exception as e:
                 logging.error(f"Error fetching {url} on attempt {attempt + 1}: {e}")
                 log_counter(

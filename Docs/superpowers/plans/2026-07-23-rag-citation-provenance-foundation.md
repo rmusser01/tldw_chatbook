@@ -44,7 +44,11 @@ Those are separate plans because they cross different runtime, UI, and server ow
 source .venv/bin/activate
 ```
 
-- At the approved baseline, ChaChaNotes is schema v25. Immediately before `TASK-553.4`, rebase and reserve the next free version. Use v25→v26 only if v25 is still current; rename the SQL file and migration symbols consistently if another migration lands first.
+- `TASK-557` integrated the foundation with current `dev`: message-generation
+  metadata owns v24→v25, Console summaries own v25→v26, and citation
+  provenance owns v26→v27. Future integrations must still reserve the next
+  free version and rename the SQL file and migration symbols consistently if
+  another migration lands first.
 - New provenance tables are local-only in this plan. Do not add them to existing sync triggers, FTS tables, Library indexing, or RAG ingestion.
 - Keep `EvidenceReference`, `EvidenceBundle`, `CitationRef`, current server citation arrays, and `chat_rag_context.json` readable. Do not mutate them into falsely complete traces.
 - Store no raw query, answer, snapshot, title, source identity, locator, lineage, content hash, or comparison fingerprint in logs or immutable aggregate JSON.
@@ -71,7 +75,7 @@ source .venv/bin/activate
 | `tldw_chatbook/Chat/citation_payload_lifecycle.py` | Revocation, tombstones, retention decisions, and GC |
 | `tldw_chatbook/Chat/citation_artifact_ownership.py` | Cross-store outbox/lease reconciliation |
 | `tldw_chatbook/Chat/citation_legacy_migration.py` | Legacy synthesis, migration journal, and divergence detection |
-| `tldw_chatbook/DB/migrations/chachanotes_v25_to_v26_citation_provenance.sql` | Baseline migration name; renumber if needed |
+| `tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql` | Canonical citation-provenance migration |
 
 ## Dependency order
 
@@ -503,7 +507,7 @@ Complete `TASK-553.3` hygiene.
 
 **Files:**
 
-- Create: `tldw_chatbook/DB/migrations/chachanotes_v25_to_v26_citation_provenance.sql` (renumber if necessary)
+- Create: `tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql`
 - Modify symbols: schema-version constant, migration helpers, migration dispatcher, and schema initialization in `tldw_chatbook/DB/ChaChaNotes_DB.py`
 - Create: `tldw_chatbook/Chat/citation_trace_repository.py`
 - Create: `tldw_chatbook/Chat/citation_provenance_runtime.py`
@@ -545,7 +549,8 @@ Expected: FAIL because the schema version and tables do not exist.
 
 - [ ] **Step 2: Add one-source, transaction-safe migration execution**
 
-Do **not** copy the v24→v25 `executescript` behavior: this repository has no standalone v24→v25 SQL file, and `sqlite3.Connection.executescript` can implicitly commit an outer transaction.
+Do **not** copy the message-metadata migration's `executescript` behavior:
+`sqlite3.Connection.executescript` can implicitly commit an outer transaction.
 
 Use the new standalone SQL file as the single DDL source. Accumulate lines with stdlib `sqlite3.complete_statement` and execute each complete statement with the active migration cursor inside the existing `TransactionContextManager`; the file contains no `BEGIN`, `COMMIT`, version update, or trigger bodies. The migration method:
 

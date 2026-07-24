@@ -13,11 +13,13 @@ from typing import TYPE_CHECKING, Any, Mapping
 from loguru import logger
 from textual.css.query import QueryError
 
+from ...Character_Chat.active_user_profile import resolve_active_user_profile_name
 from ...Character_Chat.Character_Chat_Lib import replace_placeholders
 from ...Chat.console_chat_models import ConsoleProviderSelection
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...Chat.console_session_settings import build_default_console_session_settings
 from ...Chat.provider_catalog import PROVIDER_DISPLAY_NAMES
+from ...Chat.provider_readiness import get_provider_readiness
 from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
@@ -64,6 +66,23 @@ class PersonasPreviewController:
         self.screen.workers.cancel_group(self.screen, "personas-preview")
         self.history.clear()
 
+    def _active_user_name(self) -> str | None:
+        """The active user profile's name for ``{{user}}``/labels, or ``None``.
+
+        Resolved through the app's LOCAL persona service - the synchronous
+        ``list_user_profiles`` surface the task-442 resolver expects (the
+        scope service's method is async and cannot be consumed by the sync
+        resolver). Any failure reads as no-active, so callers fall back to
+        the historical "User" literal byte-for-byte.
+
+        Returns:
+            The active profile's name, or ``None`` when no profile is active.
+        """
+        service = getattr(
+            self.screen.app_instance, "local_character_persona_service", None
+        )
+        return resolve_active_user_profile_name(service)
+
     async def reset(self, greeting: str, *, seeded_for: str | None = None) -> None:
         """Clear preview state and reseed the preview transcript.
 
@@ -109,7 +128,20 @@ class PersonasPreviewController:
             for g in (record.get("alternate_greetings") or [])
             if isinstance(g, str)
         ]
-        self._greetings = [replace_placeholders(g, name, "User") for g in raw]
+        # task-442: {{user}} renders the active user profile's name. With no
+        # active profile the historical "User" literal is preserved byte-exact
+        # and the pane's user speaker label stays untouched.
+        user_name = self._active_user_name()
+        self._greetings = [
+            replace_placeholders(g, name, user_name or "User") for g in raw
+        ]
+        if user_name:
+            try:
+                self.screen.query_one(PersonasPreviewPane).set_speakers(
+                    user=user_name
+                )
+            except QueryError:
+                pass
         if keep_index and self._greetings:
             self._current_greeting_index = min(
                 self._current_greeting_index, len(self._greetings) - 1
@@ -269,6 +301,46 @@ class PersonasPreviewController:
         except QueryError:
             pass
 
+    def console_handoff_readiness(self) -> tuple[bool, str | None]:
+        """Cheap, config/env-only readiness for a Console handoff send.
+
+        The Roleplay inspector/header readiness surfaces (task-440) gate
+        Attach/Start Chat, which create a FRESH native-Console session
+        (``chat_screen._start_character_console_session`` ->
+        ``_default_console_session_settings`` ->
+        ``_effective_console_provider_model``) - a path resolved from
+        ``chat_defaults``; the native Console never reads
+        ``character_defaults``. So this checks ONLY the chat_defaults
+        selection: it is the config-side approximation of
+        ``_effective_console_provider_model`` (this screen cannot see the
+        Console screen's live provider reactives, and a fresh handoff
+        session is built from these config defaults, so config-side is the
+        honest cheap answer). The preview pane's own provider readout keeps
+        its separate character_defaults -> chat_defaults fallback behavior
+        (``provider_readout`` / ``_resolve_selection_with_fallback``,
+        task-425) - that one IS the preview send path.
+
+        Readiness goes through ``get_provider_readiness`` - the same
+        side-effect-free seam Chat and Settings badges already use - not the
+        async ``ConsoleProviderGateway.resolve_for_send`` probe: this runs
+        on every selection sync and must stay cheap. Unlike the real send
+        path it performs no llama.cpp network reachability check, so a
+        configured-but-unreachable llama.cpp endpoint reads as ready here -
+        the real send still surfaces that failure when it happens.
+
+        Returns:
+            ``(ready, reason)``. When not ready, ``reason`` is the
+            ``ProviderReadiness.user_message`` for the provider the handoff
+            session would resolve. ``None`` when ready.
+        """
+        raw_config = getattr(self.screen.app_instance, "app_config", {}) or {}
+        config = raw_config if isinstance(raw_config, Mapping) else {}
+        selection = self._selection_from_defaults(config, "chat_defaults")
+        readiness = get_provider_readiness(selection.provider, config)
+        if readiness.ready:
+            return True, None
+        return False, readiness.user_message
+
     def open_provider_settings(self) -> None:
         """Deep-link to Settings > Providers & Models for the readout provider."""
         context: dict[str, Any] = {"category": SettingsCategoryId.PROVIDERS_MODELS}
@@ -367,7 +439,7 @@ class PersonasPreviewController:
                     )
                     or {}
                 )
-        elif screen.state.active_mode == "personas":
+        elif screen.state.active_mode == "user_profiles":
             record = screen._profile_record(screen.state.selected_entity_id) or {}
         parts = [
             str(record.get(key) or "").strip()

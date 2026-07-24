@@ -66,6 +66,8 @@ from ...Chat.scope_picker_listers import (
     build_notes_source_lister,
 )
 from ...Chat.console_command_grammar import (
+    GENERATE_IMAGE_COMMAND_HANDLER_ID,
+    GENERATE_IMAGE_COMMAND_NAME,
     KIND_COMMAND,
     KIND_FALLBACK,
     KIND_NOT_COMMAND,
@@ -74,6 +76,8 @@ from ...Chat.console_command_grammar import (
     PREFILL_COMMAND_NAME,
     PROMPT_COMMAND_HANDLER_ID,
     PROMPT_COMMAND_NAME,
+    REWIND_COMMAND_HANDLER_ID,
+    REWIND_COMMAND_NAME,
     SKILLS_COMMAND_HANDLER_ID,
     SKILLS_COMMAND_NAME,
     SYSTEM_COMMAND_HANDLER_ID,
@@ -92,6 +96,18 @@ from ...Chat.console_prefill import (
     parse_prefill_args,
     pinned_prefill_from_conversation_metadata,
 )
+from ...Chat.console_generate_image import (
+    GenerationRefusal,
+    PreparedGeneration,
+    clamp_initial_batch,
+    generation_content_marker,
+    insert_style_token_into_draft,
+    parse_generate_image_args,
+    prepare_generation_request,
+    run_generation_batch,
+)
+from ...Image_Generation.config import get_image_generation_config
+from ...Image_Generation.listing import list_image_models_for_catalog
 from ...Chat.console_skill_resolver import (
     SKILL_UNTRUSTED_REFUSE,
     SkillCommandCandidate,
@@ -112,6 +128,7 @@ from ...Chat.console_chat_models import (
     ConsoleWorkspaceContext,
     ConsoleStagedSource,
     MessageAttachment,
+    derive_console_session_title,
 )
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -252,6 +269,7 @@ from ...UI.Workbench import (
 from ...UI.Workbench.focus import WorkbenchFocusRegistry
 from ...state.ui_state import UIState
 from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfirmCard
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
@@ -275,6 +293,10 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
+from ...Widgets.Console.console_generation_card import (
+    ConsoleGenerationCardSpec,
+    generation_card_signature,
+)
 from ...Widgets.Console.console_status_chips import (
     ConsoleScopeChip,
     ConsoleStatusChips,
@@ -292,6 +314,7 @@ from ...Widgets.Console.console_prompt_picker_modal import (
     ConsolePromptPickerModal,
 )
 from ...Widgets.Console.console_skill_picker_modal import ConsoleSkillPickerModal
+from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.Console.console_system_prompt_modal import ConsoleSystemPromptModal
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
@@ -303,6 +326,11 @@ from ...Widgets.Console.console_rail_section import (
 from ...Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
     ConsoleSwitcherChoice,
+)
+from ...Widgets.Console.console_rewind_modal import (
+    ConsoleRewindChoice,
+    ConsoleRewindModal,
+    RewindPromptRow,
 )
 from ...Widgets.Console.console_workspace_details import ConsoleWorkspaceDetailsTray
 from ...Widgets.Console.console_workbench_state import build_console_workbench_state
@@ -1438,6 +1466,22 @@ class ChatScreen(BaseAppScreen):
             return
         self.run_worker(
             self._open_console_prompt_picker_for_insert(""),
+            exclusive=False,
+        )
+
+    def action_open_console_style_insert(self) -> None:
+        """Open the image-style picker from the command palette ("Insert image style…").
+
+        Mirrors `action_open_console_prompt_insert`'s guard + launch shape.
+        The picker only inserts an `@<style-id>` token into the composer
+        draft -- `/generate-image @<id> ...` is what later resolves and
+        applies the style at generation time; this action never generates
+        anything itself.
+        """
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(
+            self._open_console_style_picker_for_insert(),
             exclusive=False,
         )
 
@@ -3084,6 +3128,12 @@ class ChatScreen(BaseAppScreen):
 
         Mirrors the provider payload's most-recent-N image policy
         (``_provider_message_payloads``'s ``image_ids[-image_budget:]``).
+
+        Excludes image-generation messages (non-empty ``generation_metadata``)
+        -- those render as a ``"generation-card"`` row instead of the plain
+        ``"image"`` row (see ``_build_generation_card_specs``), so including
+        them here would double-render and burn a plain-image LRU slot under
+        their bare message id for no row that ever reads it (TASK P2a-7).
         """
         # Bound the working set to the cache capacity so prep can never evict
         # what the transcript still shows (churn guard).
@@ -3091,6 +3141,7 @@ class ChatScreen(BaseAppScreen):
             message
             for message in messages
             if getattr(message, "image_data", None) is not None
+            and not getattr(message, "generation_metadata", ())
         ]
         return image_messages[-IMAGE_CACHE_MAX_ENTRIES:]
 
@@ -3113,6 +3164,97 @@ class ChatScreen(BaseAppScreen):
                 pil=pil if mode == "graphics" else None,
             )
         return specs
+
+    def _console_generation_browse(self) -> dict[str, int]:
+        """Return the lazily-created browsed-variant-index map for generation cards.
+
+        Ephemeral (never persisted) and not initialized in ``__init__`` --
+        mirrors the getattr/setdefault pattern
+        ``_console_imagegen_inflight_sessions`` uses for other screen-owned,
+        purely in-memory bookkeeping. Absent entries default a generation
+        message to its canonical variant (index 0) until a later task's
+        browse controls change it.
+        """
+        browse = getattr(self, "_generation_browse", None)
+        if browse is None:
+            browse = {}
+            self._generation_browse = browse
+        return browse
+
+    def _build_generation_card_specs(
+        self, messages
+    ) -> dict[str, ConsoleGenerationCardSpec]:
+        """Build image-generation card row payloads for generation messages.
+
+        Mirrors ``_build_console_image_specs``'s mode/cache resolution, but
+        keys the render cache under the browsed variant's composite key
+        (``f"{message_id}:{browsed_index}"``) instead of the plain message
+        id -- one generation message can browse between several decoded
+        variants sharing the same bounded render cache.
+
+        Unlike a plain image row, an undecoded/byte-less browsed variant
+        does NOT drop the row here: the card still carries real value from
+        its details block alone, so ``ConsoleGenerationCard`` renders a
+        placeholder line for the missing image instead.
+        """
+        state, cache = self._ensure_console_image_view()
+        default_mode = self._console_image_default_mode
+        browse = self._console_generation_browse()
+        specs: dict[str, ConsoleGenerationCardSpec] = {}
+        for message in messages:
+            generation_metadata = getattr(message, "generation_metadata", ())
+            if not generation_metadata:
+                continue
+            mode = state.mode_for(message.id, default=default_mode)
+            if mode == "hidden":
+                continue
+            variant_count = len(generation_metadata)
+            browsed_index = browse.get(message.id, 0)
+            if not (0 <= browsed_index < variant_count):
+                browsed_index = 0
+            cache_key = f"{message.id}:{browsed_index}"
+            specs[message.id] = ConsoleGenerationCardSpec(
+                message_id=message.id,
+                browsed_index=browsed_index,
+                variant_count=variant_count,
+                meta=generation_metadata[browsed_index],
+                mode=mode,
+                pixels=cache.get_pixels(cache_key) if mode == "pixels" else None,
+                pil=cache.get_pil(cache_key) if mode == "graphics" else None,
+            )
+        return specs
+
+    def _pending_console_generation_card_images(
+        self,
+        messages,
+        card_specs: Mapping[str, ConsoleGenerationCardSpec],
+    ) -> list[tuple[str, bytes]]:
+        """Return (cache-key, bytes) pairs for un-decoded browsed generation variants.
+
+        Feeds the same generic ``_prep_console_images`` off-thread decode
+        path as plain image rows -- its ``pending`` list is already opaque
+        ``(cache_key, bytes)`` pairs, so no separate prep routine is needed.
+        Bytes come from ``message.attachments[browsed_index].data``; a
+        rehydrated-without-bytes attachment (``data is None``) is skipped
+        (never queued), leaving the card's placeholder-image fallback in
+        place rather than queuing dead work.
+        """
+        _state, cache = self._ensure_console_image_view()
+        by_id = {message.id: message for message in messages}
+        pending: list[tuple[str, bytes]] = []
+        for message_id, spec in card_specs.items():
+            message = by_id.get(message_id)
+            attachments = getattr(message, "attachments", ()) or () if message else ()
+            if not (0 <= spec.browsed_index < len(attachments)):
+                continue
+            data = attachments[spec.browsed_index].data
+            if data is None:
+                continue
+            cache_key = f"{message_id}:{spec.browsed_index}"
+            if cache.get_pil(cache_key) is not None or cache.is_failed(cache_key):
+                continue
+            pending.append((cache_key, data))
+        return pending
 
     async def _prep_console_images(self, pending: list[tuple[str, bytes]]) -> None:
         """Prepare pending transcript images off-loop, then resync once."""
@@ -3202,6 +3344,9 @@ class ChatScreen(BaseAppScreen):
         self._console_chat_controller.app = self.app_instance
         self._console_chat_controller.set_pending_approval = (
             self._set_console_pending_approval
+        )
+        self._console_chat_controller.set_pending_skill_install = (
+            self._set_console_pending_skill_install
         )
         self._sync_console_chat_core_state()
         return self._console_chat_controller
@@ -4460,9 +4605,22 @@ class ChatScreen(BaseAppScreen):
         persisted ChaChaNotes rows, where markers never land
         (``ConsoleAgentBridge._append_marker`` uses ``persist=False`` so
         agent activity survives a restart without being written into the
-        conversation itself). See ``inject_resume_agent_markers`` for the
-        placement/idempotency contract, and ``resume_marker_messages`` for
-        how each run's marker block is derived.
+        conversation itself).
+
+        Task 3: ``resume_marker_messages`` now pairs each run's block with
+        the ``assistant_message_id`` of the reply it produced, and
+        ``inject_resume_agent_markers`` anchors placement to that id
+        against ``messages``'s own ``persisted_message_id``s -- a run
+        whose reply isn't on the active path (edited/regenerated onto
+        another branch) has its block hidden rather than misattributed to
+        a different reply; a legacy/null-id run keeps the prior ordinal
+        placement. ``messages`` is the caller's already-active-path
+        transcript (``_console_messages_from_conversation_tree`` walks the
+        active thread only), so this composes correctly with branching
+        without any extra filtering here. See ``inject_resume_agent_
+        markers`` for the full placement/idempotency contract, and
+        ``resume_marker_messages`` for how each run's marker block and
+        anchor id are derived.
 
         Returns ``messages`` unchanged when there is no durable agent
         bridge available (e.g. an in-memory test harness, matching
@@ -4473,6 +4631,9 @@ class ChatScreen(BaseAppScreen):
             return messages
         from tldw_chatbook.Chat.console_agent_bridge import inject_resume_agent_markers
 
+        # bridge.resume_marker_messages returns the (anchor_id, block) pairs
+        # inject_resume_agent_markers now expects directly -- no reshaping
+        # needed here, just passed straight through.
         return inject_resume_agent_markers(
             messages, bridge.resume_marker_messages(conversation_id)
         )
@@ -7959,11 +8120,11 @@ class ChatScreen(BaseAppScreen):
             value = label.partition(":")[2].strip()
             return value.split(maxsplit=1)[0] if value else "0"
 
-        persona = str(control_state.persona_label or "General")
+        persona = str(control_state.user_profile_label or "General")
         if persona.startswith("Assistant: "):
             persona = persona.removeprefix("Assistant: ").strip() or "General"
-        elif persona.startswith("Persona: "):
-            persona = persona.removeprefix("Persona: ").strip() or "Persona"
+        elif persona.startswith("As: "):
+            persona = persona.removeprefix("As: ").strip() or "User Profile"
         return (
             "Chat/RAG/Follow"
             f" | {persona}"
@@ -9463,8 +9624,13 @@ class ChatScreen(BaseAppScreen):
         """Return per-session Console settings from a saved state payload."""
         if not isinstance(payload, dict):
             return None
+        values = dict(payload)
+        if "persona_label" in values and "user_profile_label" not in values:
+            # Pre-task-442 blobs serialized the old field name.
+            values["user_profile_label"] = values.pop("persona_label")
+        values.pop("persona_label", None)
         valid_fields = set(ConsoleSessionSettings.__dataclass_fields__)
-        values = {key: value for key, value in payload.items() if key in valid_fields}
+        values = {key: value for key, value in values.items() if key in valid_fields}
         provider = str(values.get("provider") or "").strip()
         if not provider:
             return None
@@ -10261,6 +10427,9 @@ class ChatScreen(BaseAppScreen):
         # Local import matches this module's existing convention of
         # deferring Character_Chat submodule imports (they pull in Pillow
         # and CharactersRAGDB) rather than importing them at module scope.
+        from ...Character_Chat.active_user_profile import (
+            resolve_active_user_profile_name,
+        )
         from ...Character_Chat.Character_Chat_Lib import replace_placeholders
 
         name = str(card.get("name") or _name_hint or "").strip() or "Character"
@@ -10269,13 +10438,27 @@ class ChatScreen(BaseAppScreen):
             for key in ("system_prompt", "personality", "description", "scenario")
         ]
         system_prompt = "\n".join(p for p in parts if p) or "Stay in character."
-        greeting = replace_placeholders(str(card.get("first_message") or ""), name, "User")
+        # task-442: {{user}} renders the active user profile's name; the local
+        # persona service carries the sync list_user_profiles the resolver
+        # expects. No active profile keeps the historical "User" literal
+        # byte-exact and leaves the session's "General" label untouched.
+        active_user_name = resolve_active_user_profile_name(
+            getattr(self.app_instance, "local_character_persona_service", None)
+        )
+        greeting = replace_placeholders(
+            str(card.get("first_message") or ""), name, active_user_name or "User"
+        )
 
         store = self._ensure_console_chat_store()
+        settings_overrides: dict[str, Any] = {
+            "system_prompt": system_prompt,
+            "character_label": name,
+        }
+        if active_user_name:
+            settings_overrides["user_profile_label"] = active_user_name
         settings = replace(
             self._default_console_session_settings(),
-            system_prompt=system_prompt,
-            character_label=name,
+            **settings_overrides,
         )
         session = store.create_session(
             title=f"Chat with {name}",
@@ -10556,8 +10739,24 @@ class ChatScreen(BaseAppScreen):
         messages = self._native_console_messages()
         if transcript is not None:
             transcript.set_messages(messages)
+            # SP2 /rewind: derive the "summarize up to here" banner boundary
+            # from the active session's stored summary state. Render-derived
+            # only -- the banner shows above the boundary message when it is on
+            # the rendered path, and disappears (inert) otherwise.
+            store = self._ensure_console_chat_store()
+            summary_boundary_id: str | None = None
+            if store.active_session_id is not None:
+                _summary, summary_boundary_id = store.session_context_summary(
+                    store.active_session_id
+                )
+            transcript.set_summary_boundary(summary_boundary_id)
+            # TASK-371: reflect run state in the jump-to-latest pill when the
+            # reader is scrolled up during / just after a streaming reply.
+            transcript.sync_jump_indicator(self._current_console_run_status_value())
             image_specs = self._build_console_image_specs(messages)
             transcript.set_image_specs(image_specs)
+            card_specs = self._build_generation_card_specs(messages)
+            transcript.set_generation_card_specs(card_specs)
             _state, cache = self._ensure_console_image_view()
             # Same bounded subset as `_build_console_image_specs` — computing
             # pending work over the full transcript would prep messages the
@@ -10573,6 +10772,16 @@ class ChatScreen(BaseAppScreen):
                 )
                 if mid not in self._console_image_preparing
             ]
+            # Browsed generation-card variants share the same off-thread
+            # prep worker (its pending list is already opaque
+            # (cache-key, bytes) pairs) and the same in-flight guard set.
+            pending_images.extend(
+                (cache_key, data)
+                for cache_key, data in self._pending_console_generation_card_images(
+                    messages, card_specs
+                )
+                if cache_key not in self._console_image_preparing
+            )
             if pending_images:
                 self._console_image_preparing.update(mid for mid, _ in pending_images)
                 self.run_worker(
@@ -10584,15 +10793,27 @@ class ChatScreen(BaseAppScreen):
             # message-signature fingerprint below has already stabilized, so
             # fold the built specs (id + mode) into the gate too - otherwise
             # a sync that only differs by "the image finished decoding" (or
-            # a view-mode toggle) would be skipped as a no-op refresh.
+            # a view-mode toggle) would be skipped as a no-op refresh. The
+            # generation-card signature covers the same case for cards
+            # (browse/keep changes, mode toggles, and variant decode
+            # completion all alter it -- see `generation_card_signature`).
             image_signature = tuple(
                 (message_id, image_specs[message_id].mode)
                 for message_id in sorted(image_specs)
+            )
+            card_signature = tuple(
+                generation_card_signature(card_specs[message_id])
+                for message_id in sorted(card_specs)
             )
             refresh_key = (
                 id(transcript),
                 self._native_console_transcript_fingerprint(messages),
                 image_signature,
+                card_signature,
+                # SP2 /rewind: a boundary change alone (summarize / restore
+                # before-boundary) must force a refresh so the banner appears
+                # or clears even when the message set is otherwise unchanged.
+                summary_boundary_id,
             )
             if refresh_key != self._last_native_transcript_refresh_key:
                 await transcript.refresh_messages()
@@ -11120,6 +11341,8 @@ class ChatScreen(BaseAppScreen):
         SYSTEM_COMMAND_NAME: SYSTEM_COMMAND_HANDLER_ID,
         SKILLS_COMMAND_NAME: SKILLS_COMMAND_HANDLER_ID,
         PREFILL_COMMAND_NAME: PREFILL_COMMAND_HANDLER_ID,
+        GENERATE_IMAGE_COMMAND_NAME: GENERATE_IMAGE_COMMAND_HANDLER_ID,
+        REWIND_COMMAND_NAME: REWIND_COMMAND_HANDLER_ID,
     }
 
     def _console_unknown_command_hint(self, name: str) -> str:
@@ -11156,6 +11379,8 @@ class ChatScreen(BaseAppScreen):
             "apply-system": self._console_command_apply_system,
             SKILLS_COMMAND_HANDLER_ID: self._console_command_skills,
             PREFILL_COMMAND_HANDLER_ID: self._console_command_prefill,
+            GENERATE_IMAGE_COMMAND_HANDLER_ID: self._console_command_generate_image,
+            REWIND_COMMAND_HANDLER_ID: self._console_command_rewind,
         }
         handler = dispatch_map.get(handler_id)
         if handler is None:
@@ -11289,6 +11514,57 @@ class ChatScreen(BaseAppScreen):
             ),
             callback=_apply_picker_choice,
         )
+
+    async def _open_console_style_picker_for_insert(self) -> None:
+        """Open the image-style picker, inserting whatever style is chosen."""
+
+        def _apply_picker_choice(record: Optional[Mapping[str, Any]]) -> None:
+            self._focus_console_composer_if_needed(force=True)
+            if record is None:
+                return
+            style_id = str(record.get("id") or "").strip()
+            if not style_id:
+                return
+            self._insert_console_style_token_into_composer(style_id)
+
+        self.app.push_screen(ConsoleStylePickerModal(), callback=_apply_picker_choice)
+
+    def _insert_console_style_token_into_composer(self, style_id: str) -> bool:
+        """Compose an ``@<style_id>`` token into a valid `/generate-image` draft.
+
+        Delegates the actual composition to `insert_style_token_into_draft`
+        (the pure grammar-aware helper `/generate-image`'s own parser is
+        built from) rather than blindly prepending the token: a bare
+        prepend would land the token BEFORE the command word on an
+        unedited draft like ``/generate-image a dragon``, producing
+        ``@style_anime /generate-image a dragon`` -- text `parse_generate_
+        image_args` never sees as a command at all (`ConsoleCommandRegistry
+        .parse` only recognizes drafts that START with `/`), so the whole
+        thing would ship to the LLM as plain chat text instead of
+        generating anything.
+
+        The whole draft is replaced wholesale with the composed result --
+        same clear-then-paste idiom `_insert_prompt_text_into_composer`
+        uses for `replace=True` -- since the composed draft may reorder or
+        drop text relative to the original (e.g. replacing an existing
+        leading `@style` token), so a plain in-place insert cannot express
+        it.
+
+        Args:
+            style_id: The resolved style template's `id` (e.g. "style_anime").
+
+        Returns:
+            ``True`` when the composer widget was found and the insert
+            applied, ``False`` when no native composer is mounted.
+        """
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return False
+        new_draft = insert_style_token_into_draft(composer.draft_text(), style_id)
+        composer.clear_draft()
+        composer.insert_text_as_paste(new_draft)
+        return True
 
     def _insert_prompt_text_into_composer(self, text: str, *, replace: bool) -> bool:
         """Insert resolved prompt text into the Console composer via paste semantics.
@@ -11517,6 +11793,391 @@ class ChatScreen(BaseAppScreen):
                 "prefilled sends."
             )
         return
+
+    def _console_imagegen_inflight_sessions(self) -> set[str]:
+        """Return the lazily-created set of sessions with a batch in flight.
+
+        Not initialized in ``__init__`` — mirrors the getattr/setdefault
+        pattern the composer/store use for other screen-owned, purely
+        in-memory bookkeeping — so `/generate-image` never assumes it ran
+        during construction.
+        """
+        sessions = getattr(self, "_imagegen_inflight_sessions", None)
+        if sessions is None:
+            sessions = set()
+            self._imagegen_inflight_sessions = sessions
+        return sessions
+
+    def _console_imagegen_inflight_message_ids(self) -> set[str]:
+        """Return the lazily-created set of messages with a regenerate-append in flight.
+
+        Mirrors ``_console_imagegen_inflight_sessions``'s lazy
+        getattr/setdefault pattern but keyed by MESSAGE id, not session id:
+        the regenerate (``♻``) action appends one variant to a single
+        generation message, and this guard must not block regenerate on one
+        message in a session while another message in the same session is
+        still generating.
+        """
+        message_ids = getattr(self, "_imagegen_inflight_message_ids", None)
+        if message_ids is None:
+            message_ids = set()
+            self._imagegen_inflight_message_ids = message_ids
+        return message_ids
+
+    def _console_generate_image_conversation_pairs(
+        self, store: Any, session_id: str
+    ) -> list[tuple[str, str]]:
+        """Return the session's completed, non-empty messages as ``(role, content)``.
+
+        Feeds `prepare_generation_request`'s no-prompt "generate from
+        conversation" path. The just-typed ``/generate-image`` invocation
+        itself is never in this list -- command dispatch intercepts before
+        the composer draft is ever appended to the store as a message.
+        """
+        return [
+            (
+                message.role.value
+                if hasattr(message.role, "value")
+                else str(message.role),
+                message.content,
+            )
+            for message in store.messages_for_session(session_id)
+            if message.status == "complete" and message.content and message.content.strip()
+        ]
+
+    async def _console_command_generate_image(self, parse: CommandParse) -> None:
+        """Resolve and run one `/generate-image` batch.
+
+        Grammar: ``[:backend] [@style] <prompt>`` (tokens in any order), or
+        no prompt at all to generate from the session's conversation
+        context. `prepare_generation_request` (`Chat/console_generate_image.py`)
+        owns all of that decision logic -- style-token resolution, prompt
+        composition against a template, and the conversation-context
+        fallback -- so it stays independently unit-testable; this handler
+        just executes its result.
+
+        Refusals (a `GenerationRefusal` from `prepare_generation_request`,
+        no resolvable/configured backend, or a batch already running for
+        this session) leave the composer draft untouched, mirroring
+        `/system`'s no-system-part behavior, and never touch the store.
+        Once a batch is actually going to run the draft is cleared up front
+        (this IS the "successful dispatch" point — not "successful
+        generation"): the blocking batch loop (`run_generation_batch`) then
+        runs off the UI loop via `asyncio.to_thread`, exactly like
+        `_prep_console_images`. On the zero-success path the original draft
+        is restored so the user can edit and retry. One or more successes
+        append a single generation message via
+        `ConsoleChatStore.append_generation_message` with a trailing
+        partial status line when some variants failed. The in-flight guard
+        is always cleared in a `finally`, so a crashed/cancelled batch
+        never wedges the session against further `/generate-image`
+        commands.
+        """
+        args = parse_generate_image_args(parse.args)
+        store = self._ensure_console_chat_store()
+        session = store.ensure_session(
+            workspace_id=store.workspace_context.active_workspace_id,
+            settings=self._default_console_session_settings(),
+        )
+        conversation_pairs = self._console_generate_image_conversation_pairs(
+            store, session.id
+        )
+        prepared: PreparedGeneration | GenerationRefusal = prepare_generation_request(
+            args, conversation_pairs
+        )
+        if isinstance(prepared, GenerationRefusal):
+            await self._append_native_console_system_message(prepared.reason)
+            return
+        cfg = get_image_generation_config()
+        backend = args.backend or cfg.default_backend
+        if not backend:
+            await self._append_native_console_system_message(
+                "No image generation backend configured. Set "
+                "[image_generation].default_backend, or use "
+                "/generate-image :backend <prompt>."
+            )
+            return
+        catalog = list_image_models_for_catalog()
+        entry = next(
+            (item for item in catalog if item.get("name") == backend), None
+        )
+        if entry is None or not entry.get("is_configured"):
+            await self._append_native_console_system_message(
+                f"Image backend '{backend}' is not enabled/configured. "
+                "Check [image_generation] settings."
+            )
+            return
+        inflight = self._console_imagegen_inflight_sessions()
+        if session.id in inflight:
+            await self._append_native_console_system_message(
+                "An image generation is already running for this session."
+            )
+            return
+        inflight.add(session.id)
+        # Capture draft before clearing so we can restore it on zero-success.
+        composer = self._console_composer_or_none()
+        saved_draft = composer.draft_text() if composer is not None else ""
+        self._clear_console_composer_draft()
+        try:
+            count = clamp_initial_batch(cfg.default_batch, cfg.max_variants_per_message)
+            batch = await asyncio.to_thread(
+                run_generation_batch,
+                backend=backend,
+                prompt=prepared.prompt,
+                negative_prompt=prepared.negative_prompt,
+                seed=None,
+                count=count,
+                style_name=prepared.style_name,
+                width=prepared.width,
+                height=prepared.height,
+                steps=prepared.steps,
+                cfg_scale=prepared.cfg_scale,
+            )
+            if not batch.successes:
+                # Restore the saved draft so the user can edit and retry.
+                if composer is not None and saved_draft:
+                    composer.clear_draft()
+                    composer.insert_text_as_paste(saved_draft)
+                detail = "; ".join(batch.errors) or "unknown error"
+                await self._append_native_console_system_message(
+                    f"Image generation failed: {detail}"
+                )
+                return
+            store.append_generation_message(
+                session.id,
+                content=generation_content_marker(prepared.prompt),
+                variants=batch.successes,
+                persist=True,
+            )
+            if len(batch.successes) < count:
+                store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content=(
+                        f"{len(batch.successes)}/{count} generated "
+                        f"({'; '.join(batch.errors)})"
+                    ),
+                )
+            await self._sync_native_console_chat_ui()
+        finally:
+            inflight.discard(session.id)
+
+    async def _regenerate_console_generation_variant(self, message_id: str) -> None:
+        """Append one new generated variant to an existing generation message.
+
+        This is the generation-message branch of the selected-message
+        regenerate (``♻``) action (Task 8): unlike text regeneration it
+        never creates an LLM sibling turn -- it rebuilds a request from the
+        message's position-0 (canonical) ``GenerationVariantMeta`` -- same
+        backend/prompt/negative/style -- with ``seed`` forced to ``-1`` so
+        the new variant is never a duplicate of the kept image, generates ONE
+        variant off the UI loop (mirroring ``_console_command_generate_image``'s
+        ``asyncio.to_thread(run_generation_batch, ...)`` offload), appends it
+        via ``ConsoleChatStore.append_generation_variant``, and browses to
+        the newly-appended index.
+
+        Refuses with a status line and makes no mutation when a generation
+        is already running for this message, or the message already carries
+        ``[image_generation].max_variants_per_message`` variants. A failed
+        batch (zero successes) leaves the existing message completely
+        untouched, per spec §4 ("a failed append leaves the existing
+        message untouched and reports the error"). The in-flight guard is
+        always cleared in a ``finally``, so a crashed/cancelled batch never
+        wedges this message against further regenerate presses.
+        """
+        store = self._ensure_console_chat_store()
+        try:
+            message = store.get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="warning",
+            )
+            return
+        if not message.generation_metadata:
+            return
+        inflight = self._console_imagegen_inflight_message_ids()
+        if message_id in inflight:
+            self.app_instance.notify(
+                "An image generation is already running for this message.",
+                severity="warning",
+            )
+            return
+        cfg = get_image_generation_config()
+        if len(message.generation_metadata) >= cfg.max_variants_per_message:
+            self.app_instance.notify(
+                f"Already at the maximum of {cfg.max_variants_per_message} "
+                "variants for this message.",
+                severity="warning",
+            )
+            return
+        inflight.add(message_id)
+        try:
+            base_meta = message.generation_metadata[0]
+            batch = await asyncio.to_thread(
+                run_generation_batch,
+                backend=base_meta.backend,
+                prompt=base_meta.prompt,
+                negative_prompt=base_meta.negative_prompt or None,
+                seed=-1,
+                count=1,
+                style_name=base_meta.style,
+            )
+            if not batch.successes:
+                detail = "; ".join(batch.errors) or "unknown error"
+                self.app_instance.notify(
+                    f"Image regeneration failed: {detail}", severity="error"
+                )
+                return
+            data, mime_type, meta = batch.successes[0]
+            session_id = store.session_id_for_message(message_id)
+            new_position = store.append_generation_variant(
+                session_id,
+                message_id,
+                data=data,
+                mime_type=mime_type,
+                meta=meta,
+                persist=True,
+            )
+            self._console_generation_browse()[message_id] = new_position
+            await self._sync_native_console_chat_ui()
+        finally:
+            inflight.discard(message_id)
+    # Preview length used to build `/rewind` menu rows -- collapses the
+    # prompt to one line and truncates it (with a trailing ellipsis) via the
+    # same helper session titles use.
+    _CONSOLE_REWIND_PREVIEW_MAX_LENGTH = 60
+
+    def _console_rewind_prompt_rows(
+        self, session_id: str
+    ) -> tuple[RewindPromptRow, ...]:
+        """Build newest-first `/rewind` menu rows for a session's USER turns.
+
+        Args:
+            session_id: Native Console session id whose active-path USER
+                messages become rows.
+
+        Returns:
+            One `RewindPromptRow` per USER message in `messages_for_session`
+            (which walks the active path; a message not on the active path
+            never appears here), ordered newest first. `index_label` is the
+            USER turn's 1-based chronological position ("#1", "#2", ...);
+            `preview` is a collapsed, truncated single-line preview of its
+            content.
+        """
+        store = self._ensure_console_chat_store()
+        user_messages = [
+            message
+            for message in store.messages_for_session(session_id)
+            if message.role is ConsoleMessageRole.USER
+        ]
+        rows = [
+            RewindPromptRow(
+                message_id=message.id,
+                index_label=f"#{position}",
+                preview=derive_console_session_title(
+                    message.content,
+                    max_length=self._CONSOLE_REWIND_PREVIEW_MAX_LENGTH,
+                )
+                or "(empty prompt)",
+            )
+            for position, message in enumerate(user_messages, start=1)
+        ]
+        rows.reverse()
+        return tuple(rows)
+
+    async def _console_command_rewind(self, parse: CommandParse) -> None:
+        """Open the `/rewind` menu over the active session's prior USER prompts.
+
+        Collects the active path's USER-turn rows (newest first) and pushes
+        `ConsoleRewindModal`; a session with no USER turns yet (or no active
+        session at all) is a no-op notify rather than an empty modal.
+        """
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        rows = self._console_rewind_prompt_rows(session_id) if session_id else ()
+        if not rows:
+            self.app_instance.notify("Nothing to rewind.", severity="warning")
+            return
+
+        async def _apply_choice(choice: "ConsoleRewindChoice | None") -> None:
+            await self._apply_console_rewind_choice(session_id, choice)
+
+        self.app.push_screen(
+            ConsoleRewindModal(prompts=rows),
+            callback=_apply_choice,
+        )
+
+    async def _apply_console_rewind_choice(
+        self, session_id: str, choice: "ConsoleRewindChoice | None"
+    ) -> None:
+        """Apply a `/rewind` modal result.
+
+        `None` (Escape / "Never mind") just returns focus to the composer.
+        `"restore"` is pure tree navigation: gated on
+        `controller.run_state.is_send_allowed` (mirrors regenerate/resend --
+        never mutates while a run is streaming), the new active leaf is the
+        selected prompt's PARENT found by an id lookup in
+        `active_path_message_ids` (never positional -- display-only TOOL rows
+        can pad `messages_for_session`'s view without being tree nodes), with
+        `None` (empty transcript) when the selected prompt was the root. The
+        selected prompt's own text is written back into the composer via the
+        same paste-semantics seam `/prompt` uses.
+        `"summarize-up-to"` runs the boundary-summary flow (SP2 Task 3) on an
+        exclusive `console-run` worker, gated on `is_send_allowed` the same way
+        restore is (never mutates while a run is streaming).
+
+        Args:
+            session_id: Native Console session id the modal was opened for.
+            choice: The modal's result, or `None`.
+        """
+        if choice is None:
+            self._focus_console_composer_if_needed(force=True)
+            return
+        if choice.kind == "summarize-up-to":
+            controller = self._ensure_console_chat_controller()
+            # Gate BEFORE spawning: an exclusive console-run worker cancels any
+            # in-flight run at creation time, before the controller's own
+            # rejection can run -- refuse first, like the regenerate path.
+            if not controller.run_state.is_send_allowed:
+                self.app_instance.notify(
+                    CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning"
+                )
+                return
+            self.run_worker(
+                self._summarize_console_up_to(controller, choice.message_id),
+                exclusive=True,
+                group="console-run",
+            )
+            return
+        if choice.kind != "restore":
+            return
+        store = self._ensure_console_chat_store()
+        controller = self._ensure_console_chat_controller()
+        if not controller.run_state.is_send_allowed:
+            self.app_instance.notify(
+                CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning"
+            )
+            return
+        try:
+            path = store.active_path_message_ids(session_id)
+            index = path.index(choice.message_id)
+        except (KeyError, ValueError):
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="error",
+            )
+            return
+        target = path[index - 1] if index > 0 else None
+        store.set_active_leaf(session_id, target)
+        # The lookup above proves `choice.message_id` is a live message, so
+        # this can't raise -- fetch the FULL text rather than reusing
+        # `choice.prompt_text`, which is only the modal row's truncated
+        # display preview (see `ConsoleRewindChoice`/`RewindPromptRow`).
+        full_text = store.get_message(choice.message_id).content
+        self._insert_prompt_text_into_composer(full_text, replace=True)
+        self._focus_console_composer_if_needed(force=True)
+        await self._sync_native_console_chat_ui()
 
     def _clear_console_composer_draft(self) -> None:
         """Clear the native Console composer's draft text, if mounted.
@@ -12432,6 +13093,17 @@ class ChatScreen(BaseAppScreen):
             copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
             if callable(copy_to_clipboard):
                 copy_to_clipboard(result.clipboard_text)
+        if action_id == "speak" and result.status == "completed":
+            # No new TTS machinery -- hand off to the app's existing
+            # pipeline (validation, synthesis, playback, failure toast) the
+            # same way legacy chat does (spec §1a).
+            from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+                TTSRequestEvent,
+            )
+
+            self.app_instance.post_message(
+                TTSRequestEvent(text=message.content, message_id=message.id)
+            )
         if action_id == "edit" and result.status == "edit_requested":
             await self._open_console_message_edit_modal(
                 message_id=message_id,
@@ -12455,6 +13127,14 @@ class ChatScreen(BaseAppScreen):
             )
             return True
         if action_id == "regenerate" and result.status == "wip":
+            if message.generation_metadata:
+                # A generation message's regenerate ALWAYS appends one new
+                # image variant -- never an LLM text sibling -- so it skips
+                # the controller/run-state gate entirely (that gate exists
+                # for chat runs; image generation has its own in-flight
+                # guard, checked inside this call).
+                await self._regenerate_console_generation_variant(message_id)
+                return True
             controller = self._ensure_console_chat_controller()
             if not controller.run_state.is_send_allowed:
                 self.app_instance.notify(
@@ -12471,8 +13151,16 @@ class ChatScreen(BaseAppScreen):
             action_id in {"variant-previous", "variant-next"}
             and result.status == "completed"
         ):
-            self._select_console_message_variant(message_id, direction=action_id)
+            if message.generation_metadata:
+                self._select_console_generation_variant(message, direction=action_id)
+            else:
+                self._select_console_message_variant(message_id, direction=action_id)
             await self._sync_native_console_chat_ui()
+            return True
+        if action_id == "keep" and result.status == "completed":
+            self._keep_console_generation_variant(message)
+            await self._sync_native_console_chat_ui()
+            self.app_instance.notify(result.visible_copy, severity="information")
             return True
         if (
             action_id in {"feedback-up", "feedback-down"}
@@ -13086,6 +13774,7 @@ class ChatScreen(BaseAppScreen):
             ("console-message-action-feedback-down-", "feedback-down"),
             ("console-message-action-variant-previous-", "variant-previous"),
             ("console-message-action-variant-next-", "variant-next"),
+            ("console-message-action-keep-", "keep"),
             ("console-message-action-save-as-", "save-as"),
             ("console-message-action-save-image-", "save-image"),
             ("console-message-action-toggle-image-view-", "toggle-image-view"),
@@ -13093,6 +13782,7 @@ class ChatScreen(BaseAppScreen):
             ("console-message-action-continue-", "continue"),
             ("console-message-action-delete-", "delete"),
             ("console-message-action-retry-", "retry"),
+            ("console-message-action-speak-", "speak"),
             ("console-message-action-copy-", "copy"),
             ("console-message-action-edit-", "edit"),
         )
@@ -13138,6 +13828,26 @@ class ChatScreen(BaseAppScreen):
         result = await controller.regenerate_message(message_id)
         if result.visible_copy and not result.accepted:
             self.app_instance.notify(result.visible_copy, severity="warning")
+        await self._sync_native_console_chat_ui()
+
+    async def _summarize_console_up_to(
+        self,
+        controller: ConsoleChatController,
+        message_id: str,
+    ) -> None:
+        """Run `/rewind` "summarize up to here" and reflect the outcome.
+
+        Mirrors ``_regenerate_console_message`` (sync timer for the "Summarizing
+        conversation…" run state, await, re-sync). Summarize streams nothing
+        into the transcript, so on success the only visible feedback is this
+        notify plus the render-derived banner the resync plumbs -- surface the
+        success copy as information, and any block/failure copy as a warning.
+        """
+        self._start_console_transcript_sync_timer()
+        result = await controller.summarize_up_to(message_id)
+        if result.visible_copy:
+            severity = "information" if result.accepted else "warning"
+            self.app_instance.notify(result.visible_copy, severity=severity)
         await self._sync_native_console_chat_ui()
 
     async def _edit_resend_console_message(
@@ -13186,6 +13896,83 @@ class ChatScreen(BaseAppScreen):
         target_sibling_id = siblings[target_index].id
         session_id = store.session_id_for_message(message_id)
         store.set_active_leaf(session_id, store._leaf_under(target_sibling_id))
+
+    def _select_console_generation_variant(
+        self, message: ConsoleChatMessage, *, direction: str
+    ) -> None:
+        """Move a generation message's ephemeral browsed-variant index (clamped).
+
+        The generation-message counterpart of ``_select_console_message_variant``:
+        purely screen-side, in-memory state (``self._generation_browse``) --
+        never touches the store/DB, matching `<`/`>` browsing's documented
+        ephemeral-vs-durable-Keep split (spec §5.2). A no-op at either end of
+        the variant list (nothing before the first / after the last), mirroring
+        the text-sibling version's own boundary behavior.
+        """
+        variant_count = len(message.generation_metadata)
+        if variant_count <= 1:
+            return
+        browse = self._console_generation_browse()
+        current = browse.get(message.id, 0)
+        if not (0 <= current < variant_count):
+            current = 0
+        if direction == "variant-previous":
+            target = current - 1
+        elif direction == "variant-next":
+            target = current + 1
+        else:
+            return
+        if target < 0 or target >= variant_count:
+            return
+        browse[message.id] = target
+
+    def _keep_console_generation_variant(self, message: ConsoleChatMessage) -> None:
+        """Promote the browsed variant to canonical (position 0) -- durable.
+
+        A no-op when the browsed index is already 0 (nothing to promote) or
+        ``message`` isn't a generation message. Defensive: ``available_actions()``
+        only ever offers "keep" when ``generation_browsed_index != 0`` (which
+        implies a generation message), but this guards direct callers too.
+
+        ``store.keep_generation_variant`` swaps attachment bytes between
+        position 0 and the browsed position, but the render cache
+        (``_build_generation_card_specs``) still holds the OLD decoded
+        images under the composite keys ``f"{message_id}:{i}"`` -- and the
+        prep path skips re-decoding whatever is already cached. Left alone,
+        the card would keep showing the pre-keep canonical image (paired
+        with the now-correct details block) until the next full reload or
+        an unrelated LRU eviction. Evict every variant key for this message
+        so the next spec build re-decodes from the now-correct in-memory
+        bytes; ``generation_card_signature``'s ``decoded`` bit then drives
+        the row rebuild once prep catches up.
+        """
+        if not message.generation_metadata:
+            return
+        browse = self._console_generation_browse()
+        browsed_index = browse.get(message.id, 0)
+        if browsed_index <= 0 or browsed_index >= len(message.generation_metadata):
+            return
+        store = self._ensure_console_chat_store()
+        session_id = store.session_id_for_message(message.id)
+        variant_count = len(message.generation_metadata)
+        store.keep_generation_variant(
+            session_id, message.id, position=browsed_index, persist=True
+        )
+        browse[message.id] = 0
+        # `evict_session` is key-agnostic despite its session-closing name
+        # and docstring -- it just pops whatever string keys it's handed
+        # from the image/pixels dicts and clears their failure marks, which
+        # is exactly what a composite `f"{message_id}:{i}"` key needs too.
+        _state, cache = self._ensure_console_image_view()
+        stale_keys = [f"{message.id}:{i}" for i in range(variant_count)]
+        cache.evict_session(stale_keys)
+        # `getattr(..., None)`, not `self._console_image_preparing`: bare
+        # test screens built via `ChatScreen.__new__` (bypassing `__init__`,
+        # which normally seeds this set) never touch the in-flight prep
+        # guard, so it may not exist yet.
+        preparing = getattr(self, "_console_image_preparing", None)
+        if preparing is not None:
+            preparing.difference_update(stale_keys)
 
     def _get_shell_bar(self):
         """Get the mounted combined chat shell bar."""
@@ -13843,7 +14630,7 @@ class ChatScreen(BaseAppScreen):
                 next_settings = replace(
                     next_settings,
                     **override_fields,
-                    persona_label=settings.persona_label,
+                    user_profile_label=settings.user_profile_label,
                     character_label=settings.character_label,
                 )
             if temperature is not None:
@@ -14803,6 +15590,19 @@ class ChatScreen(BaseAppScreen):
         current = self.chat_state.task_resume_state
         self.set_task_resume_state(replace(current, pending_approval=approval))
 
+    def _set_console_pending_skill_install(
+        self, payload: Dict[str, Any] | None
+    ) -> None:
+        """Set/clear the pending skill-install confirm, then sync the task cards.
+
+        UI-thread bridge target for ConsoleChatController.
+        request_skill_install_confirm, invoked via call_from_thread. Mutates
+        only pending_skill_install so an in-flight approval/resume state is
+        never clobbered.
+        """
+        current = self.chat_state.task_resume_state
+        self.set_task_resume_state(replace(current, pending_skill_install=payload))
+
     @on(ChatApprovalCard.ApprovalDecided)
     def handle_console_approval_decided(
         self, event: ChatApprovalCard.ApprovalDecided
@@ -14812,6 +15612,16 @@ class ChatScreen(BaseAppScreen):
         controller = self._console_chat_controller
         if controller is not None:
             controller.resolve_pending_approval(event.decisions)
+
+    @on(SkillInstallConfirmCard.InstallDecided)
+    def handle_console_skill_install_decided(
+        self, event: SkillInstallConfirmCard.InstallDecided
+    ) -> None:
+        """Forward the user's install decision to the controller's worker thread."""
+        event.stop()
+        controller = self._console_chat_controller
+        if controller is not None:
+            controller.resolve_pending_skill_install(event.allow)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """

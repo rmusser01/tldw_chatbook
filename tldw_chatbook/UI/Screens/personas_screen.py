@@ -19,6 +19,11 @@ from textual.css.query import QueryError
 from textual.timer import Timer
 from textual.widgets import Button, Input, ListView, Static, TabbedContent, TextArea
 
+from ...Character_Chat.active_user_profile import (
+    clear_active_user_profile,
+    get_active_user_profile_pointer,
+    set_active_user_profile,
+)
 from ...Character_Chat.Character_Chat_Lib import (
     count_character_page,
     export_character_card_to_json,
@@ -27,13 +32,13 @@ from ...Character_Chat.Character_Chat_Lib import (
     list_character_tags,
     validate_character_book,
 )
-from ...Character_Chat.persona_list_paging import page_persona_profiles
+from ...Character_Chat.persona_list_paging import page_user_profiles
 from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
 from ...DB.ChaChaNotes_DB import ConflictError
-from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
+from ...tldw_api import UserProfileCreate, UserProfileUpdate
 from ...Utils.path_validation import validate_path_simple
 from ...Utils.paths import get_user_data_dir
 from ...Widgets.Console.console_rail_handle import ConsoleRailHandle
@@ -42,8 +47,8 @@ from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.Persona_Widgets.persona_profile_card_widget import (
     PersonaProfileCardWidget,
 )
-from ...Widgets.Persona_Widgets.persona_profile_editor_widget import (
-    PersonaProfileEditorWidget,
+from ...Widgets.Persona_Widgets.user_profile_editor_widget import (
+    UserProfileEditorWidget,
 )
 from ...Widgets.Persona_Widgets.personas_character_card_widget import (
     PersonasCharacterCardWidget,
@@ -92,9 +97,9 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
     ConversationRowSelected,
     EditCharacterRequested,
     EditorContentChanged,
-    EditPersonaRequested,
+    EditUserProfileRequested,
     PersonaProfileEditCancelled,
-    PersonaProfileSaveRequested,
+    UserProfileSaveRequested,
     PreviewConfigureProviderRequested,
     PreviewGreetingSelected,
     PreviewOpenInConsoleRequested,
@@ -171,12 +176,12 @@ logger = logger.bind(module="PersonasScreen")
 #: "prompts" is retired (Task 7): prompt management now lives entirely
 #: inside Library (see the "prompts" route alias in ``screen_registry`` and
 #: ``shell_destinations``), so it is no longer offered as a Personas mode.
-MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "dictionaries", "lore")
+MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "user_profiles", "dictionaries", "lore")
 
 #: One-line "what this mode is" copy, shown under the title and as chip tooltips.
 _MODE_DESCRIPTORS: dict[str, str] = {
     "characters": "Characters — who the AI plays.",
-    "personas": "Personas — who you are.",
+    "user_profiles": "User Profiles — who you are.",
     "prompts": "Prompts — moving to the Library.",
     "dictionaries": "Dictionaries — text find/replace rules.",
     "lore": "Lore — world facts injected on keywords.",
@@ -362,6 +367,12 @@ class PersonasScreen(BaseAppScreen):
     PersonasScreen {
         background: $background;
     }
+
+    /* Red cue when the staged Console handoff provider is unready (task-523):
+       the "Blocked" badge word turns $ds-status-blocked. The rule CANNOT live
+       here — app-bundle CSS (`.ds-status-badge { color: $ds-text-primary }`)
+       outranks any widget DEFAULT_CSS regardless of specificity — so it lives
+       in the app-tier source css/components/_workbench.tcss instead. */
 
     #personas-mode-strip {
         height: 1;
@@ -679,7 +690,7 @@ class PersonasScreen(BaseAppScreen):
                             yield PersonasCharacterDictionariesWidget()
                             yield PersonasCharacterWorldBooksWidget()
                         yield PersonaProfileCardWidget()
-                        yield PersonaProfileEditorWidget()
+                        yield UserProfileEditorWidget()
                         with Horizontal(id="personas-conversation-actions"):
                             yield Button(
                                 "Back to card", id="personas-conversation-back"
@@ -820,7 +831,7 @@ class PersonasScreen(BaseAppScreen):
                 await self._select_character(
                     entity_id, name, restore_preview=pending.get("preview")
                 )
-            elif kind == "persona_profile":
+            elif kind == "user_profile":
                 await self._select_profile(entity_id, name)
             elif kind == "dictionary":
                 await self._select_dictionary(entity_id, name)
@@ -856,6 +867,11 @@ class PersonasScreen(BaseAppScreen):
         self._show_center(None)
         await self.character_handler.refresh_character_list()
         self._sync_title_and_console_actions()
+        # Reflect a "my name" pointer persisted from a previous session
+        # immediately, before any selection happens (task-442 T3).
+        self.query_one(PersonasInspectorPane).set_active_profile_name(
+            get_active_user_profile_pointer()
+        )
         await self._apply_pending_restore()
 
     async def on_unmount(self) -> None:
@@ -952,8 +968,14 @@ class PersonasScreen(BaseAppScreen):
         """Map id/name records onto library rows, skipping id-less records.
 
         Character rows carry a ``YYYY-MM-DD`` last-modified meta line; personas
-        (id/name summaries) render without one.
+        (id/name summaries) render without one. User-profile rows are also
+        marked ``is_active_profile`` against the live "my name" pointer
+        (task-442 T3) so the library marker never goes stale across
+        selection/save/delete re-renders.
         """
+        active_profile_name = (
+            get_active_user_profile_pointer() if kind == "user_profile" else None
+        )
         rows: list[LibraryRow] = []
         for record in records:
             if record.get("id") is None:
@@ -962,12 +984,16 @@ class PersonasScreen(BaseAppScreen):
             if kind == "character":
                 last_modified = str(record.get("last_modified") or "")
                 meta = last_modified[:10] if last_modified else None
+            name = str(record.get("name") or "Unnamed")
             rows.append(
                 LibraryRow(
                     item_id=str(record.get("id")),
                     kind=kind,
-                    name=str(record.get("name") or "Unnamed"),
+                    name=name,
                     meta=meta,
+                    is_active_profile=(
+                        active_profile_name is not None and name == active_profile_name
+                    ),
                 )
             )
         return tuple(rows)
@@ -1129,24 +1155,24 @@ class PersonasScreen(BaseAppScreen):
         """Re-render whichever paginated library (characters/personas) is active."""
         if self.state.active_mode == "characters":
             await self._reload_character_page()
-        elif self.state.active_mode == "personas":
+        elif self.state.active_mode == "user_profiles":
             await self._render_profile_rows()
 
     def _profile_list_recovery_state(self, exc: Exception) -> DestinationRecoveryState:
-        """Build recovery copy when persona profile listing is unavailable."""
+        """Build recovery copy when user profile listing is unavailable."""
 
         reason = (
-            str(exc).strip() or "The current backend did not return persona profiles."
+            str(exc).strip() or "The current backend did not return user profiles."
         )
-        disabled_tooltip = f"{reason} Retry Personas or use Characters until persona profiles are available."
+        disabled_tooltip = f"{reason} Retry User Profiles or use Characters until user profiles are available."
         return DestinationRecoveryState(
-            status_label="Persona profiles unavailable",
-            unavailable_what="Browse persona profiles in Personas",
+            status_label="User profiles unavailable",
+            unavailable_what="Browse user profiles in User Profiles",
             why=reason,
             next_action=(
-                "Check the current runtime backend or retry after persona profile support is available"
+                "Check the current runtime backend or retry after user profile support is available"
             ),
-            recovery_action="Retry Personas or use Characters",
+            recovery_action="Retry User Profiles or use Characters",
             authority_owner="persona scope service",
             stable_selector="personas-service-error",
             disabled_tooltip=disabled_tooltip,
@@ -1154,7 +1180,7 @@ class PersonasScreen(BaseAppScreen):
 
     @work(exclusive=True, group="personas-list-refresh")
     async def _refresh_profile_rows_worker(self) -> None:
-        """Fetch persona profile rows and render them while still in Personas mode."""
+        """Fetch user profile rows and render them while still in User Profiles mode."""
         try:
             profiles = await self.persona_handler.refresh_persona_list(
                 raise_on_unavailable=True
@@ -1169,7 +1195,7 @@ class PersonasScreen(BaseAppScreen):
             self._profile_lookup_recovery_state = None
         self._profiles = [dict(record) for record in (profiles or [])]
         self._update_status_row()
-        if not self.is_mounted or self.state.active_mode != "personas":
+        if not self.is_mounted or self.state.active_mode != "user_profiles":
             # A late result must not render persona rows into another mode.
             return
         try:
@@ -1199,7 +1225,7 @@ class PersonasScreen(BaseAppScreen):
             self.state.sort_key if self.state.sort_key != "relevance" else "name_asc"
         )
         offset = self.state.page_offset
-        page_rows, total = page_persona_profiles(
+        page_rows, total = page_user_profiles(
             self._profiles,
             search_term=self.state.search_query,
             sort_key=sort_key,
@@ -1213,7 +1239,7 @@ class PersonasScreen(BaseAppScreen):
                 (total - 1) // PERSONAS_LIBRARY_PAGE_SIZE
             ) * PERSONAS_LIBRARY_PAGE_SIZE
             self.state.page_offset = offset
-            page_rows, total = page_persona_profiles(
+            page_rows, total = page_user_profiles(
                 self._profiles,
                 search_term=self.state.search_query,
                 sort_key=sort_key,
@@ -1227,13 +1253,13 @@ class PersonasScreen(BaseAppScreen):
             ):
                 return
             self._profile_total = total
-            rows = self._build_library_rows(page_rows, "persona_profile")
+            rows = self._build_library_rows(page_rows, "user_profile")
             library = self.query_one(PersonasLibraryPane)
             recovery_state = self._profile_lookup_recovery_state
             await library.update_rows(
                 rows,
                 total=total,
-                noun="persona profiles",
+                noun="user profiles",
                 recovery_copy=(
                     recovery_state.visible_copy if recovery_state is not None else None
                 ),
@@ -1250,11 +1276,11 @@ class PersonasScreen(BaseAppScreen):
                     f"Sort: {_LIBRARY_SORT_LABELS.get(sort_key, 'Name')}"
                 )
             if (
-                self.state.selected_entity_kind == "persona_profile"
+                self.state.selected_entity_kind == "user_profile"
                 and self.state.selected_entity_id
             ):
                 library.mark_active_row(
-                    "persona_profile", self.state.selected_entity_id
+                    "user_profile", self.state.selected_entity_id
                 )
 
     @on(PersonaSearchChanged)
@@ -1292,7 +1318,7 @@ class PersonasScreen(BaseAppScreen):
     async def _handle_sort_cycle(self, message: PersonaSortCycleRequested) -> None:
         """Advance the library sort (characters + personas)."""
         message.stop()
-        if self.state.active_mode not in ("characters", "personas"):
+        if self.state.active_mode not in ("characters", "user_profiles"):
             return
         await self._cycle_sort()
 
@@ -1395,7 +1421,7 @@ class PersonasScreen(BaseAppScreen):
                 logger.opt(exception=True).warning(
                     "Could not re-render character rows after search."
                 )
-        elif mode == "personas":
+        elif mode == "user_profiles":
             try:
                 await self._render_profile_rows(
                     expected_query=query,
@@ -1444,10 +1470,10 @@ class PersonasScreen(BaseAppScreen):
         """
         fallback = dict(self._profile_record(persona_id) or {"id": persona_id})
         service = getattr(self.app_instance, "character_persona_scope_service", None)
-        if service is None or not hasattr(service, "get_persona_profile"):
+        if service is None or not hasattr(service, "get_user_profile"):
             return fallback, False
         try:
-            record = await service.get_persona_profile(
+            record = await service.get_user_profile(
                 persona_id, mode=self.persona_handler.current_mode()
             )
         except Exception:
@@ -1678,9 +1704,9 @@ class PersonasScreen(BaseAppScreen):
         if mode == "characters":
             await self._render_library_rows()
             self._show_center(None)
-        elif mode == "personas":
+        elif mode == "user_profiles":
             self._profile_lookup_recovery_state = None
-            await library.update_rows((), total=0, noun="persona profiles")
+            await library.update_rows((), total=0, noun="user profiles")
             self._show_center(None)
             self._refresh_profile_rows_worker()
         elif mode == "dictionaries":
@@ -1699,14 +1725,14 @@ class PersonasScreen(BaseAppScreen):
             self._show_center("#personas-mode-placeholder")
 
     def _header_subtitle_text(self) -> str:
-        """Live header subtitle: destination purpose plus the editing state.
-
-        "Local" deliberately stays out of the header - the status row directly
-        below already says "Source: Local" (de-dup, P3-15).
-        """
+        """Live header subtitle: destination purpose plus the editing state."""
         suffix = " - unsaved" if self.state.has_unsaved_changes else ""
         if self._edit_mode == "create":
-            noun = "persona" if self.state.active_mode == "personas" else "character"
+            noun = (
+                "user profile"
+                if self.state.active_mode == "user_profiles"
+                else "character"
+            )
             return f"New {noun}{suffix}"
         if self._edit_mode == "edit":
             name = self.state.selected_entity_name or "item"
@@ -1732,11 +1758,18 @@ class PersonasScreen(BaseAppScreen):
         except Exception:
             logger.opt(exception=True).debug("Could not update the personas header.")
             return
+        # Same input as the inspector's readiness line (task-440): a staged
+        # character/persona whose resolved provider would not answer must
+        # not claim "Ready" - the existing degraded-state badge ("Blocked")
+        # is the header's own established pattern (see stats_screen.py) for
+        # this, so no new header UI is introduced. The fuller "what to do"
+        # remedy text stays in the inspector's readiness line below it.
+        status = "blocked" if self._provider_send_block_reason() else "ready"
         header.sync_state(
             WorkbenchHeaderState(
                 title="Roleplay & Chat Dictionaries",
                 subtitle=self._header_subtitle_text(),
-                status="ready",
+                status=status,
             )
         )
 
@@ -1745,10 +1778,10 @@ class PersonasScreen(BaseAppScreen):
         if mode == "characters":
             # ``_characters`` is now one page; the full-library count lives in
             # ``_character_total``.
-            return f"Characters: {self._character_total} | Source: Local | Attachments: Console"
-        if mode == "personas":
-            return f"Personas: {len(self._profiles)} | Source: Local | Attachments: Console"
-        return f"Mode: {MODE_LABELS.get(mode, mode)} | Source: Local | Attachments: Console"
+            return f"Characters: {self._character_total}"
+        if mode == "user_profiles":
+            return f"User Profiles: {len(self._profiles)}"
+        return f"Mode: {MODE_LABELS.get(mode, mode)}"
 
     def _update_status_row(self) -> None:
         """Refresh the status row text; tolerate refreshes racing teardown."""
@@ -1770,7 +1803,7 @@ class PersonasScreen(BaseAppScreen):
             await self._run_guarded(
                 lambda: self._select_character(message.entity_id, message.entity_name)
             )
-        elif message.entity_kind == "persona_profile":
+        elif message.entity_kind == "user_profile":
             await self._run_guarded(
                 lambda: self._select_profile(message.entity_id, message.entity_name)
             )
@@ -1799,7 +1832,7 @@ class PersonasScreen(BaseAppScreen):
         await self.character_handler.load_character(entity_id)
         self._show_center("#ccp-character-card-view")
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=entity_name, kind="character", authority="Local")
+        inspector.show_selection(name=entity_name, kind="character")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
@@ -1837,21 +1870,19 @@ class PersonasScreen(BaseAppScreen):
 
     async def _select_profile(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(
-            entity_kind="persona_profile",
+            entity_kind="user_profile",
             entity_id=entity_id,
             entity_name=entity_name,
         )
         self._edit_mode = "view"
         self.query_one(PersonasLibraryPane).mark_active_row(
-            "persona_profile", entity_id
+            "user_profile", entity_id
         )
         record = await self._fetch_profile_record(entity_id)
         self.query_one(PersonaProfileCardWidget).show_persona(record)
         self._show_center("#ccp-persona-card-view")
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(
-            name=entity_name, kind="persona_profile", authority="Local"
-        )
+        inspector.show_selection(name=entity_name, kind="user_profile")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
@@ -1898,7 +1929,7 @@ class PersonasScreen(BaseAppScreen):
         library = self.query_one(PersonasLibraryPane)
         library.mark_active_row("dictionary", entity_id)
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=entity_name, kind="dictionary", authority="Local")
+        inspector.show_selection(name=entity_name, kind="dictionary")
         self.query_one(PersonasDictionaryTryItWidget).set_ready(
             True, "Run the preview to see what this dictionary changes."
         )
@@ -1955,7 +1986,7 @@ class PersonasScreen(BaseAppScreen):
         library = self.query_one(PersonasLibraryPane)
         library.mark_active_row("lore", entity_id)
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=entity_name, kind="lore", authority="Local")
+        inspector.show_selection(name=entity_name, kind="lore")
         self.query_one(PersonasLoreTryItWidget).set_ready(
             True, "Run the preview to see what this lore book injects."
         )
@@ -2071,7 +2102,7 @@ class PersonasScreen(BaseAppScreen):
         self.state.has_unsaved_changes = False
         self.state.selected_entity_name = str(record.get("name") or "")
         self.query_one(PersonasInspectorPane).show_selection(
-            name=self.state.selected_entity_name, kind="dictionary", authority="Local"
+            name=self.state.selected_entity_name, kind="dictionary"
         )
         detail.load_dictionary(record)
         await self._refresh_dictionary_statistics(record)
@@ -2790,7 +2821,6 @@ class PersonasScreen(BaseAppScreen):
             self.query_one(PersonasInspectorPane).show_selection(
                 name=self.state.selected_entity_name,
                 kind="dictionary",
-                authority="Local",
             )
             detail.load_dictionary(record)
             await self._refresh_dictionary_statistics(record)
@@ -3120,7 +3150,7 @@ class PersonasScreen(BaseAppScreen):
             self._selected_lore_book = record
             self.state.selected_entity_name = str(record.get("name") or "")
             self.query_one(PersonasInspectorPane).show_selection(
-                name=self.state.selected_entity_name, kind="lore", authority="Local"
+                name=self.state.selected_entity_name, kind="lore"
             )
         detail.set_status("Saved.")
         self._update_title()
@@ -3467,7 +3497,7 @@ class PersonasScreen(BaseAppScreen):
         """True when a saved character/persona profile selection is attachable."""
         return bool(
             self.state.selected_entity_id
-            and self.state.selected_entity_kind in ("character", "persona_profile")
+            and self.state.selected_entity_kind in ("character", "user_profile")
             and not self.state.has_unsaved_changes
         )
 
@@ -3483,9 +3513,40 @@ class PersonasScreen(BaseAppScreen):
             return "select an item"
         if self.state.selected_entity_kind == "dictionary":
             return "attach arrives in a later update"
-        if self.state.selected_entity_kind not in ("character", "persona_profile"):
+        if self.state.selected_entity_kind not in ("character", "user_profile"):
             return "select a character or persona"
         return "unavailable"
+
+    def _provider_send_block_reason(self) -> str | None:
+        """Actionable reason the staged Console handoff send would fail, if any.
+
+        Reuses ``PersonasPreviewController.console_handoff_readiness`` - a
+        config/env-only mirror of the provider a fresh Start-Chat/Attach
+        Console session actually resolves (chat_defaults; the native Console
+        never reads character_defaults) - so this never duplicates
+        provider-resolution logic and stays cheap enough to run on every
+        selection sync (task-440).
+
+        Returns:
+            ``None`` when the handoff provider would answer (or no
+            character/persona is staged, so the question does not apply),
+            else a short actionable reason suitable for the inspector/header
+            readiness copy.
+        """
+        # Precedence (Qodo #824-2): the provider question is only OPERATIVE
+        # when the Console action gate itself passes — otherwise the header
+        # would claim provider-"Blocked" while the inspector says
+        # "Console blocked: unsaved edits/select an item" (two conflicting
+        # readiness stories for one staged intent). With the gate closed the
+        # inspector carries the action reason and the header keeps its
+        # pre-task-440 semantics; provider readiness surfaces the moment the
+        # action gate opens.
+        if not self._console_action_allowed():
+            return None
+        if self.state.selected_entity_kind not in ("character", "user_profile"):
+            return None
+        ready, reason = self.preview.console_handoff_readiness()
+        return None if ready else reason
 
     def _sync_inspector_console_actions(self) -> None:
         """Push the single screen-owned Console gate into the inspector pane."""
@@ -3497,7 +3558,43 @@ class PersonasScreen(BaseAppScreen):
         inspector.set_console_actions_enabled(
             allowed,
             reason=None if allowed else self._console_action_block_reason(),
+            provider_block_reason=self._provider_send_block_reason(),
         )
+
+    async def _sync_active_profile_indicators(self) -> None:
+        """Push the active ("my name") user-profile pointer into indicators.
+
+        Refreshes the inspector's "Chatting as: ..." summary line/button
+        label (always, cheap) and the library row marker (only while User
+        Profiles mode is showing rows, since that is the only render that
+        carries the marker) so the pointer and the visible UI never diverge
+        (task-442 T3). Called after every pointer write (Set/Clear button,
+        delete-active-clears-pointer) and once on mount to reflect a pointer
+        persisted from a previous session.
+        """
+        name = get_active_user_profile_pointer()
+        try:
+            inspector = self.query_one(PersonasInspectorPane)
+        except QueryError:
+            return
+        inspector.set_active_profile_name(name)
+        if self.state.active_mode == "user_profiles":
+            await self._render_profile_rows()
+
+    @on(Button.Pressed, "#personas-set-my-name")
+    async def _handle_set_my_name(self, event: Button.Pressed) -> None:
+        """Toggle the active-profile pointer for the selected user profile."""
+        event.stop()
+        if self.state.selected_entity_kind != "user_profile":
+            return
+        name = self.state.selected_entity_name
+        if not name:
+            return
+        if get_active_user_profile_pointer() == name:
+            clear_active_user_profile()
+        else:
+            set_active_user_profile(name)
+        await self._sync_active_profile_indicators()
 
     async def _selection_handoff_body(self) -> str | None:
         """Readable card summary for the selected item, or ``None`` when stale."""
@@ -3523,7 +3620,7 @@ class PersonasScreen(BaseAppScreen):
             record, complete = await self._fetch_profile_record_checked(entity_id)
             if not complete:
                 self._notify(
-                    "Persona profile is not fully loaded; try reselecting it.",
+                    "User profile is not fully loaded; try reselecting it.",
                     "warning",
                 )
                 return None
@@ -3545,6 +3642,13 @@ class PersonasScreen(BaseAppScreen):
             # this is a defensive re-check (and the ctrl+enter guard).
             self._notify("Select a saved item before using Console actions.", "warning")
             return
+        if intent == "start_chat":
+            # Start Chat needs a ready handoff provider (task-523 per-intent);
+            # defense-in-depth against a press racing a config change.
+            block = self._provider_send_block_reason()
+            if block:
+                self._notify(f"Start Chat blocked: {block}", "warning")
+                return
         kind = str(self.state.selected_entity_kind)
         name = self.state.selected_entity_name or "Unnamed"
         body = await self._selection_handoff_body()
@@ -3634,7 +3738,7 @@ class PersonasScreen(BaseAppScreen):
         if message.action == "create":
             if self.state.active_mode == "characters":
                 await self._run_guarded(self._begin_create_character)
-            elif self.state.active_mode == "personas":
+            elif self.state.active_mode == "user_profiles":
                 await self._run_guarded(self._begin_create_profile)
             elif self.state.active_mode == "dictionaries":
                 await self._run_guarded(self._begin_create_dictionary)
@@ -3649,7 +3753,9 @@ class PersonasScreen(BaseAppScreen):
             elif self.state.active_mode == "lore":
                 await self._run_guarded(self._open_lore_import_dialog)
         elif message.action == "duplicate":
-            if self.state.active_mode == "dictionaries":
+            if self.state.active_mode == "characters":
+                await self._run_guarded(self._duplicate_selected_character)
+            elif self.state.active_mode == "dictionaries":
                 await self._run_guarded(self._duplicate_selected_dictionary)
             elif self.state.active_mode == "lore":
                 await self._run_guarded(self._duplicate_selected_lore)
@@ -3698,7 +3804,7 @@ class PersonasScreen(BaseAppScreen):
         self._profile_save_inflight = False
         # Change-based dirty tracking: the session starts clean (see
         # _begin_create_character).
-        self.query_one(PersonaProfileEditorWidget).new_persona()
+        self.query_one(UserProfileEditorWidget).new_persona()
         self._show_center("#ccp-persona-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         # Same identity reset as _begin_create_character: no stale selection.
@@ -3743,6 +3849,80 @@ class PersonasScreen(BaseAppScreen):
             self.query_one("#personas-dict-name", Input).focus()
         except QueryError:
             pass
+
+    async def _duplicate_selected_character(self) -> None:
+        """Copy the selected character card under a disambiguated name.
+
+        Task-443 AC2: characters had no Duplicate seam (only dictionaries and
+        lore did). Mirrors ``_duplicate_selected_dictionary``/
+        ``_duplicate_selected_lore``: read the full source record off the UI
+        thread, disambiguate the name against the cached list, and reuse the
+        existing create seam (``ccp_character_handler.create_character`` -
+        the same helper Save-as-new-character already calls) rather than a
+        new duplication engine.
+        """
+        entity_id = self.state.selected_entity_id
+        if self.state.selected_entity_kind != "character" or not entity_id:
+            self._notify("Select a character to duplicate.", "warning")
+            return
+        try:
+            source = await asyncio.to_thread(
+                ccp_character_handler.fetch_character_by_id, entity_id
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Could not load character {entity_id} to duplicate."
+            )
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        if not source:
+            self._notify(
+                f"Could not load character {entity_id} to duplicate.", "error"
+            )
+            return
+        base_name = str(source.get("name") or "Character")
+        base = f"{base_name} (copy)"
+        existing = {
+            str(c.get("name") or "") for c in self.character_handler.character_list
+        }
+        name = base
+        suffix = 2
+        while name in existing:
+            name = f"{base_name} (copy {suffix})"
+            suffix += 1
+        payload = {
+            "name": name,
+            "description": source.get("description"),
+            "personality": source.get("personality"),
+            "scenario": source.get("scenario"),
+            "image": source.get("image"),
+            "post_history_instructions": source.get("post_history_instructions"),
+            "first_message": source.get("first_message"),
+            "message_example": source.get("message_example"),
+            "creator_notes": source.get("creator_notes"),
+            "system_prompt": source.get("system_prompt"),
+            "alternate_greetings": source.get("alternate_greetings"),
+            "tags": source.get("tags"),
+            "creator": source.get("creator"),
+            "character_version": source.get("character_version"),
+            "extensions": source.get("extensions"),
+        }
+        try:
+            new_id = await asyncio.to_thread(
+                ccp_character_handler.create_character, payload
+            )
+        except ConflictError:
+            self._notify("A character with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not duplicate the character.")
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        if not new_id:
+            self._notify("Duplicate failed: character creation returned no id.", "error")
+            return
+        await self.character_handler.refresh_character_list()
+        await self._select_character(str(new_id), name)
 
     async def _duplicate_selected_dictionary(self) -> None:
         service = self._dictionary_scope_service()
@@ -3939,14 +4119,14 @@ class PersonasScreen(BaseAppScreen):
             # instead of letting the selected-row re-mark above steal it.
             library.highlight_row("dictionary", entity_id)
 
-    @on(EditPersonaRequested)
+    @on(EditUserProfileRequested)
     async def _handle_persona_edit_requested(
-        self, message: EditPersonaRequested
+        self, message: EditUserProfileRequested
     ) -> None:
         message.stop()
         if str(message.persona_id) != (self.state.selected_entity_id or ""):
             self._notify(
-                "Selection out of sync; reselect the persona profile.", "warning"
+                "Selection out of sync; reselect the user profile.", "warning"
             )
             return
         record = await self._fetch_profile_record(str(message.persona_id))
@@ -3955,7 +4135,7 @@ class PersonasScreen(BaseAppScreen):
         self._profile_save_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
-        self.query_one(PersonaProfileEditorWidget).load_persona(record)
+        self.query_one(UserProfileEditorWidget).load_persona(record)
         self._show_center("#ccp-persona-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         inspector.set_unsaved(False)
@@ -4990,10 +5170,20 @@ class PersonasScreen(BaseAppScreen):
         # The selection changed outside _run_guarded; refresh the footer hints
         # (attach is now available) and the header state.
         self._sync_title_and_console_actions()
+        # task-445: import swaps in the card view and inspector at the same
+        # moment this notification appears, so the default 5s toast reads as
+        # a flash against a screen that just changed everywhere else. Linger
+        # longer, matching the codebase's convention for confirmations that
+        # need a deliberate beat to register (e.g. import-conflict warnings
+        # elsewhere use timeout=6).
         if existed_before:
-            self._notify("Character already existed; selected it.", "information")
+            self._notify(
+                "Character already existed; selected it.",
+                "information",
+                timeout=6.0,
+            )
         else:
-            self._notify("Character imported.", "information")
+            self._notify("Character imported.", "information", timeout=6.0)
 
     async def _open_lore_import_dialog(self) -> None:
         """Continuation for the guarded lore-import action."""
@@ -5281,7 +5471,7 @@ class PersonasScreen(BaseAppScreen):
         kind = self.state.selected_entity_kind
         if not self.state.selected_entity_id or kind not in (
             "character",
-            "persona_profile",
+            "user_profile",
         ):
             # The inspector disables these buttons without a saved selection;
             # this is a defensive re-check.
@@ -5353,7 +5543,7 @@ class PersonasScreen(BaseAppScreen):
                     await asyncio.to_thread(
                         self._export_character_json_sync, character_id, target_path
                     )
-            elif kind == "persona_profile":
+            elif kind == "user_profile":
                 if fmt != "json":
                     self._notify(
                         "PNG export is only available for characters.", "warning"
@@ -5433,7 +5623,7 @@ class PersonasScreen(BaseAppScreen):
         entity_id = str(self.state.selected_entity_id or "")
         if not entity_id or kind not in (
             "character",
-            "persona_profile",
+            "user_profile",
             "dictionary",
             "lore",
         ):
@@ -5618,13 +5808,13 @@ class PersonasScreen(BaseAppScreen):
             service = getattr(
                 self.app_instance, "character_persona_scope_service", None
             )
-            if service is None or not hasattr(service, "delete_persona_profile"):
+            if service is None or not hasattr(service, "delete_user_profile"):
                 self._notify(
-                    "Delete failed: persona profiles are unavailable.", "error"
+                    "Delete failed: user profiles are unavailable.", "error"
                 )
                 return
             try:
-                await service.delete_persona_profile(
+                await service.delete_user_profile(
                     entity_id,
                     expected_version=version,
                     mode=self.persona_handler.current_mode(),
@@ -5637,10 +5827,19 @@ class PersonasScreen(BaseAppScreen):
                 # `..._version_conflict:` ValueError marker; map it onto the
                 # same recovery copy the character path uses.
                 if "version_conflict" in str(exc):
-                    self._notify(conflict_copy.format(noun="persona profile"), "error")
+                    self._notify(conflict_copy.format(noun="user profile"), "error")
                 else:
                     self._notify(f"Delete failed: {exc}", "error")
                 return
+            # The deleted profile can no longer serve as the "my name"
+            # pointer; clear it and refresh indicators (task-442 T3).
+            if (
+                self.state.selected_entity_name
+                and get_active_user_profile_pointer()
+                == self.state.selected_entity_name
+            ):
+                clear_active_user_profile()
+                await self._sync_active_profile_indicators()
         await self._after_delete(kind)
 
     async def _after_delete(self, kind: str) -> None:
@@ -5649,7 +5848,7 @@ class PersonasScreen(BaseAppScreen):
             # _full_character_record cannot serve stale data.
             self.character_handler.current_character_id = None
             self.character_handler.current_character_data = {}
-        expected_mode = "characters" if kind == "character" else "personas"
+        expected_mode = "characters" if kind == "character" else "user_profiles"
         stale = not self.is_mounted or self.state.active_mode != expected_mode
         if not stale:
             self.state.clear_selection()
@@ -5811,7 +6010,7 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasPreviewPane).set_speakers(character=name)
         self.state.has_unsaved_changes = False
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=name, kind="character", authority="Local")
+        inspector.show_selection(name=name, kind="character")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
@@ -5843,9 +6042,9 @@ class PersonasScreen(BaseAppScreen):
         self._sync_title_and_console_actions()
         self._notify("Character saved.", severity="information")
 
-    @on(PersonaProfileSaveRequested)
+    @on(UserProfileSaveRequested)
     async def _handle_profile_save_requested(
-        self, message: PersonaProfileSaveRequested
+        self, message: UserProfileSaveRequested
     ) -> None:
         """Persist a persona profile through the async scope service.
 
@@ -5878,7 +6077,7 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasInspectorPane).show_validation_editing()
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None:
-            self._notify("Save failed: persona profiles are unavailable.", "error")
+            self._notify("Save failed: user profiles are unavailable.", "error")
             return
         self._profile_save_inflight = True
         # mode/persona_id are read INSIDE the try (rather than before it) so
@@ -5894,7 +6093,7 @@ class PersonasScreen(BaseAppScreen):
             mode = self.persona_handler.current_mode()
             persona_id = str(data.get("id") or "")
             if self._edit_mode == "create" or not persona_id:
-                request = PersonaProfileCreate(
+                request = UserProfileCreate(
                     id=data.get("id") or None,
                     name=str(data.get("name") or ""),
                     description=data.get("description"),
@@ -5903,9 +6102,9 @@ class PersonasScreen(BaseAppScreen):
                     is_active=bool(data.get("is_active", True)),
                     personality_traits=str(data.get("personality_traits") or ""),
                 )
-                result = await service.create_persona_profile(request, mode=mode)
+                result = await service.create_user_profile(request, mode=mode)
             else:
-                request = PersonaProfileUpdate(
+                request = UserProfileUpdate(
                     name=str(data.get("name") or ""),
                     description=data.get("description"),
                     mode=data.get("mode"),
@@ -5913,7 +6112,7 @@ class PersonasScreen(BaseAppScreen):
                     is_active=data.get("is_active"),
                     personality_traits=data.get("personality_traits"),
                 )
-                result = await service.update_persona_profile(
+                result = await service.update_user_profile(
                     persona_id,
                     request,
                     expected_version=data.get("version"),
@@ -5955,19 +6154,39 @@ class PersonasScreen(BaseAppScreen):
         self._profiles = [dict(record) for record in (profiles or [])]
         self._update_status_row()
         self._update_status_row()
-        if not self.is_mounted or self.state.active_mode != "personas":
+        if not self.is_mounted or self.state.active_mode != "user_profiles":
             # Leave the selection, inspector, and center pane alone.
             return
         self._edit_mode = "edit"  # create -> edit stays in the editor
         self.state.has_unsaved_changes = False
         self._set_active_row_unsaved(False)
         saved_id = str(saved.get("id") or "")
-        name = str(saved.get("name") or "Saved persona")
+        name = str(saved.get("name") or "Saved profile")
+        # task-442 T3 review: renaming the ACTIVE profile follows the pointer.
+        # The spec's dangling->None floor is acceptable, but this save path
+        # knows both names for free (selected_entity_name is still the OLD
+        # name until select_entity below), so keep "who I am" sticky.
+        old_name = str(self.state.selected_entity_name or "")
+        if (
+            old_name
+            and old_name != name
+            and get_active_user_profile_pointer() == old_name
+        ):
+            set_active_user_profile(name)
         self.state.select_entity(
-            entity_kind="persona_profile", entity_id=saved_id, entity_name=name
+            entity_kind="user_profile", entity_id=saved_id, entity_name=name
         )
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=name, kind="persona_profile", authority="Local")
+        # Whole-branch review (+ rebase fix): the pointer write above must
+        # also refresh the pane's cached _active_profile_name (no reactive
+        # plumbing — a stale "Set as my name" label would INVERT the button's
+        # action on the next click). Push ONLY the cached name here, before
+        # show_selection computes the label; the row marker re-renders via
+        # this save path's own _render_profile_rows below — calling the full
+        # _sync_active_profile_indicators() would render the rows twice and
+        # trip the task-523 one-render-per-save gate test.
+        inspector.set_active_profile_name(get_active_user_profile_pointer())
+        inspector.show_selection(name=name, kind="user_profile")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
@@ -5977,11 +6196,11 @@ class PersonasScreen(BaseAppScreen):
         # open) re-baselines dirty tracking straight from it - no re-read
         # needed (unlike the character finisher, which reads a stale handler
         # cache and must go back to the DB).
-        editor = self.query_one(PersonaProfileEditorWidget)
+        editor = self.query_one(UserProfileEditorWidget)
         editor.mark_saved(saved)
         self._show_center("#ccp-persona-editor-view")
         self._sync_title_and_console_actions()
-        self._notify("Persona saved.", "information")
+        self._notify("User profile saved.", "information")
 
     # ===== Cancel =====
 
@@ -6181,10 +6400,28 @@ class PersonasScreen(BaseAppScreen):
             )
             return False
 
-    def _notify(self, message: str, severity: str = "warning") -> None:
+    def _notify(
+        self,
+        message: str,
+        severity: str = "warning",
+        *,
+        timeout: float | None = None,
+    ) -> None:
+        """Post an app notification.
+
+        Args:
+            message: Text to show.
+            severity: Textual severity level.
+            timeout: Seconds to linger before dismissing; ``None`` uses the
+                app's default (Textual's ``NOTIFICATION_TIMEOUT``, 5s). Most
+                callers leave this at the default; a few confirmations that
+                land alongside a big simultaneous UI change (e.g. import
+                swapping in the card view) pass a longer value so they don't
+                read as a flash (task-445).
+        """
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
-            notify(message, severity=severity)
+            notify(message, severity=severity, timeout=timeout)
 
     # ===== Key bindings =====
 

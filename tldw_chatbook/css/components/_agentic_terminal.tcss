@@ -435,6 +435,67 @@ ConsoleSkillPickerModal {
     color: $ds-text-muted;
 }
 
+ConsoleStylePickerModal {
+    align: center middle;
+}
+
+#console-style-picker-modal {
+    width: 76;
+    max-width: 95%;
+    height: auto;
+    max-height: 85%;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    padding: 1 2;
+}
+
+#console-style-picker-filter {
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-style-picker-filter:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+#console-style-picker-results {
+    height: auto;
+    max-height: 20;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+}
+
+.console-style-picker-row {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.console-style-picker-row-highlighted {
+    border: tall $ds-action-focus;
+    background: $ds-input-focus-bg;
+    text-style: bold;
+}
+
+#console-style-picker-empty {
+    height: auto;
+    margin: 1 0;
+    color: $ds-text-muted;
+}
+
 ConsoleSystemPromptModal {
     align: center middle;
 }
@@ -2962,6 +3023,19 @@ ConsoleSystemPromptModal {
     text-style: bold underline;
 }
 
+/* TASK-371: docked "jump to latest" pill shown while the reader is scrolled up
+   during (or just after) a streaming reply. Pinned to the transcript's bottom
+   edge, high-contrast so it reads as an actionable status, click to re-attach. */
+.console-transcript-jump-pill {
+    dock: bottom;
+    width: 100%;
+    height: 1;
+    content-align: center middle;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
 .console-transcript-action-row {
     height: 3;
     min-height: 3;
@@ -3077,14 +3151,15 @@ ConsoleSystemPromptModal {
 }
 
 .console-setup-step {
-    height: 1;
+    height: auto;
+    min-height: 1;
     color: $ds-text-primary;
-    /* TASK-389: the step is height-1, so a line wider than the card silently
-       clipped its last word ("setup") to a hidden second line with no ellipsis.
-       Ellipsize on one line so any unavoidable overflow (e.g. a narrow terminal
-       capping the card at max-width) is marked rather than dropped. */
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
+    /* TASK-389 made a height-1 line ellipsize on unavoidable overflow instead
+       of silently clipping. TASK-441: ellipsizing still drops the tail of the
+       sentence, so wrap onto a second row instead -- height:auto (Static's
+       default text-wrap is already "wrap") lets the widget grow to fit
+       however many rows a narrow terminal's capped card width needs, and
+       .console-setup-modal-card's own height:auto absorbs the extra row. */
 }
 
 .console-setup-step-done {
@@ -3731,6 +3806,22 @@ Button.settings-category-button.settings-secondary-search-match {
     content-align: left middle;
 }
 
+/* The Library/RAG detail card (Search/Embedding/Chunking/Vector store/
+ * Reranking groups) has the longest field labels in Settings ("Default
+ * results", "Embedding model ⚠", "Distance metric ⚠", "Rerank results", ...).
+ * The generic 12-column label width clips them to their first wrapped word
+ * (Static wraps at the column width but the row stays height:1, so only
+ * that first line paints) -- e.g. "Default results" rendered as just
+ * "Default", and "Reranker model"/"Reranker top-k" (pre UX-review-2026-07
+ * naming) both rendered as the identical "Reranker". Widen the column for
+ * this card only so every RAG label fits on one line unambiguously; other
+ * Settings categories keep the base 12-column rhythm.
+ */
+#settings-library-rag-card .settings-input-label {
+    width: 20;
+    min-width: 20;
+}
+
 .settings-compact-input {
     width: 1fr;
     height: 1;
@@ -3865,6 +3956,35 @@ Button.settings-category-button.settings-secondary-search-match {
     text-style: bold;
 }
 
+/* RAG profile-manager region (task-2): read-only note for a built-in active
+   profile -- attention-worthy like #library-skill-warnings above, not muted
+   like the surrounding .settings-status-row lines. */
+.settings-library-rag-readonly-banner {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+/* RAG profile editor (task-3 review): reranker top-k vs default-results
+   advisory -- same attention-worthy treatment as the readonly banner above.
+   Purely informational (never gates Save; see soft_config_warnings). */
+.settings-library-rag-soft-warning {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+RagProfileNameModal,
+RagProfileSwitchConfirmModal {
+    align: center middle;
+}
+
+.settings-rag-profile-modal {
+    width: 60;
+    height: auto;
+    padding: 1 2;
+    border: thick $ds-action-focus;
+    background: $ds-surface-panel;
+}
+
 .settings-focus-card {
     width: 100%;
     height: auto;
@@ -3913,6 +4033,15 @@ Button.settings-category-button.settings-secondary-search-match {
     color: $ds-text-primary;
     text-style: bold underline;
     outline: none;
+}
+
+/* UX review item 7 (delete danger styling): visually separate the RAG
+   profile-manager's destructive Delete button from the other three
+   (Set active/Clone/Rename) in the same row -- variant="error" alone
+   (settings_screen.py) gives it distinct color, but it still read as just
+   another button in the row without the extra gap. */
+.settings-library-rag-profile-delete-button {
+    margin-left: 2;
 }
 
 .settings-sync-safety-row {
@@ -4055,6 +4184,18 @@ ListItem.personas-library-row.is-active.-highlight {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold;
+}
+
+/* task-445: the global `*:focus { outline: solid $ds-focus-accent; }`
+   fallback (core/_reset.tcss) draws its outline around the ListView's own
+   box once it takes keyboard focus after a row is selected -- and that box
+   is taller than the 1-2 rows it holds (it fills the rail's remaining
+   height), so the outline rendered as a tall empty bordered rectangle
+   hanging below the selected row (RP UX review). Rows already show
+   selection via .is-active/.-highlight backgrounds above, so the fallback
+   outline is both redundant and visually broken here. */
+#personas-library-rows:focus {
+    outline: none;
 }
 
 .library-source-action {

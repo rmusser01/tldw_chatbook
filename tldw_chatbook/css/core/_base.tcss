@@ -9,3 +9,16 @@ Screen { layout: vertical; }
 Header { dock: top; height: 1; background: $panel; }
 Footer { dock: bottom; height: 1; background: $panel; }
 #content { height: 1fr; width: 100%; }
+
+/* App-wide scrollbar defaults (TASK-394). Consolidated here -- a deliberate
+ * foundation rule -- from the two bare `VerticalScroll` selectors that had
+ * leaked out of feature modules (the splash/theme module and _conversations);
+ * this is the union of what both set, so the effective app-wide scrollbar is
+ * unchanged. */
+VerticalScroll {
+    scrollbar-background: $surface-darken-1;
+    scrollbar-color: $primary;
+    scrollbar-color-hover: $primary-lighten-1;
+    scrollbar-color-active: $primary-lighten-2;
+    scrollbar-size: 1 1;
+}

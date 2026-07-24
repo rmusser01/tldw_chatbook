@@ -2756,6 +2756,16 @@ wezterm = "regular"
 iterm2 = "regular"
 default = "pixels"
 
+[web_security]
+# Egress guard (SSRF protection) for web scraping / ingestion / subscription
+# fetches. When enabled, content-derived URLs (redirects, sitemap/crawl
+# discoveries, feed items) must resolve to public IPs; URLs you explicitly
+# configure (feed sources, Confluence base_url, ingest URLs) may be private.
+# Cloud metadata endpoints (169.254.169.254 etc.) are always blocked unless
+# the exact host is listed in allowed_hosts.
+enabled = true
+allowed_hosts = []
+
 [image_generation]
 default_backend = "swarmui"          # local SwarmUI instance is the friendliest zero-key default
 enabled_backends = ["swarmui"]
@@ -2765,6 +2775,8 @@ max_pixels = 1048576
 max_steps = 50
 max_prompt_length = 1000
 inline_max_bytes = 4000000
+default_batch = 1
+max_variants_per_message = 8
 
 [image_generation.stable_diffusion_cpp]
 binary_path = ""                      # local `sd` CLI; empty = backend unusable
@@ -4357,6 +4369,28 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
 
 # --- CLI Database and Log File Path Getters ---
 BASE_DATA_DIR_CLI = Path.home() / ".local" / "share" / "tldw_cli"  # Renamed for clarity
+# NOTE: BASE_DATA_DIR_CLI is a module-level constant frozen at IMPORT time
+# (kept for backward compatibility -- some callers reference it directly).
+# get_user_data_dir()'s fallback below does NOT use it; it resolves the
+# default at CALL time via _default_base_data_dir() instead, so per-test
+# HOME monkeypatches (applied well after this module is first imported) are
+# actually honored. See task-519. (XDG_DATA_HOME is deliberately NOT
+# consulted -- see _default_base_data_dir()'s docstring.)
+
+
+def _default_base_data_dir() -> Path:
+    """Default data dir resolved at CALL time (honors post-import HOME changes
+    for test isolation; task-519). Deliberately does NOT honor XDG_DATA_HOME:
+    the pre-existing default never did, and adding it would silently relocate
+    an XDG user's data dir on upgrade with no migration (task-519 review).
+
+    Uses os.environ["HOME"] explicitly (falling back to Path.home()) because
+    Path.home() is not guaranteed to re-read a post-import HOME monkeypatch
+    on every platform/Python version, whereas os.environ is always read live.
+    """
+    home = os.environ.get("HOME")
+    base = Path(home).expanduser() if home else Path.home()
+    return base / ".local" / "share" / "tldw_cli"
 
 
 def get_api_key(api_name: str) -> Optional[str]:
@@ -4441,7 +4475,7 @@ def get_user_data_dir() -> Path:
     base_data_dir = (
         Path(configured_data_dir).expanduser()
         if configured_data_dir
-        else BASE_DATA_DIR_CLI
+        else _default_base_data_dir()
     )
     user_dir = base_data_dir / user_folder
     # Create directory if it doesn't exist

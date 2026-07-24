@@ -30,6 +30,7 @@ except ImportError:
 # Local Imports
 from ..web_scraping_pipelines import BaseScrapingPipeline, ScrapedItem, ScrapingConfig
 from ...Metrics.metrics_logger import log_counter
+from ...Utils.egress import MAX_FETCH_BYTES_PAGE, guarded_fetch_httpx_async
 #
 ########################################################################################################################
 #
@@ -165,8 +166,12 @@ class HackerNewsScrapingPipeline(BaseScrapingPipeline):
             headers = self.get_headers()
             headers["Accept"] = "application/rss+xml, application/xml"
 
-            response = await client.get(
-                feed_url, headers=headers, follow_redirects=True
+            response = await guarded_fetch_httpx_async(
+                feed_url,
+                client=client,
+                max_bytes=MAX_FETCH_BYTES_PAGE,
+                trusted_origins=frozenset(),
+                headers=headers,
             )
             response.raise_for_status()
 
@@ -209,8 +214,13 @@ class HackerNewsScrapingPipeline(BaseScrapingPipeline):
 
         # Fetch results
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(
-                search_url, params=params, headers=self.get_headers()
+            response = await guarded_fetch_httpx_async(
+                search_url,
+                client=client,
+                max_bytes=MAX_FETCH_BYTES_PAGE,
+                trusted_origins=frozenset(),
+                headers=self.get_headers(),
+                params=params,
             )
             response.raise_for_status()
 
@@ -228,7 +238,13 @@ class HackerNewsScrapingPipeline(BaseScrapingPipeline):
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Get user profile
-            response = await client.get(user_url, headers=self.get_headers())
+            response = await guarded_fetch_httpx_async(
+                user_url,
+                client=client,
+                max_bytes=MAX_FETCH_BYTES_PAGE,
+                trusted_origins=frozenset(),
+                headers=self.get_headers(),
+            )
             response.raise_for_status()
 
             user_data = response.json()
@@ -238,7 +254,13 @@ class HackerNewsScrapingPipeline(BaseScrapingPipeline):
             items = []
             for item_id in submitted_ids:
                 item_url = f"{self.HN_FIREBASE_API}/item/{item_id}.json"
-                item_response = await client.get(item_url, headers=self.get_headers())
+                item_response = await guarded_fetch_httpx_async(
+                    item_url,
+                    client=client,
+                    max_bytes=MAX_FETCH_BYTES_PAGE,
+                    trusted_origins=frozenset(),
+                    headers=self.get_headers(),
+                )
 
                 if item_response.status_code == 200:
                     item_data = item_response.json()
@@ -270,7 +292,13 @@ class HackerNewsScrapingPipeline(BaseScrapingPipeline):
                 if hn_id:
                     # Fetch item details including comments
                     item_url = f"{self.HN_ALGOLIA_API}/items/{hn_id}"
-                    response = await client.get(item_url, headers=self.get_headers())
+                    response = await guarded_fetch_httpx_async(
+                        item_url,
+                        client=client,
+                        max_bytes=MAX_FETCH_BYTES_PAGE,
+                        trusted_origins=frozenset(),
+                        headers=self.get_headers(),
+                    )
 
                     if response.status_code == 200:
                         item_data = response.json()

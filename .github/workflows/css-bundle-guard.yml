@@ -1,0 +1,33 @@
+name: CSS Bundle Guard
+
+# TASK-395: a source .tcss edited without regenerating the bundle (or the bundle
+# hand-edited directly) silently ships broken styling -- every rebuild, including
+# the app's boot-time rebuild, strips the hand-edit. This guard fails any change
+# under tldw_chatbook/css/** whose committed bundle does not reproduce from its
+# sources. Like backlog-guard, it is a standalone workflow so it runs even while
+# the general CI suite is left in the intentionally-cancelled state.
+
+on:
+  pull_request:
+    paths:
+      - 'tldw_chatbook/css/**'
+  push:
+    branches: [dev, main]
+    paths:
+      - 'tldw_chatbook/css/**'
+
+jobs:
+  css-bundle-reproducible:
+    name: CSS bundle reproduces from its sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Bundle must match its source modules
+        run: |
+          # check_bundle_sync rebuilds the bundle into a temp file and diffs it
+          # against the committed one, ignoring only the `Generated:` timestamp;
+          # it names any drifted MODULE block. Stdlib-only, no install needed.
+          python tldw_chatbook/css/check_bundle_sync.py

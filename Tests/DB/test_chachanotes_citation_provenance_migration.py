@@ -324,6 +324,21 @@ def _minimal_v24(path: Path) -> None:
         )
 
 
+def _minimal_v26(path: Path) -> None:
+    """Build a v26 fixture by applying both current-dev migrations."""
+
+    _minimal_v24(path)
+    with sqlite3.connect(path) as connection:
+        connection.executescript(CharactersRAGDB._MIGRATE_V24_TO_V25_SQL)
+        connection.execute(
+            "ALTER TABLE conversations ADD COLUMN context_summary TEXT"
+        )
+        connection.execute(
+            "ALTER TABLE conversations ADD COLUMN summary_boundary_message_id TEXT"
+        )
+        connection.executescript(CharactersRAGDB._MIGRATE_V25_TO_V26_SQL)
+
+
 def _table_names(connection: sqlite3.Connection) -> set[str]:
     return {
         row[0]
@@ -376,14 +391,14 @@ def _insert_local_trace_and_snapshot(connection: sqlite3.Connection) -> str:
     return profile_id
 
 
-def test_fresh_database_reaches_v25_with_stable_identity_context(
+def test_fresh_database_reaches_v27_with_stable_identity_context(
     tmp_path: Path,
 ) -> None:
     db = _fresh_db(tmp_path / "fresh.sqlite")
     connection = db.get_connection()
 
-    assert db._CURRENT_SCHEMA_VERSION == 25
-    assert _version(connection) == 25
+    assert db._CURRENT_SCHEMA_VERSION == 27
+    assert _version(connection) == 27
     assert PROVENANCE_TABLES <= _table_names(connection)
     row = connection.execute("SELECT * FROM rag_identity_context").fetchone()
     assert row["context_name"] == "default"
@@ -393,15 +408,23 @@ def test_fresh_database_reaches_v25_with_stable_identity_context(
     assert row["created_at"]
 
 
-def test_v24_upgrade_uses_the_exact_standalone_sql_schema(tmp_path: Path) -> None:
+def test_v24_upgrade_reaches_v27_and_uses_exact_citation_sql_schema(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "upgrade.sqlite"
     _minimal_v24(path)
 
     db = _fresh_db(path)
     connection = db.get_connection()
 
-    assert _version(connection) == 25
+    assert _version(connection) == 27
     assert PROVENANCE_TABLES <= _table_names(connection)
+    assert "message_generation_metadata" in _table_names(connection)
+    conversation_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
+    }
+    assert {"context_summary", "summary_boundary_message_id"} <= conversation_columns
 
     type_names = {"T": "TEXT", "I": "INTEGER"}
     for table, compact_contract in TABLE_INFO_CONTRACT.items():
@@ -735,18 +758,18 @@ def test_preexisting_partial_provenance_schema_is_rejected_atomically(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "partial-provenance.sqlite"
-    _minimal_v24(path)
+    _minimal_v26(path)
     with sqlite3.connect(path) as connection:
         connection.execute("CREATE TABLE rag_evidence_runs(marker TEXT)")
 
     with pytest.raises(
         CharactersRAGDBError,
-        match="Migration from V24 to V25 failed",
+        match="Migration from V26 to V27 failed",
     ):
         _fresh_db(path)
 
     with sqlite3.connect(path) as connection:
-        assert _version(connection) == 24
+        assert _version(connection) == 26
         assert PROVENANCE_TABLES & _table_names(connection) == {"rag_evidence_runs"}
         assert connection.execute(
             "PRAGMA table_info(rag_evidence_runs)"
@@ -760,7 +783,7 @@ def test_migration_failure_rolls_back_schema_context_and_version(
     failure_kind: str,
 ) -> None:
     path = tmp_path / f"rollback-{failure_kind}.sqlite"
-    _minimal_v24(path)
+    _minimal_v26(path)
 
     if failure_kind == "ddl":
         original = CharactersRAGDB._execute_citation_migration_statement
@@ -788,7 +811,41 @@ def test_migration_failure_rolls_back_schema_context_and_version(
         _fresh_db(path)
 
     with sqlite3.connect(path) as connection:
-        assert _version(connection) == 24
+        assert _version(connection) == 26
+        assert not (PROVENANCE_TABLES & _table_names(connection))
+
+
+def test_citation_failure_after_dev_migrations_leaves_clean_v26(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sequential v24→v27 path must keep the final migration atomic."""
+
+    path = tmp_path / "sequential-rollback.sqlite"
+    _minimal_v24(path)
+    monkeypatch.setattr(
+        CharactersRAGDB,
+        "_update_citation_schema_version",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            sqlite3.OperationalError("forced sequential version failure")
+        ),
+    )
+
+    with pytest.raises(Exception, match="forced sequential"):
+        _fresh_db(path)
+
+    with sqlite3.connect(path) as connection:
+        assert _version(connection) == 26
+        assert "message_generation_metadata" in _table_names(connection)
+        conversation_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(conversations)"
+            ).fetchall()
+        }
+        assert {"context_summary", "summary_boundary_message_id"} <= (
+            conversation_columns
+        )
         assert not (PROVENANCE_TABLES & _table_names(connection))
 
 
@@ -800,7 +857,7 @@ def test_migration_sql_is_ddl_only_and_provenance_is_not_indexed_or_synced(
         / "tldw_chatbook"
         / "DB"
         / "migrations"
-        / "chachanotes_v24_to_v25_citation_provenance.sql"
+        / "chachanotes_v26_to_v27_citation_provenance.sql"
     )
     sql = sql_path.read_text(encoding="utf-8")
     executable = "\n".join(

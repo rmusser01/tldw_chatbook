@@ -23,6 +23,7 @@ from .monitoring_engine import FeedMonitor, RateLimiter
 from .security import SecurityValidator
 from ..DB.Subscriptions_DB import SubscriptionsDB
 from ..Metrics.metrics_logger import log_histogram, log_counter
+from ..Utils.egress import MAX_FETCH_BYTES_PAGE, guarded_fetch_httpx_async, origin_set
 
 # Try to import existing web scraping functionality
 try:
@@ -289,7 +290,10 @@ class WebsiteMonitor:
         """Use article scraper as fallback."""
         try:
             # Use scrape_article for single URL
-            article_data = await scrape_article(subscription["source"])
+            article_data = await scrape_article(
+                subscription["source"],
+                trusted_origins=origin_set(subscription["source"]),
+            )
 
             if article_data and article_data.get("extraction_successful"):
                 return [
@@ -314,7 +318,9 @@ class WebsiteMonitor:
         try:
             # Try article extractor first
             if ARTICLE_SCRAPER_AVAILABLE:
-                article_data = await scrape_article(url)
+                article_data = await scrape_article(
+                    url, trusted_origins=origin_set(url)
+                )
                 if article_data and article_data.get("extraction_successful"):
                     return article_data.get("html", article_data.get("content", ""))
 
@@ -322,7 +328,12 @@ class WebsiteMonitor:
             import httpx
 
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url)
+                response = await guarded_fetch_httpx_async(
+                    url,
+                    client=client,
+                    max_bytes=MAX_FETCH_BYTES_PAGE,
+                    trusted_origins=origin_set(url),
+                )
                 response.raise_for_status()
                 return response.text
 

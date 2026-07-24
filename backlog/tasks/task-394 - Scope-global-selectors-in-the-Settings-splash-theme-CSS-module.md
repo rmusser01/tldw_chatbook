@@ -1,8 +1,9 @@
 ---
 id: TASK-394
 title: Scope global selectors in the Settings splash/theme CSS module
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 18:35'
 labels: [css, tech-debt]
 dependencies: []
@@ -19,7 +20,34 @@ Raised by review on PR #723 (Gemini findings on `_settings_splash_theme.tcss:105
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 No bare type selectors (e.g. `VerticalScroll`) or cross-module generic class names remain in the splash/theme module; styles are scoped or feature-prefixed
-- [ ] #2 Settings splash gallery and theme editor render unchanged after the scoping (visual check or snapshot)
-- [ ] #3 Screens that shared the old generic class names (`stats_screen`, chat) are verified unaffected
+- [x] #1 No bare type selectors (e.g. `VerticalScroll`) or cross-module generic class names remain in the splash/theme module; styles are scoped or feature-prefixed
+- [x] #2 Settings splash gallery and theme editor render unchanged after the scoping (visual check or snapshot)
+- [x] #3 Screens that shared the old generic class names (`stats_screen`, chat) are verified unaffected
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Investigation reframed the task: the splash/theme module's whole TOP section was
+the OLD (pre-Settings) splash viewer's stylesheet. The current viewer + theme
+editor use only the module's BOTTOM section (#settings-theme-*, .settings-splash-*,
+.preview-*-demo). The top section held (a) app-wide GENERIC component classes
+(.setting-label 63 uses, .settings-section 35, .help-text 23, .action-buttons 18,
+.section-header 12, .card-list/.preview-panel/.preview-container/.preview-content —
+used across settings/coderepo/dataset/eval/chunk widgets), (b) a bare VerticalScroll
+that (with a second bare one in _conversations) was the app's de-facto scrollbar
+default, and (c) seven zero-importer orphans. These are NOT scopeable leaks — they
+are app-wide components misplaced in a feature module. FIX: (1) moved the shared
+component rules VERBATIM to a purpose-named components/_shared_components.tcss placed
+at the SAME manifest position (immediately after the splash module) so the bundle
+cascade is byte-for-byte equivalent; (2) consolidated the two bare VerticalScroll
+rules into ONE deliberate app-wide default in core/_base.tcss (union of both -> same
+effective scrollbar) and removed them from splash + _conversations; (3) removed the
+7 orphans (card-list-container/-panel, card-info, preview-widget, checkbox-button,
+modal-container, splash-gallery-modal). VERIFICATION: a static before/after effective-
+style diff proved ALL 9 relocated classes + VerticalScroll have byte-identical merged
+styles app-wide (AC#2/#3 — zero rendering change); the app boots clean on the new
+bundle and Settings renders (served-app). 3 new regression tests lock: splash module
+has no bare/generic selectors, the moved rules are in _shared_components + bundle, and
+VerticalScroll is in core. css_build_integrity + bundle-sync guard green.
+<!-- SECTION:NOTES:END -->

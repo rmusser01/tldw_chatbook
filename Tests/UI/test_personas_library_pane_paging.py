@@ -96,7 +96,7 @@ async def test_tag_button_hidden_for_personas_visible_for_characters():
     app = _Host()
     async with app.run_test() as pilot:
         pane = app.query_one(PersonasLibraryPane)
-        pane.set_mode("personas")
+        pane.set_mode("user_profiles")
         assert app.query_one("#personas-library-tag", Button).display is False
         assert app.query_one("#personas-library-sort", Button).display is True
         pane.set_mode("characters")
@@ -138,5 +138,6 @@ async def test_update_rows_without_page_kwargs_keeps_plain_count():
         )
         await pilot.pause()
         count = app.query_one("#personas-library-count", Static)
-        assert "1 dictionaries" in str(count.renderable)
+        # task-445: a total of exactly 1 reads singular ("1 dictionary").
+        assert "1 dictionary" in str(count.renderable)
         assert app.query_one("#personas-library-pagebar").display is False

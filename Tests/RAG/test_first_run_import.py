@@ -162,8 +162,9 @@ def test_get_shared_rag_service_calls_first_run_import_at_most_once(
 
     calls = []
     monkeypatch.setattr(ac, "ensure_imported_profile", lambda: calls.append(1) or None)
-    # Bypass the test-mode safety skip so the wiring path under test actually runs.
-    monkeypatch.setattr(ii, "_running_under_pytest", lambda: False)
+    # No test-mode skip to bypass anymore (task-519 removed the
+    # PYTEST_CURRENT_TEST guard): the _reset_first_run_wiring fixture already
+    # resets _first_run_import_attempted so this exercises the real path.
 
     fake_service = object()
     ii.set_shared_rag_service(fake_service)
@@ -203,7 +204,9 @@ def test_first_run_import_runs_before_shared_service_lock_is_held(
         acquired.append(got)
 
     monkeypatch.setattr(ac, "ensure_imported_profile", _fake_ensure_imported_profile)
-    monkeypatch.setattr(ii, "_running_under_pytest", lambda: False)
+    # No test-mode skip to bypass anymore (task-519 removed the
+    # PYTEST_CURRENT_TEST guard): the _reset_first_run_wiring fixture already
+    # resets _first_run_import_attempted so this exercises the real path.
     # Avoid a real (possibly slow/dependency-gated) RAGService build -- this
     # test is only exercising the lock-acquisition ordering, not construction.
     monkeypatch.setattr(simplified_pkg, "create_rag_service", lambda **kwargs: object())

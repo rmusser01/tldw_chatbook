@@ -40,6 +40,10 @@ CSS_MODULES = [
     # rules now live in _settings_splash_theme.tcss at this same manifest
     # position so cascade order is unchanged.
     "components/_settings_splash_theme.tcss",
+    # TASK-394: generic, app-wide component styles moved OUT of the splash/theme
+    # module. Kept at this manifest position (immediately after it) so the
+    # bundle cascade is byte-for-byte equivalent for the relocated rules.
+    "components/_shared_components.tcss",
     # 4. Features - Application Specific (depends on all above)
     "features/_chat.tcss",
     "features/_chat_tabs.tcss",

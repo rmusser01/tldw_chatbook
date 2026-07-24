@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any
-
-from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
 
 from .settings_config_models import SettingsValidationResult
 
 
 SEARCH_MODES = frozenset({"plain", "semantic", "hybrid"})
 CITATION_STYLES = frozenset({"inline", "footnote", "none"})
+CHUNKING_METHODS = frozenset({"words", "sentences", "paragraphs"})
+DISTANCE_METRICS = frozenset({"cosine", "l2", "ip"})
 DEFAULT_SEARCH_MODE = "semantic"
 DEFAULT_CITATION_STYLE = "inline"
+DEFAULT_CHUNKING_METHOD = "words"
+DEFAULT_DISTANCE_METRIC = "cosine"
 MIN_RAG_RESULT_COUNT = 1
 MAX_RAG_RESULT_COUNT = 100
 MIN_RAG_BALANCE = 0.0
@@ -40,38 +41,30 @@ class SettingsLibraryRagDefaults:
     citation_style: str = DEFAULT_CITATION_STYLE
     snippet_max_chars: int = 240
     max_context_size: int = 16000
-
-
-def _coerce_bool(value: Any, default: bool) -> bool:
-    """Coerce common Settings field values to a boolean."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on", "enabled"}:
-            return True
-        if normalized in {"0", "false", "no", "off", "disabled"}:
-            return False
-    return default
-
-
-def _coerce_int(value: Any, default: int) -> int:
-    """Coerce a Settings field to int, falling back on parse failures."""
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        try:
-            return int(float(str(value).strip()))
-        except (TypeError, ValueError):
-            return default
-
-
-def _coerce_float(value: Any, default: float) -> float:
-    """Coerce a Settings field to float, falling back on parse failures."""
-    try:
-        return float(str(value).strip())
-    except (TypeError, ValueError):
-        return default
+    # Embedding (task-3/SP3: extended profile editor)
+    embedding_model: str = "mxbai-embed-large-v1"
+    embedding_device: str = "auto"
+    embedding_batch_size: int = 16
+    embedding_max_length: int = 512
+    # Chunking
+    chunk_size: int = 400
+    chunk_overlap: int = 100
+    chunking_method: str = DEFAULT_CHUNKING_METHOD
+    # Vector store
+    distance_metric: str = DEFAULT_DISTANCE_METRIC
+    # Reranking -- `enable_reranking` controls the PRESENCE of the active
+    # profile's `reranking_config` (see settings_rag_profile_adapter.py); a
+    # blank `reranker_model` means "use the reranker's own default".
+    enable_reranking: bool = False
+    reranker_model: str = ""
+    # 20 == RerankingConfig().top_k_to_rerank (RAG_Search/reranker.py) --
+    # NOT SearchConfig.reranker_top_k (5), a functionally-dead field the RAG
+    # engine never reads for reranking (rag_factory.py decides reranking
+    # purely from `profile.reranking_config is not None`). Hardcoded rather
+    # than imported to avoid pulling reranker.py's heavier import chain
+    # (Chat_Functions, Internal_Prompts) into this otherwise-light module;
+    # kept honest by test_reranker_top_k_default_matches_reranking_config.
+    reranker_top_k: int = 20
 
 
 def _strict_int(value: Any) -> int | None:
@@ -95,21 +88,6 @@ def _strict_float(value: Any) -> float | None:
         return float(str(value).strip())
     except (TypeError, ValueError):
         return None
-
-
-def _rag_section(app_config: Mapping[str, Any]) -> Mapping[str, Any]:
-    """Return the nested AppRAGSearchConfig.rag mapping when present."""
-    section = app_config.get("AppRAGSearchConfig", {})
-    if not isinstance(section, Mapping):
-        return {}
-    rag = section.get("rag", {})
-    return rag if isinstance(rag, Mapping) else {}
-
-
-def _nested_mapping(parent: Mapping[str, Any], key: str) -> Mapping[str, Any]:
-    """Return a child mapping or an empty mapping when the value is absent."""
-    child = parent.get(key, {})
-    return child if isinstance(child, Mapping) else {}
 
 
 def normalise_library_rag_search_mode(value: Any) -> str:
@@ -138,63 +116,30 @@ def normalise_library_rag_citation_style(value: Any) -> str:
     return text if text in CITATION_STYLES else DEFAULT_CITATION_STYLE
 
 
-def load_library_rag_defaults(
-    app_config: Mapping[str, Any],
-) -> SettingsLibraryRagDefaults:
-    """Load Settings-owned Library/RAG defaults from app configuration.
+def normalise_library_rag_chunking_method(value: Any) -> str:
+    """Return a safe Library/RAG chunking method for widgets.
 
     Args:
-        app_config: Application configuration mapping to read from.
+        value: Raw config or draft value.
 
     Returns:
-        Coerced Library/RAG defaults with safe fallbacks for malformed numeric
-        values.
+        A supported chunking method, falling back to the words default.
     """
-    fallback = RAGConfig()
-    rag = _rag_section(app_config)
-    search = _nested_mapping(rag, "search")
-    retriever = _nested_mapping(rag, "retriever")
+    text = str(value).strip()
+    return text if text in CHUNKING_METHODS else DEFAULT_CHUNKING_METHOD
 
-    return SettingsLibraryRagDefaults(
-        default_search_mode=str(
-            search.get("default_search_mode", fallback.search.default_search_mode)
-        ),
-        default_top_k=_coerce_int(
-            search.get("default_top_k", fallback.search.default_top_k),
-            fallback.search.default_top_k,
-        ),
-        fts_top_k=_coerce_int(
-            retriever.get("fts_top_k", fallback.search.fts_top_k),
-            fallback.search.fts_top_k,
-        ),
-        vector_top_k=_coerce_int(
-            retriever.get("vector_top_k", fallback.search.vector_top_k),
-            fallback.search.vector_top_k,
-        ),
-        hybrid_alpha=_coerce_float(
-            retriever.get("hybrid_alpha", fallback.search.hybrid_alpha),
-            fallback.search.hybrid_alpha,
-        ),
-        score_threshold=_coerce_float(
-            search.get("score_threshold", fallback.search.score_threshold),
-            fallback.search.score_threshold,
-        ),
-        include_citations=_coerce_bool(
-            search.get("include_citations", fallback.search.include_citations),
-            fallback.search.include_citations,
-        ),
-        citation_style=str(
-            search.get("citation_style", fallback.search.citation_style)
-        ),
-        snippet_max_chars=_coerce_int(
-            search.get("snippet_max_chars", fallback.search.snippet_max_chars),
-            fallback.search.snippet_max_chars,
-        ),
-        max_context_size=_coerce_int(
-            search.get("max_context_size", fallback.search.max_context_size),
-            fallback.search.max_context_size,
-        ),
-    )
+
+def normalise_library_rag_distance_metric(value: Any) -> str:
+    """Return a safe Library/RAG vector-store distance metric for widgets.
+
+    Args:
+        value: Raw config or draft value.
+
+    Returns:
+        A supported distance metric, falling back to the cosine default.
+    """
+    text = str(value).strip()
+    return text if text in DISTANCE_METRICS else DEFAULT_DISTANCE_METRIC
 
 
 def validate_library_rag_defaults(
@@ -282,56 +227,31 @@ def validate_library_rag_defaults(
             "Context budget must be between "
             f"{MIN_RAG_CONTEXT_CHARS} and {MAX_RAG_CONTEXT_CHARS} characters.",
         )
+    if not str(values.embedding_model).strip():
+        return SettingsValidationResult(
+            False, "Embedding model must not be empty."
+        )
+    embedding_max_length = _strict_int(values.embedding_max_length)
+    if embedding_max_length is None or embedding_max_length <= 0:
+        return SettingsValidationResult(
+            False, "Embedding max length must be positive."
+        )
+    if values.chunking_method not in CHUNKING_METHODS:
+        return SettingsValidationResult(
+            False, "Chunking method must be words, sentences, or paragraphs."
+        )
+    # chunk_size, chunk_overlap, distance_metric, and embedding_batch_size are
+    # all already validated by RAGConfig.validate() -- routing through the
+    # adapter's hard_config_errors() (rather than re-implementing the same
+    # rules here) keeps this function from drifting out of sync with it.
+    # Reranker top-k >= 1 (when reranking is enabled) is also folded in
+    # there, since RAGConfig itself has no concept of reranking. Imported
+    # locally: settings_rag_profile_adapter imports SettingsLibraryRagDefaults
+    # from this module at its own top level, so a module-level import here
+    # would be circular.
+    from .settings_rag_profile_adapter import hard_config_errors
+
+    errors = hard_config_errors(values)
+    if errors:
+        return SettingsValidationResult(False, errors[0])
     return SettingsValidationResult(True, "Library/RAG defaults are valid.")
-
-
-def build_library_rag_save_sections(
-    app_config: Mapping[str, Any],
-    values: SettingsLibraryRagDefaults,
-) -> dict[str, dict[str, Any]]:
-    """Build a deep-merged config payload for Settings persistence.
-
-    Args:
-        app_config: Existing application configuration used as the merge base.
-        values: Validated Library/RAG defaults to persist.
-
-    Returns:
-        Config sections suitable for ``SettingsConfigAdapter.save_sections``.
-    """
-    existing_section = app_config.get("AppRAGSearchConfig", {})
-    if not isinstance(existing_section, Mapping):
-        existing_section = {}
-
-    section = deepcopy(dict(existing_section))
-    rag = section.get("rag", {})
-    if not isinstance(rag, Mapping):
-        rag = {}
-    rag = deepcopy(dict(rag))
-
-    search = deepcopy(dict(_nested_mapping(rag, "search")))
-    retriever = deepcopy(dict(_nested_mapping(rag, "retriever")))
-
-    value_map = asdict(values)
-    search.update(
-        {
-            "default_search_mode": value_map["default_search_mode"],
-            "default_top_k": value_map["default_top_k"],
-            "score_threshold": value_map["score_threshold"],
-            "include_citations": value_map["include_citations"],
-            "citation_style": value_map["citation_style"],
-            "snippet_max_chars": value_map["snippet_max_chars"],
-            "max_context_size": value_map["max_context_size"],
-        }
-    )
-    retriever.update(
-        {
-            "fts_top_k": value_map["fts_top_k"],
-            "vector_top_k": value_map["vector_top_k"],
-            "hybrid_alpha": value_map["hybrid_alpha"],
-        }
-    )
-
-    rag["search"] = search
-    rag["retriever"] = retriever
-    section["rag"] = rag
-    return {"AppRAGSearchConfig": section}

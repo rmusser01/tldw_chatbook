@@ -737,3 +737,112 @@ async def test_handle_chat_load_character_with_greeting(mock_load_char, mock_app
             message="Hello, adventurer!", role="Greeter", generation_complete=True
         )
         mock_app.query_one("#chat-log").mount.assert_called_once_with(mock_greeting_msg)
+
+
+# ===== task-442 T4: {{user}} renders the active user profile's name in the
+# enhanced-chat display path (display_conversation_in_chat_tab_ui) =====
+
+
+class _T4ProfileService:
+    """Sync ``list_user_profiles`` double matching the T1 resolver contract."""
+
+    def __init__(self, names):
+        self._names = list(names)
+
+    def list_user_profiles(self, **kwargs):
+        return [{"name": name} for name in self._names]
+
+
+def _t4_conversation_fixture(content: str) -> dict:
+    return {
+        "metadata": {"title": "T4", "keywords_display": "", "character_id": None},
+        "messages": [
+            {"content": content, "sender": "User", "id": "m1", "timestamp": "t"}
+        ],
+        "character_name": "Sherlock",
+    }
+
+
+def _t4_route_pointer(monkeypatch, store: dict) -> None:
+    """Point the active-profile config seam at an in-memory store."""
+    import tldw_chatbook.Character_Chat.active_user_profile as active_profile_module
+
+    monkeypatch.setattr(
+        active_profile_module,
+        "get_cli_setting",
+        lambda section, key, default=None: store.get((section, key), default),
+    )
+
+
+async def test_display_conversation_substitutes_active_profile_name(
+    mock_app, monkeypatch
+):
+    """Active profile "Sam": the ccl.replace_placeholders display path renders
+    {{user}} as "Sam"."""
+    import tldw_chatbook.Event_Handlers.Chat_Events.chat_events as chat_events_module
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
+        display_conversation_in_chat_tab_ui,
+    )
+
+    _t4_route_pointer(
+        monkeypatch, {("character_defaults", "active_user_profile"): "Sam"}
+    )
+    mock_app.local_character_persona_service = _T4ProfileService(["Sam"])
+    monkeypatch.setattr(
+        chat_events_module.ccl,
+        "get_conversation_details_and_messages",
+        lambda db, conversation_id: _t4_conversation_fixture(
+            "Hello {{user}}, I am {{char}}."
+        ),
+    )
+    # Force the classic (non-enhanced) widget path deterministically.
+    monkeypatch.setattr(
+        chat_events_module, "get_cli_setting", lambda *a, **k: False
+    )
+
+    with patch(
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage"
+    ) as mock_chat_msg_class:
+        mock_chat_msg_class.return_value = MagicMock(spec=ChatMessage)
+        await display_conversation_in_chat_tab_ui(mock_app, "conv-t4")
+
+    assert (
+        mock_chat_msg_class.call_args.kwargs["message"]
+        == "Hello Sam, I am Sherlock."
+    )
+
+
+async def test_display_conversation_keeps_users_name_without_active_profile(
+    mock_app, monkeypatch
+):
+    """task-442 T4 twin (AC3): with no active profile the display path stays
+    byte-identical to the pre-T4 USERS_NAME fallback ("Tester" in this
+    fixture's app_config)."""
+    import tldw_chatbook.Event_Handlers.Chat_Events.chat_events as chat_events_module
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
+        display_conversation_in_chat_tab_ui,
+    )
+
+    _t4_route_pointer(monkeypatch, {})  # no pointer set
+    mock_app.local_character_persona_service = _T4ProfileService(["Sam"])
+    monkeypatch.setattr(
+        chat_events_module.ccl,
+        "get_conversation_details_and_messages",
+        lambda db, conversation_id: _t4_conversation_fixture(
+            "Hello {{user}}, I am {{char}}."
+        ),
+    )
+    monkeypatch.setattr(
+        chat_events_module, "get_cli_setting", lambda *a, **k: False
+    )
+
+    with patch(
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage"
+    ) as mock_chat_msg_class:
+        mock_chat_msg_class.return_value = MagicMock(spec=ChatMessage)
+        await display_conversation_in_chat_tab_ui(mock_app, "conv-t4")
+
+    assert (
+        mock_chat_msg_class.call_args.kwargs["message"]
+        == "Hello Tester, I am Sherlock."
+    )

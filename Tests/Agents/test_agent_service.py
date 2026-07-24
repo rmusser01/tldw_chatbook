@@ -329,6 +329,30 @@ def test_spawn_creates_linked_child_with_clean_context(db):
     assert db.count_subagent_runs("c") == 1
 
 
+def test_run_turn_records_assistant_message_id_on_primary_only(db):
+    """The primary run records the assistant_message_id it is handed; a
+    spawned sub-agent run records None (it produces no transcript reply)."""
+    service, _ = make_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "compute 6*7"}),  # parent turn 1
+            "sub answer: 42",  # CHILD turn 1
+            "The sub-agent says 42.",  # parent turn 2
+        ],
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "delegate this"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+        assistant_message_id="a1",
+    )
+    assert outcome.status == RUN_DONE and outcome.subagents_spawned == 1
+    assert db.get_run(run_id)["assistant_message_id"] == "a1"
+    child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
+    assert child["assistant_message_id"] is None
+
+
 def test_subagent_result_is_capped(db):
     long_answer = "x" * 10000
     service, _ = make_service(

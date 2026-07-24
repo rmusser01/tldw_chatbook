@@ -9,7 +9,7 @@ from textual.message import Message
 
 PersonaWorkbenchMode = Literal[
     "characters",
-    "personas",
+    "user_profiles",
     "prompts",
     "dictionaries",
     "lore",
@@ -17,7 +17,7 @@ PersonaWorkbenchMode = Literal[
 ]
 PersonaEntityKind = Literal[
     "character",
-    "persona_profile",
+    "user_profile",
     "prompt",
     "dictionary",
     "lore",

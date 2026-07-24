@@ -27,10 +27,10 @@ Reconcile the completed citation provenance foundation with current dev so its d
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Citation provenance migrates current dev schema v26 to schema v27 without overwriting message-generation metadata or Console rewind migration ownership
-- [ ] #2 Combined chat persistence and database initialization preserve both current dev behavior and citation atomicity
-- [ ] #3 Shared test setup and generated CSS contain both branches' intended behavior with no conflict markers or stale bundle state
-- [ ] #4 Citation foundation, migration, database, UI maturity, static, and qualification gates pass on the integrated branch
+- [x] #1 Citation provenance migrates current dev schema v26 to schema v27 without overwriting message-generation metadata or Console rewind migration ownership
+- [x] #2 Combined chat persistence and database initialization preserve both current dev behavior and citation atomicity
+- [x] #3 Shared test setup and generated CSS contain both branches' intended behavior with no conflict markers or stale bundle state
+- [x] #4 Citation foundation, migration, database, UI maturity, static, and qualification gates pass on the integrated branch
 - [ ] #5 The branch is pushed and a ready pull request targets dev with accurate verification and limitation notes
 <!-- AC:END -->
 
@@ -47,3 +47,39 @@ ADR required: no new ADR
 ADR path: backlog/decisions/024-rag-citation-provenance-and-source-resolution.md
 Reason: ADR-024 already owns the citation storage and persistence contract; advancing its migration to the next free version and combining current dev behavior is an anticipated mechanical integration, not a new architecture decision.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged `origin/dev` at `e00b2930` into the citation foundation and resolved the
+five preflighted aggregate conflicts. Current `dev` retains ownership of schema
+v25 message-generation metadata and schema v26 Console summaries; canonical
+citation provenance now migrates v26→v27 through its transaction-safe standalone
+SQL runner. Migration dispatch restores a real SQLite transaction after legacy
+`executescript` steps, so chained v24→v27 failures cannot leak citation DDL.
+Chat message creation now combines generation metadata with sealed
+citation writes atomically and validates both on uncertain retry. Shared test
+isolation retains call-time HOME handling, lazy RAG pre-arm, and database/prompt
+singleton cleanup, while the CSS bundle was regenerated from merged sources.
+
+Verification:
+- Citation foundation: 768 passed.
+- ChaChaNotes/DB: 355 passed.
+- Persistence and environment isolation: 156 passed.
+- CSS/UI source and parity gates: 138 passed; CSS bundle guards: 10 passed.
+- UI maturity: 87 passed.
+- Qualification: eligible with `overall_pass=true`.
+- Ruff: passed for Chat, Chatbooks, DB, and their citation/performance tests.
+- Independent review: approved with no blocking findings; its focused suite
+  passed 82 tests. Suggested rollback-sidecar coverage and stale comments were
+  addressed, with 16 affected tests passing afterward.
+
+An additional repository-wide pytest run was deferred because another checkout
+has had a long-running full-suite process active throughout this integration;
+the earlier branch-wide attempt was not counted because concurrent runs produced
+non-reproducible setup failures. The scoped foundation, database, persistence,
+CSS, and UI gates above are clean.
+
+ADR decision: no new ADR required. Existing ADR-024 defines the citation storage,
+identity, governance, and atomic persistence boundaries used by this integration.
+<!-- SECTION:NOTES:END -->

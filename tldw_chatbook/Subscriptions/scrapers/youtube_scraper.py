@@ -30,6 +30,7 @@ except ImportError:
 # Local Imports
 from ..web_scraping_pipelines import BaseScrapingPipeline, ScrapedItem, ScrapingConfig
 from ...Metrics.metrics_logger import log_counter
+from ...Utils.egress import MAX_FETCH_BYTES_PAGE, guarded_fetch_httpx_async
 #
 ########################################################################################################################
 #
@@ -180,8 +181,12 @@ class YouTubeScrapingPipeline(BaseScrapingPipeline):
             headers = self.get_headers()
             headers["Accept"] = "application/rss+xml, application/xml"
 
-            response = await client.get(
-                feed_url, headers=headers, follow_redirects=True
+            response = await guarded_fetch_httpx_async(
+                feed_url,
+                client=client,
+                max_bytes=MAX_FETCH_BYTES_PAGE,
+                trusted_origins=frozenset(),
+                headers=headers,
             )
             response.raise_for_status()
 
@@ -205,7 +210,13 @@ class YouTubeScrapingPipeline(BaseScrapingPipeline):
                 channel_url = f"{self.YOUTUBE_BASE_URL}/c/{self.username}"
 
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(channel_url, headers=self.get_headers())
+                response = await guarded_fetch_httpx_async(
+                    channel_url,
+                    client=client,
+                    max_bytes=MAX_FETCH_BYTES_PAGE,
+                    trusted_origins=frozenset(),
+                    headers=self.get_headers(),
+                )
                 response.raise_for_status()
 
                 # Extract channel ID from page content

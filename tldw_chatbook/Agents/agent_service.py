@@ -45,6 +45,7 @@ from .native_tools import (
 )
 from .tool_catalog import (
     FIND_TOOLS_SCHEMA,
+    INSTALL_SKILL_TOOL_SCHEMA,
     LOAD_TOOLS_SCHEMA,
     SKILL_FILE_TOOL_SCHEMA,
     SPAWN_TOOL_SCHEMA,
@@ -174,6 +175,7 @@ class AgentService:
         review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
         review_state_scope: Callable[[], "contextlib.AbstractContextManager"]
         | None = None,
+        install_skill_tool: Callable[[str], ToolResult] | None = None,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -212,6 +214,12 @@ class AgentService:
         # the concrete MCP-specific context manager wired here by
         # `console_agent_bridge.ConsoleAgentBridge.run_reply`.
         self.review_state_scope = review_state_scope
+        # Agent-callable skill install (5th runtime tool). A ready-built
+        # closure (enforce -> classify -> confirm -> install -> wrap) supplied
+        # by the bridge. Pinned/wired ONLY for the top-level agent
+        # (agent_kind == primary) in _run_one; a spawned subagent never gets
+        # it. `None` (the default) means the run is not wired for install.
+        self._install_skill_tool = install_skill_tool
 
     # -- internals -------------------------------------------------------
 
@@ -332,6 +340,7 @@ class AgentService:
         agent_kind: str,
         task: str | None,
         parent_run_id: str | None,
+        assistant_message_id: str | None = None,
     ) -> tuple[str, RunOutcome]:
         run_id = self.db.create_run(
             conversation_id=conversation_id,
@@ -339,6 +348,7 @@ class AgentService:
             task=task,
             parent_run_id=parent_run_id,
             budget=dataclasses.asdict(config.budget),
+            assistant_message_id=assistant_message_id,
         )
         started = self.clock()
 
@@ -358,6 +368,8 @@ class AgentService:
             and self.skill_file_bindings.authorized
         ):
             runtime_schemas.append(SKILL_FILE_TOOL_SCHEMA)
+        if agent_kind == AGENT_KIND_PRIMARY and self._install_skill_tool is not None:
+            runtime_schemas.append(INSTALL_SKILL_TOOL_SCHEMA)
 
         def find_tools(query: str):
             # Q7(b): never surface a disallowed tool through find_tools,
@@ -620,6 +632,12 @@ class AgentService:
                 and self.skill_file_bindings.authorized
                 else None
             ),
+            install_skill=(
+                self._install_skill_tool
+                if agent_kind == AGENT_KIND_PRIMARY
+                and self._install_skill_tool is not None
+                else None
+            ),
         )
         try:
             outcome = run_agent_loop(config, messages, active, deps)
@@ -653,6 +671,7 @@ class AgentService:
         api_endpoint: str,
         should_cancel: Callable[[], bool] = lambda: False,
         supersede_run_id: str | None = None,
+        assistant_message_id: str | None = None,
     ) -> tuple[str, RunOutcome]:
         """Run one primary-agent turn (and any sub-agents it spawns).
 
@@ -676,6 +695,14 @@ class AgentService:
             supersede_run_id: When set, marks that prior run (and its
                 sub-agent tree) ``superseded`` before starting this run —
                 used by retry/regenerate/continue.
+            assistant_message_id: Recorded on the primary run at creation
+                time (only the primary run — never a spawned sub-agent,
+                which produces no transcript reply). At create time this is
+                the reply's NATIVE in-memory id; the assistant node is not
+                persisted yet, so the caller overwrites it with the durable
+                persisted id via ``AgentRunsDB.set_run_assistant_message_id``
+                once the reply completes (that later write is what resume's
+                marker anchoring reads).
 
         Returns:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its
@@ -700,4 +727,5 @@ class AgentService:
             agent_kind=AGENT_KIND_PRIMARY,
             task=None,
             parent_run_id=None,
+            assistant_message_id=assistant_message_id,
         )
