@@ -19,7 +19,15 @@ from tldw_chatbook.Chat.citation_provenance_runtime import (
 )
 from tldw_chatbook.Chat.citation_source_locators import (
     AuthorityScope,
+    CanonicalSourceKind,
     CitationReadAuthorization,
+    CitationSourceAvailability,
+    CitationSourceObservation,
+    CitationSourcePermission,
+    CitationContentState,
+    CitationLocationState,
+    SOURCE_INVENTORY_BY_SCOPE_V1,
+    SourceCapability,
 )
 from tldw_chatbook.Chat.citation_trace_identity import (
     CitationFingerprintCodec,
@@ -94,6 +102,15 @@ class CitationAvailabilityWarning(str, Enum):
     """Safe active-presentation warning without governed payload content."""
 
     EVIDENCE_REVOKED = "evidence_revoked"
+
+
+class CitationObservationWriteOutcome(str, Enum):
+    """Bounded compare-and-replace result for one observation key."""
+
+    INSERTED = "inserted"
+    REPLACED = "replaced"
+    STALE = "stale"
+    IDEMPOTENT = "idempotent"
 
 
 class _FrozenModel(BaseModel):
@@ -205,6 +222,57 @@ def _canonical_json(value: Any) -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
+
+
+def _bounded_observation_identifier(value: str, field_name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise CitationPersistenceUnavailable(f"source_observation_{field_name}_invalid")
+    if len(value.encode("utf-8")) > 256:
+        raise CitationPersistenceUnavailable(f"source_observation_{field_name}_invalid")
+    return value
+
+
+def _observation_capabilities_json(
+    observation: CitationSourceObservation,
+) -> str:
+    return _canonical_json(
+        {
+            "capabilities": [
+                capability.value for capability in observation.capabilities
+            ],
+            "request_generation": observation.request_generation,
+        }
+    )
+
+
+def _observation_from_row(row: sqlite3.Row) -> CitationSourceObservation:
+    try:
+        payload = json.loads(row["capabilities_json"])
+        if not isinstance(payload, dict) or set(payload) != {
+            "capabilities",
+            "request_generation",
+        }:
+            raise ValueError("invalid observation capability payload")
+        raw_capabilities = payload["capabilities"]
+        if not isinstance(raw_capabilities, list):
+            raise ValueError("invalid observation capabilities")
+        return CitationSourceObservation(
+            resolver_kind=CanonicalSourceKind(row["resolver_kind"]),
+            resolver_version=row["resolver_version"],
+            availability=CitationSourceAvailability(row["availability"]),
+            permission=CitationSourcePermission(row["permission_state"]),
+            content_state=CitationContentState(row["content_state"]),
+            location_state=CitationLocationState(row["location_state"]),
+            capabilities=tuple(
+                SourceCapability(capability) for capability in raw_capabilities
+            ),
+            observed_at=datetime.fromisoformat(row["observed_at"]),
+            request_generation=payload["request_generation"],
+            request_nonce=row["request_nonce"],
+            error_code=row["error_code"],
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        raise CitationPersistenceUnavailable("source_observation_invalid") from None
 
 
 def _prepared_write_digest(prepared: PreparedCitationWrite) -> bytes:
@@ -1382,6 +1450,443 @@ class CitationTraceRepository:
         if tombstone is not None:
             raise CitationPersistenceUnavailable("payload_origin_revoked")
 
+    def upsert_source_observation(
+        self,
+        cursor: sqlite3.Cursor,
+        namespace: TraceNamespace,
+        *,
+        prompt_set_id: str,
+        evidence_ordinal: int,
+        snapshot_payload_id: str,
+        observation: CitationSourceObservation,
+        authorization: CitationReadAuthorization,
+    ) -> CitationObservationWriteOutcome:
+        """Keep only the deterministic latest safe observation for one ref."""
+
+        identity = self._acquire_source_observation_write_lock(cursor)
+        (
+            validated_namespace,
+            validated_observation,
+            validated_authorization,
+        ) = self._validate_source_observation_request(
+            namespace,
+            observation=observation,
+            authorization=authorization,
+            identity=identity,
+            require_refresh=True,
+        )
+        prompt_id, ordinal, payload_id = self._validate_observation_ref_key(
+            prompt_set_id,
+            evidence_ordinal,
+            snapshot_payload_id,
+        )
+        self._validate_source_observation_reference(
+            cursor,
+            validated_namespace,
+            prompt_set_id=prompt_id,
+            evidence_ordinal=ordinal,
+            snapshot_payload_id=payload_id,
+            resolver_kind=validated_observation.resolver_kind,
+            resolver_version=validated_observation.resolver_version,
+            authorization=validated_authorization,
+            capabilities=validated_observation.capabilities,
+        )
+
+        key = (
+            identity.profile_id,
+            validated_namespace.trace_id,
+            prompt_id,
+            ordinal,
+            payload_id,
+            validated_observation.resolver_kind.value,
+            validated_observation.resolver_version,
+        )
+        values = (
+            *key,
+            validated_observation.availability.value,
+            validated_observation.permission.value,
+            validated_observation.content_state.value,
+            validated_observation.location_state.value,
+            _observation_capabilities_json(validated_observation),
+            validated_observation.request_nonce,
+            validated_observation.observed_at.isoformat(),
+            validated_observation.error_code,
+        )
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO rag_source_observations(
+                profile_id, trace_id, prompt_set_id, evidence_ordinal,
+                snapshot_payload_id, resolver_kind, resolver_version,
+                availability, permission_state, content_state, location_state,
+                capabilities_json, request_nonce, observed_at, error_code
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        if cursor.rowcount == 1:
+            return CitationObservationWriteOutcome.INSERTED
+
+        current_row = cursor.execute(
+            """
+            SELECT
+                resolver_kind, resolver_version, availability,
+                permission_state, content_state, location_state,
+                capabilities_json, request_nonce, observed_at, error_code
+            FROM rag_source_observations
+            WHERE profile_id = ? AND trace_id = ? AND prompt_set_id = ?
+              AND evidence_ordinal = ? AND snapshot_payload_id = ?
+              AND resolver_kind = ? AND resolver_version = ?
+            """,
+            key,
+        ).fetchone()
+        if current_row is None:
+            raise CitationPersistenceUnavailable(
+                "source_observation_reference_mismatch"
+            )
+        current = _observation_from_row(current_row)
+        incoming_order = (
+            validated_observation.observed_at,
+            validated_observation.request_generation,
+            validated_observation.request_nonce,
+        )
+        current_order = (
+            current.observed_at,
+            current.request_generation,
+            current.request_nonce,
+        )
+        if incoming_order < current_order:
+            return CitationObservationWriteOutcome.STALE
+        if incoming_order == current_order:
+            if validated_observation == current:
+                return CitationObservationWriteOutcome.IDEMPOTENT
+            raise CitationPersistenceUnavailable("source_observation_nonce_conflict")
+
+        cursor.execute(
+            """
+            UPDATE rag_source_observations
+            SET availability = ?, permission_state = ?, content_state = ?,
+                location_state = ?, capabilities_json = ?, request_nonce = ?,
+                observed_at = ?, error_code = ?
+            WHERE profile_id = ? AND trace_id = ? AND prompt_set_id = ?
+              AND evidence_ordinal = ? AND snapshot_payload_id = ?
+              AND resolver_kind = ? AND resolver_version = ?
+            """,
+            (
+                validated_observation.availability.value,
+                validated_observation.permission.value,
+                validated_observation.content_state.value,
+                validated_observation.location_state.value,
+                _observation_capabilities_json(validated_observation),
+                validated_observation.request_nonce,
+                validated_observation.observed_at.isoformat(),
+                validated_observation.error_code,
+                *key,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise CitationPersistenceUnavailable("source_observation_write_failed")
+        return CitationObservationWriteOutcome.REPLACED
+
+    def _acquire_source_observation_write_lock(
+        self,
+        cursor: sqlite3.Cursor,
+    ) -> LocalCitationIdentityContext:
+        """Serialize deferred SQLite transactions before any observation reads."""
+
+        if cursor.connection is not self.db.get_connection():
+            raise RuntimeError(
+                "citation persistence requires the repository database transaction"
+            )
+        if not cursor.connection.in_transaction:
+            raise RuntimeError("citation persistence requires an active transaction")
+        if not self.policy.canonical_writes_enabled:
+            raise CitationPersistenceUnavailable("canonical_citation_writes_disabled")
+        cursor.execute("DELETE FROM rag_source_observations WHERE 0")
+        return self._require_active_write_cursor(cursor)
+
+    def get_source_observation(
+        self,
+        namespace: TraceNamespace,
+        *,
+        prompt_set_id: str,
+        evidence_ordinal: int,
+        snapshot_payload_id: str,
+        resolver_kind: CanonicalSourceKind,
+        resolver_version: str,
+        authorization: CitationReadAuthorization,
+    ) -> CitationSourceObservation | None:
+        """Read the latest safe keyed status without fingerprint-key access."""
+
+        identity = load_local_citation_identity_context(self.db)
+        if identity is None:
+            raise CitationPersistenceUnavailable(
+                "citation_identity_context_unavailable"
+            )
+        validated_namespace, _, validated_authorization = (
+            self._validate_source_observation_request(
+                namespace,
+                observation=None,
+                authorization=authorization,
+                identity=identity,
+                require_refresh=False,
+            )
+        )
+        if not isinstance(resolver_kind, CanonicalSourceKind):
+            raise CitationPersistenceUnavailable(
+                "source_observation_resolver_unsupported"
+            )
+        version = _bounded_observation_identifier(
+            resolver_version,
+            "resolver_version",
+        )
+        prompt_id, ordinal, payload_id = self._validate_observation_ref_key(
+            prompt_set_id,
+            evidence_ordinal,
+            snapshot_payload_id,
+        )
+        connection = self.db.get_connection()
+        self._validate_source_observation_reference(
+            connection,
+            validated_namespace,
+            prompt_set_id=prompt_id,
+            evidence_ordinal=ordinal,
+            snapshot_payload_id=payload_id,
+            resolver_kind=resolver_kind,
+            resolver_version=version,
+            authorization=validated_authorization,
+            capabilities=(),
+        )
+        row = connection.execute(
+            """
+            SELECT
+                resolver_kind, resolver_version, availability,
+                permission_state, content_state, location_state,
+                capabilities_json, request_nonce, observed_at, error_code
+            FROM rag_source_observations
+            WHERE profile_id = ? AND trace_id = ? AND prompt_set_id = ?
+              AND evidence_ordinal = ? AND snapshot_payload_id = ?
+              AND resolver_kind = ? AND resolver_version = ?
+            """,
+            (
+                identity.profile_id,
+                validated_namespace.trace_id,
+                prompt_id,
+                ordinal,
+                payload_id,
+                resolver_kind.value,
+                version,
+            ),
+        ).fetchone()
+        return None if row is None else _observation_from_row(row)
+
+    @staticmethod
+    def _validate_observation_ref_key(
+        prompt_set_id: str,
+        evidence_ordinal: int,
+        snapshot_payload_id: str,
+    ) -> tuple[str, int, str]:
+        prompt_id = _bounded_observation_identifier(
+            prompt_set_id,
+            "prompt_set_id",
+        )
+        payload_id = _bounded_observation_identifier(
+            snapshot_payload_id,
+            "snapshot_payload_id",
+        )
+        if (
+            isinstance(evidence_ordinal, bool)
+            or not isinstance(evidence_ordinal, int)
+            or evidence_ordinal < 1
+        ):
+            raise CitationPersistenceUnavailable(
+                "source_observation_evidence_ordinal_invalid"
+            )
+        return prompt_id, evidence_ordinal, payload_id
+
+    @staticmethod
+    def _validate_source_observation_request(
+        namespace: TraceNamespace,
+        *,
+        observation: CitationSourceObservation | None,
+        authorization: CitationReadAuthorization,
+        identity: LocalCitationIdentityContext,
+        require_refresh: bool,
+    ) -> tuple[
+        TraceNamespace,
+        CitationSourceObservation | None,
+        CitationReadAuthorization,
+    ]:
+        try:
+            validated_namespace = TraceNamespace.model_validate(
+                namespace.model_dump(mode="python"),
+                strict=True,
+            )
+            validated_authorization = CitationReadAuthorization.model_validate(
+                authorization.model_dump(mode="python"),
+                strict=True,
+            )
+            validated_observation = (
+                None
+                if observation is None
+                else CitationSourceObservation.model_validate(
+                    observation.model_dump(mode="python"),
+                    strict=True,
+                )
+            )
+        except (AttributeError, TypeError, ValueError):
+            raise CitationPersistenceUnavailable(
+                "source_observation_request_invalid"
+            ) from None
+
+        expected_namespace = local_trace_namespace(
+            identity,
+            trace_id=validated_namespace.trace_id or "",
+            wire_schema_version=validated_namespace.wire_schema_version,
+        )
+        if validated_namespace != expected_namespace:
+            raise CitationPersistenceUnavailable(
+                "source_observation_namespace_mismatch"
+            )
+        if (
+            validated_authorization.authority_scope is not AuthorityScope.LOCAL_PROFILE
+            or validated_authorization.profile_id != identity.profile_id
+            or validated_authorization.governance_scope_id != identity.profile_id
+            or identity.local_authority_id
+            not in validated_authorization.allowlisted_authority_ids
+            or (require_refresh and not validated_authorization.refresh_observation)
+        ):
+            raise CitationPersistenceUnavailable(
+                "source_observation_authorization_denied"
+            )
+        return (
+            validated_namespace,
+            validated_observation,
+            validated_authorization,
+        )
+
+    @staticmethod
+    def _validate_source_observation_reference(
+        connection: sqlite3.Connection | sqlite3.Cursor,
+        namespace: TraceNamespace,
+        *,
+        prompt_set_id: str,
+        evidence_ordinal: int,
+        snapshot_payload_id: str,
+        resolver_kind: CanonicalSourceKind,
+        resolver_version: str,
+        authorization: CitationReadAuthorization,
+        capabilities: tuple[SourceCapability, ...],
+    ) -> None:
+        inventory = SOURCE_INVENTORY_BY_SCOPE_V1.get(
+            (resolver_kind, AuthorityScope.LOCAL_PROFILE)
+        )
+        if inventory is None or resolver_version != str(inventory.locator_version):
+            raise CitationPersistenceUnavailable(
+                "source_observation_resolver_unsupported"
+            )
+        row = connection.execute(
+            """
+            SELECT
+                trace.aggregate_json, trace.visibility_state,
+                snapshot.governance_scope_id, snapshot.authority_id
+            FROM rag_trace_evidence_refs AS reference
+            JOIN rag_citation_traces AS trace
+              ON trace.profile_id = reference.profile_id
+             AND trace.trace_id = reference.trace_id
+            JOIN rag_evidence_snapshots AS snapshot
+              ON snapshot.profile_id = reference.profile_id
+             AND snapshot.payload_id = reference.snapshot_payload_id
+            WHERE reference.profile_id = ? AND reference.trace_id = ?
+              AND reference.prompt_set_id = ?
+              AND reference.evidence_ordinal = ?
+              AND reference.snapshot_payload_id = ?
+              AND trace.origin = 'local'
+              AND trace.origin_scope_id = ?
+            """,
+            (
+                namespace.profile_id,
+                namespace.trace_id,
+                prompt_set_id,
+                evidence_ordinal,
+                snapshot_payload_id,
+                namespace.profile_id,
+            ),
+        ).fetchone()
+        if row is None:
+            raise CitationPersistenceUnavailable(
+                "source_observation_reference_mismatch"
+            )
+        if (
+            row["visibility_state"] != "active"
+            or row["governance_scope_id"] != namespace.profile_id
+            or row["authority_id"] != namespace.authority_id
+            or authorization.governance_scope_id != row["governance_scope_id"]
+            or row["authority_id"] not in authorization.allowlisted_authority_ids
+        ):
+            raise CitationPersistenceUnavailable(
+                "source_observation_authorization_denied"
+            )
+        try:
+            trace = CitationTrace.model_validate_json(row["aggregate_json"])
+        except (TypeError, ValueError):
+            raise CitationPersistenceUnavailable(
+                "source_observation_reference_mismatch"
+            ) from None
+        prompt_set = next(
+            (
+                item
+                for item in trace.prompt_evidence_sets
+                if item.prompt_set_id == prompt_set_id
+            ),
+            None,
+        )
+        entry = (
+            None
+            if prompt_set is None
+            else next(
+                (
+                    item
+                    for item in prompt_set.entries
+                    if item.evidence_ordinal == evidence_ordinal
+                ),
+                None,
+            )
+        )
+        if (
+            trace.trace_id != namespace.trace_id
+            or entry is None
+            or entry.snapshot_payload_ref != snapshot_payload_id
+        ):
+            raise CitationPersistenceUnavailable(
+                "source_observation_reference_mismatch"
+            )
+        if PolicyCapability.RESOLVE_CURRENT_SOURCE not in trace.policy_capabilities:
+            raise CitationPersistenceUnavailable(
+                "source_observation_trace_policy_denied"
+            )
+
+        trace_policy = {
+            SourceCapability.VIEW_SNAPSHOT: PolicyCapability.VIEW_SNAPSHOT,
+            SourceCapability.VIEW_SOURCE_IDENTITY: (
+                PolicyCapability.VIEW_SOURCE_IDENTITY
+            ),
+            SourceCapability.RESOLVE_CURRENT: (PolicyCapability.RESOLVE_CURRENT_SOURCE),
+            SourceCapability.OPEN_NATIVE: PolicyCapability.OPEN_NATIVE,
+            SourceCapability.OPEN_EXTERNAL: PolicyCapability.OPEN_EXTERNAL,
+            SourceCapability.COMPARE: PolicyCapability.COMPARE_CURRENT_SOURCE,
+            SourceCapability.REFRESH_OBSERVATION: (
+                PolicyCapability.RESOLVE_CURRENT_SOURCE
+            ),
+            SourceCapability.EXPORT: PolicyCapability.EXPORT_SNAPSHOT,
+        }
+        if any(
+            not inventory.default_policy.permits(capability)
+            or not authorization.permits(capability)
+            or trace_policy[capability] not in trace.policy_capabilities
+            for capability in capabilities
+        ):
+            raise CitationPersistenceUnavailable("source_observation_capability_denied")
+
     def invalidate_trace_capabilities(
         self,
         profile_id: str,
@@ -2524,6 +3029,7 @@ __all__ = [
     "CitationAvailabilityWarning",
     "CitationHydrationResult",
     "CitationHydrationState",
+    "CitationObservationWriteOutcome",
     "CitationPersistenceUnavailable",
     "CitationTraceRepository",
     "CitationTraceSummary",

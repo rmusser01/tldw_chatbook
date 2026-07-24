@@ -27,6 +27,9 @@ from .citation_trace_models import (
 
 
 LOCATOR_ENVELOPE_JSON_BYTES_MAX = 16 * 1024
+SOURCE_OBSERVATION_JSON_BYTES_MAX = 8 * 1024
+SOURCE_OBSERVATION_ERROR_CHARACTERS_MAX = 256
+SOURCE_OBSERVATION_REQUEST_GENERATION_MAX = (1 << 63) - 1
 AUTHORITY_IDS_PER_READ_AUTHORIZATION_MAX = 32
 CURRENT_AUTHORITY_LOOKUP_TTL_MAX = timedelta(minutes=5)
 INERT_LOCATOR_JSON_DEPTH_MAX = 32
@@ -34,6 +37,7 @@ INERT_LOCATOR_JSON_CONTAINERS_MAX = 256
 INERT_LOCATOR_JSON_ITEMS_MAX = 2048
 INERT_LOCATOR_JSON_KEY_UTF8_BYTES_MAX = 256
 _DRIVE_PATH = re.compile(r"^[A-Za-z]:")
+_SAFE_ERROR_CODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
 
 
 def _bounded_identifier(value: str) -> str:
@@ -84,6 +88,23 @@ SafeRelativePath = Annotated[str, AfterValidator(_safe_relative_path)]
 CandidateJson = Annotated[
     str,
     StringConstraints(strict=True, min_length=1),
+]
+
+
+def _sanitized_error_code(value: str) -> str:
+    if _SAFE_ERROR_CODE.fullmatch(value) is None:
+        raise ValueError("error_code must be a sanitized status code")
+    return value
+
+
+SanitizedObservationErrorCode = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        min_length=1,
+        max_length=SOURCE_OBSERVATION_ERROR_CHARACTERS_MAX,
+    ),
+    AfterValidator(_sanitized_error_code),
 ]
 
 
@@ -142,6 +163,140 @@ class SourceCapability(str, Enum):
     COMPARE = "compare"
     REFRESH_OBSERVATION = "refresh_observation"
     EXPORT = "export"
+
+
+class CitationSourceAvailability(str, Enum):
+    """Current reachability, independent of permission and content state."""
+
+    AVAILABLE = "available"
+    MISSING = "missing"
+    OFFLINE = "offline"
+    ERROR = "error"
+    UNKNOWN = "unknown"
+
+
+class CitationSourcePermission(str, Enum):
+    """Current authorization, independent of source reachability."""
+
+    ALLOWED = "allowed"
+    DENIED = "denied"
+    AUTHENTICATION_REQUIRED = "authentication_required"
+    REVOKED = "revoked"
+    UNKNOWN = "unknown"
+
+
+class CitationContentState(str, Enum):
+    """Comparison of the current item with the submitted snapshot."""
+
+    UNCHANGED = "unchanged"
+    CHANGED = "changed"
+    UNKNOWN = "unknown"
+
+
+class CitationLocationState(str, Enum):
+    """Current location result without embedding a governed locator."""
+
+    UNCHANGED = "unchanged"
+    RELOCATED = "relocated"
+    AMBIGUOUS = "ambiguous"
+    MISSING = "missing"
+    UNKNOWN = "unknown"
+
+
+def validate_source_observation_json_size(serialized: str) -> str:
+    """Return bounded UTF-8 observation JSON or reject it unchanged."""
+
+    byte_count = len(serialized.encode("utf-8"))
+    if byte_count > SOURCE_OBSERVATION_JSON_BYTES_MAX:
+        raise ValueError(
+            "source observation JSON exceeds "
+            f"{SOURCE_OBSERVATION_JSON_BYTES_MAX} UTF-8 bytes"
+        )
+    return serialized
+
+
+class CitationSourceObservation(_StrictFrozenModel):
+    """Latest bounded, non-governed status for one exact evidence resolver."""
+
+    schema_version: Literal[1] = 1
+    resolver_kind: CanonicalSourceKind
+    resolver_version: BoundedIdentifier
+    availability: CitationSourceAvailability
+    permission: CitationSourcePermission
+    content_state: CitationContentState
+    location_state: CitationLocationState
+    capabilities: tuple[SourceCapability, ...] = Field(
+        default=(),
+        max_length=len(SourceCapability),
+    )
+    observed_at: datetime
+    request_generation: int = Field(
+        ge=0,
+        le=SOURCE_OBSERVATION_REQUEST_GENERATION_MAX,
+    )
+    request_nonce: BoundedIdentifier
+    error_code: SanitizedObservationErrorCode | None = None
+
+    @model_validator(mode="after")
+    def _validate_observation(self) -> "CitationSourceObservation":
+        if self.observed_at.tzinfo is None:
+            raise ValueError("observed_at must be timezone-aware")
+        if len(set(self.capabilities)) != len(self.capabilities):
+            raise ValueError("source observation capabilities must be unique")
+        if (self.availability is CitationSourceAvailability.ERROR) != (
+            self.error_code is not None
+        ):
+            raise ValueError("error availability and error_code must appear together")
+
+        current_actions = {
+            SourceCapability.RESOLVE_CURRENT,
+            SourceCapability.OPEN_NATIVE,
+            SourceCapability.OPEN_EXTERNAL,
+            SourceCapability.COMPARE,
+            SourceCapability.REFRESH_OBSERVATION,
+        }
+        definitive_actions = {
+            SourceCapability.OPEN_NATIVE,
+            SourceCapability.OPEN_EXTERNAL,
+            SourceCapability.COMPARE,
+        }
+        if self.permission in {
+            CitationSourcePermission.DENIED,
+            CitationSourcePermission.REVOKED,
+        } and current_actions.intersection(self.capabilities):
+            raise ValueError(
+                "denied or revoked observations cannot grant current-source actions"
+            )
+        if (
+            self.availability is not CitationSourceAvailability.AVAILABLE
+            or self.permission is not CitationSourcePermission.ALLOWED
+        ) and definitive_actions.intersection(self.capabilities):
+            raise ValueError(
+                "unavailable or unauthorized observations cannot open or compare"
+            )
+        if self.location_state is CitationLocationState.RELOCATED and (
+            self.availability is not CitationSourceAvailability.AVAILABLE
+            or self.permission is not CitationSourcePermission.ALLOWED
+            or SourceCapability.RESOLVE_CURRENT not in self.capabilities
+        ):
+            raise ValueError(
+                "relocated observations require an available authorized resolution"
+            )
+        if self.location_state is CitationLocationState.AMBIGUOUS and any(
+            capability in self.capabilities
+            for capability in (
+                SourceCapability.OPEN_NATIVE,
+                SourceCapability.OPEN_EXTERNAL,
+                SourceCapability.COMPARE,
+            )
+        ):
+            raise ValueError(
+                "ambiguous observations cannot grant definitive open or compare actions"
+            )
+        validate_source_observation_json_size(
+            _canonical_json(self.model_dump(mode="json"))
+        )
+        return self
 
 
 class SourceProducer(str, Enum):
