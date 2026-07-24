@@ -1416,10 +1416,23 @@ class CitationTraceRepository:
                  AND selected.trace_id = trace.trace_id
                  AND selected.attempt_id = trace.selected_attempt_id
                 WHERE trace.profile_id = ? AND trace.trace_id = ?
+                  AND trace.completeness_at_seal = 'complete'
                   AND selected.redaction_state = 'available'
                   AND selected.answer_body IS NOT NULL
                   AND selected.body_integrity_hmac IS NOT NULL
                   AND selected.purged_at IS NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM rag_evidence_runs AS run
+                      WHERE run.profile_id = trace.profile_id
+                        AND run.trace_id = trace.trace_id
+                  )
+                  AND EXISTS (
+                      SELECT 1
+                      FROM rag_trace_evidence_refs AS reference
+                      WHERE reference.profile_id = trace.profile_id
+                        AND reference.trace_id = trace.trace_id
+                  )
                   AND NOT EXISTS (
                       SELECT 1
                       FROM rag_evidence_runs AS run
@@ -1429,6 +1442,30 @@ class CitationTraceRepository:
                             run.redaction_state != 'available'
                             OR run.run_payload_json IS NULL
                             OR run.purged_at IS NOT NULL
+                            OR CASE
+                                WHEN NOT json_valid(run.run_payload_json)
+                                THEN 1
+                                WHEN json_type(run.run_payload_json) != 'object'
+                                THEN 1
+                                WHEN json_extract(
+                                    run.run_payload_json,
+                                    '$.run_id'
+                                ) IS NOT run.run_id
+                                THEN 1
+                                ELSE 0
+                               END
+                        )
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM rag_answer_attempt_payloads AS attempt
+                      WHERE attempt.profile_id = trace.profile_id
+                        AND attempt.trace_id = trace.trace_id
+                        AND (
+                            attempt.redaction_state != 'available'
+                            OR attempt.answer_body IS NULL
+                            OR attempt.body_integrity_hmac IS NULL
+                            OR attempt.purged_at IS NOT NULL
                         )
                   )
                   AND NOT EXISTS (
@@ -1442,6 +1479,10 @@ class CitationTraceRepository:
                         AND (
                             snapshot.redaction_state != 'available'
                             OR snapshot.purged_at IS NOT NULL
+                            OR (
+                                snapshot.storage_mode = 'embedded'
+                                AND snapshot.snapshot_text IS NULL
+                            )
                             OR EXISTS (
                                 SELECT 1
                                 FROM rag_payload_tombstones AS tombstone
@@ -1469,14 +1510,82 @@ class CitationTraceRepository:
     ) -> tuple[bool, CitationAvailabilityWarning | None]:
         """Return whether a sealed summary is safe and its non-content warning."""
 
+        if summary.trace.completeness_at_seal is not CitationCompleteness.COMPLETE:
+            return False, None
+        if not self._trace_row_identities_match(
+            summary,
+            profile_id=profile_id,
+            trace_id=trace_id,
+        ):
+            return False, None
         if self._trace_payloads_available(profile_id, trace_id):
             return True, None
-        if (
-            summary.trace.completeness_at_seal is CitationCompleteness.COMPLETE
-            and self._trace_evidence_revoked(profile_id, trace_id)
-        ):
+        if self._trace_evidence_revoked(profile_id, trace_id):
             return True, CitationAvailabilityWarning.EVIDENCE_REVOKED
         return False, None
+
+    def _trace_row_identities_match(
+        self,
+        summary: CitationTraceSummary,
+        *,
+        profile_id: str,
+        trace_id: str,
+    ) -> bool:
+        """Match every persisted governed identity to the sealed aggregate."""
+
+        connection = self.db.get_connection()
+        run_rows = connection.execute(
+            """
+            SELECT run_id, run_ordinal, stage
+            FROM rag_evidence_runs
+            WHERE profile_id = ? AND trace_id = ?
+            """,
+            (profile_id, trace_id),
+        ).fetchall()
+        expected_runs = {
+            (run.run_id, run.run_ordinal, run.stage)
+            for run in summary.trace.evidence_runs
+        }
+        if {tuple(row) for row in run_rows} != expected_runs:
+            return False
+        answer_rows = connection.execute(
+            """
+            SELECT payload_id, attempt_id
+            FROM rag_answer_attempt_payloads
+            WHERE profile_id = ? AND trace_id = ?
+            """,
+            (profile_id, trace_id),
+        ).fetchall()
+        expected_answers = {
+            (attempt.answer_payload_ref, attempt.attempt_id)
+            for attempt in summary.trace.answer_attempts
+            if attempt.answer_payload_ref is not None
+        }
+        if {tuple(row) for row in answer_rows} != expected_answers:
+            return False
+        reference_rows = connection.execute(
+            """
+            SELECT
+                prompt_set_id, evidence_ordinal, run_id,
+                snapshot_payload_id, marker_ordinal, storage_mode
+            FROM rag_trace_evidence_refs
+            WHERE profile_id = ? AND trace_id = ?
+            """,
+            (profile_id, trace_id),
+        ).fetchall()
+        expected_references = {
+            (
+                prompt_set.prompt_set_id,
+                entry.evidence_ordinal,
+                entry.run_id,
+                entry.snapshot_payload_ref,
+                entry.marker_ordinal,
+                entry.storage_mode.value,
+            )
+            for prompt_set in summary.trace.prompt_evidence_sets
+            for entry in prompt_set.entries
+        }
+        return {tuple(row) for row in reference_rows} == expected_references
 
     def _trace_evidence_revoked(
         self,
@@ -1493,40 +1602,72 @@ class CitationTraceRepository:
                 FROM rag_citation_traces AS trace
                 WHERE trace.profile_id = ? AND trace.trace_id = ?
                   AND trace.completeness_at_seal = 'complete'
-                  AND (
-                      EXISTS (
-                          SELECT 1
-                          FROM rag_evidence_runs AS run
-                          WHERE run.profile_id = trace.profile_id
-                            AND run.trace_id = trace.trace_id
-                            AND (
-                                run.redaction_state = 'purged'
-                                OR run.purged_at IS NOT NULL
-                            )
-                      )
-                      OR EXISTS (
-                          SELECT 1
-                          FROM rag_answer_attempt_payloads AS attempt
-                          WHERE attempt.profile_id = trace.profile_id
-                            AND attempt.trace_id = trace.trace_id
-                            AND (
-                                attempt.redaction_state = 'purged'
-                                OR attempt.purged_at IS NOT NULL
-                            )
-                      )
-                      OR EXISTS (
-                          SELECT 1
-                          FROM rag_trace_evidence_refs AS reference
-                          JOIN rag_evidence_snapshots AS snapshot
-                            ON snapshot.profile_id = reference.profile_id
-                           AND snapshot.payload_id =
-                               reference.snapshot_payload_id
-                          WHERE reference.profile_id = trace.profile_id
-                            AND reference.trace_id = trace.trace_id
-                            AND (
+                  AND EXISTS (
+                      SELECT 1
+                      FROM rag_trace_evidence_refs AS reference
+                      JOIN rag_evidence_snapshots AS snapshot
+                        ON snapshot.profile_id = reference.profile_id
+                       AND snapshot.payload_id = reference.snapshot_payload_id
+                      JOIN rag_payload_tombstones AS tombstone
+                        ON tombstone.profile_id = snapshot.profile_id
+                       AND tombstone.origin_namespace =
+                           snapshot.origin_namespace
+                       AND tombstone.origin_payload_id =
+                           snapshot.origin_payload_id
+                      WHERE reference.profile_id = trace.profile_id
+                        AND reference.trace_id = trace.trace_id
+                        AND snapshot.redaction_state = 'purged'
+                        AND snapshot.purged_at IS NOT NULL
+                  )
+                  AND EXISTS (
+                      SELECT 1
+                      FROM rag_evidence_runs AS run
+                      WHERE run.profile_id = trace.profile_id
+                        AND run.trace_id = trace.trace_id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM rag_evidence_runs AS run
+                      WHERE run.profile_id = trace.profile_id
+                        AND run.trace_id = trace.trace_id
+                        AND (
+                            run.redaction_state != 'purged'
+                            OR run.run_payload_json IS NOT NULL
+                            OR run.purged_at IS NULL
+                        )
+                  )
+                  AND EXISTS (
+                      SELECT 1
+                      FROM rag_answer_attempt_payloads AS selected
+                      WHERE selected.profile_id = trace.profile_id
+                        AND selected.trace_id = trace.trace_id
+                        AND selected.attempt_id = trace.selected_attempt_id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM rag_answer_attempt_payloads AS attempt
+                      WHERE attempt.profile_id = trace.profile_id
+                        AND attempt.trace_id = trace.trace_id
+                        AND (
+                            attempt.redaction_state != 'purged'
+                            OR attempt.answer_body IS NOT NULL
+                            OR attempt.body_integrity_hmac IS NOT NULL
+                            OR attempt.purged_at IS NULL
+                        )
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM rag_trace_evidence_refs AS reference
+                      JOIN rag_evidence_snapshots AS snapshot
+                        ON snapshot.profile_id = reference.profile_id
+                       AND snapshot.payload_id = reference.snapshot_payload_id
+                      WHERE reference.profile_id = trace.profile_id
+                        AND reference.trace_id = trace.trace_id
+                        AND (
+                            snapshot.redaction_state = 'redacted'
+                            OR (
                                 snapshot.redaction_state = 'purged'
-                                OR snapshot.purged_at IS NOT NULL
-                                OR EXISTS (
+                                AND NOT EXISTS (
                                     SELECT 1
                                     FROM rag_payload_tombstones AS tombstone
                                     WHERE tombstone.profile_id =
@@ -1537,7 +1678,20 @@ class CitationTraceRepository:
                                           snapshot.origin_payload_id
                                 )
                             )
-                      )
+                            OR (
+                                snapshot.redaction_state = 'available'
+                                AND EXISTS (
+                                    SELECT 1
+                                    FROM rag_payload_tombstones AS tombstone
+                                    WHERE tombstone.profile_id =
+                                          snapshot.profile_id
+                                      AND tombstone.origin_namespace =
+                                          snapshot.origin_namespace
+                                      AND tombstone.origin_payload_id =
+                                          snapshot.origin_payload_id
+                                )
+                            )
+                        )
                   )
                 """,
                 (profile_id, trace_id),

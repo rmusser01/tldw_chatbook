@@ -469,6 +469,14 @@ def test_revoke_never_upgrades_noncomplete_seals_to_grounded_warning_capabilitie
                 json.dumps(aggregate, separators=(",", ":"), sort_keys=True),
             ),
         )
+    before_revoke = repository.get_active_trace_for_message(
+        "message-1",
+        1,
+        "Answer [S1].",
+        TEST_FINGERPRINT_CODEC,
+    )
+    assert before_revoke.state.value != "active"
+    assert before_revoke.summary is None
     CitationPayloadLifecycle(
         repository,
         retention_policy=_policy(),
@@ -487,6 +495,108 @@ def test_revoke_never_upgrades_noncomplete_seals_to_grounded_warning_capabilitie
 
     assert refreshed.state.value != "active"
     assert refreshed.summary is None
+
+
+@pytest.mark.parametrize(
+    "isolated_purge",
+    [
+        "run",
+        "run_redacted",
+        "run_corrupt",
+        "run_missing",
+        "selected_attempt",
+        "diagnostic_attempt",
+        "snapshot",
+    ],
+)
+def test_untrusted_payload_state_without_tombstone_never_issues_revocation_warning(
+    db: CharactersRAGDB,
+    isolated_purge: str,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    identity = _identity(db)
+    with db.transaction() as cursor:
+        if isolated_purge == "run":
+            cursor.execute(
+                """
+                UPDATE rag_evidence_runs
+                SET redaction_state = 'purged', run_payload_json = NULL,
+                    purged_at = ?
+                WHERE trace_id = 'trace-1'
+                """,
+                (NOW.isoformat(),),
+            )
+        elif isolated_purge == "run_redacted":
+            cursor.execute(
+                """
+                UPDATE rag_evidence_runs
+                SET redaction_state = 'redacted', run_payload_json = NULL
+                WHERE trace_id = 'trace-1'
+                """
+            )
+        elif isolated_purge == "run_corrupt":
+            cursor.execute(
+                """
+                UPDATE rag_evidence_runs
+                SET run_payload_json = 'not-json'
+                WHERE trace_id = 'trace-1'
+                """
+            )
+        elif isolated_purge == "run_missing":
+            cursor.execute(
+                "DELETE FROM rag_trace_evidence_refs WHERE trace_id = 'trace-1'"
+            )
+            cursor.execute("DELETE FROM rag_evidence_runs WHERE trace_id = 'trace-1'")
+        elif isolated_purge == "selected_attempt":
+            cursor.execute(
+                """
+                UPDATE rag_answer_attempt_payloads
+                SET redaction_state = 'purged', answer_body = NULL,
+                    body_integrity_hmac = NULL, purged_at = ?
+                WHERE trace_id = 'trace-1' AND attempt_id = 'attempt-1'
+                """,
+                (NOW.isoformat(),),
+            )
+        elif isolated_purge == "diagnostic_attempt":
+            cursor.execute(
+                """
+                INSERT INTO rag_answer_attempt_payloads VALUES (
+                    ?, 'diagnostic-payload', 'trace-1', 'diagnostic-attempt',
+                    'purged', 'default', NULL, NULL, ?, NULL, ?
+                )
+                """,
+                (identity.profile_id, NOW.isoformat(), NOW.isoformat()),
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE rag_evidence_snapshots
+                SET redaction_state = 'purged', snapshot_text = NULL,
+                    title = NULL, source_identity_json = NULL,
+                    locator_json = NULL, lineage_json = NULL,
+                    transformations_json = NULL, content_hash = NULL,
+                    comparison_fingerprint = NULL, purged_at = ?
+                WHERE payload_id = 'snapshot-1'
+                """,
+                (NOW.isoformat(),),
+            )
+
+    result = repository.get_active_trace_for_message(
+        "message-1",
+        1,
+        "Answer [S1].",
+        TEST_FINGERPRINT_CODEC,
+    )
+
+    assert result.state.value != "active"
+    assert result.summary is None
+    hydration = repository.hydrate_trace(
+        local_trace_namespace(identity, trace_id="trace-1"),
+        authorization=_authorization(identity),
+    )
+    assert hydration.state is not CitationHydrationState.AUTHORIZED
+    assert hydration.state is not CitationHydrationState.REVOKED
 
 
 def test_revoke_purges_run_and_attempt_payloads_for_every_shared_snapshot_reference(
