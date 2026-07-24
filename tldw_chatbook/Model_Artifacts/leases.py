@@ -13,6 +13,8 @@ from typing import BinaryIO
 
 import portalocker
 
+from tldw_chatbook.Utils.path_validation import validate_path_simple
+
 
 _IDENTITY_SEPARATOR = "\x1f"
 
@@ -81,13 +83,28 @@ def _validate_mode(mode: LeaseMode) -> None:
 
 @dataclass(frozen=True, order=True)
 class ArtifactLeaseKey:
-    """Opaque identity of one immutable artifact version."""
+    """Opaque identity of one immutable artifact version.
+
+    Args:
+        artifact_id: Stable artifact identifier.
+        revision: Immutable artifact revision.
+        variant: Artifact precision or platform variant.
+
+    Raises:
+        ValueError: If a field is empty or contains the reserved separator.
+    """
 
     artifact_id: str
     revision: str
     variant: str
 
     def __post_init__(self) -> None:
+        """Validate the three identity components.
+
+        Raises:
+            ValueError: If a field is empty or contains the reserved separator.
+        """
+
         for field_name, value in (
             ("artifact_id", self.artifact_id),
             ("revision", self.revision),
@@ -100,7 +117,11 @@ class ArtifactLeaseKey:
 
     @property
     def canonical_identity(self) -> str:
-        """Return the unambiguous identity used only as hash input."""
+        """Return the unambiguous identity used only as hash input.
+
+        Returns:
+            The separator-delimited immutable artifact identity.
+        """
 
         return _IDENTITY_SEPARATOR.join((self.artifact_id, self.revision, self.variant))
 
@@ -118,9 +139,27 @@ class ArtifactOperationLease:
         check_interval_seconds: float = 0.05,
         cancelled: Callable[[], bool] | None = None,
     ) -> None:
+        """Initialize an operation lease.
+
+        Args:
+            lock_root: Persistent root for lock files. External input is validated
+                with the repository path validator before use.
+            key: Immutable artifact identity to lock.
+            mode: Shared or exclusive lease mode.
+            timeout_seconds: Maximum acquisition wait in seconds.
+            check_interval_seconds: Maximum delay between acquisition attempts.
+            cancelled: Optional callback that requests cancellation when true.
+
+        Raises:
+            TypeError: If ``mode`` is not a :class:`LeaseMode`.
+            ValueError: If the path or timing values are invalid.
+        """
+
         _validate_mode(mode)
         _validate_timing(timeout_seconds, check_interval_seconds)
-        self._lock_root = Path(lock_root)
+        self._lock_root = validate_path_simple(
+            lock_root, require_exists=False
+        ).resolve()
         self.key = key
         self.mode = mode
         self.timeout_seconds = timeout_seconds
@@ -130,19 +169,36 @@ class ArtifactOperationLease:
 
     @property
     def lock_path(self) -> Path:
-        """Return the contained lock-file path for this opaque identity."""
+        """Return the contained lock-file path for this opaque identity.
+
+        Returns:
+            A SHA-256-named file beneath the validated lock root.
+        """
 
         digest = hashlib.sha256(self.key.canonical_identity.encode("utf-8")).hexdigest()
         return self._lock_root / f"{digest}.lock"
 
     @property
     def acquired(self) -> bool:
-        """Return whether this object currently owns its OS-backed lock."""
+        """Return whether this object currently owns its OS-backed lock.
+
+        Returns:
+            True when the lease owns an open, locked file handle.
+        """
 
         return self._handle is not None
 
     def acquire(self) -> ArtifactOperationLease:
-        """Acquire the lease or raise a stable timeout/cancellation error."""
+        """Acquire the lease.
+
+        Returns:
+            This acquired lease.
+
+        Raises:
+            ArtifactLeaseCancelledError: If the cancellation callback returns true.
+            ArtifactLeaseTimeoutError: If contention lasts past the deadline.
+            ArtifactLeaseError: If setup or the locking backend fails.
+        """
 
         return self._acquire_until(
             time.monotonic() + self.timeout_seconds,
@@ -226,7 +282,11 @@ class ArtifactOperationLease:
             raise
 
     def release(self) -> None:
-        """Release the OS lock and close its owning handle idempotently."""
+        """Release the OS lock and close its owning handle idempotently.
+
+        Raises:
+            ArtifactLeaseError: If unlocking or closing the handle fails.
+        """
 
         handle = self._handle
         self._handle = None
@@ -264,6 +324,15 @@ class ArtifactOperationLease:
         )
 
     def __enter__(self) -> ArtifactOperationLease:
+        """Acquire and return this lease for a context manager.
+
+        Returns:
+            This acquired lease.
+
+        Raises:
+            ArtifactLeaseError: If the lease cannot be acquired.
+        """
+
         return self.acquire()
 
     def __exit__(
@@ -272,6 +341,17 @@ class ArtifactOperationLease:
         exc: BaseException | None,
         traceback: object,
     ) -> None:
+        """Release the lease when leaving a context.
+
+        Args:
+            exc_type: Type of an exception raised by the context body, if any.
+            exc: Exception raised by the context body, if any.
+            traceback: Traceback associated with ``exc``, if any.
+
+        Raises:
+            ArtifactLeaseError: If cleanup fails without an active body exception.
+        """
+
         _release_for_context(self.release, exc)
 
 
@@ -288,12 +368,30 @@ class ArtifactOperationLeaseSet:
         check_interval_seconds: float = 0.05,
         cancelled: Callable[[], bool] | None = None,
     ) -> None:
+        """Initialize an ordered lease set.
+
+        Args:
+            lock_root: Persistent root for lock files. External input is validated
+                with the repository path validator before use.
+            keys: Immutable artifact identities forming the operation closure.
+            mode: Shared or exclusive lease mode for every key.
+            timeout_seconds: Total acquisition budget in seconds.
+            check_interval_seconds: Maximum delay between acquisition attempts.
+            cancelled: Optional callback that requests cancellation when true.
+
+        Raises:
+            TypeError: If ``mode`` is not a :class:`LeaseMode`.
+            ValueError: If the path, key collection, or timing values are invalid.
+        """
+
         _validate_mode(mode)
         ordered_keys = tuple(sorted(set(keys)))
         if not ordered_keys:
             raise ValueError("lease set requires at least one artifact key")
         _validate_timing(timeout_seconds, check_interval_seconds)
-        self._lock_root = Path(lock_root)
+        self._lock_root = validate_path_simple(
+            lock_root, require_exists=False
+        ).resolve()
         self.keys = ordered_keys
         self.mode = mode
         self.timeout_seconds = timeout_seconds
@@ -303,12 +401,25 @@ class ArtifactOperationLeaseSet:
 
     @property
     def acquired(self) -> bool:
-        """Return whether the complete key set is currently held."""
+        """Return whether the complete key set is currently held.
+
+        Returns:
+            True when every artifact key has an acquired lease.
+        """
 
         return len(self._leases) == len(self.keys)
 
     def acquire(self) -> ArtifactOperationLeaseSet:
-        """Acquire every key in order under one total timeout budget."""
+        """Acquire every key in order under one total timeout budget.
+
+        Returns:
+            This acquired lease set.
+
+        Raises:
+            ArtifactLeaseCancelledError: If the cancellation callback returns true.
+            ArtifactLeaseTimeoutError: If contention lasts past the shared deadline.
+            ArtifactLeaseError: If setup, locking, or rollback cleanup fails.
+        """
 
         if self._leases:
             raise ArtifactLeaseError("lease set is already acquired")
@@ -346,7 +457,11 @@ class ArtifactOperationLeaseSet:
         return self
 
     def release(self) -> None:
-        """Release all acquired keys in reverse order."""
+        """Release all acquired keys in reverse order.
+
+        Raises:
+            ArtifactLeaseError: If one or more leases cannot be released cleanly.
+        """
 
         first_error: BaseException | None = None
         while self._leases:
@@ -361,6 +476,15 @@ class ArtifactOperationLeaseSet:
             raise first_error
 
     def __enter__(self) -> ArtifactOperationLeaseSet:
+        """Acquire and return this lease set for a context manager.
+
+        Returns:
+            This acquired lease set.
+
+        Raises:
+            ArtifactLeaseError: If the complete set cannot be acquired.
+        """
+
         return self.acquire()
 
     def __exit__(
@@ -369,4 +493,15 @@ class ArtifactOperationLeaseSet:
         exc: BaseException | None,
         traceback: object,
     ) -> None:
+        """Release the lease set when leaving a context.
+
+        Args:
+            exc_type: Type of an exception raised by the context body, if any.
+            exc: Exception raised by the context body, if any.
+            traceback: Traceback associated with ``exc``, if any.
+
+        Raises:
+            ArtifactLeaseError: If cleanup fails without an active body exception.
+        """
+
         _release_for_context(self.release, exc)

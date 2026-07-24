@@ -104,6 +104,7 @@ jobs:
         pip install -r requirements-test.txt
 
     - name: Prove cross-platform operation leases
+      shell: bash
       run: |
         pytest Tests/Model_Artifacts/test_operation_leases.py \
           Tests/Model_Artifacts/test_operation_leases_process.py -v

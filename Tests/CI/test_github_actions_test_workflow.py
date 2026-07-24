@@ -135,6 +135,11 @@ def test_artifact_lease_spike_runs_natively_on_three_operating_systems() -> None
     assert 'python-version: ["3.11"]' in block
     assert "pip install -e ." in block
     assert "pip install -r requirements-test.txt" in block
+    assert (
+        "- name: Prove cross-platform operation leases\n"
+        "      shell: bash\n"
+        "      run:" in block
+    )
     _assert_artifact_lease_test_targets(block)
 
 

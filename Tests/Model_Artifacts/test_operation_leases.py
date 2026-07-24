@@ -47,6 +47,30 @@ def test_lock_filename_is_deterministic_and_opaque(tmp_path: Path) -> None:
     assert "windows" not in first.lock_path.name
 
 
+def test_lease_constructors_reject_unsafe_lock_root(tmp_path: Path) -> None:
+    unsafe_root = tmp_path / "../.."
+
+    with pytest.raises(ValueError, match="dangerous pattern"):
+        ArtifactOperationLease(unsafe_root, key(), LeaseMode.SHARED)
+    with pytest.raises(ValueError, match="dangerous pattern"):
+        ArtifactOperationLeaseSet(unsafe_root, [key()], LeaseMode.SHARED)
+
+
+def test_lease_constructors_canonicalize_lock_root(tmp_path: Path) -> None:
+    noncanonical_root = tmp_path / "nested" / ".." / "locks"
+    expected_root = (tmp_path / "locks").resolve()
+
+    lease = ArtifactOperationLease(noncanonical_root, key(), LeaseMode.SHARED)
+    lease_set = ArtifactOperationLeaseSet(
+        noncanonical_root,
+        [key()],
+        LeaseMode.SHARED,
+    )
+
+    assert lease.lock_path.parent == expected_root
+    assert lease_set._lock_root == expected_root
+
+
 def test_exclusive_times_out_while_shared_lease_is_open(tmp_path: Path) -> None:
     with ArtifactOperationLease(tmp_path, key(), LeaseMode.SHARED):
         with pytest.raises(ArtifactLeaseTimeoutError):
