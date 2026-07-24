@@ -1,3 +1,5 @@
+import pytest
+
 from tldw_chatbook.Chat.Chat_Functions import extract_response_content
 
 
@@ -36,3 +38,26 @@ def test_non_dict_input():
 
 def test_missing_everything():
     assert extract_response_content({}) == ""
+
+
+@pytest.mark.parametrize("resp", [
+    {"choices": ["not-a-dict"]},
+    {"choices": "abc"},
+    {"choices": {"foo": "bar"}},
+    {"choices": [42]},
+    {"choices": [["nested-list"]]},
+    {"choices": [None]},
+    42,
+    [1, 2, 3],
+])
+def test_malformed_never_raises_returns_str(resp):
+    out = extract_response_content(resp)
+    assert isinstance(out, str)
+    assert out == ""  # none of these carry extractable text
+
+
+def test_non_string_content_coerced_to_str():
+    resp = {"choices": [{"message": {"content": [{"type": "text", "text": "hi"}]}}]}
+    out = extract_response_content(resp)
+    assert isinstance(out, str)
+    assert out != ""

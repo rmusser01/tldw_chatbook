@@ -680,17 +680,19 @@ def extract_response_content(resp: Any) -> str:
         resp: A ``chat_api_call`` non-streaming return value (dict), or any value.
 
     Returns:
-        The assistant text, or "" when it cannot be found.
+        The assistant text as a str, or "" when it cannot be found or is not a string.
     """
     if not isinstance(resp, dict):
         return resp if isinstance(resp, str) else ""
-    choices = resp.get("choices") or []
-    if choices:
-        message = (choices[0] or {}).get("message") or {}
-        content = message.get("content")
-        if content:
-            return content
-    return resp.get("content") or ""
+    choices = resp.get("choices")
+    first = choices[0] if isinstance(choices, list) and choices else None
+    message = first.get("message") if isinstance(first, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if content is None:
+        content = resp.get("content")
+    if not content:
+        return ""
+    return content if isinstance(content, str) else str(content)
 
 
 def chat_api_call(
