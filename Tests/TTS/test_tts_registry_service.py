@@ -1063,6 +1063,99 @@ async def test_cancel_after_slot_acquisition_releases_admission_state() -> None:
         timeout=0.2,
     )
     await replacement.aclose()
+    await service.close()
+    await asyncio.wait_for(service.wait_closed(), timeout=0.2)
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_response_handoff_closes_undelivered_response() -> None:
+    synthesis_started = asyncio.Event()
+    allow_response = asyncio.Event()
+    response_created = asyncio.Event()
+
+    class DelayedResponseAdapter(FakeAdapter):
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: ProgressSink | None = None,
+        ) -> TTSAudioResponse:
+            synthesis_started.set()
+            await allow_response.wait()
+            response = await super().synthesize(request, progress_sink)
+            response_created.set()
+            return response
+
+    adapter = DelayedResponseAdapter("openai")
+    service = TTSService(
+        registry_for_adapter(adapter),
+        max_concurrent_operations=1,
+    )
+    synthesis = asyncio.create_task(service.synthesize(tts_request()))
+    await synthesis_started.wait()
+
+    await service._lifecycle_lock.acquire()
+    try:
+        allow_response.set()
+        await response_created.wait()
+        synthesis.cancel()
+        await asyncio.sleep(0)
+    finally:
+        service._lifecycle_lock.release()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(synthesis, timeout=0.2)
+
+    assert adapter.response_close_calls == 1
+    replacement = await asyncio.wait_for(
+        service.synthesize(tts_request()),
+        timeout=0.2,
+    )
+    await replacement.aclose()
+    await service.close()
+    await asyncio.wait_for(service.wait_closed(), timeout=0.2)
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_synthesis_finalizer_completes_lifecycle_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    finish_started = asyncio.Event()
+    allow_finish = asyncio.Event()
+    adapter = FakeAdapter("openai")
+    service = TTSService(
+        registry_for_adapter(adapter),
+        max_concurrent_operations=1,
+    )
+    original_finish = service._finish_synthesis_creation
+
+    async def delayed_finish() -> None:
+        finish_started.set()
+        await allow_finish.wait()
+        await original_finish()
+
+    monkeypatch.setattr(service, "_finish_synthesis_creation", delayed_finish)
+    synthesis = asyncio.create_task(service.synthesize(tts_request()))
+    await finish_started.wait()
+
+    synthesis.cancel()
+    await asyncio.sleep(0)
+    returned_before_finish = synthesis.done()
+    allow_finish.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(synthesis, timeout=0.2)
+
+    assert returned_before_finish is False
+    assert service._syntheses_in_progress == 0
+    assert service._synthesis_idle.is_set()
+    assert adapter.response_close_calls == 1
+    replacement = await asyncio.wait_for(
+        service.synthesize(tts_request()),
+        timeout=0.2,
+    )
+    await replacement.aclose()
+    await service.close()
+    await asyncio.wait_for(service.wait_closed(), timeout=0.2)
 
 
 @pytest.mark.asyncio

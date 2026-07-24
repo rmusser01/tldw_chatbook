@@ -215,6 +215,14 @@ class TTSService:
         self._shutdown_response_tasks[task] = None
         task.add_done_callback(self._observe_task_result)
 
+    async def _start_abandoned_response_shutdown(
+        self,
+        response: _ManagedAudioResponse,
+    ) -> None:
+        response_task, resource_task = response.start_shutdown_close()
+        self._track_shutdown_response_task(response_task)
+        await _join_retained_task(resource_task)
+
     async def _start_response_shutdown(self) -> list[BaseException]:
         async with self._lifecycle_lock:
             responses = tuple(self._responses)
@@ -273,6 +281,8 @@ class TTSService:
             A response that releases its registry lease when closed.
         """
         await self._acquire_operation_slot()
+        managed: _ManagedAudioResponse | None = None
+        response_registered = False
         try:
             try:
                 lease = await self.registry.acquire(request.provider_id)
@@ -300,22 +310,42 @@ class TTSService:
                 resources,
                 self._response_closed,
             )
-            async with self._lifecycle_lock:
-                if not self._closing:
-                    self._responses[managed] = None
-                    return managed
-
-            response_task, resource_task = managed.start_shutdown_close()
-            self._track_shutdown_response_task(response_task)
-            closing_error = TTSRegistryClosedError("The TTS service is closing")
             try:
-                await _join_retained_task(resource_task)
-            except BaseException:
-                closing_error.add_note(_SHUTDOWN_RESPONSE_FAILURE_NOTE)
-                logger.warning("TTS response resources failed during service shutdown")
-            raise closing_error
+                async with self._lifecycle_lock:
+                    if not self._closing:
+                        self._responses[managed] = None
+                        response_registered = True
+            except BaseException as error:
+                await _cleanup_preserving_primary(
+                    lambda: self._start_abandoned_response_shutdown(managed),
+                    error,
+                )
+                raise
+
+            if not response_registered:
+                closing_error = TTSRegistryClosedError("The TTS service is closing")
+                try:
+                    await self._start_abandoned_response_shutdown(managed)
+                except BaseException:
+                    closing_error.add_note(_SHUTDOWN_RESPONSE_FAILURE_NOTE)
+                    logger.warning(
+                        "TTS response resources failed during service shutdown"
+                    )
+                raise closing_error
         finally:
-            await self._finish_synthesis_creation()
+            try:
+                finish_task = asyncio.create_task(self._finish_synthesis_creation())
+                await _join_retained_task(finish_task)
+            except BaseException as error:
+                if managed is not None and response_registered:
+                    await _cleanup_preserving_primary(
+                        lambda: self._start_abandoned_response_shutdown(managed),
+                        error,
+                    )
+                raise
+
+        assert managed is not None
+        return managed
 
     async def generate_audio_stream(
         self,
