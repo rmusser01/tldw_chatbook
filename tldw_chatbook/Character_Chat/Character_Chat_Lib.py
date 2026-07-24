@@ -411,10 +411,15 @@ def replace_placeholders(
     and user names. If names are not provided, default values ("Character", "User")
     are used. Returns an empty string if the input text is None or empty.
 
+    '{{character}}' and '{{persona}}' (task-442) are character-side aliases
+    for '{{char}}': they resolve to the AI character's name and never to the
+    user's name.
+
     Args:
         text (Optional[str]): The input string, possibly containing placeholders.
         char_name (Optional[str]): The name of the character to substitute for
-            '{{char}}' and '<CHAR>'. Defaults to "Character" if None.
+            '{{char}}', '{{character}}', '{{persona}}', and '<CHAR>'. Defaults
+            to "Character" if None.
         user_name (Optional[str]): The name of the user to substitute for
             '{{user}}', '{{random_user}}', and '<USER>'. Defaults to "User" if None.
 
@@ -435,6 +440,8 @@ def replace_placeholders(
         "{{random_user}}": user_name_actual,  # As per original logic
         "<USER>": user_name_actual,  # Common alternative
         "<CHAR>": char_name_actual,  # Common alternative
+        "{{character}}": char_name_actual,   # task-442 alias: the AI character's name
+        "{{persona}}": char_name_actual,     # task-442 alias: the AI character's name (NEVER the user)
     }
 
     processed_text = text
