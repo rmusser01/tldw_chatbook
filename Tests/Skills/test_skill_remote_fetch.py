@@ -313,3 +313,70 @@ def test_reroot_lying_header_bomb_aborts_bounded():
     data = _zipball([("SKILL.md", "body"), ("references/huge.md", big)])
     with pytest.raises(RemoteSkillError, match="too large"):
         re_root_skill_zip(data, subdir="", suggested_name="repo")
+
+
+def test_reroot_rejects_zip_slip_relative_member():
+    # A member name that -- once the skill_root prefix is stripped -- still
+    # carries ".." segments. Raw member selection is a naive
+    # ``startswith(skill_root)`` string match, so this still reaches
+    # synthesis; the per-member path validator must catch it there.
+    data = _zipball([
+        ("SKILL.md", "body"),
+        ("refs/../../evil.md", "evil"),
+    ])
+    # Sanity: writestr does not normalize the traversal out of the name.
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        assert any(n.endswith("refs/../../evil.md") for n in z.namelist())
+    with pytest.raises(RemoteSkillError, match="Unsafe file path") as exc_info:
+        re_root_skill_zip(data, subdir="", suggested_name="repo")
+    assert "evil.md" in str(exc_info.value)
+
+
+def test_reroot_prunes_junk_before_count_cap():
+    # Junk-heavy but otherwise-legitimate bundles must not be falsely
+    # rejected by the count cap: the cap applies to the PRUNED member list,
+    # matching LocalSkillsService.import_skill_file's own ordering.
+    from tldw_chatbook.tldw_api.skills_schemas import MAX_SUPPORTING_FILES_COUNT
+
+    entries = [
+        ("SKILL.md", "body"),
+        ("references/a.md", "a"),
+        ("references/b.md", "b"),
+        ("scripts/run.sh", "run"),
+    ]
+    entries += [
+        (f"__pycache__/x{i}.pyc", "junk")
+        for i in range(MAX_SUPPORTING_FILES_COUNT + 5)
+    ]
+    data = _zipball(entries)
+    out, name = re_root_skill_zip(data, subdir="", suggested_name="repo")
+    with zipfile.ZipFile(io.BytesIO(out)) as z:
+        names = z.namelist()
+    assert not any("__pycache__" in n for n in names)
+    assert set(names) == {
+        "SKILL.md", "references/a.md", "references/b.md", "scripts/run.sh",
+    }
+
+
+def _reroot_zip_with_understated_file_size(declared: int = 5) -> bytes:
+    """Bridge-shaped analog of ``test_zip_import_bundle.py``'s
+    ``_zip_with_understated_file_size``: a member whose central-directory
+    ``file_size`` lies smaller than its real (compressed) payload, tripping a
+    CRC mismatch on read -- exercising the "corrupt", not "too large", branch
+    of ``_read_zip_member_bounded``'s ``ValueError`` contract.
+    """
+    buf = io.BytesIO()
+    z = zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED)
+    z.writestr("SKILL.md", b"---\nname: forged\n---\nbody\n")
+    info = zipfile.ZipInfo("big.bin")
+    z.writestr(info, b"y" * 4096)   # local header + data written with real size
+    info.file_size = declared        # mutate BEFORE close -> central dir lies
+    z.close()
+    return buf.getvalue()
+
+
+def test_reroot_labels_corrupt_member_not_too_large():
+    data = _reroot_zip_with_understated_file_size()
+    with pytest.raises(RemoteSkillError, match="Corrupt file in bundle") as exc_info:
+        re_root_skill_zip(data, subdir="", suggested_name="x")
+    assert "too large" not in str(exc_info.value)

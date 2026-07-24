@@ -326,19 +326,47 @@ def re_root_skill_zip(
             skill_root = base + candidates[0] + "/"
             final_name = candidates[0].rsplit("/", 1)[-1]
 
-        members = [
+        from .skill_trust_scanner import SUPPORTING_JUNK_DIRS, _is_junk
+
+        raw_members = [
             m for m in archive.infolist()
             if not m.is_dir() and m.filename.startswith(skill_root)
         ]
-        if len(members) > MAX_SUPPORTING_FILES_COUNT + 1:
+
+        # Prune + path-validate BEFORE the count cap and BEFORE any
+        # decompression -- mirrors LocalSkillsService.import_skill_file's own
+        # ordering (junk pruned first, so junk-heavy-but-legitimate bundles
+        # aren't falsely rejected by the count cap) and its own per-member
+        # zip-slip validator (``_validate_archive_member``, which special-cases
+        # the literal top-level ``SKILL.md`` name and otherwise delegates to
+        # ``validate_supporting_file_path`` -- rejecting ``..``/absolute
+        # segments so nothing outside ``skill_root`` can leak into the
+        # synthesized zip, even though raw member selection above is a naive
+        # ``startswith(skill_root)`` string match that a crafted name like
+        # ``<skill_root>refs/../../evil.md`` still passes).
+        pruned: list[tuple["_zipfile.ZipInfo", str]] = []
+        for member in raw_members:
+            relative = member.filename[len(skill_root):]
+            if not relative:
+                continue
+            parts = relative.split("/")
+            if any(p in SUPPORTING_JUNK_DIRS for p in parts) or _is_junk(parts[-1]):
+                continue                       # junk pruned, matches the importer
+            try:
+                LocalSkillsService._validate_archive_member(relative)
+            except ValueError as exc:
+                raise RemoteSkillError(
+                    f"Unsafe file path in archive: {relative}"
+                ) from exc
+            pruned.append((member, relative))
+
+        if len(pruned) > MAX_SUPPORTING_FILES_COUNT + 1:
             raise RemoteSkillError("That skill bundle has too many files.")
+
         out = BytesIO()
         total = 0
         with _zipfile.ZipFile(out, "w", compression=_zipfile.ZIP_DEFLATED) as dest:
-            for member in members:
-                relative = member.filename[len(skill_root):]
-                if not relative:
-                    continue
+            for member, relative in pruned:
                 if member.file_size > MAX_SUPPORTING_FILE_BYTES:
                     raise RemoteSkillError(
                         f"File too large in bundle: {relative}"
@@ -348,7 +376,14 @@ def re_root_skill_zip(
                         archive, member, relative, MAX_SUPPORTING_FILE_BYTES
                     )
                 except ValueError as exc:
-                    raise RemoteSkillError(f"File too large in bundle: {relative}") from exc
+                    message = str(exc)
+                    if message.startswith("local_skill_file_too_large"):
+                        raise RemoteSkillError(
+                            f"File too large in bundle: {relative}"
+                        ) from exc
+                    raise RemoteSkillError(
+                        f"Corrupt file in bundle: {relative}"
+                    ) from exc
                 total += len(data)
                 if total > MAX_SUPPORTING_FILES_TOTAL_BYTES:
                     raise RemoteSkillError("That skill bundle is too large.")
