@@ -23,6 +23,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-021](021-file-backed-notes-disk-authority-and-recovery.md) | Proposed | Keep linked note files disk-authoritative, project them locally, and store journaled safety plus opt-in recovery replicas in an independent recovery database. |
 | [ADR-022](022-local-private-data-boundary.md) | Accepted | Enforce owner-only POSIX storage for local private artifacts, make config persistence single-owner, keep persistent logs payload-free, and contain legacy Notes sync paths. |
 | [ADR-023](023-derived-index-lifecycle-and-atomic-media-migrations.md) | Accepted | Keep media SQLite authoritative, reconcile derived semantic-index deletion asynchronously, and make versioned media migrations genuinely atomic. |
+| [ADR-024](024-bounded-evaluation-and-tool-worker-execution.md) | Accepted | Adapt synchronous eval providers off-loop, bound eval/tool concurrency, and make failure and cancellation terminal states truthful. |
 
 ## Historical Decision Material
 

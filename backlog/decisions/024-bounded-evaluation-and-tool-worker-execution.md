@@ -1,0 +1,113 @@
+# ADR 024: Bounded Evaluation and Tool Worker Execution
+
+Status: Accepted
+Date: 2026-07-24
+Related Tasks:
+[TASK-496](../tasks/task-496%20-%20Enforce-evaluation-execution-and-run-state-contracts.md),
+[TASK-497](../tasks/task-497%20-%20Enforce-ToolExecutor-concurrency-and-cancellation-contracts.md)
+Supersedes: N/A
+
+## Decision
+
+Keep the synchronous `chat_api_call()` dispatcher as the production provider
+boundary and adapt it at the evaluation boundary with a worker thread,
+per-attempt timeout, and awaitable-result compatibility. Bound concurrent
+evaluation samples and tool executions with `asyncio` semaphores in their
+owning runtime. Preserve input order in returned batches while reporting
+progress as work settles. Treat sample errors as a failed evaluation run while
+retaining stored results. Persist cancellation as `cancelled`, record cancelled
+tool history, and always re-raise `asyncio.CancelledError`.
+
+The existing evaluation status vocabulary remains unchanged. A run containing
+one or more failed samples uses `failed`, not a new `completed_with_errors`
+schema value. Tool execution remains an async `Tool.execute()` contract; the
+unused `ThreadPoolExecutor` is removed rather than made authoritative.
+
+## Context
+
+The production chat dispatcher is synchronous, but
+`BaseEvalRunner._call_llm()` awaited it directly. A synchronous reproduction
+failed with `TypeError: object str can't be used in 'await' expression`.
+Existing tests patched the dispatcher with async mocks and therefore encoded a
+different contract from production.
+
+`EvalRunner` exposed `max_concurrent_requests`, `request_timeout`, and
+`retry_attempts`, but evaluated samples sequentially and did not apply the
+timeout to provider attempts. A two-sample reproduction with one failed sample
+stored both results and marked the run `completed` with no error message.
+Cancelling an orchestrated run removed it from the in-process concurrent-run
+registry but left its durable database status `running`.
+
+`ToolExecutor` constructed a `ThreadPoolExecutor(max_workers=...)` that no tool
+call used. Five test tools reached five simultaneous executions when configured
+for two workers. `asyncio.CancelledError` bypassed its ordinary exception
+handlers and left the history record at `started`; batch gathering could also
+turn a child cancellation into a returned object instead of propagating it.
+
+These are runtime and cross-module service contracts. They need one explicit
+decision before the larger application-state decomposition changes ownership
+or worker topology.
+
+## Alternatives Considered
+
+| Option | Why rejected |
+| --- | --- |
+| Rewrite all provider handlers and `chat_api_call()` as native async APIs | This is a broad provider migration with substantially larger compatibility risk. The evaluation boundary can adapt the existing synchronous contract. |
+| Continue awaiting the dispatcher and make tests use only async mocks | This preserves a test-only contract that production does not satisfy. |
+| Keep evaluation sequential and treat concurrency settings as advisory | The public configuration would remain misleading and large evaluations would unnecessarily serialize independent samples. |
+| Add `completed_with_errors` to the database status constraint | It requires a schema migration and downstream UI/status changes. Existing `failed` already expresses an unsuccessful run while stored results remain inspectable. |
+| Execute async tools through the existing `ThreadPoolExecutor` | Tool implementations already return awaitables and belong on the owning event loop; a thread pool does not bound them unless another event loop is introduced per worker. |
+| Let batch gathering contain cancellation like an ordinary tool failure | Cancellation is control flow. Swallowing it leaves callers unable to stop the owning run reliably. |
+| Use subprocesses to force-kill timed-out provider calls | Process isolation can enforce a hard stop but adds serialization, credential, platform, and cleanup contracts outside this repair tranche. |
+
+## Consequences
+
+Evaluation construction rejects non-positive concurrency and timeout values,
+negative retry values, and non-finite numeric bounds. `retry_attempts` from the
+model execution configuration takes precedence over the task metadata
+`max_retries`; the task value remains the fallback for compatibility.
+`retry_delay` follows the same model-then-task fallback. Basic runners retain
+their existing retry wrapper; the specialized-runner `LLMInterface` applies the
+same normalized retry policy because those runners currently call it directly.
+Each provider attempt, including an awaitable returned by a test double, is
+covered by the configured timeout.
+
+The provider call runs through `asyncio.to_thread()`, so it no longer blocks the
+application event loop. Cancelling or timing out the awaiting coroutine cannot
+kill Python code already running in that thread. Chatbook stops awaiting the
+late result and may start a configured retry; the underlying handler can
+continue until it returns, so a timeout can produce overlapping or duplicate
+billed provider work. Hard cancellation requires the rejected subprocess or
+native-async provider redesign and must not be inferred from this contract.
+
+Evaluation sample tasks acquire one semaphore. Results are written into slots
+by input index and returned in dataset order. Progress callbacks run centrally
+once per settled sample, in completion order, so callback or persistence
+failures fail the run instead of being converted into duplicate sample errors.
+When the caller cancels or the central callback fails, outstanding sample tasks
+are cancelled and drained.
+
+An orchestrated run is `completed` only when all returned samples are
+error-free and every result was stored. Sample errors and storage mismatches
+produce `failed` with a count-based summary while retaining results and
+aggregate metrics. Caller cancellation attempts to persist `cancelled` without
+masking the original cancellation and always unregisters the run.
+
+Each `ToolExecutor` uses one positive `max_workers` semaphore around actual
+tool execution. Queue time is not part of `timeout_seconds`; timeout begins
+after a call obtains a slot. Cached and validation-only responses do not occupy
+execution capacity. The executor is owned by one application event-loop
+runtime, matching its current global use. Supporting one executor concurrently
+across multiple event loops remains out of scope.
+
+Ordinary tool exceptions and timeouts remain per-call error results. A
+cancelled call records `cancelled` with an end time and re-raises. Batch
+execution relies on the leaf call to contain ordinary failures, uses normal
+ordered gathering, and lets cancellation propagate. Reloading replaces the
+global executor without a retired thread-pool shutdown lifecycle.
+
+## Links
+
+- [Evaluation execution design](../../Docs/superpowers/specs/2026-07-24-evaluation-execution-contracts-design.md)
+- [Tool worker design](../../Docs/superpowers/specs/2026-07-24-tool-worker-contracts-design.md)
+- [TASK-332: platform resource-limit disclosure](../tasks/task-332%20-%20Eval-runner-resource-limits-robust-on-macOS.md)
