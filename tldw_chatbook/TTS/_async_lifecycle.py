@@ -7,7 +7,9 @@ from collections.abc import Callable
 async def join_retained_task(
     task: asyncio.Future[None],
     *,
-    on_failure_after_cancellation: Callable[[BaseException], None] | None = None,
+    on_failure_after_cancellation: (
+        Callable[[BaseException, BaseException], None] | None
+    ) = None,
 ) -> None:
     """Finish retained cleanup before propagating caller cancellation."""
     cancellation: asyncio.CancelledError | None = None
@@ -36,7 +38,7 @@ async def join_retained_task(
 
     if cancellation is not None:
         if task_error is not None and on_failure_after_cancellation is not None:
-            on_failure_after_cancellation(cancellation)
+            on_failure_after_cancellation(cancellation, task_error)
         raise cancellation
     if task_error is not None:
         raise task_error

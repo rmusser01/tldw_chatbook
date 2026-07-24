@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator, Mapping
 from typing import Any, cast
 
@@ -239,22 +240,26 @@ async def test_adapter_cleanup_cancellation_is_primary_without_caller_cancel() -
 
 
 @pytest.mark.asyncio
-async def test_caller_cancellation_precedes_later_resource_cleanup_failure() -> None:
+async def test_caller_cancellation_precedes_later_resource_cleanup_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     close_started = asyncio.Event()
     allow_close = asyncio.Event()
+    cleanup_error = RuntimeError("resource cleanup failed")
 
     class BlockingFailingCloseAdapter(FakeAdapter):
         async def close(self) -> None:
             self.close_calls += 1
             close_started.set()
             await allow_close.wait()
-            raise RuntimeError("resource cleanup failed")
+            raise cleanup_error
 
     adapter = BlockingFailingCloseAdapter("openai")
     registry = registry_for_adapter(adapter)
     service = TTSService(registry, max_concurrent_operations=1)
     response = await service.synthesize(tts_request())
     await registry.reconfigure_provider("openai", {"revision": 2})
+    caplog.set_level(logging.WARNING, logger="tldw_chatbook.TTS.TTS_Generation")
     close_response = asyncio.create_task(response.aclose())
     await close_started.wait()
 
@@ -270,6 +275,17 @@ async def test_caller_cancellation_precedes_later_resource_cleanup_failure() -> 
     assert error.value.__notes__ == [
         "TTS cleanup also failed while preserving the original error"
     ]
+    cleanup_record = next(
+        record
+        for record in caplog.records
+        if record.getMessage().startswith(
+            "TTS cleanup failed while preserving an earlier error"
+        )
+    )
+    assert cleanup_record.getMessage().endswith("RuntimeError: resource cleanup failed")
+    assert cleanup_record.exc_info is not None
+    assert cleanup_record.exc_info[1] is cleanup_error
+    assert cleanup_record.exc_info[2] is not None
     replacement_response = await asyncio.wait_for(
         service.synthesize(tts_request()),
         timeout=1,

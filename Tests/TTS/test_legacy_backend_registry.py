@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import importlib
+import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-import time
+from types import ModuleType
 
 import pytest
 
+from tldw_chatbook.TTS import TTS_Backends
 from tldw_chatbook.TTS.TTS_Backends import BackendRegistry, TTSBackendManager
 from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
 
@@ -75,3 +78,31 @@ def test_concurrent_manager_construction_loads_builtins_once(
 
 def test_legacy_registry_exposes_no_test_only_reset_hook() -> None:
     assert not hasattr(BackendRegistry, "_reset_for_tests")
+
+
+def test_missing_builtin_class_does_not_abort_remaining_loads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_module = "tldw_chatbook.TTS.backends.openai"
+    original_import_module = importlib.import_module
+    warnings: list[tuple[str, tuple[object, ...]]] = []
+
+    def import_module(module_name: str) -> ModuleType:
+        if module_name == missing_module:
+            return ModuleType(module_name)
+        return original_import_module(module_name)
+
+    monkeypatch.setattr(TTS_Backends.importlib, "import_module", import_module)
+    monkeypatch.setattr(
+        TTS_Backends.logger,
+        "warning",
+        lambda message, *args: warnings.append((message, args)),
+    )
+
+    loaded = set(BackendRegistry.ensure_builtins())
+
+    assert loaded == EXPECTED_LEGACY_IDS - {"openai_official_*"}
+    assert (
+        "Legacy TTS backend is unavailable: {}",
+        ("openai_official_*",),
+    ) in warnings

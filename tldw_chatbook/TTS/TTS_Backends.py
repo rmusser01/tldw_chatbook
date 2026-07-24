@@ -113,7 +113,7 @@ class BackendRegistry:
                 module = importlib.import_module(module_name)
                 backend_class = getattr(module, class_name)
                 cls._register_builtin(backend_id, backend_class)
-            except ImportError:
+            except (ImportError, AttributeError):
                 logger.warning("Legacy TTS backend is unavailable: {}", backend_id)
 
     @classmethod

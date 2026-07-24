@@ -27,9 +27,21 @@ logger = logging.getLogger(__name__)
 _CLEANUP_FAILURE_NOTE = "TTS cleanup also failed while preserving the original error"
 
 
-def _record_cleanup_failure(primary_error: BaseException) -> None:
+def _record_cleanup_failure(
+    primary_error: BaseException,
+    cleanup_error: BaseException,
+) -> None:
     primary_error.add_note(_CLEANUP_FAILURE_NOTE)
-    logger.warning("TTS cleanup failed while preserving an earlier error")
+    logger.warning(
+        "TTS cleanup failed while preserving an earlier error: %s: %s",
+        type(cleanup_error).__name__,
+        cleanup_error,
+        exc_info=(
+            type(cleanup_error),
+            cleanup_error,
+            cleanup_error.__traceback__,
+        ),
+    )
 
 
 async def _join_retained_task(task: asyncio.Task[None]) -> None:
@@ -47,12 +59,12 @@ async def _cleanup_preserving_primary(
     cancellation_requests = waiter.cancelling() if waiter is not None else 0
     try:
         await cleanup()
-    except asyncio.CancelledError:
+    except asyncio.CancelledError as cleanup_error:
         if waiter is not None and waiter.cancelling() > cancellation_requests:
             raise
-        _record_cleanup_failure(primary_error)
-    except BaseException:
-        _record_cleanup_failure(primary_error)
+        _record_cleanup_failure(primary_error, cleanup_error)
+    except BaseException as cleanup_error:
+        _record_cleanup_failure(primary_error, cleanup_error)
 
 
 class _OperationResources:
@@ -197,7 +209,15 @@ class TTSService:
         provider_id: str,
         refresh: bool = False,
     ) -> TTSProviderCatalog:
-        """Return a provider catalog, optionally refreshing its contents."""
+        """Return a provider catalog, optionally refreshing its contents.
+
+        Args:
+            provider_id: Canonical provider identifier.
+            refresh: Whether to refresh the provider catalog.
+
+        Returns:
+            The provider's current catalog.
+        """
         return await self.registry.get_catalog(provider_id, refresh=refresh)
 
     async def reconfigure_provider(
@@ -205,7 +225,15 @@ class TTSService:
         provider_id: str,
         config: Mapping[str, Any],
     ) -> ReconfigureResult:
-        """Apply provider configuration through the registry lifecycle."""
+        """Apply provider configuration through the registry lifecycle.
+
+        Args:
+            provider_id: Canonical provider identifier.
+            config: Replacement provider configuration.
+
+        Returns:
+            The registry's reconfiguration result.
+        """
         return await self.registry.reconfigure_provider(provider_id, config)
 
     async def close(self) -> None:

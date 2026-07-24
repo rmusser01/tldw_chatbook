@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 00:42'
-updated_date: '2026-07-24 13:41'
+updated_date: '2026-07-24 14:10'
 labels:
   - tts
   - architecture
@@ -41,16 +41,19 @@ Replace direct access to the wildcard TTS backend manager with one application-o
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Define provider-neutral adapter contracts and idempotent response cleanup using TDD.
-2. Implement the sealed exact-ID registry, lazy materialization, operation leases, reconfiguration, retirement, and bounded shutdown.
-3. Quarantine the existing class registry and add six provider-scoped legacy adapters with enumerated routing, catalogs, locks, and progress translation.
-4. Move TTSService onto the registry while retaining the compatibility byte generator and explicit application binding.
-5. Bind construction and teardown to TldwCli, route STTS progress through the service, remove direct manager access, and close the OpenAI key-prefix leak.
-6. Run focused and compatibility suites, static/boundary checks, update documentation and task notes, then complete TASK-402.
+1. Add failing regression coverage for the actionable PR review findings: missing legacy backend symbols and cleanup-failure detail preserved under cancellation.
+2. Add failing STTS settings-save coverage proving recognized provider keys reload effective config once, reconfigure only candidate providers, leave defaults alone, and do not materialize unrelated adapters.
+3. Add failing TTSService shutdown coverage proving admission seals, semaphore waiters fail closed, abandoned responses close after the registry drain deadline, and wait_closed leaves no blocked waiter.
+4. Implement the minimal Google-style docstrings, narrow AttributeError handling, and cleanup callback contract needed for the review findings.
+5. Implement targeted provider reconfiguration using the existing legacy config snapshot and bound TTSService.
+6. Implement service-level close signaling and tracked response cleanup around the existing registry shutdown deadline.
+7. Preserve the retained async STTS event-task design; document and resolve the worker-dispatch review finding as a false positive because the hook already dispatches same-loop async work with explicit cleanup ownership.
+8. Run focused and broad tests, static checks, formatting, boundary checks, and diff hygiene; update implementation notes and acceptance criteria only from fresh evidence.
+9. Reply to and resolve every current review thread, address stale summary findings without unrelated code changes, push the branch, wait for required GitHub checks, and merge PR #833.
 
 ADR required: yes
 ADR path: backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md
-Reason: ADR-023 governs the provider boundary, lifecycle, compatibility bridge, and ordered native-adapter migration.
+Reason: ADR-023 already governs the service lifecycle, provider reconfiguration, compatibility bridge, and shutdown behavior; no new ADR is required.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
