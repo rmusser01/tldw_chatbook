@@ -73,6 +73,10 @@ _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS = 120.0
 #: the Phase-5 plan) -- also the worst-case slack added on top of a
 #: configured timeout/cancellation before this method observes it.
 _MCP_APPROVAL_POLL_SECONDS = 1.0
+#: Fallback used when no `skill_install_confirm_timeout_seconds` seam is
+#: injected -- mirrors `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`'s role for
+#: `request_skill_install_confirm`'s own wait loop.
+_DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS = 120.0
 
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
@@ -412,6 +416,16 @@ class ConsoleChatController:
         #: no approval round is in flight.
         self._pending_approval_event: threading.Event | None = None
         self._pending_approval_decisions: dict[str, str] | None = None
+        #: UI-thread callback that pushes/clears the pending skill-install
+        #: confirm payload into the owning screen's task-resume state
+        #: (ChatScreen._set_console_pending_skill_install). Invoked through
+        #: self.app.call_from_thread from request_skill_install_confirm.
+        self.set_pending_skill_install: Callable[[dict | None], None] | None = None
+        #: Optional test override for the confirm timeout.
+        self.skill_install_confirm_timeout_seconds: Callable[[], float] | None = None
+        #: The active confirm round's release Event + shared decision box.
+        self._pending_skill_install_event: threading.Event | None = None
+        self._pending_skill_install_decision: dict[str, bool] | None = None
 
     async def submit_draft(self, draft: str) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution."""
@@ -707,6 +721,7 @@ class ConsoleChatController:
         # send while one is running), so this is unconditional -- a no-op
         # whenever no round is in flight.
         self._deny_pending_approval_on_context_change()
+        self._deny_pending_skill_install_on_context_change()
         return session
 
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
@@ -1084,6 +1099,69 @@ class ConsoleChatController:
         approval_event = self._pending_approval_event
         if approval_event is not None:
             approval_event.set()
+
+    # -- Skill-install confirm bridge (task-5) -------------------------------
+
+    def request_skill_install_confirm(self, url: str) -> bool:
+        """WORKER THREAD: ask the user to confirm a skill install before any fetch.
+
+        Blocks on a fresh threading.Event, surfacing an Allow/Deny card via
+        set_pending_skill_install (marshaled onto the UI thread), then polls
+        re-checking this run's cancel signals and a deadline. Cancel/stop,
+        timeout, context-change, or no wired UI all resolve to DENY
+        (fail-closed). Returns True only on an explicit Allow.
+        """
+        event = threading.Event()
+        decision: dict[str, bool] = {}
+        self._pending_skill_install_event = event
+        self._pending_skill_install_decision = decision
+
+        timeout_seconds = (
+            self.skill_install_confirm_timeout_seconds()
+            if self.skill_install_confirm_timeout_seconds is not None
+            else _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS
+        )
+        deadline = time.monotonic() + timeout_seconds
+        payload = {"url": url, "timeout_seconds": timeout_seconds}
+        try:
+            self._marshal_pending_skill_install(payload)
+            while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+                if self._stop_requested or (
+                    self._active_cancel_event is not None
+                    and self._active_cancel_event.is_set()
+                ):
+                    break
+                if time.monotonic() >= deadline:
+                    break
+            return bool(decision.get("allow", False))
+        finally:
+            self._pending_skill_install_event = None
+            self._pending_skill_install_decision = None
+            try:
+                self._marshal_pending_skill_install(None)
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).debug(
+                    "Failed to clear skill-install confirm during teardown"
+                )
+
+    def _marshal_pending_skill_install(self, payload: dict[str, Any] | None) -> None:
+        if self.app is not None and self.set_pending_skill_install is not None:
+            self.app.call_from_thread(self.set_pending_skill_install, payload)
+
+    def resolve_pending_skill_install(self, allow: bool) -> None:
+        """UI THREAD: apply the user's Allow/Deny, releasing the worker thread."""
+        decision = self._pending_skill_install_decision
+        event = self._pending_skill_install_event
+        if decision is None or event is None:
+            return
+        decision["allow"] = bool(allow)
+        event.set()
+
+    def _deny_pending_skill_install_on_context_change(self) -> None:
+        """Force-deny a pending confirm (Event set, decision left False)."""
+        event = self._pending_skill_install_event
+        if event is not None:
+            event.set()
 
     def stop_active_run(self, *, record_user_stop: bool = True) -> bool:
         """Request the active stream to stop at the next safe boundary.
@@ -3175,6 +3253,7 @@ class ConsoleChatController:
                 review_tool_calls=mcp_review_hook,
                 turn_skill_bindings=skill_bindings,
                 turn_bundle_block=skill_bundle_block,
+                request_skill_install_confirm=self.request_skill_install_confirm,
             )
         except asyncio.CancelledError:
             if self._stop_requested:
