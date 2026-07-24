@@ -43,7 +43,7 @@ pytest --cov=tldw_chatbook  # With coverage
 - `UI/Screens/media_screen.py` / `media_ingest_screen.py` - Media hub + ingestion
 - `UI/Screens/personas_screen.py`, `evals_screen.py`, `library_screen.py`, etc.
 
-Each tab is a `Screen` registered in `UI/Navigation/screen_registry.py`. Note: `Chat_Window_Enhanced.py` and `SearchRAGWindow.py` are embedded `Container` widgets, not Screens. Several legacy standalone screens (Notes, Coding, Skills, Prompts) are retired; their route ids now alias to Library (see `_SCREEN_ALIASES` in `screen_registry.py`).
+Each tab is a `Screen` registered in `UI/Navigation/screen_registry.py`. Note: `Chat_Window_Enhanced.py` and `SearchRAGWindow.py` are embedded `Container` widgets, not Screens. Several legacy standalone screens are retired and their route ids alias to a live screen (see `_SCREEN_ALIASES` in `screen_registry.py`): Notes, Skills, and Prompts alias to Library; Coding aliases to Chat (merged into Console).
 
 **Key Widgets**:
 - `chat_message_enhanced.py` - Rich messages with actions
