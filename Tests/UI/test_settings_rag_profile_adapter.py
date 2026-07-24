@@ -423,57 +423,82 @@ def test_rerank_toggle_off_reaches_the_real_service_enable_reranking_flag(
     assert service.enable_reranking is False
 
 
-def test_validate_full_config_reports_a_real_ragconfig_violation(wired):
-    """`RAGConfig.validate()` has zero callers today; `validate_full_config`
+# --- Task-3 review Finding 1: `validate_full_config` (zero production
+# callers) split into `hard_config_errors` (blocks Save, routes through
+# RAGConfig.validate() for the fields it covers) and `soft_config_warnings`
+# (advisory only). `validate_full_config` itself was retired -- nothing
+# outside this file's own (now-removed) tests ever imported it. ---
+
+
+def test_hard_config_errors_reports_a_real_ragconfig_violation(wired):
+    """`RAGConfig.validate()` had zero callers before this; `hard_config_errors`
     is the first. Pick a violation it genuinely reports (chunk_overlap must
-    be less than chunk_size) and confirm it surfaces."""
+    be less than chunk_size) and confirm it surfaces, in RAGConfig's own
+    wording (not a hand-rolled duplicate message)."""
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        hard_config_errors,
         load_rag_defaults_from_active_profile,
-        validate_full_config,
     )
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
     d = dataclasses.replace(d, chunk_size=100, chunk_overlap=100)
 
-    errors = validate_full_config(d)
+    errors = hard_config_errors(d)
 
-    assert any("chunk_overlap" in e and "chunk_size" in e for e in errors)
+    assert "chunk_overlap must be less than chunk_size" in errors
 
 
-def test_validate_full_config_accepts_a_valid_config(wired):
+def test_hard_config_errors_and_soft_config_warnings_empty_for_a_valid_config(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        hard_config_errors,
         load_rag_defaults_from_active_profile,
-        validate_full_config,
+        soft_config_warnings,
     )
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
 
-    errors = validate_full_config(d)
+    assert hard_config_errors(d) == []
+    assert soft_config_warnings(d) == []
 
-    assert errors == []
 
-
-def test_validate_full_config_flags_reranker_top_k_below_one(wired):
+def test_hard_config_errors_flags_reranker_top_k_below_one_when_enabled(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        hard_config_errors,
         load_rag_defaults_from_active_profile,
-        validate_full_config,
     )
     mgr, state = wired
     _user_profile(mgr, state)
     d = load_rag_defaults_from_active_profile()
     d = dataclasses.replace(d, enable_reranking=True, reranker_top_k=0)
 
-    errors = validate_full_config(d)
+    errors = hard_config_errors(d)
 
     assert any("top-k" in e.lower() for e in errors)
 
 
-def test_validate_full_config_warns_when_reranker_top_k_exceeds_default_top_k(wired):
+def test_hard_config_errors_ignores_reranker_top_k_when_reranking_disabled(wired):
+    """Behavior change from the old `validate_full_config`: it used to flag
+    reranker_top_k < 1 unconditionally, even with reranking off. Gated on
+    `enable_reranking` now -- an untouched/irrelevant top-k must never block
+    Save while reranking itself is off."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        hard_config_errors,
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    _user_profile(mgr, state)
+    d = load_rag_defaults_from_active_profile()
+    d = dataclasses.replace(d, enable_reranking=False, reranker_top_k=0)
+
+    assert hard_config_errors(d) == []
+
+
+def test_soft_config_warnings_flags_reranker_top_k_exceeding_default_top_k(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
-        validate_full_config,
+        soft_config_warnings,
     )
     mgr, state = wired
     _user_profile(mgr, state)
@@ -482,18 +507,35 @@ def test_validate_full_config_warns_when_reranker_top_k_exceeds_default_top_k(wi
         d, enable_reranking=True, default_top_k=5, reranker_top_k=50
     )
 
-    errors = validate_full_config(d)
+    warnings = soft_config_warnings(d)
 
-    assert any("top-k" in e.lower() and "exceed" in e.lower() for e in errors)
+    assert any("top-k" in w.lower() and "exceed" in w.lower() for w in warnings)
 
 
-def test_validate_full_config_never_mutates_the_cached_active_profile(wired):
-    """`validate_full_config` must scratch-copy the active profile -- never
+def test_soft_config_warnings_empty_when_reranking_disabled(wired):
+    """The advisory is reranking-specific; it must never fire while
+    reranking itself is off, however default_top_k/reranker_top_k compare."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile,
+        soft_config_warnings,
+    )
+    mgr, state = wired
+    _user_profile(mgr, state)
+    d = load_rag_defaults_from_active_profile()
+    d = dataclasses.replace(
+        d, enable_reranking=False, default_top_k=5, reranker_top_k=50
+    )
+
+    assert soft_config_warnings(d) == []
+
+
+def test_hard_config_errors_never_mutates_the_cached_active_profile(wired):
+    """`hard_config_errors` must scratch-copy the active profile -- never
     mutate the live cached object the manager hands back to every other
     caller."""
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        hard_config_errors,
         load_rag_defaults_from_active_profile,
-        validate_full_config,
     )
     mgr, state = wired
     p = _user_profile(mgr, state)
@@ -505,7 +547,187 @@ def test_validate_full_config_never_mutates_the_cached_active_profile(wired):
         d, chunk_size=original_chunk_size + 1, enable_reranking=True
     )
 
-    validate_full_config(d)
+    hard_config_errors(d)
 
     assert mgr.get_profile(p.id).rag_config.chunking.chunk_size == original_chunk_size
     assert mgr.get_profile(p.id).reranking_config is None
+
+
+def test_hard_config_errors_filters_out_unexposed_field_violations(wired):
+    """vector_store.type isn't editable in the Library/RAG category -- a
+    violation the ACTIVE PROFILE already carries on that field must not leak
+    into hard_config_errors' output and gate Save, even though
+    RAGConfig.validate() itself does report it."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        hard_config_errors,
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    p = _user_profile(mgr, state)
+    p.rag_config.vector_store.type = "not-a-real-store"
+    mgr.save_profile(p)
+
+    d = load_rag_defaults_from_active_profile()
+    # Sanity: RAGConfig.validate() itself DOES flag this on the scratch copy.
+    import copy as _copy
+    scratch = _copy.deepcopy(p)
+    assert any("vector store type" in e.lower() for e in scratch.rag_config.validate())
+
+    errors = hard_config_errors(d)
+
+    assert not any("vector store type" in e.lower() for e in errors)
+
+
+def test_hard_config_errors_tolerates_float_like_numeric_strings(wired):
+    """A still-stringly-typed, float-like value (e.g. from a loose TOML load
+    or a test-constructed dataclass) must validate tolerantly, matching
+    validate_library_rag_defaults's own _strict_int/_strict_float
+    convention -- plain int("12.0") would otherwise raise and crash this
+    function instead of validating."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        hard_config_errors,
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    _user_profile(mgr, state)
+    d = load_rag_defaults_from_active_profile()
+    d = dataclasses.replace(d, chunk_size="400.0", embedding_batch_size="16.0")
+
+    assert hard_config_errors(d) == []
+
+
+def test_hard_config_errors_reports_instead_of_crashing_on_unparseable_numeric_value(
+    wired,
+):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        hard_config_errors,
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    _user_profile(mgr, state)
+    d = load_rag_defaults_from_active_profile()
+    d = dataclasses.replace(d, chunk_size="not-a-number")
+
+    errors = hard_config_errors(d)
+
+    assert errors  # must report something, not raise
+
+
+# --- Task-3 review Finding 1(b): validate_library_rag_defaults now routes
+# the rules it shares with RAGConfig.validate() through hard_config_errors
+# instead of re-implementing them. ---
+
+
+def test_validate_library_rag_defaults_blocks_save_with_ragconfigs_own_wording(wired):
+    from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
+        validate_library_rag_defaults,
+    )
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    _user_profile(mgr, state)
+    d = load_rag_defaults_from_active_profile()
+    d = dataclasses.replace(d, chunk_size=100, chunk_overlap=100)
+
+    result = validate_library_rag_defaults(d)
+
+    assert result.valid is False
+    # RAGConfig.validate()'s actual wording, not a hand-rolled duplicate.
+    assert result.message == "chunk_overlap must be less than chunk_size"
+
+
+def test_validate_library_rag_defaults_does_not_gate_on_an_unexposed_field_violation(
+    wired,
+):
+    from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
+        validate_library_rag_defaults,
+    )
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    p = _user_profile(mgr, state)
+    p.rag_config.vector_store.type = "not-a-real-store"
+    mgr.save_profile(p)
+
+    d = load_rag_defaults_from_active_profile()
+
+    result = validate_library_rag_defaults(d)
+
+    assert result.valid is True
+
+
+# --- Task-3 review Finding 2: reranker_top_k's default was seeded from the
+# functionally-dead SearchConfig.reranker_top_k (5) instead of
+# RerankingConfig().top_k_to_rerank (20, what the reranker actually uses). ---
+
+
+def test_reranker_top_k_dataclass_default_matches_rerankingconfig_default():
+    from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
+        SettingsLibraryRagDefaults,
+    )
+
+    assert SettingsLibraryRagDefaults().reranker_top_k == RerankingConfig().top_k_to_rerank
+
+
+def test_load_defaults_reranker_top_k_falls_back_to_rerankingconfig_default(wired):
+    """When the active profile has no reranking_config yet, the load path
+    must fall back to RerankingConfig().top_k_to_rerank (20) -- NOT
+    SearchConfig.reranker_top_k (5, unchanged from its own dataclass default
+    on this fresh clone), a field the RAG engine never reads for reranking."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    p = _user_profile(mgr, state)
+    assert p.reranking_config is None
+    assert p.rag_config.search.reranker_top_k == 5  # the dead field, untouched
+
+    d = load_rag_defaults_from_active_profile()
+
+    assert d.reranker_top_k == RerankingConfig().top_k_to_rerank == 20
+
+
+def test_enabling_rerank_without_touching_top_k_persists_the_rerankingconfig_default(
+    wired,
+):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile,
+        save_rag_defaults_to_active_profile,
+    )
+    mgr, state = wired
+    p = _user_profile(mgr, state)
+
+    d = load_rag_defaults_from_active_profile()
+    d = dataclasses.replace(d, enable_reranking=True)
+    ok, reason = save_rag_defaults_to_active_profile(d)
+    assert ok and reason == ""
+
+    mgr2 = ConfigProfileManager(profiles_dir=mgr.profiles_dir)
+    reloaded = mgr2.get_profile(p.id)
+    assert reloaded.reranking_config.top_k_to_rerank == 20
+
+
+# --- Task-3 review Finding 4: a blank embedding_device must leave the
+# profile's existing device alone (matching the pre-existing reranker_model
+# blank-guard), not stomp it with an empty string. ---
+
+
+def test_apply_defaults_with_blank_embedding_device_leaves_profile_device_unchanged(
+    wired,
+):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        apply_defaults_to_profile,
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    p = _user_profile(mgr, state)
+    p.rag_config.embedding.device = "cuda"
+
+    d = load_rag_defaults_from_active_profile()
+    d = dataclasses.replace(d, embedding_device="")
+
+    apply_defaults_to_profile(p, d)
+
+    assert p.rag_config.embedding.device == "cuda"

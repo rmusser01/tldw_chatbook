@@ -139,6 +139,7 @@ from .settings_rag_profile_adapter import (
     load_rag_defaults_from_active_profile,
     rename_user_profile,
     save_rag_defaults_to_active_profile,
+    soft_config_warnings,
 )
 from .settings_privacy_security import (
     SettingsPrivacyPosture,
@@ -2221,6 +2222,13 @@ class SettingsScreen(BaseAppScreen):
     def _library_rag_validation_result(self):
         return validate_library_rag_defaults(self._library_rag_current_defaults())
 
+    def _library_rag_soft_warnings(self) -> list[str]:
+        """Advisory-only warnings (e.g. reranker top-k vs default results)
+        for the current draft/loaded values. NEVER gates Save -- see
+        _library_rag_save_enabled, which only consults
+        _library_rag_validation_result (hard errors)."""
+        return soft_config_warnings(self._library_rag_current_defaults())
+
     def _library_rag_save_enabled(self) -> bool:
         if not self._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG):
             return False
@@ -2827,6 +2835,7 @@ class SettingsScreen(BaseAppScreen):
         )
         self._update_library_rag_preview()
         self._update_library_rag_validation_classes()
+        self._update_library_rag_soft_warning()
         self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
 
     def _sync_library_rag_widgets(self) -> None:
@@ -2896,6 +2905,7 @@ class SettingsScreen(BaseAppScreen):
         )
         self._update_library_rag_preview()
         self._update_library_rag_validation_classes()
+        self._update_library_rag_soft_warning()
 
     def _library_rag_invalid_field_key(self) -> str | None:
         validation = self._library_rag_validation_result()
@@ -2992,6 +3002,19 @@ class SettingsScreen(BaseAppScreen):
             except QueryError:
                 continue
             widget.set_class(key == invalid_key, "settings-invalid-input")
+
+    def _update_library_rag_soft_warning(self) -> None:
+        """Refresh the Reranking advisory Static (never gates Save --
+        see _library_rag_soft_warnings)."""
+        warnings = self._library_rag_soft_warnings()
+        try:
+            warning_widget = self.query_one(
+                "#settings-library-rag-reranker-warning", Static
+            )
+        except QueryError:
+            return
+        warning_widget.update(" / ".join(warnings))
+        warning_widget.display = bool(warnings)
 
     def _stage_storage_value(self, key: str, value: object) -> None:
         category = SettingsCategoryId.STORAGE
@@ -7964,6 +7987,14 @@ class SettingsScreen(BaseAppScreen):
                         restrict=r"^[0-9]*$",
                         disabled=field_disabled,
                     )
+                soft_warnings = self._library_rag_soft_warnings()
+                reranker_warning = Static(
+                    " / ".join(soft_warnings),
+                    id="settings-library-rag-reranker-warning",
+                    classes="settings-status-row settings-library-rag-soft-warning",
+                )
+                reranker_warning.display = bool(soft_warnings)
+                yield reranker_warning
             yield Static("Preview defaults", classes="destination-section")
             preview_summary, preview_retrieval, preview_context = (
                 self._library_rag_preview_rows()

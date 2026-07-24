@@ -60,7 +60,14 @@ class SettingsLibraryRagDefaults:
     # blank `reranker_model` means "use the reranker's own default".
     enable_reranking: bool = False
     reranker_model: str = ""
-    reranker_top_k: int = 5
+    # 20 == RerankingConfig().top_k_to_rerank (RAG_Search/reranker.py) --
+    # NOT SearchConfig.reranker_top_k (5), a functionally-dead field the RAG
+    # engine never reads for reranking (rag_factory.py decides reranking
+    # purely from `profile.reranking_config is not None`). Hardcoded rather
+    # than imported to avoid pulling reranker.py's heavier import chain
+    # (Chat_Functions, Internal_Prompts) into this otherwise-light module;
+    # kept honest by test_reranker_top_k_default_matches_reranking_config.
+    reranker_top_k: int = 20
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -333,37 +340,29 @@ def validate_library_rag_defaults(
         return SettingsValidationResult(
             False, "Embedding model must not be empty."
         )
-    embedding_batch_size = _strict_int(values.embedding_batch_size)
-    if embedding_batch_size is None or embedding_batch_size <= 0:
-        return SettingsValidationResult(
-            False, "Embedding batch size must be positive."
-        )
     embedding_max_length = _strict_int(values.embedding_max_length)
     if embedding_max_length is None or embedding_max_length <= 0:
         return SettingsValidationResult(
             False, "Embedding max length must be positive."
         )
-    chunk_size = _strict_int(values.chunk_size)
-    if chunk_size is None or chunk_size <= 0:
-        return SettingsValidationResult(False, "Chunk size must be positive.")
-    chunk_overlap = _strict_int(values.chunk_overlap)
-    if chunk_overlap is None or chunk_overlap < 0 or chunk_overlap >= chunk_size:
-        return SettingsValidationResult(
-            False, "Chunk overlap must be at least 0 and less than chunk size."
-        )
     if values.chunking_method not in CHUNKING_METHODS:
         return SettingsValidationResult(
             False, "Chunking method must be words, sentences, or paragraphs."
         )
-    if values.distance_metric not in DISTANCE_METRICS:
-        return SettingsValidationResult(
-            False, "Distance metric must be cosine, l2, or ip."
-        )
-    reranker_top_k = _strict_int(values.reranker_top_k)
-    if reranker_top_k is None or reranker_top_k < 1:
-        return SettingsValidationResult(
-            False, "Reranker top-k must be at least 1."
-        )
+    # chunk_size, chunk_overlap, distance_metric, and embedding_batch_size are
+    # all already validated by RAGConfig.validate() -- routing through the
+    # adapter's hard_config_errors() (rather than re-implementing the same
+    # rules here) keeps this function from drifting out of sync with it.
+    # Reranker top-k >= 1 (when reranking is enabled) is also folded in
+    # there, since RAGConfig itself has no concept of reranking. Imported
+    # locally: settings_rag_profile_adapter imports SettingsLibraryRagDefaults
+    # from this module at its own top level, so a module-level import here
+    # would be circular.
+    from .settings_rag_profile_adapter import hard_config_errors
+
+    errors = hard_config_errors(values)
+    if errors:
+        return SettingsValidationResult(False, errors[0])
     return SettingsValidationResult(True, "Library/RAG defaults are valid.")
 
 

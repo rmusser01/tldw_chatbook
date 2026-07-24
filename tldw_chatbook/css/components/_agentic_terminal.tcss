@@ -3846,6 +3846,14 @@ Button.settings-category-button.settings-secondary-search-match {
     text-style: bold;
 }
 
+/* RAG profile editor (task-3 review): reranker top-k vs default-results
+   advisory -- same attention-worthy treatment as the readonly banner above.
+   Purely informational (never gates Save; see soft_config_warnings). */
+.settings-library-rag-soft-warning {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
 RagProfileNameModal,
 RagProfileSwitchConfirmModal {
     align: center middle;
