@@ -155,12 +155,19 @@ class TestConfluenceAuth:
         headers = auth.get_auth_headers()
         assert headers["Authorization"] == "Bearer oauth-token"
 
-    @patch.object(requests.Session, "request")
-    def test_make_request(self, mock_request):
-        """Test making authenticated request"""
+    @patch(
+        "tldw_chatbook.Web_Scraping.Confluence.confluence_auth.guarded_fetch_requests"
+    )
+    def test_make_request(self, mock_guarded_fetch):
+        """Test making authenticated request
+
+        A plain GET with only headers/timeout kwargs routes through the
+        egress-guarded fetch helper (SSRF protection), not
+        ``requests.Session.request`` directly.
+        """
         mock_response = Mock()
         mock_response.status_code = 200
-        mock_request.return_value = mock_response
+        mock_guarded_fetch.return_value = mock_response
 
         auth = ConfluenceAuth("https://example.atlassian.net/wiki")
         auth.configure_api_token("user@example.com", "token")
@@ -168,12 +175,14 @@ class TestConfluenceAuth:
         response = auth.make_request("GET", "/rest/api/content/12345")
 
         assert response == mock_response
-        mock_request.assert_called_once()
-        call_args = mock_request.call_args
-        assert call_args[0][0] == "GET"
+        mock_guarded_fetch.assert_called_once()
+        call_args = mock_guarded_fetch.call_args
         assert (
-            call_args[0][1]
+            call_args[0][0]
             == "https://example.atlassian.net/wiki/rest/api/content/12345"
+        )
+        assert call_args.kwargs["trusted_origins"] == frozenset(
+            {"example.atlassian.net"}
         )
 
     def test_create_confluence_auth_api_token(self):

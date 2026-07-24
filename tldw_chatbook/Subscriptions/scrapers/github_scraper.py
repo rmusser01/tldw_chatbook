@@ -31,6 +31,7 @@ except ImportError:
 # Local Imports
 from ..web_scraping_pipelines import BaseScrapingPipeline, ScrapedItem, ScrapingConfig
 from ...Metrics.metrics_logger import log_counter
+from ...Utils.egress import MAX_FETCH_BYTES_PAGE, guarded_fetch_httpx_async
 #
 ########################################################################################################################
 #
@@ -142,8 +143,12 @@ class GitHubScrapingPipeline(BaseScrapingPipeline):
             headers = self.get_headers()
             headers["Accept"] = "application/atom+xml, application/xml"
 
-            response = await client.get(
-                feed_url, headers=headers, follow_redirects=True
+            response = await guarded_fetch_httpx_async(
+                feed_url,
+                client=client,
+                max_bytes=MAX_FETCH_BYTES_PAGE,
+                trusted_origins=frozenset(),
+                headers=headers,
             )
             response.raise_for_status()
 
@@ -189,7 +194,14 @@ class GitHubScrapingPipeline(BaseScrapingPipeline):
             if self.github_token:
                 headers["Authorization"] = f"token {self.github_token}"
 
-            response = await client.get(api_url, params=params, headers=headers)
+            response = await guarded_fetch_httpx_async(
+                api_url,
+                client=client,
+                max_bytes=MAX_FETCH_BYTES_PAGE,
+                trusted_origins=frozenset(),
+                headers=headers,
+                params=params,
+            )
             response.raise_for_status()
 
             log_counter(

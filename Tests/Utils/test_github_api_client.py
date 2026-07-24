@@ -10,6 +10,7 @@ import base64
 import httpx
 
 from tldw_chatbook.Utils.github_api_client import GitHubAPIClient, GitHubAPIError
+from tldw_chatbook.Utils.egress import MAX_FETCH_BYTES_GITHUB_FILE
 
 
 class TestGitHubAPIClient:
@@ -209,7 +210,9 @@ class TestGitHubAPIClient:
         assert branches == ["main", "master"]
 
     @pytest.mark.asyncio
-    async def test_get_repository_tree_success(self, api_client, mock_http_client):
+    async def test_get_repository_tree_success(
+        self, api_client, mock_http_client, monkeypatch
+    ):
         """Test successful repository tree retrieval."""
         # Mock branch response
         branch_response = MagicMock()
@@ -229,8 +232,12 @@ class TestGitHubAPIClient:
         }
         tree_response.raise_for_status = MagicMock()
 
-        # Set up mock to return different responses
-        mock_http_client.get.side_effect = [branch_response, tree_response]
+        # get_repository_tree now streams through the egress-guarded fetch
+        # helper (real byte cap) instead of calling self.client.get directly.
+        mock_fetch = AsyncMock(side_effect=[branch_response, tree_response])
+        monkeypatch.setattr(
+            "tldw_chatbook.Utils.egress.guarded_fetch_httpx_async", mock_fetch
+        )
         api_client._client = mock_http_client
 
         # Get tree
@@ -248,9 +255,11 @@ class TestGitHubAPIClient:
         assert items[2]["name"] == "main.py"
 
         # Check API calls
-        assert mock_http_client.get.call_count == 2
-        calls = mock_http_client.get.call_args_list
+        assert mock_fetch.call_count == 2
+        calls = mock_fetch.call_args_list
         assert calls[0][0][0] == "https://api.github.com/repos/owner/repo/branches/main"
+        assert calls[0].kwargs["client"] is mock_http_client
+        assert calls[0].kwargs["max_bytes"] == MAX_FETCH_BYTES_GITHUB_FILE
         assert (
             calls[1][0][0]
             == "https://api.github.com/repos/owner/repo/git/trees/abc123?recursive=1"
@@ -258,7 +267,7 @@ class TestGitHubAPIClient:
 
     @pytest.mark.asyncio
     async def test_get_repository_tree_main_fallback_to_master(
-        self, api_client, mock_http_client
+        self, api_client, mock_http_client, monkeypatch
     ):
         """Test fallback from main to master branch."""
         # Mock 404 for main branch
@@ -277,24 +286,27 @@ class TestGitHubAPIClient:
         tree_response.json.return_value = {"tree": []}
         tree_response.raise_for_status = MagicMock()
 
-        mock_http_client.get.side_effect = [
-            main_response,
-            master_response,
-            tree_response,
-        ]
+        mock_fetch = AsyncMock(
+            side_effect=[main_response, master_response, tree_response]
+        )
+        monkeypatch.setattr(
+            "tldw_chatbook.Utils.egress.guarded_fetch_httpx_async", mock_fetch
+        )
         api_client._client = mock_http_client
 
         # Should succeed with master branch
         await api_client.get_repository_tree("owner", "repo", "main")
 
         # Verify fallback happened
-        assert mock_http_client.get.call_count == 3
-        calls = mock_http_client.get.call_args_list
+        assert mock_fetch.call_count == 3
+        calls = mock_fetch.call_args_list
         assert "branches/main" in calls[0][0][0]
         assert "branches/master" in calls[1][0][0]
 
     @pytest.mark.asyncio
-    async def test_get_file_content_success(self, api_client, mock_http_client):
+    async def test_get_file_content_success(
+        self, api_client, mock_http_client, monkeypatch
+    ):
         """Test successful file content retrieval."""
         # Create base64 encoded content
         content = "Hello, World!"
@@ -305,8 +317,13 @@ class TestGitHubAPIClient:
         mock_response.status_code = 200
         mock_response.json.return_value = {"type": "file", "content": encoded_content}
         mock_response.raise_for_status = MagicMock()
-        mock_http_client.get.return_value = mock_response
 
+        # get_file_content now streams through the egress-guarded fetch
+        # helper (real byte cap) instead of calling self.client.get directly.
+        mock_fetch = AsyncMock(return_value=mock_response)
+        monkeypatch.setattr(
+            "tldw_chatbook.Utils.egress.guarded_fetch_httpx_async", mock_fetch
+        )
         api_client._client = mock_http_client
 
         # Get file content
@@ -314,21 +331,28 @@ class TestGitHubAPIClient:
 
         # Verify
         assert result == content
-        mock_http_client.get.assert_called_once_with(
+        mock_fetch.assert_called_once_with(
             "https://api.github.com/repos/owner/repo/contents/test.txt",
+            client=mock_http_client,
+            max_bytes=MAX_FETCH_BYTES_GITHUB_FILE,
             params={"ref": "main"},
         )
 
     @pytest.mark.asyncio
-    async def test_get_file_content_not_file(self, api_client, mock_http_client):
+    async def test_get_file_content_not_file(
+        self, api_client, mock_http_client, monkeypatch
+    ):
         """Test error when path is not a file."""
         # Mock response for directory
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"type": "dir"}
         mock_response.raise_for_status = MagicMock()
-        mock_http_client.get.return_value = mock_response
 
+        mock_fetch = AsyncMock(return_value=mock_response)
+        monkeypatch.setattr(
+            "tldw_chatbook.Utils.egress.guarded_fetch_httpx_async", mock_fetch
+        )
         api_client._client = mock_http_client
 
         # Should raise error

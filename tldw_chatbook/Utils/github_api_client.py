@@ -315,11 +315,17 @@ class GitHubAPIClient:
         if cached_tree is not None:
             return cached_tree
 
+        from ..Utils.egress import MAX_FETCH_BYTES_GITHUB_FILE, guarded_fetch_httpx_async
+
         # First try to get the branch SHA
         branch_url = f"{self.base_url}/repos/{owner}/{repo}/branches/{branch}"
 
         try:
-            response = await self.client.get(branch_url)
+            response = await guarded_fetch_httpx_async(
+                branch_url,
+                client=self.client,
+                max_bytes=MAX_FETCH_BYTES_GITHUB_FILE,
+            )
             if response.status_code == 404:
                 # Try 'master' if 'main' doesn't exist
                 if branch == "main":
@@ -338,7 +344,11 @@ class GitHubAPIClient:
             if recursive:
                 tree_url += "?recursive=1"
 
-            response = await self.client.get(tree_url)
+            response = await guarded_fetch_httpx_async(
+                tree_url,
+                client=self.client,
+                max_bytes=MAX_FETCH_BYTES_GITHUB_FILE,
+            )
             response.raise_for_status()
             tree_data = response.json()
 
@@ -385,11 +395,18 @@ class GitHubAPIClient:
         Returns:
             File content as string
         """
+        from ..Utils.egress import MAX_FETCH_BYTES_GITHUB_FILE, guarded_fetch_httpx_async
+
         url = f"{self.base_url}/repos/{owner}/{repo}/contents/{path}"
         params = {"ref": branch}
 
         try:
-            response = await self.client.get(url, params=params)
+            response = await guarded_fetch_httpx_async(
+                url,
+                client=self.client,
+                max_bytes=MAX_FETCH_BYTES_GITHUB_FILE,
+                params=params,
+            )
             response.raise_for_status()
 
             data = response.json()
@@ -446,13 +463,19 @@ class GitHubAPIClient:
         if branch:
             url += f"?ref={branch}"
 
+        from ..Utils.egress import MAX_FETCH_BYTES_GITHUB_FILE, guarded_fetch_httpx_async
+
         # Check cache
         cached_data = self._get_from_cache(url)
         if cached_data is not None:
             return cached_data
 
         try:
-            response = await self.client.get(url)
+            response = await guarded_fetch_httpx_async(
+                url,
+                client=self.client,
+                max_bytes=MAX_FETCH_BYTES_GITHUB_FILE,
+            )
             response.raise_for_status()
 
             contents = response.json()

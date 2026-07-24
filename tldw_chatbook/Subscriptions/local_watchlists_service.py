@@ -10,6 +10,12 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from ..DB.Subscriptions_DB import SubscriptionsDB
+from ..Utils.egress import (
+    MAX_FETCH_BYTES_PAGE,
+    MAX_FETCH_BYTES_SITEMAP,
+    guarded_fetch_httpx_async,
+    origin_set,
+)
 from .watchlist_content_alert_service import WatchlistContentAlertService
 from .watchlist_filter_service import WatchlistFilterService
 from .watchlist_normalizers import (
@@ -719,8 +725,13 @@ class LocalWatchlistsService:
         if not source:
             return []
 
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            response = await client.get(source)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await guarded_fetch_httpx_async(
+                source,
+                client=client,
+                max_bytes=MAX_FETCH_BYTES_SITEMAP,
+                trusted_origins=origin_set(source),
+            )
             response.raise_for_status()
 
         root = ET.fromstring(response.text)
@@ -781,13 +792,18 @@ class LocalWatchlistsService:
         request_options = (
             extraction_rules if isinstance(extraction_rules, Mapping) else {}
         )
-        request_kwargs: dict[str, Any] = {"headers": headers}
         params = request_options.get("params") or request_options.get("query")
-        if isinstance(params, Mapping) and params:
-            request_kwargs["params"] = dict(params)
+        request_params = dict(params) if isinstance(params, Mapping) and params else None
 
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            response = await client.get(source, **request_kwargs)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await guarded_fetch_httpx_async(
+                source,
+                client=client,
+                max_bytes=MAX_FETCH_BYTES_PAGE,
+                trusted_origins=origin_set(source),
+                headers=headers,
+                params=request_params,
+            )
             response.raise_for_status()
 
         payload = response.json()
