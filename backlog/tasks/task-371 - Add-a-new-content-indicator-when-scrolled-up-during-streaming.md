@@ -1,8 +1,9 @@
 ---
 id: TASK-371
 title: Add a new-content indicator when scrolled up during streaming
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,5 +24,24 @@ PageUp mid-stream did scroll the view up and the position was respected (no yank
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 While detached from the bottom during streaming, show a persistent indicator ('▼ streaming below / jump to latest') that also reflects completion or interruption
+- [x] #1 While detached from the bottom during streaming, show a persistent indicator ('▼ streaming below / jump to latest') that also reflects completion or interruption
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+New docked jump-to-latest pill in the transcript. `ConsoleTranscriptJumpPill`
+(Static) is composed docked bottom (non-scrolling) and hidden by default. New
+`ConsoleTranscript.sync_jump_indicator(run_status)` shows it ONLY while the reader
+is detached from the tail (`is_anchored and not _anchor_released` is False) AND a
+run is relevant: streaming/validating/retrying -> "▼ streaming below — jump to
+latest", stopped/failed -> "▼ stopped — jump to latest", completed -> "▼ reply
+ready — jump to latest"; idle/blocked or following-the-tail -> hidden. The screen
+calls it each 0.2s transcript sync tick (`_current_console_run_status_value()`),
+and `release_anchor` refreshes it immediately on scroll-detach. Clicking the pill
+(`jump_to_latest`) re-anchors, `scroll_end`s, and hides it. Builds on the task-298
+no-yank follow contract (the pill is the missing signal, not a behavior change).
+4 unit tests (all pill states + jump) + LIVE served-app verification: during a
+real llama stream, PageUp surfaced "▼ streaming below — jump to latest" docked at
+the transcript bottom.
+<!-- SECTION:NOTES:END -->

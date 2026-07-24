@@ -10555,6 +10555,9 @@ class ChatScreen(BaseAppScreen):
         messages = self._native_console_messages()
         if transcript is not None:
             transcript.set_messages(messages)
+            # TASK-371: reflect run state in the jump-to-latest pill when the
+            # reader is scrolled up during / just after a streaming reply.
+            transcript.sync_jump_indicator(self._current_console_run_status_value())
             image_specs = self._build_console_image_specs(messages)
             transcript.set_image_specs(image_specs)
             _state, cache = self._ensure_console_image_view()
