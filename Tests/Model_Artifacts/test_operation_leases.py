@@ -137,3 +137,75 @@ def test_partial_set_failure_releases_already_acquired_keys(tmp_path: Path) -> N
 def test_empty_lease_set_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="at least one"):
         ArtifactOperationLeaseSet(tmp_path, [], LeaseMode.SHARED)
+
+
+def test_lease_set_release_unwinds_all_keys_and_raises_first_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lease_set = ArtifactOperationLeaseSet(
+        tmp_path,
+        [
+            ArtifactLeaseKey("a", "rev", "int8"),
+            ArtifactLeaseKey("b", "rev", "int8"),
+            ArtifactLeaseKey("c", "rev", "int8"),
+        ],
+        LeaseMode.SHARED,
+    ).acquire()
+    release_order: list[str] = []
+    first_error = RuntimeError("release failed for c")
+    second_error = RuntimeError("release failed for b")
+    release_errors = {"c": first_error, "b": second_error}
+    original_release = ArtifactOperationLease.release
+
+    def release_with_failures(lease: ArtifactOperationLease) -> None:
+        release_order.append(lease.key.artifact_id)
+        original_release(lease)
+        if error := release_errors.get(lease.key.artifact_id):
+            raise error
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(ArtifactOperationLease, "release", release_with_failures)
+            with pytest.raises(RuntimeError) as exc_info:
+                lease_set.release()
+
+        assert exc_info.value is first_error
+        assert release_order == ["c", "b", "a"]
+        assert lease_set.acquired is False
+    finally:
+        lease_set.release()
+
+
+def test_acquire_preserves_timeout_when_rollback_release_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = ArtifactLeaseKey("a-root", "rev", "int8")
+    blocked = ArtifactLeaseKey("z-vad", "rev", "fp32")
+    cleanup_error = RuntimeError("cleanup failed for a-root")
+    original_release = ArtifactOperationLease.release
+
+    def release_with_failure(lease: ArtifactOperationLease) -> None:
+        original_release(lease)
+        if lease.key == first:
+            raise cleanup_error
+
+    lease_set = ArtifactOperationLeaseSet(
+        tmp_path,
+        [blocked, first],
+        LeaseMode.SHARED,
+        timeout_seconds=0.05,
+        check_interval_seconds=0.005,
+    )
+    with ArtifactOperationLease(tmp_path, blocked, LeaseMode.EXCLUSIVE):
+        with monkeypatch.context() as patch:
+            patch.setattr(ArtifactOperationLease, "release", release_with_failure)
+            with pytest.raises(ArtifactLeaseTimeoutError) as exc_info:
+                lease_set.acquire()
+
+    assert lease_set.acquired is False
+    assert any(
+        str(cleanup_error) in note
+        for note in getattr(exc_info.value, "__notes__", ())
+    )

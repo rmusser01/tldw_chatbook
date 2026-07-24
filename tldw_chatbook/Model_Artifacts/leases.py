@@ -210,16 +210,34 @@ class ArtifactOperationLeaseSet:
                 )
                 lease.acquire()
                 self._leases.append(lease)
-        except BaseException:
-            self.release()
+        except BaseException as acquisition_error:
+            try:
+                self.release()
+            except BaseException as cleanup_error:
+                acquisition_error.add_note(
+                    f"lease rollback cleanup failed: {cleanup_error!r}"
+                )
+                for note in getattr(cleanup_error, "__notes__", ()):
+                    acquisition_error.add_note(note)
             raise
         return self
 
     def release(self) -> None:
         """Release all acquired keys in reverse order."""
 
+        first_error: BaseException | None = None
         while self._leases:
-            self._leases.pop().release()
+            try:
+                self._leases.pop().release()
+            except BaseException as error:
+                if first_error is None:
+                    first_error = error
+                else:
+                    first_error.add_note(
+                        f"additional lease release failure: {error!r}"
+                    )
+        if first_error is not None:
+            raise first_error
 
     def __enter__(self) -> ArtifactOperationLeaseSet:
         return self.acquire()
