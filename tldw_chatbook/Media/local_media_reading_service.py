@@ -3893,23 +3893,37 @@ class LocalMediaReadingService:
         import tempfile
         from urllib.parse import urlparse
 
-        import requests
+        from tldw_chatbook.Utils.egress import (
+            MAX_FETCH_BYTES_MEDIA,
+            guarded_fetch_requests,
+            origin_set,
+        )
 
         opts = dict(options or {})
         timeout = float(opts.get("timeout") or 30)
-        response = requests.get(url, stream=True, timeout=timeout)
-        response.raise_for_status()
-        suffix = cls._download_suffix_for_url(
-            url,
-            media_type=media_type,
-            content_type=response.headers.get("content-type"),
-        )
-        fd, path = tempfile.mkstemp(prefix="tldw_url_ingest_", suffix=suffix)
+        trusted = origin_set(url)
+        # HEAD-less probe: we need headers before choosing the suffix, so fetch
+        # into a temp file via the guarded helper's sink mode (real streamed cap).
+        fd, path = tempfile.mkstemp(prefix="tldw_url_ingest_", suffix=".part")
         try:
             with os.fdopen(fd, "wb") as handle:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        handle.write(chunk)
+                response = guarded_fetch_requests(
+                    url,
+                    max_bytes=MAX_FETCH_BYTES_MEDIA,
+                    trusted_origins=trusted,
+                    timeout=timeout,
+                    sink=handle,
+                )
+            response.raise_for_status()
+            suffix = cls._download_suffix_for_url(
+                url,
+                media_type=media_type,
+                content_type=response.headers.get("content-type"),
+            )
+            final_path = path[: -len(".part")] + suffix if suffix else path
+            if final_path != path:
+                os.replace(path, final_path)
+                path = final_path
         except Exception:
             Path(path).unlink(missing_ok=True)
             raise
