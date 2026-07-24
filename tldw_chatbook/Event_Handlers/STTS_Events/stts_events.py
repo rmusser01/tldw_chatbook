@@ -17,6 +17,7 @@ from textual.widgets import Button, Select, RichLog, Static, ProgressBar
 #
 # Local imports
 from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
+from tldw_chatbook.TTS.adapter_bootstrap import _legacy_config_snapshot
 from tldw_chatbook.TTS.adapter_types import TTSProgress
 from tldw_chatbook.TTS.TTS_Generation import _join_retained_task
 from tldw_chatbook.Utils.secure_temp_files import secure_delete_file
@@ -25,6 +26,54 @@ from tldw_chatbook.config import get_cli_setting
 #######################################################################################################################
 #
 # Event Messages
+
+_STTS_PROVIDER_SETTING_KEYS = (
+    ("openai", frozenset({"openai_api_key"})),
+    (
+        "elevenlabs",
+        frozenset(
+            {
+                "elevenlabs_api_key",
+                "elevenlabs_voice_stability",
+                "elevenlabs_similarity_boost",
+                "elevenlabs_style",
+                "elevenlabs_use_speaker_boost",
+            }
+        ),
+    ),
+    (
+        "kokoro",
+        frozenset(
+            {
+                "kokoro_device",
+                "kokoro_use_onnx",
+                "kokoro_model_path",
+            }
+        ),
+    ),
+    (
+        "higgs",
+        frozenset(
+            {
+                "HIGGS_MODEL_PATH",
+                "HIGGS_VOICE_SAMPLES_DIR",
+                "HIGGS_DEVICE",
+                "HIGGS_ENABLE_FLASH_ATTN",
+                "HIGGS_DTYPE",
+                "HIGGS_MAX_REFERENCE_DURATION",
+                "HIGGS_DEFAULT_LANGUAGE",
+                "HIGGS_ENABLE_VOICE_CLONING",
+                "HIGGS_ENABLE_MULTI_SPEAKER",
+                "HIGGS_SPEAKER_DELIMITER",
+                "HIGGS_TRACK_PERFORMANCE",
+                "HIGGS_MAX_NEW_TOKENS",
+                "HIGGS_TEMPERATURE",
+                "HIGGS_TOP_P",
+                "HIGGS_TOP_K",
+            }
+        ),
+    ),
+)
 
 
 class STTSPlaygroundGenerateEvent(Message):
@@ -585,7 +634,7 @@ class STTSEventHandler:
             return
         active_destination: tuple[str, str, str] | None = None
         try:
-            from tldw_chatbook.config import save_setting_to_cli_config
+            from tldw_chatbook.config import load_settings, save_setting_to_cli_config
 
             # Save each setting to the appropriate section
             settings_map = {
@@ -650,6 +699,7 @@ class STTSEventHandler:
             }
 
             # Save each setting
+            persisted_keys: set[str] = set()
             for key, value in event.settings.items():
                 if key in settings_map:
                     mapping = settings_map[key]
@@ -657,18 +707,40 @@ class STTSEventHandler:
                     if isinstance(mapping, list):
                         for section, setting_name in mapping:
                             active_destination = (key, section, setting_name)
-                            save_setting_to_cli_config(section, setting_name, value)
+                            saved = save_setting_to_cli_config(
+                                section, setting_name, value
+                            )
+                            if saved is False:
+                                raise RuntimeError("STTS setting save failed")
                             logger.info(f"Saved {key} to [{section}].{setting_name}")
                             active_destination = None
                     else:
                         section, setting_name = mapping
                         active_destination = (key, section, setting_name)
-                        save_setting_to_cli_config(section, setting_name, value)
+                        saved = save_setting_to_cli_config(section, setting_name, value)
+                        if saved is False:
+                            raise RuntimeError("STTS setting save failed")
                         logger.info(f"Saved {key} to [{section}].{setting_name}")
                         active_destination = None
+                    persisted_keys.add(key)
 
-            # Reinitialize TTS service with new settings
-            await self.initialize_stts()
+            effective_settings = load_settings(force_reload=True)
+            snapshot = _legacy_config_snapshot(effective_settings)
+            candidate_providers = [
+                provider_id
+                for provider_id, setting_keys in _STTS_PROVIDER_SETTING_KEYS
+                if persisted_keys & setting_keys
+            ]
+            if candidate_providers:
+                service = self._stts_service
+                if service is None:
+                    service = await get_tts_service()
+                    self._stts_service = service
+                for provider_id in candidate_providers:
+                    await service.reconfigure_provider(
+                        provider_id,
+                        {"app_config": snapshot},
+                    )
 
             self.app.notify("Settings saved successfully!", severity="information")
         except Exception:

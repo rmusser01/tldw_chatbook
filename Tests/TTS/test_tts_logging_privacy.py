@@ -125,14 +125,21 @@ async def test_stts_settings_save_logs_names_and_destinations_not_secrets(
 
     handler = STTSEventHandler(App())
 
-    async def initialize_stts() -> None:
-        return None
+    class Service:
+        async def reconfigure_provider(self, provider_id: str, config: object) -> None:
+            del provider_id, config
 
     def save_setting(section: str, setting_name: str, value: str) -> None:
         saved.append((section, setting_name, value))
 
-    monkeypatch.setattr(handler, "initialize_stts", initialize_stts)
+    handler._stts_service = Service()
     monkeypatch.setattr("tldw_chatbook.config.save_setting_to_cli_config", save_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.load_settings",
+        lambda *, force_reload=False: {
+            "COMPREHENSIVE_CONFIG_RAW": {"API": secrets, "app_tts": {}}
+        },
+    )
 
     sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
     try:
@@ -193,12 +200,13 @@ async def test_stts_settings_save_does_not_echo_secret_from_writer_error(
 
 
 @pytest.mark.asyncio
-async def test_stts_settings_save_does_not_echo_reinitialization_error_secret(
+async def test_stts_settings_save_does_not_echo_reconfiguration_error_secret(
     monkeypatch,
 ) -> None:
-    secret = "sk-Reinitialize-UniquePrefix-PrivateSuffix"
+    secret = "sk-Reconfigure-UniquePrefix-PrivateSuffix"
     messages: list[str] = []
     saved: list[tuple[str, str, str]] = []
+    get_service_calls = 0
 
     class App:
         def notify(self, message: str, *, severity: str) -> None:
@@ -206,23 +214,36 @@ async def test_stts_settings_save_does_not_echo_reinitialization_error_secret(
 
     handler = STTSEventHandler(App())
 
+    class Service:
+        async def reconfigure_provider(
+            self,
+            provider_id: str,
+            config: object,
+        ) -> None:
+            del provider_id, config
+            raise RuntimeError(f"rejected credential {secret}")
+
     def save_setting(section: str, setting_name: str, value: str) -> None:
         saved.append((section, setting_name, value))
 
-    async def fail_to_get_service(config):
-        raise RuntimeError(f"rejected credential {secret}")
+    async def get_bound_service() -> Service:
+        nonlocal get_service_calls
+        get_service_calls += 1
+        return Service()
 
     monkeypatch.setattr("tldw_chatbook.config.save_setting_to_cli_config", save_setting)
     monkeypatch.setattr(
-        "tldw_chatbook.config.load_cli_config_and_ensure_existence", lambda: {}
-    )
-    monkeypatch.setattr(
-        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.get_cli_setting",
-        lambda _section, _key, default: default,
+        "tldw_chatbook.config.load_settings",
+        lambda *, force_reload=False: {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "API": {"openai_api_key": secret},
+                "app_tts": {},
+            }
+        },
     )
     monkeypatch.setattr(
         "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.get_tts_service",
-        fail_to_get_service,
+        get_bound_service,
     )
 
     sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
@@ -234,9 +255,10 @@ async def test_stts_settings_save_does_not_echo_reinitialization_error_secret(
         logger.remove(sink_id)
 
     assert saved == [("API", "openai_api_key", secret)]
-    assert handler._stts_service is None
+    assert get_service_calls == 1
     rendered = "\n".join(messages)
-    assert "Failed to initialize S/TT/S service" in rendered
+    assert "Failed to save settings" in rendered
+    assert "rejected credential" not in rendered
     assert secret not in rendered
     assert secret[:12] not in rendered
     assert secret[-12:] not in rendered
