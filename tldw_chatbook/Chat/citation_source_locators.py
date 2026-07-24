@@ -629,9 +629,8 @@ def _preflight_inert_locator_json(value: Any) -> None:
             add_string(node)
             return
         if type(node) is int:
-            magnitude = abs(node)
             lower_digits = (
-                1 if magnitude < 10 else ((magnitude.bit_length() - 1) * 3) // 10 + 1
+                1 if -10 < node < 10 else ((node.bit_length() - 1) * 3) // 10 + 1
             )
             add_bytes(lower_digits + (1 if node < 0 else 0))
             return

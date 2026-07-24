@@ -987,6 +987,40 @@ def test_inert_candidate_preflight_rejects_gross_string_before_serialization(
     assert canonical_calls == 0
 
 
+def test_inert_candidate_preflight_rejects_large_negative_int_without_abs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    abs_calls = 0
+    canonical_calls = 0
+
+    def unexpected_abs(value: object) -> int:
+        nonlocal abs_calls
+        abs_calls += 1
+        raise AssertionError("preflight must not materialize a positive bigint")
+
+    def unexpected_canonical_json(value: object) -> str:
+        nonlocal canonical_calls
+        canonical_calls += 1
+        raise AssertionError("canonical serialization must not run")
+
+    monkeypatch.setattr(locator_models, "abs", unexpected_abs, raising=False)
+    monkeypatch.setattr(
+        locator_models,
+        "_canonical_json",
+        unexpected_canonical_json,
+    )
+
+    with pytest.raises(ValueError, match="preflight"):
+        parse_inert_locator_candidate(
+            {"value": -(1 << 100_000)},
+            candidate_id="candidate-negative-bigint",
+            binding_state=LocatorBindingState.INERT_IMPORTED,
+        )
+
+    assert abs_calls == 0
+    assert canonical_calls == 0
+
+
 def test_inert_candidate_preflight_rejects_hostile_json_trees_with_bounded_work(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
