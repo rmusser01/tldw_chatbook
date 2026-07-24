@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 import json
 import re
 import threading
@@ -30,14 +31,17 @@ from .conflict_resolver import ConflictResolution
 
 
 _REGISTRY_LOCKS_GUARD = threading.Lock()
-_REGISTRY_LOCKS: dict[Path, threading.Lock] = {}
+_REGISTRY_LOCKS: dict[Path, threading.RLock] = {}
 _SAFE_PROVENANCE_ERROR = re.compile(r"[a-z][a-z0-9_]{0,127}\Z")
+_STALE_OWNER_REQUEST_REASONS = frozenset(
+    {"artifact_owner_request_invalid", "fingerprint_key_unavailable"}
+)
 
 
-def _registry_lock(path: Path) -> threading.Lock:
+def _registry_lock(path: Path) -> threading.RLock:
     resolved = path.resolve()
     with _REGISTRY_LOCKS_GUARD:
-        return _REGISTRY_LOCKS.setdefault(resolved, threading.Lock())
+        return _REGISTRY_LOCKS.setdefault(resolved, threading.RLock())
 
 
 class LocalChatbookService:
@@ -75,6 +79,11 @@ class LocalChatbookService:
         if coordinator is not None and coordinator.artifact_store is not self:
             raise ValueError("citation ownership coordinator store mismatch")
         self._citation_ownership_coordinator = coordinator
+
+    def provenance_collection_guard(self) -> AbstractContextManager[Any]:
+        """Hold registry mutation stable through one trace collection."""
+
+        return self._registry_lock
 
     def _default_registry_path(self) -> Path:
         for key in ("Prompts", "ChaChaNotes", "Media"):
@@ -340,13 +349,17 @@ class LocalChatbookService:
                 and coordinator is not None
                 and coordinator.writes_enabled
             ):
-                operation = coordinator.prepare_link_operation(
+                operation = self._prepare_optional_link(
+                    coordinator,
                     provenance_owner_request,
                     artifact_id=str(chatbook_id),
                     artifact_revision=1,
                 )
-                self._append_provenance_operation(registry, operation)
-                record["provenance_owner"] = operation.binding.model_dump(mode="json")
+                if operation is not None:
+                    self._append_provenance_operation(registry, operation)
+                    record["provenance_owner"] = operation.binding.model_dump(
+                        mode="json"
+                    )
             registry["records"].append(record)
             registry["next_id"] = chatbook_id + 1
             self._save_registry(registry)
@@ -376,25 +389,38 @@ class LocalChatbookService:
             if "metadata" in fields:
                 record["metadata"] = self._coerce_metadata(fields["metadata"])
             coordinator = self._citation_ownership_coordinator
-            if (
+            previous_binding = self._record_owner_binding(record)
+            if previous_binding is not None:
+                if coordinator is None or not coordinator.writes_enabled:
+                    raise CitationPersistenceUnavailable(
+                        "artifact_owner_reconciliation_unavailable"
+                    )
+                self._append_provenance_operation(
+                    registry,
+                    coordinator.prepare_unlink_operation(previous_binding),
+                )
+            can_link = (
                 provenance_owner_request is not None
                 and coordinator is not None
                 and coordinator.writes_enabled
-            ):
-                previous_binding = self._record_owner_binding(record)
+            )
+            if previous_binding is not None or can_link:
                 next_revision = int(record.get("artifact_revision") or 0) + 1
-                if previous_binding is not None:
-                    self._append_provenance_operation(
-                        registry,
-                        coordinator.prepare_unlink_operation(previous_binding),
+                link = (
+                    self._prepare_optional_link(
+                        coordinator,
+                        provenance_owner_request,
+                        artifact_id=str(record.get("chatbook_id") or record.get("id")),
+                        artifact_revision=next_revision,
                     )
-                link = coordinator.prepare_link_operation(
-                    provenance_owner_request,
-                    artifact_id=str(record.get("chatbook_id") or record.get("id")),
-                    artifact_revision=next_revision,
+                    if can_link
+                    else None
                 )
-                self._append_provenance_operation(registry, link)
-                record["provenance_owner"] = link.binding.model_dump(mode="json")
+                if link is None:
+                    record.pop("provenance_owner", None)
+                else:
+                    self._append_provenance_operation(registry, link)
+                    record["provenance_owner"] = link.binding.model_dump(mode="json")
                 record["artifact_revision"] = next_revision
             record["updated_at"] = self._utc_now()
             self._save_registry(registry)
@@ -432,6 +458,25 @@ class LocalChatbookService:
             registry["records"] = remaining
             self._save_registry(registry)
         return True
+
+    @staticmethod
+    def _prepare_optional_link(
+        coordinator: CitationArtifactOwnershipCoordinator,
+        request: CitationArtifactOwnerRequest,
+        *,
+        artifact_id: str,
+        artifact_revision: int,
+    ) -> ArtifactOwnerOperation | None:
+        try:
+            return coordinator.prepare_link_operation(
+                request,
+                artifact_id=artifact_id,
+                artifact_revision=artifact_revision,
+            )
+        except CitationPersistenceUnavailable as exc:
+            if exc.reason_code in _STALE_OWNER_REQUEST_REASONS:
+                return None
+            raise
 
     @staticmethod
     def _record_owner_binding(

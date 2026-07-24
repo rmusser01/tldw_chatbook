@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from enum import Enum
 import re
+import sqlite3
 from typing import TYPE_CHECKING, Annotated, Any, Protocol, runtime_checkable
 
 from pydantic import (
@@ -32,6 +34,7 @@ ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES = 2_048
 ARTIFACT_RECONCILIATION_BATCH_MAX = 100
 _ERROR_CODE_MAX_CHARS = 128
 _SAFE_ERROR_CODE = re.compile(r"[a-z][a-z0-9_]{0,127}\Z")
+_SQL_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
 
 
 def _aware_utc(value: datetime) -> datetime:
@@ -146,6 +149,27 @@ class CrossStoreArtifactOwnershipStore(Protocol):
     ) -> None:
         """Persist a bounded sanitized retry reason."""
 
+    def provenance_collection_guard(self) -> AbstractContextManager[Any]:
+        """Serialize registry mutation with barrier-protected collection."""
+
+
+@runtime_checkable
+class SharedDatabaseArtifactOwnershipStore(Protocol):
+    """Artifact owner store mutated through the repository SQLite cursor."""
+
+    artifact_backend_mode: ArtifactBackendMode
+    artifact_store_id: str
+    artifact_database: Any
+    artifact_table: str
+    artifact_owner_table: str
+
+    def apply_shared_database_owner_mutation(
+        self,
+        cursor: sqlite3.Cursor,
+        operation: ArtifactOwnerOperation,
+    ) -> None:
+        """Mutate artifact row and its real-FK owner through ``cursor``."""
+
 
 class CitationArtifactOwnershipCoordinator:
     """Coordinate the artifact registry and trace repository handshakes."""
@@ -158,16 +182,14 @@ class CitationArtifactOwnershipCoordinator:
     ) -> None:
         mode = getattr(artifact_store, "artifact_backend_mode", None)
         if mode is ArtifactBackendMode.SHARED_DATABASE:
-            # No production artifact store currently shares the trace database.
-            # Admit this mode only when a concrete implementation can prove both
-            # sides of its mutation run under one transaction with a real FK.
-            raise ValueError("shared_database_owner_contract_required")
+            _validate_shared_database_contract(artifact_store, trace_repository)
         elif mode is ArtifactBackendMode.CROSS_STORE:
             required = (
                 "list_provenance_outbox",
                 "mark_provenance_operation_acknowledged",
                 "prune_provenance_operation",
                 "record_provenance_operation_failure",
+                "provenance_collection_guard",
             )
             if any(
                 not callable(getattr(artifact_store, name, None)) for name in required
@@ -177,6 +199,12 @@ class CitationArtifactOwnershipCoordinator:
             raise ValueError("artifact_backend_mode_unsupported")
         self.artifact_store = artifact_store
         self.trace_repository = trace_repository
+        if mode is ArtifactBackendMode.CROSS_STORE:
+            trace_repository.register_artifact_collection_barrier(
+                provider=self.collection_barriers,
+                guard=artifact_store.provenance_collection_guard,
+            )
+        self.backend_mode = mode
 
     @property
     def writes_enabled(self) -> bool:
@@ -229,6 +257,26 @@ class CitationArtifactOwnershipCoordinator:
         if not self.writes_enabled:
             raise CitationPersistenceUnavailable("canonical_citation_writes_disabled")
         return self.trace_repository.prepare_artifact_unlink_operation(binding)
+
+    def apply_shared_database_owner_operation(
+        self,
+        operation: ArtifactOwnerOperation,
+    ) -> None:
+        """Apply the artifact and real-FK owner mutation in one SQLite tx."""
+
+        if self.backend_mode is not ArtifactBackendMode.SHARED_DATABASE:
+            raise ValueError("shared_database_owner_contract_required")
+        with self.trace_repository.db.transaction() as cursor:
+            validated = (
+                self.trace_repository.validate_shared_database_artifact_owner_operation(
+                    cursor,
+                    operation,
+                )
+            )
+            self.artifact_store.apply_shared_database_owner_mutation(
+                cursor,
+                validated,
+            )
 
     def reconcile_pending(
         self,
@@ -359,6 +407,54 @@ def _reconciliation_reason(exc: Exception) -> str:
     return "artifact_reconciliation_failed"
 
 
+def _validate_shared_database_contract(
+    artifact_store: Any,
+    trace_repository: CitationTraceRepository,
+) -> None:
+    if getattr(
+        artifact_store, "artifact_database", None
+    ) is not trace_repository.db or not callable(
+        getattr(artifact_store, "apply_shared_database_owner_mutation", None)
+    ):
+        raise ValueError("shared_database_owner_contract_required")
+    artifact_table = getattr(artifact_store, "artifact_table", None)
+    owner_table = getattr(artifact_store, "artifact_owner_table", None)
+    if not all(
+        isinstance(table, str) and _SQL_IDENTIFIER.fullmatch(table)
+        for table in (artifact_table, owner_table)
+    ):
+        raise ValueError("shared_database_owner_contract_required")
+    connection = trace_repository.db.get_connection()
+    if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+        raise ValueError("shared_database_owner_contract_required")
+    if (
+        not connection.execute(f'PRAGMA table_info("{artifact_table}")').fetchall()
+        or not connection.execute(f'PRAGMA table_info("{owner_table}")').fetchall()
+    ):
+        raise ValueError("shared_database_owner_contract_required")
+
+    groups: dict[tuple[int, str], set[tuple[str, str]]] = {}
+    for row in connection.execute(
+        f'PRAGMA foreign_key_list("{owner_table}")'
+    ).fetchall():
+        groups.setdefault((row["id"], row["table"]), set()).add(
+            (row["from"], row["to"])
+        )
+    trace_fk = {("profile_id", "profile_id"), ("trace_id", "trace_id")}
+    artifact_fk = {
+        ("artifact_id", "artifact_id"),
+        ("artifact_revision", "artifact_revision"),
+    }
+    if not any(
+        table == "rag_citation_traces" and trace_fk <= columns
+        for (_identifier, table), columns in groups.items()
+    ) or not any(
+        table == artifact_table and artifact_fk <= columns
+        for (_identifier, table), columns in groups.items()
+    ):
+        raise ValueError("shared_database_owner_contract_required")
+
+
 __all__ = [
     "ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES",
     "ARTIFACT_RECONCILIATION_BATCH_MAX",
@@ -369,4 +465,5 @@ __all__ = [
     "ArtifactOwnerOutboxState",
     "ArtifactReconciliationResult",
     "CitationArtifactOwnershipCoordinator",
+    "SharedDatabaseArtifactOwnershipStore",
 ]

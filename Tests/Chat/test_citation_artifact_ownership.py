@@ -4,6 +4,8 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 import json
+import sqlite3
+import threading
 
 import pytest
 from pydantic import ValidationError
@@ -22,6 +24,7 @@ from tldw_chatbook.Chat.citation_artifact_ownership import (
     ArtifactOwnerOperationKind,
     ArtifactOwnerOutboxState,
     CitationArtifactOwnershipCoordinator,
+    SharedDatabaseArtifactOwnershipStore,
 )
 from tldw_chatbook.Chat.citation_payload_lifecycle import CitationPayloadLifecycle
 from tldw_chatbook.Chat.citation_provenance_runtime import (
@@ -85,6 +88,113 @@ def _outbox(service: LocalChatbookService) -> list[ArtifactOwnerOperation]:
     return service.list_provenance_outbox(limit=ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES)
 
 
+def _create_shared_database_artifact_tables(db: CharactersRAGDB) -> None:
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            CREATE TABLE shared_test_artifacts(
+                artifact_id TEXT NOT NULL,
+                artifact_revision INTEGER NOT NULL,
+                PRIMARY KEY(artifact_id, artifact_revision)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE shared_test_artifact_owners(
+                profile_id TEXT NOT NULL,
+                trace_id TEXT NOT NULL,
+                artifact_id TEXT NOT NULL,
+                artifact_revision INTEGER NOT NULL,
+                PRIMARY KEY(
+                    profile_id, trace_id, artifact_id, artifact_revision
+                ),
+                FOREIGN KEY(profile_id, trace_id)
+                    REFERENCES rag_citation_traces(profile_id, trace_id)
+                    ON DELETE RESTRICT,
+                FOREIGN KEY(artifact_id, artifact_revision)
+                    REFERENCES shared_test_artifacts(
+                        artifact_id, artifact_revision
+                    )
+                    ON DELETE CASCADE
+            )
+            """
+        )
+
+
+class _SharedDatabaseArtifactStore:
+    artifact_backend_mode = ArtifactBackendMode.SHARED_DATABASE
+    artifact_store_id = "shared-test-artifacts-v1"
+    artifact_table = "shared_test_artifacts"
+    artifact_owner_table = "shared_test_artifact_owners"
+
+    def __init__(
+        self,
+        db: CharactersRAGDB,
+        *,
+        fail_after_owner: bool = False,
+        omit_artifact: bool = False,
+    ) -> None:
+        self.artifact_database = db
+        self.fail_after_owner = fail_after_owner
+        self.omit_artifact = omit_artifact
+        self.seen_connection: sqlite3.Connection | None = None
+
+    def apply_shared_database_owner_mutation(
+        self,
+        cursor: sqlite3.Cursor,
+        operation: ArtifactOwnerOperation,
+    ) -> None:
+        self.seen_connection = cursor.connection
+        binding = operation.binding
+        if operation.operation_kind is ArtifactOwnerOperationKind.LINK:
+            if not self.omit_artifact:
+                cursor.execute(
+                    """
+                    INSERT INTO shared_test_artifacts(
+                        artifact_id, artifact_revision
+                    ) VALUES (?, ?)
+                    """,
+                    (binding.artifact_id, binding.artifact_revision),
+                )
+            cursor.execute(
+                """
+                INSERT INTO shared_test_artifact_owners(
+                    profile_id, trace_id, artifact_id, artifact_revision
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    binding.profile_id,
+                    binding.trace_id,
+                    binding.artifact_id,
+                    binding.artifact_revision,
+                ),
+            )
+        else:
+            cursor.execute(
+                """
+                DELETE FROM shared_test_artifact_owners
+                WHERE profile_id = ? AND trace_id = ?
+                  AND artifact_id = ? AND artifact_revision = ?
+                """,
+                (
+                    binding.profile_id,
+                    binding.trace_id,
+                    binding.artifact_id,
+                    binding.artifact_revision,
+                ),
+            )
+            cursor.execute(
+                """
+                DELETE FROM shared_test_artifacts
+                WHERE artifact_id = ? AND artifact_revision = ?
+                """,
+                (binding.artifact_id, binding.artifact_revision),
+            )
+        if self.fail_after_owner:
+            raise RuntimeError("shared mutation interrupted")
+
+
 def test_current_json_backend_is_cross_store_and_shared_db_requires_real_contract(
     db: CharactersRAGDB,
     tmp_path,
@@ -106,6 +216,101 @@ def test_current_json_backend_is_cross_store_and_shared_db_requires_real_contrac
             artifact_store=FakeSharedDatabaseStore(),
             trace_repository=_repository(db),
         )
+
+
+def test_shared_database_owner_commit_uses_repository_transaction_and_real_fks(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    _create_shared_database_artifact_tables(db)
+    store = _SharedDatabaseArtifactStore(db)
+    assert isinstance(store, SharedDatabaseArtifactOwnershipStore)
+    coordinator = CitationArtifactOwnershipCoordinator(
+        artifact_store=store,
+        trace_repository=repository,
+    )
+    operation = coordinator.prepare_link_operation(
+        _owner_request(repository),
+        artifact_id="shared-artifact-1",
+        artifact_revision=1,
+    )
+
+    coordinator.apply_shared_database_owner_operation(operation)
+
+    connection = db.get_connection()
+    assert store.seen_connection is connection
+    assert (
+        connection.execute("SELECT count(*) FROM shared_test_artifacts").fetchone()[0]
+        == 1
+    )
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM shared_test_artifact_owners"
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_shared_database_owner_failure_rolls_back_artifact_and_fk_owner(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    _create_shared_database_artifact_tables(db)
+    store = _SharedDatabaseArtifactStore(db, fail_after_owner=True)
+    coordinator = CitationArtifactOwnershipCoordinator(
+        artifact_store=store,
+        trace_repository=repository,
+    )
+    operation = coordinator.prepare_link_operation(
+        _owner_request(repository),
+        artifact_id="shared-artifact-1",
+        artifact_revision=1,
+    )
+
+    with pytest.raises(RuntimeError, match="shared mutation interrupted"):
+        coordinator.apply_shared_database_owner_operation(operation)
+
+    connection = db.get_connection()
+    assert (
+        connection.execute("SELECT count(*) FROM shared_test_artifacts").fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM shared_test_artifact_owners"
+        ).fetchone()[0]
+        == 0
+    )
+
+
+def test_shared_database_owner_fk_is_enforced_in_the_shared_transaction(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    _create_shared_database_artifact_tables(db)
+    store = _SharedDatabaseArtifactStore(db, omit_artifact=True)
+    coordinator = CitationArtifactOwnershipCoordinator(
+        artifact_store=store,
+        trace_repository=repository,
+    )
+    operation = coordinator.prepare_link_operation(
+        _owner_request(repository),
+        artifact_id="missing-shared-artifact",
+        artifact_revision=1,
+    )
+
+    with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+        coordinator.apply_shared_database_owner_operation(operation)
+
+    assert (
+        db.get_connection()
+        .execute("SELECT count(*) FROM shared_test_artifact_owners")
+        .fetchone()[0]
+        == 0
+    )
 
 
 def test_owner_models_are_strict_frozen_bounded_and_reject_boolean_revisions() -> None:
@@ -292,6 +497,97 @@ async def test_replacement_save_allocates_next_revision_and_one_link_unlink_pair
         (2, ArtifactOwnerOperationKind.LINK),
     ]
     assert len({item.operation_id for item in operations}) == 3
+
+
+@pytest.mark.asyncio
+async def test_grounded_artifact_update_without_request_unlinks_old_revision(
+    ownership,
+) -> None:
+    repository, service, _coordinator = ownership
+    created = await service.create_chatbook(
+        name="Grounded answer",
+        provenance_owner_request=_owner_request(repository),
+    )
+
+    replaced = await service.update_chatbook(
+        created["chatbook_id"],
+        name="Edited without grounded provenance",
+    )
+
+    operations = _outbox(service)
+    assert replaced["artifact_revision"] == 2
+    assert [
+        (item.binding.artifact_revision, item.operation_kind) for item in operations
+    ] == [
+        (1, ArtifactOwnerOperationKind.LINK),
+        (1, ArtifactOwnerOperationKind.UNLINK),
+    ]
+    registry = json.loads(service.registry_path.read_text(encoding="utf-8"))
+    assert "provenance_owner" not in registry["records"][0]
+
+
+@pytest.mark.asyncio
+async def test_stale_replacement_request_still_unlinks_old_revision(
+    ownership,
+) -> None:
+    repository, service, _coordinator = ownership
+    created = await service.create_chatbook(
+        name="Grounded answer",
+        provenance_owner_request=_owner_request(repository),
+    )
+    stale_request = _owner_request(repository)
+    _mark_owner_deleted(repository.db)
+
+    replaced = await service.update_chatbook(
+        created["chatbook_id"],
+        name="Edited after provenance became stale",
+        provenance_owner_request=stale_request,
+    )
+
+    assert replaced["artifact_revision"] == 2
+    assert [item.operation_kind for item in _outbox(service)] == [
+        ArtifactOwnerOperationKind.LINK,
+        ArtifactOwnerOperationKind.UNLINK,
+    ]
+    registry = json.loads(service.registry_path.read_text(encoding="utf-8"))
+    assert "provenance_owner" not in registry["records"][0]
+
+
+def test_concurrent_grounded_replacements_serialize_revision_lease_pairs(
+    ownership,
+) -> None:
+    repository, service, _coordinator = ownership
+    created = asyncio.run(
+        service.create_chatbook(
+            name="Grounded answer",
+            provenance_owner_request=_owner_request(repository),
+        )
+    )
+    requests = [_owner_request(repository), _owner_request(repository)]
+
+    def replace(index: int) -> dict:
+        return asyncio.run(
+            service.update_chatbook(
+                created["chatbook_id"],
+                name=f"Grounded replacement {index}",
+                provenance_owner_request=requests[index],
+            )
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        replacements = list(executor.map(replace, range(2)))
+
+    assert {item["artifact_revision"] for item in replacements} == {2, 3}
+    assert [
+        (item.binding.artifact_revision, item.operation_kind)
+        for item in _outbox(service)
+    ] == [
+        (1, ArtifactOwnerOperationKind.LINK),
+        (1, ArtifactOwnerOperationKind.UNLINK),
+        (2, ArtifactOwnerOperationKind.LINK),
+        (2, ArtifactOwnerOperationKind.UNLINK),
+        (3, ArtifactOwnerOperationKind.LINK),
+    ]
 
 
 @pytest.mark.asyncio
@@ -510,7 +806,6 @@ async def test_pending_outbox_live_lease_and_unresolved_unlink_block_collection(
     lifecycle = CitationPayloadLifecycle(
         repository,
         retention_policy=_policy(),
-        artifact_barrier_provider=coordinator.collection_barriers,
     )
 
     assert lifecycle.collect(now=NOW).traces_collected == 0
@@ -541,7 +836,6 @@ def test_corrupt_registry_fails_closed_for_reconciliation_and_collection(
     lifecycle = CitationPayloadLifecycle(
         repository,
         retention_policy=_policy(),
-        artifact_barrier_provider=coordinator.collection_barriers,
     )
     with pytest.raises(
         CitationPersistenceUnavailable,
@@ -572,6 +866,132 @@ async def test_reconciliation_never_persists_untrusted_exception_text(
 
     assert result.reason_codes == ("artifact_reconciliation_failed",)
     assert _outbox(service)[0].error_code == "artifact_reconciliation_failed"
+
+
+def test_artifact_phase_one_precedes_collection_and_holds_pending_barrier(
+    ownership,
+    monkeypatch,
+) -> None:
+    repository, service, _coordinator = ownership
+    request = _owner_request(repository)
+    registry_written = threading.Event()
+    release_artifact = threading.Event()
+    collection_started = threading.Event()
+    collection_done = threading.Event()
+    original_save = service._save_registry
+    result: dict[str, object] = {}
+
+    def pause_after_registry_write(payload: dict) -> None:
+        original_save(payload)
+        registry_written.set()
+        assert release_artifact.wait(5)
+
+    def create_artifact() -> None:
+        result["artifact"] = asyncio.run(
+            service.create_chatbook(
+                name="Grounded answer",
+                provenance_owner_request=request,
+            )
+        )
+
+    lifecycle = CitationPayloadLifecycle(repository, retention_policy=_policy())
+
+    def collect() -> None:
+        collection_started.set()
+        result["collection"] = lifecycle.collect(now=NOW)
+        collection_done.set()
+
+    monkeypatch.setattr(service, "_save_registry", pause_after_registry_write)
+    artifact_thread = threading.Thread(target=create_artifact)
+    artifact_thread.start()
+    assert registry_written.wait(5)
+    _mark_owner_deleted(repository.db)
+    collection_thread = threading.Thread(target=collect)
+    collection_thread.start()
+    assert collection_started.wait(5)
+    assert not collection_done.wait(0.1)
+
+    release_artifact.set()
+    artifact_thread.join(5)
+    collection_thread.join(5)
+
+    assert not artifact_thread.is_alive()
+    assert not collection_thread.is_alive()
+    assert result["collection"].traces_collected == 0
+    assert len(_outbox(service)) == 1
+
+
+def test_collection_precedes_artifact_phase_one_and_stale_request_saves_ungrounded(
+    ownership,
+    monkeypatch,
+) -> None:
+    repository, service, _coordinator = ownership
+    request = _owner_request(repository)
+    _mark_owner_deleted(repository.db)
+    collection_in_transaction = threading.Event()
+    release_collection = threading.Event()
+    artifact_started = threading.Event()
+    artifact_done = threading.Event()
+    result: dict[str, object] = {}
+    lifecycle = CitationPayloadLifecycle(repository, retention_policy=_policy())
+
+    def pause_before_delete(*_args) -> None:
+        collection_in_transaction.set()
+        assert release_collection.wait(5)
+
+    def collect() -> None:
+        result["collection"] = lifecycle.collect(now=NOW)
+
+    def create_artifact() -> None:
+        artifact_started.set()
+        try:
+            result["artifact"] = asyncio.run(
+                service.create_chatbook(
+                    name="Ordinary saved answer",
+                    provenance_owner_request=request,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - asserted below
+            result["artifact_error"] = exc
+        finally:
+            artifact_done.set()
+
+    monkeypatch.setattr(lifecycle, "_before_collect_delete", pause_before_delete)
+    collection_thread = threading.Thread(target=collect)
+    collection_thread.start()
+    assert collection_in_transaction.wait(5)
+    artifact_thread = threading.Thread(target=create_artifact)
+    artifact_thread.start()
+    assert artifact_started.wait(5)
+    assert not artifact_done.wait(0.1)
+
+    release_collection.set()
+    collection_thread.join(5)
+    artifact_thread.join(5)
+
+    assert not collection_thread.is_alive()
+    assert not artifact_thread.is_alive()
+    assert result["collection"].traces_collected == 1
+    assert "artifact_error" not in result
+    assert result["artifact"]["name"] == "Ordinary saved answer"
+    assert _outbox(service) == []
+
+
+@pytest.mark.asyncio
+async def test_stale_owner_request_does_not_block_ordinary_artifact_save(
+    ownership,
+) -> None:
+    repository, service, _coordinator = ownership
+    request = _owner_request(repository)
+    _mark_owner_deleted(repository.db)
+
+    created = await service.create_chatbook(
+        name="Ordinary saved answer",
+        provenance_owner_request=request,
+    )
+
+    assert created["name"] == "Ordinary saved answer"
+    assert _outbox(service) == []
 
 
 @pytest.mark.asyncio

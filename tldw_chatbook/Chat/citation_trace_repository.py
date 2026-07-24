@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -9,7 +10,7 @@ import hashlib
 import hmac
 import json
 import sqlite3
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 import weakref
 
 from pydantic import BaseModel, ConfigDict
@@ -438,6 +439,35 @@ class CitationTraceRepository:
                 _ActiveTraceProof,
             ],
         ] = {}
+        self._artifact_collection_barrier_provider: Callable[[], Any] | None = None
+        self._artifact_collection_guard_factory: (
+            Callable[[], AbstractContextManager[Any]] | None
+        ) = None
+
+    def register_artifact_collection_barrier(
+        self,
+        *,
+        provider: Callable[[], Any],
+        guard: Callable[[], AbstractContextManager[Any]],
+    ) -> None:
+        """Install the authoritative cross-store barrier and mutation guard."""
+
+        if not callable(provider) or not callable(guard):
+            raise TypeError("artifact collection barrier contract is invalid")
+        self._artifact_collection_barrier_provider = provider
+        self._artifact_collection_guard_factory = guard
+
+    def artifact_collection_guard(self) -> AbstractContextManager[Any]:
+        """Return the registered cross-store guard or a no-op context."""
+
+        factory = self._artifact_collection_guard_factory
+        return nullcontext() if factory is None else factory()
+
+    def artifact_collection_barriers(self) -> Any | None:
+        """Read authoritative cross-store barriers while the guard is held."""
+
+        provider = self._artifact_collection_barrier_provider
+        return None if provider is None else provider()
 
     @classmethod
     def from_key_provider(
@@ -1448,26 +1478,10 @@ class CitationTraceRepository:
         """Idempotently apply one durable artifact-side operation receipt."""
 
         from tldw_chatbook.Chat.citation_artifact_ownership import (
-            ArtifactOwnerOperation,
             ArtifactOwnerOperationKind,
         )
 
-        validated = ArtifactOwnerOperation.model_validate(
-            operation.model_dump(mode="python"),
-            strict=True,
-        )
-        codec = self._fingerprint_codec
-        if codec is None or not self._artifact_binding_matches(
-            codec, validated.binding
-        ):
-            raise CitationPersistenceUnavailable("artifact_owner_binding_invalid")
-        expected_operation_id = self._artifact_owner_operation_id(
-            codec,
-            binding_id=validated.binding.binding_id,
-            operation_kind=validated.operation_kind.value,
-        )
-        if not hmac.compare_digest(validated.operation_id, expected_operation_id):
-            raise CitationPersistenceUnavailable("artifact_operation_identity_invalid")
+        validated = self._validate_artifact_owner_operation(operation)
         with self.db.transaction() as cursor:
             identity = self._require_active_write_cursor(cursor)
             if identity.profile_id != validated.binding.profile_id:
@@ -1616,6 +1630,58 @@ class CitationTraceRepository:
                         binding.trace_id,
                     ),
                 )
+
+    def validate_shared_database_artifact_owner_operation(
+        self,
+        cursor: sqlite3.Cursor,
+        operation: ArtifactOwnerOperation,
+    ) -> ArtifactOwnerOperation:
+        """Validate one signed owner mutation under the caller's SQLite tx."""
+
+        validated = self._validate_artifact_owner_operation(operation)
+        identity = self._require_active_write_cursor(cursor)
+        binding = validated.binding
+        if identity.profile_id != binding.profile_id:
+            raise CitationPersistenceUnavailable("artifact_owner_profile_mismatch")
+        trace = cursor.execute(
+            """
+            SELECT 1
+            FROM rag_citation_traces
+            WHERE profile_id = ? AND trace_id = ?
+              AND origin = 'local' AND origin_scope_id = ?
+              AND visibility_state = 'active'
+            """,
+            (binding.profile_id, binding.trace_id, binding.profile_id),
+        ).fetchone()
+        if trace is None:
+            raise CitationPersistenceUnavailable("artifact_trace_unavailable")
+        return validated
+
+    def _validate_artifact_owner_operation(
+        self,
+        operation: ArtifactOwnerOperation,
+    ) -> ArtifactOwnerOperation:
+        from tldw_chatbook.Chat.citation_artifact_ownership import (
+            ArtifactOwnerOperation,
+        )
+
+        validated = ArtifactOwnerOperation.model_validate(
+            operation.model_dump(mode="python"),
+            strict=True,
+        )
+        codec = self._fingerprint_codec
+        if codec is None or not self._artifact_binding_matches(
+            codec, validated.binding
+        ):
+            raise CitationPersistenceUnavailable("artifact_owner_binding_invalid")
+        expected_operation_id = self._artifact_owner_operation_id(
+            codec,
+            binding_id=validated.binding.binding_id,
+            operation_kind=validated.operation_kind.value,
+        )
+        if not hmac.compare_digest(validated.operation_id, expected_operation_id):
+            raise CitationPersistenceUnavailable("artifact_operation_identity_invalid")
+        return validated
 
     def acknowledge_artifact_owner_operation(
         self,

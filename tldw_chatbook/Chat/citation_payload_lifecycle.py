@@ -536,6 +536,24 @@ class CitationPayloadLifecycle:
         limit: int | None = None,
         continuation_cursor: CitationCollectionContinuationCursor | None = None,
     ) -> CitationCollectionResult:
+        """Collect while cross-store registry mutation is held stable."""
+
+        with self.repository.artifact_collection_guard():
+            return self._collect_under_artifact_guard(
+                now=now,
+                barriers=barriers,
+                limit=limit,
+                continuation_cursor=continuation_cursor,
+            )
+
+    def _collect_under_artifact_guard(
+        self,
+        *,
+        now: datetime,
+        barriers: CitationCollectionBarriers | None,
+        limit: int | None,
+        continuation_cursor: CitationCollectionContinuationCursor | None,
+    ) -> CitationCollectionResult:
         """Collect unowned graphs and expired tombstones in one bounded transaction."""
 
         current_time = TypeAdapter(UtcDateTime).validate_python(now, strict=True)
@@ -551,9 +569,18 @@ class CitationPayloadLifecycle:
             (barriers or CitationCollectionBarriers()).model_dump(mode="python"),
             strict=True,
         )
-        if self._artifact_barrier_provider is not None:
+        barrier_providers = (
+            self.repository.artifact_collection_barriers,
+            self._artifact_barrier_provider,
+        )
+        for provider in barrier_providers:
+            if provider is None:
+                continue
+            provided = provider()
+            if provided is None:
+                continue
             artifact_barriers = CitationCollectionBarriers.model_validate(
-                self._artifact_barrier_provider().model_dump(mode="python"),
+                provided.model_dump(mode="python"),
                 strict=True,
             )
             active_barriers = CitationCollectionBarriers(
