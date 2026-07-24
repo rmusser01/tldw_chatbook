@@ -416,6 +416,49 @@ def test_reroot_labels_corrupt_member_not_too_large():
     assert "too large" not in str(exc_info.value)
 
 
+def _zipball_with_symlink(link_content="target.md", wrapper="repo-1/"):
+    """Like ``_zipball`` but the second member is a symlink (external_attr's
+    upper 16 bits encode ``S_IFLNK`` -- the same shape ``git archive``/GitHub's
+    zipball producer emits for a repo symlink).
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr(wrapper + "SKILL.md", "---\nname: x\n---\nbody")
+        link = zipfile.ZipInfo(wrapper + "link.md")
+        link.external_attr = 0o120777 << 16
+        z.writestr(link, link_content)
+    return buf.getvalue()
+
+
+def test_reroot_skips_symlink_member():
+    # A symlink member must be skipped at the bridge exactly as
+    # LocalSkillsService.import_skill_file's importer skips it (see
+    # local_skills_service.py's own mode/S_ISLNK check) -- it must not be
+    # copied into the synthesized zip.
+    data = _zipball_with_symlink()
+    out, _ = re_root_skill_zip(data, subdir="", suggested_name="repo")
+    with zipfile.ZipFile(io.BytesIO(out)) as z:
+        names = z.namelist()
+    assert "SKILL.md" in names
+    assert "link.md" not in names
+
+
+def test_reroot_symlink_skipped_before_size_cap():
+    # A symlink whose content exceeds the per-file cap must NOT trip the
+    # "too large" abort -- proving the symlink is skipped BEFORE cap
+    # accounting/decompression, not merely excluded from the final zip.
+    # Without the fix, this raises RemoteSkillError("File too large...").
+    from tldw_chatbook.tldw_api.skills_schemas import MAX_SUPPORTING_FILE_BYTES
+
+    big = "x" * (MAX_SUPPORTING_FILE_BYTES + 100)
+    data = _zipball_with_symlink(link_content=big)
+    out, _ = re_root_skill_zip(data, subdir="", suggested_name="repo")
+    with zipfile.ZipFile(io.BytesIO(out)) as z:
+        names = z.namelist()
+    assert "SKILL.md" in names
+    assert "link.md" not in names
+
+
 # ---------------------------------------------------------------------------
 # Task 5: the public install seam (compose classify -> enforce -> fetch ->
 # re-root -> the existing import_skill_file seam).

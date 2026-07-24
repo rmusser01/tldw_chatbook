@@ -11,13 +11,18 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
+import stat
 import zipfile as _zipfile
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Any
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import httpx
+
+if TYPE_CHECKING:
+    from .skills_scope_service import SkillsScopeService
 
 
 @dataclass(frozen=True)
@@ -109,7 +114,8 @@ def classify_skill_source_url(url: str) -> GitHubZipSource | DirectZipSource:
 
 
 async def resolve_ref_and_subdir(
-    source: GitHubZipSource, list_branches
+    source: GitHubZipSource,
+    list_branches: Callable[[str, str], Awaitable[list[str]]],
 ) -> tuple[str, str]:
     """Split a ``/tree/`` tail into (ref, subdir) per the spec's §2 rules.
 
@@ -188,8 +194,8 @@ async def fetch_zip_bytes(
     url: str,
     *,
     token: str | None = None,
-    transport=None,
-    resolver=None,
+    transport: httpx.AsyncBaseTransport | None = None,
+    resolver: Callable[[str], list[str]] | None = None,
     total_deadline: float = REMOTE_FETCH_TOTAL_DEADLINE_SECONDS,
 ) -> bytes:
     """Download a zip with SSRF hardening, manual redirects, and a size cap.
@@ -380,6 +386,9 @@ def re_root_skill_zip(
         # ``<skill_root>refs/../../evil.md`` still passes).
         pruned: list[tuple["_zipfile.ZipInfo", str]] = []
         for member in raw_members:
+            mode = (member.external_attr >> 16) & 0xFFFF
+            if stat.S_ISLNK(mode):
+                continue                       # symlink member: skip-not-fail, matches the importer
             relative = member.filename[len(skill_root):]
             if not relative:
                 continue
@@ -430,10 +439,10 @@ def re_root_skill_zip(
 async def install_skill_from_url(
     url: str,
     *,
-    scope_service: Any,
+    scope_service: "SkillsScopeService",
     overwrite: bool = False,
-    transport: Any = None,
-    resolver: Any = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+    resolver: Callable[[str], list[str]] | None = None,
 ) -> dict:
     """Install a skill pasted as a GitHub/zip URL (the public install seam).
 
