@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import ast
 from collections.abc import AsyncIterator, Iterator, Mapping
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -14,6 +15,7 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSPlaygroundGenerateEvent,
+    STTSSettingsSaveEvent,
 )
 from tldw_chatbook.TTS.adapter_types import ProgressSink, TTSProgress
 from tldw_chatbook.TTS.TTS_Generation import (
@@ -222,11 +224,25 @@ class CapturingStreamService:
 
 
 @pytest.mark.asyncio
-async def test_stts_forwards_typed_progress_sink_to_service() -> None:
+async def test_stts_forwards_typed_progress_sink_to_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = SimpleNamespace(notify=Mock())
     handler = STTSEventHandler(app=app)
     service = CapturingStreamService()
     handler._stts_service = service
+    created_tasks: list[asyncio.Task[Any]] = []
+    create_task = asyncio.create_task
+
+    def capture_task(coro: Any, **kwargs: Any) -> asyncio.Task[Any]:
+        task = create_task(coro, **kwargs)
+        created_tasks.append(task)
+        return task
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.asyncio.create_task",
+        capture_task,
+    )
     status_text = SimpleNamespace(update=Mock())
     progress_bar = SimpleNamespace(update=Mock())
     generation_log = SimpleNamespace(write=Mock())
@@ -276,5 +292,111 @@ async def test_stts_forwards_typed_progress_sink_to_service() -> None:
     status_text.update.assert_called_with("Generating")
     progress_bar.update.assert_any_call(progress=50.0)
     generation_log.write.assert_any_call("[dim]Processed 1/2 item(s)[/dim]")
+    assert created_tasks
+    assert all(task.done() for task in created_tasks)
     assert handler._current_audio_file is not None
-    handler._current_audio_file.unlink()
+    audio_file = handler._current_audio_file
+
+    await handler.cleanup_tts_resources()
+    await handler.cleanup_tts_resources()
+
+    assert not audio_file.exists()
+    assert handler._current_audio_file is None
+
+
+@pytest.mark.asyncio
+async def test_stts_playground_generation_stays_in_the_owned_event_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def reject_nested_worker(coro: Any, *, exclusive: bool) -> None:
+        del exclusive
+        coro.close()
+        raise AssertionError("nested worker used")
+
+    playground = SimpleNamespace(run_worker=Mock(side_effect=reject_nested_worker))
+    app = SimpleNamespace(query_one=Mock(return_value=playground), notify=Mock())
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = object()
+    generation = AsyncMock()
+    monkeypatch.setattr(handler, "_generate_tts_worker", generation)
+    event = STTSPlaygroundGenerateEvent(
+        text="hello",
+        provider="openai",
+        voice="alloy",
+        model="tts-1",
+        speed=1.0,
+        format="wav",
+    )
+
+    await handler.handle_playground_generate(event)
+
+    generation.assert_awaited_once_with(event, playground)
+    playground.run_worker.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stts_cleanup_cancels_and_joins_tracked_event_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler = STTSEventHandler(app=SimpleNamespace(notify=Mock()))
+    started = asyncio.Event()
+    finished = asyncio.Event()
+    created_tasks: list[asyncio.Task[Any]] = []
+    create_task = asyncio.create_task
+
+    def capture_task(coro: Any, **kwargs: Any) -> asyncio.Task[Any]:
+        task = create_task(coro, **kwargs)
+        created_tasks.append(task)
+        return task
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.asyncio.create_task",
+        capture_task,
+    )
+
+    async def block_until_cancelled(event: STTSSettingsSaveEvent) -> None:
+        del event
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(0)
+            finished.set()
+
+    monkeypatch.setattr(handler, "handle_settings_save", block_until_cancelled)
+    handler.on_stts_settings_save_event(STTSSettingsSaveEvent({}))
+    await started.wait()
+
+    try:
+        tracked_task = next(iter(handler._active_tasks))
+        await handler.cleanup_tts_resources()
+        await handler.cleanup_tts_resources()
+
+        assert tracked_task.cancelled()
+        assert finished.is_set()
+        assert handler._active_tasks == set()
+    finally:
+        for task in created_tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*created_tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_stts_cleanup_preserves_persistent_audiobook_output(
+    tmp_path: Path,
+) -> None:
+    handler = STTSEventHandler(app=SimpleNamespace(notify=Mock()))
+    temporary = tmp_path / "playground.wav"
+    persistent = tmp_path / "audiobook.wav"
+    temporary.write_bytes(b"temporary")
+    persistent.write_bytes(b"persistent")
+    handler._playground_audio_files.add(temporary)
+    handler._current_audio_file = persistent
+
+    await handler.cleanup_tts_resources()
+    await handler.cleanup_tts_resources()
+
+    assert not temporary.exists()
+    assert persistent.read_bytes() == b"persistent"
+    assert handler._current_audio_file == persistent

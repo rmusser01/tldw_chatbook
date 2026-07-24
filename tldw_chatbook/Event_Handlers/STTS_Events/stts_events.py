@@ -3,6 +3,7 @@
 #
 # Imports
 import asyncio
+from collections.abc import Coroutine
 from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
@@ -17,6 +18,7 @@ from textual.widgets import Button, Select, RichLog, Static, ProgressBar
 # Local imports
 from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
 from tldw_chatbook.TTS.adapter_types import TTSProgress
+from tldw_chatbook.Utils.secure_temp_files import secure_delete_file
 from tldw_chatbook.config import get_cli_setting
 #
 #######################################################################################################################
@@ -87,6 +89,8 @@ class STTSEventHandler:
         self._stts_service = None
         self._current_audio_file = None
         self._is_generating = False
+        self._active_tasks: set[asyncio.Task[Any]] = set()
+        self._playground_audio_files: set[Path] = set()
 
     async def initialize_stts(self) -> None:
         """Initialize S/TT/S service"""
@@ -153,16 +157,7 @@ class STTSEventHandler:
             logger.warning(f"Could not find TTSPlaygroundWidget: {e}")
             playground = None
 
-        # Run the generation in a worker to avoid blocking UI
-        if playground and hasattr(playground, "run_worker"):
-            # Use the widget's worker to keep UI responsive
-            # Run async function in a worker (not in a thread)
-            playground.run_worker(
-                self._generate_tts_worker(event, playground), exclusive=True
-            )
-        else:
-            # Fallback to direct async execution
-            await self._generate_tts_worker(event, playground)
+        await self._generate_tts_worker(event, playground)
 
     async def _generate_tts_worker(
         self, event: STTSPlaygroundGenerateEvent, playground=None
@@ -407,7 +402,10 @@ class STTSEventHandler:
                             update_wait()
 
             # Start the waiting status task
-            status_task = asyncio.create_task(show_waiting_status())
+            status_task = asyncio.create_task(
+                show_waiting_status(),
+                name="stts_generation_status",
+            )
 
             try:
                 async for chunk in self._stts_service.generate_audio_stream(
@@ -440,8 +438,8 @@ class STTSEventHandler:
                         update_log(first_msg)
 
             finally:
-                # Make sure to cancel the status task
                 status_task.cancel()
+                await asyncio.gather(status_task, return_exceptions=True)
 
             # Save to temporary WAV file first
             import tempfile
@@ -452,6 +450,7 @@ class STTSEventHandler:
             ) as tmp_file:
                 tmp_file.write(audio_data)
                 wav_file = Path(tmp_file.name)
+            self._playground_audio_files.add(wav_file)
 
             # Convert to requested format if needed
             if requested_format != "wav":
@@ -473,12 +472,13 @@ class STTSEventHandler:
                     wav_file, requested_format
                 )
                 if converted_file:
-                    # Delete the temporary WAV file
-                    try:
-                        wav_file.unlink()
-                    except (FileNotFoundError, PermissionError) as e:
-                        logger.warning(f"Failed to delete temporary WAV file: {e}")
-                        pass
+                    if secure_delete_file(wav_file) or not wav_file.exists():
+                        self._playground_audio_files.discard(wav_file)
+                    else:
+                        logger.warning(
+                            f"Failed to delete temporary WAV file: {wav_file}"
+                        )
+                    self._playground_audio_files.add(converted_file)
                     self._current_audio_file = converted_file
                 else:
                     # Conversion failed, use WAV file
@@ -947,21 +947,49 @@ class STTSEventHandler:
             logger.error(f"Failed to export audio: {e}")
             self.app.notify(f"Failed to export audio: {e}", severity="error")
 
+    def _start_event_task(self, coroutine: Coroutine[Any, Any, None]) -> None:
+        """Start and retain an event task until it finishes."""
+        task = asyncio.create_task(coroutine)
+        self._active_tasks.add(task)
+        task.add_done_callback(self._active_tasks.discard)
+
+    async def cleanup_tts_resources(self) -> None:
+        """Cancel handler work and delete only playground-owned temporary audio."""
+        tasks = tuple(self._active_tasks)
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._active_tasks.difference_update(tasks)
+
+        owned_paths = tuple(self._playground_audio_files)
+        for path in owned_paths:
+            if secure_delete_file(path) or not path.exists():
+                self._playground_audio_files.discard(path)
+
+        if (
+            self._current_audio_file in owned_paths
+            and self._current_audio_file not in self._playground_audio_files
+        ):
+            self._current_audio_file = None
+        self._is_generating = False
+
     def on_stts_playground_generate_event(
         self, event: STTSPlaygroundGenerateEvent
     ) -> None:
         """Handle playground generate event"""
-        asyncio.create_task(self.handle_playground_generate(event))
+        self._start_event_task(self.handle_playground_generate(event))
 
     def on_stts_settings_save_event(self, event: STTSSettingsSaveEvent) -> None:
         """Handle settings save event"""
-        asyncio.create_task(self.handle_settings_save(event))
+        self._start_event_task(self.handle_settings_save(event))
 
     def on_stts_audiobook_generate_event(
         self, event: STTSAudioBookGenerateEvent
     ) -> None:
         """Handle audiobook generate event"""
-        asyncio.create_task(self.handle_audiobook_generate(event))
+        self._start_event_task(self.handle_audiobook_generate(event))
 
 
 #
