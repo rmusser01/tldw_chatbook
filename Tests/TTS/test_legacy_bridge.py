@@ -811,6 +811,89 @@ async def test_shutdown_closes_abandoned_partially_consumed_stream() -> None:
 
 
 @pytest.mark.asyncio
+async def test_manager_cleanup_can_finish_timed_out_operation_close() -> None:
+    backend = AsyncFinalizingLegacyBackend()
+
+    class CleanupManager(FakeLegacyManager):
+        async def close_all_backends(self) -> None:
+            self.close_calls += 1
+            backend.allow_cleanup.set()
+            await backend.cleanup_finished.wait()
+
+    manager = CleanupManager(backend)
+    host = LegacyBackendHost(
+        provider_id="kokoro",
+        app_config={},
+        manager_factory=lambda _: manager,
+        shutdown_timeout_seconds=0.01,
+    )
+    stream = host.generate(
+        "local_kokoro_default_onnx",
+        speech_request(),
+        None,
+    )
+    assert await anext(stream) == b"first"
+
+    await asyncio.wait_for(host.close(), timeout=0.2)
+
+    assert backend.cleanup_finished.is_set()
+    assert host._active_operations == 0
+    assert host._active_operation_handles == set()
+    assert manager.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_manager_unblocked_operation_cleanup_error_is_preserved() -> None:
+    allow_cleanup = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    class FailingFinalizerBackend(FinalizingLegacyBackend):
+        def generate_speech_stream(
+            self,
+            request: OpenAISpeechRequest,
+        ) -> AsyncIterator[bytes]:
+            del request
+
+            async def stream() -> AsyncIterator[bytes]:
+                try:
+                    yield b"first"
+                finally:
+                    await allow_cleanup.wait()
+                    cleanup_finished.set()
+                    raise RuntimeError("stream cleanup failed")
+
+            return stream()
+
+    backend = FailingFinalizerBackend()
+
+    class CleanupManager(FakeLegacyManager):
+        async def close_all_backends(self) -> None:
+            self.close_calls += 1
+            allow_cleanup.set()
+            await cleanup_finished.wait()
+            await asyncio.sleep(0)
+
+    manager = CleanupManager(backend)
+    host = LegacyBackendHost(
+        provider_id="kokoro",
+        app_config={},
+        manager_factory=lambda _: manager,
+        shutdown_timeout_seconds=0.01,
+    )
+    stream = host.generate(
+        "local_kokoro_default_onnx",
+        speech_request(),
+        None,
+    )
+    assert await anext(stream) == b"first"
+
+    with pytest.raises(RuntimeError, match="stream cleanup failed"):
+        await asyncio.wait_for(host.close(), timeout=0.2)
+
+    assert manager.close_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_shutdown_surfaces_uncooperative_stream_cleanup_timeout() -> None:
     backend = AsyncFinalizingLegacyBackend()
     manager = FakeLegacyManager(backend)

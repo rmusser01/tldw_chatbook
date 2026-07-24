@@ -319,27 +319,40 @@ class LegacyBackendHost:
             except TimeoutError:
                 pass
 
-        pending_operations: set[asyncio.Task[Any]] = set()
         operation_error: BaseException | None = None
+        operation_tasks: set[asyncio.Task[None]] = set()
         if not self._operations_drained.is_set():
             async with self._manager_lock:
                 operations = set(self._active_operation_handles)
             operation_tasks = {operation.start_close() for operation in operations}
-            pending_operations = await self._wait_pending(operation_tasks)
-            for operation_task in pending_operations:
-                operation_task.add_done_callback(self._observe_task_result)
-            for operation_task in operation_tasks - pending_operations:
-                try:
-                    operation_task.result()
-                except BaseException as error:
-                    operation_error = operation_error or error
+            await self._wait_pending(operation_tasks)
 
         async with self._manager_lock:
             manager = self._manager
             self._manager = None
             self._manager_detached = True
+        manager_error: BaseException | None = None
         if manager is not None:
-            await self._close_manager(manager)
+            try:
+                await self._close_manager(manager)
+            except BaseException as error:
+                manager_error = error
+
+        pending_operations: set[asyncio.Task[Any]] = {
+            operation_task
+            for operation_task in operation_tasks
+            if not operation_task.done()
+        }
+        for operation_task in pending_operations:
+            operation_task.add_done_callback(self._observe_task_result)
+        for operation_task in operation_tasks - pending_operations:
+            try:
+                operation_task.result()
+            except BaseException as error:
+                operation_error = operation_error or error
+
+        if manager_error is not None:
+            raise manager_error
         if pending_operations:
             raise TimeoutError("Legacy TTS operations did not stop before shutdown")
         if operation_error is not None:
