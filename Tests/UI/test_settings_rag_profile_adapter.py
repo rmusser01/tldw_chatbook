@@ -731,3 +731,135 @@ def test_apply_defaults_with_blank_embedding_device_leaves_profile_device_unchan
     apply_defaults_to_profile(p, d)
 
     assert p.rag_config.embedding.device == "cuda"
+
+
+# --- Task 4: index status readout + backfill + honest re-index warnings ---
+
+
+def test_index_change_pending_false_for_a_query_time_only_change(wired):
+    """default_top_k is a query-time-only field (not in the fingerprint's
+    index-determining set) -- changing it must never claim a pending
+    re-index."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        index_change_pending,
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    _user_profile(mgr, state)
+    d = load_rag_defaults_from_active_profile()
+    d = dataclasses.replace(d, default_top_k=d.default_top_k + 1)
+
+    assert index_change_pending(d) is False
+
+
+def test_index_change_pending_true_for_a_chunk_size_change(wired):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        index_change_pending,
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    _user_profile(mgr, state)
+    d = load_rag_defaults_from_active_profile()
+    d = dataclasses.replace(d, chunk_size=d.chunk_size + 50)
+
+    assert index_change_pending(d) is True
+
+
+def test_index_change_pending_true_for_an_embedding_model_change(wired):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        index_change_pending,
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    _user_profile(mgr, state)
+    d = load_rag_defaults_from_active_profile()
+    d = dataclasses.replace(d, embedding_model="a-totally-different-model")
+
+    assert index_change_pending(d) is True
+
+
+def test_index_change_pending_true_for_a_distance_metric_change(wired):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        index_change_pending,
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    _user_profile(mgr, state)
+    d = load_rag_defaults_from_active_profile()
+    assert d.distance_metric != "l2"
+    d = dataclasses.replace(d, distance_metric="l2")
+
+    assert index_change_pending(d) is True
+
+
+def test_index_change_pending_never_mutates_the_cached_active_profile(wired):
+    """Same scratch-copy discipline as ``hard_config_errors`` -- must never
+    mutate the live cached profile object the manager hands to every other
+    caller."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        index_change_pending,
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    p = _user_profile(mgr, state)
+    original_chunk_size = p.rag_config.chunking.chunk_size
+
+    d = load_rag_defaults_from_active_profile()
+    d = dataclasses.replace(d, chunk_size=original_chunk_size + 123)
+
+    index_change_pending(d)
+
+    assert mgr.get_profile(p.id).rag_config.chunking.chunk_size == original_chunk_size
+
+
+def test_index_change_pending_returns_false_without_raising_when_manager_raises(
+    wired, monkeypatch
+):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        index_change_pending,
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    _user_profile(mgr, state)
+    d = load_rag_defaults_from_active_profile()
+    d = dataclasses.replace(d, chunk_size=d.chunk_size + 50)
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("profile store unavailable")
+
+    monkeypatch.setattr(mgr, "get_profile", _raise)
+
+    assert index_change_pending(d) is False
+
+
+def test_fetch_index_status_absent_for_a_memory_store_active_profile(wired):
+    """SP1 behavior: a non-persistent (in-memory) store is always "absent" --
+    there is no on-disk collection to check."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        fetch_index_status,
+    )
+    mgr, state = wired
+    p = _user_profile(mgr, state)
+    p.rag_config.vector_store.type = "memory"
+    mgr.save_profile(p)
+
+    status = fetch_index_status()
+
+    assert status == {"state": "absent", "count": 0, "provenance": {}}
+
+
+def test_fetch_index_status_returns_unknown_without_raising_on_error(
+    wired, monkeypatch
+):
+    import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+    mgr, state = wired
+    _user_profile(mgr, state)
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("chroma unavailable")
+
+    monkeypatch.setattr(ad, "index_status", _raise)
+
+    status = ad.fetch_index_status()
+
+    assert status == {"state": "unknown", "count": 0, "provenance": {}}

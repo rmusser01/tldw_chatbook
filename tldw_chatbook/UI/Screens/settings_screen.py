@@ -135,11 +135,17 @@ from .settings_rag_profile_adapter import (
     active_profile_info,
     clone_profile_as,
     delete_user_profile,
+    fetch_index_status,
+    index_change_pending,
     list_profiles_grouped,
     load_rag_defaults_from_active_profile,
     rename_user_profile,
     save_rag_defaults_to_active_profile,
     soft_config_warnings,
+)
+from ...RAG_Search.ingestion_indexing import (
+    backfill_semantic_index,
+    semantic_indexing_available,
 )
 from .settings_privacy_security import (
     SettingsPrivacyPosture,
@@ -274,6 +280,17 @@ CONSOLE_BACKGROUND_EFFECT_SAVE_ORDER = (
 CONSOLE_BACKGROUND_WORKBENCH_UNAVAILABLE_COPY = (
     "Workbench scope is not available in this build; using Transcript scope."
 )
+# Task 4 (SP3): shared honest re-index warning, appended to BOTH triggers that
+# can re-point the active profile at a fresh (empty) fingerprinted vector
+# collection -- saving an index-determining field (settings_rag_profile_adapter
+# .index_change_pending) and switching the active profile itself
+# (handle_library_rag_profile_set_active / _rag_after_set_active). See
+# Docs/superpowers/specs/2026-07-21-rag-index-isolation-design.md.
+RAG_INDEX_CHANGE_WARNING = (
+    "This change re-points to a new (empty) index — run Backfill."
+)
+RAG_INDEX_ABSENT_STATUS_TEXT = "Index: absent — will be created on next backfill"
+RAG_INDEX_STATUS_CHECKING_TEXT = "Index: checking…"
 TEXTUAL_WEB_URL_AUTOLINK_BREAK = "\u200b"
 TEXTUAL_WEB_URL_SCHEME_RE = re.compile(r"\b(https?)://", re.IGNORECASE)
 CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
@@ -1210,6 +1227,12 @@ class SettingsScreen(BaseAppScreen):
         self._library_rag_profile_result = (
             "No RAG profile action taken this session."
         )
+        # Task 4 (SP3): index status readout + Backfill. The Static renders
+        # this placeholder text at compose time -- the real state is fetched
+        # off-thread (touches on-disk Chroma) on category show, after
+        # set-active, and after a successful save; never during compose.
+        self._library_rag_index_status_text = RAG_INDEX_STATUS_CHECKING_TEXT
+        self._library_rag_backfill_in_flight = False
         self._appearance_result = (
             "Appearance defaults have not been saved this session."
         )
@@ -1316,9 +1339,19 @@ class SettingsScreen(BaseAppScreen):
         super().on_mount()
         self._register_footer_shortcuts()
         self._queue_sync_rows_refresh()
+        # Task 4 (SP3): covers restored state (`restore_state` can set
+        # `active_category` to LIBRARY_RAG before this screen is even
+        # mounted) -- `_select_category` alone only covers a later in-session
+        # switch INTO the category.
+        self._maybe_refresh_rag_index_status_on_show()
 
     def on_screen_resume(self) -> None:
         self._queue_sync_rows_refresh()
+        self._maybe_refresh_rag_index_status_on_show()
+
+    def _maybe_refresh_rag_index_status_on_show(self) -> None:
+        if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
+            self._refresh_library_rag_index_status()
 
     def _queue_sync_rows_refresh(self) -> None:
         if not getattr(self, "is_mounted", False):
@@ -7573,6 +7606,113 @@ class SettingsScreen(BaseAppScreen):
                 return entry["name"]
         return profile_id
 
+    @staticmethod
+    def _library_rag_index_status_line(status: Mapping[str, object]) -> str:
+        """Render ``fetch_index_status()``'s dict as the status-row text.
+
+        Graceful when the store is non-persistent or the collection hasn't
+        been created yet (``state == "absent"``, ``provenance`` always
+        empty in that case -- see ``collection_indexes.index_status``): a
+        dedicated, friendlier line rather than "absent · 0 vectors". When
+        provenance is present (built/empty), append the "built with
+        <model> / chunk <size>·<overlap>" tail; omit it when provenance is
+        missing so a legacy/unstamped collection still renders sensibly.
+        """
+        state = str(status.get("state") or "unknown")
+        if state == "absent":
+            return RAG_INDEX_ABSENT_STATUS_TEXT
+        count = status.get("count", 0)
+        provenance = status.get("provenance") or {}
+        model = provenance.get("embedding_model")
+        chunk_size = provenance.get("chunk_size")
+        chunk_overlap = provenance.get("chunk_overlap")
+        base = f"Index: {state} · {count} vectors"
+        if model is None or chunk_size is None or chunk_overlap is None:
+            return base
+        return f"{base} · built with {model} / chunk {chunk_size}·{chunk_overlap}"
+
+    def _apply_library_rag_index_status(self, status: Mapping[str, object]) -> None:
+        """Imperatively update the index-status Static from a freshly fetched
+        status dict -- called from off-thread worker callbacks, never during
+        compose (see ``_library_rag_index_status_text`` init comment)."""
+        self._library_rag_index_status_text = self._library_rag_index_status_line(
+            status
+        )
+        self._set_static_text(
+            "#settings-library-rag-index-status", self._library_rag_index_status_text
+        )
+
+    @work(exclusive=True, thread=True, group="settings-rag-index-status")
+    def _rag_index_status_worker(self) -> None:
+        status = fetch_index_status()
+        self.app.call_from_thread(self._apply_library_rag_index_status, status)
+
+    def _refresh_library_rag_index_status(self) -> None:
+        """Dispatch the off-thread index-status fetch (category show / after
+        save). Guarded so a not-yet-mounted or already-navigated-away screen
+        never queues pointless work."""
+        if not getattr(self, "is_mounted", False):
+            return
+        self._rag_index_status_worker()
+
+    @work(exclusive=True, group="settings-rag-backfill")
+    async def _rag_backfill_worker(self) -> None:
+        """Bulk-index existing media/notes/conversations into the active
+        profile's resolved vector collection.
+
+        Mirrors ``SearchRAGWindow._run_index_backfill``'s call to
+        ``backfill_semantic_index`` (same default ``item_types`` covering
+        media/notes/conversations, DBs sourced the same way from
+        ``self.app_instance``) but as a genuinely async worker -- awaited
+        directly rather than that window's thread + transient ``asyncio.run``
+        dance -- since this is the settings screen's light "kick off a
+        backfill" trigger (SP3 spec §7), not the primary bulk-indexing UI.
+        Never crashes the screen: any exception is caught and reported via
+        notify rather than propagating out of the worker.
+        """
+        try:
+            if not semantic_indexing_available():
+                self.app.notify(
+                    "Semantic indexing is unavailable (missing embeddings "
+                    "extras, or disabled in config).",
+                    severity="warning",
+                )
+                return
+            media_db = getattr(self.app_instance, "media_db", None)
+            chachanotes_db = getattr(self.app_instance, "chachanotes_db", None)
+            if media_db is None and chachanotes_db is None:
+                self.app.notify(
+                    "No local databases are available to backfill.",
+                    severity="error",
+                )
+                return
+            summary = await backfill_semantic_index(
+                media_db=media_db, chachanotes_db=chachanotes_db
+            )
+        except Exception as e:
+            logger.error(f"RAG index backfill crashed: {e}")
+            self.app.notify(f"Backfill failed: {e}", severity="error")
+            return
+        finally:
+            self._library_rag_backfill_in_flight = False
+        status = summary.get("status")
+        errors = summary.get("errors") or []
+        if status in ("unavailable", "error") or errors:
+            last_error = str(errors[-1]) if errors else None
+            detail = f" Last error: {last_error}" if last_error else ""
+            self.app.notify(
+                f"Backfill finished with problems: {summary.get('indexed', 0)} "
+                f"indexed, {summary.get('failed', 0)} failed.{detail}",
+                severity="error" if status == "error" else "warning",
+            )
+        else:
+            self.app.notify(
+                f"Backfill complete: {summary.get('indexed', 0)} indexed, "
+                f"{summary.get('skipped', 0)} already up-to-date.",
+                severity="information",
+            )
+        self._refresh_library_rag_index_status()
+
     def _render_library_rag_profile_block(self) -> ComposeResult:
         info = active_profile_info()
         grouped = list_profiles_grouped()
@@ -7615,6 +7755,27 @@ class SettingsScreen(BaseAppScreen):
             id="settings-library-rag-profile-result",
             classes="settings-status-row",
         )
+        # Task 4 (SP3): index status readout. Compose ALWAYS renders the
+        # "checking…" placeholder -- the real state is fetched off-thread
+        # (touches on-disk Chroma) by the category-show/set-active/save
+        # triggers, never here.
+        #
+        # Deliberately NOT a `Static` + `Button` sharing one
+        # `.settings-action-row` Horizontal: `.settings-detail-row`/
+        # `.settings-status-row` are `width: 100%`, which -- inside a
+        # Horizontal -- claims the whole row and pushes/clips a sibling
+        # Button past the visible edge (the same class of bug already hit
+        # once in this program, RAG-Scope-button-clipped-off-rail). Own
+        # full-width row for the Static, Button in its own
+        # `.settings-action-row` right below it, exactly like the
+        # Set active/Clone/Rename/Delete row above.
+        yield Static(
+            self._library_rag_index_status_text,
+            id="settings-library-rag-index-status",
+            classes="settings-detail-row",
+        )
+        with Horizontal(classes="settings-action-row"):
+            yield Button("Backfill", id="settings-library-rag-index-backfill")
 
     def _sync_library_rag_profile_widgets(self) -> None:
         """Refresh the Profiles block imperatively (no recompose) after any
@@ -8996,6 +9157,8 @@ class SettingsScreen(BaseAppScreen):
         self.active_category = category_value
         if category_value == SettingsCategoryId.OVERVIEW.value:
             self._queue_sync_rows_refresh()
+        if category_value == SettingsCategoryId.LIBRARY_RAG.value:
+            self._refresh_library_rag_index_status()
         if restore_focus:
             self.call_after_refresh(self._focus_category, category_value)
 
@@ -9846,19 +10009,45 @@ class SettingsScreen(BaseAppScreen):
     @work(exclusive=True, thread=True, group="settings-rag-set-active")
     def _rag_set_active_worker(self, profile_id: str) -> None:
         ok, reason = activate_profile(profile_id)
-        self.app.call_from_thread(self._rag_after_set_active, ok, reason)
+        # Task 4 (SP3): fetch the newly-active profile's index status in the
+        # SAME off-thread hop that flips the pointer -- both touch the
+        # profile/config store off the UI thread already, so this reuses that
+        # trip instead of a second worker round-trip right after. `None` on
+        # failure (nothing to report) preserves the pre-task-4 2-arg call
+        # shape for `_rag_after_set_active`'s "no warning known" branch.
+        new_status = fetch_index_status() if ok else None
+        self.app.call_from_thread(
+            self._rag_after_set_active, ok, reason, new_status
+        )
 
-    def _rag_after_set_active(self, ok: bool, reason: str) -> None:
+    def _rag_after_set_active(
+        self, ok: bool, reason: str, new_index_status: Mapping[str, object] | None = None
+    ) -> None:
         if ok:
             self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
             info = active_profile_info()
             message = f"Active profile: {info['name']}"
+            # Honest re-index warning (SP3 spec §3, trigger (b)): only when we
+            # actually know the new profile's index isn't built yet -- never
+            # noisy-by-default when the caller didn't supply a status (e.g.
+            # pre-task-4 callers/tests) or when it's already built (switching
+            # to a profile whose fingerprinted collection was indexed before).
+            index_not_built = (
+                new_index_status is not None
+                and new_index_status.get("state") != "built"
+            )
+            if index_not_built:
+                message = f"{message} {RAG_INDEX_CHANGE_WARNING}"
             self._library_rag_profile_result = message
             self._set_static_text("#settings-library-rag-profile-result", message)
             self._sync_library_rag_widgets()
             self._sync_library_rag_profile_widgets()
             self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
-            self.app.notify(message, severity="information")
+            if new_index_status is not None:
+                self._apply_library_rag_index_status(new_index_status)
+            self.app.notify(
+                message, severity="warning" if index_not_built else "information"
+            )
             return
         message = f"Couldn't switch active profile: {reason}"
         self._library_rag_profile_result = message
@@ -9868,6 +10057,19 @@ class SettingsScreen(BaseAppScreen):
         # active profile rather than leaving a stale value on screen.
         self._sync_library_rag_profile_widgets()
         self.app.notify(message, severity="error")
+
+    @on(Button.Pressed, "#settings-library-rag-index-backfill")
+    def handle_library_rag_index_backfill(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._library_rag_backfill_in_flight:
+            self.app.notify("Backfill is already running.", severity="warning")
+            return
+        self._library_rag_backfill_in_flight = True
+        self.app.notify(
+            "Backfill started — this may take a while for large libraries.",
+            severity="information",
+        )
+        self._rag_backfill_worker()
 
     @on(Button.Pressed, "#settings-library-rag-profile-clone")
     def handle_library_rag_profile_clone(self, event: Button.Pressed) -> None:
@@ -10782,12 +10984,17 @@ class SettingsScreen(BaseAppScreen):
                 self._update_draft_status_widgets(category)
                 self.app.notify(validation.message, severity="error")
                 return
+            # Task 4 (SP3): computed BEFORE the save mutates the active
+            # profile (pure, scratch-copy comparison -- see
+            # index_change_pending's docstring); fast/in-memory, so this runs
+            # inline rather than adding an extra off-thread hop.
+            index_will_change = index_change_pending(values)
             self._library_rag_result = "Saving Library/RAG defaults..."
             self._set_static_text(
                 "#settings-library-rag-save-result", self._library_rag_result
             )
             self._rag_profile_pending_activate = pending_activate
-            self._settings_save_library_rag_worker(values)
+            self._settings_save_library_rag_worker(values, index_will_change)
             return
 
         if category is SettingsCategoryId.APPEARANCE:
@@ -11217,6 +11424,7 @@ class SettingsScreen(BaseAppScreen):
         self,
         saved: bool,
         reason: str,
+        index_will_change: bool = False,
     ) -> None:
         # A "Save" choice from RagProfileSwitchConfirmModal defers the profile
         # switch until this save completes; consumed (and cleared) exactly
@@ -11226,15 +11434,29 @@ class SettingsScreen(BaseAppScreen):
         self._rag_profile_pending_activate = None
         if saved:
             self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
-            self._library_rag_result = "Library/RAG defaults saved."
+            message = "Library/RAG defaults saved."
+            # Task 4 (SP3), save-path trigger (a): honest re-index warning
+            # when the just-saved fields re-point the fingerprinted
+            # collection -- computed pre-save by index_change_pending, see
+            # the dispatch site above.
+            if index_will_change:
+                message = f"{message} {RAG_INDEX_CHANGE_WARNING}"
+            self._library_rag_result = message
             self._set_static_text(
                 "#settings-library-rag-save-result", self._library_rag_result
             )
             self._sync_library_rag_widgets()
             self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
-            self.app.notify("Library/RAG defaults saved.", severity="information")
+            self.app.notify(
+                message, severity="warning" if index_will_change else "information"
+            )
             if pending_activate:
+                # The deferred set-active worker fetches its own fresh index
+                # status for the NEW active profile -- refreshing here first
+                # would just be immediately-stale, wasted off-thread work.
                 self._dispatch_rag_set_active(pending_activate)
+            else:
+                self._refresh_library_rag_index_status()
             return
         if reason == "builtin":
             self._library_rag_result = (
@@ -11256,13 +11478,14 @@ class SettingsScreen(BaseAppScreen):
 
     @work(exclusive=True, thread=True)
     def _settings_save_library_rag_worker(
-        self, values: SettingsLibraryRagDefaults
+        self, values: SettingsLibraryRagDefaults, index_will_change: bool = False
     ) -> None:
         saved, reason = save_rag_defaults_to_active_profile(values)
         self.app.call_from_thread(
             self._apply_library_rag_save_result,
             saved,
             reason,
+            index_will_change,
         )
 
     def _apply_storage_save_result(

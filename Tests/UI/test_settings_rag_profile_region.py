@@ -29,12 +29,15 @@ from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _build_test_app,
+    _visible_text,
 )
 from Tests.UI.test_settings_configuration_hub import (
     _open_settings_category,
+    _wait_for_settings_text,
     _wire_rag_profile_adapter,
 )
 from tldw_chatbook.RAG_Search.config_profiles import reset_profile_manager_cache
+import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
@@ -225,8 +228,10 @@ def test_pending_activate_survives_into_worker_dispatch_on_valid_save(
     app = _build_test_app()
     screen = _dirty_library_rag_screen(app)  # valid dirty value (12)
     screen._rag_profile_pending_activate = "target-profile-id"
-    worker_calls: list[object] = []
-    screen._settings_save_library_rag_worker = worker_calls.append
+    worker_calls: list[tuple] = []
+    # Task 4 (SP3) added a second positional arg (`index_will_change`) to the
+    # worker dispatch -- capture the full call, not just a single value.
+    screen._settings_save_library_rag_worker = lambda *args: worker_calls.append(args)
 
     screen.action_settings_save_category(allow_text_entry_focus=True)
 
@@ -300,3 +305,154 @@ async def test_library_rag_detail_renders_fields_disabled_for_readonly_active_pr
         assert screen.query_one("#settings-library-rag-citation-style", Select).disabled
         assert screen.query_one("#settings-library-rag-snippet-max-chars", Input).disabled
         assert screen.query_one("#settings-library-rag-max-context-size", Input).disabled
+
+
+# --- Task 4 (SP3): index status readout + Backfill + honest re-index warnings ---
+
+
+@pytest.mark.asyncio
+async def test_library_rag_index_status_worker_updates_the_static(
+    monkeypatch, tmp_path
+):
+    """The off-thread status fetch dispatched on category show (see
+    _select_category -> _refresh_library_rag_index_status) populates the
+    status row imperatively via _apply_library_rag_index_status, never
+    during compose (which only ever renders the "checking…" placeholder)."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    fake_status = {
+        "state": "built",
+        "count": 42,
+        "provenance": {
+            "embedding_model": "mxbai-embed-large-v1",
+            "chunk_size": 400,
+            "chunk_overlap": 100,
+        },
+    }
+    monkeypatch.setattr(
+        settings_screen_module, "fetch_index_status", lambda: fake_status
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        expected = (
+            "Index: built · 42 vectors · built with mxbai-embed-large-v1 / "
+            "chunk 400·100"
+        )
+        assert expected in _visible_text(screen)
+        assert screen._library_rag_index_status_text == expected
+
+
+@pytest.mark.asyncio
+async def test_library_rag_save_with_index_change_includes_the_warning(
+    monkeypatch, tmp_path
+):
+    """Save-path trigger (a): editing an index-determining field (chunk
+    size) and saving must surface the shared honest re-index warning
+    alongside the success notification (index_change_pending computed
+    before the save mutates the profile)."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module,
+        "fetch_index_status",
+        lambda: {"state": "absent", "count": 0, "provenance": {}},
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        chunk_size = screen.query_one("#settings-library-rag-chunk-size", Input)
+        chunk_size.value = str(profile.rag_config.chunking.chunk_size + 50)
+        screen.handle_library_rag_chunk_size_changed(
+            Input.Changed(chunk_size, chunk_size.value)
+        )
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Library/RAG defaults saved.")
+
+        assert (
+            "This change re-points to a new (empty) index — run Backfill."
+            in _visible_text(screen)
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_rag_save_without_index_change_omits_the_warning(
+    monkeypatch, tmp_path
+):
+    """Save-path trigger (a), negative case: a query-time-only field
+    (default_top_k, not in the fingerprint's index-determining set) must
+    never surface the re-index warning."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module,
+        "fetch_index_status",
+        lambda: {"state": "built", "count": 1, "provenance": {}},
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
+        top_k.value = str(profile.rag_config.search.default_top_k + 1)
+        screen.handle_library_rag_default_top_k_changed(
+            Input.Changed(top_k, top_k.value)
+        )
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Library/RAG defaults saved.")
+
+        assert (
+            "This change re-points to a new (empty) index — run Backfill."
+            not in _visible_text(screen)
+        )
+
+
+def test_backfill_button_click_starts_a_worker_and_notifies(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    worker_calls: list[bool] = []
+    screen._rag_backfill_worker = lambda: worker_calls.append(True)
+
+    button = Button(id="settings-library-rag-index-backfill")
+    screen.handle_library_rag_index_backfill(Button.Pressed(button))
+
+    assert screen._library_rag_backfill_in_flight is True
+    assert worker_calls == [True]
+    assert fake_app.notifications[-1][1] == "information"
+
+
+def test_backfill_button_click_while_in_flight_does_not_start_a_second_worker(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    screen._library_rag_backfill_in_flight = True
+    worker_calls: list[bool] = []
+    screen._rag_backfill_worker = lambda: worker_calls.append(True)
+
+    button = Button(id="settings-library-rag-index-backfill")
+    screen.handle_library_rag_index_backfill(Button.Pressed(button))
+
+    assert worker_calls == []
+    assert fake_app.notifications[-1] == ("Backfill is already running.", "warning")
