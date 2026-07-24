@@ -2376,12 +2376,12 @@ async def _close_tts_service(self) -> None:
         self._tts_binding_active = False
 
 
-async def on_mount(self) -> None:
+def on_mount(self) -> None:
     self._bind_tts_service()
 ```
 
-The current `TldwCli` class has no `on_mount()` method, so TASK-402 adds the
-single method above.
+Add the binding call at the start of the existing `TldwCli.on_mount()` method;
+do not add a second lifecycle method.
 
 `close_tts_resources()` retains and joins the service's definitive
 `wait_closed()` path before it clears the binding, including when the shutdown
