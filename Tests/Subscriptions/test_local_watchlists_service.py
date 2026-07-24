@@ -1,5 +1,6 @@
 import json
 from inspect import isawaitable
+from types import SimpleNamespace
 
 import pytest
 
@@ -307,30 +308,27 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
     fetched_sitemaps = []
     seen_urls = []
 
-    class FakeResponse:
-        text = """<?xml version="1.0" encoding="UTF-8"?>
+    SITEMAP_XML = """<?xml version="1.0" encoding="UTF-8"?>
         <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
             <url><loc>https://example.com/page-a</loc></url>
             <url><loc>https://example.com/page-b</loc></url>
         </urlset>
         """
 
-        def raise_for_status(self):
-            return None
+    async def fake_guarded(url, *, client, max_bytes, trusted_origins=frozenset(), headers=None, params=None, auth=None):
+        fetched_sitemaps.append(url)
+        return SimpleNamespace(
+            status_code=200,
+            headers={"content-type": "application/xml"},
+            text=SITEMAP_XML,
+            final_url=url,
+            raise_for_status=lambda: None,
+        )
 
-    class FakeAsyncClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, traceback):
-            return False
-
-        async def get(self, url):
-            fetched_sitemaps.append(url)
-            return FakeResponse()
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.local_watchlists_service.guarded_fetch_httpx_async",
+        fake_guarded,
+    )
 
     class FakeURLMonitor:
         def __init__(self, db):
@@ -345,7 +343,6 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
                 "published_date": "2026-04-25T00:00:00+00:00",
             }
 
-    monkeypatch.setattr("httpx.AsyncClient", FakeAsyncClient)
     monkeypatch.setattr(
         "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
         FakeURLMonitor,
@@ -392,47 +389,39 @@ async def test_local_watchlists_service_executes_api_sources_with_json_field_map
     service = LocalWatchlistsService(db_factory=lambda: db)
     requests = []
 
-    class FakeResponse:
-        headers = {"content-type": "application/json"}
+    API_PAYLOAD = {
+        "payload": {
+            "entries": [
+                {
+                    "headline": "Alpha update",
+                    "link": "https://api.example.com/a",
+                    "summary": "First item",
+                    "published": "2026-04-25T00:00:00+00:00",
+                },
+                {
+                    "headline": "Beta update",
+                    "link": "https://api.example.com/b",
+                    "summary": "Second item",
+                    "published": "2026-04-25T01:00:00+00:00",
+                },
+            ]
+        }
+    }
 
-        def raise_for_status(self):
-            return None
+    async def fake_guarded(url, *, client, max_bytes, trusted_origins=frozenset(), headers=None, params=None, auth=None):
+        requests.append({"url": url, "headers": headers, "params": params})
+        return SimpleNamespace(
+            status_code=200,
+            headers={"content-type": "application/json"},
+            final_url=url,
+            raise_for_status=lambda: None,
+            json=lambda: API_PAYLOAD,
+        )
 
-        def json(self):
-            return {
-                "payload": {
-                    "entries": [
-                        {
-                            "headline": "Alpha update",
-                            "link": "https://api.example.com/a",
-                            "summary": "First item",
-                            "published": "2026-04-25T00:00:00+00:00",
-                        },
-                        {
-                            "headline": "Beta update",
-                            "link": "https://api.example.com/b",
-                            "summary": "Second item",
-                            "published": "2026-04-25T01:00:00+00:00",
-                        },
-                    ]
-                }
-            }
-
-    class FakeAsyncClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, traceback):
-            return False
-
-        async def get(self, url, **kwargs):
-            requests.append({"url": url, **kwargs})
-            return FakeResponse()
-
-    monkeypatch.setattr("httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.local_watchlists_service.guarded_fetch_httpx_async",
+        fake_guarded,
+    )
     source = await service.create_source(
         {
             "name": "API changelog",
@@ -467,6 +456,7 @@ async def test_local_watchlists_service_executes_api_sources_with_json_field_map
                 "User-Agent": "tldw-chatbook/1.0 (+https://github.com/tldw/chatbook)",
                 "X-API-Key": "secret",
             },
+            "params": None,
         }
     ]
     assert completed["status"] == "completed"

@@ -30,6 +30,7 @@ except ImportError:
 # Local Imports
 from ..web_scraping_pipelines import BaseScrapingPipeline, ScrapedItem, ScrapingConfig
 from ...Metrics.metrics_logger import log_counter
+from ...Utils.egress import MAX_FETCH_BYTES_PAGE, guarded_fetch_httpx_async
 #
 ########################################################################################################################
 #
@@ -151,7 +152,13 @@ class RedditScrapingPipeline(BaseScrapingPipeline):
             headers = self.get_headers()
             headers["Accept"] = "application/rss+xml, application/xml"
 
-            response = await client.get(rss_url, headers=headers, follow_redirects=True)
+            response = await guarded_fetch_httpx_async(
+                rss_url,
+                client=client,
+                max_bytes=MAX_FETCH_BYTES_PAGE,
+                trusted_origins=frozenset(),
+                headers=headers,
+            )
             response.raise_for_status()
 
             log_counter(
@@ -192,7 +199,13 @@ class RedditScrapingPipeline(BaseScrapingPipeline):
             headers = self.get_headers()
             headers["Accept"] = "application/rss+xml, application/xml"
 
-            response = await client.get(rss_url, headers=headers, follow_redirects=True)
+            response = await guarded_fetch_httpx_async(
+                rss_url,
+                client=client,
+                max_bytes=MAX_FETCH_BYTES_PAGE,
+                trusted_origins=frozenset(),
+                headers=headers,
+            )
             response.raise_for_status()
 
             log_counter(

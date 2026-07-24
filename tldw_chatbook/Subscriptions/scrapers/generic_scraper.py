@@ -24,6 +24,7 @@ from ..web_scraping_pipelines import (
     ContentExtractor,
 )
 from ...Metrics.metrics_logger import log_counter
+from ...Utils.egress import MAX_FETCH_BYTES_PAGE, guarded_fetch_httpx_async, origin_set
 
 # Integration with existing web scraping module
 try:
@@ -109,7 +110,9 @@ class GenericWebScrapingPipeline(BaseScrapingPipeline):
             try:
                 # Use the existing scrape_article function
                 article_data = await scrape_article(
-                    url, custom_cookies=self.config.options.get("cookies")
+                    url,
+                    custom_cookies=self.config.options.get("cookies"),
+                    trusted_origins=origin_set(url),
                 )
 
                 if article_data and article_data.get("extraction_successful"):
@@ -134,7 +137,13 @@ class GenericWebScrapingPipeline(BaseScrapingPipeline):
             headers = self.get_headers()
 
             try:
-                response = await client.get(url, headers=headers, follow_redirects=True)
+                response = await guarded_fetch_httpx_async(
+                    url,
+                    client=client,
+                    max_bytes=MAX_FETCH_BYTES_PAGE,
+                    trusted_origins=origin_set(url),
+                    headers=headers,
+                )
                 response.raise_for_status()
 
                 log_counter(

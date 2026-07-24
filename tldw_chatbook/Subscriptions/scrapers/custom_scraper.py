@@ -24,6 +24,7 @@ from loguru import logger
 # Local Imports
 from ..web_scraping_pipelines import BaseScrapingPipeline, ScrapedItem, ScrapingConfig
 from ...Metrics.metrics_logger import log_counter
+from ...Utils.egress import MAX_FETCH_BYTES_PAGE, guarded_fetch_httpx_async, origin_set
 #
 ########################################################################################################################
 #
@@ -114,7 +115,13 @@ class CustomScrapingPipeline(BaseScrapingPipeline):
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             headers = self.get_headers()
-            response = await client.get(url, headers=headers, follow_redirects=True)
+            response = await guarded_fetch_httpx_async(
+                url,
+                client=client,
+                max_bytes=MAX_FETCH_BYTES_PAGE,
+                trusted_origins=origin_set(url),
+                headers=headers,
+            )
             response.raise_for_status()
 
             log_counter(
