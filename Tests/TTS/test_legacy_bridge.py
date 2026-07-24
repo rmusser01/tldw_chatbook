@@ -782,6 +782,35 @@ async def test_shutdown_drain_allows_admitted_operation_to_materialize() -> None
 
 
 @pytest.mark.asyncio
+async def test_shutdown_closes_abandoned_partially_consumed_stream() -> None:
+    backend = FinalizingLegacyBackend()
+    manager = FakeLegacyManager(backend)
+    host = LegacyBackendHost(
+        provider_id="kokoro",
+        app_config={},
+        manager_factory=lambda _: manager,
+        shutdown_timeout_seconds=0.01,
+    )
+    stream = host.generate(
+        "local_kokoro_default_onnx",
+        speech_request(),
+        None,
+    )
+
+    transient_consumer = asyncio.create_task(anext(stream))
+    assert await transient_consumer == b"first"
+    assert transient_consumer.done()
+
+    await asyncio.wait_for(host.close(), timeout=0.2)
+
+    assert backend.finalized.is_set()
+    assert backend.progress_callback is None
+    assert manager.close_calls == 1
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)
+
+
+@pytest.mark.asyncio
 async def test_shutdown_surfaces_uncooperative_stream_cleanup_timeout() -> None:
     backend = AsyncFinalizingLegacyBackend()
     manager = FakeLegacyManager(backend)
@@ -809,8 +838,8 @@ async def test_shutdown_surfaces_uncooperative_stream_cleanup_timeout() -> None:
 
     assert manager.close_calls == 1
     backend.allow_cleanup.set()
-    with pytest.raises(asyncio.CancelledError):
-        await stream_close
+    await stream_close
+    assert backend.cleanup_finished.is_set()
 
 
 @pytest.mark.asyncio
