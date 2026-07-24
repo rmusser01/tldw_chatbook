@@ -9,11 +9,13 @@ from __future__ import annotations
 import contextlib
 import errno
 import os
+import secrets
 import stat
+import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import BinaryIO, Iterator, TypeAlias
+from typing import BinaryIO, Iterator, TextIO, TypeAlias
 
 PathInput: TypeAlias = str | os.PathLike[str]
 
@@ -99,6 +101,13 @@ def _posix_guards_available() -> bool:
         and hasattr(os, "fchmod")
         and hasattr(os, "fsync")
     )
+
+
+def _atomic_posix_guards_available() -> bool:
+    return _posix_guards_available() and {
+        os.rename,
+        os.unlink,
+    }.issubset(os.supports_dir_fd)
 
 
 def _classify_private_file_stat(
@@ -420,6 +429,325 @@ def create_private_text(
                 reason=type(exc).__name__,
             )
         ) from None
+    finally:
+        if file_fd >= 0:
+            os.close(file_fd)
+        os.close(parent_fd)
+
+
+def _prepare_application_owned_parent(
+    selected: Path,
+    application_owned_directory: PathInput | None,
+) -> None:
+    if application_owned_directory is None:
+        return
+    owned_dir = lexical_path(application_owned_directory)
+    if selected.parent != owned_dir:
+        raise ValueError("Application-owned directory must be the target parent")
+    secure_private_directory(
+        owned_dir,
+        create=True,
+        application_owned=True,
+    )
+
+
+def atomic_private_write_bytes(
+    path: PathInput,
+    payload: bytes,
+    *,
+    application_owned_directory: PathInput | None = None,
+) -> PrivatePathResult:
+    """Atomically replace a private file without following its target."""
+
+    selected = lexical_path(path)
+    _prepare_application_owned_parent(selected, application_owned_directory)
+
+    if not _atomic_posix_guards_available():
+        if _WINDOWS_PLATFORM:
+            selected.parent.mkdir(parents=True, exist_ok=True)
+            fd, temporary = tempfile.mkstemp(
+                dir=selected.parent,
+                prefix=f".{selected.name}.",
+                suffix=".tmp",
+            )
+            try:
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(payload)
+                    stream.flush()
+                os.replace(temporary, selected)
+            except BaseException:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+                raise
+            return PrivatePathResult(
+                selected,
+                PrivatePathStatus.UNVERIFIED_PLATFORM,
+                reason="native_acl_not_verified",
+            )
+        raise PrivatePathError(
+            PrivatePathResult(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                reason="required_posix_guards_unavailable",
+            )
+        )
+
+    parent_fd, leaf = _open_verified_parent(
+        selected,
+        missing_leaf_allowed=True,
+    )
+    temporary_leaf = f".{leaf}.{secrets.token_hex(8)}.tmp"
+    temporary_fd = -1
+    temporary_exists = False
+    try:
+        try:
+            existing_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            existing_stat = None
+            prior_mode = None
+        else:
+            rejected = _classify_private_file_stat(
+                existing_stat,
+                expected_uid=os.geteuid(),
+            )
+            if rejected is not None:
+                raise PrivatePathError(PrivatePathResult(selected, rejected))
+            prior_mode = stat.S_IMODE(existing_stat.st_mode)
+            existing_fd = os.open(
+                leaf,
+                _PRIVATE_FILE_OPEN_FLAGS,
+                dir_fd=parent_fd,
+            )
+            try:
+                opened_stat = os.fstat(existing_fd)
+                if not _same_identity(opened_stat, existing_stat):
+                    raise PrivatePathError(
+                        PrivatePathResult(
+                            selected,
+                            PrivatePathStatus.OPERATION_FAILED,
+                            reason="target_replaced",
+                        )
+                    )
+                if prior_mode != _PRIVATE_FILE_MODE:
+                    os.fchmod(existing_fd, _PRIVATE_FILE_MODE)
+            finally:
+                os.close(existing_fd)
+
+        temporary_fd = _open_leaf_for_create(parent_fd, temporary_leaf)
+        temporary_exists = True
+        temporary_stat = os.fstat(temporary_fd)
+        view = memoryview(payload)
+        while view:
+            written = os.write(temporary_fd, view)
+            if written == 0:
+                raise PrivatePathError(
+                    PrivatePathResult(
+                        selected,
+                        PrivatePathStatus.OPERATION_FAILED,
+                        reason="zero_byte_write",
+                    )
+                )
+            view = view[written:]
+        os.fchmod(temporary_fd, _PRIVATE_FILE_MODE)
+        os.fsync(temporary_fd)
+
+        try:
+            current_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            current_stat = None
+        if existing_stat is None:
+            if current_stat is not None:
+                raise PrivatePathError(
+                    PrivatePathResult(
+                        selected,
+                        PrivatePathStatus.OPERATION_FAILED,
+                        reason="target_appeared",
+                    )
+                )
+        elif current_stat is None or not _same_identity(current_stat, existing_stat):
+            raise PrivatePathError(
+                PrivatePathResult(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    reason="target_replaced",
+                )
+            )
+
+        os.rename(
+            temporary_leaf,
+            leaf,
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+        temporary_exists = False
+        os.fsync(parent_fd)
+        if not _private_file_postcondition_holds(
+            temporary_fd,
+            parent_fd,
+            leaf,
+            expected_identity=temporary_stat,
+        ):
+            raise PrivatePathError(
+                PrivatePathResult(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    reason="private_file_postcondition_failed",
+                )
+            )
+        if existing_stat is None:
+            status = PrivatePathStatus.CREATED_PRIVATE
+        elif prior_mode != _PRIVATE_FILE_MODE:
+            status = PrivatePathStatus.HARDENED_PRIVATE
+        else:
+            status = PrivatePathStatus.ALREADY_PRIVATE
+        return PrivatePathResult(selected, status)
+    except PrivatePathError:
+        raise
+    except OSError as exc:
+        raise _private_path_error_from_oserror(selected, exc) from None
+    finally:
+        if temporary_fd >= 0:
+            os.close(temporary_fd)
+        try:
+            if temporary_exists:
+                try:
+                    os.unlink(temporary_leaf, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    pass
+        finally:
+            os.close(parent_fd)
+
+
+def atomic_private_write_text(
+    path: PathInput,
+    text: str,
+    *,
+    application_owned_directory: PathInput | None = None,
+    encoding: str = "utf-8",
+) -> PrivatePathResult:
+    """Atomically replace a private text file."""
+
+    return atomic_private_write_bytes(
+        path,
+        text.encode(encoding),
+        application_owned_directory=application_owned_directory,
+    )
+
+
+@contextlib.contextmanager
+def open_private_text_append(
+    path: PathInput,
+    *,
+    application_owned_directory: PathInput | None = None,
+    encoding: str = "utf-8",
+    errors: str | None = None,
+) -> Iterator[TextIO]:
+    """Open a private text file for append without following its target."""
+
+    stream = open_private_text_append_stream(
+        path,
+        application_owned_directory=application_owned_directory,
+        encoding=encoding,
+        errors=errors,
+    )
+    with stream:
+        yield stream
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def open_private_text_append_stream(
+    path: PathInput,
+    *,
+    application_owned_directory: PathInput | None = None,
+    encoding: str = "utf-8",
+    errors: str | None = None,
+) -> TextIO:
+    """Return a pinned private text stream opened for append."""
+
+    selected = lexical_path(path)
+    _prepare_application_owned_parent(selected, application_owned_directory)
+
+    if not _posix_guards_available():
+        if _WINDOWS_PLATFORM:
+            selected.parent.mkdir(parents=True, exist_ok=True)
+            return selected.open("a", encoding=encoding, errors=errors)
+        raise PrivatePathError(
+            PrivatePathResult(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                reason="required_posix_guards_unavailable",
+            )
+        )
+
+    parent_fd, leaf = _open_verified_parent(
+        selected,
+        missing_leaf_allowed=True,
+    )
+    file_fd = -1
+    try:
+        try:
+            entry_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            entry_stat = None
+        else:
+            rejected = _classify_private_file_stat(
+                entry_stat,
+                expected_uid=os.geteuid(),
+            )
+            if rejected is not None:
+                raise PrivatePathError(PrivatePathResult(selected, rejected))
+
+        file_fd = os.open(
+            leaf,
+            os.O_WRONLY | os.O_APPEND | os.O_CREAT | _NOFOLLOW | _NONBLOCK | _NOCTTY,
+            _PRIVATE_FILE_MODE,
+            dir_fd=parent_fd,
+        )
+        file_stat = os.fstat(file_fd)
+        rejected = _classify_private_file_stat(
+            file_stat,
+            expected_uid=os.geteuid(),
+        )
+        if rejected is not None:
+            raise PrivatePathError(PrivatePathResult(selected, rejected))
+        if entry_stat is not None and not _same_identity(file_stat, entry_stat):
+            raise PrivatePathError(
+                PrivatePathResult(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    reason="target_replaced",
+                )
+            )
+        os.fchmod(file_fd, _PRIVATE_FILE_MODE)
+        if not _private_file_postcondition_holds(
+            file_fd,
+            parent_fd,
+            leaf,
+            expected_identity=file_stat,
+        ):
+            raise PrivatePathError(
+                PrivatePathResult(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    reason="private_file_postcondition_failed",
+                )
+            )
+        stream = os.fdopen(
+            file_fd,
+            "a",
+            encoding=encoding,
+            errors=errors,
+            closefd=True,
+        )
+        file_fd = -1
+        return stream
+    except PrivatePathError:
+        raise
+    except OSError as exc:
+        raise _private_path_error_from_oserror(selected, exc) from None
     finally:
         if file_fd >= 0:
             os.close(file_fd)

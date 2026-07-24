@@ -7,12 +7,22 @@ is skipped on read). Arguments are redacted before they ever reach disk.
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from tldw_chatbook.MCP.redaction import redact_mapping
+from tldw_chatbook.Utils.private_paths import (
+    PrivatePathError,
+    atomic_private_write_bytes,
+    open_private_binary,
+    open_private_text_append,
+    secure_private_directory,
+)
 
 RESULT_EXCERPT_LIMIT = 500
 
@@ -87,7 +97,10 @@ class MCPExecutionLog:
 
     def __init__(self, path: Path, *, max_records_per_file: int = 500) -> None:
         self.path = Path(path)
+        if max_records_per_file < 1:
+            raise ValueError("max_records_per_file must be positive")
         self.max_records_per_file = max_records_per_file
+        self._lock = threading.RLock()
 
     def append(self, record: ExecutionRecord) -> None:
         """Append one record, rotating generations at the size cap.
@@ -101,15 +114,35 @@ class MCPExecutionLog:
             OSError: If the log file or its parent directory cannot be
                 written (callers treat recording as best-effort).
         """
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        if self._count_lines(self.path) >= self.max_records_per_file:
-            rotated = self.path.with_name(self.path.name + ".1")
-            self.path.replace(rotated)
         payload = asdict(record)
         if isinstance(payload.get("arguments"), dict):
             payload["arguments"] = redact_mapping(payload["arguments"])
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, default=str) + "\n")
+        encoded_line = (json.dumps(payload, default=str) + "\n").encode("utf-8")
+        rotated = self.path.with_name(self.path.name + ".1")
+        with self._lock:
+            self._secure_parent()
+            self._verify_existing(rotated)
+            active_payload = self._read_bytes(self.path)
+            line_count = (
+                len(active_payload.splitlines()) if active_payload is not None else 0
+            )
+            if line_count >= self.max_records_per_file:
+                atomic_private_write_bytes(
+                    rotated,
+                    active_payload or b"",
+                    application_owned_directory=self.path.parent,
+                )
+                atomic_private_write_bytes(
+                    self.path,
+                    encoded_line,
+                    application_owned_directory=self.path.parent,
+                )
+                return
+            with open_private_text_append(
+                self.path,
+                application_owned_directory=self.path.parent,
+            ) as handle:
+                handle.write(encoded_line.decode("utf-8"))
 
     def read_recent(self, limit: int = 200) -> list[dict[str, Any]]:
         """Return recent records, newest first, across both generations.
@@ -121,25 +154,64 @@ class MCPExecutionLog:
             Up to ``limit`` record dicts, newest first. Torn or corrupt
             JSONL lines are skipped rather than raising.
         """
+        if limit <= 0:
+            return []
         rows: list[dict[str, Any]] = []
         rotated = self.path.with_name(self.path.name + ".1")
-        for source in (rotated, self.path):  # oldest generation first
-            if not source.exists():
-                continue
-            for line in source.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
+        with self._lock:
+            try:
+                self._secure_parent()
+            except PrivatePathError as exc:
+                logger.warning(
+                    "MCP execution log read disabled (status={}).",
+                    exc.result.status.value,
+                )
+                return []
+            for source in (rotated, self.path):  # oldest generation first
                 try:
-                    rows.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue  # torn/corrupt line — skip, never crash
+                    raw = self._read_bytes(source)
+                except PrivatePathError as exc:
+                    logger.warning(
+                        "MCP execution-log generation skipped "
+                        "(status={}, generation={}).",
+                        exc.result.status.value,
+                        "rotated" if source == rotated else "active",
+                    )
+                    continue
+                if raw is None:
+                    continue
+                for line in raw.decode("utf-8", errors="replace").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        decoded = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue  # torn/corrupt line — skip, never crash
+                    if isinstance(decoded, dict):
+                        rows.append(decoded)
         rows.reverse()
         return rows[:limit]
 
+    def _secure_parent(self) -> None:
+        secure_private_directory(
+            self.path.parent,
+            create=True,
+            application_owned=True,
+        )
+
     @staticmethod
-    def _count_lines(path: Path) -> int:
-        if not path.exists():
-            return 0
-        with path.open("r", encoding="utf-8") as handle:
-            return sum(1 for _ in handle)
+    def _read_bytes(path: Path) -> bytes | None:
+        try:
+            with open_private_binary(path) as pinned:
+                return pinned.stream.read()
+        except FileNotFoundError:
+            return None
+
+    @staticmethod
+    def _verify_existing(path: Path) -> None:
+        try:
+            with open_private_binary(path):
+                pass
+        except FileNotFoundError:
+            pass

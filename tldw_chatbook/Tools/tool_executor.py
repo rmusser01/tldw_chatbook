@@ -4,18 +4,31 @@ Tool execution framework for handling function/tool calls from LLMs.
 """
 
 import asyncio
-import json
 import hashlib
+import json
+import math
 import time
-import pickle
-from pathlib import Path
 from abc import ABC, abstractmethod
-from datetime import datetime
-from typing import Dict, Any, Optional, List, Tuple
-from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
+
+from tldw_chatbook.Utils.private_paths import (
+    PrivatePathError,
+    atomic_private_write_bytes,
+    open_private_binary,
+    secure_private_directory,
+)
+
+TOOL_CACHE_FORMAT_VERSION = 1
+TOOL_CACHE_MAX_BYTES = 1024 * 1024
+_TOOL_CACHE_MAX_DEPTH = 20
+_TOOL_CACHE_MAX_NODES = 10_000
+_TOOL_CACHE_MAX_STRING_BYTES = 64 * 1024
 
 
 class Tool(ABC):
@@ -81,12 +94,15 @@ class ToolResultCache:
             default_ttl: Default time-to-live in seconds
             persist_path: Optional path to persist cache to disk
         """
+        if max_size < 1:
+            raise ValueError("max_size must be positive")
         self.max_size = max_size
         self.default_ttl = default_ttl
-        self.persist_path = persist_path
+        self.persist_path = Path(persist_path) if persist_path is not None else None
         self.cache: OrderedDict[str, Tuple[Any, float]] = OrderedDict()
         self._lock = asyncio.Lock()
         self._load_task = None
+        self._legacy_persistence_blocked = False
 
         # Load cache from disk if persist_path is provided
         if self.persist_path:
@@ -111,8 +127,10 @@ class ToolResultCache:
         Returns:
             Cached result or None
         """
-        cache_key = self._generate_cache_key(tool_name, args)
+        if self._load_task and not self._load_task.done():
+            await self._load_task
 
+        cache_key = self._generate_cache_key(tool_name, args)
         async with self._lock:
             if cache_key in self.cache:
                 result, expiry_time = self.cache[cache_key]
@@ -162,9 +180,8 @@ class ToolResultCache:
             self.cache.move_to_end(cache_key)
             logger.debug(f"Cached result for tool {tool_name} (TTL: {ttl}s)")
 
-        # Save to disk asynchronously
         if self.persist_path:
-            asyncio.create_task(self._save_to_disk())
+            await self._save_to_disk()
 
     async def clear_expired(self):
         """Remove all expired entries from cache."""
@@ -181,17 +198,15 @@ class ToolResultCache:
 
     async def clear(self):
         """Clear all cached entries."""
+        if self._load_task and not self._load_task.done():
+            await self._load_task
         async with self._lock:
             self.cache.clear()
+            self._legacy_persistence_blocked = False
             logger.info("Tool result cache cleared")
 
-        # Clear persistent cache
-        if self.persist_path and self.persist_path.exists():
-            try:
-                self.persist_path.unlink()
-                logger.info(f"Removed persistent cache at {self.persist_path}")
-            except Exception as e:
-                logger.error(f"Failed to remove persistent cache: {e}")
+        if self.persist_path:
+            await self._save_to_disk()
 
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
@@ -204,47 +219,200 @@ class ToolResultCache:
 
     async def _load_from_disk(self):
         """Load cache from disk if available."""
-        if not self.persist_path or not self.persist_path.exists():
-            return
-
-        try:
-            async with self._lock:
-                with open(self.persist_path, "rb") as f:
-                    loaded_cache = pickle.load(f)
-
-                # Clear expired entries and validate format
-                current_time = time.time()
-                for key, (result, expiry_time) in loaded_cache.items():
-                    if current_time < expiry_time and len(self.cache) < self.max_size:
-                        self.cache[key] = (result, expiry_time)
-
-                logger.info(
-                    f"Loaded {len(self.cache)} cache entries from {self.persist_path}"
-                )
-        except Exception as e:
-            logger.warning(f"Failed to load cache from disk: {e}")
-
-    async def _save_to_disk(self):
-        """Save cache to disk."""
         if not self.persist_path:
             return
 
         try:
-            # Ensure directory exists
-            self.persist_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Create a copy to avoid locking issues
-            cache_copy = dict(self.cache)
-
-            # Save to disk
-            with open(self.persist_path, "wb") as f:
-                pickle.dump(cache_copy, f)
-
-            logger.debug(
-                f"Saved {len(cache_copy)} cache entries to {self.persist_path}"
+            secure_private_directory(
+                self.persist_path.parent,
+                create=True,
+                application_owned=True,
             )
-        except Exception as e:
-            logger.error(f"Failed to save cache to disk: {e}")
+            with open_private_binary(self.persist_path) as pinned:
+                raw = pinned.stream.read(TOOL_CACHE_MAX_BYTES + 1)
+        except FileNotFoundError:
+            return
+        except PrivatePathError as exc:
+            logger.warning(
+                "Persistent tool cache load disabled: unsafe target (status={}).",
+                exc.result.status.value,
+            )
+            return
+        except OSError as exc:
+            logger.warning(
+                "Persistent tool cache load failed (error_type={}).",
+                type(exc).__name__,
+            )
+            return
+
+        if len(raw) > TOOL_CACHE_MAX_BYTES:
+            logger.warning("Persistent tool cache ignored (reason=oversized).")
+            return
+        if raw.lstrip()[:1] not in {b"", b"{"}:
+            self._legacy_persistence_blocked = True
+            logger.warning(
+                "Persistent tool cache left inert (reason=legacy_or_non_json)."
+            )
+            return
+        loaded_entries = self._decode_cache_envelope(raw)
+        if loaded_entries is None:
+            logger.warning("Persistent tool cache ignored (reason=invalid_format).")
+            return
+
+        async with self._lock:
+            self.cache.update(loaded_entries)
+        logger.info(
+            "Loaded persistent tool cache entries (entry_count={}).",
+            len(loaded_entries),
+        )
+
+    async def _save_to_disk(self):
+        """Save cache to disk."""
+        if not self.persist_path or self._legacy_persistence_blocked:
+            return
+
+        try:
+            async with self._lock:
+                items = list(self.cache.items())
+            entries = [
+                {
+                    "key": key,
+                    "expires_at": expiry_time,
+                    "result": result,
+                }
+                for key, (result, expiry_time) in items
+                if self._valid_cache_key(key)
+                and self._valid_expiry(expiry_time)
+                and self._valid_json_value(result)
+            ]
+            encoded = self._encode_cache_envelope(entries)
+            while len(encoded) > TOOL_CACHE_MAX_BYTES and entries:
+                entries.pop(0)
+                encoded = self._encode_cache_envelope(entries)
+            if len(encoded) > TOOL_CACHE_MAX_BYTES:
+                logger.warning(
+                    "Persistent tool cache save skipped (reason=encoded_size)."
+                )
+                return
+            atomic_private_write_bytes(
+                self.persist_path,
+                encoded,
+                application_owned_directory=self.persist_path.parent,
+            )
+            logger.debug(
+                "Saved persistent tool cache entries (entry_count={}).",
+                len(entries),
+            )
+        except PrivatePathError as exc:
+            logger.warning(
+                "Persistent tool cache save disabled: unsafe target (status={}).",
+                exc.result.status.value,
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Persistent tool cache save failed (error_type={}).",
+                type(exc).__name__,
+            )
+
+    def _decode_cache_envelope(
+        self,
+        raw: bytes,
+    ) -> list[tuple[str, tuple[Any, float]]] | None:
+        try:
+            decoded = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        if (
+            not isinstance(decoded, dict)
+            or set(decoded) != {"version", "entries"}
+            or decoded["version"] != TOOL_CACHE_FORMAT_VERSION
+            or not isinstance(decoded["entries"], list)
+            or len(decoded["entries"]) > self.max_size
+        ):
+            return None
+
+        current_time = time.time()
+        seen: set[str] = set()
+        loaded: list[tuple[str, tuple[Any, float]]] = []
+        for entry in decoded["entries"]:
+            if not isinstance(entry, dict) or set(entry) != {
+                "key",
+                "expires_at",
+                "result",
+            }:
+                return None
+            key = entry["key"]
+            expiry_time = entry["expires_at"]
+            result = entry["result"]
+            if (
+                not self._valid_cache_key(key)
+                or key in seen
+                or not self._valid_expiry(expiry_time)
+                or not self._valid_json_value(result)
+            ):
+                return None
+            seen.add(key)
+            if expiry_time > current_time:
+                loaded.append((key, (result, float(expiry_time))))
+        return loaded
+
+    @staticmethod
+    def _valid_cache_key(value: Any) -> bool:
+        return (
+            isinstance(value, str)
+            and len(value) == 64
+            and all(character in "0123456789abcdef" for character in value)
+        )
+
+    @staticmethod
+    def _valid_expiry(value: Any) -> bool:
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            and value >= 0
+        )
+
+    @staticmethod
+    def _valid_json_value(value: Any) -> bool:
+        remaining_nodes = _TOOL_CACHE_MAX_NODES
+
+        def visit(item: Any, depth: int) -> bool:
+            nonlocal remaining_nodes
+            remaining_nodes -= 1
+            if remaining_nodes < 0 or depth > _TOOL_CACHE_MAX_DEPTH:
+                return False
+            if item is None or isinstance(item, bool):
+                return True
+            if isinstance(item, str):
+                return len(item.encode("utf-8")) <= _TOOL_CACHE_MAX_STRING_BYTES
+            if isinstance(item, int):
+                return True
+            if isinstance(item, float):
+                return math.isfinite(item)
+            if isinstance(item, list):
+                return all(visit(child, depth + 1) for child in item)
+            if isinstance(item, dict):
+                return all(
+                    isinstance(key, str)
+                    and len(key.encode("utf-8")) <= _TOOL_CACHE_MAX_STRING_BYTES
+                    and visit(child, depth + 1)
+                    for key, child in item.items()
+                )
+            return False
+
+        return visit(value, 0)
+
+    @staticmethod
+    def _encode_cache_envelope(entries: list[dict[str, Any]]) -> bytes:
+        return json.dumps(
+            {
+                "version": TOOL_CACHE_FORMAT_VERSION,
+                "entries": entries,
+            },
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
 
 
 class ToolExecutor:

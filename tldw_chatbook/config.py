@@ -4581,20 +4581,24 @@ def get_scheduled_tasks_db_path() -> Path:
 
 
 def get_cli_log_file_path() -> Path:
-    # Use user-specific folder for logs
+    """Return the configured log file beneath the secured user data directory."""
+
     user_dir = get_user_data_dir()
     default_log_filename = DEFAULT_CONFIG_FROM_TOML.get("logging", {}).get(
         "log_filename", "tldw_cli_app.log"
     )
     log_filename = get_cli_setting("logging", "log_filename", default_log_filename)
-    log_file_path = user_dir / log_filename
-    try:
-        log_file_path.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        logger.opt(exception=True).error(
-            f"Could not create log directory {log_file_path.parent}: {e}"
-        )
-    return log_file_path
+    if (
+        not isinstance(log_filename, str)
+        or not log_filename.strip()
+        or log_filename in {".", ".."}
+        or "/" in log_filename
+        or "\\" in log_filename
+        or Path(log_filename).is_absolute()
+        or Path(log_filename).name != log_filename
+    ):
+        raise ValueError("Configured log filename must be a non-empty basename")
+    return user_dir / log_filename
 
 
 def get_cli_data_dir() -> Path:
