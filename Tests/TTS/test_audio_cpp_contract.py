@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import math
 import struct
+import sys
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import Any
@@ -86,6 +88,34 @@ def _surface_body_with_extra_number(surface: str, number: bytes) -> bytes:
     else:
         prefix = b'{"voices":[],"ignored":'
     return prefix + number + b"}"
+
+
+def _exception_graph(error: BaseException) -> list[BaseException]:
+    pending = [error]
+    seen: set[int] = set()
+    graph: list[BaseException] = []
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        graph.append(current)
+        for linked in (current.__context__, current.__cause__):
+            if linked is not None:
+                pending.append(linked)
+    return graph
+
+
+def _assert_unchained_contract_error(
+    call: Callable[[], object],
+) -> AudioCppContractError:
+    with pytest.raises(AudioCppContractError) as captured:
+        call()
+    error = captured.value
+    assert _exception_graph(error) == [error]
+    assert error.__context__ is None
+    assert error.__cause__ is None
+    return error
 
 
 def _chunk(
@@ -302,6 +332,90 @@ def test_json_surfaces_accept_reasonable_finite_numbers_in_extra_fields(
     body = _surface_body_with_extra_number(surface, number)
 
     _parse_surface(surface, body, len(body))
+
+
+@pytest.mark.parametrize(
+    ("case", "body"),
+    [
+        (
+            "utf8",
+            b'{"status":"ok","backend":"cuda","models":0,'
+            b'"secret":"REMOTE_UTF8_SECRET"}\xff',
+        ),
+        (
+            "json",
+            b'{"status":"ok","backend":"cuda","models":0,"secret":"REMOTE_JSON_SECRET"',
+        ),
+        (
+            "integer",
+            b'{"status":"ok","backend":"cuda","models":0,'
+            b'"secret":"REMOTE_INTEGER_SECRET","ignored":' + b"7" * 5_003 + b"}",
+        ),
+        (
+            "exponent",
+            b'{"status":"ok","backend":"cuda","models":0,'
+            b'"secret":"REMOTE_EXPONENT_SECRET","ignored":1e9999}',
+        ),
+        (
+            "duplicate",
+            b'{"status":"ok","backend":"cuda","models":0,'
+            b'"REMOTE_DUPLICATE_SECRET":1,"REMOTE_DUPLICATE_SECRET":2}',
+        ),
+        (
+            "structure",
+            b'{"status":"REMOTE_STRUCTURE_SECRET","backend":"cuda","models":0}',
+        ),
+    ],
+    ids=["utf8", "json", "integer", "exponent", "duplicate", "structure"],
+)
+def test_secret_bearing_contract_errors_have_no_exception_chain(
+    case: str,
+    body: bytes,
+) -> None:
+    error = _assert_unchained_contract_error(
+        lambda: parse_health_response(
+            body,
+            max_metadata_bytes=len(body),
+            max_identifier_characters=MAX_IDENTIFIER_CHARACTERS,
+            max_models=MAX_ITEMS,
+        )
+    )
+
+    assert error.surface == "health", case
+    assert "REMOTE_" not in str(error)
+
+
+def test_deeply_nested_json_is_translated_to_unchained_contract_error() -> None:
+    depth = sys.getrecursionlimit() * 20
+    body = (
+        b'{"status":"ok","backend":"cuda","models":0,'
+        b'"secret":"REMOTE_DEPTH_SECRET","ignored":'
+        + b"[" * depth
+        + b"0"
+        + b"]" * depth
+        + b"}"
+    )
+
+    error = _assert_unchained_contract_error(
+        lambda: parse_health_response(
+            body,
+            max_metadata_bytes=len(body),
+            max_identifier_characters=MAX_IDENTIFIER_CHARACTERS,
+            max_models=MAX_ITEMS,
+        )
+    )
+
+    assert error.category == "json"
+    assert "REMOTE_DEPTH_SECRET" not in str(error)
+
+
+def test_wav_structural_error_has_no_exception_chain() -> None:
+    body = b"REMOTE_AUDIO_SECRET"
+
+    error = _assert_unchained_contract_error(lambda: validate_pcm16_wav(body))
+
+    assert error.surface == "wav"
+    assert "REMOTE_AUDIO_SECRET" not in str(error)
 
 
 def test_health_accepts_extra_fields_and_boundary_values() -> None:

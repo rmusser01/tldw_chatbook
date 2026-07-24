@@ -33,6 +33,7 @@ _DECIMAL_PATTERN = re.compile(r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)\Z")
 _DEFAULT_MAX_TIMING_VALUE_CHARACTERS = 64
 _MAX_JSON_NUMBER_CHARACTERS = 128
 _MAX_JSON_FLOAT_EXPONENT = 308
+_JSON_PARSE_FAILED = object()
 
 
 class AudioCppContractError(ValueError):
@@ -83,21 +84,26 @@ class _InvalidJsonTokenError(ValueError):
 
 
 def _reject_json_constant(_: str) -> NoReturn:
-    raise _InvalidJsonTokenError from None
+    raise _InvalidJsonTokenError
+
+
+def _convert_json_integer(value: str) -> int | None:
+    try:
+        return int(value)
+    except (ValueError, OverflowError):
+        return None
 
 
 def _parse_json_integer(value: str) -> int:
     if len(value) > _MAX_JSON_NUMBER_CHARACTERS:
-        raise _InvalidJsonTokenError from None
-    try:
-        return int(value)
-    except (ValueError, OverflowError):
-        raise _InvalidJsonTokenError from None
+        raise _InvalidJsonTokenError
+    parsed = _convert_json_integer(value)
+    if parsed is None:
+        raise _InvalidJsonTokenError
+    return parsed
 
 
-def _parse_json_float(value: str) -> float:
-    if len(value) > _MAX_JSON_NUMBER_CHARACTERS:
-        raise _InvalidJsonTokenError from None
+def _convert_json_float(value: str) -> float | None:
     try:
         decimal_value = Decimal(value)
         exponent = decimal_value.as_tuple().exponent
@@ -107,14 +113,21 @@ def _parse_json_float(value: str) -> float:
             or abs(exponent) > _MAX_JSON_FLOAT_EXPONENT
             or abs(decimal_value.adjusted()) > _MAX_JSON_FLOAT_EXPONENT
         ):
-            raise _InvalidJsonTokenError from None
+            return None
         parsed = float(decimal_value)
-    except _InvalidJsonTokenError:
-        raise
     except (InvalidOperation, ValueError, OverflowError):
-        raise _InvalidJsonTokenError from None
+        return None
     if not math.isfinite(parsed):
-        raise _InvalidJsonTokenError from None
+        return None
+    return parsed
+
+
+def _parse_json_float(value: str) -> float:
+    if len(value) > _MAX_JSON_NUMBER_CHARACTERS:
+        raise _InvalidJsonTokenError
+    parsed = _convert_json_float(value)
+    if parsed is None:
+        raise _InvalidJsonTokenError
     return parsed
 
 
@@ -127,6 +140,28 @@ def _object_without_duplicate_keys(
             raise _InvalidJsonTokenError
         result[key] = value
     return result
+
+
+def _decode_utf8(body: bytes) -> str | None:
+    try:
+        return body.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return None
+
+
+def _parse_json_document(text: str) -> object:
+    try:
+        return json.loads(
+            text,
+            object_pairs_hook=_object_without_duplicate_keys,
+            parse_constant=_reject_json_constant,
+            parse_float=_parse_json_float,
+            parse_int=_parse_json_integer,
+        )
+    except AudioCppContractError:
+        raise
+    except (ValueError, OverflowError, RecursionError):
+        return _JSON_PARSE_FAILED
 
 
 def _fail(surface: ContractSurface, category: str) -> NoReturn:
@@ -142,22 +177,12 @@ def _load_json_object(
     if len(body) > max_metadata_bytes:
         _fail(surface, "size")
 
-    try:
-        text = body.decode("utf-8", errors="strict")
-    except UnicodeDecodeError:
+    text = _decode_utf8(body)
+    if text is None:
         _fail(surface, "encoding")
 
-    try:
-        value = json.loads(
-            text,
-            object_pairs_hook=_object_without_duplicate_keys,
-            parse_constant=_reject_json_constant,
-            parse_float=_parse_json_float,
-            parse_int=_parse_json_integer,
-        )
-    except AudioCppContractError:
-        raise
-    except (ValueError, OverflowError, RecursionError):
+    value = _parse_json_document(text)
+    if value is _JSON_PARSE_FAILED:
         _fail(surface, "json")
 
     if not isinstance(value, dict):
