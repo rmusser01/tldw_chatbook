@@ -223,7 +223,7 @@ class PersonasPreviewPane(Vertical):
         self._character_label = _DEFAULT_CHARACTER_LABEL
         self._user_label = _DEFAULT_USER_LABEL
 
-    def set_greetings(self, greetings: list[str]) -> None:
+    def set_greetings(self, greetings: list[str], selected_index: int = 0) -> None:
         """Populate the greeting selector; show it only when alternates exist.
 
         Args:
@@ -236,7 +236,7 @@ class PersonasPreviewPane(Vertical):
             select.set_options(
                 [(self._greeting_option_label(i, g), i) for i, g in enumerate(greetings)]
             )
-            select.value = 0
+            select.value = selected_index if 0 <= selected_index < len(greetings) else 0
             row.display = True
         else:
             row.display = False
@@ -472,6 +472,7 @@ class PersonasPreviewPane(Vertical):
 
     @on(Select.Changed, "#personas-preview-greeting-select")
     def _handle_greeting_selected(self, event: Select.Changed) -> None:
+        event.stop()
         if isinstance(event.value, int):
             self.post_message(PreviewGreetingSelected(event.value))
 

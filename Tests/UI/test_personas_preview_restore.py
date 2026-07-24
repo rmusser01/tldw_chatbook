@@ -14,6 +14,8 @@ def _controller_with_mock_pane():
     ctrl.seeded_for = None
     ctrl.generation = 0
     ctrl.gateway = None
+    ctrl._greetings = []
+    ctrl._current_greeting_index = 0
     events = []
     pane = MagicMock()
     pane.append_user = lambda t: events.append(("user", t))

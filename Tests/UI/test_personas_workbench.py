@@ -3052,6 +3052,42 @@ class TestPreviewIntegration:
             assert "An alternate opener." in pane.transcript_text()
             assert "hi" not in pane.transcript_text()
 
+    async def test_reload_preserves_chosen_alternate_greeting(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """TASK-438 review: a same-character reload (edit+save) that preserves the
+        in-progress transcript keeps the CHOSEN alternate greeting, so Reset still
+        returns to it rather than silently reverting to the primary."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            pane = screen.query_one("#personas-preview-pane", PersonasPreviewPane)
+            await screen.preview.handle_greeting_selected(1)  # choose alternate
+            await pilot.pause()
+            pane.append_user("hi")
+            pane.append_reply("hello")
+            await pilot.pause()
+            # Same-character reload (the task-437 preserve path): CharacterMessage.Loaded
+            await screen.preview.handle_character_loaded(
+                character_id="1",
+                card_data={
+                    "name": "Detective Sam",
+                    "first_message": "The name's {{char}}. Who's asking?",
+                    "alternate_greetings": ["An alternate opener.", "A third opener."],
+                },
+            )
+            await pilot.pause()
+            # the chosen index is preserved (selector + Reset seed), not reset to 0
+            assert screen.preview._current_greeting_index == 1
+            await pane.reset()
+            await pilot.pause()
+            assert "An alternate opener." in pane.transcript_text()
+            assert "Who's asking" not in pane.transcript_text()
+
     async def test_greeting_selector_hidden_without_alternates(
         self, mock_app_instance, stub_characters, stub_conversations
     ):

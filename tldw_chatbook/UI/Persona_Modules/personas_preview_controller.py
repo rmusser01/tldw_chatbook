@@ -87,8 +87,22 @@ class PersonasPreviewController:
                 pass
         self.refresh_provider_readout()
 
-    def _load_greetings(self, record: dict[str, Any], name: str) -> str:
-        """Store the processed greeting list, populate the selector, return the primary."""
+    def _load_greetings(
+        self, record: dict[str, Any], name: str, *, keep_index: bool = False
+    ) -> str:
+        """Store the processed greeting list, populate the selector, return the seed.
+
+        Args:
+            record: Character record carrying ``first_message``/``alternate_greetings``.
+            name: Display name for greeting placeholders.
+            keep_index: On a same-character reload that preserves the transcript,
+                keep the user's chosen greeting (clamped to the new list) instead
+                of resetting to the primary — so Reset/the selector still reflect
+                the choice.
+
+        Returns:
+            The greeting text for the current index (primary when not keeping).
+        """
         raw = [str(record.get("first_message") or "")]
         raw += [
             str(g)
@@ -96,12 +110,21 @@ class PersonasPreviewController:
             if isinstance(g, str)
         ]
         self._greetings = [replace_placeholders(g, name, "User") for g in raw]
-        self._current_greeting_index = 0
+        if keep_index and self._greetings:
+            self._current_greeting_index = min(
+                self._current_greeting_index, len(self._greetings) - 1
+            )
+        else:
+            self._current_greeting_index = 0
         try:
-            self.screen.query_one(PersonasPreviewPane).set_greetings(self._greetings)
+            self.screen.query_one(PersonasPreviewPane).set_greetings(
+                self._greetings, self._current_greeting_index
+            )
         except QueryError:
             pass
-        return self._greetings[0] if self._greetings else ""
+        return (
+            self._greetings[self._current_greeting_index] if self._greetings else ""
+        )
 
     async def reset_for_character(
         self,
@@ -267,15 +290,18 @@ class PersonasPreviewController:
             return
         record = dict(card_data or {})
         name = str(record.get("name") or screen.state.selected_entity_name or "")
-        greeting = self._load_greetings(record, name)
+        # Same-character reloads after an edit should update the reset seed, not
+        # erase an in-progress preview conversation — and must keep the user's
+        # chosen alternate greeting (else Reset/the selector silently revert to
+        # the primary, task-438 review).
+        preserve = self.seeded_for == character_id and bool(pane.transcript_text())
+        greeting = self._load_greetings(record, name, keep_index=preserve)
         # The speaker label is set once at selection (_select_character, from the
         # selection's display name) and must NOT be re-set here: set_speakers only
         # relabels FUTURE lines, so changing it on a same-character reload that
         # preserves the transcript would leave the existing lines under the old
         # prefix (mixed/stale prefixes — task-437 review).
-        # Same-character reloads after an edit should update the reset seed,
-        # not erase an in-progress preview conversation.
-        if self.seeded_for == character_id and pane.transcript_text():
+        if preserve:
             pane.refresh_greeting_seed(greeting)
             self.refresh_provider_readout()
             return
