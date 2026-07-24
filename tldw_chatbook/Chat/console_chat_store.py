@@ -382,7 +382,49 @@ class ConsoleChatStore:
             all_nodes,
             active_leaf_persisted_id=active_leaf_persisted_id,
         )
+        self._hydrate_generation_metadata_from_persistence(session.id)
         return session
+
+    def _hydrate_generation_metadata_from_persistence(self, session_id: str) -> None:
+        """Batch-fetch and apply generation-metadata sidecar rows on resume.
+
+        The store-level counterpart of Task 9's manual round-trip: every
+        caller of ``restore_persisted_session`` (a saved-conversation resume
+        from the workspace rail, and -- after an app restart, since that is
+        the only way back into a persisted conversation -- effectively every
+        production reload) gets this for free instead of each caller having
+        to remember to drive ``get_generation_metadata_for_messages`` +
+        ``hydrate_generation_metadata`` itself. Optional and probe-guarded
+        like the sibling attachment batch-fetch: a ``persistence`` with no
+        ``get_generation_metadata_for_messages`` (older fakes, or a future
+        persistence shape without one) leaves resumed messages
+        metadata-only, matching this store's other graceful-degradation
+        seams. Covers every restored node (all branches, on- and off-path)
+        in a SINGLE batched call, not one round trip per message.
+        """
+        if self.persistence is None:
+            return
+        getter = getattr(self.persistence, "get_generation_metadata_for_messages", None)
+        if not callable(getter):
+            return
+        nodes = self._nodes_by_session.get(session_id, {})
+        message_ids = [
+            message.persisted_message_id
+            for message in nodes.values()
+            if message.persisted_message_id is not None
+        ]
+        if not message_ids:
+            return
+        try:
+            rows_by_message = getter(message_ids)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Console resume generation-metadata batch fetch failed."
+            )
+            return
+        if not isinstance(rows_by_message, dict):
+            return
+        self.hydrate_generation_metadata(session_id, rows_by_message)
 
     def apply_resume_marker_overlay(
         self, session_id: str, messages: Sequence[ConsoleChatMessage]
