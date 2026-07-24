@@ -31,10 +31,22 @@ def page_user_profiles(
     offset: int,
     page_size: int,
 ) -> tuple[list[dict[str, Any]], int]:
-    """Return ``(page_rows, filtered_total)`` for the user profile list.
+    """Return one page of the (filtered, sorted) user-profile list.
 
     Search is a case-insensitive substring over name + description. ``sort_key``
     outside ``_SORTS`` (e.g. "relevance") falls back to "name_asc".
+
+    Args:
+        profiles: The full in-memory profile list to page.
+        search_term: Case-insensitive substring filter, or None/blank for all.
+        sort_key: One of the ``_SORTS`` keys; unknown keys fall back to
+            "name_asc".
+        offset: Zero-based row offset of the requested page.
+        page_size: Maximum rows per page.
+
+    Returns:
+        ``(page_rows, filtered_total)`` — the requested page slice and the
+        total row count after filtering (before paging).
     """
     rows = list(profiles or [])
     term = (search_term or "").strip().lower()

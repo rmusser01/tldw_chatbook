@@ -7,6 +7,8 @@ refers to the user in this app; the user-side concept is "user profile".
 """
 from __future__ import annotations
 
+from typing import Protocol
+
 from loguru import logger
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
@@ -15,8 +17,20 @@ _SECTION = "character_defaults"
 _KEY = "active_user_profile"
 
 
+class _UserProfileLister(Protocol):
+    """Minimal shape the resolver needs from a user-profile service (kept
+    local so this module stays free of service-layer imports)."""
+
+    def list_user_profiles(self, active_only: bool = False) -> list[dict]: ...
+
+
 def get_active_user_profile_pointer() -> str | None:
-    """Return the configured active-profile name, or None when unset."""
+    """Read the configured active-user-profile pointer.
+
+    Returns:
+        The configured profile name (whitespace-normalized), or ``None``
+        when unset/blank or when the config read fails.
+    """
     try:
         value = get_cli_setting(_SECTION, _KEY, None)
     except Exception:
@@ -26,7 +40,14 @@ def get_active_user_profile_pointer() -> str | None:
 
 
 def set_active_user_profile(name: str) -> bool:
-    """Point the active user profile at ``name``. Returns write success."""
+    """Point the active user profile at ``name``.
+
+    Args:
+        name: The profile name to mark as "who I am".
+
+    Returns:
+        True when the config write persisted, False otherwise.
+    """
     try:
         return bool(save_setting_to_cli_config(_SECTION, _KEY, str(name)))
     except Exception:
@@ -35,7 +56,11 @@ def set_active_user_profile(name: str) -> bool:
 
 
 def clear_active_user_profile() -> bool:
-    """Clear the pointer (no active user profile)."""
+    """Clear the pointer (no active user profile).
+
+    Returns:
+        True when the config write persisted, False otherwise.
+    """
     try:
         return bool(save_setting_to_cli_config(_SECTION, _KEY, ""))
     except Exception:
@@ -43,7 +68,7 @@ def clear_active_user_profile() -> bool:
         return False
 
 
-def resolve_active_user_profile_name(service) -> str | None:
+def resolve_active_user_profile_name(service: _UserProfileLister | None) -> str | None:
     """Resolve the pointer to a live profile name, or None.
 
     Unset pointer, dangling pointer (profile deleted/renamed), or ANY
