@@ -289,6 +289,43 @@ async def test_shutdown_timeout_bounds_and_rejoins_adapter_cleanup() -> None:
 
 
 @pytest.mark.asyncio
+async def test_wait_closed_joins_zero_timeout_adapter_cleanup_once() -> None:
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+    factory = _BlockingCloseFactory(
+        "openai",
+        close_started=close_started,
+        allow_close=allow_close,
+    )
+    spec = TTSProviderSpec(
+        descriptor=provider_spec("openai", FakeAdapterFactory("unused")).descriptor,
+        factory=factory,
+        initial_config={},
+    )
+    registry = TTSAdapterRegistry(
+        specs=(spec,),
+        aliases={},
+        shutdown_timeout_seconds=0,
+    )
+    lease = await registry.acquire("openai")
+    adapter = lease.adapter
+    await lease.release()
+
+    await registry.close()
+    await close_started.wait()
+    wait_for_close = asyncio.create_task(registry.wait_closed())
+    await asyncio.sleep(0)
+
+    assert wait_for_close.done() is False
+    await registry.close()
+    assert adapter.close_calls == 1
+    allow_close.set()
+    await wait_for_close
+    await registry.wait_closed()
+    assert adapter.close_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_cancelled_shutdown_does_not_report_cleanup_complete() -> None:
     close_started = asyncio.Event()
     allow_close = asyncio.Event()
@@ -393,6 +430,46 @@ class _FailingCloseFactory:
         adapter = _FailingCloseAdapter(self._provider_id)
         self.instances.append(adapter)
         return adapter
+
+
+@pytest.mark.asyncio
+async def test_wait_closed_reports_delayed_zero_timeout_cleanup_failure() -> None:
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+
+    class DelayedFailingCloseAdapter(FakeAdapter):
+        async def close(self) -> None:
+            self.close_calls += 1
+            close_started.set()
+            await allow_close.wait()
+            raise RuntimeError("delayed adapter close failed")
+
+    adapter = DelayedFailingCloseAdapter("openai")
+    spec = TTSProviderSpec(
+        descriptor=provider_spec("openai", FakeAdapterFactory("unused")).descriptor,
+        factory=lambda _config: adapter,
+        initial_config={},
+    )
+    registry = TTSAdapterRegistry(
+        specs=(spec,),
+        aliases={},
+        shutdown_timeout_seconds=0,
+    )
+    lease = await registry.acquire("openai")
+    await lease.release()
+
+    await registry.close()
+    await close_started.wait()
+    wait_for_close = asyncio.create_task(registry.wait_closed())
+    await asyncio.sleep(0)
+
+    assert wait_for_close.done() is False
+    allow_close.set()
+    with pytest.raises(RuntimeError, match="delayed adapter close failed"):
+        await wait_for_close
+    with pytest.raises(RuntimeError, match="delayed adapter close failed"):
+        await registry.wait_closed()
+    assert adapter.close_calls == 1
 
 
 @pytest.mark.parametrize("exclusive", [False, True])

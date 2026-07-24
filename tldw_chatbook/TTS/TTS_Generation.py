@@ -34,12 +34,17 @@ def _record_cleanup_failure(primary_error: BaseException) -> None:
 async def _join_retained_task(task: asyncio.Task[None]) -> None:
     cancellation: asyncio.CancelledError | None = None
     waiter = asyncio.current_task()
+    cancellation_requests = waiter.cancelling() if waiter is not None else 0
     while not task.done():
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError as error:
-            if waiter is not None and waiter.cancelling():
+            next_cancellation_requests = (
+                waiter.cancelling() if waiter is not None else 0
+            )
+            if next_cancellation_requests > cancellation_requests:
                 cancellation = cancellation or error
+                cancellation_requests = next_cancellation_requests
         except BaseException:
             if not task.done():
                 raise
@@ -63,8 +68,14 @@ async def _cleanup_preserving_primary(
     cleanup: Callable[[], Awaitable[None]],
     primary_error: BaseException,
 ) -> None:
+    waiter = asyncio.current_task()
+    cancellation_requests = waiter.cancelling() if waiter is not None else 0
     try:
         await cleanup()
+    except asyncio.CancelledError:
+        if waiter is not None and waiter.cancelling() > cancellation_requests:
+            raise
+        _record_cleanup_failure(primary_error)
     except BaseException:
         _record_cleanup_failure(primary_error)
 
@@ -197,6 +208,9 @@ class TTSService:
         try:
             async for chunk in response.byte_stream:
                 yield chunk
+        except GeneratorExit:
+            await response.aclose()
+            raise
         except BaseException as error:
             await _cleanup_preserving_primary(response.aclose, error)
             raise
@@ -220,8 +234,12 @@ class TTSService:
         return await self.registry.reconfigure_provider(provider_id, config)
 
     async def close(self) -> None:
-        """Close the registry and all materialized provider adapters."""
+        """Begin bounded shutdown of the provider registry."""
         await self.registry.close()
+
+    async def wait_closed(self) -> None:
+        """Wait for definitive provider shutdown and report cleanup failures."""
+        await self.registry.wait_closed()
 
 
 def _isolate_progress_sink(
@@ -306,7 +324,13 @@ def reset_tts_service_binding(
 async def _close_bound_service(service: TTSService) -> None:
     global _bound_tts_close_service, _bound_tts_close_task
     try:
-        await service.close()
+        try:
+            await service.close()
+        except BaseException as error:
+            await _cleanup_preserving_primary(service.wait_closed, error)
+            raise
+        else:
+            await service.wait_closed()
     finally:
         try:
             reset_tts_service_binding(expected=service)

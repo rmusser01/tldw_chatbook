@@ -105,8 +105,9 @@ class TTSAdapterRegistry:
 
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
         self._closed = False
-        self._close_complete = False
         self._close_lock = asyncio.Lock()
+        self._close_task: asyncio.Task[None] | None = None
+        self._close_error_reported = False
         self._lease_changed = asyncio.Event()
         self._records_collected = False
         self._closing_records: list[_AdapterRecord] = []
@@ -169,64 +170,104 @@ class TTSAdapterRegistry:
         return await self._reconfigure_retiring(slot, new_config)
 
     async def close(self) -> None:
+        """Seal admission and wait no longer than the shutdown timeout.
+
+        Adapter cleanup continues in one retained task after a timeout. Call
+        :meth:`wait_closed` to join definitive completion.
+        """
+        close_task = await self._ensure_close_task()
+        if not close_task.done():
+            await asyncio.wait(
+                {close_task},
+                timeout=self._shutdown_timeout_seconds,
+            )
+
         async with self._close_lock:
-            if self._close_complete:
+            if close_task.done():
+                if self._close_error_reported:
+                    return
+                try:
+                    close_task.result()
+                except BaseException:
+                    self._close_error_reported = True
+                    raise
                 return
+
+            known_error = self._known_close_error()
+            if known_error is not None:
+                raise known_error
+
+    async def wait_closed(self) -> None:
+        """Wait for retained shutdown work and report its definitive result."""
+        close_task = await self._ensure_close_task()
+        await asyncio.shield(close_task)
+
+    async def _ensure_close_task(self) -> asyncio.Task[None]:
+        async with self._close_lock:
+            if self._close_task is not None:
+                return self._close_task
 
             self._closed = True
             self._lease_changed.set()
             for slot in self._slots.values():
                 slot.lease_changed.set()
 
-            loop = asyncio.get_running_loop()
-            deadline = loop.time() + self._shutdown_timeout_seconds
-            if not self._records_collected:
-                while self._total_leases() > 0:
-                    remaining = deadline - loop.time()
-                    if remaining <= 0:
-                        break
-                    self._lease_changed.clear()
-                    if self._total_leases() == 0:
-                        break
-                    try:
-                        await asyncio.wait_for(
-                            self._lease_changed.wait(), timeout=remaining
-                        )
-                    except TimeoutError:
-                        break
+            self._close_task = asyncio.create_task(self._complete_close())
+            self._close_task.add_done_callback(self._observe_close_result)
+            return self._close_task
 
-                for slot in self._slots.values():
-                    async with slot.lock:
-                        if slot.active is not None:
-                            self._closing_records.append(slot.active)
-                        self._closing_records.extend(slot.retired)
-                        slot.active = None
-                        slot.retired = []
-                self._records_collected = True
-
-            close_tasks = [
-                await self._start_close_record(record)
-                for record in self._closing_records
-            ]
-            pending: set[asyncio.Task[None]] = set()
-            if close_tasks:
-                remaining = max(0.0, deadline - loop.time())
-                _, pending = await asyncio.wait(close_tasks, timeout=remaining)
-
-            first_error: BaseException | None = None
-            for close_task in close_tasks:
-                if not close_task.done():
-                    continue
+    async def _complete_close(self) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._shutdown_timeout_seconds
+        if not self._records_collected:
+            while self._total_leases() > 0:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+                self._lease_changed.clear()
+                if self._total_leases() == 0:
+                    break
                 try:
-                    close_task.result()
-                except BaseException as error:
-                    first_error = first_error or error
-            if not pending:
-                self._close_complete = True
-            if first_error is not None:
-                raise first_error
-            if pending:
-                return
+                    await asyncio.wait_for(
+                        self._lease_changed.wait(), timeout=remaining
+                    )
+                except TimeoutError:
+                    break
+
+            for slot in self._slots.values():
+                async with slot.lock:
+                    if slot.active is not None:
+                        self._closing_records.append(slot.active)
+                    self._closing_records.extend(slot.retired)
+                    slot.active = None
+                    slot.retired = []
+            self._records_collected = True
+
+        close_tasks = [
+            await self._start_close_record(record) for record in self._closing_records
+        ]
+        results = await asyncio.gather(*close_tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+
+    def _known_close_error(self) -> BaseException | None:
+        for record in self._closing_records:
+            close_task = record.close_task
+            if close_task is None or not close_task.done():
+                continue
+            try:
+                close_task.result()
+            except BaseException as error:
+                return error
+        return None
+
+    @staticmethod
+    def _observe_close_result(close_task: asyncio.Task[None]) -> None:
+        try:
+            close_task.exception()
+        except BaseException:
+            pass
 
     def _resolve_id(self, provider_id: str) -> str:
         canonical_id = self._aliases.get(provider_id, provider_id)

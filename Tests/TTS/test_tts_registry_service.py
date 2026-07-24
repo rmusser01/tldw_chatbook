@@ -52,7 +52,11 @@ def speech_request() -> OpenAISpeechRequest:
     )
 
 
-def registry_for_adapter(adapter: FakeAdapter) -> TTSAdapterRegistry:
+def registry_for_adapter(
+    adapter: FakeAdapter,
+    *,
+    shutdown_timeout_seconds: float = 10.0,
+) -> TTSAdapterRegistry:
     replacements = FakeAdapterFactory(adapter.provider_id)
     calls = 0
 
@@ -75,6 +79,7 @@ def registry_for_adapter(adapter: FakeAdapter) -> TTSAdapterRegistry:
             ),
         ),
         aliases={},
+        shutdown_timeout_seconds=shutdown_timeout_seconds,
     )
 
 
@@ -313,6 +318,55 @@ async def test_synthesis_failure_preserves_primary_when_lease_cleanup_fails() ->
 
 
 @pytest.mark.asyncio
+async def test_caller_cancellation_supersedes_synthesis_failure_during_cleanup() -> (
+    None
+):
+    synthesis_started = asyncio.Event()
+    fail_synthesis = asyncio.Event()
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+
+    class FailingAdapter(FakeAdapter):
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: ProgressSink | None = None,
+        ) -> TTSAudioResponse:
+            del request, progress_sink
+            synthesis_started.set()
+            await fail_synthesis.wait()
+            raise RuntimeError("synthesis failed")
+
+        async def close(self) -> None:
+            self.close_calls += 1
+            close_started.set()
+            await allow_close.wait()
+
+    adapter = FailingAdapter("openai")
+    registry = registry_for_adapter(adapter)
+    service = TTSService(registry, max_concurrent_operations=1)
+    failed_request = asyncio.create_task(service.synthesize(tts_request()))
+    await synthesis_started.wait()
+    await registry.reconfigure_provider("openai", {"revision": 2})
+    fail_synthesis.set()
+    await close_started.wait()
+
+    failed_request.cancel()
+    await asyncio.sleep(0)
+    returned_before_cleanup = failed_request.done()
+    allow_close.set()
+
+    with pytest.raises(asyncio.CancelledError) as error:
+        await failed_request
+
+    assert returned_before_cleanup is False
+    assert getattr(error.value, "__notes__", []) == []
+    assert adapter.close_calls == 1
+    response = await asyncio.wait_for(service.synthesize(tts_request()), timeout=1)
+    await response.aclose()
+
+
+@pytest.mark.asyncio
 async def test_default_concurrency_limit_holds_four_open_responses() -> None:
     service = service_for_adapter(FakeAdapter("openai"))
     responses = [await service.synthesize(tts_request()) for _ in range(4)]
@@ -355,6 +409,49 @@ async def test_compatibility_generator_closes_after_partial_consumption() -> Non
 
     assert await anext(stream) == b"one"
     await cast(AsyncGenerator[bytes, None], stream).aclose()
+
+    assert adapter.response_close_calls == 1
+    await service.registry.reconfigure_provider("openai", {"revision": 2})
+    assert adapter.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_partial_generator_close_propagates_response_cleanup_failure() -> None:
+    class CleanupFailureAdapter(FakeAdapter):
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: ProgressSink | None = None,
+        ) -> TTSAudioResponse:
+            del progress_sink
+
+            async def stream():
+                yield b"one"
+                yield b"two"
+
+            async def cleanup() -> None:
+                self.response_close_calls += 1
+                raise RuntimeError("response cleanup failed")
+
+            return TTSAudioResponse(
+                provider_id=self.provider_id,
+                model_id=request.model_id,
+                audio_format=request.response_format,
+                content_type="audio/mpeg",
+                byte_stream=stream(),
+                cleanup=cleanup,
+            )
+
+    adapter = CleanupFailureAdapter("openai")
+    service = service_for_adapter(adapter)
+    stream = service.generate_audio_stream(
+        speech_request(),
+        "openai_official_tts-1",
+    )
+
+    assert await anext(stream) == b"one"
+    with pytest.raises(RuntimeError, match="response cleanup failed"):
+        await cast(AsyncGenerator[bytes, None], stream).aclose()
 
     assert adapter.response_close_calls == 1
     await service.registry.reconfigure_provider("openai", {"revision": 2})
@@ -519,6 +616,63 @@ async def test_generator_cancellation_preserves_primary_when_cleanup_fails() -> 
 
 
 @pytest.mark.asyncio
+async def test_stream_cancellation_precedes_cleanup_originated_cancellation() -> None:
+    started = asyncio.Event()
+
+    class CancellationCleanupCancellationAdapter(FakeAdapter):
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: ProgressSink | None = None,
+        ) -> TTSAudioResponse:
+            del progress_sink
+
+            async def stream():
+                started.set()
+                await asyncio.Future()
+                yield b"unreachable"
+
+            async def cleanup() -> None:
+                self.response_close_calls += 1
+                raise asyncio.CancelledError("cleanup cancelled")
+
+            return TTSAudioResponse(
+                provider_id=self.provider_id,
+                model_id=request.model_id,
+                audio_format=request.response_format,
+                content_type="audio/mpeg",
+                byte_stream=stream(),
+                cleanup=cleanup,
+            )
+
+    adapter = CancellationCleanupCancellationAdapter("openai")
+    service = service_for_adapter(adapter)
+
+    async def consume_one() -> bytes:
+        return await anext(
+            service.generate_audio_stream(
+                speech_request(),
+                "openai_official_tts-1",
+            )
+        )
+
+    task = asyncio.create_task(consume_one())
+    await started.wait()
+    task.cancel("caller cancelled")
+
+    with pytest.raises(asyncio.CancelledError) as error:
+        await task
+
+    assert error.value.args == ("caller cancelled",)
+    assert error.value.__notes__ == [
+        "TTS cleanup also failed while preserving the original error"
+    ]
+    assert adapter.response_close_calls == 1
+    await service.registry.reconfigure_provider("openai", {"revision": 2})
+    assert adapter.close_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_progress_sink_failure_does_not_fail_synthesis() -> None:
     async def broken_sink(_progress: TTSProgress) -> None:
         raise RuntimeError("display failed")
@@ -668,6 +822,70 @@ async def test_value_equal_stale_service_cannot_reset_current_binding() -> None:
         assert await get_tts_service() is current
     finally:
         reset_tts_service_binding(expected=current)
+
+
+@pytest.mark.asyncio
+async def test_service_wait_closed_joins_bounded_registry_shutdown() -> None:
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+
+    class BlockingCloseAdapter(FakeAdapter):
+        async def close(self) -> None:
+            self.close_calls += 1
+            close_started.set()
+            await allow_close.wait()
+
+    adapter = BlockingCloseAdapter("openai")
+    service = TTSService(registry_for_adapter(adapter, shutdown_timeout_seconds=0))
+    response = await service.synthesize(tts_request())
+    await response.aclose()
+
+    await service.close()
+    await close_started.wait()
+    wait_for_close = asyncio.create_task(service.wait_closed())
+    await asyncio.sleep(0)
+
+    assert wait_for_close.done() is False
+    allow_close.set()
+    await wait_for_close
+    await service.wait_closed()
+    assert adapter.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_zero_timeout_shutdown_retains_binding_until_adapter_closes() -> None:
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+
+    class BlockingCloseAdapter(FakeAdapter):
+        async def close(self) -> None:
+            self.close_calls += 1
+            close_started.set()
+            await allow_close.wait()
+
+    adapter = BlockingCloseAdapter("openai")
+    service = TTSService(registry_for_adapter(adapter, shutdown_timeout_seconds=0))
+    response = await service.synthesize(tts_request())
+    await response.aclose()
+    bind_tts_service(service)
+    shutdown = asyncio.create_task(close_tts_resources())
+    try:
+        await close_started.wait()
+        await asyncio.sleep(0)
+
+        assert shutdown.done() is False
+        assert await get_tts_service() is service
+        assert adapter.close_calls == 1
+
+        allow_close.set()
+        await shutdown
+        with pytest.raises(RuntimeError, match="not bound"):
+            await get_tts_service()
+        assert adapter.close_calls == 1
+    finally:
+        allow_close.set()
+        await asyncio.gather(shutdown, return_exceptions=True)
+        reset_tts_service_binding(expected=service)
 
 
 @pytest.mark.asyncio
