@@ -329,24 +329,29 @@ The S/TT/S tab provides a comprehensive TTS testing environment:
 ### Programmatic Usage
 
 ```python
-from tldw_chatbook.TTS import TTSRequest, get_tts_service
+from tldw_chatbook.TTS import OpenAISpeechRequest, get_tts_service
 
 # The application binds the service before callers request it.
 tts_service = await get_tts_service()
 
-request = TTSRequest(
-    provider_id="openai",
-    model_id="tts-1",
-    text="Hello, world!",
+request = OpenAISpeechRequest(
+    model="tts-1",
+    input="Hello, world!",
     voice="alloy",
     response_format="mp3",
     speed=1.0
 )
 
-async with await tts_service.synthesize(request) as response:
-    async for chunk in response.byte_stream:
-        audio_file.write(chunk)
+internal_model_id = "openai_official_tts-1"
+async for chunk in tts_service.generate_audio_stream(request, internal_model_id):
+    audio_file.write(chunk)
 ```
+
+`TTSService.synthesize(TTSRequest)` is the native-adapter API. The six current
+registry entries are compatibility adapters and require private bridge metadata
+that `generate_audio_stream()` supplies. Do not call `synthesize()` directly for
+those entries. Native callers can use `synthesize()` after the first native
+adapter, `audio_cpp`, lands.
 
 ### Event System Integration
 
@@ -384,16 +389,34 @@ default_format = "mp3"       # Audio output format
 default_speed = 1.0          # Speech speed (0.25-4.0)
 ```
 
-### Legacy Route Selection
+### Exact legacy route allowlist
 
-The compatibility bridge resolves these existing internal model IDs:
-- `tts-1`, `tts-1-hd` → OpenAI backend
-- `kokoro` → Local Kokoro backend
-- `eleven_*` models → ElevenLabs backend
-- `chatterbox` → Chatterbox backend
+The compatibility generator accepts only these internal model IDs:
 
-New code selects a canonical provider and opaque model ID explicitly with
-`TTSRequest`; it does not infer a provider from the model name.
+- `openai_official_tts-1` → `openai`
+- `openai_official_tts-1-hd` → `openai`
+- `openai_official_tts1` → `openai`
+- `openai_official_tts1hd` → `openai`
+- `elevenlabs_eleven_monolingual_v1` → `elevenlabs`
+- `elevenlabs_eleven_multilingual_v1` → `elevenlabs`
+- `elevenlabs_eleven_multilingual_v2` → `elevenlabs`
+- `elevenlabs_eleven_turbo_v2` → `elevenlabs`
+- `elevenlabs_eleven_turbo_v2_5` → `elevenlabs`
+- `elevenlabs_eleven_flash_v2` → `elevenlabs`
+- `elevenlabs_eleven_flash_v2_5` → `elevenlabs`
+- `elevenlabs_english_v1` → `elevenlabs`
+- `elevenlabs_elevenlabs` → `elevenlabs`
+- `local_kokoro_default_onnx` → `kokoro`
+- `local_kokoro_default_pytorch` → `kokoro`
+- `local_chatterbox_default` → `chatterbox`
+- `local_higgs_default` → `higgs`
+- `local_higgs_v2` → `higgs`
+- `alltalk_default` → `alltalk`
+- `alltalk_alltalk` → `alltalk`
+
+These IDs are temporary bridge inputs, not native provider/model identities.
+New native-adapter code selects a canonical provider and opaque model ID
+explicitly with `TTSRequest`.
 
 ### Audio Formats
 Supported formats vary by provider:

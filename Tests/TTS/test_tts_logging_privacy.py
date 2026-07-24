@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import re
+from pathlib import Path
 
 import pytest
 from loguru import logger
 
 import tldw_chatbook.TTS as tts
 from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
+from tldw_chatbook.TTS.legacy_bridge import LEGACY_ROUTES
+
+GUIDE_PATH = Path(__file__).parents[2] / "Docs/Development/TTS/TTS_MODULE_GUIDE.md"
 
 
 def test_tts_package_exports_only_stable_adapter_service_api() -> None:
@@ -39,6 +44,24 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
     assert set(tts.__all__) == expected
     assert all(hasattr(tts, name) for name in expected)
     assert all(not hasattr(tts, name) for name in forbidden)
+
+
+def test_tts_guide_documents_exact_legacy_routes_and_working_example() -> None:
+    guide = GUIDE_PATH.read_text(encoding="utf-8")
+    usage = guide.split("### Programmatic Usage", 1)[1].split(
+        "### Event System Integration", 1
+    )[0]
+    routes = guide.split("### Exact legacy route allowlist", 1)[1].split(
+        "### Audio Formats", 1
+    )[0]
+    documented_routes = dict(
+        re.findall(r"^- `([^`]+)` → `([^`]+)`$", routes, re.MULTILINE)
+    )
+
+    assert documented_routes == LEGACY_ROUTES
+    assert 'internal_model_id = "openai_official_tts-1"' in usage
+    assert "generate_audio_stream(request, internal_model_id)" in usage
+    assert "tts_service.synthesize(" not in usage
 
 
 @pytest.mark.asyncio
