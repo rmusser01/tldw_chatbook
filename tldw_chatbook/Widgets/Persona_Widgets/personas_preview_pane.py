@@ -233,10 +233,17 @@ class PersonasPreviewPane(Vertical):
         row = self.query_one("#personas-preview-greeting-row")
         if len(greetings) > 1:
             select = self.query_one("#personas-preview-greeting-select", Select)
-            select.set_options(
-                [(self._greeting_option_label(i, g), i) for i, g in enumerate(greetings)]
-            )
-            select.value = selected_index if 0 <= selected_index < len(greetings) else 0
+            target = selected_index if 0 <= selected_index < len(greetings) else 0
+            # Populate/repoint the Select WITHOUT firing Select.Changed. set_options
+            # snaps value back to 0 and the explicit assignment would each post a
+            # (spurious) Changed that _handle_greeting_selected would misread as a
+            # user pick and re-seed — wiping an in-progress transcript on a
+            # same-character reload (task-438 review). prevent() suppresses both.
+            with self.prevent(Select.Changed):
+                select.set_options(
+                    [(self._greeting_option_label(i, g), i) for i, g in enumerate(greetings)]
+                )
+                select.value = target
             row.display = True
         else:
             row.display = False

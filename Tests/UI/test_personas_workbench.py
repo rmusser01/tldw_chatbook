@@ -3088,6 +3088,43 @@ class TestPreviewIntegration:
             assert "An alternate opener." in pane.transcript_text()
             assert "Who's asking" not in pane.transcript_text()
 
+    async def test_reload_via_real_select_does_not_wipe_transcript(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """TASK-438 review: choosing an alternate through the REAL Select widget
+        then a same-character reload must NOT wipe the in-progress transcript —
+        the programmatic set_options() must not fire a spurious re-seed."""
+        from textual.widgets import Select
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            pane = screen.query_one("#personas-preview-pane", PersonasPreviewPane)
+            # pick alternate index 1 via the real widget (fires Select.Changed)
+            pane.query_one("#personas-preview-greeting-select", Select).value = 1
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            pane.append_user("hi")
+            pane.append_reply("hello")
+            await pilot.pause()
+            # same-character reload (edit+save path)
+            await screen.preview.handle_character_loaded(
+                character_id="1",
+                card_data={
+                    "name": "Detective Sam",
+                    "first_message": "The name's {{char}}. Who's asking?",
+                    "alternate_greetings": ["An alternate opener.", "A third opener."],
+                },
+            )
+            await pilot.pause()
+            text = pane.transcript_text()
+            assert "hi" in text and "hello" in text  # conversation survived
+            assert screen.preview._current_greeting_index == 1
+
     async def test_greeting_selector_hidden_without_alternates(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
