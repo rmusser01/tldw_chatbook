@@ -218,8 +218,7 @@ class TTSAdapterRegistry:
                 slot.lease_changed.set()
 
             deadline = (
-                asyncio.get_running_loop().time()
-                + self._shutdown_timeout_seconds
+                asyncio.get_running_loop().time() + self._shutdown_timeout_seconds
             )
             self._shutdown_deadline = deadline
             self._close_task = asyncio.create_task(self._complete_close(deadline))
