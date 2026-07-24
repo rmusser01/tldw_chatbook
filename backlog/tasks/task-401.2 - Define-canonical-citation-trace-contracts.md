@@ -1,9 +1,11 @@
 ---
 id: TASK-401.2
 title: Define canonical citation trace contracts
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-24 00:43'
+updated_date: '2026-07-24 04:48'
 labels:
   - rag
   - citations
@@ -33,3 +35,19 @@ Introduce pure versioned provenance and identity contracts that distinguish immu
 - [ ] #4 Pure round-trip, bounds, marker occurrence, and legacy EvidenceBundle or CitationRef adapter tests pass.
 - [ ] #5 Local, server, imported, payload, and owner namespaces plus domain-separated secret fingerprint contracts are defined and tested before schema work begins.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add failing invariant, round-trip, bounds, marker, completeness, and legacy adapter tests.
+2. Implement the smallest frozen canonical trace and governed write-bundle model graph.
+3. Add deterministic selected-attempt completeness reduction and property tests.
+4. Add pure legacy EvidenceBundle/CitationRef adapters that never overstate completeness.
+5. Add failing identity/fingerprint/key-provider tests, then implement pure namespace and secret-scoped identity contracts.
+6. Run focused compatibility, property, lint, and benchmark-regression checks and self-review.
+7. Complete acceptance criteria and implementation notes after both review gates pass.
+
+ADR required: yes
+ADR path: backlog/decisions/024-rag-citation-provenance-and-source-resolution.md
+Reason: This task establishes the immutable provenance and identity contracts governed by ADR-024 before persistence schema is fixed.
+<!-- SECTION:PLAN:END -->
