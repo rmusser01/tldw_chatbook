@@ -1,6 +1,7 @@
 """TASK-334: code_audit_tool._request_llm_analysis repointed to chat_api_call."""
 
 import asyncio
+from pathlib import Path
 from unittest.mock import patch
 
 from tldw_chatbook.Tools.code_audit_tool import FileAuditSystem
@@ -32,5 +33,5 @@ def test_request_llm_analysis_calls_chat_api_call_and_extracts_content():
 
 def test_no_dead_import_in_code_audit():
     import tldw_chatbook.Tools.code_audit_tool as m
-    src = open(m.__file__, encoding="utf-8").read()
+    src = Path(m.__file__).read_text(encoding="utf-8")
     assert "import chat_with_provider" not in src

@@ -1,8 +1,7 @@
 """TASK-334: MCP server chat_with_llm repointed to chat_api_call (was ImportError)."""
 
 import importlib
-
-import pytest
+from pathlib import Path
 
 
 def test_server_module_imports_without_error():
@@ -14,6 +13,6 @@ def test_server_module_imports_without_error():
 
 def test_no_dead_chat_with_provider_import_in_server():
     import tldw_chatbook.MCP.server as srv
-    src = open(srv.__file__, encoding="utf-8").read()
+    src = Path(srv.__file__).read_text(encoding="utf-8")
     assert "import chat_with_provider" not in src
     assert "chat_api_call" in src

@@ -17,7 +17,7 @@ CLAUDE.md and README contain claims that contradict the code and will actively m
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Schema version corrected: pinned to symbol `_CURRENT_SCHEMA_VERSION` (currently 25, anchored to the symbol not a bare int)
+- [x] #1 Schema version corrected: pinned to the `_CURRENT_SCHEMA_VERSION` symbol in `DB/ChaChaNotes_DB.py` (not a bare integer, so it won't re-rot on the next schema bump)
 - [x] #2 Tool calling documented as fully implemented (detection + execution wired in `worker_events.py:407` and `chat_streaming_events.py:211`)
 - [x] #3 "New LLM Provider" recipe points at `chat_api_call()` (`Chat/Chat_Functions.py:646`) + API_CALL_HANDLERS/PROVIDER_PARAM_MAP dispatched correctly
 - [x] #4 "New Tool" recipe uses the property-based `Tool(ABC)` with name/description/parameters properties + async execute + `ToolExecutor.register_tool()`/`get_tool_executor()`
@@ -36,7 +36,7 @@ CLAUDE.md and README contain claims that contradict the code and will actively m
 <!-- SECTION:NOTES:BEGIN -->
 Comprehensive documentation corrections applied to CLAUDE.md:
 
-**Schema**: pinned to symbol `_CURRENT_SCHEMA_VERSION` (currently 25, sourced from `DB/ChaChaNotes_DB.py:143`) rather than a bare integer, ensuring recipes update automatically as schema evolves.
+**Schema**: pinned to the `_CURRENT_SCHEMA_VERSION` symbol in `DB/ChaChaNotes_DB.py` rather than a bare integer, so the doc tracks the code automatically as the schema evolves.
 
 **Tool System**: Tool detection + execution both implemented and documented; `execute_tool_call()` wired into both `worker_events.py:407` (agent-event dispatch) and `chat_streaming_events.py:211` (streaming message handling); updated "New Tool" recipe to reflect current `Tool(ABC)` pattern with name/description/parameters properties + async execute + `ToolExecutor.register_tool()`/`get_tool_executor()`.
 
