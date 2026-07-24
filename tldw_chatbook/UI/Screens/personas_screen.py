@@ -363,6 +363,15 @@ class PersonasScreen(BaseAppScreen):
         background: $background;
     }
 
+    /* Red cue when the staged Console handoff provider is unready (task-523).
+       At runtime `status-blocked` lands on the DestinationHeader (#personas-header)
+       while the badge word is on a child Static (#workbench-header-status), so the
+       color rule is a descendant of the blocked header. ($error is the Textual
+       built-in error color; $ds-* vars aren't resolvable in inline DEFAULT_CSS.) */
+    #personas-header.status-blocked .workbench-header-status {
+        color: $error;
+    }
+
     #personas-mode-strip {
         height: 1;
         min-height: 1;
@@ -3577,6 +3586,13 @@ class PersonasScreen(BaseAppScreen):
             # this is a defensive re-check (and the ctrl+enter guard).
             self._notify("Select a saved item before using Console actions.", "warning")
             return
+        if intent == "start_chat":
+            # Start Chat needs a ready handoff provider (task-523 per-intent);
+            # defense-in-depth against a press racing a config change.
+            block = self._provider_send_block_reason()
+            if block:
+                self._notify(f"Start Chat blocked: {block}", "warning")
+                return
         kind = str(self.state.selected_entity_kind)
         name = self.state.selected_entity_name or "Unnamed"
         body = await self._selection_handoff_body()

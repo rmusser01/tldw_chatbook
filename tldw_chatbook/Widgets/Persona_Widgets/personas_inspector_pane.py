@@ -195,17 +195,16 @@ class PersonasInspectorPane(Vertical):
         Args:
             enabled: Whether Console actions are currently available.
             reason: Optional user-facing reason shown when actions are blocked.
-            provider_block_reason: Optional readiness-only blocker naming why
-                the provider a Start Chat/Attach Console handoff session
-                would resolve is not ready (task-440). When set (and ``enabled`` is
-                True) it overrides the "Console ready" readiness copy with
-                the same "Console blocked: ..." pattern WITHOUT disabling the
-                buttons: Start Chat still opens a real conversation
-                (task-427) and Attach still stages the card even when the
-                staged send itself would currently fail, so button
-                availability stays driven solely by ``enabled``. Ignored when
-                ``enabled`` is False - the selection/unsaved reason already
-                owns the copy.
+            provider_block_reason: Optional blocker naming why the provider a
+                Start Chat/Attach Console handoff session would resolve is not
+                ready (task-440). Per-intent gating (task-523): when set (and
+                ``enabled`` is True) it replaces the "Console ready" copy with
+                "Start Chat blocked: ..." and DISABLES Start Chat - which needs
+                an immediate provider reply - while Attach stays enabled: Attach
+                only stages context, so its send is deferred and the user can
+                fix the provider before sending. Ignored when ``enabled`` is
+                False - the selection/unsaved reason already owns the copy and
+                both buttons are disabled by the gate.
         """
         self._console_actions_enabled = bool(enabled)
         self._console_action_block_reason = "" if enabled else (reason or "unavailable")
@@ -291,34 +290,50 @@ class PersonasInspectorPane(Vertical):
         unsaved = self._is_unsaved
         kind = self._selected_kind
         readiness = self.query_one("#personas-readiness-console", Static)
-        if self._console_actions_enabled and self._provider_block_reason:
-            readiness.update(f"Console blocked: {self._provider_block_reason}")
-        elif self._console_actions_enabled:
-            readiness.update("Console ready")
-        else:
+        if not self._console_actions_enabled:
             reason = self._console_action_block_reason or "unavailable"
             readiness.update(f"Console blocked: {reason}")
+        elif self._provider_block_reason:
+            # Per-intent (task-523): Attach stays available; only Start Chat is
+            # blocked because it needs an immediate reply from the provider.
+            readiness.update(f"Start Chat blocked: {self._provider_block_reason}")
+        else:
+            readiness.update("Console ready")
         export_enabled = selected and not unsaved
         export_tooltip = _UNSAVED_TOOLTIP if (selected and unsaved) else None
-        console_tooltip = None
+        # Attach: the selection gate only (staging context defers the reply).
+        attach_tooltip = None
         if not self._console_actions_enabled:
-            console_tooltip = (
+            attach_tooltip = (
                 _UNSAVED_TOOLTIP
                 if selected and unsaved
                 else f"Console action blocked: {self._console_action_block_reason}"
             )
-        elif self._provider_block_reason:
-            console_tooltip = f"Reply may fail: {self._provider_block_reason}"
-        # Kind gates rendering; readiness/unsaved gate the disabled+tooltip
-        # state of whatever is rendered (see the module-level constants).
+        # Kind gates rendering (task-443); readiness/unsaved/provider-readiness
+        # gate the disabled+tooltip state of whatever is rendered (see the
+        # module-level constants).
         console_applies = kind is None or kind in _CONSOLE_ACTION_APPLICABLE_KINDS
         export_json_applies = kind is None or kind in _EXPORT_JSON_APPLICABLE_KINDS
         export_png_applies = kind is None or kind in _EXPORT_PNG_APPLICABLE_KINDS
-        for button_id in ("#personas-attach-to-console", "#personas-start-chat"):
-            button = self.query_one(button_id, Button)
-            button.display = console_applies
-            button.disabled = not self._console_actions_enabled
-            button.tooltip = console_tooltip
+        # Attach: the selection gate only (staging context defers the reply).
+        attach_btn = self.query_one("#personas-attach-to-console", Button)
+        attach_btn.display = console_applies
+        attach_btn.disabled = not self._console_actions_enabled
+        attach_btn.tooltip = attach_tooltip
+        # Start Chat: selection AND a ready handoff provider (task-523) -- it
+        # needs an immediate reply, so an unready provider disables it while
+        # Attach stays available.
+        start_btn = self.query_one("#personas-start-chat", Button)
+        start_btn.display = console_applies
+        start_btn.disabled = (not self._console_actions_enabled) or bool(
+            self._provider_block_reason
+        )
+        if not self._console_actions_enabled:
+            start_btn.tooltip = attach_tooltip
+        elif self._provider_block_reason:
+            start_btn.tooltip = f"Start Chat blocked: {self._provider_block_reason}"
+        else:
+            start_btn.tooltip = None
         json_button = self.query_one("#personas-export-json", Button)
         json_button.display = export_json_applies
         json_button.disabled = not export_enabled
