@@ -127,7 +127,7 @@ class CCPPersonaHandler:
                 "Persona scope service unavailable; returning empty persona list"
             )
             if raise_on_unavailable:
-                raise RuntimeError("Persona profile service is unavailable.")
+                raise RuntimeError("User profile service is unavailable.")
             self.persona_list = []
             return self.persona_list
 
@@ -160,7 +160,7 @@ class CCPPersonaHandler:
             logger.warning(
                 "Persona scope service unavailable; cannot load persona {}", persona_id
             )
-            self._notify("Persona profiles are not available in the current backend.")
+            self._notify("User profiles are not available in the current backend.")
             return
 
         try:
@@ -176,13 +176,13 @@ class CCPPersonaHandler:
             return
         except Exception:
             logger.opt(exception=True).error("Error loading persona {}", persona_id)
-            self._notify("Failed to load persona profile.", severity="error")
+            self._notify("Failed to load user profile.", severity="error")
             return
 
         normalized = self._normalize_persona_record(persona_data)
         if not normalized:
             logger.warning("Persona {} not found", persona_id)
-            self._notify("Persona profile could not be loaded.", severity="warning")
+            self._notify("User profile could not be loaded.", severity="warning")
             return
 
         self.current_persona_id = normalized["id"] or persona_id
@@ -215,7 +215,7 @@ class CCPPersonaHandler:
         if persona_id and persona_id != self.current_persona_id:
             await self.load_persona(persona_id)
         if not self.current_persona_data:
-            self._notify("Load a persona profile before editing it.")
+            self._notify("Load a user profile before editing it.")
             return
         self._load_editor(self.current_persona_data)
         self.window.post_message(
@@ -229,12 +229,12 @@ class CCPPersonaHandler:
         """Create or update a persona profile through the shared scope service."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None:
-            self._notify("Persona profiles are not available in the current backend.")
+            self._notify("User profiles are not available in the current backend.")
             return
 
         name = str(persona_data.get("name", "") or "").strip()
         if not name:
-            self._notify("Persona name is required.")
+            self._notify("User profile name is required.")
             return
 
         mode = persona_data.get("mode") or "session_scoped"
@@ -273,7 +273,7 @@ class CCPPersonaHandler:
             return
         except Exception:
             logger.opt(exception=True).error("Error saving persona profile")
-            self._notify("Failed to save persona profile.", severity="error")
+            self._notify("Failed to save user profile.", severity="error")
             return
 
         normalized = self._normalize_persona_record(result)

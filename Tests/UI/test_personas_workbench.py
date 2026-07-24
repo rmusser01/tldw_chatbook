@@ -3111,7 +3111,7 @@ class TestConsoleActions:
             await pilot.pause()
         app.open_chat_with_handoff.assert_not_called()
         assert (
-            "Persona profile is not fully loaded; try reselecting it.",
+            "User profile is not fully loaded; try reselecting it.",
             "warning",
         ) in captured
         assert not any(severity == "information" for _msg, severity in captured)

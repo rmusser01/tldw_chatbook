@@ -490,10 +490,10 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.PERSONAS,
-        title="Personas",
-        owner_destination="Personas",
+        title="Roleplay",
+        owner_destination="Roleplay",
         source_of_truth=(
-            "Your saved characters and personas",
+            "Your saved characters and user profiles",
             "Whatever's currently open in Roleplay",
         ),
         rows=(
@@ -1449,7 +1449,7 @@ class SettingsScreen(BaseAppScreen):
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.PERSONAS,
-                "Personas",
+                "Roleplay",
                 "Character and user profile browsing, plus how they attach to Console chats.",
                 "Read-only",
             ),

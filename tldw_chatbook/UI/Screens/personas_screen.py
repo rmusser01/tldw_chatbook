@@ -3565,7 +3565,7 @@ class PersonasScreen(BaseAppScreen):
             record, complete = await self._fetch_profile_record_checked(entity_id)
             if not complete:
                 self._notify(
-                    "Persona profile is not fully loaded; try reselecting it.",
+                    "User profile is not fully loaded; try reselecting it.",
                     "warning",
                 )
                 return None
@@ -6116,7 +6116,7 @@ class PersonasScreen(BaseAppScreen):
         editor.mark_saved(saved)
         self._show_center("#ccp-persona-editor-view")
         self._sync_title_and_console_actions()
-        self._notify("Persona saved.", "information")
+        self._notify("User profile saved.", "information")
 
     # ===== Cancel =====
 
