@@ -1,5 +1,6 @@
 """Settings destination shell for global app preferences."""
 
+import asyncio
 import copy
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
@@ -7655,24 +7656,37 @@ class SettingsScreen(BaseAppScreen):
             return
         self._rag_index_status_worker()
 
-    @work(exclusive=True, group="settings-rag-backfill")
-    async def _rag_backfill_worker(self) -> None:
+    def _clear_library_rag_backfill_in_flight(self) -> None:
+        """Main-thread flip of the in-flight flag -- see
+        ``_rag_backfill_worker``'s ``finally`` block."""
+        self._library_rag_backfill_in_flight = False
+
+    @work(exclusive=True, thread=True, group="settings-rag-backfill")
+    def _rag_backfill_worker(self) -> None:
         """Bulk-index existing media/notes/conversations into the active
         profile's resolved vector collection.
 
-        Mirrors ``SearchRAGWindow._run_index_backfill``'s call to
-        ``backfill_semantic_index`` (same default ``item_types`` covering
-        media/notes/conversations, DBs sourced the same way from
-        ``self.app_instance``) but as a genuinely async worker -- awaited
-        directly rather than that window's thread + transient ``asyncio.run``
-        dance -- since this is the settings screen's light "kick off a
-        backfill" trigger (SP3 spec §7), not the primary bulk-indexing UI.
-        Never crashes the screen: any exception is caught and reported via
-        notify rather than propagating out of the worker.
+        Task 4 review (Finding 1): this originally shipped as a genuinely
+        ``async`` worker, awaiting ``backfill_semantic_index`` directly on
+        the UI event loop. That function has long *synchronous* stretches
+        between its awaits (sync sqlite pagination generators, per-entry
+        needs_reindexing/delete_document N+1 lookups), so a real backfill
+        starved the Textual heartbeat and froze the whole TUI. Runs on a
+        worker thread instead now, exactly like
+        ``SearchRAGWindow._run_index_backfill``: a transient ``asyncio.run``
+        loop keeps ALL of that sync work off the UI event loop, and every UI
+        touch (notify, the in-flight flag, the status-row refresh) is
+        marshalled back with ``call_from_thread``. Same default
+        ``item_types`` covering media/notes/conversations, DBs sourced the
+        same way from ``self.app_instance``, same start/finish/failure
+        notify contract as before. Never crashes the screen: any exception
+        is caught and reported via notify rather than propagating out of
+        the worker.
         """
         try:
             if not semantic_indexing_available():
-                self.app.notify(
+                self.app.call_from_thread(
+                    self.app.notify,
                     "Semantic indexing is unavailable (missing embeddings "
                     "extras, or disabled in config).",
                     severity="warning",
@@ -7681,37 +7695,44 @@ class SettingsScreen(BaseAppScreen):
             media_db = getattr(self.app_instance, "media_db", None)
             chachanotes_db = getattr(self.app_instance, "chachanotes_db", None)
             if media_db is None and chachanotes_db is None:
-                self.app.notify(
+                self.app.call_from_thread(
+                    self.app.notify,
                     "No local databases are available to backfill.",
                     severity="error",
                 )
                 return
-            summary = await backfill_semantic_index(
-                media_db=media_db, chachanotes_db=chachanotes_db
+            summary = asyncio.run(
+                backfill_semantic_index(
+                    media_db=media_db, chachanotes_db=chachanotes_db
+                )
             )
         except Exception as e:
             logger.error(f"RAG index backfill crashed: {e}")
-            self.app.notify(f"Backfill failed: {e}", severity="error")
+            self.app.call_from_thread(
+                self.app.notify, f"Backfill failed: {e}", severity="error"
+            )
             return
         finally:
-            self._library_rag_backfill_in_flight = False
+            self.app.call_from_thread(self._clear_library_rag_backfill_in_flight)
         status = summary.get("status")
         errors = summary.get("errors") or []
         if status in ("unavailable", "error") or errors:
             last_error = str(errors[-1]) if errors else None
             detail = f" Last error: {last_error}" if last_error else ""
-            self.app.notify(
+            self.app.call_from_thread(
+                self.app.notify,
                 f"Backfill finished with problems: {summary.get('indexed', 0)} "
                 f"indexed, {summary.get('failed', 0)} failed.{detail}",
                 severity="error" if status == "error" else "warning",
             )
         else:
-            self.app.notify(
+            self.app.call_from_thread(
+                self.app.notify,
                 f"Backfill complete: {summary.get('indexed', 0)} indexed, "
                 f"{summary.get('skipped', 0)} already up-to-date.",
                 severity="information",
             )
-        self._refresh_library_rag_index_status()
+        self.app.call_from_thread(self._refresh_library_rag_index_status)
 
     def _render_library_rag_profile_block(self) -> ComposeResult:
         info = active_profile_info()
@@ -10028,16 +10049,24 @@ class SettingsScreen(BaseAppScreen):
             info = active_profile_info()
             message = f"Active profile: {info['name']}"
             # Honest re-index warning (SP3 spec §3, trigger (b)): only when we
-            # actually know the new profile's index isn't built yet -- never
-            # noisy-by-default when the caller didn't supply a status (e.g.
-            # pre-task-4 callers/tests) or when it's already built (switching
-            # to a profile whose fingerprinted collection was indexed before).
-            index_not_built = (
-                new_index_status is not None
-                and new_index_status.get("state") != "built"
-            )
-            if index_not_built:
+            # actually KNOW the new profile's fingerprinted collection is
+            # genuinely absent/empty -- never noisy-by-default when the
+            # caller didn't supply a status (e.g. pre-task-4 callers/tests)
+            # or when it's already built (switching to a profile whose
+            # collection was indexed before). Task 4 review (Finding 2):
+            # a status-read failure ("unknown", see fetch_index_status's
+            # exception fallback) used to fall into this same "not built"
+            # branch and claim the switch "re-points to a new (empty)
+            # index" -- a false claim, since an unreadable status says
+            # nothing about whether the index actually changed. That case
+            # now gets its own honest, distinct notice instead.
+            state = new_index_status.get("state") if new_index_status is not None else None
+            index_empty = state in ("absent", "empty")
+            status_unknown = state == "unknown"
+            if index_empty:
                 message = f"{message} {RAG_INDEX_CHANGE_WARNING}"
+            elif status_unknown:
+                message = f"{message} Index status unavailable — check the Index row."
             self._library_rag_profile_result = message
             self._set_static_text("#settings-library-rag-profile-result", message)
             self._sync_library_rag_widgets()
@@ -10046,7 +10075,8 @@ class SettingsScreen(BaseAppScreen):
             if new_index_status is not None:
                 self._apply_library_rag_index_status(new_index_status)
             self.app.notify(
-                message, severity="warning" if index_not_built else "information"
+                message,
+                severity="warning" if (index_empty or status_unknown) else "information",
             )
             return
         message = f"Couldn't switch active profile: {reason}"

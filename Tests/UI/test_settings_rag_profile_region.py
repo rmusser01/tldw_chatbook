@@ -22,6 +22,9 @@ Two test styles are used, matching existing repo conventions:
   more fragile than just mounting the real screen.
 """
 
+import inspect
+from types import SimpleNamespace
+
 import pytest
 from textual.widgets import Button, Input, Select
 
@@ -67,6 +70,12 @@ class _FakeApp:
 
     def push_screen(self, screen, callback=None):
         self.pushed_screens.append((screen, callback))
+
+    def call_from_thread(self, fn, *args, **kwargs):
+        """Stand-in for Textual's cross-thread marshalling: invokes the
+        callback immediately (same idiom as test_console_mcp_approval.py),
+        since these sync-constructed tests never span a real thread."""
+        return fn(*args, **kwargs)
 
 
 @pytest.fixture
@@ -456,3 +465,111 @@ def test_backfill_button_click_while_in_flight_does_not_start_a_second_worker(
 
     assert worker_calls == []
     assert fake_app.notifications[-1] == ("Backfill is already running.", "warning")
+
+
+# --- Task 4 review Finding 1: backfill worker must be thread-isolated, not
+# an async worker awaiting on the UI event loop (backfill_semantic_index has
+# long synchronous stretches between awaits that would otherwise freeze the
+# whole TUI). Mirrors SearchRAGWindow._run_index_backfill's thread + transient
+# asyncio.run pattern. ---
+
+
+def test_rag_backfill_worker_is_dispatched_as_a_thread_worker():
+    """Source-based check, same idiom as
+    test_settings_library_rag_save_uses_exclusive_thread_worker in
+    test_settings_configuration_hub.py: confirms the worker is decorated
+    ``thread=True`` (not the async-on-UI-loop shape it originally shipped
+    with) and that its body is a plain (non-coroutine) function, since
+    ``asyncio.run`` -- not ``await`` -- drives ``backfill_semantic_index``
+    now."""
+    worker = SettingsScreen.__dict__["_rag_backfill_worker"]
+    wrapped = getattr(worker, "__wrapped__", None)
+    source = inspect.getsource(SettingsScreen)
+
+    assert wrapped is not None
+    assert not inspect.iscoroutinefunction(wrapped)
+    assert (
+        '@work(exclusive=True, thread=True, group="settings-rag-backfill")\n'
+        "    def _rag_backfill_worker"
+    ) in source
+
+
+def test_rag_backfill_worker_failure_notifies_and_clears_in_flight_without_raising(
+    monkeypatch, tmp_path, fake_app
+):
+    """The thread-worker body must never let an exception escape -- it's
+    marshalled back to the UI thread as a notify (via the fake app's
+    call_from_thread, invoked inline for this sync-constructed test) and
+    the in-flight flag is still cleared, exactly like the pre-fix async
+    worker's try/except/finally contract."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module, "semantic_indexing_available", lambda: True
+    )
+
+    def _boom(*, media_db, chachanotes_db):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(settings_screen_module, "backfill_semantic_index", _boom)
+
+    app_instance = SimpleNamespace(
+        app_config={}, media_db=object(), chachanotes_db=None
+    )
+    screen = SettingsScreen(app_instance)
+    screen._library_rag_backfill_in_flight = True
+
+    worker = SettingsScreen.__dict__["_rag_backfill_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen)  # invoke the thread-body directly, bypassing @work dispatch
+
+    assert screen._library_rag_backfill_in_flight is False
+    message, severity = fake_app.notifications[-1]
+    assert severity == "error"
+    assert "Backfill failed" in message
+    assert "kaboom" in message
+
+
+# --- Task 4 review Finding 2: _rag_after_set_active must not misreport a
+# transient status-read failure ("unknown") as "re-points to a new (empty)
+# index" -- that's a false claim the index changed. ---
+
+
+def test_after_set_active_with_absent_index_status_includes_the_warning(
+    monkeypatch, tmp_path, fake_app
+):
+    """Regression lock for the genuine case: a truly absent/empty index
+    still gets the honest re-index warning."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    screen._rag_after_set_active(
+        True, "", {"state": "absent", "count": 0, "provenance": {}}
+    )
+
+    message, severity = fake_app.notifications[-1]
+    assert settings_screen_module.RAG_INDEX_CHANGE_WARNING in message
+    assert severity == "warning"
+
+
+def test_after_set_active_with_unknown_index_status_shows_honest_notice_without_the_warning(
+    monkeypatch, tmp_path, fake_app
+):
+    """Finding 2: fetch_index_status returns state="unknown" when the read
+    itself failed (see its own except-fallback) -- it says nothing about
+    whether the index actually changed, so the change-warning constant must
+    NOT appear. A distinct, honest "status unavailable" notice is shown
+    instead."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    screen._rag_after_set_active(
+        True, "", {"state": "unknown", "count": 0, "provenance": {}}
+    )
+
+    message, severity = fake_app.notifications[-1]
+    assert settings_screen_module.RAG_INDEX_CHANGE_WARNING not in message
+    assert "unavailable" in message.lower()
