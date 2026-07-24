@@ -285,7 +285,7 @@ def hard_config_errors(values: SettingsLibraryRagDefaults) -> list[str]:
     if values.enable_reranking:
         reranker_top_k = _strict_int(values.reranker_top_k)
         if reranker_top_k is None or reranker_top_k < 1:
-            errors.append("Reranker top-k must be at least 1.")
+            errors.append("Rerank results must be at least 1.")
 
     return errors
 
@@ -312,7 +312,7 @@ def soft_config_warnings(values: SettingsLibraryRagDefaults) -> list[str]:
         return []
     if reranker_top_k > default_top_k:
         return [
-            f"Reranker top-k ({reranker_top_k}) exceeds default results "
+            f"Rerank results ({reranker_top_k}) exceeds default results "
             f"({default_top_k}); reranking will not see all requested results."
         ]
     return []
@@ -390,8 +390,22 @@ def save_rag_defaults_to_active_profile(
 def active_profile_info() -> dict:
     profile = _active_profile()
     if profile is None:
-        return {"id": _active_profile_id(), "name": "(missing)", "read_only": True}
-    return {"id": profile.id, "name": profile.name, "read_only": bool(profile.read_only)}
+        return {
+            "id": _active_profile_id(),
+            "name": "(missing)",
+            "read_only": True,
+            "description": "",
+        }
+    return {
+        "id": profile.id,
+        "name": profile.name,
+        "read_only": bool(profile.read_only),
+        # UX review item 6 (provenance): surfaces e.g. the first-run
+        # "imported settings" snapshot's "Snapshot of your active RAG
+        # profile..." note under the Active row, since a freshly imported
+        # profile is otherwise indistinguishable from a hand-authored one.
+        "description": str(profile.description or ""),
+    }
 
 
 def list_profiles_grouped() -> dict:
