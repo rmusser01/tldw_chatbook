@@ -53,6 +53,10 @@ class PersonasPreviewController:
         # ready so replies stop falling back - even after a fallback send has
         # repainted the readout text with the provider that actually answered.
         self._readout_nav_provider: str = ""
+        # Processed greetings for the selected character: index 0 is the
+        # primary first_message, the rest are alternate_greetings (task-438).
+        self._greetings: list[str] = []
+        self._current_greeting_index: int = 0
 
     def invalidate(self) -> None:
         """Clear history and cancel in-flight preview workers."""
@@ -75,7 +79,29 @@ class PersonasPreviewController:
             # Tolerate calls that race screen teardown.
             pass
         self.seeded_for = seeded_for
+        if seeded_for is None:
+            self._greetings = []
+            try:
+                self.screen.query_one(PersonasPreviewPane).set_greetings([])
+            except QueryError:
+                pass
         self.refresh_provider_readout()
+
+    def _load_greetings(self, record: dict[str, Any], name: str) -> str:
+        """Store the processed greeting list, populate the selector, return the primary."""
+        raw = [str(record.get("first_message") or "")]
+        raw += [
+            str(g)
+            for g in (record.get("alternate_greetings") or [])
+            if isinstance(g, str)
+        ]
+        self._greetings = [replace_placeholders(g, name, "User") for g in raw]
+        self._current_greeting_index = 0
+        try:
+            self.screen.query_one(PersonasPreviewPane).set_greetings(self._greetings)
+        except QueryError:
+            pass
+        return self._greetings[0] if self._greetings else ""
 
     async def reset_for_character(
         self,
@@ -94,9 +120,7 @@ class PersonasPreviewController:
         if record is None:
             await self.reset("")
             return
-        greeting = replace_placeholders(
-            str(record.get("first_message") or ""), character_name, "User"
-        )
+        greeting = self._load_greetings(record, character_name)
         await self.reset(greeting, seeded_for=character_id)
 
     async def restore_conversation(
@@ -243,9 +267,7 @@ class PersonasPreviewController:
             return
         record = dict(card_data or {})
         name = str(record.get("name") or screen.state.selected_entity_name or "")
-        greeting = replace_placeholders(
-            str(record.get("first_message") or ""), name, "User"
-        )
+        greeting = self._load_greetings(record, name)
         # The speaker label is set once at selection (_select_character, from the
         # selection's display name) and must NOT be re-set here: set_speakers only
         # relabels FUTURE lines, so changing it on a same-character reload that
@@ -335,6 +357,21 @@ class PersonasPreviewController:
     def handle_reset(self) -> None:
         """Clear provider-facing preview state after the pane resets itself."""
         self.invalidate()
+
+    async def handle_greeting_selected(self, index: int) -> None:
+        """Re-seed the preview from the chosen greeting (AC#1); Reset then returns to it (AC#2)."""
+        if index == self._current_greeting_index or not (
+            0 <= index < len(self._greetings)
+        ):
+            return
+        self._current_greeting_index = index
+        self.invalidate()
+        try:
+            await self.screen.query_one(PersonasPreviewPane).seed_greeting(
+                self._greetings[index]
+            )
+        except QueryError:
+            pass
 
     def open_in_console(self) -> None:
         """Stage the current preview transcript as a Console handoff."""

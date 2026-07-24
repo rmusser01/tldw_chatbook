@@ -46,6 +46,7 @@ CHARACTERS = [
         "name": "Detective Sam",
         "description": "Noir detective",
         "first_message": "The name's {{char}}. Who's asking?",
+        "alternate_greetings": ["An alternate opener.", "A third opener."],
         "version": 1,
     },
     {
@@ -3023,6 +3024,52 @@ class TestPreviewIntegration:
             assert pane.transcript_text() == (
                 "Detective Sam: Edited opener from Detective Sam to User."
             )
+
+    async def test_alternate_greeting_selector_seeds_and_reset_returns_to_choice(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """TASK-438: picking an alternate greeting re-seeds the preview, and
+        Reset returns to the CHOSEN greeting, not the primary."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            pane = screen.query_one("#personas-preview-pane", PersonasPreviewPane)
+            assert screen.query_one("#personas-preview-greeting-row").display is True
+            # choose alternate index 1
+            await screen.preview.handle_greeting_selected(1)
+            await pilot.pause()
+            assert "An alternate opener." in pane.transcript_text()
+            # send a turn, then Reset -> returns to the CHOSEN alternate, not primary
+            pane.append_user("hi")
+            pane.append_reply("hello")
+            await pilot.pause()
+            await pane.reset()
+            await pilot.pause()
+            assert "An alternate opener." in pane.transcript_text()
+            assert "hi" not in pane.transcript_text()
+
+    async def test_greeting_selector_hidden_without_alternates(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """A character without ``alternate_greetings`` keeps the row hidden."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-2")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            screen.query_one("#personas-preview-pane", PersonasPreviewPane)
+            assert screen.query_one("#personas-preview-greeting-row").display is False
 
     async def _readout_text(self, screen):
         from textual.widgets import Static as _Static

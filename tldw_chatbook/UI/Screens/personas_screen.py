@@ -96,6 +96,7 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
     PersonaProfileEditCancelled,
     PersonaProfileSaveRequested,
     PreviewConfigureProviderRequested,
+    PreviewGreetingSelected,
     PreviewOpenInConsoleRequested,
     PreviewReplyRequested,
     PreviewResetRequested,
@@ -3612,6 +3613,13 @@ class PersonasScreen(BaseAppScreen):
     ) -> None:
         message.stop()
         self.preview.open_provider_settings()
+
+    @on(PreviewGreetingSelected)
+    async def _handle_preview_greeting_selected(
+        self, message: PreviewGreetingSelected
+    ) -> None:
+        message.stop()
+        await self.preview.handle_greeting_selected(message.index)
 
     # ===== Create / edit =====
 
