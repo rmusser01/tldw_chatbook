@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
+import hmac
 import json
 import math
 from pathlib import Path
@@ -21,6 +22,7 @@ from tldw_chatbook.Chat.citation_trace_identity import (
 )
 from tldw_chatbook.Chat.citation_trace_models import (
     AnswerAttemptPayload,
+    CitationTrace,
     SealedCitationWrite,
 )
 from tldw_chatbook.Chat.citation_trace_repository import (
@@ -32,9 +34,9 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 LEGACY_SIDECAR_BYTES_MAX = 32 * 1024 * 1024
 LEGACY_MIGRATION_BATCH_SIZE = 100
 LEGACY_JSON_DEPTH_MAX = 32
-LEGACY_JSON_NODES_MAX = 250_000
-LEGACY_MAPPING_ITEMS_MAX = 100_000
-LEGACY_SEQUENCE_ITEMS_MAX = 10_000
+LEGACY_JSON_NODES_MAX = 20_001
+LEGACY_MAPPING_ITEMS_MAX = 5_000
+LEGACY_SEQUENCE_ITEMS_MAX = 5_000
 LEGACY_FIELD_UTF8_BYTES_MAX = 64 * 1024
 LEGACY_KEY_UTF8_BYTES_MAX = 256
 LEGACY_REASON_CODE_MAX = 256
@@ -467,6 +469,7 @@ class CitationLegacyMigrationService:
         sidecar_path: str | Path,
         fingerprint_codec: CitationFingerprintCodec | None = None,
         batch_size: int = LEGACY_MIGRATION_BATCH_SIZE,
+        before_cutover_hook: Callable[[], None] | None = None,
     ) -> None:
         if (
             isinstance(batch_size, bool)
@@ -479,6 +482,7 @@ class CitationLegacyMigrationService:
         self.sidecar_path = Path(sidecar_path)
         self._codec = fingerprint_codec
         self.batch_size = batch_size
+        self._before_cutover_hook = before_cutover_hook
         self._cache: _SidecarCacheEntry | None = None
 
     @property
@@ -543,9 +547,9 @@ class CitationLegacyMigrationService:
         records: dict[str, Mapping[str, Any]] = {}
         for raw_message_id, record in raw_records.items():
             message_id = _safe_legacy_identifier(raw_message_id)
-            if message_id is None or not isinstance(record, Mapping):
+            if message_id is None:
                 continue
-            records[message_id] = record
+            records[message_id] = record if isinstance(record, Mapping) else {}
         return records
 
     def _source_snapshot(
@@ -722,18 +726,6 @@ class CitationLegacyMigrationService:
         ]
         batch_ids = pending_ids[: self.batch_size]
         final_batch = len(pending_ids) <= self.batch_size
-        if final_batch:
-            try:
-                _, final_fingerprint = self._source_snapshot(conversation_id)
-            except (_LegacyInputError, CitationPersistenceUnavailable):
-                final_fingerprint = ""
-            if final_fingerprint != fingerprint:
-                return self._record_terminal_state(
-                    conversation_id,
-                    source_fingerprint=fingerprint,
-                    state=LegacyMigrationState.DIVERGED,
-                    reason_code="legacy_source_changed",
-                )
 
         identity = self.repository.identity_context
         if identity is None:
@@ -761,6 +753,10 @@ class CitationLegacyMigrationService:
                         updated_at=excluded.updated_at,
                         error_code=NULL,
                         completed_at=NULL
+                    WHERE rag_legacy_migration_journal.state
+                          IN ('pending', 'running')
+                      AND rag_legacy_migration_journal.source_fingerprint
+                          = excluded.source_fingerprint
                     """,
                     (
                         identity.profile_id,
@@ -815,53 +811,31 @@ class CitationLegacyMigrationService:
                     )
                     processed += 1
                 next_cursor = batch_ids[-1] if batch_ids else cursor_after
-                if final_batch:
-                    cursor.execute(
-                        """
-                        UPDATE rag_citation_traces
-                        SET visibility_state = 'active'
-                        WHERE profile_id = ? AND origin = 'legacy_inferred'
-                          AND legacy_conversation_id = ?
-                          AND visibility_state = 'migrating'
-                        """,
-                        (identity.profile_id, conversation_id),
-                    )
-                    cursor.execute(
-                        """
-                        UPDATE rag_legacy_migration_journal
-                        SET state='complete', next_message_cursor=?,
-                            updated_at=?, completed_at=?, error_code=NULL
-                        WHERE profile_id=? AND conversation_id=?
-                          AND source_fingerprint=?
-                        """,
-                        (
-                            next_cursor,
-                            now,
-                            now,
-                            identity.profile_id,
-                            conversation_id,
-                            fingerprint,
-                        ),
-                    )
-                    state = LegacyMigrationState.COMPLETE
-                else:
-                    cursor.execute(
-                        """
-                        UPDATE rag_legacy_migration_journal
-                        SET state='running', next_message_cursor=?,
-                            updated_at=?, completed_at=NULL, error_code=NULL
-                        WHERE profile_id=? AND conversation_id=?
-                          AND source_fingerprint=?
-                        """,
-                        (
-                            next_cursor,
-                            now,
-                            identity.profile_id,
-                            conversation_id,
-                            fingerprint,
-                        ),
-                    )
-                    state = LegacyMigrationState.RUNNING
+                cursor.execute(
+                    """
+                    UPDATE rag_legacy_migration_journal
+                    SET state='running',
+                        next_message_cursor=CASE
+                            WHEN ? IS NULL THEN next_message_cursor
+                            WHEN next_message_cursor IS NULL
+                              OR next_message_cursor < ? THEN ?
+                            ELSE next_message_cursor
+                        END,
+                        updated_at=?, completed_at=NULL, error_code=NULL
+                    WHERE profile_id=? AND conversation_id=?
+                      AND source_fingerprint=?
+                      AND state IN ('pending', 'running')
+                    """,
+                    (
+                        next_cursor,
+                        next_cursor,
+                        next_cursor,
+                        now,
+                        identity.profile_id,
+                        conversation_id,
+                        fingerprint,
+                    ),
+                )
         except (CitationPersistenceUnavailable, _LegacyInputError, ValueError):
             return self._record_terminal_state(
                 conversation_id,
@@ -869,8 +843,87 @@ class CitationLegacyMigrationService:
                 state=LegacyMigrationState.FAILED,
                 reason_code="legacy_batch_invalid",
             )
+
+        if not final_batch:
+            return LegacyMigrationBatchResult(
+                state=LegacyMigrationState.RUNNING,
+                processed_messages=processed,
+            )
+
+        if self._before_cutover_hook is not None:
+            self._before_cutover_hook()
+        try:
+            _, final_fingerprint = self._source_snapshot(conversation_id)
+        except (_LegacyInputError, CitationPersistenceUnavailable):
+            final_fingerprint = ""
+        if final_fingerprint != fingerprint:
+            return self._record_terminal_state(
+                conversation_id,
+                source_fingerprint=fingerprint,
+                state=LegacyMigrationState.DIVERGED,
+                reason_code="legacy_source_changed",
+            )
+
+        completed_at = datetime.now(UTC).isoformat()
+        with self.db.transaction() as cursor:
+            current = cursor.execute(
+                """
+                SELECT state, source_fingerprint, next_message_cursor
+                FROM rag_legacy_migration_journal
+                WHERE profile_id=? AND conversation_id=?
+                """,
+                (identity.profile_id, conversation_id),
+            ).fetchone()
+            if current is None:
+                return LegacyMigrationBatchResult(
+                    state=LegacyMigrationState.FAILED,
+                    processed_messages=processed,
+                    reason_code="legacy_journal_missing",
+                )
+            current_state = LegacyMigrationState(current["state"])
+            if current_state is LegacyMigrationState.COMPLETE:
+                return LegacyMigrationBatchResult(
+                    state=LegacyMigrationState.COMPLETE,
+                    processed_messages=processed,
+                )
+            if (
+                current_state is not LegacyMigrationState.RUNNING
+                or current["source_fingerprint"] != fingerprint
+                or current["next_message_cursor"] != next_cursor
+            ):
+                return LegacyMigrationBatchResult(
+                    state=current_state,
+                    processed_messages=processed,
+                    reason_code="legacy_cutover_guard_failed",
+                )
+            cursor.execute(
+                """
+                UPDATE rag_citation_traces
+                SET visibility_state = 'active'
+                WHERE profile_id = ? AND origin = 'legacy_inferred'
+                  AND legacy_conversation_id = ?
+                  AND visibility_state = 'migrating'
+                """,
+                (identity.profile_id, conversation_id),
+            )
+            cursor.execute(
+                """
+                UPDATE rag_legacy_migration_journal
+                SET state='complete', updated_at=?, completed_at=?,
+                    error_code=NULL
+                WHERE profile_id=? AND conversation_id=?
+                  AND source_fingerprint=? AND state='running'
+                """,
+                (
+                    completed_at,
+                    completed_at,
+                    identity.profile_id,
+                    conversation_id,
+                    fingerprint,
+                ),
+            )
         return LegacyMigrationBatchResult(
-            state=state,
+            state=LegacyMigrationState.COMPLETE,
             processed_messages=processed,
         )
 
@@ -1006,47 +1059,49 @@ class CitationLegacyMigrationService:
         """Choose canonical or legacy once; never merge the two histories."""
 
         journal = self.get_journal(conversation_id)
-        if journal is None or journal.state in {
-            LegacyMigrationState.PENDING,
-            LegacyMigrationState.RUNNING,
-            LegacyMigrationState.FAILED,
-        }:
-            try:
-                records = self._fallback_snapshot(conversation_id)
-            except _LegacyInputError:
-                records = {}
-            return LegacyCitationConversationRead(
-                state=LegacyCitationReadState.LEGACY_FALLBACK,
-                records=records,
-            )
-        if journal.state is LegacyMigrationState.DIVERGED:
+        if journal is not None and journal.state is LegacyMigrationState.DIVERGED:
             return LegacyCitationConversationRead(
                 state=LegacyCitationReadState.DIVERGED,
                 records={},
             )
-        if not verify_canonical:
+        canonical_records = self._canonical_records(conversation_id)
+        if journal is not None and journal.state is LegacyMigrationState.COMPLETE:
+            if not verify_canonical:
+                return LegacyCitationConversationRead(
+                    state=LegacyCitationReadState.VERIFICATION_PENDING,
+                    records={},
+                )
+            try:
+                _, fingerprint = self._source_snapshot(conversation_id)
+            except (_LegacyInputError, CitationPersistenceUnavailable):
+                fingerprint = ""
+            if fingerprint != journal.source_fingerprint:
+                self._record_terminal_state(
+                    conversation_id,
+                    source_fingerprint=journal.source_fingerprint,
+                    state=LegacyMigrationState.DIVERGED,
+                    reason_code="legacy_source_changed",
+                )
+                return LegacyCitationConversationRead(
+                    state=LegacyCitationReadState.DIVERGED,
+                    records={},
+                )
             return LegacyCitationConversationRead(
-                state=LegacyCitationReadState.VERIFICATION_PENDING,
-                records={},
+                state=LegacyCitationReadState.CANONICAL,
+                records=canonical_records,
+            )
+        if canonical_records:
+            return LegacyCitationConversationRead(
+                state=LegacyCitationReadState.CANONICAL,
+                records=canonical_records,
             )
         try:
-            _, fingerprint = self._source_snapshot(conversation_id)
-        except (_LegacyInputError, CitationPersistenceUnavailable):
-            fingerprint = ""
-        if fingerprint != journal.source_fingerprint:
-            self._record_terminal_state(
-                conversation_id,
-                source_fingerprint=journal.source_fingerprint,
-                state=LegacyMigrationState.DIVERGED,
-                reason_code="legacy_source_changed",
-            )
-            return LegacyCitationConversationRead(
-                state=LegacyCitationReadState.DIVERGED,
-                records={},
-            )
+            records = self._fallback_snapshot(conversation_id)
+        except _LegacyInputError:
+            records = {}
         return LegacyCitationConversationRead(
-            state=LegacyCitationReadState.CANONICAL,
-            records=self._canonical_records(conversation_id),
+            state=LegacyCitationReadState.LEGACY_FALLBACK,
+            records=records,
         )
 
     def _canonical_records(
@@ -1060,22 +1115,31 @@ class CitationLegacyMigrationService:
             self.db.get_connection()
             .execute(
                 """
-                SELECT trace.trace_id, trace.legacy_message_id,
-                       trace.aggregate_json, refs.evidence_ordinal,
+                SELECT trace.trace_id, trace.origin, trace.aggregate_json,
+                       owner.message_id, owner.body_fingerprint,
+                       message.content AS message_body,
+                       refs.evidence_ordinal,
                        refs.marker_ordinal, snapshot.title,
                        snapshot.snapshot_text, snapshot.source_identity_json
-                FROM rag_citation_traces AS trace
+                FROM rag_message_trace_owners AS owner
+                JOIN messages AS message
+                  ON message.id=owner.message_id
+                 AND message.version=owner.message_revision
+                 AND message.deleted=0
+                JOIN rag_citation_traces AS trace
+                  ON trace.profile_id=owner.profile_id
+                 AND trace.trace_id=owner.trace_id
                 LEFT JOIN rag_trace_evidence_refs AS refs
                   ON refs.profile_id=trace.profile_id
                  AND refs.trace_id=trace.trace_id
                 LEFT JOIN rag_evidence_snapshots AS snapshot
                   ON snapshot.profile_id=refs.profile_id
                  AND snapshot.payload_id=refs.snapshot_payload_id
-                WHERE trace.profile_id = ?
-                  AND trace.origin = 'legacy_inferred'
-                  AND trace.legacy_conversation_id = ?
+                WHERE owner.profile_id = ?
+                  AND owner.state = 'active'
+                  AND message.conversation_id = ?
                   AND trace.visibility_state = 'active'
-                ORDER BY trace.legacy_message_id, refs.evidence_ordinal
+                ORDER BY owner.message_id, refs.evidence_ordinal
                 """,
                 (identity.profile_id, conversation_id),
             )
@@ -1083,29 +1147,46 @@ class CitationLegacyMigrationService:
         )
         records: dict[str, Mapping[str, Any]] = {}
         for row in rows:
-            message_id = str(row["legacy_message_id"])
+            try:
+                body_fingerprint = self._domain_fingerprint(
+                    CitationFingerprintDomain.MESSAGE_BODY,
+                    str(row["message_body"]),
+                )
+            except CitationPersistenceUnavailable:
+                body_fingerprint = None
+            if body_fingerprint is not None and not hmac.compare_digest(
+                body_fingerprint,
+                str(row["body_fingerprint"]),
+            ):
+                continue
+            message_id = str(row["message_id"])
             record = records.get(message_id)
             if record is None:
                 try:
-                    trace = json.loads(row["aggregate_json"])
-                    attempts = trace.get("answer_attempts", [])
-                    occurrences = attempts[0].get("occurrences", []) if attempts else []
+                    trace = CitationTrace.model_validate_json(row["aggregate_json"])
+                    if trace.origin.value != row["origin"]:
+                        continue
+                    attempt = next(
+                        (
+                            item
+                            for item in trace.answer_attempts
+                            if item.attempt_id == trace.selected_attempt_id
+                        ),
+                        None,
+                    )
+                    occurrences = attempt.occurrences if attempt is not None else ()
                     citations = [
                         {
-                            "evidence_id": occurrence.get("evidence_ordinal"),
-                            "raw_marker": occurrence.get("raw_marker"),
+                            "evidence_id": occurrence.evidence_ordinal,
+                            "raw_marker": occurrence.raw_marker,
                         }
                         for occurrence in occurrences
                     ]
-                    completeness = trace.get(
-                        "completeness_at_seal",
-                        "unavailable",
-                    )
-                except (AttributeError, TypeError, json.JSONDecodeError):
-                    citations = []
-                    completeness = "unavailable"
+                    completeness = trace.completeness_at_seal.value
+                except (TypeError, ValueError):
+                    continue
                 record = {
-                    "provenance_origin": "legacy_inferred",
+                    "provenance_origin": trace.origin.value,
                     "citation_validation": {"completeness": completeness},
                     "citations": citations,
                     "evidence_bundle": {

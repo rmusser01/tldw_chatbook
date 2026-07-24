@@ -31,7 +31,9 @@ from .chatbook_models import (
     ChatbookVersion,
     Relationship,
 )
-from ..Chat.chat_conversation_service import ChatConversationService
+from ..Chat.citation_service_factory import (
+    build_local_citation_conversation_service,
+)
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
@@ -427,9 +429,9 @@ class ChatbookCreator:
             return
 
         db = CharactersRAGDB(db_path, "chatbook_creator")
-        conversation_service = ChatConversationService(
+        conversation_service, _, _ = build_local_citation_conversation_service(
             db,
-            rag_context_store_path=get_user_data_dir()
+            sidecar_path=get_user_data_dir()
             / "tldw_chatbook_chat_rag_context.json",
         )
         conv_dir = work_dir / "content" / "conversations"

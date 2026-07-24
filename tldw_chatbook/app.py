@@ -149,22 +149,11 @@ from tldw_chatbook.Constants import (
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
-from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.citation_artifact_ownership import (
     CitationArtifactOwnershipCoordinator,
 )
-from tldw_chatbook.Chat.citation_legacy_migration import (
-    CitationLegacyMigrationService,
-)
-from tldw_chatbook.Chat.citation_provenance_runtime import (
-    CitationProvenanceRuntimePolicy,
-)
-from tldw_chatbook.Chat.citation_trace_identity import (
-    KeyringCitationFingerprintKeyProvider,
-)
-from tldw_chatbook.Chat.citation_trace_repository import (
-    CitationTraceRepository,
-    load_local_citation_identity_context,
+from tldw_chatbook.Chat.citation_service_factory import (
+    build_local_citation_conversation_service,
 )
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
@@ -3869,18 +3858,64 @@ class TldwCli(
         )
 
     def _wire_chat_conversation_services(self) -> None:
-        self.local_chat_conversation_service = (
-            ChatConversationService(
-                self.chachanotes_db,
-                rag_context_store_path=get_user_data_dir()
-                / "tldw_chatbook_chat_rag_context.json",
-            )
-            if getattr(self, "chachanotes_db", None) is not None
-            else None
+        trace_db = getattr(self, "chachanotes_db", None)
+        sidecar_path = (
+            get_user_data_dir() / "tldw_chatbook_chat_rag_context.json"
         )
+        existing_service = getattr(
+            self,
+            "local_chat_conversation_service",
+            None,
+        )
+        existing_migration = getattr(
+            self,
+            "citation_legacy_migration_service",
+            None,
+        )
+        if (
+            trace_db is not None
+            and existing_service is not None
+            and existing_service.db is trace_db
+            and existing_service.rag_context_store_path == sidecar_path
+            and existing_migration is not None
+            and existing_service.citation_legacy_migration is existing_migration
+        ):
+            repository = getattr(
+                existing_migration,
+                "repository",
+                getattr(self, "citation_trace_repository", None),
+            )
+            migration = existing_migration
+            local_service = existing_service
+        elif trace_db is not None:
+            coordinator = getattr(
+                self,
+                "citation_artifact_ownership_coordinator",
+                None,
+            )
+            coordinator_repository = (
+                coordinator.trace_repository
+                if coordinator is not None
+                and coordinator.trace_repository.db is trace_db
+                else None
+            )
+            local_service, repository, migration = (
+                build_local_citation_conversation_service(
+                    trace_db,
+                    sidecar_path=sidecar_path,
+                    repository=coordinator_repository,
+                )
+            )
+        else:
+            local_service = None
+            repository = None
+            migration = None
+        self.local_chat_conversation_service = local_service
+        self.citation_trace_repository = repository
+        self.citation_legacy_migration_service = migration
         self.conversation_local_marks_service = (
-            ConversationLocalMarksService(self.chachanotes_db)
-            if getattr(self, "chachanotes_db", None) is not None
+            ConversationLocalMarksService(trace_db)
+            if trace_db is not None
             else None
         )
         self.server_chat_conversation_service = (
@@ -3995,10 +4030,20 @@ class TldwCli(
         trace_db = getattr(self, "chachanotes_db", None)
         if artifact_store is None or trace_db is None:
             if not hasattr(self, "citation_artifact_ownership_coordinator"):
-                self.citation_trace_repository = None
                 self.citation_artifact_ownership_coordinator = None
-                self.citation_legacy_migration_service = None
             return
+        repository = getattr(self, "citation_trace_repository", None)
+        if repository is None or repository.db is not trace_db:
+            conversation_service, repository, migration = (
+                build_local_citation_conversation_service(
+                    trace_db,
+                    sidecar_path=get_user_data_dir()
+                    / "tldw_chatbook_chat_rag_context.json",
+                )
+            )
+            self.local_chat_conversation_service = conversation_service
+            self.citation_trace_repository = repository
+            self.citation_legacy_migration_service = migration
         current = getattr(
             self,
             "citation_artifact_ownership_coordinator",
@@ -4007,46 +4052,15 @@ class TldwCli(
         if (
             current is not None
             and current.artifact_store is artifact_store
-            and current.trace_repository.db is trace_db
+            and current.trace_repository is repository
         ):
             return
-        policy = CitationProvenanceRuntimePolicy.from_config()
-        identity = load_local_citation_identity_context(trace_db)
-        repository = CitationTraceRepository.from_key_provider(
-            trace_db,
-            policy=policy,
-            identity_context=identity,
-            key_provider=KeyringCitationFingerprintKeyProvider(),
-        )
         coordinator = CitationArtifactOwnershipCoordinator(
             artifact_store=artifact_store,
             trace_repository=repository,
         )
         artifact_store.set_citation_ownership_coordinator(coordinator)
-        self.citation_trace_repository = repository
         self.citation_artifact_ownership_coordinator = coordinator
-        conversation_service = getattr(
-            self,
-            "local_chat_conversation_service",
-            None,
-        )
-        sidecar_path = (
-            getattr(conversation_service, "rag_context_store_path", None)
-            if conversation_service is not None
-            else None
-        )
-        migration = (
-            CitationLegacyMigrationService(
-                db=trace_db,
-                repository=repository,
-                sidecar_path=sidecar_path,
-            )
-            if sidecar_path is not None
-            else None
-        )
-        if conversation_service is not None:
-            conversation_service.set_citation_legacy_migration(migration)
-        self.citation_legacy_migration_service = migration
 
     def _wire_evaluation_services(self) -> None:
         self.local_evaluation_service = None

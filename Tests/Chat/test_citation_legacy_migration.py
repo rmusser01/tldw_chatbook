@@ -7,10 +7,22 @@ import os
 
 import pytest
 
+from Tests.Chat.test_citation_trace_repository import (
+    TEST_FINGERPRINT_CODEC,
+    _sealed_write as _local_sealed_write,
+)
 from tldw_chatbook.Chat.citation_legacy_migration import (
+    LEGACY_FIELD_UTF8_BYTES_MAX,
+    LEGACY_JSON_DEPTH_MAX,
+    LEGACY_JSON_NODES_MAX,
+    LEGACY_KEY_UTF8_BYTES_MAX,
+    LEGACY_MAPPING_ITEMS_MAX,
+    LEGACY_SEQUENCE_ITEMS_MAX,
+    LEGACY_SIDECAR_BYTES_MAX,
     LegacyCitationReadState,
     LegacyMigrationState,
     CitationLegacyMigrationService,
+    _validate_json_bounds,
     synthesize_legacy_message,
 )
 from tldw_chatbook.Chat.citation_provenance_runtime import (
@@ -286,6 +298,86 @@ def test_changed_sidecar_between_batches_diverges_without_visible_merge(
     )
 
 
+def test_mutation_after_final_batch_commit_keeps_every_trace_hidden(
+    db: CharactersRAGDB,
+    tmp_path,
+) -> None:
+    conversation_id, message_ids = _conversation_with_messages(db, 1)
+    sidecar = tmp_path / "chat_rag_context.json"
+    _write_sidecar(sidecar, conversation_id, message_ids)
+
+    def mutate_after_staging() -> None:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        payload["conversations"][conversation_id][message_ids[0]][
+            "citation_validation"
+        ] = {"valid": False}
+        sidecar.write_text(json.dumps(payload), encoding="utf-8")
+
+    service = CitationLegacyMigrationService(
+        db=db,
+        repository=_repository(db),
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+        before_cutover_hook=mutate_after_staging,
+    )
+
+    result = service.migrate_next_batch(conversation_id)
+
+    assert result.state is LegacyMigrationState.DIVERGED
+    connection = db.get_connection()
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM rag_citation_traces WHERE visibility_state='active'"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM rag_citation_traces WHERE visibility_state='migrating'"
+        ).fetchone()[0]
+        == 1
+    )
+    assert service.get_journal(conversation_id).next_message_cursor == message_ids[0]
+
+
+def test_non_mapping_message_record_synthesizes_unavailable_without_hiding_siblings(
+    db: CharactersRAGDB,
+    tmp_path,
+) -> None:
+    conversation_id, message_ids = _conversation_with_messages(db, 2)
+    sidecar = tmp_path / "chat_rag_context.json"
+    _write_sidecar(sidecar, conversation_id, message_ids)
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    payload["conversations"][conversation_id][message_ids[0]] = "malformed"
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+    service = CitationLegacyMigrationService(
+        db=db,
+        repository=_repository(db),
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+    )
+
+    assert (
+        service.migrate_next_batch(conversation_id).state
+        is LegacyMigrationState.COMPLETE
+    )
+
+    rows = (
+        db.get_connection()
+        .execute(
+            """
+        SELECT legacy_message_id, completeness_at_seal
+        FROM rag_citation_traces ORDER BY legacy_message_id
+        """
+        )
+        .fetchall()
+    )
+    assert [tuple(row) for row in rows] == [
+        (message_ids[0], "unavailable"),
+        (message_ids[1], "partial"),
+    ]
+
+
 def test_concurrent_batch_callers_converge_without_duplicate_owners(
     db: CharactersRAGDB,
     tmp_path,
@@ -438,6 +530,166 @@ def test_reader_is_fallback_until_complete_then_canonical_first(
     assert "content_ref" not in reference
 
 
+@pytest.mark.parametrize(
+    ("origin", "origin_fields"),
+    [
+        ("local", {}),
+        (
+            "server",
+            {
+                "origin_scope_id": "authority-root",
+                "connection_authority_id": "authority-1",
+                "server_trace_id": "server-trace-1",
+                "wire_schema_version": "1",
+            },
+        ),
+        (
+            "imported",
+            {
+                "origin_scope_id": "package-1",
+                "import_package_fingerprint": "package-1",
+                "external_trace_id": "external-trace-1",
+            },
+        ),
+        (
+            "legacy_inferred",
+            {
+                "legacy_conversation_id": "set-by-test",
+                "legacy_message_id": "set-by-test",
+            },
+        ),
+    ],
+)
+def test_reader_prefers_active_owner_linked_canonical_trace_for_every_origin(
+    db: CharactersRAGDB,
+    tmp_path,
+    origin: str,
+    origin_fields: dict[str, str],
+) -> None:
+    conversation_id = db.add_conversation(
+        {"title": "Canonical export", "character_id": None}
+    )
+    message_id = "canonical-message"
+    repository = CitationTraceRepository(
+        db,
+        policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+        identity_context=load_local_citation_identity_context(db),
+        fingerprint_codec=TEST_FINGERPRINT_CODEC,
+    )
+    prepared = repository.prepare_write(_local_sealed_write())
+    with db.transaction() as cursor:
+        db.add_message(
+            {
+                "id": message_id,
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "content": "Answer [S1].",
+                "timestamp": NOW.isoformat(),
+            }
+        )
+        repository.write_prepared(
+            cursor,
+            prepared,
+            message_id=message_id,
+            message_revision=1,
+            message_body="Answer [S1].",
+        )
+        if origin != "local":
+            assignments = {
+                "origin": origin,
+                "aggregate_json": _local_sealed_write()
+                .trace.model_copy(update={"origin": TraceOrigin(origin)})
+                .model_dump_json(),
+                **origin_fields,
+            }
+            if origin == "legacy_inferred":
+                assignments["legacy_conversation_id"] = conversation_id
+                assignments["legacy_message_id"] = message_id
+            cursor.execute(
+                f"""
+                UPDATE rag_citation_traces
+                SET {", ".join(f"{key}=?" for key in assignments)}
+                WHERE trace_id='trace-1'
+                """,
+                tuple(assignments.values()),
+            )
+
+    sidecar = tmp_path / "chat_rag_context.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "conversations": {
+                    conversation_id: {
+                        "sidecar-only": {"citations": []},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = CitationLegacyMigrationService(
+        db=db,
+        repository=repository,
+        sidecar_path=sidecar,
+        fingerprint_codec=TEST_FINGERPRINT_CODEC,
+    )
+
+    view = service.read_conversation(conversation_id, verify_canonical=True)
+
+    assert view.state is LegacyCitationReadState.CANONICAL
+    assert list(view.records) == [message_id]
+    assert view.records[message_id]["provenance_origin"] == origin
+
+
+def test_disabled_recovery_switch_keeps_active_canonical_reads_available(
+    db: CharactersRAGDB,
+    tmp_path,
+) -> None:
+    conversation_id = db.add_conversation(
+        {"title": "Disabled canonical read", "character_id": None}
+    )
+    message_id = "disabled-read-message"
+    writer = CitationTraceRepository(
+        db,
+        policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+        identity_context=load_local_citation_identity_context(db),
+        fingerprint_codec=TEST_FINGERPRINT_CODEC,
+    )
+    prepared = writer.prepare_write(_local_sealed_write())
+    with db.transaction() as cursor:
+        db.add_message(
+            {
+                "id": message_id,
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "content": "Answer [S1].",
+            }
+        )
+        writer.write_prepared(
+            cursor,
+            prepared,
+            message_id=message_id,
+            message_revision=1,
+            message_body="Answer [S1].",
+        )
+    reader = CitationTraceRepository(
+        db,
+        policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=False),
+        identity_context=load_local_citation_identity_context(db),
+        fingerprint_codec=None,
+    )
+    service = CitationLegacyMigrationService(
+        db=db,
+        repository=reader,
+        sidecar_path=tmp_path / "missing-sidecar.json",
+    )
+
+    view = service.read_conversation(conversation_id, verify_canonical=True)
+
+    assert view.state is LegacyCitationReadState.CANONICAL
+    assert list(view.records) == [message_id]
+
+
 def test_disabled_policy_does_not_migrate(db: CharactersRAGDB, tmp_path) -> None:
     conversation_id, message_ids = _conversation_with_messages(db, 1)
     sidecar = tmp_path / "chat_rag_context.json"
@@ -537,5 +789,108 @@ def test_oversized_sidecar_is_rejected_before_json_parse(
     )
 
     result = service.migrate_next_batch(conversation_id)
+    assert result.state is LegacyMigrationState.FAILED
+    assert result.reason_code == "legacy_sidecar_too_large"
+
+
+@pytest.mark.parametrize(
+    ("exact", "over", "reason"),
+    [
+        (
+            [[None] for _ in range(LEGACY_JSON_DEPTH_MAX - 1)],
+            [[None] for _ in range(LEGACY_JSON_DEPTH_MAX)],
+            "legacy_json_too_deep",
+        ),
+        (
+            [[None, None, None, None] for _ in range(4_000)],
+            [[None, None, None, None, None]]
+            + [[None, None, None, None] for _ in range(3_999)],
+            "legacy_json_too_many_nodes",
+        ),
+        (
+            {f"k{i}": None for i in range(LEGACY_MAPPING_ITEMS_MAX)},
+            {f"k{i}": None for i in range(LEGACY_MAPPING_ITEMS_MAX + 1)},
+            "legacy_mapping_too_large",
+        ),
+        (
+            [None] * LEGACY_SEQUENCE_ITEMS_MAX,
+            [None] * (LEGACY_SEQUENCE_ITEMS_MAX + 1),
+            "legacy_sequence_too_large",
+        ),
+        (
+            {"k" * LEGACY_KEY_UTF8_BYTES_MAX: None},
+            {"k" * (LEGACY_KEY_UTF8_BYTES_MAX + 1): None},
+            "legacy_key_too_large",
+        ),
+        (
+            "x" * LEGACY_FIELD_UTF8_BYTES_MAX,
+            "x" * (LEGACY_FIELD_UTF8_BYTES_MAX + 1),
+            "legacy_field_too_large",
+        ),
+    ],
+)
+def test_each_legacy_json_limit_accepts_exact_and_rejects_one_over(
+    exact,
+    over,
+    reason,
+) -> None:
+    if reason == "legacy_json_too_deep":
+        exact_value = None
+        for _ in range(LEGACY_JSON_DEPTH_MAX - 1):
+            exact_value = [exact_value]
+        over_value = [exact_value]
+    elif reason == "legacy_json_too_many_nodes":
+        exact_value = exact
+        over_value = over
+        assert LEGACY_JSON_NODES_MAX == 20_001
+    else:
+        exact_value = exact
+        over_value = over
+
+    _validate_json_bounds(exact_value)
+    with pytest.raises(ValueError, match=f"^{reason}$"):
+        _validate_json_bounds(over_value)
+
+
+def test_raw_sidecar_limit_accepts_exact_and_rejects_one_over(
+    db: CharactersRAGDB,
+    tmp_path,
+) -> None:
+    conversation_id, _ = _conversation_with_messages(db, 1)
+    over_limit_conversation_id, _ = _conversation_with_messages(db, 0)
+    prefix = b'{"conversations":{},"padding":['
+    suffix = b"]}"
+    unit = b'"' + (b"x" * LEGACY_FIELD_UTF8_BYTES_MAX) + b'"'
+    available = LEGACY_SIDECAR_BYTES_MAX - len(prefix) - len(suffix)
+    unit_count = (available + 1) // (len(unit) + 1)
+    parts = [unit] * unit_count
+    remaining = available - len(b",".join(parts))
+    if remaining:
+        content_size = remaining - 3
+        assert 0 <= content_size <= LEGACY_FIELD_UTF8_BYTES_MAX
+        parts.append(b'"' + (b"y" * content_size) + b'"')
+    exact = prefix + b",".join(parts) + suffix
+    assert len(exact) == LEGACY_SIDECAR_BYTES_MAX
+    sidecar = tmp_path / "chat_rag_context.json"
+    sidecar.write_bytes(exact)
+    exact_service = CitationLegacyMigrationService(
+        db=db,
+        repository=_repository(db),
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+    )
+    assert (
+        exact_service.migrate_next_batch(conversation_id).state
+        is LegacyMigrationState.COMPLETE
+    )
+
+    sidecar.write_bytes(exact + b" ")
+    over_service = CitationLegacyMigrationService(
+        db=db,
+        repository=_repository(db),
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+    )
+    result = over_service.migrate_next_batch(over_limit_conversation_id)
     assert result.state is LegacyMigrationState.FAILED
     assert result.reason_code == "legacy_sidecar_too_large"

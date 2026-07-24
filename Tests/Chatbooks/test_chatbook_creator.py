@@ -26,6 +26,30 @@ from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter
 class TestChatbookCreator:
     """Test ChatbookCreator functionality."""
 
+    @pytest.fixture(autouse=True)
+    def stub_citation_composition(self, monkeypatch):
+        """Keep unrelated chatbook unit tests on their existing mocked DB seam."""
+
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+
+        def build_local(db, *, sidecar_path):
+            return (
+                ChatConversationService(db, rag_context_store_path=sidecar_path),
+                None,
+                None,
+            )
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chatbooks.chatbook_creator.build_local_citation_conversation_service",
+            build_local,
+        )
+        monkeypatch.setattr(
+            "tldw_chatbook.Chatbooks.chatbook_importer.build_local_citation_conversation_service",
+            build_local,
+        )
+
     @pytest.fixture
     def temp_db_paths(self, tmp_path):
         """Create temporary database paths."""
@@ -559,10 +583,32 @@ class TestChatbookCreator:
         mock_chacha_db,
         chatbook_creator,
         tmp_path,
+        monkeypatch,
     ):
         """Production-shaped DB messages hydrate citation artifacts from the RAG context store."""
+        import tldw_chatbook.Chatbooks.chatbook_creator as creator_module
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+
         mock_db_instance = MagicMock()
         mock_chacha_db.return_value = mock_db_instance
+        compositions = []
+
+        def build_local(db, *, sidecar_path):
+            service = ChatConversationService(
+                db,
+                rag_context_store_path=sidecar_path,
+            )
+            compositions.append((db, sidecar_path))
+            return service, None, None
+
+        monkeypatch.setattr(
+            creator_module,
+            "build_local_citation_conversation_service",
+            build_local,
+            raising=False,
+        )
         timestamp = datetime.now().isoformat()
         mock_db_instance.get_conversation_by_id.return_value = {
             "id": "conv-rag",
@@ -641,6 +687,7 @@ class TestChatbookCreator:
         )
 
         assert success is True
+        assert compositions == [(mock_db_instance, rag_store_path)]
         with zipfile.ZipFile(output_path, "r") as zf:
             conversation = json.loads(
                 zf.read("content/conversations/conversation_conv-rag.json")
@@ -831,13 +878,35 @@ class TestChatbookCreator:
         mock_get_user_data_dir,
         temp_db_paths,
         tmp_path,
+        monkeypatch,
     ):
         """Import preserves exported citation fields in the conversation RAG context store."""
+        import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+
         user_data_dir = tmp_path / "user-data"
         mock_get_user_data_dir.return_value = user_data_dir
 
         mock_db_instance = MagicMock()
         mock_chacha_db.return_value = mock_db_instance
+        compositions = []
+
+        def build_local(db, *, sidecar_path):
+            service = ChatConversationService(
+                db,
+                rag_context_store_path=sidecar_path,
+            )
+            compositions.append((db, sidecar_path))
+            return service, None, None
+
+        monkeypatch.setattr(
+            importer_module,
+            "build_local_citation_conversation_service",
+            build_local,
+            raising=False,
+        )
         mock_db_instance.get_conversation_by_name.return_value = []
         mock_db_instance.add_conversation.return_value = "new-conv"
         mock_db_instance.add_message.return_value = "new-msg"
@@ -915,6 +984,12 @@ class TestChatbookCreator:
         success, message = importer.import_chatbook(chatbook_path)
 
         assert success is True, message
+        assert compositions == [
+            (
+                mock_db_instance,
+                user_data_dir / "tldw_chatbook_chat_rag_context.json",
+            )
+        ]
         rag_store = json.loads(
             (user_data_dir / "tldw_chatbook_chat_rag_context.json").read_text(
                 encoding="utf-8"

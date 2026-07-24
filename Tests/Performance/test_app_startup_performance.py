@@ -222,6 +222,104 @@ def test_legacy_citation_migration_is_deferred_and_policy_gated(
         assert scheduled[0][1] == "deferred_legacy_citation_migration"
 
 
+def test_conversation_wiring_attaches_migration_before_existing_artifact_coordinator(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Real startup order keeps migration wiring independent of artifact reuse."""
+
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+
+    trace_db = object()
+    artifact_store = object()
+    expected_repository = SimpleNamespace(db=trace_db)
+    migration = SimpleNamespace(writes_enabled=True, ready=True)
+    sidecar = tmp_path / "tldw_chatbook_chat_rag_context.json"
+    composition_calls = 0
+
+    def build_local(db, *, sidecar_path, repository=None):
+        nonlocal composition_calls
+        composition_calls += 1
+        assert db is trace_db
+        assert sidecar_path == sidecar
+        assert repository is None or repository is expected_repository
+        service = ChatConversationService(
+            db,
+            rag_context_store_path=sidecar_path,
+            citation_legacy_migration=migration,
+        )
+        return service, expected_repository, migration
+
+    monkeypatch.setattr(
+        app_module,
+        "build_local_citation_conversation_service",
+        build_local,
+        raising=False,
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        app_module.ServerChatConversationService,
+        "from_server_context_provider",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "ChatConversationScopeService",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+    fake_app = SimpleNamespace(
+        chachanotes_db=trace_db,
+        server_context_provider=object(),
+        service_policy_enforcer=object(),
+        local_chatbook_service=artifact_store,
+        citation_artifact_ownership_coordinator=SimpleNamespace(
+            artifact_store=artifact_store,
+            trace_repository=expected_repository,
+            writes_enabled=False,
+        ),
+        citation_legacy_migration_service=None,
+    )
+    fake_app._wire_citation_artifact_ownership = lambda: (
+        app_module.TldwCli._wire_citation_artifact_ownership(fake_app)
+    )
+
+    app_module.TldwCli._wire_chat_conversation_services(fake_app)
+    app_module.TldwCli._wire_chat_conversation_services(fake_app)
+
+    assert composition_calls == 1
+    assert fake_app.citation_trace_repository is expected_repository
+    assert fake_app.citation_legacy_migration_service is migration
+    assert (
+        fake_app.local_chat_conversation_service.citation_legacy_migration is migration
+    )
+    with pytest.raises(RuntimeError, match="legacy_rag_context_writes_disabled"):
+        fake_app.local_chat_conversation_service.record_message_rag_context(
+            "conversation",
+            "message",
+        )
+
+    scheduled: list[str] = []
+
+    def capture(coroutine, *, name: str):
+        scheduled.append(name)
+        coroutine.close()
+
+    async def migrate() -> None:
+        return None
+
+    fake_app.set_timer = Mock()
+    fake_app._schedule_footer_status_updates = Mock()
+    fake_app._start_deferred_audio_service_initialization = Mock()
+    fake_app.schedule_media_cleanup = Mock()
+    fake_app._migrate_legacy_citations_idle_unit = migrate
+    fake_app._reconcile_citation_artifact_ownership = migrate
+    fake_app._create_deferred_startup_task = capture
+    app_module.TldwCli._schedule_deferred_startup_work(fake_app)
+
+    assert scheduled == ["deferred_legacy_citation_migration"]
+
+
 @pytest.mark.asyncio
 async def test_ui_ready_before_nonessential_startup_services_finish(
     monkeypatch,
