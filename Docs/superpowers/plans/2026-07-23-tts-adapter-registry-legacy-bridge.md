@@ -19,6 +19,11 @@
 - The default service concurrency limit remains four and is instance-scoped.
 - Existing callers retain `generate_audio_stream(request: OpenAISpeechRequest, internal_model_id: str)`.
 - Progress callbacks are operation-scoped. Sink exceptions are isolated and never fail synthesis.
+- Tests verify lazy materialization and lease release through observable
+  factory, retirement, and cleanup effects; do not add production
+  introspection methods used only by tests.
+- Architecture-boundary tests parse Python syntax rather than matching raw
+  source text. The final independent `rg` check remains required.
 - New registry, bridge, and service diagnostics may not log configuration
   values or synthesis text; TASK-402 also removes the existing OpenAI
   API-key-fragment disclosure.
@@ -763,19 +768,6 @@ class TTSAdapterRegistry:
                 f"Unknown TTS provider: {provider_id}"
             )
         return canonical_id
-
-    def materialized_provider_ids(self) -> tuple[str, ...]:
-        return tuple(
-            provider_id
-            for provider_id, slot in self._slots.items()
-            if slot.active is not None
-        )
-
-    def active_lease_count(self, provider_id: str) -> int:
-        slot = self._slots[self._resolve_id(provider_id)]
-        records = ([slot.active] if slot.active is not None else [])
-        records.extend(slot.retired)
-        return sum(record.leases for record in records)
 
     def configuration_revision(self, provider_id: str) -> int:
         return self._slots[self._resolve_id(provider_id)].revision
@@ -1866,7 +1858,8 @@ async def test_compatibility_generator_closes_after_partial_consumption() -> Non
     await stream.aclose()
 
     assert adapter.response_close_calls == 1
-    assert service.registry.active_lease_count("openai") == 0
+    await service.registry.reconfigure_provider("openai", {"revision": 2})
+    assert adapter.close_calls == 1
 
 
 @pytest.mark.asyncio
@@ -1914,7 +1907,8 @@ async def test_compatibility_generator_releases_response_on_cancellation() -> No
         await task
     assert cancelled.is_set()
     assert adapter.response_close_calls == 1
-    assert service.registry.active_lease_count("openai") == 0
+    await service.registry.reconfigure_provider("openai", {"revision": 2})
+    assert adapter.close_calls == 1
 
 
 @pytest.mark.asyncio
@@ -1963,7 +1957,22 @@ def test_bootstrap_preserves_nested_raw_provider_configuration() -> None:
     }
 
 
-def test_default_bootstrap_has_six_exact_ids_and_no_aliases() -> None:
+def test_default_bootstrap_has_six_exact_ids_no_aliases_and_is_lazy(
+    monkeypatch,
+) -> None:
+    adapter_calls: list[str] = []
+
+    def factory_builder(provider_id: str):
+        def build(_config):
+            adapter_calls.append(provider_id)
+            return FakeAdapter(provider_id)
+
+        return build
+
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.adapter_bootstrap.make_legacy_adapter_factory",
+        factory_builder,
+    )
     service = build_default_tts_service({})
 
     assert tuple(
@@ -1977,8 +1986,12 @@ def test_default_bootstrap_has_six_exact_ids_and_no_aliases() -> None:
         "alltalk",
     )
     assert service.registry.aliases() == {}
-    assert service.registry.materialized_provider_ids() == ()
+    assert adapter_calls == []
 ```
+
+The concrete test may instead observe zero adapter-factory calls through a
+small test-side factory harness. Do not add a production materialization
+introspection method merely to support this assertion.
 
 - [ ] **Step 2: Write explicit application-binding tests**
 
@@ -2234,21 +2247,15 @@ git commit -m "refactor(tts): route service through adapters"
 - [ ] **Step 1: Write application-ownership and boundary tests**
 
 ```python
-class FakeOwnedRegistry:
-    def materialized_provider_ids(self) -> tuple[str, ...]:
-        return ()
-
-
 class FakeOwnedService:
     def __init__(self) -> None:
-        self.registry = FakeOwnedRegistry()
         self.close_calls = 0
 
     async def close(self) -> None:
         self.close_calls += 1
 
 
-def test_app_constructs_one_tts_service_without_materializing_adapters(
+def test_app_constructs_one_tts_service(
     monkeypatch,
 ) -> None:
     service = FakeOwnedService()
@@ -2259,7 +2266,6 @@ def test_app_constructs_one_tts_service_without_materializing_adapters(
 
     assert app.tts_service is service
     builder.assert_called_once_with(app.app_config)
-    assert service.registry.materialized_provider_ids() == ()
 
 
 @pytest.mark.asyncio
@@ -2277,13 +2283,19 @@ async def test_app_binding_and_close_are_explicit() -> None:
 
 
 def test_application_and_stts_do_not_reach_through_to_backend_manager() -> None:
-    app_source = Path("tldw_chatbook/app.py").read_text(encoding="utf-8")
-    stts_source = Path(
-        "tldw_chatbook/Event_Handlers/STTS_Events/stts_events.py"
-    ).read_text(encoding="utf-8")
-
-    assert ".backend_manager" not in app_source
-    assert ".backend_manager" not in stts_source
+    paths = (
+        Path("tldw_chatbook/app.py"),
+        Path("tldw_chatbook/Event_Handlers/STTS_Events/stts_events.py"),
+    )
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        accesses = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+            and node.attr == "backend_manager"
+        ]
+        assert accesses == [], f"{path} reaches through to backend_manager"
 ```
 
 - [ ] **Step 2: Run the ownership tests and confirm direct access remains**
@@ -2291,7 +2303,7 @@ def test_application_and_stts_do_not_reach_through_to_backend_manager() -> None:
 Run: `pytest Tests/TTS/test_tts_app_ownership.py -q`
 
 Expected: tests fail because the app does not own a registry-backed service and
-both source files inspect `backend_manager`.
+both syntax trees contain direct `backend_manager` attribute access.
 
 - [ ] **Step 3: Construct and bind the service before screen work**
 
