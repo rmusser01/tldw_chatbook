@@ -4163,23 +4163,25 @@ Thank you for using tldw-chatbook! 🎉
             self.app_instance.notify(f"Testing connection to {provider}...", timeout=2)
 
             # Simple test message
-            from ..LLM_Calls.LLM_API_Calls import chat_with_provider
+            from ..Chat.Chat_Functions import chat_api_call, extract_response_content
 
-            test_response = await self.run_worker(
-                lambda: chat_with_provider(
-                    provider=provider,
-                    model=model,
-                    messages=[
+            raw = await self.run_worker(
+                lambda: chat_api_call(
+                    api_endpoint=provider,
+                    messages_payload=[
                         {"role": "user", "content": "Test connection. Reply with 'OK'."}
                     ],
-                    temperature=0.1,
+                    model=model,
+                    temp=0.1,
                     max_tokens=10,
+                    streaming=False,
                 ),
                 thread=True,
                 exclusive=True,
             )
+            test_response = extract_response_content(raw)
 
-            if test_response and "OK" in str(test_response).upper():
+            if test_response and "OK" in test_response.upper():
                 self.app_instance.notify(
                     f"✅ Connection to {provider} successful!", severity="information"
                 )
@@ -4300,21 +4302,22 @@ Thank you for using tldw-chatbook! 🎉
                     model = models[0]
 
                     # Test with a simple message
-                    from ..LLM_Calls.LLM_API_Calls import chat_with_provider
+                    from ..Chat.Chat_Functions import chat_api_call, extract_response_content
 
-                    test_response = await self.run_worker(
-                        lambda: chat_with_provider(
-                            provider=provider,
+                    raw = await self.run_worker(
+                        lambda: chat_api_call(
+                            api_endpoint=provider,
+                            messages_payload=[{"role": "user", "content": "Test. Reply OK."}],
                             model=model,
-                            messages=[{"role": "user", "content": "Test. Reply OK."}],
-                            temperature=0.1,
+                            temp=0.1,
                             max_tokens=10,
+                            streaming=False,
                         ),
                         thread=True,
                         exclusive=True,
                     )
 
-                    if test_response:
+                    if extract_response_content(raw):
                         results.append(f"✅ {provider}: Working")
                     else:
                         results.append(f"❌ {provider}: Failed")
