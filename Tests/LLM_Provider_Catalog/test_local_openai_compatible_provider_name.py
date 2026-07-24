@@ -28,7 +28,13 @@ def _run_handler_capturing_kwargs(handler, settings_payload):
             "_chat_with_openai_compatible_local_server",
             side_effect=fake_helper,
         ),
-        patch.object(local_calls, "settings", settings_payload),
+        patch.object(
+            local_calls,
+            "get_runtime_config_snapshot",
+            return_value=type(
+                "Snapshot", (), {"values": settings_payload}
+            )(),
+        ),
     ):
         result = handler(input_data=_MESSAGES, model="test-model")
     return captured, result

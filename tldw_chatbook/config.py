@@ -25,7 +25,6 @@ from loguru import logger
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
-from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 from tldw_chatbook.Utils.console_background_effects import (
     normalize_console_background_effects,
 )
@@ -34,6 +33,7 @@ from tldw_chatbook.Utils.private_paths import (
     PrivatePathError,
     PrivatePathResult,
     PrivatePathStatus,
+    atomic_private_write_text,
     create_private_text,
     lexical_path,
     open_private_binary,
@@ -94,6 +94,7 @@ def _report_config_path_posture(
 # --- Encryption support ---
 _ENCRYPTION_PASSWORD = None  # Cached password for the session
 _ENCRYPTION_MODULE = None  # Lazily loaded encryption module
+_CONFIG_GENERATION = 0
 
 # --- Chunking Settings (Default, can be overridden by TOML) ---
 global_default_chunk_language = "en"
@@ -3683,11 +3684,6 @@ import threading as _threading  # noqa: E402
 
 _CONFIG_FILE_LOCK = _threading.RLock()
 
-# Fallback permissions for a config file that does not exist yet. config.toml
-# may hold plaintext secrets (when encryption is disabled), so it is created
-# owner-only rather than world-readable.
-_CONFIG_FILE_DEFAULT_MODE = 0o600
-
 
 def _config_file_lock():
     """Return the shared config-file read-modify-write lock.
@@ -3759,13 +3755,169 @@ def _write_raw_cli_config_unlocked(
 ) -> None:
     """Atomically write a private on-disk config while the lock is held."""
 
-    _prepare_config_parent(config_path)
-    atomic_write_text(
+    application_directory = _prepare_config_parent(config_path)
+    result = atomic_private_write_text(
         config_path,
         toml.dumps(dict(config_data)),
-        mode=_CONFIG_FILE_DEFAULT_MODE,
+        application_owned_directory=application_directory,
     )
+    _report_config_path_posture(result)
     _invalidate_config_caches()
+
+
+def _publish_runtime_config_unlocked() -> Dict[str, Any]:
+    """Reload caches and publish one complete in-process config generation."""
+
+    global settings, _CONFIG_GENERATION
+
+    loaded = _load_cli_config_bootstrap_unlocked(force_reload=True).config
+    settings = load_settings(force_reload=True)
+    _CONFIG_GENERATION += 1
+    return loaded
+
+
+class RuntimeConfigSnapshot(NamedTuple):
+    """A defensive normalized config view paired with its write generation."""
+
+    generation: int
+    values: Dict[str, Any]
+
+
+def get_runtime_config_snapshot(
+    *,
+    force_reload: bool = False,
+) -> RuntimeConfigSnapshot:
+    """Return a defensive current runtime config view."""
+
+    with _config_file_lock():
+        values = load_settings(force_reload=force_reload)
+        return RuntimeConfigSnapshot(
+            generation=_CONFIG_GENERATION,
+            values=copy.deepcopy(values),
+        )
+
+
+def _encryption_enabled(config_data: Mapping[str, Any]) -> bool:
+    encryption = config_data.get("encryption", {})
+    return isinstance(encryption, Mapping) and encryption.get("enabled", False) is True
+
+
+def _enforce_existing_encryption(
+    current_config: Mapping[str, Any],
+    replacement: Mapping[str, Any],
+) -> None:
+    if _encryption_enabled(current_config) and not _encryption_enabled(replacement):
+        raise ValueError(
+            "Encrypted config replacement must keep encryption enabled; "
+            "disable encryption explicitly"
+        )
+
+
+def _try_read_cli_config_serialized_unlocked(config_path: Path) -> str | None:
+    try:
+        with open_private_binary(config_path) as opened:
+            _report_config_path_posture(opened.result)
+            return opened.stream.read().decode("utf-8")
+    except FileNotFoundError:
+        return None
+
+
+def _read_cli_config_serialized_unlocked(config_path: Path) -> str:
+    serialized = _try_read_cli_config_serialized_unlocked(config_path)
+    if serialized is None:
+        _load_cli_config_bootstrap_unlocked(force_reload=True)
+        with open_private_binary(config_path) as opened:
+            _report_config_path_posture(opened.result)
+            return opened.stream.read().decode("utf-8")
+    return serialized
+
+
+def read_cli_config_serialized() -> str:
+    """Return the effective config's exact serialized on-disk representation."""
+
+    with _config_file_lock():
+        return _read_cli_config_serialized_unlocked(get_cli_config_path())
+
+
+def _advanced_backup_path(config_path: Path) -> Path:
+    return config_path.with_suffix(config_path.suffix + ".bak")
+
+
+def _write_serialized_config_artifact_unlocked(
+    path: Path,
+    serialized: str,
+    *,
+    config_path: Path,
+) -> Path:
+    application_directory = _prepare_config_parent(config_path)
+    result = atomic_private_write_text(
+        path,
+        serialized,
+        application_owned_directory=application_directory,
+    )
+    _report_config_path_posture(result, target_kind="snapshot")
+    return result.lexical_path
+
+
+def read_cli_config_backup_serialized() -> str:
+    """Return the exact serialized advanced-editor backup."""
+
+    with _config_file_lock():
+        config_path = get_cli_config_path()
+        backup_path = _advanced_backup_path(config_path)
+        with open_private_binary(backup_path) as opened:
+            _report_config_path_posture(opened.result, target_kind="snapshot")
+            return opened.stream.read().decode("utf-8")
+
+
+def replace_cli_config_serialized(
+    serialized: str,
+    *,
+    create_backup: bool = True,
+) -> tuple[Dict[str, Any], Path | None]:
+    """Validate and replace raw TOML without downgrading encryption."""
+
+    replacement = tomllib.loads(serialized)
+    if not isinstance(replacement, dict):
+        raise TypeError("The CLI config must contain a top-level table")
+
+    config_path = get_cli_config_path()
+    with _config_file_lock():
+        current_serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        if current_serialized is None:
+            current_config: Dict[str, Any] = {}
+        else:
+            current_config = tomllib.loads(current_serialized)
+        _enforce_existing_encryption(current_config, replacement)
+        persisted = _config_data_for_persistence(replacement)
+        backup_path: Path | None = None
+        if create_backup and current_serialized is not None:
+            backup_path = _write_serialized_config_artifact_unlocked(
+                _advanced_backup_path(config_path),
+                current_serialized,
+                config_path=config_path,
+            )
+        _write_raw_cli_config_unlocked(config_path, persisted)
+        return _publish_runtime_config_unlocked(), backup_path
+
+
+def persist_cli_config_for_shutdown() -> bool:
+    """Re-persist the effective config through the normal encrypted owner."""
+
+    try:
+        config_path = get_cli_config_path()
+        with _config_file_lock():
+            current = _load_cli_config_bootstrap_unlocked().config
+            persisted = _config_data_for_persistence(current)
+            _write_raw_cli_config_unlocked(config_path, persisted)
+            _publish_runtime_config_unlocked()
+        return True
+    except (OSError, TypeError, ValueError, toml.TomlDecodeError) as exc:
+        logger.warning(
+            "Shutdown config persistence failed (error_type={}).",
+            type(exc).__name__,
+        )
+        return False
 
 
 def _contains_unencrypted_sensitive_value(config_data: Mapping[str, Any]) -> bool:
@@ -3818,19 +3970,17 @@ def _config_data_for_persistence(
 def replace_cli_config(config_data: Mapping[str, Any]) -> Dict[str, Any]:
     """Atomically replace the effective config and refresh all config caches."""
 
-    global settings
-
     config_path = get_cli_config_path()
     with _config_file_lock():
+        current = _read_raw_cli_config_unlocked(config_path)
+        _enforce_existing_encryption(current, config_data)
         persisted = _config_data_for_persistence(config_data)
         _write_raw_cli_config_unlocked(config_path, persisted)
-        loaded = _load_cli_config_bootstrap_unlocked(force_reload=True).config
-        settings = load_settings(force_reload=True)
-        return loaded
+        return _publish_runtime_config_unlocked()
 
 
 def export_cli_config_snapshot(
-    config_data: Mapping[str, Any],
+    config_data: Mapping[str, Any] | None = None,
     *,
     timestamp: str | None = None,
 ) -> Path:
@@ -3842,22 +3992,23 @@ def export_cli_config_snapshot(
         config_path.parent / f"config_backup_{snapshot_timestamp}.toml"
     )
     with _config_file_lock():
-        application_directory = _prepare_config_parent(config_path)
-        persisted = _config_data_for_persistence(config_data)
-        result = create_private_text(
+        serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        if serialized is None:
+            if config_data is None:
+                raise FileNotFoundError(config_path)
+            serialized = toml.dumps(_config_data_for_persistence(config_data))
+        result_path = _write_serialized_config_artifact_unlocked(
             snapshot_path,
-            toml.dumps(persisted),
-            application_owned_directory=application_directory,
+            serialized,
+            config_path=config_path,
         )
-        _report_config_path_posture(result, target_kind="snapshot")
-    return result.lexical_path
+    return result_path
 
 
 def save_settings_to_cli_config(
     section_values: Mapping[str, Mapping[Any, Any]],
 ) -> bool:
     """Persist multiple config values with one TOML read/write and one cache reload."""
-    global _CONFIG_CACHE, _SETTINGS_CACHE, settings
     logged_keys = {
         section: list(values.keys()) for section, values in section_values.items()
     }
@@ -3902,8 +4053,7 @@ def save_settings_to_cli_config(
             )
             logger.success(f"Successfully saved settings batch to {config_path}")
 
-            load_cli_config_and_ensure_existence(force_reload=True)
-            settings = load_settings(force_reload=True)
+            _publish_runtime_config_unlocked()
             logger.info("Global configuration caches invalidated and reloaded.")
 
             return True
@@ -3926,7 +4076,6 @@ def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
         or every named key is already absent. False only when the file
         exists but cannot be read or rewritten, or the path is not a table.
     """
-    global _CONFIG_CACHE, _SETTINGS_CACHE, settings
     config_path = _get_effective_config_path()
     if not config_path.exists():
         return True
@@ -3974,8 +4123,7 @@ def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
                 f"Removed {len(removed)} key(s) from [{section}] in {config_path}"
             )
 
-            load_cli_config_and_ensure_existence(force_reload=True)
-            settings = load_settings(force_reload=True)
+            _publish_runtime_config_unlocked()
 
             return True
         except (IOError, OSError, toml.TomlDecodeError) as e:
@@ -4290,6 +4438,7 @@ def enable_config_encryption(password: str) -> bool:
             encrypted_config = encrypt_api_keys_in_config(config_data, password)
             _write_raw_cli_config_unlocked(config_path, encrypted_config)
             set_encryption_password(password)
+            _publish_runtime_config_unlocked()
 
         logger.success("Config encryption enabled successfully")
         return True
@@ -4329,6 +4478,7 @@ def disable_config_encryption(password: str) -> bool:
             decrypted_config.pop("encryption", None)
             _write_raw_cli_config_unlocked(config_path, decrypted_config)
             clear_encryption_password()
+            _publish_runtime_config_unlocked()
 
         logger.success("Config encryption disabled successfully")
         return True
@@ -4375,6 +4525,7 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
             )
             _write_raw_cli_config_unlocked(config_path, encrypted_config)
             set_encryption_password(new_password)
+            _publish_runtime_config_unlocked()
 
         logger.success("Encryption password changed successfully")
         return True
@@ -4814,6 +4965,8 @@ if (
 # --- Global Settings Object ---
 load_cli_config_and_ensure_existence()
 settings = load_settings()
+if _CONFIG_GENERATION == 0:
+    _CONFIG_GENERATION = 1
 
 try:
     # Accessing deeply nested key safely

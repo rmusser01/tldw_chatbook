@@ -21,7 +21,7 @@ from textual.widgets import (
     ListView,
 )
 
-from tldw_chatbook.config import settings
+from tldw_chatbook.config import get_runtime_config_snapshot
 
 
 #
@@ -146,7 +146,9 @@ def create_chat_right_sidebar(
             )
 
             # Retrieve initial value for strip_thinking_tags checkbox
-            initial_strip_value = settings.get("chat_defaults", {}).get(
+            initial_strip_value = get_runtime_config_snapshot().values.get(
+                "chat_defaults", {}
+            ).get(
                 "strip_thinking_tags", True
             )
             yield Checkbox(

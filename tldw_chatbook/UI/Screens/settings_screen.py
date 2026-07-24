@@ -62,14 +62,13 @@ from ...Chat.provider_catalog import (
 from ...config import (
     BASE_DATA_DIR_CLI,
     DEFAULT_CONFIG_FROM_TOML,
-    DEFAULT_CONFIG_PATH,
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     coerce_bool_setting,
     coerce_int_setting,
+    get_cli_config_path,
     load_settings,
-    save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
 from ...LLM_Provider_Catalog.model_catalog_settings import (
@@ -3162,9 +3161,10 @@ class SettingsScreen(BaseAppScreen):
         return divider
 
     def _config_path(self) -> Path:
-        override = os.environ.get("TLDW_CONFIG_PATH")
-        candidate = Path(override).expanduser() if override else DEFAULT_CONFIG_PATH
-        return validate_path_simple(candidate, require_exists=False).resolve()
+        return validate_path_simple(
+            get_cli_config_path(),
+            require_exists=False,
+        )
 
     def _config_writable_status(self) -> str:
         try:
@@ -3192,15 +3192,13 @@ class SettingsScreen(BaseAppScreen):
 
     def _raw_config_text(self) -> str:
         try:
-            config_path = self._config_path()
+            self._config_path()
         except (OSError, RuntimeError, ValueError) as exc:
             return f"# Unable to use config path: {redact_secret_text(str(exc))}\n"
-        if config_path.exists():
-            try:
-                return config_path.read_text(encoding="utf-8")
-            except OSError as exc:
-                return f"# Unable to read {config_path}: {type(exc).__name__}"
-        return "# Config file does not exist yet.\n"
+        try:
+            return SettingsConfigAdapter().read_serialized()
+        except OSError as exc:
+            return f"# Unable to read config: {type(exc).__name__}"
 
     @staticmethod
     def _deep_merge_config_values(base: dict, update: Mapping) -> dict:
@@ -3215,21 +3213,14 @@ class SettingsScreen(BaseAppScreen):
         return merged
 
     def _read_cli_config_without_writes(self) -> dict:
-        loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
         try:
-            config_path = self._config_path()
+            self._config_path()
         except (OSError, RuntimeError, ValueError):
-            return loaded_config
-        if not config_path.exists():
-            return loaded_config
+            return copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
         try:
-            with open(config_path, "rb") as config_file:
-                user_config = tomllib.load(config_file)
+            return SettingsConfigAdapter().load()
         except (OSError, tomllib.TOMLDecodeError):
-            return loaded_config
-        if not isinstance(user_config, Mapping):
-            return loaded_config
-        return self._deep_merge_config_values(loaded_config, user_config)
+            return copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
 
     def _read_cli_config_value_without_writes(
         self,
@@ -3716,25 +3707,15 @@ class SettingsScreen(BaseAppScreen):
             config_path = self._config_path()
         except ValueError as exc:
             return f"Advanced config save: failed - {redact_secret_text(str(exc))}"
-        tmp_path = config_path.with_suffix(config_path.suffix + ".tmp")
-        backup_path = config_path.with_suffix(config_path.suffix + ".bak")
-        backup_created = False
         try:
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            if config_path.exists():
-                backup_path.write_text(
-                    config_path.read_text(encoding="utf-8"), encoding="utf-8"
-                )
-                backup_created = True
-            tmp_path.write_text(text, encoding="utf-8")
-            tmp_path.replace(config_path)
+            _loaded, backup_path = SettingsConfigAdapter().replace_serialized(text)
             backup_message = (
-                f"backup: {backup_path}"
-                if backup_created
+                "backup: created"
+                if backup_path is not None
                 else "backup: none (new file)"
             )
             return f"Advanced config save: saved; {backup_message}"
-        except OSError as exc:
+        except (OSError, TypeError, ValueError, tomllib.TOMLDecodeError) as exc:
             return f"Advanced config save: failed - {redact_secret_text(str(exc))}"
 
     def _read_advanced_backup_preview(self) -> tuple[str, str | None]:
@@ -3745,14 +3726,13 @@ class SettingsScreen(BaseAppScreen):
                 f"Advanced config recovery: failed - {redact_secret_text(str(exc))}",
                 None,
             )
-        backup_path = config_path.with_suffix(config_path.suffix + ".bak")
-        if not backup_path.exists():
+        try:
+            backup_text = SettingsConfigAdapter().read_backup_serialized()
+        except FileNotFoundError:
             return (
-                f"Advanced config recovery: unavailable - no backup found at {backup_path}",
+                "Advanced config recovery: unavailable - no backup found",
                 None,
             )
-        try:
-            backup_text = backup_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             return (
                 f"Advanced config recovery: failed - {redact_secret_text(str(exc))}",

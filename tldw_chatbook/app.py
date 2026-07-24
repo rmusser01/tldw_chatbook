@@ -219,13 +219,13 @@ from tldw_chatbook.Event_Handlers.worker_handlers import (
     MiscWorkerHandler,
 )
 from .config import (
-    CONFIG_TOML_CONTENT,
-    DEFAULT_CONFIG_PATH,
+    get_cli_config_path,
     load_settings,
     get_cli_providers_and_models,
     API_MODELS_BY_PROVIDER,
     LOCAL_PROVIDERS,
     load_cli_config_and_ensure_existence,
+    persist_cli_config_for_shutdown,
     set_encryption_password,
 )
 from .Event_Handlers import (
@@ -1116,10 +1116,8 @@ class SettingsProvider(Provider):
             if setting_id == "open_settings":
                 _navigate_via_screen(self.app, TAB_SETTINGS, "Opened Settings")
             elif setting_id == "open_config":
-                from .config import DEFAULT_CONFIG_PATH
-
                 self.app.notify(
-                    f"Config file location: {DEFAULT_CONFIG_PATH}",
+                    f"Config file location: {get_cli_config_path()}",
                     severity="information",
                 )
             elif setting_id == "db_stats":
@@ -7097,10 +7095,9 @@ class TldwCli(
     def _show_first_run_notification(self) -> None:
         """Show a notification to the user on first run."""
         try:
-            from .config import DEFAULT_CONFIG_PATH
-
             self.notify(
-                f"Welcome to tldw chatbook! Configuration file created at:\n{DEFAULT_CONFIG_PATH}",
+                "Welcome to tldw chatbook! Configuration file created at:\n"
+                f"{get_cli_config_path()}",
                 title="First Run",
                 severity="information",
                 timeout=10,
@@ -10060,46 +10057,8 @@ class TldwCli(
         except Exception as e:
             loguru_logger.error(f"Error in quit handler: {e}")
 
-        # Save encrypted config if encryption is enabled
-        try:
-            from tldw_chatbook.config import (
-                load_cli_config_and_ensure_existence,
-                get_encryption_password,
-                encrypt_api_keys_in_config,
-                DEFAULT_CONFIG_PATH,
-            )
-            from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
-            import toml
-
-            config_data = load_cli_config_and_ensure_existence()
-            encryption_config = config_data.get("encryption", {})
-
-            if encryption_config.get("enabled", False):
-                password = get_encryption_password()
-                if password:
-                    loguru_logger.info("Encrypting configuration before exit...")
-                    try:
-                        # Encrypt the config
-                        encrypted_config = encrypt_api_keys_in_config(
-                            config_data, password
-                        )
-
-                        # Save the encrypted config
-                        config_text = toml.dumps(encrypted_config)
-                        atomic_write_text(DEFAULT_CONFIG_PATH, config_text)
-
-                        loguru_logger.info(
-                            "Configuration encrypted and saved successfully"
-                        )
-                    except Exception as e:
-                        loguru_logger.error(f"Failed to encrypt config on exit: {e}")
-                        # Continue with exit even if encryption fails
-                else:
-                    loguru_logger.warning(
-                        "Encryption enabled but no password available - config not encrypted"
-                    )
-        except Exception as e:
-            loguru_logger.error(f"Error during config encryption on exit: {e}")
+        if not persist_cli_config_for_shutdown():
+            loguru_logger.warning("Configuration shutdown persistence failed")
 
         # Always call the parent quit method
         self.exit()
@@ -10138,18 +10097,11 @@ if __name__ == "__main__":
     # Initialize logging first
     early_logging_app = initialize_early_logging()
 
-    # Ensure config file exists (create default if missing)
     try:
-        if not DEFAULT_CONFIG_PATH.exists():
-            logging.info(
-                f"Config file not found at {DEFAULT_CONFIG_PATH}, creating default."
-            )
-            DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
-                f.write(CONFIG_TOML_CONTENT)
+        load_cli_config_and_ensure_existence()
     except Exception as e_cfg_main:
         logging.error(
-            f"Could not ensure creation of default config file: {e_cfg_main}",
+            f"Could not ensure creation of effective config file: {e_cfg_main}",
             exc_info=True,
         )
 
@@ -10473,18 +10425,11 @@ def main_cli_runner():
     # Initialize logging first
     initialize_early_logging()
 
-    # Ensure config file exists (create default if missing)
     try:
-        if not DEFAULT_CONFIG_PATH.exists():
-            logging.info(
-                f"Config file not found at {DEFAULT_CONFIG_PATH}, creating default."
-            )
-            DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
-                f.write(CONFIG_TOML_CONTENT)
+        load_cli_config_and_ensure_existence()
     except Exception as e_cfg_main:
         logging.error(
-            f"Could not ensure creation of default config file: {e_cfg_main}",
+            f"Could not ensure creation of effective config file: {e_cfg_main}",
             exc_info=True,
         )
 

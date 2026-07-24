@@ -783,7 +783,9 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
 
 
 def _build_test_app(configured_default: str | None = None) -> TldwCli:
-    user_data_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-test-"))
+    user_data_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-test-")).resolve(
+        strict=True
+    )
 
     def fake_runtime_policy(app):
         context = SimpleNamespace(
