@@ -6177,15 +6177,19 @@ class PersonasScreen(BaseAppScreen):
             entity_kind="user_profile", entity_id=saved_id, entity_name=name
         )
         inspector = self.query_one(PersonasInspectorPane)
+        # Whole-branch review (+ rebase fix): the pointer write above must
+        # also refresh the pane's cached _active_profile_name (no reactive
+        # plumbing — a stale "Set as my name" label would INVERT the button's
+        # action on the next click). Push ONLY the cached name here, before
+        # show_selection computes the label; the row marker re-renders via
+        # this save path's own _render_profile_rows below — calling the full
+        # _sync_active_profile_indicators() would render the rows twice and
+        # trip the task-523 one-render-per-save gate test.
+        inspector.set_active_profile_name(get_active_user_profile_pointer())
         inspector.show_selection(name=name, kind="user_profile")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
-        # Whole-branch review: the pointer write above must also refresh the
-        # inspector's "Chatting as" summary + Set/Clear button label — the
-        # pane caches _active_profile_name (no reactive plumbing), and a
-        # stale label could INVERT the button's action on the next click.
-        await self._sync_active_profile_indicators()
         await self._render_profile_rows()
         # Save-in-place: the returned ``saved`` dict already carries the
         # incremented optimistic-lock version, so the editor (which stays
