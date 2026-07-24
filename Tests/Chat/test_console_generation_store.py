@@ -233,3 +233,68 @@ def test_generation_variant_meta_from_row_degrades_bad_params_json():
     }
     rebuilt = GenerationVariantMeta.from_row(row)
     assert rebuilt.params == {}
+
+
+def test_append_variant_rejects_non_generation_message(store_with_session):
+    """Precondition guard: append_generation_variant must reject plain messages."""
+    store, sid = store_with_session
+    # Create a plain message (no generation_metadata)
+    msg = store.append_message(
+        sid, role="assistant", content="plain text"
+    )
+
+    with pytest.raises(ValueError, match="requires a generation message"):
+        store.append_generation_variant(
+            sid, msg.id, data=b"variant", mime_type="image/png", meta=_meta(1)
+        )
+
+
+def test_append_variant_position_drift_raises_error(store_with_session):
+    """Position reconciliation guard: assert persistence position matches computed position."""
+    store, sid = store_with_session
+
+    # Create a generation message with persist=True
+    msg = store.append_generation_message(
+        sid,
+        content="[image]",
+        variants=[(b"a", "image/png", _meta(1))],
+        persist=True,
+    )
+
+    # Inject a faulty persistence that returns wrong position
+    class FaultyPersistence(FakeGenerationPersistence):
+        def append_message_attachment(self, *args, **kwargs):
+            # Return wrong position (99 instead of expected 1)
+            self.appended.append((args[0], kwargs.get("data"), kwargs.get("mime_type"),
+                                 kwargs.get("display_name", ""), kwargs.get("generation_metadata")))
+            return 99  # Intentionally wrong
+
+    store.persistence = FaultyPersistence()
+
+    with pytest.raises(RuntimeError, match="generation variant position drift"):
+        store.append_generation_variant(
+            sid, msg.id, data=b"b", mime_type="image/png", meta=_meta(2)
+        )
+
+
+def test_persist_generation_message_rejects_null_bytes(store_with_session):
+    """Byte-filter symmetry guard: reject None-data in generation attachments."""
+    store, sid = store_with_session
+
+    # Create a message with generation metadata
+    msg = store.append_generation_message(
+        sid,
+        content="[image]",
+        variants=[(b"a", "image/png", _meta(1))],
+        persist=False,  # Don't persist yet
+    )
+
+    # Manually corrupt the attachment data to None (simulating a caller bug)
+    from dataclasses import replace as dc_replace
+    msg.attachments = (
+        dc_replace(msg.attachments[0], data=None),
+    )
+
+    # Now try to persist it; should fail with ValueError
+    with pytest.raises(ValueError, match="has no bytes"):
+        store._persist_new_message(session_id=sid, message=msg)

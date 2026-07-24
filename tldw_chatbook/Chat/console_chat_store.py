@@ -978,6 +978,11 @@ class ConsoleChatStore:
         """
         self._session_or_raise(session_id)
         message = self._message_or_raise(message_id)
+        if not message.generation_metadata:
+            raise ValueError(
+                "append_generation_variant requires a generation message "
+                "(non-empty generation_metadata)."
+            )
         new_position = len(message.attachments)
         new_attachment = MessageAttachment(
             data=data, mime_type=mime_type, display_name="", position=new_position
@@ -991,13 +996,18 @@ class ConsoleChatStore:
             and message.persisted_message_id is not None
             and getattr(self.persistence, "append_message_attachment", None) is not None
         ):
-            self.persistence.append_message_attachment(
+            persisted_position = self.persistence.append_message_attachment(
                 message.persisted_message_id,
                 data=data,
                 mime_type=mime_type,
                 display_name="",
                 generation_metadata=meta.to_row(new_position),
             )
+            if persisted_position is not None and persisted_position != new_position:
+                raise RuntimeError(
+                    f"generation variant position drift: store computed {new_position}, "
+                    f"persistence assigned {persisted_position}"
+                )
         return new_position
 
     def keep_generation_variant(
@@ -1975,6 +1985,14 @@ class ConsoleChatStore:
         if message.generation_metadata and self._persistence_accepts_kwarg(
             self.persistence.create_message, "generation_metadata"
         ):
+            for attachment, meta in zip(
+                message.attachments, message.generation_metadata
+            ):
+                if attachment.data is None:
+                    raise ValueError(
+                        f"generation variant at position {attachment.position} has no bytes; "
+                        "generation creation always supplies fresh bytes (caller bug)."
+                    )
             create_kwargs["generation_metadata"] = [
                 meta.to_row(attachment.position)
                 for attachment, meta in zip(
