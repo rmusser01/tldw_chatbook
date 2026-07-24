@@ -12045,6 +12045,21 @@ class ChatScreen(BaseAppScreen):
     async def _handle_console_attach_context(self, event: Button.Pressed) -> None:
         """Open the native Console file picker and stage the selected attachment."""
         event.stop()
+        # TASK-377: block at the cap BEFORE opening the picker. Otherwise the user
+        # navigates the picker and selects a sixth file only to have it silently
+        # rejected by a transient toast after a full picker round-trip (dead work).
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        if (
+            session_id is not None
+            and len(store.pending_attachments(session_id)) >= MAX_PENDING_ATTACHMENTS
+        ):
+            self.app_instance.notify(
+                f"Attachment limit reached ({MAX_PENDING_ATTACHMENTS} per message). "
+                "Remove one to attach another.",
+                severity="warning",
+            )
+            return
         from fnmatch import fnmatch
 
         from tldw_chatbook.Chat.attachment_core import attachment_filter_specs

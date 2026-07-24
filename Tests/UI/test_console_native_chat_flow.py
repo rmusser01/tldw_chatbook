@@ -7227,6 +7227,75 @@ async def test_pending_image_on_vision_model_does_not_block(monkeypatch):
         assert console._console_attachment_blocked_reason() == ""
 
 
+@pytest.mark.asyncio
+async def test_attach_at_cap_blocks_picker_before_selection(monkeypatch):
+    """TASK-377: at the attachment cap, pressing Attach must report the limit
+    immediately rather than opening the picker and rejecting the pick afterwards.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from tldw_chatbook.Chat.console_chat_store import MAX_PENDING_ATTACHMENTS
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        for _ in range(MAX_PENDING_ATTACHMENTS):
+            assert store.add_pending_attachment(session.id, _staged_image_attachment())
+        assert len(store.pending_attachments(session.id)) == MAX_PENDING_ATTACHMENTS
+
+        pushed: list = []
+        monkeypatch.setattr(
+            console.app,
+            "push_screen",
+            AsyncMock(side_effect=lambda *a, **k: pushed.append(a)),
+        )
+        notes: list = []
+        monkeypatch.setattr(
+            console.app_instance,
+            "notify",
+            MagicMock(side_effect=lambda *a, **k: notes.append(a)),
+        )
+
+        await console._handle_console_attach_context(MagicMock())
+
+        assert not pushed, "picker opened despite being at the attachment cap"
+        assert any("limit reached" in str(a[0]).lower() for a in notes), notes
+
+
+@pytest.mark.asyncio
+async def test_attach_below_cap_still_opens_picker(monkeypatch):
+    """TASK-377 guard: below the cap the Attach button still opens the picker."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from tldw_chatbook.Chat.console_chat_store import MAX_PENDING_ATTACHMENTS
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        for _ in range(MAX_PENDING_ATTACHMENTS - 1):
+            store.add_pending_attachment(session.id, _staged_image_attachment())
+
+        pushed: list = []
+        monkeypatch.setattr(
+            console.app,
+            "push_screen",
+            AsyncMock(side_effect=lambda *a, **k: pushed.append(a)),
+        )
+        await console._handle_console_attach_context(MagicMock())
+
+        assert pushed, "picker did not open while below the attachment cap"
+
+
 def test_resume_hydrates_image_messages_including_image_only_rows():
     """Verify resuming a saved conversation keeps image-only rows and their bytes."""
     screen = ChatScreen(_build_test_app())
