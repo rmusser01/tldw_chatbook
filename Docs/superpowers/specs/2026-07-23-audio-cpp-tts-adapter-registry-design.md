@@ -47,7 +47,7 @@ inside the legacy bridge.
   user-provided `server.json`.
 - Lazy managed-server startup on first audio.cpp use.
 - App-scoped registry and service ownership.
-- Exact provider registration and explicit compatibility aliases.
+- Exact provider registration with no provider aliases in the first milestone.
 - Native request, response, catalog, health, and error contracts.
 - A temporary bridge for OpenAI, ElevenLabs, Kokoro, Chatterbox, Higgs, and
   AllTalk.
@@ -95,7 +95,7 @@ enforce narrower limits.
 specifications and sealed before application use. It provides:
 
 - Exact canonical provider lookup.
-- A small, explicit compatibility alias map.
+- An optional explicit compatibility alias map, empty in the first milestone.
 - Duplicate provider and alias rejection during construction.
 - One lazily materialized adapter instance per provider.
 - A per-provider materialization lock.
@@ -106,6 +106,12 @@ specifications and sealed before application use. It provides:
 
 The registry does not use prefix or wildcard matching. Runtime code cannot add
 or replace provider definitions after construction.
+
+Canonical provider IDs are `audio_cpp`, `openai`, `elevenlabs`, `kokoro`,
+`chatterbox`, `higgs`, and `alltalk`. UI labels such as `audio.cpp` and
+`Higgs Audio (Local)` are presentation only and are never parsed for identity.
+Historical internal-model spellings belong exclusively to the legacy resolver,
+so the initial provider alias map is empty.
 
 When effective provider configuration changes, the registry increments that
 provider's configuration revision and retires its current adapter. Providers
@@ -156,18 +162,28 @@ Application and UI code do not retrieve or call concrete adapters. They use
 operation-scoped; audio.cpp reports indeterminate work until the complete WAV
 arrives rather than inventing percentage progress.
 
+`ProgressSink` is an asynchronous
+`Callable[[TTSProgress], Awaitable[None]]`. A sink must schedule its UI update
+and return promptly. The service isolates sink exceptions, records only a safe
+diagnostic, and continues synthesis; display failures never become provider
+failures.
+
 ### Legacy bridge
 
-One `LegacyBackendHost` owns the existing `TTSBackendManager`. Six
-provider-specific `LegacyTTSAdapter` views delegate to that host, retaining the
-canonical provider identities `openai`, `elevenlabs`, `kokoro`, `chatterbox`,
-`higgs`, and `alltalk`.
+Each of the six provider-specific `LegacyTTSAdapter` entries owns a
+provider-scoped `LegacyBackendHost`, which in turn lazily owns one existing
+`TTSBackendManager`. The entries retain the canonical provider identities
+`openai`, `elevenlabs`, `kokoro`, `chatterbox`, `higgs`, and `alltalk`.
+Provider-scoped hosts keep configuration replacement and cached backend
+lifecycle isolated; changing one legacy provider does not rebuild or close
+another provider's host.
 
 The app-scoped registry is the only routing authority visible to new service,
 application, and UI code. The existing class-global `BackendRegistry` remains
-reachable only from `LegacyBackendHost`; it is not converted into a second
-public registry. Tests reset its state deterministically, no new provider may
-register with it, and it is deleted with the bridge.
+the only shared legacy state and remains reachable only from the provider
+hosts; it is not converted into a second public registry. Tests reset its state
+deterministically, no new provider may register with it, and it is deleted with
+the bridge.
 
 The bridge moves today's static model, voice, format, and control metadata out
 of the Playground and into compatibility catalogs. Those catalogs are marked
@@ -187,13 +203,13 @@ until their own migration tasks. New code uses canonical `TTSRequest` and
 `synthesize()`.
 
 The bridge never exposes `TTSBackendManager` or a concrete backend to UI code.
-When a legacy backend supports progress only through a mutable callback, the
-host serializes callback installation and generation for that backend and
-clears the callback in `finally`, preventing concurrent operations from
-receiving one another's progress.
+Each host has a per-internal-backend operation lock covering lazy construction,
+`initialize()`, mutable progress-callback installation, complete stream
+consumption, and callback clearing in `finally`. This prevents double
+initialization and cross-request progress delivery. Different provider hosts
+may still run concurrently.
 
-The host is closed exactly once by the registry. Individual bridge views do not
-own or close it.
+Each provider host is closed exactly once with its owning bridge adapter.
 
 The bridge may be removed only when:
 
@@ -219,6 +235,10 @@ startup_timeout_seconds = 300
 shutdown_timeout_seconds = 10
 max_input_characters = 10000
 max_response_bytes = 134217728
+max_metadata_bytes = 1048576
+max_catalog_models = 1000
+max_voices_per_model = 1000
+max_identifier_characters = 256
 log_ring_lines = 200
 ```
 
@@ -242,9 +262,10 @@ use external mode.
 
 The numeric defaults are initial safety guards rather than statements about
 upstream model limits. The 10,000-character input limit and 128 MiB response
-limit are configurable. Longer content remains outside the first Playground
-milestone and belongs in a chunked audiobook workflow after that flow adopts
-the adapter service.
+limit are configurable. Metadata JSON, catalog counts, and identifier lengths
+remain bounded separately so discovery cannot allocate unbounded memory. Longer
+content remains outside the first Playground milestone and belongs in a chunked
+audiobook workflow after that flow adopts the adapter service.
 
 Because ordinary audio.cpp synthesis returns no response bytes until the WAV is
 complete, the first milestone has no read-inactivity timer. The five-second
@@ -274,12 +295,21 @@ The child process's bind result is authoritative; the preflight does not claim
 to eliminate port races. Early exit and safe recent logs are reported as a
 managed-process error.
 
+Any failure or cancellation before the first Ready state—including a startup
+deadline, invalid required endpoint, or incompatible health or model
+response—rolls back the owned launch. The supervisor requests termination,
+force-stops the exact child after the shutdown deadline if necessary, and joins
+the monitor and log-drain tasks before returning the failure. The recent
+in-memory diagnostic ring remains available until the next start or application
+shutdown. A structurally compatible server with zero TTS models reaches
+`not_configured` and is not treated as a failed launch.
+
 The supervisor never adopts a process already listening on the target port. It
 never restarts during a failed synthesis. An unexpected child exit marks the
 provider unavailable and wakes readiness waiters. A later operation may start
-a replacement. A live but unhealthy child is not killed automatically; the
-Playground offers an ownership-aware Restart & Rediscover action after active
-operations drain.
+a replacement. After the server has reached Ready once, a live but unhealthy
+child is not killed automatically; the Playground offers an ownership-aware
+Restart & Rediscover action after active operations drain.
 
 Shutdown first asks the exact child to terminate, waits for the configured
 deadline, and then force-stops only that child if required. Process-group
@@ -314,8 +344,10 @@ TTS entries. A healthy compatible server with zero TTS models is
 classified as incompatible.
 
 Voice discovery is lazy per selected model and cached by provider configuration
-revision plus model ID. Returned identifiers are used as opaque values and
-bounded, stripped of controls, and markup-escaped for display.
+revision, catalog revision, and model ID. Every successful authoritative model
+refresh increments the catalog revision and invalidates prior voice results,
+even when the model list is unchanged. Returned identifiers are used as opaque
+values and bounded, stripped of controls, and markup-escaped for display.
 
 The server does not fully describe model controls or whether an unnamed default
 voice exists. audio.cpp models therefore use an `unknown` voice-omission policy.
@@ -360,7 +392,16 @@ The initial audio.cpp payload contains only:
 
 Speech POST requests are never automatically retried. Health, model, and voice
 GET requests may receive one bounded transient retry. Redirects are disabled
-for every request.
+for every request. Requests send `Accept-Encoding: identity`, and any response
+with a non-identity `Content-Encoding` is rejected before parsing.
+
+Health, model, voice, and error JSON bodies are limited by
+`max_metadata_bytes` before decoding. Model and voice arrays are limited by
+their configured counts, and identifiers plus required model metadata fields
+are limited by `max_identifier_characters`. An oversized or malformed required
+health/model response is an incompatible contract. Oversized or malformed
+optional voice metadata makes voices unavailable without making the provider
+incompatible.
 
 The HTTP body is read incrementally at the network layer. `Content-Length`, when
 present, is checked before reading; accumulated bytes are capped throughout.
@@ -393,7 +434,8 @@ The audio.cpp settings panel contains:
 - External base URL.
 - Managed binary path.
 - Managed `server.json` path.
-- Advanced timeout, input, response, and log bounds.
+- Advanced timeout, input, audio-response, metadata, catalog, identifier, and
+  log bounds.
 - Test Connection and Refresh Models for external mode.
 - Start & Test and Restart & Rediscover for managed mode.
 
@@ -439,7 +481,8 @@ Legacy adapters may provide real progress; audio.cpp remains indeterminate until
 its complete response is validated.
 
 Catalog and voice results carry the selected IDs and configuration revision.
-Stale results are discarded. Generation captures a request snapshot.
+They also carry the catalog revision used for voice discovery. Stale results are
+discarded. Generation captures a request snapshot.
 
 The generated result retains provider, model, voice, actual format, source text
 snapshot, and local operation ID. Switching providers does not relabel it.
@@ -488,10 +531,17 @@ There is no automatic fallback to a legacy provider or another audio.cpp model.
 Existing providers remain independently selectable and continue through their
 bridge entries.
 
-Synthesis text, raw error bodies, full server configuration, process
-environments, URL credentials, and unsanitized remote strings are never logged.
-Managed logs retain at most 200 sanitized lines, with ANSI, controls, and
-Textual/Rich markup neutralized before display.
+Chatbook-generated logs never include synthesis text, settings values, API
+keys, raw error bodies, full server configuration, process environments, URL
+credentials, or unsanitized remote strings. Settings-save logs record setting
+names and outcomes only.
+
+Managed child stdout and stderr are opaque and potentially sensitive because a
+user-provided binary may print arbitrary content. They are never copied into
+the general application log or persisted. The supervisor retains only the
+bounded in-memory ring for explicit diagnostics, neutralizes ANSI, controls,
+and Textual/Rich markup before display, and clears the ring on the next child
+start or application shutdown.
 
 ## Lifecycle and shutdown
 
@@ -517,18 +567,22 @@ Shutdown is idempotent and never waits indefinitely for native inference.
 ### Registry and bridge tests
 
 - Exact registration, alias collision, and sealing.
+- The initial provider alias map is empty and canonical IDs are never derived
+  from display labels.
 - Per-provider single materialization under concurrent first use.
 - Operation leases, retirement, identical-config no-op, and shutdown.
 - audio.cpp exclusive reconfiguration blocks new operations, preserves active
   leases, and never overlaps old and new adapters or managed children.
 - Response cleanup after success, partial consumption, cancellation, and
   consumer failure.
-- Shared legacy-host ownership and exactly-once close.
+- Provider-scoped legacy-host configuration isolation and exactly-once close.
 - Enumerated routing for every legacy internal-model form used by current call
   sites.
 - The retained legacy generation signature resolves through the bridge and
   always closes native responses.
-- Operation-scoped legacy progress callbacks are serialized and cleared.
+- Per-backend legacy operation locks prevent double initialization and serialize
+  mutable progress callbacks through complete stream consumption.
+- Progress-sink exceptions do not fail synthesis.
 - Application binding, explicit reset, and configuration replacement without
   first-config retention.
 - Instance-scoped concurrency across independent event loops.
@@ -538,14 +592,15 @@ Shutdown is idempotent and never waits indefinitely for native inference.
 - Health and model structural validation.
 - TTS-only filtering and zero-TTS-model recovery.
 - Lazy voice discovery, Server default as the initial selection, missing voice
-  endpoint, and cache revisions.
+  endpoint, catalog-revision invalidation, and stale voice-result rejection.
 - Correct payload, omitted server-default voice, unsupported speed, and
   unknown-option rejection.
 - Model refresh before a locally invalid model request and after an upstream
   `server_error`, without retrying the speech POST.
-- Bounded response reading, early `Content-Length` rejection, redirects
+- Bounded metadata and audio reading, catalog-count and identifier limits,
+  identity content encoding, early `Content-Length` rejection, redirects
   disabled, full PCM WAV validation, generic MIME acceptance, and malformed
-  audio rejection.
+  response rejection.
 - Quiet complete-response synthesis may run until the overall deadline without
   a read-inactivity failure.
 - Busy, invalid request, unavailable, incompatible, generation, timeout, and
@@ -564,7 +619,10 @@ Unit tests use fakes rather than sleeps or real ports and cover:
 - Concurrent startup.
 - Advisory preflight races.
 - Early exit and safe log capture.
-- Readiness and shutdown deadlines.
+- Readiness and shutdown deadlines, including complete pre-Ready rollback.
+- Contract failure and startup cancellation stop the exact owned child and join
+  monitor and log-drain tasks.
+- A post-Ready unhealthy child remains available for explicit restart.
 - Unexpected exit monitoring.
 - Restart on later use.
 - Refusal to adopt an existing listener.
@@ -585,8 +643,10 @@ and termination behavior without audio models.
 - An explicitly selected Server-default sentinel becomes `None`.
 - Reconfiguring disables audio.cpp actions without interrupting active audio.
 - Progress arrives through the service sink without direct backend access.
+- Progress display failures do not fail generation.
 - Format and speed restrictions restore on provider changes.
 - Discovered metadata and logs render safely.
+- Settings-save diagnostics never contain values or API keys.
 - Generated result provenance and filename remain accurate after selection
   changes.
 - Stale catalogs remain visible while generation is disabled.
@@ -604,7 +664,8 @@ CI.
 
 User documentation will cover both modes, the loopback-only managed boundary,
 the meaning of Server default, the WAV-only first milestone, configuration
-recovery, and the fact that external mode sends text to the configured server.
+recovery, the fact that external mode sends text to the configured server, and
+the potentially sensitive nature of explicitly displayed managed child logs.
 
 audio.cpp is Apache-2.0 licensed. This milestone links to and interoperates with
 a user-provided binary; it does not redistribute audio.cpp. Automatic download,
