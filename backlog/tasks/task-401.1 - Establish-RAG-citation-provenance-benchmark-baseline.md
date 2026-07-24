@@ -1,11 +1,11 @@
 ---
 id: TASK-401.1
 title: Establish RAG citation provenance benchmark baseline
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 00:43'
-updated_date: '2026-07-24 03:21'
+updated_date: '2026-07-24 04:47'
 labels:
   - rag
   - citations
@@ -28,59 +28,28 @@ Record a reproducible pre-feature performance and storage baseline so citation p
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A versioned deterministic corpus and fixture manifest exercises representative local RAG retrieval, generation, conversation persistence, and exact boundary or over-bound payload cases.
-- [ ] #2 The benchmark records exact commands, sample and warmup rules, supported hardware and provider envelope, current results, and a committed machine-readable v1 baseline.
-- [ ] #3 Numeric pass or fail budgets cover first-token regression, finalization, inspector data load, trace size, database growth, and migration throughput.
-- [ ] #4 External source refresh and network latency are measured separately from local rendering and persistence budgets.
+- [x] #1 A versioned deterministic corpus and fixture manifest exercises representative local RAG retrieval, generation, conversation persistence, and exact boundary or over-bound payload cases.
+- [x] #2 The benchmark records exact commands, sample and warmup rules, supported hardware and provider envelope, current results, and a committed machine-readable v1 baseline.
+- [x] #3 Numeric pass or fail budgets cover first-token regression, finalization, inspector data load, trace size, database growth, and migration throughput.
+- [x] #4 External source refresh and network latency are measured separately from local rendering and persistence budgets.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Add deterministic synthetic fixtures and a versioned manifest with exact-limit and over-bound cases.\n2. Add failing benchmark contract tests covering network isolation, reproducibility, baseline compatibility, and all budget families.\n3. Implement the Console/control-path benchmark runner and committed machine-readable baseline.\n4. Run focused tests and baseline measurements, document the reference environment and budgets, and self-review.\n5. Complete TASK-401.1 acceptance criteria and implementation notes after both review gates pass.\n\nADR required: yes\nADR path: backlog/decisions/024-rag-citation-provenance-and-source-resolution.md\nReason: This benchmark is the prerequisite measurement contract for the ADR-024 storage and pipeline implementation.
+1. Add deterministic synthetic fixtures and a versioned manifest with exact-limit and over-bound cases.
+2. Add failing benchmark contract tests covering network isolation, reproducibility, baseline compatibility, and all budget families.
+3. Implement the Console/control-path benchmark runner and committed machine-readable baseline.
+4. Run focused tests and baseline measurements, document the reference environment and budgets, and self-review.
+5. Complete TASK-401.1 acceptance criteria and implementation notes after both review gates pass.
+
+ADR required: yes
+ADR path: backlog/decisions/024-rag-citation-provenance-and-source-resolution.md
+Reason: This benchmark is the prerequisite measurement contract for the ADR-024 storage and pipeline implementation.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
-Added the deterministic v1 corpus/manifest, baseline and qualification runner,
-contract tests, machine-readable reference result, and benchmark report.
-Corpus records now drive each measured seam and publish coverage plus stable
-input hashes. Qualification compares first-token p95 directly with the
-compatible committed v1 result and current in-process control. A fixed 20 ms
-mock first-token floor keeps sub-millisecond scheduler/SQLite noise from
-dominating the direct percentage comparison while retaining the independent 25
-ms ceiling. Exact and one-unit-over domain values run through executable
-validators for every frozen v1 count/byte limit; the 4 MiB trace is split into
-valid 64 KiB snapshots. External resolver latency has a separate, explicit
-network mode whose result is informational and excluded from local pass/fail.
-The local runner now establishes isolated temporary config/data/home roots and
-hides inherited secrets before its first Chatbook import, then restores the
-environment. Qualification validates every evaluator-required baseline number
-before measurement and rejects missing, non-real, non-finite, zero-reference,
-or negative values with sanitized errors. Historical baselines must also
-record non-Boolean integer counts of at least 30 samples and five warmups.
-Runs below those counts remain available as quick diagnostics but are
-explicitly ineligible for a passing qualification. Production import
-diagnostics are suppressed only inside the isolated Console measurement so
-host, worktree, and generated config paths cannot leak while runner results
-and bounded errors remain visible.
-
-The updated 30-sample/5-warmup ARM64 reference run passed all six local budget
-families: first-token p95 23.292 ms, standard/maximum finalization p95
-0.038/2.264 ms, inspector cold/warm p95 0.267/0.067 ms, SQLite growth p95
-4,235,264 bytes for 4 MiB governed data, and migration median 105,503
-messages/second with zero duplicate restart rows. Qualification runs passed
-against the regenerated baseline: the final candidate first-token p95 was
-23.016 ms, and the baseline SHA-256 remained
-`51529a379dd1ca206f8d2011f2c819ea7802582d2a3761cac602dbdc1bf00b6b`.
-
-ADR required: yes
-
-ADR path:
-`backlog/decisions/024-rag-citation-provenance-and-source-resolution.md`
-
-Reason: This implements ADR-024's prerequisite measurement contract; no new
-architectural decision was introduced.
-
-The task remains In Progress with acceptance criteria unchecked pending the
-required specification and quality review gates.
+<!-- SECTION:NOTES:BEGIN -->
+Implemented the ADR-024 prerequisite benchmark as a deterministic, network-isolated harness. Added compact domain-shaped fixtures and manifest validation; real Console control-path TTFB measurement; corpus-driven finalization, inspector, storage-growth, and restart migration measurements; exact-limit acceptance and +1 rejection; direct historical and in-process qualification gates; an isolated optional external mode; strict host/config/secret isolation; malformed-baseline and statistical-eligibility checks; and a committed 30-sample/5-warmup baseline plus reproducibility documentation. Kept large boundary payloads descriptor-generated to avoid repository bloat. Verification completed with 316 integrated tests, Ruff check/format, diff checks, and passing fresh baseline/qualification runs. Modified the six planned benchmark/fixture/test/documentation artifacts. ADR: backlog/decisions/024-rag-citation-provenance-and-source-resolution.md.
+<!-- SECTION:NOTES:END -->
