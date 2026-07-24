@@ -3,6 +3,10 @@ from pathlib import Path
 
 import pytest
 
+from tldw_chatbook.RAG_Search.config_profiles import (
+    ConfigProfileManager,
+    reset_profile_manager_cache,
+)
 from tldw_chatbook.RAG_Search.simplified import config as rag_config_module
 from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
 from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
@@ -11,6 +15,28 @@ from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
     load_library_rag_defaults,
     validate_library_rag_defaults,
 )
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_profile_manager(tmp_path, monkeypatch):
+    """Keep validate_library_rag_defaults's profile read inside tmp_path.
+
+    validate_library_rag_defaults routes hard-error checks through the
+    adapter's hard_config_errors(), which reads the active profile via
+    get_profile_manager(). Left unpatched, that resolves to the real
+    ~/.local/share/tldw_cli/.../rag_profiles dir (get_user_data_dir's
+    Path.home() is frozen at import time, before any HOME patching a test
+    might do) -- reading real files and mkdir-ing a real tree as a side
+    effect of running this test file. Point the adapter's manager/active-id
+    seams at a tmp-dir-backed manager instead, for every test here.
+    """
+    mgr = ConfigProfileManager(profiles_dir=tmp_path / "rag_profiles")
+    import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+
+    monkeypatch.setattr(ad, "_manager", lambda: mgr, raising=False)
+    monkeypatch.setattr(ad, "_active_profile_id", lambda: "hybrid_basic", raising=False)
+    yield
+    reset_profile_manager_cache()
 
 
 def _patch_rag_settings(monkeypatch, rag_settings):
@@ -266,3 +292,20 @@ def test_library_rag_public_functions_use_google_style_docstrings():
         assert doc is not None
         assert "Args:" in doc
         assert "Returns:" in doc
+
+
+def test_hard_config_errors_fails_closed_when_the_profile_fetch_raises(monkeypatch):
+    """A profile-manager blowup while reading the active profile must not
+    escape hard_config_errors as a raised exception -- it must come back as
+    a single fail-CLOSED hard error, same as the "no active profile" case.
+    """
+    import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+
+    def _raise():
+        raise RuntimeError("profiles dir unreadable")
+
+    monkeypatch.setattr(ad, "_manager", _raise, raising=False)
+
+    errors = ad.hard_config_errors(SettingsLibraryRagDefaults())
+
+    assert errors == ["Could not load the active profile for validation."]
