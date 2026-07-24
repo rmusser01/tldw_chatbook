@@ -41,6 +41,33 @@ async def test_read_traversal_and_bad_paths_rejected(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_intermediate_symlink_dir_yields_not_found_not_unsafe(tmp_path):
+    # Qodo/PR#814 hardening: an intermediate symlinked directory inside the
+    # bundle must never act as an existence/size oracle -- an escape that
+    # resolves to a REAL file outside the bundle must raise the SAME
+    # "local_skill_file_not_found" error as an escape that resolves to
+    # nothing, never the "unsafe local skill path" message a downstream
+    # containment check would otherwise leak only when the target exists.
+    svc = _svc(tmp_path)
+    d = await _make_skill(svc)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("top secret\n", encoding="utf-8")
+    link = d / "link"
+    link.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError) as existing_exc:
+        await svc.read_skill_file("demo", "link/secret.md")
+    with pytest.raises(ValueError) as missing_exc:
+        await svc.read_skill_file("demo", "link/nonexistent.md")
+
+    assert "local_skill_file_not_found" in str(existing_exc.value)
+    assert "local_skill_file_not_found" in str(missing_exc.value)
+    assert "unsafe" not in str(existing_exc.value)
+    assert "unsafe" not in str(missing_exc.value)
+
+
+@pytest.mark.asyncio
 async def test_read_binary_returns_refusal_not_bytes(tmp_path):
     svc = _svc(tmp_path)
     await _make_skill(svc)
@@ -82,6 +109,33 @@ async def test_read_missing_file_clean_error(tmp_path):
     await _make_skill(svc)
     with pytest.raises(ValueError, match="local_skill_file_not_found"):
         await svc.read_skill_file("demo", "references/nope.md")
+
+
+@pytest.mark.asyncio
+async def test_read_skill_md_body_is_readable(tmp_path):
+    # Qodo/PR#814: the spec says the skill body IS readable through this
+    # seam -- validate_supporting_file_path's case-insensitive "skill.md"
+    # rejection must not apply to the exact canonical body path.
+    svc = _svc(tmp_path)
+    await _make_skill(svc)
+    out = await svc.read_skill_file("demo", "SKILL.md")
+    assert out["content"] == "---\nname: demo\n---\nbody\n"
+    assert out["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_read_nested_or_wrongcase_skill_md_still_rejected(tmp_path):
+    # Only the EXACT "SKILL.md" top-level path is exempted -- a nested
+    # shadow file and any-case variants still go through the validator and
+    # are rejected exactly as before (the validator's case-insensitive
+    # "skill.md" basename check, not a not-found -- these paths never reach
+    # the filesystem).
+    svc = _svc(tmp_path)
+    await _make_skill(svc)
+    with pytest.raises(ValueError):
+        await svc.read_skill_file("demo", "references/SKILL.md")
+    with pytest.raises(ValueError):
+        await svc.read_skill_file("demo", "skill.md")
 
 
 @pytest.mark.asyncio

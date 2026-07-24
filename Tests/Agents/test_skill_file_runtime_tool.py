@@ -202,6 +202,62 @@ def test_skill_file_reader_returning_non_mapping_fails_the_call_not_the_run(
     assert "skill_file" in refusal
 
 
+def test_skill_file_empty_authorized_schema_absent_and_falls_through(tmp_path):
+    # Qodo/PR#814: schema pinning (~agent_service.py:356-360) already
+    # requires bindings.authorized to be non-empty, but the OLD
+    # LoopDeps.read_skill_file wiring only checked bindings is not None --
+    # so bindings with an EMPTY authorized set (no skill forked yet in this
+    # run) still reached the named-refusal dispatch for a hallucinated
+    # call, leaking the tool's existence to an undisclosed name. Wiring
+    # must use the SAME predicate as schema pinning: empty authorized falls
+    # through to the generic "Tool not permitted" path, identical to
+    # bindings=None.
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    reg = _registry_with_builtins()
+
+    def reader(skill_name, path):
+        raise AssertionError("reader must not be called with empty authorized")
+
+    bindings = SkillFileBindings(authorized=set(), reader=reader)
+
+    script = [
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": _skill_file_fence("demo", "references/api.md")
+                    }
+                }
+            ]
+        },
+        {"choices": [{"message": {"content": "Done."}}]},
+    ]
+    calls = []
+
+    def chat_call(**kwargs):
+        calls.append(kwargs)
+        return script.pop(0)
+
+    service = AgentService(db, reg, chat_call=chat_call, skill_file_bindings=bindings)
+    run_id, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "go"}],
+        config=_base_config(),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+
+    first_system_content = calls[0]["messages_payload"][0]["content"]
+    assert SKILL_FILE_TOOL_NAME not in first_system_content
+
+    run = db.get_run(run_id)
+    results = [s for s in run["steps"] if s["kind"] == "tool_result"]
+    # Falls through to the SAME permission-gate path any other undisclosed/
+    # disallowed tool name hits -- not the skill_file-specific
+    # "'demo' is not active in this run" refusal.
+    assert "Tool not permitted: skill_file" in results[0]["result"]
+
+
 def test_skill_file_bindings_none_schema_absent_and_falls_through(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_builtins()

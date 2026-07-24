@@ -328,6 +328,25 @@ class SkillsScopeService:
         Local-only by design: the server backend has no read_skill_file and
         every runtime skill path is already hardcoded local. Rejecting server
         mode here beats surfacing a raw AttributeError from _call.
+
+        Args:
+            skill_name: Canonical skill name.
+            relative_path: POSIX relative path within the skill's bundle
+                (or the literal ``"SKILL.md"`` for the body itself).
+            mode: Backend selector; only ``None``/``SkillsBackend.LOCAL`` is
+                accepted (defaults to local, unlike this class's other
+                methods, which default to server).
+
+        Returns:
+            ``{"content", "truncated", "size"}``; a binary file yields a
+            clean refusal string as ``content`` (never bytes, never raises).
+
+        Raises:
+            ValueError: ``mode`` resolves to server (``"skill_file reads
+                are local-only"``), the local backend is unavailable, or
+                the underlying local read rejects the path/skill (bad
+                path, unknown skill, or missing file).
+            SkillTrustBlockedError: Skill not currently trusted.
         """
         normalized_mode = self._normalize_mode(mode) if mode is not None else SkillsBackend.LOCAL
         if normalized_mode is not SkillsBackend.LOCAL:

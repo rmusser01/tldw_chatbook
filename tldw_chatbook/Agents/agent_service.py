@@ -608,8 +608,17 @@ class AgentService:
                 else (lambda s: None)
             ),
             review_tool_calls=self.review_tool_calls,
+            # Qodo/PR#814: wired under the SAME predicate as the schema pin
+            # above (~:356-360) -- bindings with an EMPTY authorized set
+            # must never reach the named-refusal dispatch either; a
+            # hallucinated call for an unpinned tool falls through to the
+            # generic "Tool not permitted" path like any other undisclosed
+            # tool name.
             read_skill_file=(
-                read_skill_file_tool if self.skill_file_bindings is not None else None
+                read_skill_file_tool
+                if self.skill_file_bindings is not None
+                and self.skill_file_bindings.authorized
+                else None
             ),
         )
         try:

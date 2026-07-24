@@ -1239,17 +1239,23 @@ class LocalSkillsService:
     async def read_skill_file(
         self, skill_name: str, relative_path: str
     ) -> dict[str, Any]:
-        """Read one bundled supporting file of a trusted skill, contained + capped.
+        """Read one bundled file of a trusted skill, contained + capped.
 
         The runtime `skill_file` tool's single backing seam. Order is
         load-bearing: policy gate, per-READ trust re-verification (a skill
         revoked mid-run stops being readable immediately), path validation,
-        then the same containment discipline `_read_text_preserving_newlines`
-        already applies to the skill body.
+        containment (checked before any filesystem stat, so an escape can
+        never be distinguished from a genuinely missing file), then the same
+        read discipline `_read_text_preserving_newlines` already applies to
+        the skill body. The exact canonical body path (``"SKILL.md"``) is
+        readable through this seam too -- only that literal path skips the
+        supporting-file validator's case-insensitive rejection; any nested
+        or differently-cased variant still goes through it unchanged.
 
         Args:
             skill_name: Canonical skill name.
-            relative_path: POSIX relative path within the skill's bundle.
+            relative_path: POSIX relative path within the skill's bundle
+                (or the literal ``"SKILL.md"`` for the body itself).
 
         Returns:
             ``{"content", "truncated", "size"}``; a binary file yields a
@@ -1265,11 +1271,32 @@ class LocalSkillsService:
 
         self._enforce("skills.read_file.launch.local")
         self._require_trusted_skill(skill_name)
-        validate_supporting_file_path(relative_path)
+        # The canonical body path is exempted from the supporting-file
+        # validator (which otherwise rejects any-case "skill.md" as a
+        # shadow-body attempt) -- the spec says the body IS readable
+        # through this seam. Exact match only: a nested or wrong-case
+        # variant (e.g. "references/SKILL.md", "skill.md") still goes
+        # through the validator and is rejected exactly as before.
+        # Containment is still enforced below via the same contained read.
+        if relative_path != _SKILL_FILENAME:
+            validate_supporting_file_path(relative_path)
         skill_dir = self._skill_dir(skill_name)
         if not skill_dir.is_dir():
             raise ValueError(f"local_skill_not_found:{skill_name}")
         path = skill_dir / PurePosixPath(relative_path)
+        # Containment is checked BEFORE any is_file()/stat() touches the
+        # candidate path (Qodo/PR#814 hardening): an intermediate symlinked
+        # directory planted inside the bundle between the trust re-scan and
+        # this read would otherwise let is_file()/stat() follow it and act
+        # as an existence/size oracle for paths outside the bundle -- an
+        # escape that resolves to a real file would raise a DIFFERENT error
+        # ("unsafe local skill path" from the read below) than a genuinely
+        # missing one. Checking containment first means every path whose
+        # resolution escapes skill_dir short-circuits to the SAME
+        # "local_skill_file_not_found" error as a missing file, before
+        # is_file()/stat() ever run on it.
+        if get_safe_relative_path(path, skill_dir) is None:
+            raise ValueError(f"local_skill_file_not_found:{relative_path}")
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"local_skill_file_not_found:{relative_path}")
         raw_size = path.stat().st_size
