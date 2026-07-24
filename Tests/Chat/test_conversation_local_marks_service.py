@@ -76,6 +76,22 @@ def test_local_marks_migrate_from_v16_to_v17_with_expected_schema(tmp_path):
     conn.execute("DROP TRIGGER IF EXISTS conversations_sync_delete")
     conn.execute("DROP TRIGGER IF EXISTS conversations_sync_undelete")
     conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
+    # A V16 fixture must not retain tables introduced by the V24->V25 migration.
+    for table in (
+        "rag_artifact_owner_operations",
+        "rag_artifact_owner_leases",
+        "rag_source_observations",
+        "rag_message_trace_owners",
+        "rag_trace_evidence_refs",
+        "rag_answer_attempt_payloads",
+        "rag_evidence_runs",
+        "rag_citation_traces",
+        "rag_evidence_snapshots",
+        "rag_payload_tombstones",
+        "rag_legacy_migration_journal",
+        "rag_identity_context",
+    ):
+        conn.execute(f"DROP TABLE {table}")
     conn.execute(
         """
         UPDATE db_schema_version
