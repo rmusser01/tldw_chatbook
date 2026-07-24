@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 """
 Full integration tests for Code Repo Copy/Paste feature.
 
@@ -12,6 +13,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.CodeRepoCopyPasteWindow import CodeRepoCopyPasteWindow
 from tldw_chatbook.Utils.github_api_client import GitHubAPIError
+
+# Imported so pytest registers the shared fixture for this module.
+from Tests.textual_test_utils import app_pilot  # noqa: F401
 
 
 class CodeRepoTestApp(TldwCli):
