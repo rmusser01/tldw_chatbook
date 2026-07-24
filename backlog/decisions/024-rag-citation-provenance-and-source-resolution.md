@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Task: TASK-401 — Canonical RAG citation provenance epic
+Related Task: TASK-553 — Canonical RAG citation provenance epic
 Supersedes: N/A
 
 ## Decision

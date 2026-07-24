@@ -1,5 +1,5 @@
 ---
-id: TASK-401.8
+id: TASK-553.8
 title: Add crash safe artifact citation ownership
 status: Done
 assignee:
@@ -12,13 +12,13 @@ labels:
   - artifacts
   - reliability
 dependencies:
-  - TASK-401.5
-  - TASK-401.6
+  - TASK-553.5
+  - TASK-553.6
 references:
   - Docs/superpowers/specs/2026-07-23-rag-citation-provenance-design.md
   - Docs/superpowers/plans/2026-07-23-rag-citation-provenance-foundation.md
   - backlog/decisions/024-rag-citation-provenance-and-source-resolution.md
-parent_task_id: TASK-401
+parent_task_id: TASK-553
 priority: high
 ---
 

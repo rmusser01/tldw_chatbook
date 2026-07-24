@@ -1,5 +1,5 @@
 ---
-id: TASK-401.10
+id: TASK-553.10
 title: Make citation lifecycle retention tests clock-independent
 status: Done
 assignee:
@@ -11,7 +11,7 @@ labels:
   - citations
   - tests
 dependencies: []
-parent_task_id: TASK-401
+parent_task_id: TASK-553
 priority: high
 ---
 

@@ -1,5 +1,5 @@
 ---
-id: TASK-401.7
+id: TASK-553.7
 title: Persist bounded citation source observations
 status: Done
 assignee:
@@ -12,14 +12,14 @@ labels:
   - resolvers
   - database
 dependencies:
-  - TASK-401.4
-  - TASK-401.3
-  - TASK-401.5
+  - TASK-553.4
+  - TASK-553.3
+  - TASK-553.5
 references:
   - Docs/superpowers/specs/2026-07-23-rag-citation-provenance-design.md
   - Docs/superpowers/plans/2026-07-23-rag-citation-provenance-foundation.md
   - backlog/decisions/024-rag-citation-provenance-and-source-resolution.md
-parent_task_id: TASK-401
+parent_task_id: TASK-553
 priority: medium
 ---
 

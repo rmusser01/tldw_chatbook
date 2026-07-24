@@ -10,7 +10,7 @@
 
 **Spec:** `Docs/superpowers/specs/2026-07-23-rag-citation-provenance-design.md`
 
-**Backlog:** `TASK-401`, with foundation children `TASK-401.1` through `TASK-401.9`
+**Backlog:** `TASK-553`, with foundation children `TASK-553.1` through `TASK-553.9`
 
 **ADR required:** yes
 
@@ -44,7 +44,7 @@ Those are separate plans because they cross different runtime, UI, and server ow
 source .venv/bin/activate
 ```
 
-- At the approved baseline, ChaChaNotes is schema v25. Immediately before `TASK-401.4`, rebase and reserve the next free version. Use v25→v26 only if v25 is still current; rename the SQL file and migration symbols consistently if another migration lands first.
+- At the approved baseline, ChaChaNotes is schema v25. Immediately before `TASK-553.4`, rebase and reserve the next free version. Use v25→v26 only if v25 is still current; rename the SQL file and migration symbols consistently if another migration lands first.
 - New provenance tables are local-only in this plan. Do not add them to existing sync triggers, FTS tables, Library indexing, or RAG ingestion.
 - Keep `EvidenceReference`, `EvidenceBundle`, `CitationRef`, current server citation arrays, and `chat_rag_context.json` readable. Do not mutate them into falsely complete traces.
 - Store no raw query, answer, snapshot, title, source identity, locator, lineage, content hash, or comparison fingerprint in logs or immutable aggregate JSON.
@@ -76,18 +76,18 @@ source .venv/bin/activate
 ## Dependency order
 
 ```text
-TASK-401.1 benchmark
-  -> TASK-401.2 trace + identity contracts
-    -> TASK-401.3 locator contracts
-      -> TASK-401.4 schema + sealed transaction
-        -> TASK-401.5 idempotency + body binding
-          -> TASK-401.6 revocation + retention + GC
-          -> TASK-401.7 current observations
-          -> TASK-401.8 artifact owner handshake
-          -> TASK-401.9 legacy migration
+TASK-553.1 benchmark
+  -> TASK-553.2 trace + identity contracts
+    -> TASK-553.3 locator contracts
+      -> TASK-553.4 schema + sealed transaction
+        -> TASK-553.5 idempotency + body binding
+          -> TASK-553.6 revocation + retention + GC
+          -> TASK-553.7 current observations
+          -> TASK-553.8 artifact owner handshake
+          -> TASK-553.9 legacy migration
 ```
 
-`TASK-401.2` defines pure namespace and fingerprint behavior before schema work. `TASK-401.4` then persists the stable local identity context and consumes those contracts. `TASK-401.7` waits for `401.5` because observation keys use the complete `TraceNamespace`. `TASK-401.8` and `401.9` wait for lifecycle behavior because leases and migrated payloads must participate in collection and anti-resurrection rules.
+`TASK-553.2` defines pure namespace and fingerprint behavior before schema work. `TASK-553.4` then persists the stable local identity context and consumes those contracts. `TASK-553.7` waits for `553.5` because observation keys use the complete `TraceNamespace`. `TASK-553.8` and `553.9` wait for lifecycle behavior because leases and migrated payloads must participate in collection and anti-resurrection rules.
 
 ## Frozen v1 bounds
 
@@ -115,7 +115,7 @@ The benchmark corpus contains exact-limit cases and one-unit-over rejection case
 
 ## Stable identity and secret ownership
 
-- `TraceNamespace` is part of `TASK-401.2`, not deferred until after persistence. It includes the local profile, origin namespace, authority, optional authenticated tenant, and wire version needed by ADR-024.
+- `TraceNamespace` is part of `TASK-553.2`, not deferred until after persistence. It includes the local profile, origin namespace, authority, optional authenticated tenant, and wire version needed by ADR-024.
 - Local persistence uses a singleton `rag_identity_context` row containing random 128-bit `profile_id`, `local_authority_id`, and `fingerprint_key_id`. These survive restart and DB copy. They are never derived from the existing inconsistently-used `client_id`.
 - `CitationFingerprintKeyProvider` loads the key identified by `fingerprint_key_id`. The production adapter follows the repository's existing keyring abstraction under service `tldw_chatbook.citation-provenance.v1`; tests inject an in-memory provider. It may provision a new secret only when no fingerprint-bearing canonical row exists. A copied/restored DB whose prior key is missing fails closed rather than silently replacing the key.
 - If the key is absent or keyring is unavailable, canonical reads still work, but writes, migration, and reconciliation fail closed with `fingerprint_key_unavailable`. There is no public/default digest.
@@ -144,7 +144,7 @@ Repository `CHECK`s and model validation use the same enum and size constants. G
 
 ---
 
-### Task 1: Publish the prerequisite benchmark (`TASK-401.1`)
+### Task 1: Publish the prerequisite benchmark (`TASK-553.1`)
 
 **Files:**
 
@@ -168,11 +168,11 @@ Repository `CHECK`s and model validation use the same enum and size constants. G
 - No network access in the local benchmark mode.
 - Qualification verifies fixture/schema versions and the documented environment envelope, compares candidate work with the unchanged no-provenance control path in-process, and uses the committed v1 result as the historical reference. An incompatible environment may emit measurements but cannot claim a passing qualification.
 
-- [ ] **Step 1: Put `TASK-401.1` in progress and record its task-local plan**
+- [ ] **Step 1: Put `TASK-553.1` in progress and record its task-local plan**
 
 ```bash
-backlog task edit 401.1 -s "In Progress"
-backlog task edit 401.1 --plan "1. Add deterministic fixtures and manifest\n2. Add a network-free benchmark runner\n3. Record baseline results and numeric budgets\n4. Add reproducibility tests and documentation"
+backlog task edit 553.1 -s "In Progress"
+backlog task edit 553.1 --plan "1. Add deterministic fixtures and manifest\n2. Add a network-free benchmark runner\n3. Record baseline results and numeric budgets\n4. Add reproducibility tests and documentation"
 ```
 
 - [ ] **Step 2: Write failing manifest and runner contract tests**
@@ -263,11 +263,11 @@ git add Tests/fixtures/rag_citation_provenance/manifest_v1.json \
 git commit -m "test(rag): establish citation provenance baseline"
 ```
 
-Update all `TASK-401.1` acceptance criteria, add the recorded results to Implementation Notes, and mark it `Done`.
+Update all `TASK-553.1` acceptance criteria, add the recorded results to Implementation Notes, and mark it `Done`.
 
 ---
 
-### Task 2: Define canonical trace contracts (`TASK-401.2`)
+### Task 2: Define canonical trace contracts (`TASK-553.2`)
 
 **Files:**
 
@@ -399,11 +399,11 @@ git add tldw_chatbook/Chat/citation_trace_models.py \
 git commit -m "feat(rag): define canonical citation trace contracts"
 ```
 
-Complete `TASK-401.2` hygiene before proceeding.
+Complete `TASK-553.2` hygiene before proceeding.
 
 ---
 
-### Task 3: Define inert source locators and inventory (`TASK-401.3`)
+### Task 3: Define inert source locators and inventory (`TASK-553.3`)
 
 **Files:**
 
@@ -495,11 +495,11 @@ git add tldw_chatbook/Chat/citation_source_locators.py \
 git commit -m "feat(rag): define governed citation source locators"
 ```
 
-Complete `TASK-401.3` hygiene.
+Complete `TASK-553.3` hygiene.
 
 ---
 
-### Task 4: Add schema and atomic sealed persistence (`TASK-401.4`)
+### Task 4: Add schema and atomic sealed persistence (`TASK-553.4`)
 
 **Files:**
 
@@ -565,7 +565,7 @@ Add `[rag_citations].canonical_writes_enabled = false` to defaults and typed con
 - every canonical write returns a bounded disabled/key-unavailable result before opening a transaction when the switch is false or the configured key cannot be loaded
 - no key is generated or fetched during module import
 
-`TASK-401.8` and `TASK-401.9` separately test that their own reconciliation/migration entry points honor the same policy before those services are marked Done.
+`TASK-553.8` and `TASK-553.9` separately test that their own reconciliation/migration entry points honor the same policy before those services are marked Done.
 
 When enabled, a composition root loads the 256-bit secret for the row's `fingerprint_key_id` through the injected provider. It may create one only after a repository check proves there are no fingerprint-bearing canonical rows. A missing key beside existing owners, tombstones, migration journal entries, or imported fingerprints is `fingerprint_key_unavailable`, not an implicit rekey. The secret never enters SQLite, logs, config files, trace JSON, or benchmark results.
 
@@ -626,7 +626,7 @@ python Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
   --baseline Docs/Development/RAG/citation-provenance-baseline-v1.json \
   --samples 30 \
   --warmups 5 \
-  --output /tmp/rag-citation-storage-task-401-4.json
+  --output /tmp/rag-citation-storage-task-553-4.json
 ```
 
 Record results in task notes. Do not edit the v1 baseline.
@@ -649,11 +649,11 @@ git add tldw_chatbook/DB/migrations/chachanotes_v*_citation_provenance.sql \
 git commit -m "feat(rag): persist sealed citation traces atomically"
 ```
 
-Complete `TASK-401.4` hygiene.
+Complete `TASK-553.4` hygiene.
 
 ---
 
-### Task 5: Add namespaced identity and idempotency (`TASK-401.5`)
+### Task 5: Add namespaced identity and idempotency (`TASK-553.5`)
 
 **Files:**
 
@@ -668,7 +668,7 @@ Complete `TASK-401.4` hygiene.
 
 - idempotency keys for local retry, server wire identity, owner links, and cache reuse
 - imported and Sync identity constructors remain pure dormant contracts; portable import and Sync writes are out of scope
-- identity comparisons always use the `CitationFingerprintCodec` and stable context defined in `TASK-401.2`/`401.4`
+- identity comparisons always use the `CitationFingerprintCodec` and stable context defined in `TASK-553.2`/`553.4`
 
 - [ ] **Step 1: Extend failing identity and repository tests**
 
@@ -726,11 +726,11 @@ git add tldw_chatbook/Chat/citation_trace_identity.py \
 git commit -m "feat(rag): make citation persistence idempotent"
 ```
 
-Complete `TASK-401.5` hygiene.
+Complete `TASK-553.5` hygiene.
 
 ---
 
-### Task 6: Add revocation, retention, tombstones, and GC (`TASK-401.6`)
+### Task 6: Add revocation, retention, tombstones, and GC (`TASK-553.6`)
 
 **Files:**
 
@@ -805,11 +805,11 @@ git add tldw_chatbook/Chat/citation_payload_lifecycle.py \
 git commit -m "feat(rag): govern citation payload lifecycle"
 ```
 
-Complete `TASK-401.6` hygiene.
+Complete `TASK-553.6` hygiene.
 
 ---
 
-### Task 7: Persist bounded current-source observations (`TASK-401.7`)
+### Task 7: Persist bounded current-source observations (`TASK-553.7`)
 
 **Files:**
 
@@ -856,11 +856,11 @@ git add tldw_chatbook/Chat/citation_source_locators.py \
 git commit -m "feat(rag): persist bounded citation observations"
 ```
 
-Complete `TASK-401.7` hygiene.
+Complete `TASK-553.7` hygiene.
 
 ---
 
-### Task 8: Add crash-safe artifact owner leases (`TASK-401.8`)
+### Task 8: Add crash-safe artifact owner leases (`TASK-553.8`)
 
 **Files:**
 
@@ -963,11 +963,11 @@ git add tldw_chatbook/Chat/citation_artifact_ownership.py \
 git commit -m "feat(rag): reconcile artifact citation ownership"
 ```
 
-Complete `TASK-401.8` hygiene.
+Complete `TASK-553.8` hygiene.
 
 ---
 
-### Task 9: Migrate legacy citation sidecars safely (`TASK-401.9`)
+### Task 9: Migrate legacy citation sidecars safely (`TASK-553.9`)
 
 **Files:**
 
@@ -1077,7 +1077,7 @@ python Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
   --baseline Docs/Development/RAG/citation-provenance-baseline-v1.json \
   --samples 30 \
   --warmups 5 \
-  --output /tmp/rag-citation-migration-task-401-9.json
+  --output /tmp/rag-citation-migration-task-553-9.json
 ```
 
 Verify ≥100 messages/second on the documented machine and zero duplicates after interruption/restart.
@@ -1099,7 +1099,7 @@ git add tldw_chatbook/Chat/citation_legacy_migration.py \
 git commit -m "feat(rag): migrate legacy citation sidecars safely"
 ```
 
-Complete `TASK-401.9` hygiene.
+Complete `TASK-553.9` hygiene.
 
 ---
 

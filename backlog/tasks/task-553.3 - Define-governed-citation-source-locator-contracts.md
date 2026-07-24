@@ -1,5 +1,5 @@
 ---
-id: TASK-401.3
+id: TASK-553.3
 title: Define governed citation source locator contracts
 status: Done
 assignee:
@@ -12,12 +12,12 @@ labels:
   - security
   - resolvers
 dependencies:
-  - TASK-401.2
+  - TASK-553.2
 references:
   - Docs/superpowers/specs/2026-07-23-rag-citation-provenance-design.md
   - Docs/superpowers/plans/2026-07-23-rag-citation-provenance-foundation.md
   - backlog/decisions/024-rag-citation-provenance-and-source-resolution.md
-parent_task_id: TASK-401
+parent_task_id: TASK-553
 priority: high
 ---
 

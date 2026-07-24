@@ -1,5 +1,5 @@
 ---
-id: TASK-401.11
+id: TASK-553.11
 title: Make legacy world-book migration fixtures pre-v25 accurate
 status: Done
 assignee: []
@@ -7,6 +7,7 @@ created_date: '2026-07-24 16:36'
 updated_date: '2026-07-24 16:39'
 labels: []
 dependencies: []
+parent_task_id: TASK-553
 ---
 
 ## Description

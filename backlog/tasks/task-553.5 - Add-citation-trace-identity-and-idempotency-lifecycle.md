@@ -1,5 +1,5 @@
 ---
-id: TASK-401.5
+id: TASK-553.5
 title: Add citation trace identity and idempotency lifecycle
 status: Done
 assignee:
@@ -12,12 +12,12 @@ labels:
   - identity
   - reliability
 dependencies:
-  - TASK-401.4
+  - TASK-553.4
 references:
   - Docs/superpowers/specs/2026-07-23-rag-citation-provenance-design.md
   - Docs/superpowers/plans/2026-07-23-rag-citation-provenance-foundation.md
   - backlog/decisions/024-rag-citation-provenance-and-source-resolution.md
-parent_task_id: TASK-401
+parent_task_id: TASK-553
 priority: high
 ---
 

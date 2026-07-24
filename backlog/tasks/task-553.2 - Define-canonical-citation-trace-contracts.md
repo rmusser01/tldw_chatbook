@@ -1,5 +1,5 @@
 ---
-id: TASK-401.2
+id: TASK-553.2
 title: Define canonical citation trace contracts
 status: Done
 assignee:
@@ -12,12 +12,12 @@ labels:
   - contracts
   - foundation
 dependencies:
-  - TASK-401.1
+  - TASK-553.1
 references:
   - Docs/superpowers/specs/2026-07-23-rag-citation-provenance-design.md
   - Docs/superpowers/plans/2026-07-23-rag-citation-provenance-foundation.md
   - backlog/decisions/024-rag-citation-provenance-and-source-resolution.md
-parent_task_id: TASK-401
+parent_task_id: TASK-553
 priority: high
 ---
 

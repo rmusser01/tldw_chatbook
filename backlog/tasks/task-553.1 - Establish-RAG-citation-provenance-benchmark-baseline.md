@@ -1,5 +1,5 @@
 ---
-id: TASK-401.1
+id: TASK-553.1
 title: Establish RAG citation provenance benchmark baseline
 status: Done
 assignee:
@@ -16,7 +16,7 @@ references:
   - Docs/superpowers/specs/2026-07-23-rag-citation-provenance-design.md
   - Docs/superpowers/plans/2026-07-23-rag-citation-provenance-foundation.md
   - backlog/decisions/024-rag-citation-provenance-and-source-resolution.md
-parent_task_id: TASK-401
+parent_task_id: TASK-553
 priority: high
 ---
 
@@ -41,7 +41,7 @@ Record a reproducible pre-feature performance and storage baseline so citation p
 2. Add failing benchmark contract tests covering network isolation, reproducibility, baseline compatibility, and all budget families.
 3. Implement the Console/control-path benchmark runner and committed machine-readable baseline.
 4. Run focused tests and baseline measurements, document the reference environment and budgets, and self-review.
-5. Complete TASK-401.1 acceptance criteria and implementation notes after both review gates pass.
+5. Complete TASK-553.1 acceptance criteria and implementation notes after both review gates pass.
 
 ADR required: yes
 ADR path: backlog/decisions/024-rag-citation-provenance-and-source-resolution.md

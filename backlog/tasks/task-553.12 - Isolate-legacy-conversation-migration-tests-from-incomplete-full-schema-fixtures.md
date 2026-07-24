@@ -1,5 +1,5 @@
 ---
-id: TASK-401.12
+id: TASK-553.12
 title: >-
   Isolate legacy conversation migration tests from incomplete full-schema
   fixtures
@@ -9,6 +9,7 @@ created_date: '2026-07-24 16:42'
 updated_date: '2026-07-24 16:48'
 labels: []
 dependencies: []
+parent_task_id: TASK-553
 ---
 
 ## Description
@@ -35,5 +36,5 @@ Make legacy conversation parity tests exercise the specific v12-to-v14 conversat
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Replaced full CharactersRAGDB initialization for the handcrafted v12/v13 conversation fixtures with a context-managed test harness built around CharactersRAGDB.__new__. The harness opens a real sqlite3.Row connection and invokes only the selected production v12-to-v13 or v13-to-v14 migration. The three tests now read migrated conversation rows directly, preserving exact scope, assistant-identity, runtime/discovery backfill expectations and the no-conversation-sync-log assertion. No production code, migration validation, or unrelated schema was changed. ADR required: no; ADR path: N/A; Reason: test-only isolation of existing migration contracts with no architecture, schema, storage, or runtime boundary decision. TDD evidence: the three focused tests failed before the correction when full initialization reached v20 and rejected missing world_book_entries, then passed through the direct harness. Verification: focused regressions 3 passed; both affected files 18 passed; full Tests/ChaChaNotesDB/ plus Tests/DB/ slice 332 passed; Ruff lint and format checks passed; git diff --check passed. TASK-401.11 and TASK-401.12 are intentionally standalone because the repository contains duplicate TASK-401 IDs and an explicit parent reference resolves ambiguously; both tasks now have separate acceptance-criterion checkboxes.
+Replaced full CharactersRAGDB initialization for the handcrafted v12/v13 conversation fixtures with a context-managed test harness built around CharactersRAGDB.__new__. The harness opens a real sqlite3.Row connection and invokes only the selected production v12-to-v13 or v13-to-v14 migration. The three tests now read migrated conversation rows directly, preserving exact scope, assistant-identity, runtime/discovery backfill expectations and the no-conversation-sync-log assertion. No production code, migration validation, or unrelated schema was changed. ADR required: no; ADR path: N/A; Reason: test-only isolation of existing migration contracts with no architecture, schema, storage, or runtime boundary decision. TDD evidence: the three focused tests failed before the correction when full initialization reached v20 and rejected missing world_book_entries, then passed through the direct harness. Verification: focused regressions 3 passed; both affected files 18 passed; full Tests/ChaChaNotesDB/ plus Tests/DB/ slice 332 passed; Ruff lint and format checks passed; git diff --check passed. Before this remediation, TASK-553.11's parent link had been removed after the duplicate root was identified, while TASK-553.12 was recorded standalone. TASK-554 resolves that ambiguity and assigns both completed maintenance tasks to the TASK-553 citation epic without changing their implementation.
 <!-- SECTION:NOTES:END -->
