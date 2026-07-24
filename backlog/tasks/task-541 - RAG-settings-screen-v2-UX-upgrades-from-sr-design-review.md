@@ -2,7 +2,7 @@
 id: TASK-541
 title: >-
   RAG settings screen v2 UX upgrades (from sr design review)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-24 03:30'
 updated_date: '2026-07-24 03:30'
