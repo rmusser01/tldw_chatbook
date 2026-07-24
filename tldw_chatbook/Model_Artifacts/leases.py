@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -234,21 +233,35 @@ class ArtifactOperationLease:
         if handle is None:
             return
         try:
-            try:
-                portalocker.unlock(handle)
-            except Exception as error:
-                raise ArtifactLeaseError(
-                    f"failed releasing {self.mode.value} lease "
-                    f"for {self.key.artifact_id}"
-                ) from error
-        finally:
+            portalocker.unlock(handle)
+        except Exception as error:
+            release_error = ArtifactLeaseError(
+                f"failed releasing {self.mode.value} lease for {self.key.artifact_id}"
+            )
             _close_handle(
                 handle,
-                primary_error=sys.exception(),
+                primary_error=release_error,
                 failure_message=(
                     f"failed closing {self.mode.value} lease for {self.key.artifact_id}"
                 ),
             )
+            raise release_error from error
+        except BaseException as error:
+            _close_handle(
+                handle,
+                primary_error=error,
+                failure_message=(
+                    f"failed closing {self.mode.value} lease for {self.key.artifact_id}"
+                ),
+            )
+            raise
+        _close_handle(
+            handle,
+            primary_error=None,
+            failure_message=(
+                f"failed closing {self.mode.value} lease for {self.key.artifact_id}"
+            ),
+        )
 
     def __enter__(self) -> ArtifactOperationLease:
         return self.acquire()

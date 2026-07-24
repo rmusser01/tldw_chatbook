@@ -316,6 +316,37 @@ def test_release_raises_stable_error_without_masking_unlock_failure(
     assert lease.acquired is False
 
 
+def test_release_does_not_attach_close_failure_to_ambient_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    close_failure = OSError("close failed")
+    ambient_error = ValueError("unrelated caller error")
+
+    class Handle:
+        def close(self) -> None:
+            raise close_failure
+
+    handle = Handle()
+    monkeypatch.setattr(Path, "open", lambda *args, **kwargs: handle)
+    monkeypatch.setattr(portalocker, "lock", lambda current_handle, flags: None)
+    monkeypatch.setattr(portalocker, "unlock", lambda current_handle: None)
+    lease = ArtifactOperationLease(tmp_path, key(), LeaseMode.SHARED).acquire()
+
+    try:
+        raise ambient_error
+    except ValueError:
+        with pytest.raises(
+            ArtifactLeaseError,
+            match="failed closing shared lease",
+        ) as exc_info:
+            lease.release()
+
+    assert exc_info.value.__cause__ is close_failure
+    assert getattr(ambient_error, "__notes__", ()) == ()
+    assert lease.acquired is False
+
+
 def test_context_close_releases_lock(tmp_path: Path) -> None:
     shared = ArtifactOperationLease(tmp_path, key(), LeaseMode.SHARED)
     with shared:

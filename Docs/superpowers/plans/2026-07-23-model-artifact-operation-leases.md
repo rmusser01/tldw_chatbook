@@ -859,7 +859,7 @@ pytest Tests/Model_Artifacts/test_operation_leases.py \
   Tests/Model_Artifacts/test_operation_leases_process.py -v
 ```
 
-Expected: 50 passed, including stable backend/cleanup errors, hard deadline
+Expected: 51 passed, including stable backend/cleanup errors, hard deadline
 enforcement, and both shared-to-exclusive and exclusive-to-shared process
 proofs.
 
