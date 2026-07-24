@@ -100,31 +100,32 @@ class SchedulesWorkbench(BaseAppScreen):
         owner_id = service.owner_id if service else "local"
         active_server_id = self._active_server_id()
         server_available = self._server_available(service, active_server_id)
-        yield SyncStatusWidget(
-            id="scheduling-sync-status",
-            current_owner=owner_id,
-            active_server_id=active_server_id,
-            server_available=server_available,
-        )
-        with TabbedContent():
-            with TabPane("Queue", id="scheduling-queue-tab"):
-                with Horizontal(id="scheduling-workbench"):
-                    with Vertical(id="scheduling-list-pane"):
-                        yield Static(
-                            "Schedule Queue",
-                            id="scheduling-list-title",
-                            classes="scheduling-column-title",
-                        )
-                        yield DataTable(id="scheduling-task-table")
-                    with Vertical(id="scheduling-detail-pane"):
-                        yield TaskDetail(id="scheduling-task-detail")
-                    with Vertical(id="scheduling-inspector-pane"):
-                        yield TaskInspector(id="scheduling-task-inspector")
-            with TabPane("Conflicts", id="scheduling-conflicts-tab"):
-                yield ConflictsTab(
-                    id="scheduling-conflicts",
-                    sync_engine=service.sync_engine if service else None,
-                )
+        with Vertical(id="schedules-shell"):
+            yield SyncStatusWidget(
+                id="scheduling-sync-status",
+                current_owner=owner_id,
+                active_server_id=active_server_id,
+                server_available=server_available,
+            )
+            with TabbedContent():
+                with TabPane("Queue", id="scheduling-queue-tab"):
+                    with Horizontal(id="scheduling-workbench"):
+                        with Vertical(id="scheduling-list-pane"):
+                            yield Static(
+                                "Schedule Queue",
+                                id="scheduling-list-title",
+                                classes="scheduling-column-title",
+                            )
+                            yield DataTable(id="scheduling-task-table")
+                        with Vertical(id="scheduling-detail-pane"):
+                            yield TaskDetail(id="scheduling-task-detail")
+                        with Vertical(id="scheduling-inspector-pane"):
+                            yield TaskInspector(id="scheduling-task-inspector")
+                with TabPane("Conflicts", id="scheduling-conflicts-tab"):
+                    yield ConflictsTab(
+                        id="scheduling-conflicts",
+                        sync_engine=service.sync_engine if service else None,
+                    )
 
     def _service(self) -> "SchedulingService | None":
         """Return the app's scheduling service, if available."""
