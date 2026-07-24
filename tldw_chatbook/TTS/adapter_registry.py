@@ -7,7 +7,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from tldw_chatbook.TTS._async_lifecycle import join_retained_task
+from tldw_chatbook.TTS._async_lifecycle import (
+    join_retained_task,
+    shutdown_deadline_scope,
+)
 from tldw_chatbook.TTS.adapter_types import (
     TTSAdapter,
     TTSProviderCatalog,
@@ -105,6 +108,7 @@ class TTSAdapterRegistry:
         self._closed = False
         self._close_lock = asyncio.Lock()
         self._close_task: asyncio.Task[None] | None = None
+        self._shutdown_deadline: float | None = None
         self._close_error_reported = False
         self._lease_changed = asyncio.Event()
         self._records_collected = False
@@ -174,10 +178,13 @@ class TTSAdapterRegistry:
         :meth:`wait_closed` to join definitive completion.
         """
         close_task = await self._ensure_close_task()
-        if not close_task.done():
+        deadline = self._shutdown_deadline
+        if not close_task.done() and deadline is not None:
+            remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+            await asyncio.sleep(0)
             await asyncio.wait(
                 {close_task},
-                timeout=self._shutdown_timeout_seconds,
+                timeout=remaining,
             )
 
         async with self._close_lock:
@@ -210,13 +217,17 @@ class TTSAdapterRegistry:
             for slot in self._slots.values():
                 slot.lease_changed.set()
 
-            self._close_task = asyncio.create_task(self._complete_close())
+            deadline = (
+                asyncio.get_running_loop().time()
+                + self._shutdown_timeout_seconds
+            )
+            self._shutdown_deadline = deadline
+            self._close_task = asyncio.create_task(self._complete_close(deadline))
             self._close_task.add_done_callback(self._observe_close_result)
             return self._close_task
 
-    async def _complete_close(self) -> None:
+    async def _complete_close(self, deadline: float) -> None:
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + self._shutdown_timeout_seconds
         if not self._records_collected:
             while self._total_leases() > 0:
                 remaining = deadline - loop.time()
@@ -242,7 +253,11 @@ class TTSAdapterRegistry:
             self._records_collected = True
 
         close_tasks = [
-            await self._start_close_record(record) for record in self._closing_records
+            await self._start_close_record(
+                record,
+                shutdown_deadline=deadline,
+            )
+            for record in self._closing_records
         ]
         results = await asyncio.gather(*close_tasks, return_exceptions=True)
         for result in results:
@@ -362,10 +377,16 @@ class TTSAdapterRegistry:
         close_task = await self._start_close_record(record)
         await asyncio.shield(close_task)
 
-    async def _start_close_record(self, record: _AdapterRecord) -> asyncio.Task[None]:
+    async def _start_close_record(
+        self,
+        record: _AdapterRecord,
+        *,
+        shutdown_deadline: float | None = None,
+    ) -> asyncio.Task[None]:
         async with record.close_lock:
             if record.close_task is None:
-                record.close_task = asyncio.create_task(record.adapter.close())
+                with shutdown_deadline_scope(shutdown_deadline):
+                    record.close_task = asyncio.create_task(record.adapter.close())
             return record.close_task
 
     def _total_leases(self) -> int:
