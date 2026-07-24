@@ -9,7 +9,7 @@ from .personas_messages import PersonaEntityKind, PersonaWorkbenchMode
 
 VALID_PERSONA_MODES: tuple[PersonaWorkbenchMode, ...] = (
     "characters",
-    "personas",
+    "user_profiles",
     "prompts",
     "dictionaries",
     "lore",
@@ -17,14 +17,14 @@ VALID_PERSONA_MODES: tuple[PersonaWorkbenchMode, ...] = (
 )
 VALID_PERSONA_ENTITY_KINDS: tuple[PersonaEntityKind, ...] = (
     "character",
-    "persona_profile",
+    "user_profile",
     "prompt",
     "dictionary",
     "lore",
 )
 MODE_LABELS: dict[PersonaWorkbenchMode, str] = {
     "characters": "Characters",
-    "personas": "Personas",
+    "user_profiles": "User Profiles",
     "prompts": "Prompts",
     "dictionaries": "Dictionaries",
     "lore": "Lore",

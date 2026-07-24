@@ -460,6 +460,116 @@ async def test_native_start_chat_survives_post_seed_sync_failure():
         assert len(character_sessions) == 1
 
 
+class _StartChatProfileService:
+    """Sync ``list_user_profiles`` double matching the T1 resolver contract."""
+
+    def __init__(self, names):
+        self._names = list(names)
+
+    def list_user_profiles(self, **kwargs):
+        return [{"name": name} for name in self._names]
+
+
+def _route_active_profile_pointer(monkeypatch, store: dict) -> None:
+    """Point the active-profile config seam at an in-memory store (task-442)."""
+    import tldw_chatbook.Character_Chat.active_user_profile as active_profile_module
+
+    monkeypatch.setattr(
+        active_profile_module,
+        "get_cli_setting",
+        lambda section, key, default=None: store.get((section, key), default),
+    )
+
+
+@pytest.mark.asyncio
+async def test_native_start_chat_greeting_uses_active_user_profile_name(monkeypatch):
+    """task-442 T4: with an active user profile "Sam", the Start-Chat handoff
+    greeting's {{user}} renders "Sam" and the session settings carry
+    ``user_profile_label == "Sam"``."""
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    _route_active_profile_pointer(
+        monkeypatch, {("character_defaults", "active_user_profile"): "Sam"}
+    )
+
+    app = _build_test_app()
+    app.chachanotes_db = _StubCharacterCardDB(
+        {
+            "name": "Elara",
+            "first_message": "Greetings, {{user}}.",
+            "system_prompt": "You are Elara, a forest guide.",
+        }
+    )
+    app.local_character_persona_service = _StartChatProfileService(["Sam"])
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+
+        app.pending_chat_handoff = _character_start_chat_payload(
+            character_id=7, name="Elara", first_message="Greetings, {{user}}."
+        )
+
+        await screen._consume_pending_chat_handoff()
+        await pilot.pause()
+
+        store = screen._ensure_console_chat_store()
+        session = store._sessions[store.active_session_id]
+        msgs = store.messages_for_session(session.id)
+        assert msgs[0].role is ConsoleMessageRole.ASSISTANT
+        assert msgs[0].content == "Greetings, Sam."
+        assert session.settings.user_profile_label == "Sam"
+        assert session.settings.character_label == "Elara"
+
+
+@pytest.mark.asyncio
+async def test_native_start_chat_greeting_stays_user_without_active_profile(
+    monkeypatch,
+):
+    """task-442 T4 twin (AC3): with no active profile the greeting stays
+    byte-identical ("User") and ``user_profile_label`` keeps its "General"
+    default."""
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    _route_active_profile_pointer(monkeypatch, {})  # no pointer set
+
+    app = _build_test_app()
+    app.chachanotes_db = _StubCharacterCardDB(
+        {
+            "name": "Elara",
+            "first_message": "Greetings, {{user}}.",
+            "system_prompt": "You are Elara, a forest guide.",
+        }
+    )
+    app.local_character_persona_service = _StartChatProfileService(["Sam"])
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+
+        app.pending_chat_handoff = _character_start_chat_payload(
+            character_id=7, name="Elara", first_message="Greetings, {{user}}."
+        )
+
+        await screen._consume_pending_chat_handoff()
+        await pilot.pause()
+
+        store = screen._ensure_console_chat_store()
+        session = store._sessions[store.active_session_id]
+        msgs = store.messages_for_session(session.id)
+        assert msgs[0].content == "Greetings, User."
+        assert session.settings.user_profile_label == "General"
+
+
 @pytest.mark.asyncio
 async def test_resume_restores_character_identity():
     """Resuming a saved character conversation after an app restart must

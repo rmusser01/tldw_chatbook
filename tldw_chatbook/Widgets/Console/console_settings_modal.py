@@ -541,7 +541,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         markup=False,
                     )
                     yield Static(
-                        f"Persona         {self._persona_label()} [read-only]",
+                        f"User Profile    {self._user_profile_label()} [read-only]",
                         id="console-settings-persona-readonly",
                         classes="console-settings-modal-row",
                         markup=False,
@@ -998,7 +998,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 "console-settings-thinking-budget-tokens"
             ),
             streaming=self._streaming_draft,
-            persona_label=self._settings.persona_label,
+            user_profile_label=self._settings.user_profile_label,
             character_label=self._settings.character_label,
         )
 
@@ -1370,12 +1370,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         return "None"
 
     def _identity_current_label(self) -> str:
-        persona = self._persona_label()
+        persona = self._user_profile_label()
         character = self._settings.character_label.strip()
         return f"{persona} / {character}" if character else persona
 
-    def _persona_label(self) -> str:
-        return self._settings.persona_label.strip() or "General"
+    def _user_profile_label(self) -> str:
+        return self._settings.user_profile_label.strip() or "General"
 
     def _character_label(self) -> str:
         return self._settings.character_label.strip() or "None"

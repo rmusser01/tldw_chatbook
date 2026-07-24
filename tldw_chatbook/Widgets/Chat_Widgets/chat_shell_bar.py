@@ -16,7 +16,7 @@ class ChatShellLabelResolver:
     """Optional live label overrides for workspace/persona/character names."""
 
     workspace_name: Optional[str] = None
-    persona_label: Optional[str] = None
+    user_profile_label: Optional[str] = None
     character_label: Optional[str] = None
 
 
@@ -71,12 +71,14 @@ class ChatShellContext:
                 else "Assistant: General"
             )
         elif assistant_kind == "persona":
-            persona_label = (
-                getattr(resolver, "persona_label", None) if resolver else None
+            user_profile_label = (
+                getattr(resolver, "user_profile_label", None) if resolver else None
             )
-            persona_value = persona_label or getattr(session_data, "assistant_id", None)
+            persona_value = user_profile_label or getattr(
+                session_data, "assistant_id", None
+            )
             assistant = (
-                f"Persona: {persona_value}" if persona_value else "Assistant: General"
+                f"As: {persona_value}" if persona_value else "Assistant: General"
             )
         else:
             assistant = "Assistant: General"

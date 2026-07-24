@@ -8119,11 +8119,11 @@ class ChatScreen(BaseAppScreen):
             value = label.partition(":")[2].strip()
             return value.split(maxsplit=1)[0] if value else "0"
 
-        persona = str(control_state.persona_label or "General")
+        persona = str(control_state.user_profile_label or "General")
         if persona.startswith("Assistant: "):
             persona = persona.removeprefix("Assistant: ").strip() or "General"
-        elif persona.startswith("Persona: "):
-            persona = persona.removeprefix("Persona: ").strip() or "Persona"
+        elif persona.startswith("As: "):
+            persona = persona.removeprefix("As: ").strip() or "User Profile"
         return (
             "Chat/RAG/Follow"
             f" | {persona}"
@@ -9623,8 +9623,13 @@ class ChatScreen(BaseAppScreen):
         """Return per-session Console settings from a saved state payload."""
         if not isinstance(payload, dict):
             return None
+        values = dict(payload)
+        if "persona_label" in values and "user_profile_label" not in values:
+            # Pre-task-442 blobs serialized the old field name.
+            values["user_profile_label"] = values.pop("persona_label")
+        values.pop("persona_label", None)
         valid_fields = set(ConsoleSessionSettings.__dataclass_fields__)
-        values = {key: value for key, value in payload.items() if key in valid_fields}
+        values = {key: value for key, value in values.items() if key in valid_fields}
         provider = str(values.get("provider") or "").strip()
         if not provider:
             return None
@@ -10421,6 +10426,9 @@ class ChatScreen(BaseAppScreen):
         # Local import matches this module's existing convention of
         # deferring Character_Chat submodule imports (they pull in Pillow
         # and CharactersRAGDB) rather than importing them at module scope.
+        from ...Character_Chat.active_user_profile import (
+            resolve_active_user_profile_name,
+        )
         from ...Character_Chat.Character_Chat_Lib import replace_placeholders
 
         name = str(card.get("name") or _name_hint or "").strip() or "Character"
@@ -10429,13 +10437,27 @@ class ChatScreen(BaseAppScreen):
             for key in ("system_prompt", "personality", "description", "scenario")
         ]
         system_prompt = "\n".join(p for p in parts if p) or "Stay in character."
-        greeting = replace_placeholders(str(card.get("first_message") or ""), name, "User")
+        # task-442: {{user}} renders the active user profile's name; the local
+        # persona service carries the sync list_user_profiles the resolver
+        # expects. No active profile keeps the historical "User" literal
+        # byte-exact and leaves the session's "General" label untouched.
+        active_user_name = resolve_active_user_profile_name(
+            getattr(self.app_instance, "local_character_persona_service", None)
+        )
+        greeting = replace_placeholders(
+            str(card.get("first_message") or ""), name, active_user_name or "User"
+        )
 
         store = self._ensure_console_chat_store()
+        settings_overrides: dict[str, Any] = {
+            "system_prompt": system_prompt,
+            "character_label": name,
+        }
+        if active_user_name:
+            settings_overrides["user_profile_label"] = active_user_name
         settings = replace(
             self._default_console_session_settings(),
-            system_prompt=system_prompt,
-            character_label=name,
+            **settings_overrides,
         )
         session = store.create_session(
             title=f"Chat with {name}",
@@ -14587,7 +14609,7 @@ class ChatScreen(BaseAppScreen):
                 next_settings = replace(
                     next_settings,
                     **override_fields,
-                    persona_label=settings.persona_label,
+                    user_profile_label=settings.user_profile_label,
                     character_label=settings.character_label,
                 )
             if temperature is not None:

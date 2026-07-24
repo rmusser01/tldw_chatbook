@@ -253,6 +253,31 @@ class TestChatScreenStateSerialization:
         assert restored.workspace_id is None
 
 
+class TestConsoleSessionSettingsPersonaLabelCompat:
+    def test_restore_console_settings_accepts_pre_rename_persona_label_key(self):
+        """task-442 T2 accept-old-write-new: a pre-rename serialized settings
+        dict (``persona_label``) must deserialize into ``user_profile_label``
+        -- old saved state predates the rename and must not silently lose the
+        value (nor round-trip the old key back out)."""
+        from dataclasses import asdict
+
+        from tldw_chatbook.Chat.console_session_settings import (
+            ConsoleSessionSettings,
+        )
+
+        settings = ConsoleSessionSettings(
+            provider="openai", user_profile_label="Explorer"
+        )
+        old_blob = asdict(settings)
+        old_blob["persona_label"] = old_blob.pop("user_profile_label")
+
+        restored = ChatScreen._restore_console_settings(old_blob)
+
+        assert restored is not None
+        assert restored.user_profile_label == "Explorer"
+        assert asdict(restored).get("persona_label") is None
+
+
 class TestChatScreenSave:
     def test_save_state_uses_chat_tab_bar_public_tab_ids(self):
         mock_app = Mock()

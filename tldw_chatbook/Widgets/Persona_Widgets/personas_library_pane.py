@@ -56,6 +56,12 @@ class LibraryRow:
     name: str
     is_unsaved: bool = False
     meta: str | None = None
+    is_active_profile: bool = False
+    """task-442 T3: this user profile is the active "my name" pointer.
+
+    Rendered as a marker prefix on the row label; never mutates ``name``
+    itself since callers (selection, save, delete) key off the real name.
+    """
 
 
 class PersonasLibraryPane(Vertical):
@@ -229,7 +235,7 @@ class PersonasLibraryPane(Vertical):
             "dictionaries",
             "lore",
         )
-        sort_visible = mode in ("characters", "personas")
+        sort_visible = mode in ("characters", "user_profiles")
         self.query_one("#personas-library-sort", Button).display = sort_visible
         self.query_one("#personas-library-tag", Button).display = mode == "characters"
         if not sort_visible:
@@ -311,10 +317,15 @@ class PersonasLibraryPane(Vertical):
             classes = "personas-library-row console-action-subdued"
             if row.is_unsaved:
                 classes += " is-unsaved"
+            if row.is_active_profile:
+                classes += " is-active-profile"
+            # The marker prefixes the DISPLAYED label only -- row.name stays the
+            # real profile name selection/save/delete key off of (task-442 T3).
+            display_name = f"● {row.name}" if row.is_active_profile else row.name
             if row.meta:
                 item = ListItem(
                     Vertical(
-                        Static(row.name, markup=False),
+                        Static(display_name, markup=False),
                         Static(
                             row.meta,
                             markup=False,
@@ -331,7 +342,9 @@ class PersonasLibraryPane(Vertical):
                 items.append(item)
             else:
                 items.append(
-                    ListItem(Static(row.name, markup=False), id=dom_id, classes=classes)
+                    ListItem(
+                        Static(display_name, markup=False), id=dom_id, classes=classes
+                    )
                 )
         await list_view.extend(items)
         pagebar = self.query_one("#personas-library-pagebar")

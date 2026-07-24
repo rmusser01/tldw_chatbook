@@ -1,4 +1,4 @@
-"""Console status-pill strip (provider/model/persona/RAG/source/tool/approval)
+"""Console status-pill strip (provider/model/user profile/RAG/source/tool/approval)
 plus the retrieval-scope chip.
 
 Extracted from ConsoleControlBar so the pills can render in their own strip
@@ -91,7 +91,7 @@ class ConsoleScopeChip(ConsoleChip):
 
 class ConsoleStatusChips(Horizontal):
     """Full-width strip of the eight Console readiness pills (provider/model/
-    persona/RAG/source/tool/approval plus the retrieval-scope chip).
+    user profile/RAG/source/tool/approval plus the retrieval-scope chip).
 
     Exposes ``sync_state`` so ``ChatScreen`` can refresh the pill labels and
     counter emphasis after provider/model/source/tool/approval state changes.
@@ -147,7 +147,7 @@ class ConsoleStatusChips(Horizontal):
     def compose(self) -> ComposeResult:
         yield self._chip(self.state.provider_label, id="console-provider-chip")
         yield self._chip(self.state.model_label, id="console-model-chip")
-        yield self._chip(self.state.persona_label, id="console-persona-chip")
+        yield self._chip(self.state.user_profile_label, id="console-persona-chip")
         yield self._chip(self.state.rag_label, id="console-rag-chip")
         yield self._chip(
             self.state.sources_label,
@@ -266,7 +266,7 @@ class ConsoleStatusChips(Horizontal):
         label_values = {
             "#console-provider-chip": state.provider_label,
             "#console-model-chip": state.model_label,
-            "#console-persona-chip": state.persona_label,
+            "#console-persona-chip": state.user_profile_label,
             "#console-rag-chip": state.rag_label,
             "#console-sources-chip": state.sources_label,
             "#console-tools-chip": state.tools_label,

@@ -292,7 +292,7 @@ async def test_console_settings_summary_renders_rows_and_button() -> None:
         model_row="Model: model-a",
         context_row="Context: 12 / 4k",
         sampling_row="Sampling: T 0.70, P 0.95",
-        identity_row="Persona: General",
+        identity_row="As: General",
         readiness_label="Ready",
     )
 
@@ -306,7 +306,7 @@ async def test_console_settings_summary_renders_rows_and_button() -> None:
         assert "Model: model-a" in text
         assert "Context: 12 / 4k" in text
         assert "Sampling: T 0.70, P 0.95" in text
-        assert "Persona: General" in text
+        assert "As: General" in text
         header = app.query_one("#console-settings-header", Horizontal)
         title = app.query_one("#console-settings-title", Static)
         button = app.query_one("#console-settings-open", Button)
@@ -326,7 +326,7 @@ async def test_console_settings_summary_uses_direct_choose_model_action_when_set
         model_row="Model: Missing",
         context_row="Context: unavailable",
         sampling_row="Sampling: T 0.70, P 0.95",
-        identity_row="Persona: General",
+        identity_row="As: General",
         readiness_label="Missing model",
         action_label="Choose Model",
         action_tooltip="Choose a model for this Console session",
@@ -351,7 +351,7 @@ async def test_console_settings_summary_treats_missing_provider_row_as_blank() -
         model_row="Model: model-a",
         context_row="Context: 12 / 4k",
         sampling_row="Sampling: T 0.70, P 0.95",
-        identity_row="Persona: General",
+        identity_row="As: General",
         readiness_label="Ready",
     )
 
@@ -368,7 +368,7 @@ async def test_console_settings_summary_treats_missing_provider_row_as_blank() -
             model_row="Model: model-b",
             context_row="Context: 20 / 4k",
             sampling_row="Sampling: T 0.20, P 0.90",
-            identity_row="Persona: Analyst",
+            identity_row="As: Analyst",
             readiness_label="Ready",
         )
         app.query_one(ConsoleSettingsSummary).sync_state(updated_state)
@@ -798,12 +798,12 @@ def test_summary_state_normalizes_unknown_context_label() -> None:
     assert state.context_row == "Context: unavailable"
 
 
-def test_summary_state_prefers_character_label_over_persona_label() -> None:
+def test_summary_state_prefers_character_label_over_user_profile_label() -> None:
     character = build_console_settings_summary_state(
         ConsoleSessionSettings(
             provider="llama_cpp",
             model="model-a",
-            persona_label="General",
+            user_profile_label="General",
             character_label="Ada",
         ),
         ConsoleSettingsContextEstimate(
@@ -815,7 +815,7 @@ def test_summary_state_prefers_character_label_over_persona_label() -> None:
     )
     persona = build_console_settings_summary_state(
         ConsoleSessionSettings(
-            provider="llama_cpp", model="model-a", persona_label="Mentor"
+            provider="llama_cpp", model="model-a", user_profile_label="Mentor"
         ),
         ConsoleSettingsContextEstimate(
             used_tokens=12, token_limit=4096, label="12 / 4k"
@@ -825,7 +825,7 @@ def test_summary_state_prefers_character_label_over_persona_label() -> None:
         ),
     )
     fallback = build_console_settings_summary_state(
-        ConsoleSessionSettings(provider="llama_cpp", model="model-a", persona_label=""),
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a", user_profile_label=""),
         ConsoleSettingsContextEstimate(
             used_tokens=12, token_limit=4096, label="12 / 4k"
         ),
@@ -835,8 +835,8 @@ def test_summary_state_prefers_character_label_over_persona_label() -> None:
     )
 
     assert character.identity_row == "Character: Ada"
-    assert persona.identity_row == "Persona: Mentor"
-    assert fallback.identity_row == "Persona: General"
+    assert persona.identity_row == "As: Mentor"
+    assert fallback.identity_row == "As: General"
 
 
 def test_choose_model_action_label_normalization() -> None:
@@ -1810,7 +1810,7 @@ async def test_console_settings_modal_renders_context_and_identity_read_only_row
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
         model="model-a",
-        persona_label="Planner",
+        user_profile_label="Planner",
         character_label="Ada",
     )
 

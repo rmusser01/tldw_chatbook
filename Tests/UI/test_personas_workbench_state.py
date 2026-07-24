@@ -383,3 +383,30 @@ class TestNonCharacterModeRestoreGate:
             assert screen2._pending_restore is None
             # Blank center, same as any fresh Characters-mode mount.
             assert screen2.query_one("#ccp-character-card-view").display is False
+
+    async def test_pre_rename_personas_mode_blob_restores_to_default(
+        self, mock_app_instance, stub_characters
+    ):
+        """task-442 T2: a pre-rename saved blob with ``active_mode": "personas"``
+        was ALREADY discarded by this same gate (only "characters" restores) -
+        the mode-id rename ("personas" -> "user_profiles") needs no compat shim
+        here, because old and new mode ids are equally non-"characters"."""
+        mock_app_instance.character_persona_scope_service = None
+        saved = {
+            "personas_workbench": {
+                "active_mode": "personas",
+                "selected_entity_kind": "persona_profile",
+                "selected_entity_id": "persona-1",
+                "selected_entity_name": "Some Persona",
+            },
+            "personas_preview": None,
+        }
+
+        app = _RestoringPersonasTestApp(mock_app_instance, saved)
+        async with app.run_test() as pilot:
+            screen2 = await _mounted(pilot)
+            # Falls back to the fresh default: Characters mode, no selection.
+            assert screen2.state.active_mode == "characters"
+            assert screen2.state.selected_entity_id is None
+            assert screen2.state.selected_entity_kind is None
+            assert screen2._pending_restore is None
