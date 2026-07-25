@@ -216,19 +216,31 @@ def test_shadow_name_set_stays_in_sync_with_real_sources():
 
     # Assert RUNTIME_TOOL_NAMES (spawn_subagent, find_tools, load_tools) is a subset
     assert RUNTIME_TOOL_NAMES <= _SHADOWED_BUILTIN_NAMES, (
-        f"RUNTIME_TOOL_NAMES not covered: {RUNTIME_TOOL_NAMES - _SHADOWED_BUILTIN_NAMES}"
+        "RUNTIME_TOOL_NAMES not covered: "
+        f"{RUNTIME_TOOL_NAMES - _SHADOWED_BUILTIN_NAMES}. "
+        "Add them to _SHADOWED_BUILTIN_NAMES in "
+        "tldw_chatbook/Library/library_skills_state.py -- do not accept this "
+        "as a baseline failure (task-580)."
     )
 
     # Assert builtin tool names (calculator, get_current_datetime) are a subset
     builtin_names = {e.name for e in BuiltinToolProvider().list_catalog()}
     assert builtin_names <= _SHADOWED_BUILTIN_NAMES, (
-        f"BuiltinToolProvider names not covered: {builtin_names - _SHADOWED_BUILTIN_NAMES}"
+        "BuiltinToolProvider names not covered: "
+        f"{builtin_names - _SHADOWED_BUILTIN_NAMES}. "
+        "Add them to _SHADOWED_BUILTIN_NAMES in "
+        "tldw_chatbook/Library/library_skills_state.py -- do not accept this "
+        "as a baseline failure (task-580)."
     )
 
     # Assert console command names (prompt, system) are a subset
     command_names = set(default_console_registry().available_names())
     assert command_names <= _SHADOWED_BUILTIN_NAMES, (
-        f"ConsoleCommandRegistry names not covered: {command_names - _SHADOWED_BUILTIN_NAMES}"
+        "ConsoleCommandRegistry names not covered: "
+        f"{command_names - _SHADOWED_BUILTIN_NAMES}. "
+        "Add them to _SHADOWED_BUILTIN_NAMES in "
+        "tldw_chatbook/Library/library_skills_state.py -- do not accept this "
+        "as a baseline failure (task-580)."
     )
 
 
@@ -283,3 +295,18 @@ def test_skill_trust_header_line_maps_postures():
     assert "can't be verified" in skill_trust_header_line("error", 0)[0]
     # disabled/empty posture -> hidden
     assert skill_trust_header_line("", 0) is None
+
+
+def test_console_command_names_are_treated_as_shadowing():
+    """task-580 (AC#3): a skill named after a console command shadows it.
+
+    `rewind` and `generate-image` were missing from the set, so a skill by
+    either name was silently NOT recognised as shadowing a built-in, unlike
+    every other command. Pinned by name rather than by re-deriving the
+    registry, so this keeps failing if someone removes them.
+    """
+    from tldw_chatbook.Library.library_skills_state import skill_name_shadows_builtin
+
+    for name in ("rewind", "generate-image"):
+        assert skill_name_shadows_builtin(name) == name
+        assert skill_name_shadows_builtin(f"  {name.upper()} ") == name
