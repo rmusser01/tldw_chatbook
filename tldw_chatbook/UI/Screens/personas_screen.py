@@ -4948,6 +4948,7 @@ class PersonasScreen(BaseAppScreen):
         self.run_worker(
             self._expression_style_pick_dialog_worker(),
             group="personas-io",
+            exit_on_error=False,
         )
 
     @on(CharacterExpressionClearRequested)
@@ -5113,6 +5114,13 @@ class PersonasScreen(BaseAppScreen):
                 cfg_scale=params.get("cfg_scale"),
             )
             session_token = self._character_editor_session_token()
+            if session_token is None:
+                logger.debug(
+                    "Image generation skipped because no character editor "
+                    f"session is open. character_id={character_id!r}, "
+                    f"state={state!r}"
+                )
+                return False
             result = await asyncio.to_thread(run_generation, request)
             if self._character_editor_session_token() != session_token:
                 logger.debug(
@@ -5178,12 +5186,36 @@ class PersonasScreen(BaseAppScreen):
         generate - one state's failure does not abort the sweep. A slot
         already claimed by an independent single-slot generate click
         (started just before this sweep) is skipped rather than raced.
-        Reports a single "k/4 generated" summary at the end.
+        Reports a single "k/4 generated" summary at the end - counting only
+        the slots that actually completed before any session-identity
+        mismatch stopped the sweep (see below).
+
+        Re-checks session identity at the TOP of every iteration (not just
+        once up front) and stops the sweep the moment it no longer matches
+        the character this sweep was launched for - the user may cancel the
+        editor and open a different character in the same widget between
+        slots, and each slot's own generation can take long enough for that
+        to happen mid-sweep. This deliberately does NOT reuse
+        ``_character_editor_session_token()`` for that check: the token's
+        generation counter is bumped by ``_apply_expression_upload`` on
+        every successful write (Task 1's staleness signal for OTHER
+        seams), so a token captured before the loop would already
+        mismatch after this sweep's own first successful slot. Comparing
+        the freshly-resolved editor's loaded character id is immune to
+        that self-inflicted bump.
         """
         style_template = getattr(self, "_expression_generate_style", None)
         succeeded = 0
         try:
             for state in ("avatar", "thinking", "speaking", "error"):
+                if not self._character_editor_is_active():
+                    break
+                try:
+                    editor = self.query_one(PersonasCharacterEditorWidget)
+                except QueryError:
+                    break
+                if editor.expression_character_id() != character_id:
+                    break
                 slot_key = (character_id, state)
                 if slot_key in self._expression_generate_inflight:
                     continue
@@ -5205,9 +5237,9 @@ class PersonasScreen(BaseAppScreen):
         it, mirroring how the Console's own style-insert flow refocuses
         its composer after the same modal closes. Mirrors
         ``_expression_upload_dialog_worker``'s own nested try/except around
-        ``push_screen_wait``: this worker's ``run_worker`` call does not set
-        ``exit_on_error=False``, so an uncaught exception here would crash
-        the app rather than just this dialog.
+        ``push_screen_wait``; the dispatching ``run_worker`` call also
+        passes ``exit_on_error=False`` (final review F5) so an uncaught
+        exception here only kills this dialog's worker instead of the app.
         """
         try:
             try:

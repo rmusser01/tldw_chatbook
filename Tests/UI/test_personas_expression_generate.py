@@ -119,9 +119,15 @@ async def test_expressions_header_does_not_push_siblings_off_row():
     all, and Import/Export set controls - would otherwise claim the entire
     row and render every sibling past the row's right edge. The row is a
     plain ``Horizontal`` (no wrap, no horizontal scrollbar), so those five
-    controls would be permanently unreachable by mouse click. Live tmux
-    verification caught this; this pins the fix (an explicit ``width: auto``
-    on the header) at the compose level."""
+    controls would be unreachable by mouse click. Live tmux verification
+    caught this; this pins the fix (an explicit ``width: auto`` on the
+    header) at the compose level.
+
+    Scope: this only proves the fix at the 200-column viewport tested here -
+    the 1fr-header defect is fixed and the five controls are reachable at
+    that width. It does NOT prove reachability at narrower terminal widths;
+    full narrow-terminal reachability of this row is a separate, already-
+    known issue, independent of the 1fr-header defect fixed here."""
     app = _CaptureApp()
     async with app.run_test(size=(200, 50)):
         editor = app.query_one(PersonasCharacterEditorWidget)
@@ -347,6 +353,46 @@ async def test_generate_worker_stale_token_skips_write(
     await screen._generate_expression_image_worker(char_id, "speaking")
 
     apply_mock.assert_not_awaited()
+
+
+async def test_generate_worker_no_open_editor_session_skips_write(
+    personas_editor_with_saved_character, monkeypatch
+):
+    """Final review F2 (confirmed): the editor is cancelled after the
+    handler dispatched this worker but before the worker's own session
+    token is captured (the token is read fresh inside ``_generate_one_
+    slot``, not passed in by the caller) - e.g. the user hits Cancel in the
+    moment between a generate-button click and the worker actually
+    starting. Without the fix, the freshly-captured token is ``None``
+    (no editor open) and the post-generation re-check compares
+    ``None != None``, which is ``False`` - so the stale-write guard
+    silently passes and the result gets written with no editor open at
+    all. The fix refuses outright when the freshly-captured token is
+    ``None``."""
+    app, screen, db, char_id = personas_editor_with_saved_character
+    _configure_backend(monkeypatch)
+    _set_description(screen, "A cheerful adventurer.")
+
+    monkeypatch.setattr(
+        personas_screen_module,
+        "run_generation",
+        lambda request: SimpleNamespace(
+            content=b"png-bytes", content_type="image/png"
+        ),
+    )
+    apply_mock = AsyncMock()
+    monkeypatch.setattr(screen, "_apply_expression_upload", apply_mock)
+
+    # The user cancels the editor after the handler dispatched the worker
+    # but before the worker itself captures a session token.
+    screen._finish_cancel_edit()
+    assert screen._character_editor_session_token() is None
+
+    screen._expression_generate_inflight.add((char_id, "thinking"))
+    await screen._generate_expression_image_worker(char_id, "thinking")
+
+    apply_mock.assert_not_awaited()
+    assert (char_id, "thinking") not in screen._expression_generate_inflight
 
 
 async def test_generate_worker_failure_notifies_and_clears_inflight(
@@ -728,6 +774,76 @@ async def test_generate_all_worker_skips_a_slot_already_in_flight(
     applied_states = {call.args[1] for call in apply_mock.await_args_list}
     assert applied_states == {"speaking", "error"}  # thinking was skipped
     assert notifications[-1] == ("3/4 generated.", "information")
+
+
+async def test_generate_all_worker_stops_sweep_when_character_switches_mid_generation(
+    personas_editor_with_saved_character, monkeypatch
+):
+    """Final review F1 (confirmed, High): the user cancels the editor mid-
+    sweep and opens a DIFFERENT character (B) in the same editor widget
+    while slot 1 (avatar) is still generating. Slot 1 itself is caught by
+    its own pre-existing per-call stale-token guard in ``_generate_one_
+    slot`` (the switch happens mid-call, before ``run_generation``
+    returns). But WITHOUT this fix, slots 2-4 each capture a brand-new
+    session token at the START of their own ``_generate_one_slot`` call -
+    by then already matching character B's now-current session, since no
+    further switch happens during THEIR calls - so they'd sail past their
+    own stale-write guard and write real bytes into character A's DB rows,
+    composed from B's live (unsaved) text. The fix re-verifies session
+    identity against the character id THIS sweep was launched for at the
+    top of every loop iteration and stops the sweep the moment they
+    diverge, so the sweep must not even attempt slots 2-4."""
+    app, screen, db, char_id = personas_editor_with_saved_character
+    _configure_backend(monkeypatch)
+    editor = _set_description(screen, "CHARACTER A: a cheerful adventurer.")
+    other_id = db.add_character_card({"name": "Grim"})
+
+    prompts = []
+
+    def _run_generation(request):
+        prompts.append(request.prompt)
+        if len(prompts) == 1:
+            # The user cancels the editor after slot 1 (avatar) dispatched
+            # its generation call, but before that call returns, then
+            # opens a DIFFERENT character (B) in the same editor widget -
+            # mirroring what _handle_edit_requested does for a fresh
+            # EditCharacterRequested.
+            screen._finish_cancel_edit()
+            screen._character_editor_generation += 1
+            screen._edit_mode = "edit"
+            screen.state.select_entity(
+                entity_kind="character",
+                entity_id=str(other_id),
+                entity_name="Grim",
+            )
+            screen._show_center("#ccp-character-editor-view")
+            editor.load_character(
+                {
+                    "id": other_id,
+                    "name": "Grim",
+                    "description": "CHARACTER B: a grim necromancer.",
+                    "version": 1,
+                }
+            )
+        return SimpleNamespace(content=b"png-bytes", content_type="image/png")
+
+    monkeypatch.setattr(personas_screen_module, "run_generation", _run_generation)
+    apply_mock = AsyncMock()
+    monkeypatch.setattr(screen, "_apply_expression_upload", apply_mock)
+    _capture_avatar_render_worker(screen)
+    notifications = _capture_notifications(app)
+    screen._expression_generate_inflight.add((char_id, "all"))
+
+    await screen._generate_all_expression_images_worker(char_id)
+
+    apply_mock.assert_not_awaited()  # zero writes, into A or B, after the switch
+    assert len(prompts) == 1  # only the avatar attempt; nothing dispatched after
+    assert (char_id, "all") not in screen._expression_generate_inflight
+    for state in ("avatar", "thinking", "speaking", "error"):
+        assert (char_id, state) not in screen._expression_generate_inflight
+    # The summary reflects only genuinely-completed slots (zero here - the
+    # switch lands before slot 1 even finishes).
+    assert notifications[-1] == ("0/4 generated.", "information")
 
 
 # ----- Handler: Generate-all gates (saved character required) --------------
