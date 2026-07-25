@@ -47,6 +47,11 @@ from loguru import logger
 
 SCRUBBED_PATH = "/usr/bin:/bin"
 
+_SANDBOX_UNSUPPORTED_MESSAGE = (
+    "Skill script execution is POSIX-only (macOS/Linux) and is not "
+    "available on this platform."
+)
+
 #: How long teardown may spend reaping the SIGKILLed child.
 _REAP_TIMEOUT_SECONDS = 2.0
 #: How long teardown may wait for a reader thread to drain and finish.
@@ -106,6 +111,33 @@ class ScriptRunResult:
     truncated_stdout: bool
     truncated_stderr: bool
     sandbox_warnings: tuple[str, ...] = field(default=())
+
+
+class SandboxUnsupportedError(RuntimeError):
+    """Raised when a skill script run is attempted on an unsupported platform.
+
+    The sandbox this module builds depends on POSIX-only primitives
+    (``start_new_session=True``, ``os.killpg``/``os.getpgid``, and a
+    trampoline that imports the POSIX-only ``resource`` module), none of
+    which exist on Windows. Rather than let those calls fail midway through
+    a spawn/teardown sequence, :func:`sandbox_supported` is checked first and
+    this error is raised BEFORE any subprocess is started.
+    """
+
+
+def sandbox_supported() -> bool:
+    """Return whether this platform can run the skill-script sandbox at all.
+
+    The containment this module provides (process-group teardown via
+    ``start_new_session``/``os.killpg``, and resource limits applied through
+    the ``resource`` module) is POSIX-only. There is no Windows equivalent
+    implemented here, so callers must treat script execution as entirely
+    unavailable -- never a degraded/unsandboxed fallback -- on Windows.
+
+    Returns:
+        False when ``os.name == "nt"`` (Windows); True otherwise.
+    """
+    return os.name != "nt"
 
 
 def memory_limit_enforced() -> bool:
@@ -320,10 +352,16 @@ def run_script_subprocess(
         settle the child, in which case ``sandbox_warnings`` says so.
 
     Raises:
+        SandboxUnsupportedError: :func:`sandbox_supported` is False for this
+            platform (currently: Windows). Checked FIRST, before anything
+            else in this function, so an unsupported platform never reaches
+            ``Popen`` or the POSIX-only teardown calls below it.
         ValueError: ``target_argv`` is empty or its first element is not a
             non-empty executable path.
         OSError: The target could not be spawned at all.
     """
+    if not sandbox_supported():
+        raise SandboxUnsupportedError(_SANDBOX_UNSUPPORTED_MESSAGE)
     if not target_argv or not isinstance(target_argv[0], str) or not target_argv[0]:
         raise ValueError("target_argv must start with a non-empty executable path")
 

@@ -9,10 +9,13 @@ from pathlib import Path
 
 import pytest
 
+import tldw_chatbook.Skills_Interop.skill_script_runner as skill_script_runner
 from tldw_chatbook.Skills_Interop.skill_script_runner import (
+    SandboxUnsupportedError,
     ScriptRunLimits,
     resolve_interpreter,
     run_script_subprocess,
+    sandbox_supported,
 )
 
 
@@ -323,6 +326,32 @@ def test_empty_target_argv_is_a_clear_error(tmp_path):
     for bad in ([], [""]):
         with pytest.raises(ValueError):
             run_script_subprocess(bad, cwd=tmp_path, limits=ScriptRunLimits())
+
+
+def test_sandbox_supported_is_true_on_this_posix_box():
+    """Sanity: this suite runs on macOS/Linux, so the predicate must say so."""
+    assert sandbox_supported() is True
+
+
+def test_sandbox_unsupported_raises_before_any_spawn(tmp_path, monkeypatch):
+    """Simulate Windows via the platform predicate -- never actually run Windows code.
+
+    Monkeypatches ``os.name`` (what ``sandbox_supported`` inspects) so the
+    check reports unsupported, then asserts ``run_script_subprocess`` raises
+    the controlled ``SandboxUnsupportedError`` immediately -- before
+    ``target_argv`` validation and before ``subprocess.Popen`` is ever
+    reached. A ``target_argv`` that would otherwise be perfectly valid (a
+    real, runnable script) proves the platform check truly runs first, not
+    merely that a later step also happens to fail.
+    """
+    monkeypatch.setattr(skill_script_runner.os, "name", "nt")
+    assert sandbox_supported() is False
+
+    script = _script(tmp_path, "print('should never run')")
+    with pytest.raises(SandboxUnsupportedError):
+        run_script_subprocess(
+            [sys.executable, str(script)], cwd=tmp_path, limits=ScriptRunLimits()
+        )
 
 
 def test_returns_promptly_when_a_grandchild_outlives_the_child(tmp_path):

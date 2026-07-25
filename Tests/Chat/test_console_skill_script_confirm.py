@@ -676,6 +676,51 @@ def test_tool_is_absent_without_a_confirm_callback(bridge_without_confirm):
     assert bridge_without_confirm.run_skill_script_tool is None
 
 
+def test_tool_is_absent_on_an_unsupported_platform(tmp_path, monkeypatch):
+    """Advertised must equal usable, applied to the Windows gap (Qodo #871
+    finding 2): even with a skills service AND a confirm callback wired,
+    the tool must not be built when the platform's sandbox is unusable.
+
+    Simulates Windows purely through the platform predicate
+    ``skill_script_runner.sandbox_supported`` -- never by actually running
+    any Windows-only code path on this (POSIX) test box.
+    """
+    import tldw_chatbook.Skills_Interop.skill_script_runner as skill_script_runner_module
+
+    monkeypatch.setattr(
+        skill_script_runner_module, "sandbox_supported", lambda: False
+    )
+
+    trust_service = _FakeTrustService(granted=False)
+    scope = _FakeScopeService(
+        trust_service=trust_service,
+        enforce_side_effect=None,
+        describe_side_effect=None,
+        run_result=ScriptRunResult(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            timed_out=False,
+            output_capped=False,
+            duration_seconds=0.0,
+            truncated_stdout=False,
+            truncated_stderr=False,
+            sandbox_warnings=(),
+        ),
+        run_calls=[],
+    )
+    tool = _capture_run_skill_script_tool(
+        tmp_path,
+        monkeypatch,
+        scope=scope,
+        request_skill_script_confirm=lambda payload: {
+            "allow": True,
+            "remember": False,
+        },
+    )
+    assert tool is None
+
+
 # -- Step 3c: advertised must equal usable (controller-level wiring) --------
 
 

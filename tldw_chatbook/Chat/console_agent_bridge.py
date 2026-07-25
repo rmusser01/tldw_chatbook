@@ -1044,17 +1044,32 @@ class ConsoleAgentBridge:
                 )
 
         # Trust-gated skill script execution (6th runtime tool). Built only
-        # when BOTH a skills service AND a confirm callback exist -- without a
-        # callback the tool is absent (never advertised) rather than
-        # auto-denying every call. Order (load-bearing): enforce policy (no
-        # prompt on denial) -> describe/resolve (no prompt on a bad path or an
-        # unrunnable type) -> grant check (no prompt when the user already
-        # granted this skill) -> confirm (plain blocking call, OUTSIDE any
-        # asyncio.run) -> run -> broad-catch wrap. run_skill_script re-verifies
-        # policy/trust/path authoritatively, so a stale plan can never widen
-        # what actually executes.
+        # when a skills service AND a confirm callback exist AND this
+        # platform's sandbox is actually usable -- without any one of the
+        # three the tool is absent (never advertised) rather than
+        # auto-denying every call. The platform check matters because the
+        # sandbox (skill_script_runner.run_script_subprocess) depends on
+        # POSIX-only primitives (process-group teardown, RLIMIT_* via the
+        # `resource` module) that do not exist on Windows: "advertised must
+        # equal usable" -- a tool the model can call but that always raises
+        # is a defect, not a graceful degradation, so it must simply not be
+        # wired on an unsupported platform. Order (load-bearing): enforce
+        # policy (no prompt on denial) -> describe/resolve (no prompt on a
+        # bad path or an unrunnable type) -> grant check (no prompt when the
+        # user already granted this skill) -> confirm (plain blocking call,
+        # OUTSIDE any asyncio.run) -> run -> broad-catch wrap.
+        # run_skill_script re-verifies policy/trust/path authoritatively, so
+        # a stale plan can never widen what actually executes.
+        from tldw_chatbook.Skills_Interop.skill_script_runner import (
+            sandbox_supported,
+        )
+
         run_skill_script_tool = None
-        if self._skills_service is not None and request_skill_script_confirm is not None:
+        if (
+            self._skills_service is not None
+            and request_skill_script_confirm is not None
+            and sandbox_supported()
+        ):
             scope = self._skills_service
             trust_service = getattr(
                 getattr(scope, "local_service", None), "trust_service", None

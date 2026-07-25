@@ -5,7 +5,15 @@ from __future__ import annotations
 import inspect
 from collections.abc import Sequence
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Deferred at runtime (mirrors local_skills_service.py's own TYPE_CHECKING
+    # import of skill_script_runner): skills_scope_service is deliberately
+    # thin and must not pull in the subprocess sandbox or the local service's
+    # heavier dependencies at module scope just to resolve these hints.
+    from .local_skills_service import ScriptPlan
+    from .skill_script_runner import ScriptRunResult
 
 
 class SkillsBackend(str, Enum):
@@ -385,7 +393,7 @@ class SkillsScopeService:
         script_path: str,
         *,
         mode: SkillsBackend | str | None = None,
-    ):
+    ) -> ScriptPlan:
         """Resolve a LOCAL skill's script for display, without running it.
 
         Args:
@@ -418,7 +426,7 @@ class SkillsScopeService:
         args: Sequence[str],
         *,
         mode: SkillsBackend | str | None = None,
-    ):
+    ) -> ScriptRunResult:
         """Run a LOCAL trusted skill's bundled script (runtime run_skill_script seam).
 
         Args:
@@ -436,6 +444,8 @@ class SkillsScopeService:
             ValueError: Server mode, unavailable local backend, bad path,
                 an unrunnable file type, or invalid ``args``.
             SkillTrustBlockedError: Skill not currently trusted.
+            SandboxUnsupportedError: The sandbox is not usable on this
+                platform (see the local service's ``run_skill_script``).
         """
         normalized_mode = (
             self._normalize_mode(mode) if mode is not None else SkillsBackend.LOCAL

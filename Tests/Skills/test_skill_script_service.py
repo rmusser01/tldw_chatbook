@@ -119,6 +119,51 @@ def test_symlink_escape_is_indistinguishable_from_missing(script_service, tmp_pa
     assert errors[1] == f"local_skill_script_not_found:{links[1]}"
 
 
+@pytest.mark.parametrize(
+    "bad_path",
+    [
+        "../outside.py",  # traversal segment: validate_supporting_file_path's
+        # OWN "Invalid path segment in '../outside.py'" message, pre-fix,
+        # escaped `_resolve_script` unwrapped.
+        "scripts/bad segment!.py",  # fails SEGMENT_PATTERN: validator's own
+        # "Invalid path segment 'bad segment!.py' in ..." message.
+        "x" * 5000,  # exceeds MAX_SUPPORTING_FILE_PATH_LEN: validator's own
+        # "Supporting file path too long: ..." message.
+    ],
+)
+def test_validator_rejection_is_indistinguishable_from_missing(script_service, bad_path):
+    """A `validate_supporting_file_path` rejection must carry the SAME error
+    KIND as a genuinely missing file (Qodo #871 finding 3).
+
+    `_resolve_script`'s docstring promises every script-path rejection --
+    unsafe, missing, symlink, untrusted, or the reserved body -- surfaces as
+    the identical `local_skill_script_not_found` kind, so an escape attempt
+    can never be told apart from a typo. `validate_supporting_file_path` is
+    an independent validator with its OWN differently-worded `ValueError`
+    messages ("Invalid path segment ...", "Supporting file path too long:
+    ..."); calling it without a try/except would let those specific
+    messages leak straight through, breaking that invariant for exactly the
+    paths a security-conscious caller is most likely to probe with.
+    """
+    service, name = script_service
+
+    with pytest.raises(ValueError) as validator_exc:
+        service._resolve_script(name, bad_path)
+    with pytest.raises(ValueError) as missing_exc:
+        service._resolve_script(name, "scripts/definitely-missing.py")
+
+    validator_kind = str(validator_exc.value).split(":", 1)[0]
+    missing_kind = str(missing_exc.value).split(":", 1)[0]
+    assert validator_kind == missing_kind == "local_skill_script_not_found", (
+        f"validator-rejected path surfaced a different error kind: "
+        f"{validator_exc.value!r} vs {missing_exc.value!r}"
+    )
+    # Pin the per-path echo alongside the kind, so a regression to a bare
+    # constant (which would make the kind-equality assertion above
+    # vacuously true) is still caught.
+    assert str(validator_exc.value) == f"local_skill_script_not_found:{bad_path}"
+
+
 @pytest.mark.asyncio
 async def test_symlink_in_bundle_blocks_the_public_seam(script_service):
     """A symlinked bundle raises SkillTrustBlockedError from the PUBLIC seam.

@@ -5,6 +5,20 @@ scripts (`scripts/extract.py`, `bin/render.sh`) that the skill's instructions te
 agent to run. This feature lets those scripts actually execute, under three independent
 gates and a best-effort sandbox.
 
+## Platform support
+
+**Script execution is POSIX-only (macOS/Linux) and is unavailable on Windows.** The
+sandbox (`Skills_Interop/skill_script_runner.py`) depends on POSIX-only primitives —
+`start_new_session=True` for process-group teardown, `os.killpg`/`os.getpgid`, and a
+trampoline that applies resource limits via the POSIX-only `resource` module — none of
+which exist on Windows.
+
+Rather than fail mid-run on an unsupported platform, `sandbox_supported()` is checked
+first and the `run_skill_script` runtime tool is simply never wired up (never advertised
+to the agent) when it returns `False`. The rest of tldw_chatbook, including reading skill
+files and every other runtime tool, is unaffected — only script execution is gated by
+platform.
+
 ## How a run is gated
 
 Every single execution passes all three, in this order:

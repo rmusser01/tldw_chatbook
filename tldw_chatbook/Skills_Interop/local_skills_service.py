@@ -1487,7 +1487,15 @@ class LocalSkillsService:
 
         if script_path == _SKILL_FILENAME:
             raise ValueError(f"{_SCRIPT_NOT_FOUND_ERROR}:{script_path}")
-        validate_supporting_file_path(script_path)
+        try:
+            validate_supporting_file_path(script_path)
+        except ValueError as exc:
+            # Never let the validator's own (differently-worded, reason-
+            # specific) message escape: that would let a caller distinguish
+            # "rejected by path validation" from "genuinely missing", which
+            # is exactly the distinction this method's docstring promises
+            # never to leak.
+            raise ValueError(f"{_SCRIPT_NOT_FOUND_ERROR}:{script_path}") from exc
         skill_dir = self._skill_dir(skill_name)
         if not skill_dir.is_dir():
             raise ValueError(f"local_skill_not_found:{skill_name}")
@@ -1737,6 +1745,12 @@ class LocalSkillsService:
             ValueError: Unsafe/missing path, unrunnable file type, or
                 ``args`` is not a list/tuple of str
                 (``invalid_skill_script_args``).
+            SandboxUnsupportedError: The sandbox is not usable on this
+                platform (currently: Windows) -- see
+                ``skill_script_runner.sandbox_supported``. In practice a
+                well-behaved caller checks that first and never wires this
+                method up at all on an unsupported platform (see
+                ``console_agent_bridge``'s ``run_skill_script_tool`` gate).
         """
         import shutil as _shutil
         import tempfile
