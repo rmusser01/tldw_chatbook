@@ -49,6 +49,7 @@ from tldw_chatbook.UI.Screens.settings_screen import (
     RagProfileSwitchConfirmModal,
     SettingsScreen,
 )
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 
 @pytest.fixture(autouse=True)
@@ -1372,3 +1373,272 @@ def test_after_set_active_with_unknown_index_status_shows_honest_notice_without_
     message, severity = fake_app.notifications[-1]
     assert settings_screen_module.RAG_INDEX_CHANGE_WARNING not in message
     assert "unavailable" in message.lower()
+
+
+# --- Task 2 (541 v2 UX): pre-commit re-index confirmation. A save that
+# would re-point the active profile at a fresh, EMPTY vector collection
+# while the CURRENT collection is actually built (has vectors worth
+# losing) must be confirmed BEFORE the save worker dispatches -- not just
+# warned about after the fact (that's the existing RAG_INDEX_CHANGE_WARNING
+# post-save notice, which still covers the absent/empty/unknown case). ---
+
+
+def _dirty_screen_ready_for_reindex_gate(
+    monkeypatch, tmp_path, fake_app, *, cached_status, pending_activate=None
+):
+    """Wire an isolated adapter, force `index_change_pending` True (so the
+    gate always evaluates the STATUS branch regardless of which field the
+    draft actually touches), seed the screen's cached index-status with
+    `cached_status`, and stub the save worker so dispatch is observable
+    without touching real profile files."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module, "index_change_pending", lambda values: True
+    )
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)
+    screen._library_rag_index_status_cache = cached_status
+    if pending_activate is not None:
+        screen._rag_profile_pending_activate = pending_activate
+    worker_calls: list[tuple] = []
+    screen._settings_save_library_rag_worker = lambda *args: worker_calls.append(args)
+    return screen, worker_calls
+
+
+def test_save_with_built_index_pushes_confirm_modal_with_count_and_backfill(
+    monkeypatch, tmp_path, fake_app
+):
+    screen, worker_calls = _dirty_screen_ready_for_reindex_gate(
+        monkeypatch,
+        tmp_path,
+        fake_app,
+        cached_status={"state": "built", "count": 1234, "provenance": {}},
+    )
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+
+    # Nothing dispatched yet -- the modal gates the worker.
+    assert worker_calls == []
+    assert len(fake_app.pushed_screens) == 1
+    modal, callback = fake_app.pushed_screens[0]
+    assert isinstance(modal, ConfirmationDialog)
+    assert "1234" in modal.message
+    assert "Backfill" in modal.message
+
+
+def test_reindex_confirm_cancel_does_not_save_and_clears_pending_activate(
+    monkeypatch, tmp_path, fake_app
+):
+    screen, worker_calls = _dirty_screen_ready_for_reindex_gate(
+        monkeypatch,
+        tmp_path,
+        fake_app,
+        cached_status={"state": "built", "count": 1234, "provenance": {}},
+        pending_activate="target-profile-id",
+    )
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+    _modal, callback = fake_app.pushed_screens[0]
+
+    callback(False)
+
+    assert worker_calls == []
+    assert screen._rag_profile_pending_activate is None
+    # The draft is left staged -- Cancel must not lose the user's edits.
+    assert SettingsCategoryId.LIBRARY_RAG in screen._settings_drafts
+
+
+def test_reindex_confirm_confirm_dispatches_save_and_rearms_pending_activate(
+    monkeypatch, tmp_path, fake_app
+):
+    screen, worker_calls = _dirty_screen_ready_for_reindex_gate(
+        monkeypatch,
+        tmp_path,
+        fake_app,
+        cached_status={"state": "built", "count": 1234, "provenance": {}},
+        pending_activate="target-profile-id",
+    )
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+    _modal, callback = fake_app.pushed_screens[0]
+
+    callback(True)
+
+    assert len(worker_calls) == 1
+    values, index_will_change = worker_calls[0]
+    assert index_will_change is True
+    assert screen._rag_profile_pending_activate == "target-profile-id"
+
+
+@pytest.mark.parametrize("state", ["absent", "empty"])
+def test_save_with_index_change_but_nothing_built_skips_modal_and_saves_directly(
+    monkeypatch, tmp_path, fake_app, state
+):
+    screen, worker_calls = _dirty_screen_ready_for_reindex_gate(
+        monkeypatch,
+        tmp_path,
+        fake_app,
+        cached_status={"state": state, "count": 0, "provenance": {}},
+    )
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+
+    assert fake_app.pushed_screens == []
+    assert len(worker_calls) == 1
+    values, index_will_change = worker_calls[0]
+    assert index_will_change is True
+
+
+def test_save_then_switch_reindex_confirm_survives_a_confirm(
+    monkeypatch, tmp_path, fake_app
+):
+    """The save-then-switch flow (dirty prompt -> Save) must still complete
+    end to end even when the save it defers to gets its own re-index
+    confirm: pending-activate armed by "Save" on the switch prompt must
+    survive a Confirm on the (second) reindex-confirm modal."""
+    screen, callback, other_id = _dirty_screen_with_switch_pushed(
+        monkeypatch, tmp_path, fake_app
+    )
+    monkeypatch.setattr(
+        settings_screen_module, "index_change_pending", lambda values: True
+    )
+    screen._library_rag_index_status_cache = {
+        "state": "built",
+        "count": 7,
+        "provenance": {},
+    }
+    worker_calls: list[tuple] = []
+    screen._settings_save_library_rag_worker = lambda *args: worker_calls.append(args)
+
+    callback("save")  # arms _rag_profile_pending_activate=other_id, calls Save
+
+    assert worker_calls == []
+    assert len(fake_app.pushed_screens) == 2
+    reindex_modal, reindex_callback = fake_app.pushed_screens[-1]
+    assert isinstance(reindex_modal, ConfirmationDialog)
+
+    reindex_callback(True)
+
+    assert len(worker_calls) == 1
+    assert screen._rag_profile_pending_activate == other_id
+
+
+def test_save_then_switch_reindex_confirm_survives_a_cancel(
+    monkeypatch, tmp_path, fake_app
+):
+    """Same setup, Cancel branch: the deferred switch must NOT fire and
+    _rag_profile_pending_activate must end up clear, not stuck armed."""
+    screen, callback, _other_id = _dirty_screen_with_switch_pushed(
+        monkeypatch, tmp_path, fake_app
+    )
+    monkeypatch.setattr(
+        settings_screen_module, "index_change_pending", lambda values: True
+    )
+    screen._library_rag_index_status_cache = {
+        "state": "built",
+        "count": 7,
+        "provenance": {},
+    }
+    worker_calls: list[tuple] = []
+    screen._settings_save_library_rag_worker = lambda *args: worker_calls.append(args)
+
+    callback("save")
+    _reindex_modal, reindex_callback = fake_app.pushed_screens[-1]
+
+    reindex_callback(False)
+
+    assert worker_calls == []
+    assert screen._rag_profile_pending_activate is None
+
+
+def test_save_with_no_cached_status_fetches_then_confirms_when_built(
+    monkeypatch, tmp_path, fake_app
+):
+    """Step 2: when nothing has been cached yet (category never shown /
+    status never fetched), the gate dispatches its own off-thread fetch
+    before deciding. `_FakeApp` can't run the real Textual worker
+    machinery, so the dispatch call itself is stubbed (same idiom as
+    ``test_backfill_button_click_starts_a_worker_and_notifies``) and the
+    thread-body is invoked directly afterwards (same idiom as
+    ``test_rag_test_category_worker_completion_notifies_state_and_preview``)
+    to simulate the off-thread fetch completing."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module, "index_change_pending", lambda values: True
+    )
+    monkeypatch.setattr(
+        settings_screen_module,
+        "fetch_index_status",
+        lambda: {"state": "built", "count": 99, "provenance": {}},
+    )
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)
+    assert screen._library_rag_index_status_cache is None
+    worker_calls: list[tuple] = []
+    screen._settings_save_library_rag_worker = lambda *args: worker_calls.append(args)
+    fetch_dispatches: list[tuple] = []
+    screen._rag_reindex_confirm_status_worker = lambda *args: fetch_dispatches.append(
+        args
+    )
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+
+    # No modal from the (synchronous) action call itself -- only the fetch
+    # was dispatched, off-thread.
+    assert fake_app.pushed_screens == []
+    assert len(fetch_dispatches) == 1
+    values, pending_activate = fetch_dispatches[0]
+
+    # Simulate the off-thread fetch completing by invoking the real
+    # thread-body directly, bypassing @work's dispatch machinery.
+    worker = SettingsScreen.__dict__["_rag_reindex_confirm_status_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen, values, pending_activate)
+
+    assert worker_calls == []  # gated behind the modal, not dispatched yet
+    assert screen._library_rag_index_status_cache == {
+        "state": "built",
+        "count": 99,
+        "provenance": {},
+    }
+    assert len(fake_app.pushed_screens) == 1
+    modal, callback = fake_app.pushed_screens[0]
+    assert isinstance(modal, ConfirmationDialog)
+    assert "99" in modal.message
+
+    callback(True)
+
+    assert len(worker_calls) == 1
+
+
+def test_save_with_no_cached_status_fetches_then_saves_directly_when_absent(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module, "index_change_pending", lambda values: True
+    )
+    monkeypatch.setattr(
+        settings_screen_module,
+        "fetch_index_status",
+        lambda: {"state": "absent", "count": 0, "provenance": {}},
+    )
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)
+    worker_calls: list[tuple] = []
+    screen._settings_save_library_rag_worker = lambda *args: worker_calls.append(args)
+    fetch_dispatches: list[tuple] = []
+    screen._rag_reindex_confirm_status_worker = lambda *args: fetch_dispatches.append(
+        args
+    )
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+    assert len(fetch_dispatches) == 1
+    values, pending_activate = fetch_dispatches[0]
+
+    worker = SettingsScreen.__dict__["_rag_reindex_confirm_status_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen, values, pending_activate)
+
+    assert fake_app.pushed_screens == []
+    assert len(worker_calls) == 1

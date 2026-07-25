@@ -1234,6 +1234,14 @@ class SettingsScreen(BaseAppScreen):
         # off-thread (touches on-disk Chroma) on category show, after
         # set-active, and after a successful save; never during compose.
         self._library_rag_index_status_text = RAG_INDEX_STATUS_CHECKING_TEXT
+        #: Task 2 (541 v2 UX): the raw dict behind `_library_rag_index_status_text`,
+        #: kept in lockstep by `_apply_library_rag_index_status` (the single
+        #: funnel every fetch trigger already goes through -- category show,
+        #: post-save, post-set-active, 't' test). The pre-commit re-index
+        #: confirm gate (`_confirm_reindex_then_save`) reads this to avoid
+        #: an extra off-thread status fetch on every Save click; None until
+        #: the first fetch completes.
+        self._library_rag_index_status_cache: Mapping[str, object] | None = None
         self._library_rag_backfill_in_flight = False
         self._appearance_result = (
             "Appearance defaults have not been saved this session."
@@ -7740,7 +7748,14 @@ class SettingsScreen(BaseAppScreen):
     def _apply_library_rag_index_status(self, status: Mapping[str, object]) -> None:
         """Imperatively update the index-status Static from a freshly fetched
         status dict -- called from off-thread worker callbacks, never during
-        compose (see ``_library_rag_index_status_text`` init comment)."""
+        compose (see ``_library_rag_index_status_text`` init comment).
+
+        Also refreshes ``_library_rag_index_status_cache`` (Task 2, 541 v2
+        UX) -- every caller of this method already has a fresh status in
+        hand, so this is the one place that needs to remember it for the
+        Save-path re-index confirm gate to read later.
+        """
+        self._library_rag_index_status_cache = status
         self._library_rag_index_status_text = self._library_rag_index_status_line(
             status
         )
@@ -11288,17 +11303,15 @@ class SettingsScreen(BaseAppScreen):
                 self._update_draft_status_widgets(category)
                 self.app.notify(validation.message, severity="error")
                 return
-            # Task 4 (SP3): computed BEFORE the save mutates the active
-            # profile (pure, scratch-copy comparison -- see
-            # index_change_pending's docstring); fast/in-memory, so this runs
-            # inline rather than adding an extra off-thread hop.
-            index_will_change = index_change_pending(values)
-            self._library_rag_result = "Saving Library/RAG defaults..."
-            self._set_static_text(
-                "#settings-library-rag-save-result", self._library_rag_result
-            )
-            self._rag_profile_pending_activate = pending_activate
-            self._settings_save_library_rag_worker(values, index_will_change)
+            # Task 2 (541 v2 UX): gate behind a pre-commit re-index confirm
+            # when this save would re-point the active profile at a fresh,
+            # EMPTY collection while the CURRENT one is actually built (see
+            # _confirm_reindex_then_save's docstring). `pending_activate`
+            # travels through the whole gate/confirm chain as a plain
+            # argument -- `_rag_profile_pending_activate` stays cleared
+            # (from the capture-and-clear above) until the save actually
+            # dispatches, so a Cancel never re-arms it.
+            self._confirm_reindex_then_save(values, pending_activate)
             return
 
         if category is SettingsCategoryId.APPEARANCE:
@@ -11733,6 +11746,110 @@ class SettingsScreen(BaseAppScreen):
             saved,
             dict(section_values),
         )
+
+    def _confirm_reindex_then_save(
+        self,
+        values: SettingsLibraryRagDefaults,
+        pending_activate: str | None,
+    ) -> None:
+        """Task 2 (541 v2 UX): pre-commit gate for the LIBRARY_RAG save.
+
+        A save that would re-point the active profile at a fresh, EMPTY
+        vector collection while the CURRENT collection is actually BUILT
+        (has vectors worth losing) must be confirmed by the user BEFORE the
+        save worker dispatches -- silently saving straight into "search
+        returns nothing" is a trap. When the current index has nothing to
+        lose (absent/empty/unknown, or the save doesn't change the
+        collection at all), this proceeds straight through: the existing
+        post-save ``RAG_INDEX_CHANGE_WARNING`` notice already covers that
+        case honestly.
+
+        ``index_change_pending`` is pure/fast (in-memory fingerprint
+        compare), so it's always computed inline. The index STATUS check,
+        by contrast, touches on-disk Chroma -- prefer the Static's last
+        cached fetch (``_library_rag_index_status_cache``, kept fresh by
+        every trigger that already calls ``_apply_library_rag_index_status``:
+        category show, post-save, post-set-active, 't' test) to avoid
+        adding save-click latency; only when nothing has been cached yet
+        does this dispatch its own off-thread fetch before deciding.
+        """
+        if not index_change_pending(values):
+            self._dispatch_library_rag_save(values, False, pending_activate)
+            return
+        cached_status = self._library_rag_index_status_cache
+        if cached_status is not None:
+            self._decide_reindex_confirmation(values, pending_activate, cached_status)
+            return
+        self._rag_reindex_confirm_status_worker(values, pending_activate)
+
+    def _decide_reindex_confirmation(
+        self,
+        values: SettingsLibraryRagDefaults,
+        pending_activate: str | None,
+        status: Mapping[str, object],
+    ) -> None:
+        """Given a (cached or freshly fetched) index status, either push the
+        re-index confirm modal (state == "built") or proceed straight to
+        dispatch (absent/empty/unknown -- nothing built to lose)."""
+        if str(status.get("state") or "unknown") != "built":
+            self._dispatch_library_rag_save(values, True, pending_activate)
+            return
+        count = status.get("count", 0)
+        modal = ConfirmationDialog(
+            title="Re-index required",
+            message=(
+                "This change re-points to a new EMPTY index — the current "
+                f"index ({count} vectors) stops being used and search "
+                "returns nothing until you run Backfill. Save anyway?"
+            ),
+            confirm_label="Save anyway",
+            cancel_label="Cancel",
+        )
+        self.app.push_screen(
+            modal,
+            lambda confirmed: self._handle_reindex_confirmation_result(
+                confirmed, values, pending_activate
+            ),
+        )
+
+    def _handle_reindex_confirmation_result(
+        self,
+        confirmed: bool | None,
+        values: SettingsLibraryRagDefaults,
+        pending_activate: str | None,
+    ) -> None:
+        if not confirmed:
+            # Cancel: the draft stays staged (never popped on this path) and
+            # `_rag_profile_pending_activate` stays cleared (never re-armed
+            # -- see the capture-and-clear comment at the LIBRARY_RAG save
+            # branch) -- no save dispatched, nothing lost, nothing leaked.
+            return
+        self._dispatch_library_rag_save(values, True, pending_activate)
+
+    @work(exclusive=True, thread=True, group="settings-rag-index-status")
+    def _rag_reindex_confirm_status_worker(
+        self,
+        values: SettingsLibraryRagDefaults,
+        pending_activate: str | None,
+    ) -> None:
+        status = fetch_index_status()
+        self.app.call_from_thread(self._apply_library_rag_index_status, status)
+        self.app.call_from_thread(
+            self._decide_reindex_confirmation, values, pending_activate, status
+        )
+
+    def _dispatch_library_rag_save(
+        self,
+        values: SettingsLibraryRagDefaults,
+        index_will_change: bool,
+        pending_activate: str | None,
+    ) -> None:
+        self._library_rag_result = "Saving Library/RAG defaults..."
+        self._set_static_text(
+            "#settings-library-rag-save-result", self._library_rag_result
+        )
+        self._rag_profile_pending_activate = pending_activate
+        self._settings_save_library_rag_worker(values, index_will_change)
 
     def _apply_library_rag_save_result(
         self,
