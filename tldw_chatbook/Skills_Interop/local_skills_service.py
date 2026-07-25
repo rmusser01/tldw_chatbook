@@ -8,9 +8,10 @@ import json
 import re
 import shutil
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -18,6 +19,12 @@ from ..runtime_policy.types import PolicyDeniedError
 from ..Utils.input_validation import sanitize_string, validate_text_input
 from ..Utils.path_validation import get_safe_relative_path, validate_path_simple
 from .skill_trust_models import SkillTrustBlockedError
+
+if TYPE_CHECKING:
+    # Deferred at runtime (see run_skill_script) to avoid a module-scope
+    # import of the subprocess sandbox for every LocalSkillsService caller;
+    # imported here only so the type hints below resolve for static analysis.
+    from .skill_script_runner import ScriptRunLimits, ScriptRunResult
 
 
 _INDEX_FILENAME = "tldw_chatbook_skills.json"
@@ -55,6 +62,31 @@ _TEXT_FIELD_LIMITS = {
 _TRUST_STATUS_SERVICE_UNAVAILABLE = "trust_locked"
 _TRUST_REASON_SERVICE_UNAVAILABLE = "trust_service_unavailable"
 SKILL_FILE_READ_CAP_CHARS = 100_000
+
+_INTERPRETER_MAP = {
+    ".py": "python3",
+    ".sh": "sh",
+    ".bash": "bash",
+    ".js": "node",
+}
+
+#: Sentinel error surfaced for every "this script can't be resolved" reason
+#: inside ``_resolve_script`` -- unknown skill aside, deliberately identical
+#: text for an unsafe path, a missing file, a symlink, and the canonical
+#: body, so an escape can never be distinguished from a genuinely missing
+#: file (or from any other rejection reason) by its error text alone.
+_SCRIPT_NOT_FOUND_ERROR = "local_skill_script_not_found"
+
+
+@dataclass(frozen=True)
+class ScriptPlan:
+    """How a bundled script would be run, for display and dispatch."""
+
+    skill_name: str
+    script_path: str
+    mechanism: str  # "direct-exec" | "interpreter"
+    interpreter_display: str
+    is_binary: bool
 
 
 class LocalSkillsService:
@@ -1321,6 +1353,202 @@ class LocalSkillsService:
             )
             return {"content": text, "truncated": True, "size": raw_size}
         return {"content": text, "truncated": False, "size": raw_size}
+
+    def _resolve_script(self, skill_name: str, script_path: str) -> tuple[Path, Path]:
+        """Resolve a bundle-relative script path, containment-first.
+
+        Args:
+            skill_name: Canonical skill name.
+            script_path: POSIX relative path within the bundle.
+
+        Returns:
+            ``(skill_dir, absolute_script_path)``.
+
+        Raises:
+            ValueError: Unknown skill, or a path that is unsafe, missing, a
+                symlink, or the canonical body -- all surfaced as the exact
+                SAME ``local_skill_script_not_found`` error text (no
+                interpolated detail) so an escape can never be distinguished
+                from a genuinely missing file, a rejected symlink, or the
+                reserved body path by its error text alone.
+        """
+        from ..tldw_api.skills_schemas import validate_supporting_file_path
+
+        if script_path == _SKILL_FILENAME:
+            raise ValueError(_SCRIPT_NOT_FOUND_ERROR)
+        validate_supporting_file_path(script_path)
+        skill_dir = self._skill_dir(skill_name)
+        if not skill_dir.is_dir():
+            raise ValueError(f"local_skill_not_found:{skill_name}")
+        path = skill_dir / PurePosixPath(script_path)
+        # Containment BEFORE any stat (PR#814 symlink-oracle hardening,
+        # mirrored from read_skill_file): an intermediate symlinked
+        # directory, or the target itself, planted inside the bundle would
+        # otherwise let is_file()/is_symlink() act as an existence oracle
+        # for paths outside skill_dir.
+        if get_safe_relative_path(path, skill_dir) is None:
+            raise ValueError(_SCRIPT_NOT_FOUND_ERROR)
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(_SCRIPT_NOT_FOUND_ERROR)
+        return skill_dir, path
+
+    def _plan_for_script(self, skill_name: str, script_path: str, path: Path) -> ScriptPlan:
+        """Classify how a resolved script should be invoked.
+
+        Args:
+            skill_name: Canonical skill name.
+            script_path: POSIX relative path within the bundle.
+            path: The resolved absolute path.
+
+        Returns:
+            A ScriptPlan naming the mechanism and interpreter.
+
+        Raises:
+            ValueError: ``unrunnable_script_type`` when the file is neither
+                executable nor a known text-script extension, or when a
+                mapped interpreter does not resolve on the scrubbed PATH.
+        """
+        import stat as _stat
+
+        from .skill_script_runner import resolve_interpreter
+
+        raw = path.read_bytes()[:8192]
+        is_binary = b"\x00" in raw
+        if path.stat().st_mode & _stat.S_IXUSR:
+            return ScriptPlan(
+                skill_name=skill_name,
+                script_path=script_path,
+                mechanism="direct-exec",
+                interpreter_display="direct-exec",
+                is_binary=is_binary,
+            )
+        if is_binary:
+            raise ValueError(f"unrunnable_script_type:{script_path}")
+        interpreter_name = _INTERPRETER_MAP.get(PurePosixPath(script_path).suffix)
+        if interpreter_name is None:
+            raise ValueError(f"unrunnable_script_type:{script_path}")
+        resolved = resolve_interpreter(interpreter_name)
+        if resolved is None:
+            raise ValueError(
+                f"unrunnable_script_type:{script_path} "
+                f"(interpreter '{interpreter_name}' is not available)"
+            )
+        return ScriptPlan(
+            skill_name=skill_name,
+            script_path=script_path,
+            mechanism="interpreter",
+            interpreter_display=resolved,
+            is_binary=False,
+        )
+
+    @staticmethod
+    def _script_scratch_root() -> str | None:
+        """Resolve the optional ``[skills] script_scratch_root`` config root.
+
+        Uses the THREE-argument ``get_cli_setting`` form on purpose: the
+        section-dict form (``get_cli_setting("skills", {})``) silently returns
+        ``{}`` for any section without a dot in its name (config.py:3965), so
+        it would make this knob permanently unreachable.
+
+        Returns:
+            The configured scratch root, or None to use the OS temp dir.
+        """
+        try:
+            from ..config import get_cli_setting
+
+            configured = get_cli_setting("skills", "script_scratch_root", "")
+        except Exception:  # noqa: BLE001 — config problems fall back to temp
+            return None
+        if not configured or not isinstance(configured, str):
+            return None
+        root = Path(configured).expanduser()
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return None
+        return str(root)
+
+    async def describe_skill_script(self, skill_name: str, script_path: str) -> ScriptPlan:
+        """Resolve a script for display WITHOUT running it.
+
+        Lets a caller build a confirm prompt and fail early — with no prompt —
+        on policy, trust, path, or type errors. Read-only and side-effect-free;
+        ``run_skill_script`` re-runs every one of these checks authoritatively,
+        so a plan that goes stale before the user decides can never widen what
+        actually executes.
+
+        Args:
+            skill_name: Canonical skill name.
+            script_path: POSIX relative path within the bundle.
+
+        Returns:
+            A ScriptPlan describing the mechanism and interpreter.
+
+        Raises:
+            SkillTrustBlockedError: Skill not currently trusted.
+            ValueError: Unsafe/missing path or unrunnable file type.
+        """
+        self._enforce("skills.run_script.launch.local")
+        self._require_trusted_skill(skill_name)
+        _skill_dir, path = self._resolve_script(skill_name, script_path)
+        return self._plan_for_script(skill_name, script_path, path)
+
+    async def run_skill_script(
+        self,
+        skill_name: str,
+        script_path: str,
+        args: list[str],
+        *,
+        limits: ScriptRunLimits | None = None,
+    ) -> ScriptRunResult:
+        """Run a bundled script of a trusted skill under best-effort containment.
+
+        Order is load-bearing and re-verified here even if the caller already
+        called ``describe_skill_script``: policy gate, per-RUN trust
+        re-verification (a skill revoked or mutated mid-run stops being
+        runnable immediately), containment-first path resolution, then
+        classification, then the sandboxed subprocess in a fresh scratch
+        directory that is never the skill directory.
+
+        Args:
+            skill_name: Canonical skill name.
+            script_path: POSIX relative path within the bundle.
+            args: Arguments appended after the script path. Never shell-parsed.
+            limits: Optional containment budget; defaults to ScriptRunLimits().
+
+        Returns:
+            A ScriptRunResult; a non-zero exit or timeout is a normal result.
+
+        Raises:
+            SkillTrustBlockedError: Skill not currently trusted.
+            ValueError: Unsafe/missing path or unrunnable file type.
+        """
+        import shutil as _shutil
+        import tempfile
+
+        from .skill_script_runner import ScriptRunLimits, run_script_subprocess
+
+        self._enforce("skills.run_script.launch.local")
+        self._require_trusted_skill(skill_name)
+        _skill_dir, path = self._resolve_script(skill_name, script_path)
+        plan = self._plan_for_script(skill_name, script_path, path)
+        effective_limits = limits or ScriptRunLimits()
+        target_argv = (
+            [str(path), *[str(a) for a in args]]
+            if plan.mechanism == "direct-exec"
+            else [plan.interpreter_display, str(path), *[str(a) for a in args]]
+        )
+        scratch = Path(
+            tempfile.mkdtemp(
+                prefix="tldw-skill-script-", dir=self._script_scratch_root()
+            )
+        )
+        try:
+            return run_script_subprocess(
+                target_argv, cwd=scratch, limits=effective_limits
+            )
+        finally:
+            _shutil.rmtree(scratch, ignore_errors=True)
 
     async def seed_builtin_skills(self, *, overwrite: bool = False) -> dict[str, Any]:
         self._enforce("skills.seed.launch.local")

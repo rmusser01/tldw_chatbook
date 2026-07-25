@@ -367,6 +367,84 @@ class SkillsScopeService:
         """
         self._enforce_policy("skills.install_remote.launch.local")
 
+    def enforce_run_script(self) -> None:
+        """Gate a skill-script run (public seam for the agent bridge closure).
+
+        Public by design so the bridge closure can deny on policy BEFORE
+        prompting the user, mirroring ``enforce_install_remote``.
+
+        Raises:
+            PolicyDeniedError: When a wired policy enforcer denies the action.
+        """
+        self._enforce_policy("skills.run_script.launch.local")
+
+    async def describe_skill_script(
+        self,
+        skill_name: str,
+        script_path: str,
+        *,
+        mode: SkillsBackend | str | None = None,
+    ):
+        """Resolve a LOCAL skill's script for display, without running it.
+
+        Args:
+            skill_name: Canonical skill name.
+            script_path: POSIX relative path within the bundle.
+            mode: Backend selector; only local is accepted.
+
+        Returns:
+            The local service's ScriptPlan.
+
+        Raises:
+            ValueError: Server mode, unavailable local backend, or a bad path.
+            SkillTrustBlockedError: Skill not currently trusted.
+        """
+        normalized_mode = (
+            self._normalize_mode(mode) if mode is not None else SkillsBackend.LOCAL
+        )
+        if normalized_mode is not SkillsBackend.LOCAL:
+            raise ValueError("skill scripts run local-only")
+        service = self._require_service(SkillsBackend.LOCAL)
+        self._enforce_policy("skills.run_script.launch.local")
+        return await self._maybe_await(
+            service.describe_skill_script(skill_name, script_path)
+        )
+
+    async def run_skill_script(
+        self,
+        skill_name: str,
+        script_path: str,
+        args: list[str],
+        *,
+        mode: SkillsBackend | str | None = None,
+    ):
+        """Run a LOCAL trusted skill's bundled script (runtime run_skill_script seam).
+
+        Args:
+            skill_name: Canonical skill name.
+            script_path: POSIX relative path within the bundle.
+            args: Arguments appended after the script path.
+            mode: Backend selector; only local is accepted.
+
+        Returns:
+            The local service's ScriptRunResult.
+
+        Raises:
+            ValueError: Server mode, unavailable local backend, bad path, or
+                an unrunnable file type.
+            SkillTrustBlockedError: Skill not currently trusted.
+        """
+        normalized_mode = (
+            self._normalize_mode(mode) if mode is not None else SkillsBackend.LOCAL
+        )
+        if normalized_mode is not SkillsBackend.LOCAL:
+            raise ValueError("skill scripts run local-only")
+        service = self._require_service(SkillsBackend.LOCAL)
+        self._enforce_policy("skills.run_script.launch.local")
+        return await self._maybe_await(
+            service.run_skill_script(skill_name, script_path, args)
+        )
+
     async def seed_builtin_skills(
         self, *, mode: SkillsBackend | str | None = None, **kwargs: Any
     ) -> dict[str, Any]:
