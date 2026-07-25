@@ -5372,6 +5372,7 @@ async def test_switching_mode_away_from_audit_clears_entry_detail():
 
 
 @pytest.mark.asyncio
+@pytest.mark.filterwarnings("error::RuntimeWarning")
 async def test_audit_open_tool_switches_to_tools_mode_selects_row_and_shows_detail():
     app = AuditApp([_audit_record(server_key="local:docs", tool_name="search")])
     async with app.run_test(size=(120, 40)) as pilot:
@@ -5692,6 +5693,7 @@ async def test_switching_mode_away_from_audit_clears_finding_detail():
 
 
 @pytest.mark.asyncio
+@pytest.mark.filterwarnings("error::RuntimeWarning")
 async def test_audit_adjust_permission_switches_to_permissions_mode_and_selects_row():
     app = AuditApp([_audit_record(server_key="local:docs", tool_name="search")])
     async with app.run_test(size=(120, 40)) as pilot:

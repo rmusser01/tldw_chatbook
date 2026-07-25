@@ -8,6 +8,7 @@ import json
 import os
 import time
 from collections.abc import Mapping
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -1720,7 +1721,7 @@ class MCPWorkbench(Container):
             # a Servers -> Tools -> Servers round-trip. Dispatched as a
             # worker (set_mode is sync); no-op when unarmed.
             self.run_worker(
-                self._disarm_canvas_delete(),
+                self._disarm_canvas_delete,
                 group="mcp-detail-disarm",
                 exclusive=True,
             )
@@ -1729,7 +1730,7 @@ class MCPWorkbench(Container):
             # Test Tool panel behind otherwise; switching INTO it starts
             # with nothing selected anyway, so this is a no-op there.
             self.run_worker(
-                self._clear_tool_view(),
+                self._clear_tool_view,
                 group="mcp-tool-clear",
                 exclusive=True,
             )
@@ -2170,14 +2171,14 @@ class MCPWorkbench(Container):
         between the two `run_worker()` calls) -- Textual cancels the
         PREVIOUSLY-QUEUED worker in an exclusive group at `add_worker()`
         time, before it ever runs, not at completion time. That means
-        `_clear_tool_view()`'s own `show_audit_entry(None)` call is an
-        orphaned coroutine that never executes here -- `_open_audit_tool()`
-        below does NOT rely on that cancelled worker to clear the audit
-        panel; it clears `#mcp-inspector-audit` itself, explicitly, before
-        populating the Tools-mode detail (Critical fix: the stale
-        audit-entry detail -- including its own live "Open tool"/"Adjust
-        permission" buttons -- used to stay mounted underneath the new
-        detail otherwise).
+        the lazily supplied `_clear_tool_view` callable is cancelled before
+        invocation: none of its inspector clears execute here, and no live
+        coroutine object is orphaned. `_open_audit_tool()` below therefore
+        does NOT rely on that cancelled worker to clear the audit panel; it
+        clears `#mcp-inspector-audit` itself, explicitly, before populating
+        the Tools-mode detail (Critical fix: the stale audit-entry detail --
+        including its own live "Open tool"/"Adjust permission" buttons --
+        used to stay mounted underneath the new detail otherwise).
         """
         event.stop()
         tool = self._tool_for(event.server_key, event.tool_name)
@@ -2191,7 +2192,9 @@ class MCPWorkbench(Container):
             return
         self.set_mode("tools")
         self.run_worker(
-            self._open_audit_tool(tool), group="mcp-tool-clear", exclusive=True
+            partial(self._open_audit_tool, tool),
+            group="mcp-tool-clear",
+            exclusive=True,
         )
 
     async def _open_audit_tool(self, tool: HubTool) -> None:
@@ -2230,7 +2233,9 @@ class MCPWorkbench(Container):
             return
         self.set_mode("permissions")
         self.run_worker(
-            self._open_audit_permission(tool), group="mcp-tool-clear", exclusive=True
+            partial(self._open_audit_permission, tool),
+            group="mcp-tool-clear",
+            exclusive=True,
         )
 
     async def _open_audit_permission(self, tool: HubTool) -> None:
