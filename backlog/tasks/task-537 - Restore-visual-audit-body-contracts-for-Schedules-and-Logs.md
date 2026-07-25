@@ -1,10 +1,10 @@
 ---
 id: TASK-537
 title: Restore visual audit body contracts for Schedules and Logs
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-24 21:15'
-updated_date: '2026-07-24 21:22'
+updated_date: '2026-07-25 19:12'
 labels:
   - ui
   - navigation
@@ -55,6 +55,12 @@ Reason: The canonical shell ADR still describes Logs as folded under Settings ev
 - Restored the stable `#schedules-shell` outer body around the current `SchedulesWorkbench` content without changing scheduling services, workers, events, or responsive class ownership.
 - Added the existing `#logs-destination-header` to both cross-destination visual selector maps and added direct phase-6 route-inventory coverage so future destination additions cannot fail only deep inside the size sweep.
 - Amended [ADR-015](../decisions/015-shell-destination-ia.md) to record the already-established 13-destination taxonomy, top-level Logs ownership, fold map, palette semantics, rationale, and consequences.
-- Verification: the focused shell regression passed red-to-green; phase-1 and phase-6 matrices each passed all three terminal sizes; 53 focused Schedules/shell-navigation tests, 7 Schedules visual-parity tests, and 2 direct selector-map tests passed. Ruff, formatting, `compileall`, and `git diff --check` passed.
-- Independent review approved the wrapper boundary, Textual lifecycle/layout behavior, route inventory, ADR coherence, test coverage, and bounded diff with no actionable findings.
+- Reconciliation verification: all 9 phase-1/phase-6 visual-audit tests
+  passed across compact, laptop, and large sizes; all 6 Schedules geometry
+  cases passed; and all 43 Schedules, CSS-integrity, and duplicate-task
+  sentinel tests passed. The direct shell/selector checks and original compact
+  failure also passed. Ruff, formatting, `compileall`, and diff checks passed.
+- The original implementation received independent review. A final
+  reconciliation self-review found and corrected the stale direct-child CSS
+  selector before closeout.
 <!-- SECTION:NOTES:END -->

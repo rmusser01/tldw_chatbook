@@ -8,7 +8,11 @@ from textual.app import App
 from textual.containers import Horizontal
 from textual.widgets import Button, DataTable, Input, Static
 
-from tldw_chatbook.Scheduling.events import DeleteTaskRequested, SyncCompleted, SyncFailed
+from tldw_chatbook.Scheduling.events import (
+    DeleteTaskRequested,
+    SyncCompleted,
+    SyncFailed,
+)
 from tldw_chatbook.Scheduling.models import (
     ReminderTask,
     ScheduledTask,
@@ -960,14 +964,16 @@ async def test_conflicts_tab_renders_rows_and_resolves():
         tab = CapturingConflictsTab(sync_engine=engine)
         await pilot.app.mount(tab)
         await pilot.pause()
-        tab.populate([
-            {
-                "id": "c1",
-                "local_id": "l1",
-                "server_state": {},
-                "local_state": {"record": {"title": "Local"}},
-            },
-        ])
+        tab.populate(
+            [
+                {
+                    "id": "c1",
+                    "local_id": "l1",
+                    "server_state": {},
+                    "local_state": {"record": {"title": "Local"}},
+                },
+            ]
+        )
         await pilot.pause()
 
         table = tab.query_one("#scheduling-conflicts-table", DataTable)
@@ -982,7 +988,6 @@ async def test_conflicts_tab_renders_rows_and_resolves():
         assert msg.conflict_id == "c1"
         assert msg.resolution == "server"
         assert table.row_count == 0
-
 
 
 @pytest.mark.asyncio
@@ -1011,14 +1016,16 @@ async def test_conflicts_tab_resolve_false_does_not_post_message():
         tab = CapturingConflictsTab(sync_engine=engine)
         await pilot.app.mount(tab)
         await pilot.pause()
-        tab.populate([
-            {
-                "id": "c1",
-                "local_id": "l1",
-                "server_state": {},
-                "local_state": {"record": {"title": "Local"}},
-            },
-        ])
+        tab.populate(
+            [
+                {
+                    "id": "c1",
+                    "local_id": "l1",
+                    "server_state": {},
+                    "local_state": {"record": {"title": "Local"}},
+                },
+            ]
+        )
         await pilot.pause()
 
         table = tab.query_one("#scheduling-conflicts-table", DataTable)
