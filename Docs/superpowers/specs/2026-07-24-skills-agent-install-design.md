@@ -149,5 +149,5 @@ Fail-closed throughout: policy denial short-circuits before prompting; a malform
 
 - The in-chat confirm shows the URL but cannot show the archive contents before download (the fetch happens after confirm) — the human's second gate (trust review) is where bundle contents are inspected.
 - **Run-budget interaction:** the run's `max_wall_seconds` (480 s) is checked once per outer-loop iteration, not during a blocking tool dispatch, so the confirm does not get killed mid-wait; but a human who resolves very close to the budget edge can cause the run to hit `RUN_STUCK` on the *next* iteration — after a successful install — so the agent never gets a turn to narrate the outcome. The skill is still installed (trust-pending, visible in Library); the 120 s confirm timeout keeps this corner rare. Accepted.
-- The DNS-rebinding TOCTOU residual from the remote-fetch layer (no transport-level IP pinning) still applies to `install_skill_from_url`; unchanged here (tracked as task-524/525).
+- The DNS-rebinding TOCTOU residual from the remote-fetch layer (no transport-level IP pinning) still applies to `install_skill_from_url`; unchanged here (tracked as task-609/610).
 - Policy-off schema suppression (§6) is deferred.
