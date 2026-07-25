@@ -1819,6 +1819,151 @@ def test_double_save_click_during_no_cache_fetch_does_not_drop_pending_activate(
     assert len(fetch_dispatches) == 2
 
 
+# --- task-566: cancel settings-rag-index-status workers on category nav ---
+
+
+def test_leaving_library_rag_cancels_the_index_status_worker_group(
+    monkeypatch, tmp_path
+):
+    """task-566 AC1: the exclusive ``settings-rag-index-status`` worker
+    group (index-status fetch on category show / 't' test / Save-path
+    reindex confirm) must be cancelled the moment the user navigates away
+    from Library/RAG, so a stale fetch can't linger and land its callback
+    over an unrelated category.
+
+    ``self.workers`` resolves through ``self.app`` -- a bare-constructed
+    screen only has one once it's mounted (``is_mounted`` -- a plain
+    ``_is_mounted`` instance flag, flipped True here) or a real running app
+    context. Faking ``workers`` at the class level (same trick as the
+    ``fake_app`` fixture's ``app`` override) avoids needing a full pilot
+    mount just to observe the cancel call.
+    """
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    screen._is_mounted = True
+    cancelled: list[tuple] = []
+    monkeypatch.setattr(
+        SettingsScreen,
+        "workers",
+        property(
+            lambda self: SimpleNamespace(
+                cancel_group=lambda node, group: cancelled.append((node, group))
+            )
+        ),
+        raising=False,
+    )
+
+    screen._select_category(SettingsCategoryId.THEME.value)
+
+    assert cancelled == [(screen, "settings-rag-index-status")]
+
+
+def test_apply_library_rag_index_status_no_ops_after_navigating_away(
+    monkeypatch, tmp_path
+):
+    """task-566 AC2: a stale ``settings-rag-index-status`` worker callback
+    that lands after the user has already left Library/RAG must not write
+    the status Static, update the cached status, or refresh the first-run
+    panel -- all of that belongs to a category the user isn't looking at
+    anymore (worker cancellation is best-effort: a thread already running
+    still completes and still calls back, so this callback-side guard is
+    what actually matters)."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.THEME.value
+    screen._library_rag_index_status_cache = None
+    refreshed: list[bool] = []
+    monkeypatch.setattr(
+        screen, "_refresh_rag_first_run_panel_state", lambda: refreshed.append(True)
+    )
+
+    screen._apply_library_rag_index_status(
+        {"state": "built", "count": 3, "provenance": {}}
+    )
+
+    assert screen._library_rag_index_status_cache is None
+    assert refreshed == []
+
+
+def test_stale_reindex_confirm_worker_landing_after_nav_away_skips_the_modal(
+    monkeypatch, tmp_path, fake_app
+):
+    """task-566 AC2: the Save-path reindex-confirm worker landing its
+    decision callback AFTER the user has already navigated away from
+    Library/RAG must never pop the destructive "Re-index required" modal
+    over whatever unrelated category is now showing -- the exact post-541
+    finding this task closes. The save attempt is dropped rather than
+    auto-confirmed or shown out of context; there's no one left to confirm
+    it."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module, "index_change_pending", lambda values: True
+    )
+    monkeypatch.setattr(
+        settings_screen_module,
+        "fetch_index_status",
+        lambda: {"state": "built", "count": 99, "provenance": {}},
+    )
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)
+    worker_calls: list[tuple] = []
+    screen._settings_save_library_rag_worker = lambda *args: worker_calls.append(args)
+    fetch_dispatches: list[tuple] = []
+    screen._rag_reindex_confirm_status_worker = lambda *args: fetch_dispatches.append(
+        args
+    )
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+    assert len(fetch_dispatches) == 1
+    values, pending_activate = fetch_dispatches[0]
+
+    # The user navigates away from Library/RAG WHILE that fetch is still
+    # in flight -- exactly the race this task targets.
+    screen.active_category = SettingsCategoryId.THEME.value
+
+    # Simulate the off-thread fetch completing anyway (thread already
+    # running -- cancellation can't stop it), same idiom as
+    # `test_save_with_no_cached_status_fetches_then_confirms_when_built`.
+    worker = SettingsScreen.__dict__["_rag_reindex_confirm_status_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen, values, pending_activate)
+
+    assert fake_app.pushed_screens == []
+    assert worker_calls == []
+
+
+def test_reentering_library_rag_after_leaving_still_fetches_fresh_status(
+    monkeypatch, tmp_path
+):
+    """task-566 AC3: cancelling the worker group on the way out must not
+    prevent a fresh index-status fetch from being dispatched the next time
+    the user re-enters Library/RAG."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    screen._is_mounted = True
+    monkeypatch.setattr(
+        SettingsScreen,
+        "workers",
+        property(lambda self: SimpleNamespace(cancel_group=lambda *a, **k: None)),
+        raising=False,
+    )
+    refreshed: list[bool] = []
+    monkeypatch.setattr(
+        screen, "_refresh_library_rag_index_status", lambda: refreshed.append(True)
+    )
+
+    screen._select_category(SettingsCategoryId.THEME.value)
+    assert refreshed == []
+
+    screen._select_category(SettingsCategoryId.LIBRARY_RAG.value)
+    assert refreshed == [True]
+
+
 def test_reindex_confirm_in_flight_cleared_on_cancel(monkeypatch, tmp_path, fake_app):
     """The in-flight guard must clear on the Cancel branch too (defensive
     -- by the time the modal resolves it's normally already cleared by the

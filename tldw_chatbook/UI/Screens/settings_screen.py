@@ -8171,6 +8171,14 @@ class SettingsScreen(BaseAppScreen):
         hand, so this is the one place that needs to remember it for the
         Save-path re-index confirm gate to read later.
         """
+        # task-566: a `settings-rag-index-status` worker (category show /
+        # 't' test / Save-path reindex confirm) that was already running
+        # when the user navigated away still completes and still calls
+        # back -- `_select_category`'s `cancel_group` is best-effort, not a
+        # guarantee. Skip entirely rather than write a status Static / cache
+        # entry that belongs to a category no longer on screen.
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
         self._library_rag_index_status_cache = status
         self._library_rag_index_status_text = self._library_rag_index_status_line(
             status
@@ -10127,6 +10135,22 @@ class SettingsScreen(BaseAppScreen):
             # nothing to it, so a leftover entry here would incorrectly
             # swallow that new instance's own first genuine Changed.
             self._rag_select_suppress_queue.clear()
+            # task-566: the exclusive `settings-rag-index-status` worker
+            # group (index-status fetch on category show / 't' test /
+            # Save-path reindex confirm) must not be left running once the
+            # user has navigated away -- its callback would otherwise land
+            # later and pop a re-index confirm modal, or write a status
+            # line, over a now-unrelated category. Cancellation is
+            # best-effort (a thread already running still completes and
+            # still calls back -- see the guards in
+            # `_apply_library_rag_index_status` and
+            # `_decide_reindex_confirmation`, which are what actually
+            # matter), but it does stop a not-yet-started fetch from ever
+            # landing at all. `is_mounted` guards `self.workers` (routes
+            # through `self.app`, unavailable on a not-yet-mounted screen)
+            # -- same guard shape as `_refresh_library_rag_index_status`.
+            if getattr(self, "is_mounted", False):
+                self.workers.cancel_group(self, "settings-rag-index-status")
         # Task 2 review (Important): a stale re-index-confirm in-flight
         # guard must never survive navigating away from (or back into) the
         # category -- e.g. the user backs out mid-fetch. Unconditional
@@ -12852,6 +12876,16 @@ class SettingsScreen(BaseAppScreen):
         dispatch (absent/empty/unknown -- nothing built to lose)."""
         if str(status.get("state") or "unknown") != "built":
             self._dispatch_library_rag_save(values, True, pending_activate)
+            return
+        # task-566: this decision can be reached by a `settings-rag-index-
+        # status` worker callback that was already in flight when the user
+        # navigated away from Library/RAG (`_select_category`'s
+        # `cancel_group` is best-effort, not a guarantee for an
+        # already-running thread). Never surface the destructive "Re-index
+        # required" modal over an unrelated category -- there's no one left
+        # to confirm it, so the save attempt is dropped here rather than
+        # auto-confirmed or shown out of context.
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
             return
         count = status.get("count", 0)
         # 541-v2 final review item 3: thousands separator -- a large library
