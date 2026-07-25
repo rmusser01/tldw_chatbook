@@ -85,6 +85,7 @@ class MCPPendingCall:
     server_label: str
     arguments: dict
     reason: str  # ask|config_changed|risk_floored
+    options: tuple[str, ...] = ()
 
 
 def _has_non_text_content(value: Any) -> bool:

@@ -853,6 +853,7 @@ class ConsoleChatController:
                     "server_label": call.server_label,
                     "arguments": dict(call.arguments or {}),
                     "reason": call.reason,
+                    "options": list(call.options),
                 }
                 for call in pending
             ],

@@ -41,6 +41,25 @@ _DECISION_OPTIONS: list[tuple[str, str]] = [
 ]
 _DEFAULT_DECISION = "approve_once"
 
+
+def _options_for_row(call: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """Decision options for one row, honoring an optional ``options`` key.
+
+    Rows that omit ``options`` (every MCP row) get the full set, so MCP
+    behavior is unchanged. A row may narrow it -- built-in tools offer
+    only the session-scoped choices in P1, because persistent decisions
+    for them cannot yet be undone in the UI. Unknown values are dropped,
+    and an empty result falls back to the full set rather than rendering
+    an unusable empty ``Select``.
+    """
+    requested = call.get("options") if isinstance(call, Mapping) else None
+    if not isinstance(requested, (list, tuple)) or not requested:
+        return _DECISION_OPTIONS
+    wanted = set(requested)
+    narrowed = [pair for pair in _DECISION_OPTIONS if pair[1] in wanted]
+    return narrowed or _DECISION_OPTIONS
+
+
 #: Reason-badge suffixes appended to a row's header line.
 _REASON_SUFFIXES: dict[str, str] = {
     "config_changed": " (definition changed)",
@@ -216,9 +235,16 @@ class ChatApprovalCard(Container):
         rows: list[Horizontal] = []
         for index, entry in enumerate(grouped):
             names.append(str(entry.get("llm_name", "")))
+            row_options = _options_for_row(entry)
+            row_values = [value for _label, value in row_options]
+            default_value = (
+                _DEFAULT_DECISION
+                if _DEFAULT_DECISION in row_values
+                else row_options[0][1]
+            )
             select = Select(
-                _DECISION_OPTIONS,
-                value=_DEFAULT_DECISION,
+                row_options,
+                value=default_value,
                 allow_blank=False,
                 classes="approval-row-decision",
             )
