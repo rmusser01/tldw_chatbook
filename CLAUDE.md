@@ -126,6 +126,9 @@ def _heavy_task(self):
 2. Implement the `name`, `description`, `parameters` properties and the async `execute(**kwargs)` method
 3. Register the instance via `ToolExecutor.register_tool()` (the singleton executor is obtained through `get_tool_executor()` in `tool_executor.py`); built-in registration is gated by the `[tools]` config section
 
+**UI changes:** PRs that change a screen's UI should update the matching
+`Docs/User_Guide/` page (or at least its "Verified against" stamp).
+
 ### Security Requirements
 
 - Validate all inputs via `input_validation.py`
