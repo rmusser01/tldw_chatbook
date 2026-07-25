@@ -6047,7 +6047,7 @@ class TldwCli(
         )
         handler = await self._ensure_stts_handler()
         if handler:
-            await handler.handle_playground_generate(event)
+            handler.start_playground_generation(event)
         else:
             self.loguru_logger.error("S/TT/S handler not initialized")
             self.notify("S/TT/S service not available", severity="error")

@@ -277,6 +277,32 @@ class _SnapshotHost(App[None]):
         self.generation_events.append(event)
 
 
+class _EndToEndHost(App[None]):
+    def __init__(self, native_service: object) -> None:
+        super().__init__()
+        self.notifications: list[tuple[str, str]] = []
+        self._stts_handler = STTSEventHandler(app=self)
+        self._stts_handler._stts_service = native_service
+
+    def compose(self) -> ComposeResult:
+        yield TTSPlaygroundWidget()
+
+    @on(STTSPlaygroundGenerateEvent)
+    def generate(self, event: STTSPlaygroundGenerateEvent) -> None:
+        self._stts_handler.start_playground_generation(event)
+
+    def notify(
+        self,
+        message: str,
+        *,
+        title: str = "",
+        severity: str = "information",
+        timeout: float | None = None,
+    ) -> None:
+        del title, timeout
+        self.notifications.append((message, severity))
+
+
 async def _resolved(value: object) -> object:
     return value
 
@@ -392,6 +418,103 @@ async def test_playground_stores_delivered_artifact_not_current_selectors(
             str(app.query_one("#audio-player-status", Static).render())
             == "WAV audio ready to play"
         )
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_playground_runs_end_to_end_through_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog_service = _SnapshotService()
+    native_service = _NativeService(
+        _Response(_CountingStream((b"RIFF", b"end-to-end")))
+    )
+    monkeypatch.setattr(
+        STTS_Window,
+        "get_cli_setting",
+        lambda section, key, default=None: (
+            "audio_cpp"
+            if (section, key) == ("app_tts", "default_provider")
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        STTS_Window,
+        "get_tts_service",
+        lambda: _resolved(catalog_service),
+    )
+    app = _EndToEndHost(native_service)
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await app.workers.wait_for_complete()
+        widget = app.query_one(TTSPlaygroundWidget)
+        app.query_one("#tts-text-input", TextArea).text = "synthesize this"
+        await pilot.pause()
+
+        widget._generate_tts()
+        for _ in range(100):
+            if app._stts_handler.playground_state().artifact is not None:
+                break
+            await pilot.pause(0.02)
+        await pilot.pause()
+
+        artifact = app._stts_handler.playground_state().artifact
+        assert artifact is not None
+        assert artifact.path.read_bytes() == b"RIFFend-to-end"
+        assert widget.current_audio_artifact is artifact
+        assert widget.current_audio_file == artifact.path
+        assert app.query_one("#audio-play-btn", Button).disabled is False
+        assert app.query_one("#audio-export-btn", Button).disabled is False
+
+    await app._stts_handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_catalog_refresh_does_not_cancel_handler_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog_service = _SnapshotService()
+    release = asyncio.Event()
+    native_service = _NativeService(_Response(_CountingStream((), blocked=release)))
+    monkeypatch.setattr(
+        STTS_Window,
+        "get_cli_setting",
+        lambda section, key, default=None: (
+            "audio_cpp"
+            if (section, key) == ("app_tts", "default_provider")
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        STTS_Window,
+        "get_tts_service",
+        lambda: _resolved(catalog_service),
+    )
+    app = _EndToEndHost(native_service)
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await app.workers.wait_for_complete()
+        widget = app.query_one(TTSPlaygroundWidget)
+        app.query_one("#tts-text-input", TextArea).text = "synthesize this"
+        await pilot.pause()
+        widget._generate_tts()
+        for _ in range(100):
+            if app._stts_handler.playground_state().generation_active:
+                break
+            await pilot.pause(0.02)
+        generation_task = app._stts_handler._generation_task
+        assert generation_task is not None
+
+        widget._load_provider_catalog("audio_cpp", refresh=True)
+        await app.workers.wait_for_complete()
+
+        assert app._stts_handler._generation_task is generation_task
+        assert generation_task.done() is False
+        assert generation_task.cancelled() is False
+
+        release.set()
+        await generation_task
+
+    await app._stts_handler.cleanup_tts_resources()
 
 
 @pytest.mark.asyncio
@@ -711,4 +834,174 @@ async def test_repeated_generate_is_rejected_without_replacing_active_work() -> 
     assert handler._is_generating is True
     assert app.notifications == [
         ("TTS generation already in progress", "warning"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_handler_retains_one_generation_task_and_exposes_read_only_state() -> (
+    None
+):
+    release = asyncio.Event()
+    first_response = _Response(_CountingStream((), blocked=release))
+    service = _NativeService(first_response)
+    app = _DeliveryApp()
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = service
+    first_event = STTSPlaygroundGenerateEvent(_snapshot())
+    second_event = STTSPlaygroundGenerateEvent(
+        STTSPlaygroundRequest(
+            operation_id="local-operation-2",
+            provider_id="audio_cpp",
+            model_id="model-2",
+            text="second",
+            voice_id=None,
+            response_format="wav",
+        )
+    )
+
+    handler.start_playground_generation(first_event)
+    await asyncio.sleep(0)
+    retained_task = handler._generation_task
+    state = handler.playground_state()
+    handler.start_playground_generation(second_event)
+
+    assert retained_task is not None
+    assert handler._generation_task is retained_task
+    assert state.active_operation_id == "local-operation-1"
+    assert state.generation_active is True
+    assert state.artifact is None
+    assert app.notifications == [
+        ("TTS generation already in progress", "warning"),
+    ]
+
+    release.set()
+    await retained_task
+    finished_state = handler.playground_state()
+    try:
+        assert finished_state.active_operation_id is None
+        assert finished_state.generation_active is False
+        assert finished_state.artifact is not None
+        assert finished_state.artifact.operation_id == "local-operation-1"
+    finally:
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_successful_replacement_and_shutdown_delete_owned_artifacts() -> None:
+    app = _DeliveryApp()
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = _NativeService(
+        _Response(_CountingStream((b"RIFF", b"first")))
+    )
+    await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(_snapshot()))
+    first = handler._current_playground_artifact
+    assert first is not None
+    assert first.path.exists()
+
+    handler._stts_service = _NativeService(
+        _Response(_CountingStream((b"RIFF", b"second")))
+    )
+    await handler.handle_playground_generate(
+        STTSPlaygroundGenerateEvent(
+            STTSPlaygroundRequest(
+                operation_id="local-operation-2",
+                provider_id="audio_cpp",
+                model_id="model-2",
+                text="second",
+                voice_id=None,
+                response_format="wav",
+            )
+        )
+    )
+    second = handler._current_playground_artifact
+
+    assert second is not None
+    assert second.path.exists()
+    assert second.path.read_bytes() == b"RIFFsecond"
+    assert not first.path.exists()
+    assert handler._playground_audio_files == {second.path}
+    assert handler._playground_operation_files == {
+        "local-operation-2": {second.path},
+    }
+
+    await handler.cleanup_tts_resources()
+
+    assert not second.path.exists()
+    assert handler._current_playground_artifact is None
+    assert handler._current_audio_file is None
+    assert handler._playground_audio_files == set()
+    assert handler._playground_operation_files == {}
+
+
+@pytest.mark.asyncio
+async def test_generation_survives_broken_or_removed_progress_view() -> None:
+    class BrokenPlayground:
+        def query_one(self, *_args: object, **_kwargs: object) -> object:
+            raise LookupError("PRIVATE_REMOVED_WIDGET")
+
+        def call_from_thread(self, callback: object, *args: object) -> None:
+            assert callable(callback)
+            callback(*args)
+
+    response = _Response(_CountingStream((b"RIFF", b"audio")))
+    app = _DeliveryApp(BrokenPlayground())  # type: ignore[arg-type]
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = _NativeService(response)
+
+    await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(_snapshot()))
+
+    artifact = handler._current_playground_artifact
+    try:
+        assert artifact is not None
+        assert artifact.path.read_bytes() == b"RIFFaudio"
+        assert app.notifications == [
+            ("TTS generation complete!", "information"),
+        ]
+    finally:
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_unmounted_view_is_not_retained_or_called_on_completion() -> None:
+    release = asyncio.Event()
+    response = _Response(_CountingStream((), blocked=release))
+    first_view = _DeliveryPlayground()
+    app = _DeliveryApp(first_view)
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = _NativeService(response)
+    handler.start_playground_generation(STTSPlaygroundGenerateEvent(_snapshot()))
+    await asyncio.sleep(0)
+    retained_task = handler._generation_task
+    assert retained_task is not None
+
+    app.playground = None
+    release.set()
+    await retained_task
+
+    state = handler.playground_state()
+    try:
+        assert first_view.completions == []
+        assert state.generation_active is False
+        assert state.active_operation_id is None
+        assert state.artifact is not None
+        assert state.artifact.path.exists()
+    finally:
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_unavailable_service_releases_playground_generation_state() -> None:
+    playground = _DeliveryPlayground()
+    app = _DeliveryApp(playground)
+    handler = STTSEventHandler(app=app)
+
+    await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(_snapshot()))
+
+    state = handler.playground_state()
+    assert playground.completions == [None]
+    assert state.active_operation_id is None
+    assert state.generation_active is False
+    assert state.artifact is None
+    assert app.notifications == [
+        ("TTS service not initialized", "error"),
     ]

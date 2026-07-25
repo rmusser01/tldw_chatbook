@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from rich.text import Text
@@ -16,6 +18,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSProviderDescriptor,
 )
+from tldw_chatbook.TTS.playground_types import STTSGeneratedAudio
 from tldw_chatbook.TTS.legacy_catalogs import legacy_catalog
 from tldw_chatbook.UI import STTS_Window
 from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
@@ -91,6 +94,7 @@ class FakeTTSService:
         }
         self.catalog_started: asyncio.Event | None = None
         self.allow_catalog: asyncio.Event | None = None
+        self.catalog_cancelled = False
 
     def provider_descriptors(self) -> tuple[TTSProviderDescriptor, ...]:
         self.descriptor_calls += 1
@@ -122,6 +126,7 @@ class FakeTTSService:
             try:
                 await self.allow_catalog.wait()
             except asyncio.CancelledError:
+                self.catalog_cancelled = True
                 await self.allow_catalog.wait()
         return self.catalogs[provider_id]
 
@@ -313,6 +318,41 @@ async def test_catalog_result_is_discarded_when_configuration_revision_changes(
 
 
 @pytest.mark.asyncio
+async def test_voice_discovery_does_not_cancel_inflight_catalog_refresh(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        service.catalog_started = asyncio.Event()
+        service.allow_catalog = asyncio.Event()
+        widget = app.query_one(TTSPlaygroundWidget)
+
+        widget._load_provider_catalog("audio_cpp", refresh=True)
+        await service.catalog_started.wait()
+        app.query_one("#tts-model-select", Select).value = "second-model"
+        await _wait_until(
+            pilot,
+            lambda: any(
+                provider_id == "audio_cpp" and model_id == "second-model"
+                for provider_id, model_id, _refresh in service.voice_calls
+            ),
+        )
+
+        assert service.catalog_cancelled is False
+        service.allow_catalog.set()
+        await _wait_until(
+            pilot,
+            lambda: (
+                "ready"
+                in str(app.query_one("#tts-provider-status", Static).render()).lower()
+            ),
+        )
+
+
+@pytest.mark.asyncio
 async def test_legacy_control_state_is_restored_after_audio_cpp_switch(
     audio_cpp_playground: FakeTTSService,
 ) -> None:
@@ -403,7 +443,167 @@ async def test_audio_cpp_health_states_use_fixed_safe_recovery_copy(
         status = str(app.query_one("#tts-provider-status", Static).render()).lower()
         assert expected_copy in status
         assert app.query_one("#tts-generate-btn", Button).disabled is True
+        assert app.query_one("#tts-refresh-catalog-btn", Button).disabled is False
+        assert app.query_one("#tts-provider-select", Select).value == "audio_cpp"
         assert _option_values(app.query_one("#tts-model-select", Select)) == (
             "<opaque:model>",
             "second-model",
         )
+        assert service.catalog_calls == [("audio_cpp", False)]
+
+
+@pytest.mark.asyncio
+async def test_playback_uses_dedicated_widget_worker_group(
+    audio_cpp_playground: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    del audio_cpp_playground
+    path = tmp_path / "artifact.wav"
+    path.write_bytes(b"RIFF")
+    artifact = STTSGeneratedAudio(
+        path=path,
+        provider_id="audio_cpp",
+        model_id="model",
+        voice_id=None,
+        source_text="source",
+        operation_id="operation",
+        audio_format="wav",
+        content_type="audio/wav",
+    )
+    captured: dict[str, object] = {}
+    worker_calls = 0
+
+    def run_worker(
+        _self: TTSPlaygroundWidget,
+        awaitable: object,
+        **kwargs: object,
+    ) -> SimpleNamespace:
+        nonlocal worker_calls
+        worker_calls += 1
+        captured.update(kwargs)
+        close = getattr(awaitable, "close", None)
+        if callable(close):
+            close()
+        return SimpleNamespace(is_finished=False, cancel=lambda: None)
+
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)):
+        await app.workers.wait_for_complete()
+        monkeypatch.setattr(TTSPlaygroundWidget, "run_worker", run_worker)
+        monkeypatch.setattr(
+            TTSPlaygroundWidget,
+            "_ensure_audio_player",
+            lambda _self: True,
+        )
+        widget = app.query_one(TTSPlaygroundWidget)
+        widget.current_audio_artifact = artifact
+        widget.current_audio_file = artifact.path
+
+        widget._play_audio()
+        widget._play_audio()
+
+        assert captured["group"] == "stts-playback"
+        assert captured["exclusive"] is True
+        assert worker_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_unmount_cancels_only_widget_owned_worker_groups(
+    audio_cpp_playground: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del audio_cpp_playground
+    app = _PlaygroundHost()
+    cleanup = Mock()
+    app._stts_handler = SimpleNamespace(cleanup_tts_resources=cleanup)
+    cancelled_groups: list[str] = []
+
+    async with app.run_test(size=(180, 70)):
+        original_cancel_group = app.workers.cancel_group
+
+        def cancel_group(node: object, group: str) -> None:
+            cancelled_groups.append(group)
+            original_cancel_group(node, group)
+
+        monkeypatch.setattr(app.workers, "cancel_group", cancel_group)
+        await app.workers.wait_for_complete()
+
+    assert {
+        "stts-catalog-discovery",
+        "stts-voice-discovery",
+        "stts-playback",
+    }.issubset(cancelled_groups)
+    cleanup.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_new_mount_rehydrates_handler_owned_artifact(
+    audio_cpp_playground: FakeTTSService,
+    tmp_path: Path,
+) -> None:
+    del audio_cpp_playground
+    path = tmp_path / "retained.wav"
+    path.write_bytes(b"RIFF")
+    artifact = STTSGeneratedAudio(
+        path=path,
+        provider_id="audio_cpp",
+        model_id="response-model",
+        voice_id=None,
+        source_text="source",
+        operation_id="completed-operation",
+        audio_format="wav",
+        content_type="audio/wav",
+    )
+    state = SimpleNamespace(
+        active_operation_id=None,
+        artifact=artifact,
+        generation_active=False,
+    )
+    cleanup = Mock()
+    app = _PlaygroundHost()
+    app._stts_handler = SimpleNamespace(
+        playground_state=lambda: state,
+        cleanup_tts_resources=cleanup,
+    )
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        widget = app.query_one(TTSPlaygroundWidget)
+
+        assert widget.current_audio_artifact is artifact
+        assert widget.current_audio_file == path
+        assert app.query_one("#audio-play-btn", Button).disabled is False
+        assert app.query_one("#audio-export-btn", Button).disabled is False
+
+    assert path.exists()
+    cleanup.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_new_mount_rehydrates_active_generation_without_starting_another(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    state = SimpleNamespace(
+        active_operation_id="active-operation",
+        artifact=None,
+        generation_active=True,
+    )
+    app = _PlaygroundHost()
+    app._stts_handler = SimpleNamespace(playground_state=lambda: state)
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        widget = app.query_one(TTSPlaygroundWidget)
+
+        assert widget._generation_operation_id == "active-operation"
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        assert (
+            "in progress"
+            in str(app.query_one("#generation-status-text", Static).render()).lower()
+        )
+        assert service.synthesize_calls == 0

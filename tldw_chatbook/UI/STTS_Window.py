@@ -243,6 +243,7 @@ class TTSPlaygroundWidget(Widget):
         self._applied_model_id: str | None = None
         self._applied_voice_id: str | None = None
         self._applied_format: str | None = None
+        self._generation_operation_id: str | None = None
         self.example_texts = [
             "Welcome to the Text-to-Speech playground! This is where you can experiment with different voices, providers, and settings to create natural-sounding speech.",
             "The quick brown fox jumps over the lazy dog. This pangram contains all letters of the alphabet.",
@@ -626,6 +627,7 @@ class TTSPlaygroundWidget(Widget):
 
     def on_mount(self) -> None:
         """Load provider descriptors and only the selected provider catalog."""
+        self._rehydrate_handler_state()
         self._load_provider_catalog(initialize=True)
 
     async def on_unmount(self) -> None:
@@ -633,6 +635,7 @@ class TTSPlaygroundWidget(Widget):
         try:
             self.app.workers.cancel_group(self, "stts-catalog-discovery")
             self.app.workers.cancel_group(self, "stts-voice-discovery")
+            self.app.workers.cancel_group(self, "stts-playback")
             # Cancel any active progress timer
             if self._progress_timer_task and not self._progress_timer_task.done():
                 self._progress_timer_task.cancel()
@@ -642,7 +645,7 @@ class TTSPlaygroundWidget(Widget):
             if (
                 hasattr(self, "_play_worker_task")
                 and self._play_worker_task
-                and not self._play_worker_task.done()
+                and not self._play_worker_task.is_finished
             ):
                 self._play_worker_task.cancel()
                 await asyncio.sleep(0.05)
@@ -1192,6 +1195,7 @@ class TTSPlaygroundWidget(Widget):
             text_present
             and self._catalog_generation_allowed
             and revision_matches
+            and self._generation_operation_id is None
             and not getattr(self.app, "_is_generating", False)
         )
 
@@ -1563,51 +1567,86 @@ class TTSPlaygroundWidget(Widget):
         # Disable generate button
         self.query_one("#tts-generate-btn", Button).disabled = True
 
-        # Post event to generate TTS
-        self.app.post_message(
-            STTSPlaygroundGenerateEvent(
-                STTSPlaygroundRequest(
-                    operation_id=str(uuid4()),
-                    provider_id=provider,
-                    model_id=model,
-                    text=text,
-                    voice_id=voice_id,
-                    response_format=format,
-                    speed=speed,
-                    options=extra_params,
-                )
-            )
+        request = STTSPlaygroundRequest(
+            operation_id=str(uuid4()),
+            provider_id=provider,
+            model_id=model,
+            text=text,
+            voice_id=voice_id,
+            response_format=format,
+            speed=speed,
+            options=extra_params,
         )
+        self._generation_operation_id = request.operation_id
+        self.app.post_message(STTSPlaygroundGenerateEvent(request))
 
     def _generation_complete(
         self,
         artifact: STTSGeneratedAudio | None,
     ) -> None:
         """Store one delivered artifact independently of current selectors."""
+        if (
+            artifact is not None
+            and self._generation_operation_id is not None
+            and artifact.operation_id != self._generation_operation_id
+        ):
+            return
+        self._generation_operation_id = None
         self._sync_generate_enabled()
 
         if artifact is not None:
-            self.current_audio_artifact = artifact
-            self.current_audio_file = artifact.path
-
-            log = self.query_one("#tts-generation-log", RichLog)
-            log.write("[bold green]✓ TTS generation complete![/bold green]")
-
-            # Enable audio controls
-            self.query_one("#audio-play-btn", Button).disabled = False
-            self.query_one(
-                "#pause-audio-btn", Button
-            ).disabled = True  # Disabled until playing
-            self.query_one(
-                "#stop-audio-btn", Button
-            ).disabled = True  # Disabled until playing
-            self.query_one("#audio-export-btn", Button).disabled = False
-            self.query_one("#audio-player-status", Static).update(
-                f"{artifact.audio_format.upper()} audio ready to play"
-            )
+            self._store_delivered_artifact(artifact, announce=True)
         else:
             log = self.query_one("#tts-generation-log", RichLog)
             log.write("[bold red]✗ TTS generation failed![/bold red]")
+
+    def _store_delivered_artifact(
+        self,
+        artifact: STTSGeneratedAudio,
+        *,
+        announce: bool,
+    ) -> None:
+        self.current_audio_artifact = artifact
+        self.current_audio_file = artifact.path
+        if announce:
+            self.query_one("#tts-generation-log", RichLog).write(
+                "[bold green]✓ TTS generation complete![/bold green]"
+            )
+        self.query_one("#audio-play-btn", Button).disabled = False
+        self.query_one("#pause-audio-btn", Button).disabled = True
+        self.query_one("#stop-audio-btn", Button).disabled = True
+        self.query_one("#audio-export-btn", Button).disabled = False
+        self.query_one("#audio-player-status", Static).update(
+            f"{artifact.audio_format.upper()} audio ready to play"
+        )
+
+    def _rehydrate_handler_state(self) -> None:
+        handler = getattr(self.app, "_stts_handler", None)
+        snapshot_getter = getattr(handler, "playground_state", None)
+        if not callable(snapshot_getter):
+            return
+        try:
+            state = snapshot_getter()
+        except Exception as error:
+            logger.debug(
+                "Could not rehydrate TTS Playground state ({})",
+                type(error).__name__,
+            )
+            return
+        artifact = getattr(state, "artifact", None)
+        if isinstance(artifact, STTSGeneratedAudio) and artifact.path.exists():
+            self._store_delivered_artifact(artifact, announce=False)
+        active_operation_id = getattr(state, "active_operation_id", None)
+        if getattr(state, "generation_active", False) and isinstance(
+            active_operation_id,
+            str,
+        ):
+            self._generation_operation_id = active_operation_id
+            self.query_one("#generation-status-container").remove_class("hidden")
+            self.query_one("#generation-status-text", Static).update(
+                "Generation in progress…"
+            )
+            self.query_one("#tts-generate-btn", Button).disabled = True
 
     def _current_generated_audio_path(self) -> Path | None:
         """Return the delivered artifact path, with legacy path fallback."""
@@ -1627,7 +1666,7 @@ class TTSPlaygroundWidget(Widget):
         if (
             hasattr(self, "_play_worker_task")
             and self._play_worker_task
-            and not self._play_worker_task.done()
+            and not self._play_worker_task.is_finished
         ):
             logger.debug("Play already in progress, ignoring request")
             return
@@ -1662,7 +1701,9 @@ class TTSPlaygroundWidget(Widget):
             # Use the new audio player method
             # Store the worker task so we can check if it's running
             self._play_worker_task = self.run_worker(
-                self._play_audio_async, exclusive=False
+                self._play_audio_async,
+                group="stts-playback",
+                exclusive=True,
             )
         else:
             self.app.notify("Audio playback not available", severity="warning")
@@ -1770,8 +1811,11 @@ class TTSPlaygroundWidget(Widget):
         logger.debug("_pause_audio called")
         if self._ensure_audio_player():
             logger.debug("Audio player available, running pause worker")
-            # Don't use exclusive worker for pause - it needs to interrupt play
-            self.run_worker(self._pause_audio_async, exclusive=False)
+            self.run_worker(
+                self._pause_audio_async,
+                group="stts-playback",
+                exclusive=True,
+            )
         else:
             logger.debug("Audio player not available")
             self.app.notify("Audio player not available", severity="warning")
@@ -1826,8 +1870,11 @@ class TTSPlaygroundWidget(Widget):
         logger.debug("_stop_audio called")
         if self._ensure_audio_player():
             logger.debug("Audio player available, running stop worker")
-            # Don't use exclusive worker for stop - it needs to interrupt play
-            self.run_worker(self._stop_audio_async, exclusive=False)
+            self.run_worker(
+                self._stop_audio_async,
+                group="stts-playback",
+                exclusive=True,
+            )
         else:
             logger.debug("Audio player not available")
             self.app.notify("Audio player not available", severity="warning")

@@ -342,9 +342,10 @@ async def test_stts_forwards_typed_progress_sink_to_service(
         query_one=query_one,
         call_from_thread=call_from_thread,
     )
+    app.query_one = Mock(return_value=playground)
     event = _playground_event()
 
-    await handler._generate_tts_worker(event, playground)
+    await handler.handle_playground_generate(event)
 
     assert service.progress_sink is not None
     assert scheduled
@@ -381,7 +382,8 @@ async def test_stts_playground_generation_stays_in_the_owned_event_task(
 
     await handler.handle_playground_generate(event)
 
-    generation.assert_awaited_once_with(event, playground)
+    generation.assert_awaited_once_with(event)
+    app.query_one.assert_not_called()
     playground.run_worker.assert_not_called()
 
 
@@ -500,6 +502,7 @@ async def test_stts_conversion_cancellation_tracks_and_deletes_partial_output(
         assert process_terminated.is_set()
         assert process_waited.is_set()
         assert not output_path.exists()
+        assert handler._playground_operation_files == {}
     finally:
         if not generation.done():
             generation.cancel()

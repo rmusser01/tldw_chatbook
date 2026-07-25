@@ -5,6 +5,7 @@
 import asyncio
 from collections.abc import Coroutine, Mapping
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Dict, Any, NamedTuple
 from pathlib import Path
@@ -286,6 +287,15 @@ class STTSProviderConfigurationChanged(Message):
         self.configuration_revision = configuration_revision
 
 
+@dataclass(frozen=True, slots=True)
+class _STTSPlaygroundState:
+    """Read-only handler-owned Playground lifecycle snapshot."""
+
+    active_operation_id: str | None
+    artifact: STTSGeneratedAudio | None
+    generation_active: bool
+
+
 class STTSAudioBookGenerateEvent(Message):
     """Event when audiobook generation is requested"""
 
@@ -320,7 +330,10 @@ class STTSEventHandler:
         self._current_playground_artifact: STTSGeneratedAudio | None = None
         self._is_generating = False
         self._active_tasks: set[asyncio.Task[Any]] = set()
+        self._generation_task: asyncio.Task[None] | None = None
+        self._active_playground_operation_id: str | None = None
         self._playground_audio_files: set[Path] = set()
+        self._playground_operation_files: dict[str, set[Path]] = {}
         self._cleanup_task: asyncio.Task[None] | None = None
         self._settings_save_lock = asyncio.Lock()
 
@@ -332,6 +345,88 @@ class STTSEventHandler:
         except Exception:
             logger.error("Failed to initialize S/TT/S service")
             self._stts_service = None
+
+    def playground_state(self) -> _STTSPlaygroundState:
+        """Return immutable handler-owned generation and artifact state."""
+        return _STTSPlaygroundState(
+            active_operation_id=self._active_playground_operation_id,
+            artifact=self._current_playground_artifact,
+            generation_active=self._is_generating,
+        )
+
+    def start_playground_generation(
+        self,
+        event: STTSPlaygroundGenerateEvent,
+    ) -> None:
+        """Start and retain exactly one handler-owned Playground task."""
+        if self._cleanup_task is not None:
+            logger.debug("Ignoring TTS generation after STTS cleanup started")
+            return
+        if self._generation_task is not None and not self._generation_task.done():
+            self.app.notify("TTS generation already in progress", severity="warning")
+            return
+        if self._is_generating:
+            self.app.notify("TTS generation already in progress", severity="warning")
+            return
+
+        task = asyncio.create_task(
+            self.handle_playground_generate(event),
+            name=f"stts_playground_{event.request.operation_id}",
+        )
+        self._generation_task = task
+        self._active_tasks.add(task)
+        task.add_done_callback(self._playground_generation_done)
+
+    def _playground_generation_done(self, task: asyncio.Task[None]) -> None:
+        self._active_tasks.discard(task)
+        if self._generation_task is task:
+            self._generation_task = None
+        try:
+            task.exception()
+        except BaseException:
+            pass
+
+    def _track_operation_file(self, operation_id: str, path: Path) -> None:
+        path = Path(path)
+        self._playground_audio_files.add(path)
+        self._playground_operation_files.setdefault(operation_id, set()).add(path)
+
+    def _forget_operation_file(self, operation_id: str, path: Path) -> None:
+        path = Path(path)
+        self._playground_audio_files.discard(path)
+        operation_files = self._playground_operation_files.get(operation_id)
+        if operation_files is None:
+            return
+        operation_files.discard(path)
+        if not operation_files:
+            self._playground_operation_files.pop(operation_id, None)
+
+    def _delete_operation_files(
+        self,
+        operation_id: str,
+        *,
+        keep: frozenset[Path] = frozenset(),
+    ) -> None:
+        for path in tuple(self._playground_operation_files.get(operation_id, ())):
+            if path in keep:
+                continue
+            if secure_delete_file(path) or not path.exists():
+                self._forget_operation_file(operation_id, path)
+
+    def _accept_playground_artifact(self, artifact: STTSGeneratedAudio) -> None:
+        """Store the new artifact before securely retiring older files."""
+        self._current_playground_artifact = artifact
+        self._current_audio_file = artifact.path
+        self._track_operation_file(artifact.operation_id, artifact.path)
+        for operation_id in tuple(self._playground_operation_files):
+            self._delete_operation_files(
+                operation_id,
+                keep=(
+                    frozenset({artifact.path})
+                    if operation_id == artifact.operation_id
+                    else frozenset()
+                ),
+            )
 
     async def _generate_audio_cpp(
         self,
@@ -378,7 +473,7 @@ class STTSEventHandler:
                 prefix="stts_playground_",
             )
         )
-        self._playground_audio_files.add(path)
+        self._track_operation_file(snapshot.operation_id, path)
         try:
             return STTSGeneratedAudio(
                 path=path,
@@ -393,7 +488,7 @@ class STTSEventHandler:
             )
         except BaseException:
             if secure_delete_file(path) or not path.exists():
-                self._playground_audio_files.discard(path)
+                self._forget_operation_file(snapshot.operation_id, path)
             raise
 
     async def _generate_legacy(
@@ -438,14 +533,17 @@ class STTSEventHandler:
                 )
             )
             created_paths.add(wav_file)
-            self._playground_audio_files.add(wav_file)
+            self._track_operation_file(snapshot.operation_id, wav_file)
             output_file = wav_file
             audio_format = "wav"
 
             if requested_format != "wav":
                 conversion_destination = wav_file.with_suffix(f".{requested_format}")
                 created_paths.add(conversion_destination)
-                self._playground_audio_files.add(conversion_destination)
+                self._track_operation_file(
+                    snapshot.operation_id,
+                    conversion_destination,
+                )
                 converted_file = await self._convert_audio_format(
                     wav_file,
                     requested_format,
@@ -453,16 +551,22 @@ class STTSEventHandler:
                 if converted_file is not None:
                     output_file = Path(converted_file)
                     created_paths.add(output_file)
-                    self._playground_audio_files.add(output_file)
+                    self._track_operation_file(snapshot.operation_id, output_file)
                     audio_format = requested_format
                     if secure_delete_file(wav_file) or not wav_file.exists():
-                        self._playground_audio_files.discard(wav_file)
+                        self._forget_operation_file(
+                            snapshot.operation_id,
+                            wav_file,
+                        )
                         created_paths.discard(wav_file)
                 elif (
                     secure_delete_file(conversion_destination)
                     or not conversion_destination.exists()
                 ):
-                    self._playground_audio_files.discard(conversion_destination)
+                    self._forget_operation_file(
+                        snapshot.operation_id,
+                        conversion_destination,
+                    )
                     created_paths.discard(conversion_destination)
 
             return STTSGeneratedAudio(
@@ -479,7 +583,7 @@ class STTSEventHandler:
         except BaseException:
             for path in created_paths:
                 if secure_delete_file(path) or not path.exists():
-                    self._playground_audio_files.discard(path)
+                    self._forget_operation_file(snapshot.operation_id, path)
             raise
 
     @staticmethod
@@ -527,39 +631,33 @@ class STTSEventHandler:
             return
 
         if not self._stts_service:
+            operation_id = event.request.operation_id
+            self._is_generating = True
+            self._active_playground_operation_id = operation_id
+            self._deliver_generation_failure(
+                operation_id,
+                "The TTS service is unavailable",
+            )
             self.app.notify("TTS service not initialized", severity="error")
+            self._is_generating = False
+            self._finish_generation_ui(operation_id)
+            self._active_playground_operation_id = None
             return
 
         self._is_generating = True
-
-        # Get playground widget first
-        try:
-            from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
-
-            playground = self.app.query_one(TTSPlaygroundWidget)
-            logger.debug("Found mounted TTS Playground")
-        except Exception as error:
-            logger.debug(
-                "TTS Playground is not mounted ({})",
-                type(error).__name__,
-            )
-            playground = None
-
-        # The Textual message hook already dispatches this coroutine through
-        # _start_event_task, so a nested worker would split task ownership.
-        await self._generate_tts_worker(event, playground)
+        self._active_playground_operation_id = event.request.operation_id
+        await self._generate_tts_worker(event)
 
     async def _generate_tts_worker(
         self,
         event: STTSPlaygroundGenerateEvent,
-        playground: Any | None = None,
     ) -> None:
         """Generate from one immutable request and deliver one artifact."""
         snapshot = event.request
-        self._show_generation_progress(playground)
+        self._show_generation_progress(snapshot.operation_id)
 
         async def progress_callback(info: TTSProgress) -> None:
-            self._update_generation_progress(playground, info)
+            self._update_generation_progress(snapshot.operation_id, info)
 
         try:
             if snapshot.provider_id == "audio_cpp":
@@ -572,13 +670,17 @@ class STTSEventHandler:
                     snapshot,
                     progress_callback,
                 )
-            self._current_playground_artifact = artifact
-            self._current_audio_file = artifact.path
-            self._deliver_generation_success(playground, artifact)
+            self._accept_playground_artifact(artifact)
+            self._deliver_generation_success(
+                snapshot.operation_id,
+                artifact,
+            )
             self.app.notify("TTS generation complete!", severity="information")
         except asyncio.CancelledError:
+            self._delete_operation_files(snapshot.operation_id)
             raise
         except Exception as error:
+            self._delete_operation_files(snapshot.operation_id)
             message = self._generation_error_copy(error)
             if isinstance(error, TTSOperationError):
                 logger.error(
@@ -591,16 +693,19 @@ class STTSEventHandler:
                     "TTS generation failed ({})",
                     type(error).__name__,
                 )
-            self._deliver_generation_failure(playground, message)
+            self._deliver_generation_failure(snapshot.operation_id, message)
             self.app.notify(
                 f"TTS generation failed: {escape(message)}",
                 severity="error",
             )
         finally:
-            self._is_generating = False
-            self._finish_generation_ui(playground)
+            if self._active_playground_operation_id == snapshot.operation_id:
+                self._is_generating = False
+                self._finish_generation_ui(snapshot.operation_id)
+                self._active_playground_operation_id = None
 
-    def _show_generation_progress(self, playground: Any | None) -> None:
+    def _show_generation_progress(self, operation_id: str) -> None:
+        playground = self._mounted_playground(operation_id)
         if playground is None:
             return
 
@@ -615,9 +720,10 @@ class STTSEventHandler:
 
     def _update_generation_progress(
         self,
-        playground: Any | None,
+        operation_id: str,
         info: TTSProgress,
     ) -> None:
+        playground = self._mounted_playground(operation_id)
         if playground is None:
             return
 
@@ -647,9 +753,10 @@ class STTSEventHandler:
 
     def _deliver_generation_success(
         self,
-        playground: Any | None,
+        operation_id: str,
         artifact: STTSGeneratedAudio,
     ) -> None:
+        playground = self._mounted_playground(operation_id)
         if playground is None:
             return
 
@@ -671,9 +778,10 @@ class STTSEventHandler:
 
     def _deliver_generation_failure(
         self,
-        playground: Any | None,
+        operation_id: str,
         message: str,
     ) -> None:
+        playground = self._mounted_playground(operation_id)
         if playground is None:
             return
 
@@ -687,7 +795,8 @@ class STTSEventHandler:
 
         self._invoke_playground(playground, deliver)
 
-    def _finish_generation_ui(self, playground: Any | None) -> None:
+    def _finish_generation_ui(self, operation_id: str) -> None:
+        playground = self._mounted_playground(operation_id)
         if playground is None:
             return
 
@@ -707,6 +816,20 @@ class STTSEventHandler:
             playground.query_one("#generation-status-container").add_class("hidden")
 
         self._invoke_playground(playground, finish)
+
+    def _mounted_playground(self, operation_id: str) -> Any | None:
+        if operation_id != self._active_playground_operation_id:
+            return None
+        try:
+            from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
+
+            return self.app.query_one(TTSPlaygroundWidget)
+        except Exception as error:
+            logger.debug(
+                "TTS Playground is not mounted ({})",
+                type(error).__name__,
+            )
+            return None
 
     @staticmethod
     def _invoke_playground(
@@ -1202,19 +1325,30 @@ class STTSEventHandler:
         for path in owned_paths:
             if secure_delete_file(path) or not path.exists():
                 self._playground_audio_files.discard(path)
+                for operation_id in tuple(self._playground_operation_files):
+                    self._forget_operation_file(operation_id, path)
 
         if (
             self._current_audio_file in owned_paths
             and self._current_audio_file not in self._playground_audio_files
         ):
             self._current_audio_file = None
+        if (
+            self._current_playground_artifact is not None
+            and self._current_playground_artifact.path
+            not in self._playground_audio_files
+        ):
+            self._current_playground_artifact = None
+        if self._generation_task is not None and self._generation_task.done():
+            self._generation_task = None
+        self._active_playground_operation_id = None
         self._is_generating = False
 
     def on_stts_playground_generate_event(
         self, event: STTSPlaygroundGenerateEvent
     ) -> None:
         """Start a retained async task for playground generation."""
-        self._start_event_task(self.handle_playground_generate(event))
+        self.start_playground_generation(event)
 
     def on_stts_settings_save_event(self, event: STTSSettingsSaveEvent) -> None:
         """Handle settings save event"""
