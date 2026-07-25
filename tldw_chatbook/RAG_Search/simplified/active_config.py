@@ -16,7 +16,7 @@ from typing import Optional, Union
 from loguru import logger
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
-from .config import RAGConfig, _normalized_type_setting
+from .config import RAGConfig, _normalized_type_setting, validate_chroma_persist_directory
 from ..config_profiles import get_profile_manager, ProfileConfig, _slugify
 from ..ingestion_indexing import reset_shared_rag_service
 from ..reranker import RerankingConfig
@@ -88,7 +88,16 @@ def _apply_env_overrides(config: RAGConfig,
     e.base_url = os.getenv("RAG_EMBEDDING_BASE_URL") or e.base_url
     persist = override_persist_dir or os.getenv("RAG_PERSIST_DIR")
     if persist:
-        config.vector_store.persist_directory = Path(persist)
+        # Routed through the SAME validate_chroma_persist_directory() the two
+        # Chroma client-construction sites (vector_store.py, collection_
+        # indexes.py) use, not a bare Path(persist) -- a persist_directory
+        # PRODUCER that skips this normalization (e.g. leaving a literal "~"
+        # unexpanded) would hand the consumers a path string that diverges
+        # from what they'd compute themselves, defeating chromadb's
+        # SharedSystemClient per-path client cache one hop earlier than the
+        # task-482 fix closed it at. See validate_chroma_persist_directory's
+        # docstring.
+        config.vector_store.persist_directory = validate_chroma_persist_directory(persist)
     # vector_store.type: resolve_active_rag_config() deep-copies an already-
     # constructed profile's RAGConfig (copy.deepcopy does NOT re-run
     # VectorStoreConfig.__post_init__), so RAG_VECTOR_STORE must be applied

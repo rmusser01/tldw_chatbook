@@ -10,7 +10,7 @@ from typing import Any
 
 from loguru import logger
 
-from .config import RAGConfig
+from .config import RAGConfig, validate_chroma_persist_directory
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
 
 _LEGACY_BASE = "default"  # the pre-fingerprint canonical collection name
@@ -29,8 +29,16 @@ def _client(persist_directory) -> Any:
     # these Settings MUST match that construction exactly (currently
     # anonymized_telemetry=False, allow_reset=True) or real service creation
     # would break the moment this migration runs.
+    #
+    # validate_chroma_persist_directory is the SAME normalization
+    # ChromaVectorStore.__init__ routes through, so the two independent
+    # PersistentClient(...) construction sites always agree on the exact
+    # path string -- a divergence here (raw vs. normalized) would collide
+    # with the SharedSystemClient cache above even for the same physical
+    # directory.
+    validated = validate_chroma_persist_directory(persist_directory)
     return chromadb.PersistentClient(
-        path=str(persist_directory),
+        path=str(validated),
         settings=Settings(anonymized_telemetry=False, allow_reset=True),
     )
 

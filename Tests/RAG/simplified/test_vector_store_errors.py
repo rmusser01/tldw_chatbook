@@ -140,8 +140,13 @@ class TestChromaVectorStoreErrors:
                 # Should handle permission error gracefully
                 ChromaVectorStore(persist_directory=temp_dir + "/subdir")
                 # Depending on OS, this might fail at different points
-            except (OSError, PermissionError):
-                # Expected behavior
+            except (OSError, PermissionError, ValueError):
+                # Expected behavior. ValueError included because (task-482)
+                # ChromaVectorStore now validates persist_directory up front
+                # via validate_chroma_persist_directory(), whose existence
+                # probe can itself raise PermissionError while stat'ing a
+                # path under a directory it can't traverse -- that gets
+                # wrapped as ValueError by path_validation.validate_path_simple.
                 pass
             finally:
                 # Restore permissions for cleanup
