@@ -1,0 +1,612 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+import pytest
+from pydantic import ValidationError
+
+from tldw_chatbook.Chat.citation_source_locators import CanonicalSourceKind
+from tldw_chatbook.Chat.citation_trace_builder import (
+    CitationTraceBuilder,
+    LocalPromptEvidenceCapture,
+    LocalRetrievalCandidateCapture,
+    LocalRetrievalRunMetadata,
+)
+from tldw_chatbook.Chat.citation_trace_identity import (
+    CitationFingerprintCodec,
+    CitationFingerprintDomain,
+    LocalCitationIdentityContext,
+)
+from tldw_chatbook.Chat.citation_trace_models import (
+    EVIDENCE_ENTRIES_PER_PROMPT_MAX,
+    PROMPT_EVIDENCE_SETS_MAX,
+    RETRIEVAL_CANDIDATES_PER_RUN_MAX,
+    SNAPSHOT_TEXT_UTF8_BYTES_MAX,
+    EvidenceStorageMode,
+    MarkerNamespace,
+    RetrievalScoreKind,
+    RetrievalScoreScale,
+)
+
+
+NOW = datetime(2026, 7, 25, 12, 0, tzinfo=UTC)
+SECRET = b"0123456789abcdef0123456789abcdef"
+
+
+def _identity() -> LocalCitationIdentityContext:
+    return LocalCitationIdentityContext(
+        profile_id="profile-1",
+        local_authority_id="local-authority-1",
+        fingerprint_key_id="fingerprint-key-1",
+    )
+
+
+def _builder() -> CitationTraceBuilder:
+    return CitationTraceBuilder.local(
+        request_id="request-1",
+        generation_id="generation-1",
+        identity_context=_identity(),
+        fingerprint_codec=CitationFingerprintCodec(SECRET),
+        created_at=NOW,
+    )
+
+
+def _candidate(
+    *,
+    rank: int = 1,
+    source_id: str = "media-1",
+    title: str = "Alpha",
+    score: float = 0.9,
+) -> LocalRetrievalCandidateCapture:
+    return LocalRetrievalCandidateCapture(
+        candidate_rank=rank,
+        source_kind=CanonicalSourceKind.MEDIA_DB,
+        source_id=source_id,
+        title=title,
+        score_kind=RetrievalScoreKind.VECTOR_SIMILARITY,
+        score_scale=RetrievalScoreScale.ZERO_TO_ONE,
+        score=score,
+        chunk_index=3,
+        start_char=10,
+        end_char=20,
+    )
+
+
+def _metadata() -> LocalRetrievalRunMetadata:
+    return LocalRetrievalRunMetadata(
+        search_mode="hybrid",
+        requested_top_k=5,
+        max_context_characters=10_000,
+        rerank_enabled=True,
+        source_kinds=(CanonicalSourceKind.MEDIA_DB,),
+        scope_state="unscoped",
+    )
+
+
+def _record_run(builder: CitationTraceBuilder) -> str:
+    return builder.record_retrieval_run(
+        stage="hybrid",
+        raw_query="secret query",
+        candidates=(
+            _candidate(rank=1, source_id="media-1", title="Alpha"),
+            _candidate(rank=2, source_id="media-2", title="Beta"),
+        ),
+        retrieval_metadata=_metadata(),
+        started_at=NOW,
+        ended_at=NOW,
+    )
+
+
+def test_local_builder_starts_empty_unsealed_and_redacts_private_context() -> None:
+    builder = _builder()
+
+    assert builder.request_id == "request-1"
+    assert builder.generation_id == "generation-1"
+    assert builder.created_at == NOW
+    assert builder.evidence_runs == ()
+    assert builder.evidence_run_payloads == ()
+    assert builder.prompt_evidence_sets == ()
+    assert builder.evidence_snapshot_payloads == ()
+    assert builder.is_sealed is False
+    assert not hasattr(builder, "seal")
+    assert not hasattr(builder, "persist")
+    assert not hasattr(builder, "prepare_write")
+    assert SECRET.decode() not in repr(builder)
+    assert "fingerprint-key-1" not in repr(builder)
+
+
+def test_local_builder_requires_a_valid_frozen_local_identity_binding() -> None:
+    identity = _identity()
+
+    with pytest.raises(ValidationError, match="frozen"):
+        identity.profile_id = "changed"  # type: ignore[misc]
+
+    missing_profile = LocalCitationIdentityContext.model_construct(
+        profile_id="",
+        local_authority_id="local-authority-1",
+        fingerprint_key_id="fingerprint-key-1",
+    )
+    with pytest.raises((TypeError, ValueError, ValidationError), match="identifier"):
+        CitationTraceBuilder.local(
+            request_id="request-1",
+            generation_id="generation-1",
+            identity_context=missing_profile,
+            fingerprint_codec=CitationFingerprintCodec(SECRET),
+            created_at=NOW,
+        )
+    with pytest.raises(TypeError, match="identity_context"):
+        CitationTraceBuilder.local(
+            request_id="request-1",
+            generation_id="generation-1",
+            identity_context=None,  # type: ignore[arg-type]
+            fingerprint_codec=CitationFingerprintCodec(SECRET),
+            created_at=NOW,
+        )
+
+
+@pytest.mark.parametrize(
+    ("request_id", "generation_id", "created_at"),
+    [
+        ("", "generation-1", NOW),
+        ("request-1", "", NOW),
+        ("request-1", "generation-1", NOW.replace(tzinfo=None)),
+    ],
+)
+def test_local_builder_rejects_invalid_request_identity_or_timestamp(
+    request_id: str,
+    generation_id: str,
+    created_at: datetime,
+) -> None:
+    with pytest.raises((ValueError, ValidationError)):
+        CitationTraceBuilder.local(
+            request_id=request_id,
+            generation_id=generation_id,
+            identity_context=_identity(),
+            fingerprint_codec=CitationFingerprintCodec(SECRET),
+            created_at=created_at,
+        )
+
+
+def test_local_capture_types_reject_non_local_source_families() -> None:
+    with pytest.raises(ValidationError, match="local source"):
+        LocalRetrievalCandidateCapture(
+            candidate_rank=1,
+            source_kind=CanonicalSourceKind.WEB_CONTENT,
+            source_id="web-1",
+            title="Remote result",
+        )
+    with pytest.raises(ValidationError, match="local source"):
+        LocalRetrievalRunMetadata(
+            search_mode="hybrid",
+            requested_top_k=5,
+            max_context_characters=10_000,
+            rerank_enabled=False,
+            source_kinds=(CanonicalSourceKind.WEB_CONTENT,),
+            scope_state="unscoped",
+        )
+
+
+def test_record_retrieval_run_preserves_order_and_governs_sensitive_data(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    builder = _builder()
+    codec = CitationFingerprintCodec(SECRET)
+    candidates = (
+        _candidate(rank=2, source_id="media-2", title="Sensitive Beta"),
+        _candidate(rank=1, source_id="media-1", title="Sensitive Alpha"),
+    )
+
+    run_id = builder.record_retrieval_run(
+        stage="hybrid",
+        raw_query="secret query",
+        candidates=candidates,
+        retrieval_metadata=_metadata(),
+        started_at=NOW,
+        ended_at=NOW,
+    )
+
+    run = builder.evidence_runs[0]
+    payload = builder.evidence_run_payloads[0]
+    assert run.run_id == run_id
+    assert run.request_id == "request-1"
+    assert run.run_ordinal == 1
+    assert run.stage == "hybrid"
+    assert run.payload_ref == payload.payload_id
+    assert run.started_at == NOW
+    assert run.ended_at == NOW
+    assert payload.run_id == run_id
+    assert payload.raw_query is None
+    assert payload.query_fingerprint == codec.fingerprint(
+        CitationFingerprintDomain.RAW_QUERY,
+        "secret query",
+    )
+    assert payload.authority_id == "local-authority-1"
+    assert payload.retrieval_metadata == {
+        "search_mode": "hybrid",
+        "requested_top_k": 5,
+        "max_context_characters": 10_000,
+        "rerank_enabled": True,
+        "source_kinds": ["media_db"],
+        "scope_state": "unscoped",
+    }
+    assert [candidate.rank for candidate in payload.candidates] == [2, 1]
+    assert [candidate.title for candidate in payload.candidates] == [
+        "Sensitive Beta",
+        "Sensitive Alpha",
+    ]
+    assert payload.candidates[0].source_identity == {
+        "source_kind": "media_db",
+        "source_id": "media-2",
+    }
+    assert payload.candidates[0].locator == {}
+    assert payload.candidates[0].lineage == {
+        "chunk_index": 3,
+        "start_char": 10,
+        "end_char": 20,
+    }
+    assert payload.candidates[0].score_kind is RetrievalScoreKind.VECTOR_SIMILARITY
+    assert payload.candidates[0].score_scale is RetrievalScoreScale.ZERO_TO_ONE
+    dumped = payload.model_dump(mode="json")
+    assert "content" not in repr(dumped)
+    assert "secret query" not in repr(builder)
+    assert "Sensitive Alpha" not in repr(builder)
+    assert "media-1" not in repr(builder)
+    assert payload.query_fingerprint not in repr(builder)
+    assert "secret query" not in caplog.text
+    assert "Sensitive Alpha" not in caplog.text
+    assert payload.query_fingerprint not in caplog.text
+
+
+def test_retrieval_inputs_forbid_free_form_or_executable_metadata() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        LocalRetrievalRunMetadata.model_validate(
+            {
+                **_metadata().model_dump(mode="python"),
+                "workspace_path": "/private/workspace",
+            }
+        )
+    with pytest.raises(ValidationError):
+        LocalRetrievalRunMetadata.model_validate(
+            {
+                **_metadata().model_dump(mode="python"),
+                "search_mode": "https://example.invalid/search",
+            }
+        )
+    with pytest.raises(ValidationError):
+        LocalRetrievalRunMetadata.model_validate(
+            {
+                **_metadata().model_dump(mode="python"),
+                "scope_state": "/private/workspace",
+            }
+        )
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        LocalRetrievalCandidateCapture.model_validate(
+            {
+                **_candidate().model_dump(mode="python"),
+                "content": "candidate content must not cross this boundary",
+            }
+        )
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        LocalRetrievalCandidateCapture.model_validate(
+            {
+                **_candidate().model_dump(mode="python"),
+                "metadata": {"url": "https://example.invalid"},
+            }
+        )
+    for field, value in (
+        ("source_id", "https://example.invalid/item"),
+        ("source_id", "/private/source"),
+        ("chunk_id", "../other/chunk"),
+    ):
+        with pytest.raises(ValidationError, match="executable path or URL"):
+            LocalRetrievalCandidateCapture.model_validate(
+                {
+                    **_candidate().model_dump(mode="python"),
+                    field: value,
+                }
+            )
+
+
+def test_retrieval_run_rejects_non_finite_scores_and_candidate_overflow_atomically() -> (
+    None
+):
+    builder = _builder()
+    non_finite = LocalRetrievalCandidateCapture.model_construct(
+        **{**_candidate().model_dump(mode="python"), "score": float("nan")}
+    )
+
+    with pytest.raises(ValidationError, match="finite"):
+        builder.record_retrieval_run(
+            stage="semantic",
+            raw_query="secret query",
+            candidates=(non_finite,),
+            retrieval_metadata=_metadata(),
+            started_at=NOW,
+            ended_at=NOW,
+        )
+    assert builder.evidence_runs == ()
+    assert builder.evidence_run_payloads == ()
+
+    with pytest.raises(ValueError, match="candidates"):
+        builder.record_retrieval_run(
+            stage="semantic",
+            raw_query="secret query",
+            candidates=(_candidate(),) * (RETRIEVAL_CANDIDATES_PER_RUN_MAX + 1),
+            retrieval_metadata=_metadata(),
+            started_at=NOW,
+            ended_at=NOW,
+        )
+    assert builder.evidence_runs == ()
+    assert builder.evidence_run_payloads == ()
+
+
+@pytest.mark.parametrize(
+    ("stage", "started_at", "ended_at", "message"),
+    [
+        ("", NOW, NOW, "at least 1 character"),
+        ("hybrid", NOW, NOW.replace(tzinfo=None), "timezone-aware"),
+        (
+            "hybrid",
+            NOW,
+            datetime(2026, 7, 25, 11, 59, tzinfo=UTC),
+            "must not precede",
+        ),
+    ],
+)
+def test_invalid_retrieval_run_data_does_not_partially_mutate_state(
+    stage: str,
+    started_at: datetime,
+    ended_at: datetime,
+    message: str,
+) -> None:
+    builder = _builder()
+
+    with pytest.raises(ValidationError, match=message):
+        builder.record_retrieval_run(
+            stage=stage,
+            raw_query="secret query",
+            candidates=(_candidate(),),
+            retrieval_metadata=_metadata(),
+            started_at=started_at,
+            ended_at=ended_at,
+        )
+
+    assert builder.evidence_runs == ()
+    assert builder.evidence_run_payloads == ()
+
+
+def test_duplicate_candidate_ranks_fail_without_a_partial_run_or_payload() -> None:
+    builder = _builder()
+
+    with pytest.raises(ValidationError, match="candidate rank"):
+        builder.record_retrieval_run(
+            stage="hybrid",
+            raw_query="secret query",
+            candidates=(
+                _candidate(rank=1, source_id="media-1"),
+                _candidate(rank=1, source_id="media-2"),
+            ),
+            retrieval_metadata=_metadata(),
+            started_at=NOW,
+            ended_at=NOW,
+        )
+
+    assert builder.evidence_runs == ()
+    assert builder.evidence_run_payloads == ()
+
+
+def test_record_prompt_evidence_set_preserves_exact_snapshot_bytes_and_linkage() -> (
+    None
+):
+    builder = _builder()
+    codec = CitationFingerprintCodec(SECRET)
+    run_id = _record_run(builder)
+    first_snapshot = "[S1] MEDIA — Alpha\r\nExact transformed 🧪 e\u0301"
+    second_snapshot = "[S2] MEDIA — Beta\nSecond exact block"
+
+    prompt_set_id = builder.record_prompt_evidence_set(
+        run_id=run_id,
+        evidence=(
+            LocalPromptEvidenceCapture(
+                candidate_rank=1,
+                snapshot_text=first_snapshot,
+                transformations=("heading_injected", "marker_injected"),
+            ),
+            LocalPromptEvidenceCapture(
+                candidate_rank=2,
+                snapshot_text=second_snapshot,
+                transformations=("heading_injected", "marker_injected"),
+            ),
+        ),
+        created_at=NOW,
+    )
+
+    prompt_set = builder.prompt_evidence_sets[0]
+    assert prompt_set.prompt_set_id == prompt_set_id
+    assert prompt_set.prompt_set_ordinal == 1
+    assert prompt_set.marker_namespace is MarkerNamespace.CHATBOOK_S_V1
+    assert prompt_set.created_at == NOW
+    assert [entry.evidence_ordinal for entry in prompt_set.entries] == [1, 2]
+    assert [entry.marker_ordinal for entry in prompt_set.entries] == [1, 2]
+    assert [entry.run_id for entry in prompt_set.entries] == [run_id, run_id]
+    assert all(
+        entry.storage_mode is EvidenceStorageMode.EMBEDDED
+        for entry in prompt_set.entries
+    )
+
+    first_payload, second_payload = builder.evidence_snapshot_payloads
+    assert prompt_set.entries[0].snapshot_payload_ref == first_payload.payload_id
+    assert prompt_set.entries[1].snapshot_payload_ref == second_payload.payload_id
+    assert first_payload.snapshot_text == first_snapshot
+    assert first_payload.snapshot_text.encode("utf-8") == first_snapshot.encode("utf-8")
+    assert first_payload.storage_mode is EvidenceStorageMode.EMBEDDED
+    assert first_payload.title == "Alpha"
+    assert first_payload.source_identity == {
+        "source_kind": "media_db",
+        "source_id": "media-1",
+    }
+    assert first_payload.locator == {}
+    assert first_payload.lineage == {
+        "chunk_index": 3,
+        "start_char": 10,
+        "end_char": 20,
+    }
+    assert first_payload.transformations == (
+        "heading_injected",
+        "marker_injected",
+    )
+    assert first_payload.content_hash == codec.fingerprint(
+        CitationFingerprintDomain.EXACT_PAYLOAD,
+        "exact-snapshot-v1",
+        first_snapshot.encode("utf-8"),
+    )
+    assert first_payload.comparison_hash == codec.fingerprint(
+        CitationFingerprintDomain.EXACT_PAYLOAD,
+        "comparison-nfc-lf-v1",
+        "[S1] MEDIA — Alpha\nExact transformed 🧪 é".encode("utf-8"),
+    )
+    assert second_payload.snapshot_text == second_snapshot
+    assert first_snapshot not in repr(builder)
+    assert first_payload.content_hash not in repr(builder)
+
+
+def test_prompt_evidence_rejects_unknown_runs_zero_entries_and_duplicate_ranks() -> (
+    None
+):
+    builder = _builder()
+    run_id = _record_run(builder)
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        builder.record_prompt_evidence_set(
+            run_id=run_id,
+            evidence=(),
+            created_at=NOW,
+        )
+    with pytest.raises(ValueError, match="unknown evidence run"):
+        builder.record_prompt_evidence_set(
+            run_id="missing-run",
+            evidence=(
+                LocalPromptEvidenceCapture(
+                    candidate_rank=1,
+                    snapshot_text="[S1] MEDIA — Alpha\nExact",
+                ),
+            ),
+            created_at=NOW,
+        )
+    with pytest.raises(ValueError, match="candidate_rank"):
+        builder.record_prompt_evidence_set(
+            run_id=run_id,
+            evidence=(
+                LocalPromptEvidenceCapture(
+                    candidate_rank=1,
+                    snapshot_text="[S1] MEDIA — Alpha\nExact",
+                ),
+                LocalPromptEvidenceCapture(
+                    candidate_rank=1,
+                    snapshot_text="[S2] MEDIA — Alpha\nDuplicate rank",
+                ),
+            ),
+            created_at=NOW,
+        )
+
+    assert builder.prompt_evidence_sets == ()
+    assert builder.evidence_snapshot_payloads == ()
+
+
+@pytest.mark.parametrize(
+    ("evidence", "created_at", "message"),
+    [
+        (
+            (
+                LocalPromptEvidenceCapture(
+                    candidate_rank=1,
+                    snapshot_text="[S9] MEDIA — Alpha\nWrong marker",
+                ),
+            ),
+            NOW,
+            "marker ordinal",
+        ),
+        (
+            (
+                LocalPromptEvidenceCapture(
+                    candidate_rank=1,
+                    snapshot_text="[S1] MEDIA — Alpha\nExact",
+                ),
+            ),
+            NOW.replace(tzinfo=None),
+            "timezone-aware",
+        ),
+    ],
+)
+def test_invalid_prompt_evidence_set_is_atomic(
+    evidence: tuple[LocalPromptEvidenceCapture, ...],
+    created_at: datetime,
+    message: str,
+) -> None:
+    builder = _builder()
+    run_id = _record_run(builder)
+
+    with pytest.raises((ValueError, ValidationError), match=message):
+        builder.record_prompt_evidence_set(
+            run_id=run_id,
+            evidence=evidence,
+            created_at=created_at,
+        )
+
+    assert builder.prompt_evidence_sets == ()
+    assert builder.evidence_snapshot_payloads == ()
+
+
+def test_prompt_evidence_set_enforces_snapshot_entry_and_set_caps_atomically() -> None:
+    builder = _builder()
+    run_id = _record_run(builder)
+    oversized = LocalPromptEvidenceCapture.model_construct(
+        candidate_rank=1,
+        snapshot_text="[S1] " + ("é" * SNAPSHOT_TEXT_UTF8_BYTES_MAX),
+        transformations=(),
+    )
+
+    with pytest.raises(ValidationError, match="snapshot_text exceeds"):
+        builder.record_prompt_evidence_set(
+            run_id=run_id,
+            evidence=(oversized,),
+            created_at=NOW,
+        )
+    with pytest.raises(ValueError, match="evidence entries"):
+        builder.record_prompt_evidence_set(
+            run_id=run_id,
+            evidence=tuple(
+                LocalPromptEvidenceCapture(
+                    candidate_rank=1,
+                    snapshot_text=f"[S{ordinal}] MEDIA — Alpha\nExact",
+                )
+                for ordinal in range(1, EVIDENCE_ENTRIES_PER_PROMPT_MAX + 2)
+            ),
+            created_at=NOW,
+        )
+    assert builder.prompt_evidence_sets == ()
+    assert builder.evidence_snapshot_payloads == ()
+
+    single = (
+        LocalPromptEvidenceCapture(
+            candidate_rank=1,
+            snapshot_text="[S1] MEDIA — Alpha\nExact",
+        ),
+    )
+    for _ in range(PROMPT_EVIDENCE_SETS_MAX):
+        builder.record_prompt_evidence_set(
+            run_id=run_id,
+            evidence=single,
+            created_at=NOW,
+        )
+    snapshot_count = len(builder.evidence_snapshot_payloads)
+
+    with pytest.raises(ValueError, match="prompt evidence sets"):
+        builder.record_prompt_evidence_set(
+            run_id=run_id,
+            evidence=single,
+            created_at=NOW,
+        )
+
+    assert len(builder.prompt_evidence_sets) == PROMPT_EVIDENCE_SETS_MAX
+    assert len(builder.evidence_snapshot_payloads) == snapshot_count
