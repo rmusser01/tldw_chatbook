@@ -256,12 +256,27 @@ class AgentRunsDB(BaseDB):
         up a run that legitimately started running after the first sweep
         (e.g. one created by this same still-live process).
 
+        The path is registered in ``_swept_paths`` only *after* the sweep's
+        transaction has committed successfully (i.e. after the ``with
+        self.transaction()`` block below exits normally). ``transaction()``
+        rolls back and re-raises on any error -- e.g. a transient
+        ``sqlite3.OperationalError: database is locked`` -- so registering
+        beforehand would leave the path permanently marked "swept" even
+        though nothing was actually reconciled, silently defeating AC#2's
+        crash-recovery guarantee for the rest of the process. A clean sweep
+        that finds zero orphaned rows still registers the path (it commits
+        successfully; it just has nothing to update).
+
         Returns:
             The number of rows reconciled (``0`` if skipped by a guard).
+
+        Raises:
+            Exception: Re-raised (from ``transaction()``) on any error
+                while sweeping; the path is left unregistered so a later
+                call in this process retries the sweep.
         """
         if self.is_memory_db or self.db_path_str in self._swept_paths:
             return 0
-        self._swept_paths.add(self.db_path_str)
         with self.transaction() as conn:
             cur = conn.execute(
                 "UPDATE agent_runs "
@@ -271,7 +286,9 @@ class AgentRunsDB(BaseDB):
                 "WHERE status = 'running'",
                 (_now_iso(),),
             )
-            return cur.rowcount
+            rowcount = cur.rowcount
+        self._swept_paths.add(self.db_path_str)
+        return rowcount
 
     def set_run_assistant_message_id(
         self, run_id: str, assistant_message_id: str | None
