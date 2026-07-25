@@ -1607,7 +1607,11 @@ async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
                 "#settings-detail-pane",
                 "#settings-impact-pane",
             ),
-            ("#settings-open-appearance",),
+            (
+                "#settings-manual-sync-preview",
+                "#settings-save-category",
+                "#settings-open-appearance",
+            ),
         ),
     ],
 )
@@ -1651,8 +1655,12 @@ async def test_runtime_and_settings_destinations_use_pane_layouts(
                 "#settings-detail-pane",
                 "#settings-impact-pane",
             ),
-            ("#settings-open-appearance",),
-            ("#settings-boundary-note",),
+            (
+                "#settings-manual-sync-preview",
+                "#settings-save-category",
+                "#settings-open-appearance",
+            ),
+            ("#settings-selected-category-draft-status",),
             "#settings-impact-pane",
         ),
     ],
@@ -1844,7 +1852,10 @@ COMPACT_DESTINATION_CONTRACTS = {
         "workbench": "#workflows-workbench",
         "object": "#workflows-list-pane",
         "detail": "#workflows-detail-pane",
-        "actions": ("#workflows-launch-in-console",),
+        "actions": (
+            "#workflows-console-unavailable",
+            "#workflows-launch-in-console",
+        ),
     },
     "mcp": {
         # #mcp-workbench / #mcp-server-tree-pane / #mcp-detail-pane /

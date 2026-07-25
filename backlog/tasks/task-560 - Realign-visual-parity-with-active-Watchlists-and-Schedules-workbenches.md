@@ -1,10 +1,10 @@
 ---
 id: TASK-560
 title: Realign visual parity with active Watchlists and Schedules workbenches
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-25 18:10'
-updated_date: '2026-07-25 18:10'
+updated_date: '2026-07-25 18:26'
 labels: []
 dependencies: []
 ---
@@ -17,11 +17,11 @@ Restore the destination visual-parity gate after the Watchlists navigation redes
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Watchlists geometry uses the current header, navigator, sources, detail, inspector, and compact empty-state actions
-- [ ] #2 Schedules geometry uses SchedulesWorkbench sync, queue, detail, inspector, empty-state, and Console-follow contracts
-- [ ] #3 Retired Watchlists filter-copy and legacy SchedulesScreen loading assertions are removed without weakening surviving geometry checks
-- [ ] #4 The 12 reproduced visual-parity failures pass and the complete module is green
-- [ ] #5 Focused destination suites, static checks, and task notes verify the correction and ADR applicability
+- [x] #1 Watchlists geometry uses the current header, navigator, sources, detail, inspector, and compact empty-state actions
+- [x] #2 Schedules geometry uses SchedulesWorkbench sync, queue, detail, inspector, empty-state, and Console-follow contracts
+- [x] #3 Retired Watchlists filter-copy and legacy SchedulesScreen loading assertions are removed without weakening surviving geometry checks
+- [x] #4 The 12 reproduced visual-parity failures pass and the complete module is green
+- [x] #5 Focused destination suites, static checks, and task notes verify the correction and ADR applicability
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -37,3 +37,15 @@ ADR required: no (existing decisions apply)
 ADR path: backlog/decisions/018-watchlists-tui-screen.md and backlog/decisions/018-local-server-hybrid-scheduled-tasks.md
 Reason: Existing decisions own the active Watchlists and scheduling boundaries; this task updates a stale test consumer and introduces no new architecture.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Realigned the production-stylesheet parity harness with the active Watchlists and Schedules workbenches. The harness now loads the committed CSS bundle; Watchlists asserts its compact backend header, navigator/list/detail/inspector layout, current copy, and empty actions. Schedules now exposes its destination title, bounds TabbedContent to remaining height, and keeps queue/detail/inspector panes inside compact viewports while preserving their 3:4:2 ratio. Retired filter and legacy loading assertions were replaced with mounted state and action contracts.
+
+Verification: 12/12 focused Watchlists/Schedules parity cases; 82/82 complete parity module; 62/62 native Watchlists/Schedules destination regressions; 9/9 stylesheet integrity tests; Ruff, formatter, and diff checks pass. The complete module became green after the separately tracked TASK-561 corrected neighboring stylesheet-backed defects.
+
+ADR required: no. Existing ADR-018 Watchlists and ADR-018 local/server scheduling decisions remain authoritative.
+
+Modified files: Tests/UI/test_destination_visual_parity_correction.py; tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py; tldw_chatbook/css/components/_agentic_terminal.tcss; tldw_chatbook/css/features/_scheduling.tcss; generated tldw_chatbook/css/tldw_cli_modular.tcss.
+<!-- SECTION:NOTES:END -->

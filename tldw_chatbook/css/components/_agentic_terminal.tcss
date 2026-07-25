@@ -3340,7 +3340,7 @@ ConsoleSystemPromptModal {
 #workflows-list-pane,
 #acp-list-pane {
     width: 2fr;
-    min-width: 30;
+    min-width: 0;
     border: solid $ds-grid-line;
     padding: 1;
 }
@@ -3348,7 +3348,7 @@ ConsoleSystemPromptModal {
 #workflows-detail-pane,
 #acp-detail-pane {
     width: 4fr;
-    min-width: 52;
+    min-width: 0;
     border: solid $ds-grid-line;
     padding: 1;
 }
@@ -3356,7 +3356,7 @@ ConsoleSystemPromptModal {
 #workflows-inspector-pane,
 #acp-inspector-pane {
     width: 2fr;
-    min-width: 34;
+    min-width: 0;
     border: solid $ds-grid-line;
     padding: 1;
 }
@@ -4429,6 +4429,10 @@ ListItem.personas-library-row.is-active.-highlight {
 #mcp-hub-inspector {
     width: 3fr;
     min-width: 28;
+    /* The generic .ds-inspector uses intrinsic height. This pane is a direct
+       child of the horizontal hub grid and must fill the workbench instead. */
+    height: 100%;
+    min-height: 0;
 }
 
 /* A5: the row wrapping the aggregate summary's colored glyph + neutral
