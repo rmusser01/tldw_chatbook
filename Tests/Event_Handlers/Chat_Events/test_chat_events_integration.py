@@ -218,38 +218,6 @@ class TestChatBasicOperations:
             assert user_msg.message_text == "Hello, this is a test message"
 
     @pytest.mark.asyncio
-    async def test_new_conversation(self, real_app):
-        """Test creating a new conversation"""
-        async with real_app.run_test() as pilot:
-            await pilot.pause(0.5)
-
-            # Navigate to chat tab
-            await pilot.press("c")
-            await pilot.pause(0.1)
-
-            # Set some initial state
-            real_app.current_chat_conversation_id = "old_conv_id"
-            real_app.current_chat_is_ephemeral = False
-
-            # Add some messages to chat log
-            chat_log = real_app.query_one("#chat-log", VerticalScroll)
-            msg1 = ChatMessage(message="Old message", role="User")
-            await chat_log.mount(msg1)
-
-            # Click new conversation button
-            new_button = real_app.query_one("#chat-new-conversation-button", Button)
-            await pilot.click(new_button)
-            await pilot.pause(0.1)
-
-            # Check state was reset
-            assert real_app.current_chat_conversation_id is None
-            assert real_app.current_chat_is_ephemeral is True
-
-            # Check chat log was cleared
-            messages = chat_log.query(ChatMessage)
-            assert len(messages) == 0
-
-    @pytest.mark.asyncio
     async def test_save_ephemeral_chat(self, real_app):
         """Test saving an ephemeral chat"""
         async with real_app.run_test() as pilot:

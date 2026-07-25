@@ -9294,29 +9294,7 @@ class TldwCli(
         input_id = event.input.id
         current_active_tab = self.current_tab
         # --- Notes input events are handled inside the Library screen, not here ---
-        # --- Chat Sidebar Conversation Search ---
-        if (
-            input_id == "chat-conversation-search-bar"
-            and current_active_tab == TAB_CHAT
-        ):
-            await chat_handlers.handle_chat_conversation_search_bar_changed(
-                self, event.value
-            )
-        elif (
-            input_id == "chat-conversation-keyword-search-bar"
-            and current_active_tab == TAB_CHAT
-        ):
-            await chat_handlers.handle_chat_conversation_search_bar_changed(
-                self, event.value
-            )
-        elif (
-            input_id == "chat-conversation-tags-search-bar"
-            and current_active_tab == TAB_CHAT
-        ):
-            await chat_handlers.handle_chat_conversation_search_bar_changed(
-                self, event.value
-            )
-        elif input_id == "conv-char-search-input" and current_active_tab == TAB_CCP:
+        if input_id == "conv-char-search-input" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_conversation_search_input_changed(self, event)
         elif (
             input_id == "conv-char-keyword-search-input"
@@ -9441,14 +9419,6 @@ class TldwCli(
             )
             await chat_events_sidebar.handle_media_item_selected(self, event.item)
 
-        elif (
-            list_view_id == "chat-conversation-search-results-list"
-            and current_active_tab == TAB_CHAT
-        ):
-            self.loguru_logger.debug("Conversation selected in chat tab search results")
-            # Store the selected item for the Load Selected button, but don't load immediately
-            # This maintains the existing UX where users must click "Load Selected"
-
         # Note: conv-char-search-results-list selections are handled by their respective "Load Selected" buttons.
         else:
             self.loguru_logger.warning(
@@ -9460,13 +9430,6 @@ class TldwCli(
         current_active_tab = self.current_tab
 
         if (
-            checkbox_id.startswith("chat-conversation-search-")
-            and current_active_tab == TAB_CHAT
-        ):
-            await chat_handlers.handle_chat_search_checkbox_changed(
-                self, checkbox_id, event.value
-            )
-        elif (
             checkbox_id.startswith("conv-char-search-")
             and current_active_tab == TAB_CCP
         ):
@@ -9597,14 +9560,6 @@ class TldwCli(
                     self.loguru_logger.debug(
                         f"Could not update token counter on model change: {e}"
                     )
-        elif (
-            select_id == "chat-conversation-search-character-filter-select"
-            and current_active_tab == TAB_CHAT
-        ):
-            self.loguru_logger.debug(
-                "Character filter changed in chat tab, triggering conversation search"
-            )
-            await chat_handlers.perform_chat_conversation_search(self)
         elif (
             select_id == "chat-rag-expansion-method" and current_active_tab == TAB_CHAT
         ):

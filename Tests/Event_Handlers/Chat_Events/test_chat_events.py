@@ -15,10 +15,8 @@ from textual.widgets import Button, TextArea, ListItem, Markdown
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
     handle_chat_send_button_pressed,
     handle_chat_action_button_pressed,
-    handle_chat_new_conversation_button_pressed,
     handle_chat_load_character_button_pressed,
     _console_chatbook_artifact_metadata,
-    is_general_history_conversation,
     # ... import other handlers as you write tests for them
 )
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
@@ -38,21 +36,6 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
 
 # The mock_app fixture is imported from Tests.fixtures.event_handler_mocks
-
-
-async def test_general_history_excludes_ccp_owned_sessions():
-    conversations = [
-        {"id": "conv-general", "discovery_owner": "general_chat"},
-        {"id": "conv-char", "discovery_owner": "ccp_character"},
-        {"id": "conv-persona", "discovery_owner": "ccp_persona"},
-        {"id": "conv-implicit"},
-    ]
-
-    visible_ids = [
-        row["id"] for row in conversations if is_general_history_conversation(row)
-    ]
-
-    assert visible_ids == ["conv-general", "conv-implicit"]
 
 
 # Mock external dependencies used in chat_events.py
@@ -268,26 +251,6 @@ async def test_world_info_indicator_reflects_current_send_not_previous(
     assert "5 entries activated" in send2_text
     assert "3 entries" not in send2_text
     assert send2_indicator_calls[0].kwargs.get("before") is ai_placeholder_2
-
-
-async def test_handle_new_conversation_button_pressed(mock_app):
-    """Test that the new chat button clears state and UI."""
-    # Set some state to ensure it's cleared
-    mock_app.current_chat_conversation_id = "conv_123"
-    mock_app.current_chat_is_ephemeral = False
-    mock_app.current_chat_active_character_data = {"name": "char"}
-
-    await handle_chat_new_conversation_button_pressed(mock_app, MagicMock())
-
-    mock_app.query_one("#chat-log").remove_children.assert_called_once()
-    # New conversation creates a UUID, so it shouldn't be None
-    assert mock_app.current_chat_conversation_id is not None
-    assert isinstance(mock_app.current_chat_conversation_id, str)
-    # After creating a new conversation, it's no longer ephemeral
-    assert mock_app.current_chat_is_ephemeral is False
-    assert mock_app.current_chat_active_character_data is None
-    # Check that a UI field was reset
-    assert mock_app.query_one("#chat-system-prompt").text == "Default system prompt."
 
 
 @patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.TextArea")
