@@ -47,9 +47,11 @@ Modified/added files:
 - `Tests/Character_Chat/test_character_card_lenient_import.py` (PNG chunk-surgery helper + 2 regression tests)
 
 Verification:
-- `pytest Tests/Character_Chat/test_character_card_lenient_import.py` -> 28 passed.
+- `pytest Tests/Character_Chat/test_character_card_lenient_import.py` -> 29 passed.
 - Full import path over reporter's folder -> IMPORTED: 108, FAILED: 0.
 - Full import path over SillyTavern characters folder -> IMPORTED: 95, FAILED: 0 (includes reported `Ann1.png`).
+
+Review hardening (Qodo): the metadata keys are now a shared module constant (`_CARD_IMAGE_METADATA_KEYS`), the forced decode is PNG-only (WebP/JPEG skip straight to EXIF) and bounded by `_MAX_CARD_DECODE_PIXELS` (50 MP, checked pre-decode via `img_obj.size`) to prevent CPU/memory spikes on oversized untrusted images, and PNG decode failures log at warning. A regression test covers the oversized-skip path.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
