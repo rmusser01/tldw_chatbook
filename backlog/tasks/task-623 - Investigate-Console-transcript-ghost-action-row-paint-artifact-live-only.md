@@ -1,7 +1,7 @@
 ---
 id: TASK-623
 title: Investigate Console transcript ghost action-row paint artifact (live-only)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-25 10:15'
 updated_date: '2026-07-25 17:30'
