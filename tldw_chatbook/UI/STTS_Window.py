@@ -737,6 +737,16 @@ class TTSPlaygroundWidget(Widget):
                 )
                 return
 
+            previous_catalog = self._catalogs.get(provider_id)
+            if (
+                previous_catalog is not None
+                and previous_catalog.revision != catalog.revision
+            ):
+                self._discovered_voices = {
+                    key: value
+                    for key, value in self._discovered_voices.items()
+                    if key[0] != provider_id
+                }
             self._catalogs[provider_id] = catalog
             self._catalog_configuration_revisions[provider_id] = configuration_revision
             self._stale_providers.discard(provider_id)

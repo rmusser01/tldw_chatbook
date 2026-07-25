@@ -95,6 +95,8 @@ class FakeTTSService:
         self.catalog_started: asyncio.Event | None = None
         self.allow_catalog: asyncio.Event | None = None
         self.catalog_cancelled = False
+        self.voice_started: asyncio.Event | None = None
+        self.allow_voices: asyncio.Event | None = None
 
     def provider_descriptors(self) -> tuple[TTSProviderDescriptor, ...]:
         self.descriptor_calls += 1
@@ -137,6 +139,10 @@ class FakeTTSService:
         refresh: bool = False,
     ) -> tuple[str, ...]:
         self.voice_calls.append((provider_id, model_id, refresh))
+        if self.voice_started is not None:
+            self.voice_started.set()
+        if self.allow_voices is not None:
+            await self.allow_voices.wait()
         return self.voices.get((provider_id, model_id), ())
 
     async def synthesize(self, *_args: Any, **_kwargs: Any) -> None:
@@ -350,6 +356,34 @@ async def test_voice_discovery_does_not_cancel_inflight_catalog_refresh(
                 in str(app.query_one("#tts-provider-status", Static).render()).lower()
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_catalog_revision_invalidates_old_voices_before_rediscovery(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        voice_select = app.query_one("#tts-voice-select", Select)
+        voice_select.value = "[voice]"
+        await pilot.pause()
+
+        service.catalogs["audio_cpp"] = _audio_catalog(revision=12)
+        service.voice_started = asyncio.Event()
+        service.allow_voices = asyncio.Event()
+        widget = app.query_one(TTSPlaygroundWidget)
+        widget._load_provider_catalog("audio_cpp", refresh=True)
+        await service.voice_started.wait()
+        await pilot.pause()
+
+        assert _option_values(voice_select) == (SERVER_DEFAULT_VOICE_ID,)
+        assert voice_select.value == SERVER_DEFAULT_VOICE_ID
+
+        service.allow_voices.set()
+        await app.workers.wait_for_complete()
 
 
 @pytest.mark.asyncio

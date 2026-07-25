@@ -16,6 +16,7 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSPlaygroundGenerateEvent,
+    STTSProviderConfigurationChanged,
     STTSSettingsSaveEvent,
 )
 from tldw_chatbook.TTS import STTSPlaygroundRequest
@@ -212,6 +213,20 @@ async def test_stts_initialization_only_retrieves_the_bound_service(
 
     get_service.assert_awaited_once_with()
     assert handler._stts_service is service
+
+
+def test_app_forwards_provider_configuration_change_to_stts_handler() -> None:
+    callback = Mock()
+    owner = SimpleNamespace(
+        _stts_handler=SimpleNamespace(
+            on_stts_provider_configuration_changed=callback,
+        )
+    )
+    event = STTSProviderConfigurationChanged("audio_cpp", 2)
+
+    TldwCli.handle_stts_provider_configuration_changed(owner, event)
+
+    callback.assert_called_once_with(event)
 
 
 def test_existing_mount_binds_before_screen_work() -> None:
