@@ -1314,6 +1314,37 @@ def test_rag_test_category_worker_completion_notifies_state_and_preview(
     )
 
 
+def test_stale_test_category_worker_landing_after_nav_away_skips_the_toast(
+    monkeypatch, tmp_path, fake_app
+):
+    """task-566 review (Important): ``_apply_rag_test_category_result``
+    calls the now-guarded ``_apply_library_rag_index_status`` (task-566,
+    no-ops after nav-away), but its OWN ``self.app.notify("RAG check:
+    ...")`` was still unconditional -- a stale ``'t'`` test-category
+    worker landing after the user has already navigated away from
+    Library/RAG would still toast the RAG check summary over whatever
+    category they're now on. Must be guarded the same way."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module,
+        "fetch_index_status",
+        lambda: {"state": "absent", "count": 0, "provenance": {}},
+    )
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    # The user navigates away from Library/RAG WHILE the 't' test-category
+    # fetch is still in flight -- exactly the race this task targets.
+    screen.active_category = SettingsCategoryId.THEME.value
+
+    worker = SettingsScreen.__dict__["_rag_test_category_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen)  # simulate the off-thread fetch completing anyway
+
+    assert fake_app.notifications == []
+
+
 # --- Task 4 review Finding 1: backfill worker must be thread-isolated, not
 # an async worker awaiting on the UI event loop (backfill_semantic_index has
 # long synchronous stretches between awaits that would otherwise freeze the

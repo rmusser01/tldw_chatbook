@@ -8338,6 +8338,13 @@ class SettingsScreen(BaseAppScreen):
         preview_summary, _preview_retrieval, _preview_context = (
             self._library_rag_preview_rows()
         )
+        # task-566 review (Important): a stale 't' test-category worker can
+        # land after the user has already navigated away from Library/RAG --
+        # `_apply_library_rag_index_status` above already no-ops in that
+        # case, but this toast was still unconditional, surfacing "RAG
+        # check: ..." over whatever category the user is now on.
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
         self.app.notify(
             f"RAG check: {state} index · {preview_summary}", severity="information"
         )
