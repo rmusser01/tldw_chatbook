@@ -72,7 +72,3 @@ Button:disabled:hover {
 #toggle-chat-left-sidebar {
     margin-right: 1; /* Original toggle on the left of input area */
 }
-
-#toggle-chat-right-sidebar {
-    margin-left: 1; /* New toggle on the right of input area */
-}
