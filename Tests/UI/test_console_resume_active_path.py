@@ -481,3 +481,59 @@ def test_resume_leaves_valid_persisted_summary_boundary_untouched():
         )
     finally:
         db.close_connection()
+
+
+def _persist_degenerate_all_user_legacy_conversation(db: CharactersRAGDB):
+    """Legacy FLAT conversation whose user turns got NO assistant reply.
+
+    Reachable in the flat era via repeated failed/blocked sends: every row is
+    a NULL-parent USER root with no children. task-572's target shape -- the
+    role-homogeneity signal alone mistakes it for a genuine Phase-B root fork
+    and leaves it un-chained (phantom counter, truncated view).
+    """
+    service = ChatConversationService(db)
+    conversation_id = service.create_conversation(
+        id="degenerate-flat-conv-1",
+        title="Degenerate",
+        scope_type="global",
+        state="in-progress",
+    )
+    for i, content in enumerate(["u1", "u2", "u3"]):
+        db.add_message(
+            {
+                "id": f"m-degen-{i}",
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": content,
+                "timestamp": f"2026-01-01T00:00:0{i}.000000+00:00",
+            }
+        )
+    return conversation_id
+
+
+def test_resume_chains_degenerate_all_user_legacy_conversation():
+    """task-572: a degenerate all-USER legacy conversation (multiple
+    parentless user rows, no replies anywhere) resumes as the full ordered
+    sequence with no phantom sibling counter.
+
+    The stronger fingerprint: an all-USER root set whose roots are ALL
+    childless is degenerate legacy (a genuine first-message edit-&-resend
+    fork always carries at least one reply subtree under a root) and is
+    chained; an all-USER root set with any subtree stays un-chained (pinned
+    by ``test_resume_second_root_loads_off_path_but_is_not_shown``).
+    """
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id = _persist_degenerate_all_user_legacy_conversation(db)
+        assert db.get_conversation_active_leaf(conversation_id) is None
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        view = store.messages_for_session(session.id)
+        assert [m.content for m in view] == ["u1", "u2", "u3"]
+        for message in view:
+            _snapshots, _index, count = store.siblings_at(message.id)
+            assert count == 1
+    finally:
+        db.close_connection()

@@ -318,3 +318,133 @@ async def test_edit_and_resend_skill_refusal_leaves_no_pending_node():
     assert all(
         m.status != "pending" for m in store.messages_for_session(session.id)
     )
+
+
+class _RecordingStreamingGateway(StreamingGateway):
+    """StreamingGateway that records the provider payload it was handed."""
+
+    def __init__(self):
+        self.messages_seen = None
+
+    async def stream_chat(self, resolution, messages):
+        self.messages_seen = [dict(m) for m in messages]
+        for chunk in ("edi", "ted-reply"):
+            yield chunk
+
+
+def _anchor_attachment():
+    from tldw_chatbook.Chat.console_chat_models import MessageAttachment
+
+    return MessageAttachment(
+        data=b"png-bytes",
+        mime_type="image/png",
+        display_name="photo.png",
+        position=0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_edit_and_resend_carries_anchor_attachments(monkeypatch):
+    """task-573: the resent sibling keeps the anchor's attachments -- on the
+    persisted node AND embedded in the provider payload (multimodal parts),
+    instead of silently re-sending text-only."""
+    from tldw_chatbook.Chat import console_chat_controller as controller_module
+
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    store = ConsoleChatStore()
+    gateway = _RecordingStreamingGateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, model="vision-model"
+    )
+    session = store.create_session(title="t")
+    store.active_session_id = session.id
+    u1 = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="look at this",
+        attachments=(_anchor_attachment(),),
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="old reply"
+    )
+
+    result = await controller.edit_and_resend_message(u1.id, "edited caption")
+
+    assert result.accepted is True
+    siblings, _index, count = store.siblings_at(u1.id)
+    assert count == 2
+    new_user_id = next(iter({s.id for s in siblings} - {u1.id}))
+    new_user = store.get_message(new_user_id)
+    assert len(new_user.attachments) == 1
+    assert new_user.attachments[0].data == b"png-bytes"
+    assert new_user.attachments[0].mime_type == "image/png"
+
+    user_rows = [m for m in gateway.messages_seen if m["role"] == "user"]
+    last_user = user_rows[-1]
+    assert isinstance(last_user["content"], list)
+    assert last_user["content"][0] == {"type": "text", "text": "edited caption"}
+    assert last_user["content"][1]["image_url"]["url"].startswith(
+        "data:image/png;base64,"
+    )
+
+
+@pytest.mark.asyncio
+async def test_edit_and_resend_blocks_attachments_on_non_vision_model(monkeypatch):
+    """task-573 AC#2: the vision gate applies exactly as on a fresh send, and
+    the block fires BEFORE any node is created (mutate-last discipline)."""
+    from tldw_chatbook.Chat import console_chat_controller as controller_module
+
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: False)
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=StreamingGateway(), model="text-model"
+    )
+    session = store.create_session(title="t")
+    store.active_session_id = session.id
+    u1 = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="look at this",
+        attachments=(_anchor_attachment(),),
+    )
+    a1 = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="old reply"
+    )
+
+    result = await controller.edit_and_resend_message(u1.id, "edited caption")
+
+    assert result.accepted is False
+    assert "can't accept images" in result.visible_copy
+    siblings, _index, count = store.siblings_at(u1.id)
+    assert count == 1
+    # The block appends only the SYSTEM block-row (standard _block behavior);
+    # no forked USER sibling and no stuck "pending" assistant node exist.
+    assert all(
+        m.status != "pending" for m in store.messages_for_session(session.id)
+    )
+    active_leaf = store.get_message(store.active_leaf(session.id))
+    assert active_leaf.role is ConsoleMessageRole.SYSTEM
+    assert a1.id in store.active_path_message_ids(session.id)
+
+
+@pytest.mark.asyncio
+async def test_edit_and_resend_text_only_anchor_stays_text_payload():
+    """A text-only anchor keeps the pre-task-573 payload shape (plain string
+    content), so no provider sees a gratuitous multimodal list."""
+    store = ConsoleChatStore()
+    gateway = _RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.create_session(title="t")
+    store.active_session_id = session.id
+    u1 = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="original"
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="original-reply"
+    )
+
+    result = await controller.edit_and_resend_message(u1.id, "edited")
+
+    assert result.accepted is True
+    user_rows = [m for m in gateway.messages_seen if m["role"] == "user"]
+    assert user_rows[-1]["content"] == "edited"

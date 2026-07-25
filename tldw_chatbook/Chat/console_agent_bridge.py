@@ -1452,6 +1452,35 @@ class ConsoleAgentBridge:
         """
         self._db.set_run_assistant_message_id(run_id, persisted_message_id)
 
+    def latest_unanchored_primary_run_id(self, conversation_id: str) -> str | None:
+        """Return the newest non-superseded PRIMARY run's id while unanchored.
+
+        task-543 seam for the stopped-via-cancel path: ``stop_active_run``'s
+        ``task.cancel()`` raises ``CancelledError`` in the controller before
+        ``run_reply``'s ``(run_id, outcome)`` ever binds, so the controller
+        cannot learn the run id from the return value -- but the run ROW
+        already exists (``create_run`` runs at loop start, long before the
+        first chunk can stream), and the newest non-superseded primary is by
+        construction the active run. The ``assistant_message_id IS NULL``
+        guard covers the one exception: a Stop delivered before
+        ``create_run`` committed would surface the PREVIOUS run here, and a
+        finished run always has its anchor recorded by a finalizer terminal
+        path -- so an already-anchored newest row means "record nothing"
+        (row stays NULL -> ordinal fallback, the pre-fix behavior), never
+        "overwrite a good anchor".
+
+        Args:
+            conversation_id: Durable conversation id whose runs to inspect.
+
+        Returns:
+            The newest non-superseded primary run's id when its
+            ``assistant_message_id`` is still NULL, else ``None``.
+        """
+        record = self._db.latest_primary_run(conversation_id)
+        if record is None or record.get("assistant_message_id") is not None:
+            return None
+        return record["id"]
+
     def subagent_count(self, conversation_id: str) -> int:
         return self._db.count_subagent_runs(conversation_id)
 

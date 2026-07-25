@@ -1415,3 +1415,135 @@ async def test_mcp_review_hook_raise_fails_open_but_invoke_gate_still_refuses(tm
     assert (
         service.execute_calls == []
     )  # never invoked -- refused by invoke()'s own gate
+
+
+@pytest.mark.asyncio
+async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
+    """task-543: the dominant user-Stop path (``stop_active_run`` ->
+    ``task.cancel()``) raises ``CancelledError`` in the controller BEFORE
+    ``run_reply``'s ``(run_id, outcome)`` ever binds -- so the CancelledError
+    branch must recover the run id via the bridge's latest-unanchored-primary
+    lookup and record the stopped reply's PERSISTED id onto the run. Every
+    pre-existing stop test simulated the stop via a normally-returning
+    ``run_reply``, which made this gap invisible. RED pre-fix: the run row
+    stays NULL and falls to the ordinal fallback on resume.
+    """
+    from Tests.Chat.test_console_chat_store import FakePersistence
+
+    class _YieldThenParkGateway(_ParkingGateway):
+        """Streams ONE chunk before parking: a zero-chunk stop never persists
+        (empty rows defer -- the AC#3 NULL case, covered separately below), so
+        the persisted-id recording needs a partial reply in the buffer."""
+
+        async def stream_chat(self, _resolution, _messages):
+            yield "partial answer\n"
+            self.started.set()
+            self.release.wait(timeout=60)
+            yield "answered anyway."
+
+    gateway = _YieldThenParkGateway()
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+
+    send_task = asyncio.ensure_future(controller.submit_draft("hello"))
+    for _ in range(3000):  # 30s deadline -- CI-contention headroom
+        if gateway.started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert gateway.started.is_set(), (
+        "bridge thread never reached the parked gateway call"
+    )
+
+    # A REAL cross-task cancellation, exactly as the Stop button delivers it.
+    assert controller.stop_active_run() is True
+    result = await send_task
+    assert result.accepted is True
+
+    session_id = store.active_session_id
+    assistant = next(
+        m
+        for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.status == "stopped"
+    assert assistant.persisted_message_id is not None
+
+    gateway.release.set()
+    primary: dict | None = None
+    for _ in range(3000):  # 30s deadline -- CI-contention headroom
+        runs = [r for r in _all_runs(db) if r["agent_kind"] == "primary"]
+        if runs and runs[0]["status"] != "running":
+            primary = runs[0]
+            break
+        await asyncio.sleep(0.01)
+
+    assert primary is not None, "primary run never settled"
+    assert primary["assistant_message_id"] == assistant.persisted_message_id
+    assert primary["assistant_message_id"] != assistant.id
+
+
+@pytest.mark.asyncio
+async def test_stopped_via_cancel_without_persistence_stays_null(tmp_path):
+    """task-543 AC#3: with no persistence backend the stopped reply never gets
+    a persisted id, so the cancel-path recording must no-op and the run row
+    must stay NULL (ordinal fallback) -- never a stale/native id."""
+    gateway = _ParkingGateway()
+    store = ConsoleChatStore()
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+
+    send_task = asyncio.ensure_future(controller.submit_draft("hello"))
+    for _ in range(3000):
+        if gateway.started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert gateway.started.is_set()
+
+    assert controller.stop_active_run() is True
+    await send_task
+    gateway.release.set()
+
+    primary: dict | None = None
+    for _ in range(3000):
+        runs = [r for r in _all_runs(db) if r["agent_kind"] == "primary"]
+        if runs and runs[0]["status"] != "running":
+            primary = runs[0]
+            break
+        await asyncio.sleep(0.01)
+    assert primary is not None
+    assert primary["assistant_message_id"] is None
+
+
+def test_latest_unanchored_primary_run_id_guards_anchored_rows(tmp_path):
+    """task-543 mis-write guard: an ultra-early Stop (before create_run
+    committed) sees the PREVIOUS run as the newest primary -- but a finished
+    run is always anchored by a finalizer path, so the lookup must return
+    None for it rather than let the caller overwrite a good anchor."""
+    store = ConsoleChatStore()
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=None)
+
+    run_id = db.create_run(conversation_id="conv-1", agent_kind="primary", task="t")
+    assert bridge.latest_unanchored_primary_run_id("conv-1") == run_id
+
+    db.set_run_assistant_message_id(run_id, "persisted-1")
+    assert bridge.latest_unanchored_primary_run_id("conv-1") is None
+    assert bridge.latest_unanchored_primary_run_id("conv-other") is None

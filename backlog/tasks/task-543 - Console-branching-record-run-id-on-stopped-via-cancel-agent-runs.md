@@ -3,8 +3,9 @@ id: TASK-543
 title: >-
   Console branching: record the persisted reply id for stopped-via-cancel agent
   runs
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-24'
 labels:
   - console
@@ -23,7 +24,35 @@ Fix direction (final-review recommendation): expose the most-recent primary run 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A user Stop delivered via task cancellation records the stopped reply's persisted id on the run (id-anchored + off-path-hidden on resume, same as other terminal paths)
-- [ ] #2 A test exercises the real `stop_active_run` → `task.cancel()` path and asserts the run's `assistant_message_id`
-- [ ] #3 A never-persisted stopped reply still leaves the run NULL (ordinal fallback), never a stale id
+- [x] #1 A user Stop delivered via task cancellation records the stopped reply's persisted id on the run (id-anchored + off-path-hidden on resume, same as other terminal paths)
+- [x] #2 A test exercises the real `stop_active_run` → `task.cancel()` path and asserts the run's `assistant_message_id`
+- [x] #3 A never-persisted stopped reply still leaves the run NULL (ordinal fallback), never a stale id
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Bridge seam `latest_unanchored_primary_run_id(conversation_id)`: newest
+   non-superseded PRIMARY run's id, returned ONLY while its
+   `assistant_message_id` is still NULL (the mis-write guard for a Stop that
+   beats `create_run` -- a finished run is always anchored by a finalizer
+   path, so an anchored newest row means record nothing).
+2. Controller CancelledError branch: after `_mark_stream_stopped`, call
+   `_record_run_assistant_message` with the recovered id (defensive wrapper;
+   the existing helper already no-ops on a never-persisted stop -> AC#3).
+3. Tests exercising the REAL `stop_active_run` -> `task.cancel()` path via
+   the parked-bridge-thread scaffolding (yield-then-park gateway so the gate
+   flushes a chunk and the stopped reply persists), plus the NULL guard.
+
+## Implementation Notes
+
+- The run ROW exists long before a user can Stop (`create_run` at loop
+  start), so the newest non-superseded primary IS the active run; the
+  NULL-anchor guard turns the one racy exception into a safe no-op instead
+  of overwriting the previous run's good anchor.
+- Test detail discovered en route: the agent stream's fence-gate is
+  line-buffered -- a chunk without a newline never flushes to the store, so
+  a zero-chunk (or newline-less) stop legitimately never persists and stays
+  NULL -> ordinal fallback (pinned by the no-persistence test).
+- Files: `tldw_chatbook/Chat/console_agent_bridge.py`,
+  `tldw_chatbook/Chat/console_chat_controller.py`,
+  `Tests/Chat/test_console_agent_swap.py`.
