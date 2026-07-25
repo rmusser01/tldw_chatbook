@@ -1418,14 +1418,28 @@ class SettingsScreen(BaseAppScreen):
         #: _select_category) and cleared by _rag_after_set_active /
         #: _rag_after_profile_action.
         self._rag_preview_profile_id: str | None = None
-        #: Guards the profile Select's OWN `.value =` writes
-        #: (_sync_library_rag_profile_widgets) against re-entering
-        #: handle_library_rag_profile_select_changed via the Select.Changed
-        #: message that assignment posts (Textual's `Select.value` is a
-        #: `var(..., init=False)`, so only POST-mount assignments post
-        #: Changed -- but a programmatic resync is exactly such an
-        #: assignment).
-        self._syncing_library_rag_profile_select = False
+        #: 541-v2 final review item 1: FIFO queue of the Select value(s)
+        #: `_sync_library_rag_profile_widgets`'s OWN `set_options`/`value =`
+        #: writes are about to cause the profile Select to post a
+        #: `Select.Changed` for. A prior boolean-flag approach here
+        #: (`_syncing_library_rag_profile_select`, set True around the
+        #: writes, reset in a `finally`) could NOT actually suppress
+        #: anything: Textual's `Select._watch_value` posts `Changed`
+        #: through the widget's own async message queue, so
+        #: handle_library_rag_profile_select_changed only receives it AFTER
+        #: this resync has already returned and reset the flag (verified
+        #: empirically with a mounted-pilot probe -- both the transient
+        #: `Select.NULL` reset `set_options()` causes and the final
+        #: resolved value arrive as separate deferred messages). Recording
+        #: the actual value(s) a resync will cause Select to post here --
+        #: and having the handler consume-and-ignore exactly those, in
+        #: arrival order, popping each once matched -- suppresses them for
+        #: real without swallowing a genuine user browse that later happens
+        #: to land on the same value. Cleared on any category switch away
+        #: from LIBRARY_RAG too (see _select_category): leaving the
+        #: category recomposes the detail pane, minting a brand-new Select
+        #: instance no stale expectation could ever legitimately match.
+        self._rag_select_suppress_queue: list = []
         self._navigation_provider: str | None = None
         self._navigation_model: str | None = None
         self._navigation_field: str | None = None
@@ -8481,6 +8495,37 @@ class SettingsScreen(BaseAppScreen):
         with Horizontal(classes="settings-action-row"):
             yield Button("Backfill", id="settings-library-rag-index-backfill")
 
+    def _queue_rag_select_suppression(self, select: Select, expected_value: object) -> None:
+        """Record ``expected_value`` as a ``Select.Changed`` value the NEXT
+        (about-to-happen) programmatic mutation of ``select`` is expected to
+        post -- see ``_rag_select_suppress_queue``'s docstring for why this
+        replaces a boolean in-progress flag. Only queues an expectation when
+        the mutation will actually change ``select.value`` (mirrors
+        ``Reactive._set``'s own "only fires when the value differs" gate,
+        which is what decides whether Textual posts a Changed at all): an
+        unconditional queue entry a mutation never triggers a Changed for
+        would sit there forever and wrongly swallow a LATER, unrelated
+        genuine user selection that happens to land on that same value.
+        """
+        if select.value != expected_value:
+            self._rag_select_suppress_queue.append(expected_value)
+
+    def _set_library_rag_editing_caption_visible(self, visible: bool) -> None:
+        """541-v2 final review item 2: the decoupling caption ("Editing: X.
+        Pick a profile and press 'Set active' to edit a different one.")
+        always names the ACTIVE profile -- directly contradictory sitting
+        right above the editor's "Previewing: Y" title while a
+        profile-picker PREVIEW is active. Hidden entirely during preview
+        rather than reworded: the preview banner just below the Select
+        already carries the equivalent "Previewing '<name>' (read-only) —
+        press Set active to edit it" message.
+        """
+        try:
+            caption = self.query_one("#settings-library-rag-editing-caption", Static)
+        except QueryError:
+            return
+        caption.display = visible
+
     def _sync_library_rag_profile_widgets(
         self, *, select_override: str | None = None
     ) -> None:
@@ -8522,6 +8567,14 @@ class SettingsScreen(BaseAppScreen):
             f"Editing: {info['name']}. Pick a profile and press 'Set active' "
             "to edit a different one.",
         )
+        # 541-v2 final review item 2: this resync always runs OUTSIDE a
+        # preview (see class docstring on `_rag_select_suppress_queue`), so
+        # unconditionally un-hide the caption here too -- covers the
+        # set-active/clone/rename/delete exit-preview paths, which clear
+        # `_rag_preview_profile_id` and call this method directly rather
+        # than routing back through `_sync_rag_editor_display` (which
+        # handles the "browsed back to the active profile" exit path).
+        self._set_library_rag_editing_caption_visible(True)
 
         options = self._library_rag_profile_select_options(grouped)
         valid_ids = {value for _, value in options}
@@ -8531,21 +8584,31 @@ class SettingsScreen(BaseAppScreen):
             if select_override is not None and select_override in valid_ids
             else active_id
         )
-        # Task 4 (541 v2 UX AC1): `set_options` alone resets the selection
-        # (posting a transient BLANK Changed), then the explicit assignment
-        # below posts a second one -- both must be suppressed here so this
-        # imperative resync can never itself flip
-        # `_rag_preview_profile_id` via handle_library_rag_profile_select_changed
-        # (that handler exists solely to react to a genuine user browse).
-        self._syncing_library_rag_profile_select = True
         try:
             select = self.query_one("#settings-library-rag-profile-select", Select)
+            # 541-v2 final review item 1: `set_options` alone resets the
+            # selection to `Select.NULL` (posting a transient Changed, see
+            # `Select._init_selected_option`), then the explicit assignment
+            # below posts a second one -- both are recorded as expected
+            # BEFORE the write that causes them so
+            # handle_library_rag_profile_select_changed can consume and
+            # ignore each once it actually arrives (see
+            # `_rag_select_suppress_queue`'s docstring for why a boolean
+            # flag here cannot work). NOTE: the resolved-value fallback
+            # deliberately uses `Select.NULL`, not `Select.BLANK` --
+            # `Select.BLANK` doesn't exist on this Textual version's
+            # `Select`; the attribute lookup silently resolves to the
+            # unrelated `Widget.BLANK` (`False`), and assigning that to
+            # `.value` would raise `InvalidSelectValueError` the one time
+            # this fallback (active id no longer a valid option) is ever
+            # actually hit.
+            resolved_target = target_id if target_id in valid_ids else Select.NULL
+            self._queue_rag_select_suppression(select, Select.NULL)
             select.set_options(options)
-            select.value = target_id if target_id in valid_ids else Select.BLANK
+            self._queue_rag_select_suppression(select, resolved_target)
+            select.value = resolved_target
         except QueryError:
             pass
-        finally:
-            self._syncing_library_rag_profile_select = False
 
         try:
             self.query_one(
@@ -10043,6 +10106,13 @@ class SettingsScreen(BaseAppScreen):
             # "previewing X" flag must not survive to a later visit and
             # silently mismatch what's actually on screen.
             self._rag_preview_profile_id = None
+            # 541-v2 final review item 1: same reasoning -- a still-pending
+            # suppression expectation was queued against THIS (about to be
+            # destroyed) Select instance's next Changed message(s); the
+            # recomposed detail pane mints a brand-new Select that owes
+            # nothing to it, so a leftover entry here would incorrectly
+            # swallow that new instance's own first genuine Changed.
+            self._rag_select_suppress_queue.clear()
         # Task 2 review (Important): a stale re-index-confirm in-flight
         # guard must never survive navigating away from (or back into) the
         # category -- e.g. the user backs out mid-fetch. Unconditional
@@ -10910,12 +10980,19 @@ class SettingsScreen(BaseAppScreen):
         Selecting the ACTIVE profile's own id exits preview and restores
         the ordinary, draft-aware editor.
 
-        Suppressed while `_sync_library_rag_profile_widgets` is itself
-        rewriting the Select's options/value (`_syncing_library_rag_profile_select`)
-        -- that's an imperative resync, not a user browsing the dropdown.
+        541-v2 final review item 1: a message whose value matches the head
+        of `_rag_select_suppress_queue` is `_sync_library_rag_profile_widgets`'s
+        OWN imperative resync arriving (Textual delivers `Select.Changed`
+        asynchronously, so this can land well after that resync call has
+        returned) -- consumed and ignored rather than treated as a user
+        browsing the dropdown. Only the ONE matching queued expectation is
+        popped per message: a later genuine selection that happens to reuse
+        the same value is never mistaken for a leftover resync.
         """
         event.stop()
-        if self._syncing_library_rag_profile_select:
+        queue = self._rag_select_suppress_queue
+        if queue and event.value == queue[0]:
+            queue.pop(0)
             return
         selected = event.value
         active_id = active_profile_info()["id"]
@@ -10943,6 +11020,12 @@ class SettingsScreen(BaseAppScreen):
         )
         self._update_library_rag_editor_title()
         self._set_library_rag_preview_banner(None)
+        # 541-v2 final review item 2: restore the decoupling caption --
+        # covers the "browsed back to the active profile" exit-preview path,
+        # which reaches here without going through
+        # `_sync_library_rag_profile_widgets` (that method's own exit-preview
+        # paths -- set-active/clone/rename/delete -- restore it themselves).
+        self._set_library_rag_editing_caption_visible(True)
 
     def _render_rag_profile_preview(self, profile_id: str) -> None:
         """Render `profile_id`'s OWN values into the editor, all disabled,
@@ -10960,6 +11043,12 @@ class SettingsScreen(BaseAppScreen):
         name = self._library_rag_profile_name(profile_id)
         self._update_library_rag_editor_title(preview_name=name)
         self._set_library_rag_preview_banner(name)
+        # 541-v2 final review item 2: the decoupling caption always names
+        # the ACTIVE profile ("Editing: X...") -- directly contradictory
+        # sitting right above this "Previewing: Y" title. The banner above
+        # already carries the equivalent messaging, so hide it rather than
+        # reword it.
+        self._set_library_rag_editing_caption_visible(False)
 
     def _update_library_rag_editor_title(self, *, preview_name: str | None = None) -> None:
         """Task 4 (541 v2 UX AC1): the editor container's border title --
@@ -11084,10 +11173,10 @@ class SettingsScreen(BaseAppScreen):
         # "previewing <failed target>" flag would mismatch what's on
         # screen. Explicit rather than relying on the Select.Changed
         # cascade: `_sync_library_rag_profile_widgets` deliberately
-        # suppresses that cascade (see `_syncing_library_rag_profile_select`),
-        # and even without suppression a same-value reassignment (Set
-        # active on the profile already being previewed) posts no Changed
-        # message at all.
+        # suppresses that cascade (see `_rag_select_suppress_queue`), and
+        # even without suppression a same-value reassignment (Set active on
+        # the profile already being previewed) posts no Changed message at
+        # all.
         self._rag_preview_profile_id = None
         if ok:
             self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
@@ -12710,11 +12799,14 @@ class SettingsScreen(BaseAppScreen):
             self._dispatch_library_rag_save(values, True, pending_activate)
             return
         count = status.get("count", 0)
+        # 541-v2 final review item 3: thousands separator -- a large library
+        # can easily have a 6-7 digit vector count, unreadable at a glance
+        # as a bare run of digits.
         modal = ConfirmationDialog(
             title="Re-index required",
             message=(
                 "This change re-points to a new EMPTY index — the current "
-                f"index ({count} vectors) stops being used and search "
+                f"index ({count:,} vectors) stops being used and search "
                 "returns nothing until you run Backfill. Save anyway?"
             ),
             confirm_label="Save anyway",

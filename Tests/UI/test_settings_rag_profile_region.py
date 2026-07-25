@@ -487,7 +487,18 @@ async def test_clone_success_selects_the_clone_in_the_real_select_widget(
 ):
     """Full-mount regression lock for item 1: after a clone completes, the
     ACTUAL profile Select widget's value is the clone's id (not snapped
-    back to the still-active source profile)."""
+    back to the still-active source profile).
+
+    541-v2 final review item 1: the ``select.value``/toast/caption
+    assertions below are all determined synchronously the moment
+    ``_rag_after_profile_action`` returns -- none of them actually
+    exercised the real bug (Select posts its resulting ``Changed``
+    message(s) ASYNCHRONOUSLY, so a single early ``pilot.pause()`` was a
+    timing coincidence, not a guarantee). Two more pauses below, draining
+    those deferred messages, plus a ``_rag_preview_profile_id`` assertion,
+    close that gap -- see
+    ``test_cloning_leaves_the_select_on_the_clone_without_auto_entering_preview``
+    for the dedicated regression."""
     mgr, _profile, _state = _wire_rag_profile_adapter(
         monkeypatch, tmp_path, active_id="hybrid_basic"
     )
@@ -513,6 +524,15 @@ async def test_clone_success_selects_the_clone_in_the_real_select_widget(
         # The active profile hasn't changed (only the picker's highlight
         # has) -- the decoupling caption (item 2) must still name the
         # original active profile, not the clone.
+        assert "Editing: Hybrid Basic." in _visible_text(screen)
+
+        # Drain the resync's own deferred Select.Changed message(s) (the
+        # transient Select.NULL `set_options()` causes, then the clone id)
+        # -- neither may flip the editor into a profile-picker PREVIEW.
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._rag_preview_profile_id is None
+        assert select.value == clone.id
         assert "Editing: Hybrid Basic." in _visible_text(screen)
 
 
@@ -543,13 +563,25 @@ async def test_editing_caption_names_the_active_profile_not_the_select_value(
         ) in _visible_text(screen)
 
         # Browse to a different profile in the dropdown WITHOUT pressing
-        # "Set active" -- the caption must not follow the Select.
+        # "Set active" -- the caption must not follow the Select. 541-v2
+        # final review item 2: it's hidden entirely while previewing (it
+        # used to keep naming the active profile here, which read as a
+        # direct contradiction sitting right above the editor's own
+        # "Previewing: Other RAG" title) -- and it never shows the browsed
+        # profile's name in its place either.
         select = screen.query_one("#settings-library-rag-profile-select", Select)
         select.value = other.id
         await pilot.pause()
 
+        visible = _visible_text(screen)
+        assert f"Editing: {profile.name}." not in visible
+        assert "Editing: Other RAG." not in visible
+
+        # Browsing back to the active profile's own id exits preview and
+        # restores the caption.
+        select.value = profile.id
+        await pilot.pause()
         assert f"Editing: {profile.name}." in _visible_text(screen)
-        assert "Editing: Other RAG." not in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -1488,7 +1520,10 @@ def test_save_with_built_index_pushes_confirm_modal_with_count_and_backfill(
     assert len(fake_app.pushed_screens) == 1
     modal, callback = fake_app.pushed_screens[0]
     assert isinstance(modal, ConfirmationDialog)
-    assert "1234" in modal.message
+    # 541-v2 final review item 3: thousands separator -- 1234 renders as
+    # "1,234", not the bare digit run.
+    assert "1,234" in modal.message
+    assert "1234" not in modal.message
     assert "Backfill" in modal.message
 
 
@@ -2420,26 +2455,87 @@ async def test_preview_banner_and_title_escape_markup_significant_profile_names(
         assert r"\[bold]Other\[/bold]" in str(banner.renderable)
 
 
-def test_cloning_leaves_the_select_on_the_clone_without_auto_entering_preview(
-    monkeypatch, tmp_path, fake_app
+@pytest.mark.asyncio
+async def test_cloning_leaves_the_select_on_the_clone_without_auto_entering_preview(
+    monkeypatch, tmp_path
 ):
     """The profile-picker's own imperative resync
     (`_sync_library_rag_profile_widgets`, e.g. the clone flow's
     `select_override`) must never itself trigger a preview -- only a
     genuine user browse (a real Select.Changed from interacting with the
-    dropdown) does. Sync-constructed (unmounted): the real Select never
-    exists, so this exercises the state directly rather than the message
-    cascade -- see the full-mount clone regression test above for the
-    Select-widget-value side of this flow."""
-    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    dropdown) does.
+
+    541-v2 final review item 1: full-mount (a REAL Select widget, not a
+    sync-constructed/unmounted screen) and DRAINS its deferred
+    Select.Changed messages -- an earlier, sync-constructed version of
+    this test asserted the same conclusion but passed vacuously: without
+    a real Select there's no Changed message for anything to suppress,
+    so it couldn't have caught the bug it was named for. Reproduces the
+    real bug pre-fix: `_sync_library_rag_profile_widgets`'s post-clone
+    resync (`select_override=clone.id`, a NON-active id) posts its own
+    transient `Select.NULL` then the clone id as separate, asynchronously
+    -delivered Changed messages (confirmed with a mounted-pilot probe);
+    the pre-fix boolean `_syncing_library_rag_profile_select` flag was
+    already reset by the time those arrived, so the second one drove the
+    editor straight into an unrequested PREVIEW of the profile the user
+    had just landed on -- exactly what the two `pilot.pause()` calls
+    below flush out."""
+    mgr, _profile, _state = _wire_rag_profile_adapter(
+        monkeypatch, tmp_path, active_id="hybrid_basic"
+    )
     app = _build_test_app()
-    screen = SettingsScreen(app)
-    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
-    assert screen._rag_preview_profile_id is None
+    host = DestinationHarness(app, "settings")
 
-    screen._rag_after_profile_action("clone", True, "some-clone-id")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        assert screen._rag_preview_profile_id is None
 
-    assert screen._rag_preview_profile_id is None
+        clone = mgr.clone_profile("hybrid_basic", "My Clone")
+        mgr.save_profile(clone)
+        screen._rag_after_profile_action("clone", True, clone.id)
+        await pilot.pause()
+        await pilot.pause()
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        assert select.value == clone.id
+        assert screen._rag_preview_profile_id is None
+        editor_card = screen.query_one("#settings-library-rag-editor-card")
+        assert editor_card.border_title == "Editing: Hybrid Basic"
+
+
+@pytest.mark.asyncio
+async def test_genuine_profile_browse_right_after_a_resync_still_enters_preview(
+    monkeypatch, tmp_path
+):
+    """Companion regression to the suppression fix above: it must not
+    over-consume. A genuine user browse to a DIFFERENT non-active
+    profile, arriving right after a programmatic resync's own deferred
+    Select.Changed messages have already been drained, must still enter
+    preview exactly as before -- the suppression queue only ever swallows
+    the resync's OWN expected messages, never an unrelated later
+    selection."""
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        # Trigger + fully drain a programmatic resync first (a no-override
+        # resync is a convenient way to do this without a clone -- it
+        # still round-trips through Select.NULL and posts two deferred
+        # Changed messages, same as the clone flow).
+        screen._sync_library_rag_profile_widgets()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._rag_preview_profile_id is None
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+
+        assert screen._rag_preview_profile_id == other.id
 
 
 def test_leaving_the_library_rag_category_clears_a_stale_preview(monkeypatch, tmp_path):
@@ -2448,10 +2544,16 @@ def test_leaving_the_library_rag_category_clears_a_stale_preview(monkeypatch, tm
     screen = SettingsScreen(app)
     screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
     screen._rag_preview_profile_id = "some-other-profile-id"
+    # 541-v2 final review item 1: a suppression expectation queued against
+    # the about-to-be-recomposed Select instance is just as stale as the
+    # preview flag above -- must not survive to swallow a brand-new Select
+    # instance's own first genuine Changed message on a later visit.
+    screen._rag_select_suppress_queue.append("some-queued-value")
 
     screen._select_category(SettingsCategoryId.STORAGE.value)
 
     assert screen._rag_preview_profile_id is None
+    assert screen._rag_select_suppress_queue == []
 
 
 # --- Task 5 (541 v2 UX AC5): first-run starter panel -- replaces the "wall
