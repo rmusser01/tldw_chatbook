@@ -168,7 +168,7 @@ Key sections:
 - Tool messages are persisted in the ChaChaNotes DB (see `_CURRENT_SCHEMA_VERSION` for the current schema version)
 - `tool_executor.py` handles execution
 - Provider parsing implemented
-- Status: detection AND execution implemented — `ToolExecutor.execute_tool_call()`/`execute_tool_calls()` run tools; wired into `Event_Handlers/worker_events.py` and `Event_Handlers/Chat_Events/chat_streaming_events.py`
+- Status: detection AND execution implemented — `ToolExecutor.execute_tool_call()`/`execute_tool_calls()` run tools; the live Console tool-calling path is the Agents runtime (`Agents/native_tools.py` + `AgentService`, wired through `Chat/console_chat_controller.py`). The legacy event-handler wiring (`worker_events.py`/`chat_streaming_events.py`) was retired in task-577.
 
 ### Config Encryption
 - AES-256 with PBKDF2
