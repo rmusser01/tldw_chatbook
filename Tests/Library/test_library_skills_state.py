@@ -297,7 +297,7 @@ def test_skill_trust_header_line_maps_postures():
     assert skill_trust_header_line("", 0) is None
 
 
-def test_console_command_names_are_treated_as_shadowing(monkeypatch):
+def test_console_command_names_are_treated_as_shadowing():
     """task-580 (AC#3): a skill named after a console command shadows it.
 
     `rewind` and `generate-image` were missing from the set, so a skill by
