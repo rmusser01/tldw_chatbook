@@ -37,6 +37,7 @@ import platform
 import shutil
 import signal
 import subprocess
+import tempfile
 import sys
 import threading
 import time
@@ -111,6 +112,12 @@ class ScriptRunResult:
     truncated_stdout: bool
     truncated_stderr: bool
     sandbox_warnings: tuple[str, ...] = field(default=())
+    #: task-584: populated by the SKILLS SERVICE after the run, not by this
+    #: module -- the runner stays skills-agnostic and only ever receives a cwd.
+    #: `output_files` carries name/size ONLY, never contents: the tool result
+    #: reaches the model, and a script's artifact is not trust-reviewed.
+    output_dir: str | None = None
+    output_files: tuple[dict, ...] = field(default=())
 
 
 class SandboxUnsupportedError(RuntimeError):
@@ -191,11 +198,28 @@ def resolve_interpreter(name: str) -> str | None:
     return shutil.which(name, path=SCRUBBED_PATH)
 
 
-def _scrubbed_env(cwd: Path) -> dict[str, str]:
+def _scrubbed_env(cwd: Path, home: Path | None = None) -> dict[str, str]:
+    """Build the child's environment.
+
+    ``home`` defaults to ``cwd`` for backwards compatibility, but callers that
+    RETAIN the working directory should pass a throwaway one: pointing HOME at
+    the cwd makes interpreters and OS frameworks scribble their caches there
+    (macOS Python writes ``Library/Caches/com.apple.python/**.pyc``), which is
+    invisible while the directory is deleted afterwards but pollutes the
+    directory -- and any listing of it -- once it is kept.
+
+    Args:
+        cwd: The child's working directory.
+        home: Directory to advertise as HOME/TMPDIR; defaults to ``cwd``.
+
+    Returns:
+        The scrubbed environment mapping.
+    """
+    home_dir = home or cwd
     env = {
         "PATH": SCRUBBED_PATH,
-        "HOME": str(cwd),
-        "TMPDIR": str(cwd),
+        "HOME": str(home_dir),
+        "TMPDIR": str(home_dir),
     }
     for passthrough in ("LANG", "LC_ALL"):
         value = os.environ.get(passthrough)
@@ -385,11 +409,14 @@ def run_script_subprocess(
     out_sink = _CappedSink(limits.output_cap_bytes)
     err_sink = _CappedSink(limits.output_cap_bytes)
 
+    # A throwaway HOME, always deleted, so interpreter/OS cache junk never
+    # lands in a caller-retained working directory (task-584).
+    home_dir = Path(tempfile.mkdtemp(prefix="tldw-skill-home-"))
     started = time.monotonic()
     process = subprocess.Popen(  # noqa: S603 — argv list, shell=False, scrubbed env
         argv,
         cwd=str(cwd),
-        env=_scrubbed_env(cwd),
+        env=_scrubbed_env(cwd, home=home_dir),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -479,6 +506,7 @@ def run_script_subprocess(
 
     stdout_bytes, stdout_capped = out_sink.snapshot()
     stderr_bytes, stderr_capped = err_sink.snapshot()
+    shutil.rmtree(home_dir, ignore_errors=True)
     return ScriptRunResult(
         exit_code=exit_code,
         stdout=stdout_bytes.decode("utf-8", errors="replace"),

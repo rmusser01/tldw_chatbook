@@ -382,17 +382,24 @@ async def test_cancelling_the_awaiting_task_lets_the_thread_finish_and_clean_up(
     )
 
     # The offloaded thread is unaffected by the coroutine's cancellation: it
-    # keeps the child running to completion and cleans up after itself, with
-    # no scratch dir left behind once it finishes.
+    # keeps the child running to completion. task-584 changed what happens to
+    # the directory afterwards -- a run that PRODUCED files (this one writes
+    # both markers) is deliberately RETAINED as its output, so the property to
+    # assert is no longer "it disappears" but "the child ran to completion
+    # without cleanup racing it".
     for _ in range(500):
-        if not scratch.exists():
+        if (scratch / "finished.marker").exists():
             break
         await asyncio.sleep(0.01)
     else:
         pytest.fail(
-            "the scratch dir was never cleaned up once the offloaded thread "
-            "finished running the child to completion"
+            "the offloaded thread did not run the child to completion after "
+            "the awaiting coroutine was cancelled"
         )
+    # Both markers survive: nothing deleted the directory out from under a
+    # still-live child, which is the race this test exists to catch.
+    assert (scratch / "started.marker").exists()
+    assert (scratch / "finished.marker").exists()
 
 
 def test_plan_for_script_does_not_read_the_whole_file_into_memory(

@@ -70,6 +70,16 @@ SKILL_FILE_READ_CAP_CHARS = 100_000
 #: would strand the turn rather than merely allow a slow script.
 MAX_SCRIPT_WALL_CLOCK_SECONDS = 600.0
 
+#: task-584: how many per-run output directories to keep. Bounded by COUNT
+#: rather than age or size: predictable, needs no background timer, and prunes
+#: deterministically right after each run.
+SCRIPT_OUTPUT_KEEP_RUNS = 20
+
+#: Directory name under the user data dir holding retained run output. A stable,
+#: discoverable location on purpose -- OS temp is swept by the system and is not
+#: somewhere a user would think to look for a report their skill just produced.
+_SCRIPT_OUTPUT_DIRNAME = "skill_script_output"
+
 #: [skills] config key -> (ScriptRunLimits field, coercion) for the sandbox
 #: budget. Read with the THREE-argument get_cli_setting form: the section-dict
 #: form (`get_cli_setting("skills", {})`) silently returns {} for any section
@@ -1834,6 +1844,89 @@ class LocalSkillsService:
             return None
         return str(root)
 
+    def _script_output_root(self) -> Path:
+        """Return the directory holding retained per-run output.
+
+        Defaults to ``<file-tool sandbox root>/skill_script_output`` so the
+        existing file tools can reach it; a configured
+        ``[skills] script_scratch_root`` overrides it (the same key already
+        governs where run directories live, and carries the same rejection of
+        roots resolving inside the skills or trust store, so a run can never be
+        handed a working directory inside its own bundle).
+
+        Returns:
+            An existing directory path to create run directories under.
+        """
+        configured = self._script_scratch_root()
+        if configured:
+            root = Path(configured)
+        else:
+            # Default INSIDE the file-tool sandbox root (task-584): that is the
+            # one directory the existing ReadFileTool/ListDirectoryTool are
+            # confined to, so retained output is reachable by the tooling the
+            # app already has rather than needing a new read surface. Those
+            # tools stay config-gated, so this only makes the output
+            # *reachable* -- it does not by itself expose anything.
+            from ..Tools.file_operation_tools import _tool_sandbox_root
+
+            root = _tool_sandbox_root() / _SCRIPT_OUTPUT_DIRNAME
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    @staticmethod
+    def _list_output_files(run_dir: Path) -> tuple[dict, ...]:
+        """List what a run produced, as name/size pairs only.
+
+        Contents are deliberately excluded: this listing goes into the tool
+        result and therefore into the model's context, and a script's output is
+        not trust-reviewed material.
+
+        Args:
+            run_dir: The run's output directory.
+
+        Returns:
+            One ``{"name", "size"}`` dict per regular file, sorted by name.
+            Symlinks and unreadable entries are skipped.
+        """
+        entries: list[dict] = []
+        try:
+            for path in sorted(run_dir.rglob("*"), key=lambda p: p.as_posix()):
+                if path.is_symlink() or not path.is_file():
+                    continue
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    continue
+                entries.append(
+                    {"name": path.relative_to(run_dir).as_posix(), "size": size}
+                )
+        except OSError:
+            return ()
+        return tuple(entries)
+
+    @staticmethod
+    def _prune_output_runs(root: Path, keep: int, protect: Path) -> None:
+        """Delete the oldest run directories beyond ``keep``.
+
+        Args:
+            root: The output root holding per-run directories.
+            keep: How many to retain.
+            protect: A directory that must survive regardless (the run that
+                just finished, so a tiny ``keep`` never deletes its own output).
+        """
+        import shutil as _shutil
+
+        try:
+            runs = [p for p in root.iterdir() if p.is_dir() and not p.is_symlink()]
+        except OSError:
+            return
+        runs.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0.0)
+        protect = protect.resolve()
+        for stale in runs[: max(0, len(runs) - max(1, keep))]:
+            if stale.resolve() == protect:
+                continue
+            _shutil.rmtree(stale, ignore_errors=True)
+
     async def describe_skill_script(self, skill_name: str, script_path: str) -> ScriptPlan:
         """Resolve a script for display WITHOUT running it.
 
@@ -1946,17 +2039,29 @@ class LocalSkillsService:
             the whole process group before returning -- has actually
             finished, from the very thread that ran it.
             """
-            scratch = Path(
-                tempfile.mkdtemp(
-                    prefix="tldw-skill-script-", dir=self._script_scratch_root()
-                )
+            # task-584: the run directory is RETAINED, not deleted. It is the
+            # only place a script's artifacts can survive, and it stays owned by
+            # this offloaded callable so a cancelled caller can never make
+            # cleanup race a still-live child (see this function's docstring).
+            output_root = self._script_output_root()
+            run_dir = Path(
+                tempfile.mkdtemp(prefix="tldw-skill-script-", dir=output_root)
             )
-            try:
-                return run_script_subprocess(
-                    target_argv, cwd=scratch, limits=effective_limits
-                )
-            finally:
-                _shutil.rmtree(scratch, ignore_errors=True)
+            result = run_script_subprocess(
+                target_argv, cwd=run_dir, limits=effective_limits
+            )
+            produced = self._list_output_files(run_dir)
+            if not produced:
+                # Nothing to keep: do not leave an empty directory behind to be
+                # pruned later, and do not count it against the retention slots.
+                _shutil.rmtree(run_dir, ignore_errors=True)
+                return replace(result, output_dir=None, output_files=())
+            self._prune_output_runs(
+                output_root, SCRIPT_OUTPUT_KEEP_RUNS, protect=run_dir
+            )
+            return replace(
+                result, output_dir=str(run_dir), output_files=produced
+            )
 
         # Offloaded to a thread: run_script_subprocess is a blocking call
         # (up to limits.wall_clock_seconds + 6.0s worst case) and this
