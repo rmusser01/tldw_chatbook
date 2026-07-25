@@ -555,3 +555,147 @@ default_theme = "textual-dark"
     assert "enabled_backends" not in image_gen_section
     assert set(image_gen_section.keys()) == {"openrouter"}
     assert set(image_gen_section["openrouter"].keys()) == {"default_model"}
+
+
+# ---------------------------------------------------------------------------
+# Fix Round 1 (coordinator review): revert-shortcut recompose, Select
+# refire guard, global int/float inline-error feedback.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_revert_action_shortcut_recomposes_panel(scratch_config, tmp_path):
+    """IMPORTANT fix: the footer `r` shortcut calls
+    ``action_settings_revert_category`` directly (not the panel's own
+    Revert button) -- before the fix, IMAGE_GENERATION fell through to the
+    generic draft-pop-only path, which cleared the dirty marker without
+    ever recomposing the panel, leaving the Input stuck showing the
+    discarded unsaved text.
+    """
+    scratch_config(
+        """
+[image_generation]
+default_backend = "openrouter"
+enabled_backends = ["openrouter"]
+
+[image_generation.openrouter]
+default_model = "original-model"
+"""
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        model_input = panel.query_one(
+            "#settings-imagegen-field-openrouter-default_model", Input
+        )
+        model_input.value = "typed-but-not-saved"
+        await pilot.pause()
+
+        rail_button = screen.query_one("#settings-category-image_generation", Button)
+        assert "*" in str(rail_button.label)
+
+        # The same action the footer's `r` binding invokes -- NOT the
+        # panel's own Revert button.
+        screen.action_settings_revert_category()
+        await pilot.pause()
+        await pilot.pause()
+
+        rail_button = screen.query_one("#settings-category-image_generation", Button)
+        assert "*" not in str(rail_button.label)
+
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        model_input = panel.query_one(
+            "#settings-imagegen-field-openrouter-default_model", Input
+        )
+        assert model_input.value == "original-model"
+
+    config_path = tmp_path / "config.toml"
+    with open(config_path, "rb") as f:
+        saved = tomllib.load(f)
+    assert saved["image_generation"]["openrouter"]["default_model"] == "original-model"
+
+
+@pytest.mark.asyncio
+async def test_default_backend_select_mount_refire_is_suppressed(scratch_config):
+    """MINOR 1 fix: constructing the default-backend Select with its own
+    current (non-blank) value fires a Select.Changed the moment it mounts
+    (verified empirically -- a fresh Select's reactive default IS blank,
+    so any non-blank initial value is a real change from Select's own
+    point of view). `_queue_image_gen_select_suppression` records the
+    exact value the about-to-(re)compose Select will mount with; the
+    handler must consume-and-ignore exactly that one arrival. A queue
+    entry left over after the mount settles would mean the refired
+    message either never arrived as expected or was staged into the
+    draft instead of being suppressed (and would incorrectly swallow a
+    LATER, genuine user selection that happens to land on that same
+    value).
+    """
+    scratch_config(
+        """
+[image_generation]
+default_backend = "openrouter"
+enabled_backends = ["openrouter"]
+"""
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        await pilot.pause()
+
+        assert screen._image_gen_select_suppress_queue == []
+        rail_button = screen.query_one("#settings-category-image_generation", Button)
+        assert "*" not in str(rail_button.label)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        assert panel.query_one("#settings-imagegen-save", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_invalid_global_int_field_blocks_save_with_inline_error(
+    scratch_config, tmp_path
+):
+    """MINOR 2 fix: typing non-numeric text into a global int field (e.g.
+    ``default_batch``) must behave like the per-backend int fields --
+    inline error + no write -- instead of the edit silently vanishing with
+    no feedback and (were it to reach diff_to_sections unguarded) writing
+    the raw string into config.toml.
+    """
+    scratch_config(
+        """
+[image_generation]
+default_backend = "openrouter"
+enabled_backends = ["openrouter"]
+"""
+    )
+    config_path = tmp_path / "config.toml"
+    before = config_path.read_text(encoding="utf-8")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        batch_input = panel.query_one("#settings-imagegen-default_batch", Input)
+        batch_input.value = "not-a-number"
+        await pilot.pause()
+
+        # Staged as dirty (feedback that something changed) rather than
+        # silently dropped.
+        rail_button = screen.query_one("#settings-category-image_generation", Button)
+        assert "*" in str(rail_button.label)
+
+        await pilot.click("#settings-imagegen-save")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert "Default batch must be a whole number" in _visible_text(screen)
+
+    after = config_path.read_text(encoding="utf-8")
+    assert after == before

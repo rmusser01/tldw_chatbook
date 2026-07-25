@@ -407,17 +407,56 @@ def diff_to_sections(
     return sections, deletions
 
 
+# Global scalar fields that render as a plain-text Input (task 5): label
+# used in an inline error, and whether the field is int- or float-typed.
+# The screen stages an UNPARSEABLE edit as the raw string rather than
+# silently dropping it (so it still marks dirty and surfaces feedback);
+# validate_draft is what actually catches it before it could ever reach
+# diff_to_sections, matching the per-backend "int"-kind fields' treatment
+# below exactly.
+_GLOBAL_INT_FIELD_LABELS: dict[str, str] = {
+    "default_batch": "Default batch",
+    "max_variants_per_message": "Max variants / message",
+    "context_llm_turns": "Context LLM turns",
+}
+_GLOBAL_FLOAT_FIELD_LABELS: dict[str, str] = {
+    "context_llm_timeout_seconds": "Context LLM timeout (s)",
+}
+
+
+def _is_valid_numeric(value: Any, *, kind: type) -> bool:
+    """``True`` iff ``value`` is already a real (non-bool) ``kind`` or a
+    string ``kind(...)`` can parse. ``bool`` is a ``int`` subclass in
+    Python -- excluded so a stray ``True``/``False`` never passes as 0/1."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, kind):
+        return True
+    try:
+        kind(str(value).strip())
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def validate_draft(draft: ImageGenDraftValues) -> tuple[list[str], list[str]]:
     """Validate a draft before it can be saved.
 
     Returns:
         ``(errors, warnings)``. ``errors`` block the save: the default
         backend must be enabled, backend "int"-kind fields (timeout_seconds)
-        must parse and respect their ``FieldSpec.min_value``, and "url"-kind
-        fields (``base_url``) must parse as an http(s) URL with a host.
+        must parse and respect their ``FieldSpec.min_value``, "url"-kind
+        fields (``base_url``) must parse as an http(s) URL with a host, and
+        the global int/float fields (``default_batch``,
+        ``max_variants_per_message``, ``context_llm_turns``,
+        ``context_llm_timeout_seconds``) must parse as their expected type
+        (the screen stages an unparseable edit as the raw string rather
+        than silently dropping it -- this is what actually blocks it).
         ``warnings`` are non-blocking hints: all backends disabled, and
         ``default_batch`` exceeding ``max_variants_per_message`` (the
-        runtime already clamps this safely).
+        runtime already clamps this safely; skipped when either isn't
+        currently a valid number, since the corresponding error above
+        already covers that case).
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -447,6 +486,15 @@ def validate_draft(draft: ImageGenDraftValues) -> tuple[list[str], list[str]]:
                 if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
                     errors.append(f"{backend_label} {spec.label} must be a valid http(s) URL.")
 
+    for key, label in _GLOBAL_INT_FIELD_LABELS.items():
+        value = getattr(draft, key)
+        if value is not None and not _is_valid_numeric(value, kind=int):
+            errors.append(f"{label} must be a whole number.")
+    for key, label in _GLOBAL_FLOAT_FIELD_LABELS.items():
+        value = getattr(draft, key)
+        if value is not None and not _is_valid_numeric(value, kind=float):
+            errors.append(f"{label} must be a number.")
+
     if not enabled:
         warnings.append(
             "All backends are disabled — image generation will be unavailable "
@@ -455,7 +503,9 @@ def validate_draft(draft: ImageGenDraftValues) -> tuple[list[str], list[str]]:
     if (
         draft.default_batch is not None
         and draft.max_variants_per_message is not None
-        and draft.default_batch > draft.max_variants_per_message
+        and _is_valid_numeric(draft.default_batch, kind=int)
+        and _is_valid_numeric(draft.max_variants_per_message, kind=int)
+        and float(draft.default_batch) > float(draft.max_variants_per_message)
     ):
         warnings.append(
             "Default batch is larger than the max-variants cap — the runtime will clamp it down."

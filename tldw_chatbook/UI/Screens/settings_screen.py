@@ -131,7 +131,10 @@ from .settings_image_gen_defaults import (
     key_source_after_clear as image_gen_key_source_after_clear,
     validate_draft as validate_image_gen_draft,
 )
-from ...Image_Generation.config import reset_image_generation_config_cache
+from ...Image_Generation.config import (
+    get_image_generation_config,
+    reset_image_generation_config_cache,
+)
 from .settings_appearance_defaults import (
     SettingsAppearanceDefaults,
     build_appearance_save_sections,
@@ -1497,6 +1500,22 @@ class SettingsScreen(BaseAppScreen):
         #: category recomposes the detail pane, minting a brand-new Select
         #: instance no stale expectation could ever legitimately match.
         self._rag_select_suppress_queue: list = []
+        #: Same idiom as `_rag_select_suppress_queue`, applied to the
+        #: Image Gen default-backend Select: constructing a Select with a
+        #: non-blank `value=` fires `Select.Changed` the moment it mounts
+        #: (verified empirically -- unlike Checkbox/Input, a fresh Select's
+        #: reactive default IS blank, so any non-blank initial value is a
+        #: real change from Select's own point of view). Every category
+        #: (re)compose/recompose of `ImageGenSettingsPanel` -- initial
+        #: category open, and the panel.recompose() after a successful
+        #: Save or after Revert -- mints a brand-new Select instance that
+        #: refires exactly once, re-staging its own already-current value
+        #: into the draft as a spurious "edit" if left unguarded. Queued
+        #: right before each (re)compose with the value that compose() is
+        #: about to construct the Select with; the handler consumes and
+        #: ignores exactly one matching entry per message. Cleared on any
+        #: category switch away from IMAGE_GENERATION (see _select_category).
+        self._image_gen_select_suppress_queue: list = []
         self._navigation_provider: str | None = None
         self._navigation_model: str | None = None
         self._navigation_field: str | None = None
@@ -2776,6 +2795,37 @@ class SettingsScreen(BaseAppScreen):
         draft = self._settings_drafts.get(SettingsCategoryId.IMAGE_GENERATION)
         return dict(draft.values) if draft is not None else {}
 
+    def _image_gen_expected_default_backend_select_value(
+        self, overlay: Mapping[str, object]
+    ) -> object:
+        """The exact value `ImageGenSettingsPanel.compose()` is about to
+        construct `#settings-imagegen-default_backend` with, for `overlay`
+        -- must mirror that compose() logic exactly (see
+        `_queue_image_gen_select_suppression`'s docstring)."""
+        cfg = get_image_generation_config(reload=True)
+        effective_default_backend = overlay.get("default_backend", cfg.default_backend)
+        return (
+            effective_default_backend
+            if effective_default_backend in IMAGE_GEN_BACKEND_IDS
+            else Select.NULL
+        )
+
+    def _queue_image_gen_select_suppression(self, overlay: Mapping[str, object]) -> None:
+        """Record the value the about-to-(re)compose default-backend
+        `Select` will mount with, if that value is non-blank -- a fresh
+        `Select` only posts `Changed` on mount when constructed with a
+        non-`Select.NULL` value (verified empirically; unlike Checkbox,
+        which never refires on construction regardless of value). Call
+        this immediately before every `ImageGenSettingsPanel` (re)compose:
+        the initial category-open `_render_detail_pane` branch, and the
+        `panel.recompose()` calls in `_apply_image_gen_save_result` /
+        `_handle_image_gen_revert`. See `_rag_select_suppress_queue` for
+        the sibling idiom this mirrors (a boolean in-progress flag cannot
+        suppress a deferred `Select.Changed` message)."""
+        expected_value = self._image_gen_expected_default_backend_select_value(overlay)
+        if expected_value is not Select.NULL:
+            self._image_gen_select_suppress_queue.append(expected_value)
+
     def _image_gen_stage(self, key: str, original: object, value: object) -> None:
         category = SettingsCategoryId.IMAGE_GENERATION
         draft = self._settings_drafts.setdefault(
@@ -2889,6 +2939,15 @@ class SettingsScreen(BaseAppScreen):
     @on(Select.Changed, "#settings-imagegen-default_backend")
     def handle_image_gen_default_backend_changed(self, event: Select.Changed) -> None:
         event.stop()
+        # A brand-new Select instance refires Changed with its OWN initial
+        # value the moment it mounts (every category open + every post-
+        # Save/Revert recompose) -- consume-and-ignore that expected
+        # arrival rather than re-staging the value it's already showing as
+        # a spurious "edit". See _queue_image_gen_select_suppression.
+        queue = self._image_gen_select_suppress_queue
+        if queue and event.value == queue[0]:
+            queue.pop(0)
+            return
         value = event.value if isinstance(event.value, str) else None
         if value is None:
             self._image_gen_unstage("default_backend")
@@ -2950,19 +3009,25 @@ class SettingsScreen(BaseAppScreen):
         global_key = self._IMAGE_GEN_INT_GLOBAL_KEYS.get(input_id)
         if global_key is not None:
             event.stop()
-            coerced = self._image_gen_coerce_int(event.value)
-            if coerced is None:
-                return
             original = self._image_gen_raw_section().get(global_key)
-            self._image_gen_stage(global_key, original, coerced)
+            # An unparseable edit is staged as the raw string rather than
+            # silently dropped -- it still marks dirty, and validate_draft
+            # (settings_image_gen_defaults.py) is what actually catches it
+            # at Save time with an inline error, matching the per-backend
+            # "int"-kind fields' treatment exactly instead of the edit
+            # just vanishing with no feedback at all.
+            coerced = self._image_gen_coerce_int(event.value)
+            staged_value = coerced if coerced is not None else event.value
+            self._image_gen_stage(global_key, original, staged_value)
             return
         if input_id == "settings-imagegen-context_llm_timeout_seconds":
             event.stop()
-            coerced_float = self._image_gen_coerce_float(event.value)
-            if coerced_float is None:
-                return
             original = self._image_gen_raw_section().get("context_llm_timeout_seconds")
-            self._image_gen_stage("context_llm_timeout_seconds", original, coerced_float)
+            coerced_float = self._image_gen_coerce_float(event.value)
+            staged_value = coerced_float if coerced_float is not None else event.value
+            self._image_gen_stage(
+                "context_llm_timeout_seconds", original, staged_value
+            )
 
     def _handle_image_gen_clear(self, backend_id: str, toml_key: str) -> None:
         self._image_gen_stage(f"cleared::{backend_id}::{toml_key}", False, True)
@@ -3042,6 +3107,7 @@ class SettingsScreen(BaseAppScreen):
             panel = None
         if panel is not None:
             panel.overlay = {}
+            self._queue_image_gen_select_suppression({})
             await panel.recompose()
             self._set_static_text("#settings-imagegen-save-result", message)
         self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
@@ -3055,6 +3121,7 @@ class SettingsScreen(BaseAppScreen):
             panel = None
         if panel is not None:
             panel.overlay = {}
+            self._queue_image_gen_select_suppression({})
             await panel.recompose()
             self._set_static_text("#settings-imagegen-save-result", "")
         self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
@@ -9879,9 +9946,11 @@ class SettingsScreen(BaseAppScreen):
             yield InternalPromptsPanel(id="settings-internal-prompts-panel")
         elif category is SettingsCategoryId.IMAGE_GENERATION:
             yield Static("Image Gen", classes="destination-section settings-column-title")
+            image_gen_overlay = self._image_gen_overlay_values()
+            self._queue_image_gen_select_suppression(image_gen_overlay)
             yield ImageGenSettingsPanel(
                 id="settings-imagegen-panel",
-                overlay=self._image_gen_overlay_values(),
+                overlay=image_gen_overlay,
             )
         elif category is SettingsCategoryId.STORAGE:
             values = self._storage_setting_values()
@@ -10705,6 +10774,13 @@ class SettingsScreen(BaseAppScreen):
             # -- same guard shape as `_refresh_library_rag_index_status`.
             if getattr(self, "is_mounted", False):
                 self.workers.cancel_group(self, "settings-rag-index-status")
+        if category_value != SettingsCategoryId.IMAGE_GENERATION.value:
+            # Same reasoning as the RAG queue clear immediately above: a
+            # still-pending suppression expectation belongs to the (about
+            # to be destroyed) default-backend Select instance; the
+            # recomposed detail pane mints a brand-new one that owes it
+            # nothing.
+            self._image_gen_select_suppress_queue.clear()
         # Task 2 review (Important): a stale re-index-confirm in-flight
         # guard must never survive navigating away from (or back into) the
         # category -- e.g. the user backs out mid-fetch. Unconditional
@@ -13055,6 +13131,23 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
+        if category is SettingsCategoryId.IMAGE_GENERATION:
+            # Unlike THEME/SPLASH_SCREEN/INTERNAL_PROMPTS below (which have
+            # no unified revert this action could drive at all), Image Gen
+            # DOES have one -- `_handle_image_gen_revert` (the same coroutine
+            # the panel's own Revert button calls). Routing the footer `r`
+            # shortcut through the generic draft-pop-only path further down
+            # would have popped the draft/cleared the `*` marker without
+            # ever recomposing the panel, leaving its Input widgets stuck
+            # showing the just-discarded unsaved text until the category was
+            # re-entered. `run_worker` schedules the coroutine since this
+            # action itself is sync (mirrors the Button.Pressed handler,
+            # which is async and awaits it directly instead).
+            if not self._category_has_unsaved_changes(category):
+                self.app.notify("No Settings changes to revert.", severity="information")
+                return
+            self.run_worker(self._handle_image_gen_revert(), exclusive=False)
+            return
         if category in (
             SettingsCategoryId.THEME,
             SettingsCategoryId.SPLASH_SCREEN,
