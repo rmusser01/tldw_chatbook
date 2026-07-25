@@ -6042,7 +6042,8 @@ class TldwCli(
     ) -> None:
         """Handle S/TT/S playground generation request."""
         self.loguru_logger.info(
-            f"S/TT/S generation request: provider={event.provider}, model={event.model}"
+            "S/TT/S generation request accepted for provider={}",
+            event.request.provider_id,
         )
         handler = await self._ensure_stts_handler()
         if handler:

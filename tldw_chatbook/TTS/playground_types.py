@@ -10,6 +10,22 @@ from typing import Any
 AudioMetadataValue = str | int | float | bool | None
 
 
+def _freeze_option(value: Any) -> Any:
+    """Recursively isolate mutable option containers."""
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {
+                deepcopy(key): _freeze_option(nested_value)
+                for key, nested_value in value.items()
+            }
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_option(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(_freeze_option(item) for item in value)
+    return deepcopy(value)
+
+
 def _require_identifier(name: str, value: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must not be empty")
@@ -34,7 +50,7 @@ class STTSPlaygroundRequest:
         object.__setattr__(
             self,
             "options",
-            MappingProxyType(deepcopy(dict(self.options))),
+            _freeze_option(self.options),
         )
 
 

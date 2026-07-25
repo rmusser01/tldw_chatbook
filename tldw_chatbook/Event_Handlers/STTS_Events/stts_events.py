@@ -9,21 +9,37 @@ from datetime import datetime
 from typing import Optional, Dict, Any, NamedTuple
 from pathlib import Path
 from loguru import logger
+from rich.markup import escape
 
 #
 # Third-party imports
 from textual.message import Message
-from textual.widgets import Button, Select, RichLog, Static, ProgressBar
+from textual.widgets import Button, RichLog, Static, ProgressBar
 
 #
 # Local imports
-from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
+from tldw_chatbook.TTS import (
+    get_tts_service,
+    OpenAISpeechRequest,
+    STTSGeneratedAudio,
+    STTSPlaygroundRequest,
+    TTSRequest,
+)
 from tldw_chatbook.TTS.adapter_registry import ReconfigureResult
-from tldw_chatbook.TTS.adapter_types import TTSProgress
+from tldw_chatbook.TTS.adapter_types import (
+    ProgressSink,
+    TTSOperationError,
+    TTSProgress,
+    TTSProviderReconfiguringError,
+    TTSRegistryClosedError,
+)
 from tldw_chatbook.TTS.audio_cpp_config import project_audio_cpp_config
 from tldw_chatbook.TTS.legacy_bridge import legacy_provider_config
 from tldw_chatbook.TTS.TTS_Generation import _join_retained_task
-from tldw_chatbook.Utils.secure_temp_files import secure_delete_file
+from tldw_chatbook.Utils.secure_temp_files import (
+    create_secure_temp_file,
+    secure_delete_file,
+)
 #
 #######################################################################################################################
 #
@@ -244,26 +260,13 @@ def _effective_provider_config(
 
 
 class STTSPlaygroundGenerateEvent(Message):
-    """Event when TTS generation is requested from playground"""
+    """Event carrying one immutable Playground generation snapshot."""
 
-    def __init__(
-        self,
-        text: str,
-        provider: str,
-        voice: str,
-        model: str,
-        speed: float,
-        format: str,
-        extra_params: Optional[Dict[str, Any]] = None,
-    ):
+    def __init__(self, request: STTSPlaygroundRequest) -> None:
         super().__init__()
-        self.text = text
-        self.provider = provider
-        self.voice = voice
-        self.model = model
-        self.speed = speed
-        self.format = format
-        self.extra_params = extra_params or {}
+        if not isinstance(request, STTSPlaygroundRequest):
+            raise TypeError("request must be an STTSPlaygroundRequest")
+        self.request = request
 
 
 class STTSSettingsSaveEvent(Message):
@@ -314,6 +317,7 @@ class STTSEventHandler:
         self.app = app  # Reference to the main app
         self._stts_service = None
         self._current_audio_file = None
+        self._current_playground_artifact: STTSGeneratedAudio | None = None
         self._is_generating = False
         self._active_tasks: set[asyncio.Task[Any]] = set()
         self._playground_audio_files: set[Path] = set()
@@ -328,6 +332,188 @@ class STTSEventHandler:
         except Exception:
             logger.error("Failed to initialize S/TT/S service")
             self._stts_service = None
+
+    async def _generate_audio_cpp(
+        self,
+        snapshot: STTSPlaygroundRequest,
+        progress_sink: ProgressSink | None,
+    ) -> STTSGeneratedAudio:
+        """Generate one complete native audio.cpp WAV response."""
+        if self._stts_service is None:
+            raise RuntimeError("TTS service is not initialized")
+
+        request = TTSRequest(
+            provider_id="audio_cpp",
+            model_id=snapshot.model_id,
+            text=snapshot.text,
+            voice=snapshot.voice_id,
+            response_format="wav",
+            speed=1.0,
+            options={},
+        )
+        response = None
+        primary_error: BaseException | None = None
+        try:
+            response = await self._stts_service.synthesize(request, progress_sink)
+            chunks = [chunk async for chunk in response.byte_stream]
+        except BaseException as error:
+            primary_error = error
+            raise
+        finally:
+            if response is not None:
+                try:
+                    await response.aclose()
+                except BaseException:
+                    if primary_error is None:
+                        raise
+                    logger.warning(
+                        "Failed to close audio.cpp response after {}",
+                        type(primary_error).__name__,
+                    )
+
+        path = Path(
+            create_secure_temp_file(
+                b"".join(chunks),
+                suffix=f".{response.audio_format.removeprefix('.')}",
+                prefix="stts_playground_",
+            )
+        )
+        self._playground_audio_files.add(path)
+        try:
+            return STTSGeneratedAudio(
+                path=path,
+                provider_id=response.provider_id,
+                model_id=response.model_id,
+                voice_id=snapshot.voice_id,
+                source_text=snapshot.text,
+                operation_id=snapshot.operation_id,
+                audio_format=response.audio_format,
+                content_type=response.content_type,
+                metadata=response.metadata,
+            )
+        except BaseException:
+            if secure_delete_file(path) or not path.exists():
+                self._playground_audio_files.discard(path)
+            raise
+
+    async def _generate_legacy(
+        self,
+        snapshot: STTSPlaygroundRequest,
+        progress_sink: ProgressSink | None,
+    ) -> STTSGeneratedAudio:
+        """Retain the existing stream-and-convert path for legacy providers."""
+        if self._stts_service is None:
+            raise RuntimeError("TTS service is not initialized")
+
+        requested_format = snapshot.response_format.lower()
+        if requested_format not in {"mp3", "opus", "aac", "flac", "wav", "pcm"}:
+            requested_format = "mp3"
+        request = OpenAISpeechRequest(
+            model=snapshot.model_id,
+            input=snapshot.text,
+            voice=snapshot.voice_id or "default",
+            response_format="wav",
+            speed=snapshot.speed,
+        )
+        options = dict(snapshot.options)
+        if snapshot.provider_id in {"chatterbox", "higgs"} and options:
+            request.extra_params = options
+
+        internal_model_id = self._legacy_internal_model_id(snapshot, options)
+        created_paths: set[Path] = set()
+        try:
+            chunks = [
+                chunk
+                async for chunk in self._stts_service.generate_audio_stream(
+                    request,
+                    internal_model_id,
+                    progress_sink=progress_sink,
+                )
+            ]
+            wav_file = Path(
+                create_secure_temp_file(
+                    b"".join(chunks),
+                    suffix=".wav",
+                    prefix="stts_playground_",
+                )
+            )
+            created_paths.add(wav_file)
+            self._playground_audio_files.add(wav_file)
+            output_file = wav_file
+            audio_format = "wav"
+
+            if requested_format != "wav":
+                conversion_destination = wav_file.with_suffix(f".{requested_format}")
+                created_paths.add(conversion_destination)
+                self._playground_audio_files.add(conversion_destination)
+                converted_file = await self._convert_audio_format(
+                    wav_file,
+                    requested_format,
+                )
+                if converted_file is not None:
+                    output_file = Path(converted_file)
+                    created_paths.add(output_file)
+                    self._playground_audio_files.add(output_file)
+                    audio_format = requested_format
+                    if secure_delete_file(wav_file) or not wav_file.exists():
+                        self._playground_audio_files.discard(wav_file)
+                        created_paths.discard(wav_file)
+                elif (
+                    secure_delete_file(conversion_destination)
+                    or not conversion_destination.exists()
+                ):
+                    self._playground_audio_files.discard(conversion_destination)
+                    created_paths.discard(conversion_destination)
+
+            return STTSGeneratedAudio(
+                path=output_file,
+                provider_id=snapshot.provider_id,
+                model_id=snapshot.model_id,
+                voice_id=snapshot.voice_id,
+                source_text=snapshot.text,
+                operation_id=snapshot.operation_id,
+                audio_format=audio_format,
+                content_type=self._audio_content_type(audio_format),
+                metadata={},
+            )
+        except BaseException:
+            for path in created_paths:
+                if secure_delete_file(path) or not path.exists():
+                    self._playground_audio_files.discard(path)
+            raise
+
+    @staticmethod
+    def _legacy_internal_model_id(
+        snapshot: STTSPlaygroundRequest,
+        options: Mapping[str, Any],
+    ) -> str:
+        provider_id = snapshot.provider_id
+        if provider_id == "openai":
+            model_id = snapshot.model_id.lower().replace("-", "")
+            return f"openai_official_{model_id}"
+        if provider_id == "elevenlabs":
+            return f"elevenlabs_{snapshot.model_id}"
+        if provider_id == "kokoro":
+            engine = "onnx" if options.get("use_onnx", True) else "pytorch"
+            return f"local_kokoro_default_{engine}"
+        if provider_id == "chatterbox":
+            return "local_chatterbox_default"
+        if provider_id == "higgs":
+            return "local_higgs_v2"
+        if provider_id == "alltalk":
+            return f"alltalk_{snapshot.model_id}"
+        return snapshot.model_id
+
+    @staticmethod
+    def _audio_content_type(audio_format: str) -> str:
+        return {
+            "aac": "audio/aac",
+            "flac": "audio/flac",
+            "mp3": "audio/mpeg",
+            "opus": "audio/ogg",
+            "pcm": "audio/L16",
+            "wav": "audio/wav",
+        }.get(audio_format, "application/octet-stream")
 
     async def handle_playground_generate(
         self, event: STTSPlaygroundGenerateEvent
@@ -351,9 +537,12 @@ class STTSEventHandler:
             from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
 
             playground = self.app.query_one(TTSPlaygroundWidget)
-            logger.debug(f"Found playground widget: {playground}")
-        except Exception as e:
-            logger.warning(f"Could not find TTSPlaygroundWidget: {e}")
+            logger.debug("Found mounted TTS Playground")
+        except Exception as error:
+            logger.debug(
+                "TTS Playground is not mounted ({})",
+                type(error).__name__,
+            )
             playground = None
 
         # The Textual message hook already dispatches this coroutine through
@@ -361,418 +550,198 @@ class STTSEventHandler:
         await self._generate_tts_worker(event, playground)
 
     async def _generate_tts_worker(
-        self, event: STTSPlaygroundGenerateEvent, playground=None
+        self,
+        event: STTSPlaygroundGenerateEvent,
+        playground: Any | None = None,
     ) -> None:
-        """Worker function for TTS generation"""
+        """Generate from one immutable request and deliver one artifact."""
+        snapshot = event.request
+        self._show_generation_progress(playground)
+
+        async def progress_callback(info: TTSProgress) -> None:
+            self._update_generation_progress(playground, info)
+
         try:
-            # Show progress container if available
-            if playground:
-
-                def show_progress():
-                    try:
-                        status_container = playground.query_one(
-                            "#generation-status-container"
-                        )
-                        status_container.remove_class("hidden")
-                        progress_bar = playground.query_one("#generation-progress")
-                        progress_bar.update(total=100, progress=0)
-                    except Exception as e:
-                        logger.debug(f"Could not show progress container: {e}")
-
-                if hasattr(playground, "call_from_thread"):
-                    playground.call_from_thread(show_progress)
-                else:
-                    show_progress()
-            # Validate and clean format
-            format_value = event.format
-            if isinstance(format_value, tuple):
-                format_value = format_value[0]
-            elif (
-                not format_value
-                or format_value == Select.BLANK
-                or str(format_value) == "Select.BLANK"
-            ):
-                format_value = "mp3"
-
-            # Additional validation for allowed formats
-            valid_formats = ["mp3", "opus", "aac", "flac", "wav", "pcm"]
-            if format_value not in valid_formats:
-                logger.warning(
-                    f"Invalid format value '{format_value}', defaulting to mp3"
+            if snapshot.provider_id == "audio_cpp":
+                artifact = await self._generate_audio_cpp(
+                    snapshot,
+                    progress_callback,
                 )
-                format_value = "mp3"
-
-            # Store the requested format for later conversion
-            requested_format = format_value
-
-            # For non-WAV formats, generate WAV first to avoid choppiness
-            generation_format = "wav"
-            logger.debug(
-                f"TTS Request - requested format: {requested_format}, generation format: {generation_format}, provider: {event.provider}"
-            )
-
-            # Create TTS request with generation format (WAV for quality)
-            request = OpenAISpeechRequest(
-                model=event.model,
-                input=event.text,
-                voice=event.voice,
-                response_format=generation_format,
-                speed=event.speed,
-            )
-
-            # Map provider to internal model ID (handle case-insensitive)
-            provider_lower = event.provider.lower() if event.provider else ""
-
-            # Extract the actual provider key from display names
-            if "kokoro" in provider_lower:
-                provider_lower = "kokoro"
-            elif "elevenlabs" in provider_lower:
-                provider_lower = "elevenlabs"
-            elif "openai" in provider_lower:
-                provider_lower = "openai"
-            elif "chatterbox" in provider_lower:
-                provider_lower = "chatterbox"
-            elif "alltalk" in provider_lower:
-                provider_lower = "alltalk"
-            elif "higgs" in provider_lower:
-                provider_lower = "higgs"
-
-            if provider_lower == "openai":
-                # Also convert model to lowercase
-                model_lower = event.model.lower().replace(
-                    "-", ""
-                )  # Convert TTS-1 to tts1
-                internal_model_id = f"openai_official_{model_lower}"
-            elif provider_lower == "elevenlabs":
-                internal_model_id = f"elevenlabs_{event.model}"
-            elif provider_lower == "kokoro":
-                # Check if ONNX or PyTorch should be used
-                use_onnx = event.extra_params.get("use_onnx", True)
-                if use_onnx:
-                    internal_model_id = "local_kokoro_default_onnx"
-                else:
-                    internal_model_id = "local_kokoro_default_pytorch"
-                # Handle Kokoro language code
-                if event.extra_params.get("language"):
-                    # Kokoro voices include language code prefix
-                    lang_code = event.extra_params["language"]
-                    # Update voice to include language code if not already present
-                    if not event.voice.startswith(f"{lang_code}"):
-                        # Voice might need language adjustment
-                        pass  # The voice already includes the language prefix
-            elif provider_lower == "chatterbox":
-                internal_model_id = "local_chatterbox_default"
-                # Pass voice and extra params to the request
-                if event.voice.startswith("custom:"):
-                    # Voice contains reference audio path
-                    request.voice = event.voice
-                elif event.voice.startswith("profile:"):
-                    # Voice is a saved profile
-                    request.voice = event.voice
-                # Add extra params to request for Chatterbox
-                if event.extra_params:
-                    request.extra_params = event.extra_params
-            elif provider_lower == "higgs":
-                internal_model_id = "local_higgs_v2"
-                # Handle voice cloning reference
-                if event.voice.startswith("custom:"):
-                    # Voice contains reference audio path
-                    request.voice = event.voice
-                elif event.voice.startswith("profile:"):
-                    # Voice is a saved profile
-                    request.voice = event.voice
-                # Pass extra params for Higgs features
-                if event.extra_params:
-                    request.extra_params = event.extra_params
-            elif provider_lower == "alltalk":
-                internal_model_id = f"alltalk_{event.model}"
             else:
-                # Default case - use the model as-is
-                internal_model_id = event.model
-
-            # Log to playground
-            if playground:
-                # Use call_from_thread if we're in a worker thread
-                def update_log(msg):
-                    log = playground.query_one("#tts-generation-log", RichLog)
-                    log.write(msg)
-
-                if hasattr(playground, "call_from_thread"):
-                    playground.call_from_thread(
-                        update_log,
-                        f"[bold yellow]Starting generation with {event.provider}...[/bold yellow]",
-                    )
-                    if provider_lower in ["higgs", "chatterbox", "kokoro"]:
-                        playground.call_from_thread(
-                            update_log,
-                            "[dim]⚠️  First-time model loading may take 2-5 minutes...[/dim]",
-                        )
-                        playground.call_from_thread(
-                            update_log,
-                            "[dim]The model will be cached for faster subsequent generations.[/dim]",
-                        )
-                else:
-                    update_log(
-                        f"[bold yellow]Starting generation with {event.provider}...[/bold yellow]"
-                    )
-                    if provider_lower in ["higgs", "chatterbox", "kokoro"]:
-                        update_log(
-                            "[dim]⚠️  First-time model loading may take 2-5 minutes...[/dim]"
-                        )
-                        update_log(
-                            "[dim]The model will be cached for faster subsequent generations.[/dim]"
-                        )
-
-            # Define progress callback
-            async def progress_callback(info: TTSProgress) -> None:
-                """Update UI with generation progress"""
-                if playground:
-
-                    def update_progress():
-                        try:
-                            # Update status text
-                            status_text = playground.query_one(
-                                "#generation-status-text", Static
-                            )
-                            status_text.update(info.status or "Generating...")
-
-                            # Update progress bar
-                            progress_bar = playground.query_one(
-                                "#generation-progress", ProgressBar
-                            )
-                            if info.fraction is not None:
-                                progress_bar.update(progress=info.fraction * 100)
-
-                            # Log additional details
-                            log = playground.query_one("#tts-generation-log", RichLog)
-                            audio_duration = info.metrics.get("audio_duration")
-                            if isinstance(audio_duration, (int, float)):
-                                log.write(
-                                    f"[dim]Generated {audio_duration:.1f}s of audio[/dim]"
-                                )
-                            elif info.processed is not None:
-                                if info.total is None:
-                                    log.write(
-                                        f"[dim]Processed {info.processed} item(s)[/dim]"
-                                    )
-                                else:
-                                    log.write(
-                                        f"[dim]Processed {info.processed}/{info.total} item(s)[/dim]"
-                                    )
-                        except Exception as e:
-                            logger.debug(f"Progress update error: {e}")
-
-                    if hasattr(playground, "call_from_thread"):
-                        playground.call_from_thread(update_progress)
-                    else:
-                        update_progress()
-
-            # Generate audio with provider-specific settings
-            audio_data = b""
-            chunk_count = 0
-            total_size = 0
-            start_time = asyncio.get_event_loop().time()
-
-            # Pass extra params to the service if needed
-            if event.provider == "elevenlabs" and event.extra_params:
-                # For ElevenLabs, we need to pass these settings to the backend
-                # The TTS service should handle passing these to the appropriate backend
-                request_dict = request.dict()
-                request_dict.update(event.extra_params)
-                # Note: This requires the backend to support these extra parameters
-
-            # Create a task to show periodic status while waiting
-            async def show_waiting_status():
-                wait_count = 0
-                while chunk_count == 0:  # While we haven't received any chunks yet
-                    await asyncio.sleep(5)  # Check every 5 seconds
-                    wait_count += 1
-                    if playground and chunk_count == 0:  # Still waiting
-                        elapsed = int(asyncio.get_event_loop().time() - start_time)
-                        wait_msg = f"[yellow]⏳ Still loading model... ({elapsed}s elapsed)[/yellow]"
-                        if wait_count > 12:  # After 1 minute
-                            wait_msg += "\n[dim]This is taking longer than usual. Please be patient.[/dim]"
-
-                        def update_wait():
-                            log = playground.query_one("#tts-generation-log", RichLog)
-                            log.write(wait_msg)
-
-                        if hasattr(playground, "call_from_thread"):
-                            playground.call_from_thread(update_wait)
-                        else:
-                            update_wait()
-
-            # Start the waiting status task
-            status_task = asyncio.create_task(
-                show_waiting_status(),
-                name="stts_generation_status",
-            )
-
-            try:
-                async for chunk in self._stts_service.generate_audio_stream(
-                    request,
-                    internal_model_id,
-                    progress_sink=progress_callback,
-                ):
-                    audio_data += chunk
-                    chunk_count += 1
-                    total_size = len(audio_data)
-
-                    # Cancel the waiting status task once we start receiving data
-                    if chunk_count == 1:
-                        status_task.cancel()
-
-                # Update progress periodically (every 10 chunks)
-                if chunk_count % 10 == 0 and playground:
-                    progress_msg = f"[cyan]Streaming audio... {total_size / 1024:.1f} KB received[/cyan]"
-                    if hasattr(playground, "call_from_thread"):
-                        playground.call_from_thread(update_log, progress_msg)
-                    else:
-                        update_log(progress_msg)
-
-                # Also update for first chunk to show we're receiving data
-                if chunk_count == 1 and playground:
-                    first_msg = "[green]✓ Model loaded, receiving audio data...[/green]"
-                    if hasattr(playground, "call_from_thread"):
-                        playground.call_from_thread(update_log, first_msg)
-                    else:
-                        update_log(first_msg)
-
-            finally:
-                status_task.cancel()
-                await asyncio.gather(status_task, return_exceptions=True)
-
-            # Save to temporary WAV file first
-            import tempfile
-
-            wav_file = None
-            with tempfile.NamedTemporaryFile(
-                delete=False, suffix=".wav", prefix="stts_playground_"
-            ) as tmp_file:
-                tmp_file.write(audio_data)
-                wav_file = Path(tmp_file.name)
-            self._playground_audio_files.add(wav_file)
-
-            # Convert to requested format if needed
-            if requested_format != "wav":
-                if playground:
-
-                    def update_converting():
-                        log = playground.query_one("#tts-generation-log", RichLog)
-                        log.write(
-                            f"[yellow]Converting to {requested_format.upper()}...[/yellow]"
-                        )
-
-                    if hasattr(playground, "call_from_thread"):
-                        playground.call_from_thread(update_converting)
-                    else:
-                        update_converting()
-
-                # Convert audio format
-                conversion_destination = wav_file.with_suffix(f".{requested_format}")
-                self._playground_audio_files.add(conversion_destination)
-                converted_file = await self._convert_audio_format(
-                    wav_file, requested_format
+                artifact = await self._generate_legacy(
+                    snapshot,
+                    progress_callback,
                 )
-                if converted_file:
-                    if secure_delete_file(wav_file) or not wav_file.exists():
-                        self._playground_audio_files.discard(wav_file)
-                    else:
-                        logger.warning(
-                            f"Failed to delete temporary WAV file: {wav_file}"
-                        )
-                    self._current_audio_file = converted_file
-                else:
-                    if (
-                        secure_delete_file(conversion_destination)
-                        or not conversion_destination.exists()
-                    ):
-                        self._playground_audio_files.discard(conversion_destination)
-                    # Conversion failed, use WAV file
-                    logger.warning(
-                        f"Failed to convert to {requested_format}, using WAV"
-                    )
-                    self._current_audio_file = wav_file
-            else:
-                self._current_audio_file = wav_file
-
-            # Update UI
-            if playground:
-
-                def complete_generation():
-                    log = playground.query_one("#tts-generation-log", RichLog)
-                    log.write(
-                        f"[bold green]✓ Generation complete! File: {self._current_audio_file.name}[/bold green]"
-                    )
-                    log.write(f"Size: {len(audio_data) / 1024:.1f} KB")
-
-                    # Call the widget's completion method
-                    if hasattr(playground, "_generation_complete"):
-                        playground._generation_complete(True, self._current_audio_file)
-                    else:
-                        # Fallback to direct UI updates
-                        playground.query_one("#audio-play-btn", Button).disabled = False
-                        playground.query_one(
-                            "#audio-export-btn", Button
-                        ).disabled = False
-                        playground.query_one("#audio-player-status").update(
-                            f"Audio ready: {self._current_audio_file.name}"
-                        )
-
-                if hasattr(playground, "call_from_thread"):
-                    playground.call_from_thread(complete_generation)
-                else:
-                    complete_generation()
-
+            self._current_playground_artifact = artifact
+            self._current_audio_file = artifact.path
+            self._deliver_generation_success(playground, artifact)
             self.app.notify("TTS generation complete!", severity="information")
-
-        except Exception as e:
-            logger.error(f"TTS generation failed: {e}")
-            if playground:
-                exc = e
-
-                def handle_error():
-                    log = playground.query_one("#tts-generation-log", RichLog)
-                    log.write(f"[bold red]✗ Generation failed: {exc}[/bold red]")
-
-                    # Call the widget's completion method
-                    if hasattr(playground, "_generation_complete"):
-                        playground._generation_complete(False)
-
-                if hasattr(playground, "call_from_thread"):
-                    playground.call_from_thread(handle_error)
-                else:
-                    handle_error()
-
-            from rich.markup import escape
-
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            message = self._generation_error_copy(error)
+            if isinstance(error, TTSOperationError):
+                logger.error(
+                    "TTS generation failed (code={}, retryable={})",
+                    error.code,
+                    error.retryable,
+                )
+            else:
+                logger.error(
+                    "TTS generation failed ({})",
+                    type(error).__name__,
+                )
+            self._deliver_generation_failure(playground, message)
             self.app.notify(
-                f"TTS generation failed: {escape(str(e))}", severity="error"
+                f"TTS generation failed: {escape(message)}",
+                severity="error",
             )
         finally:
             self._is_generating = False
-            # Re-enable generate button is now handled in _generation_complete
-            # But ensure it's re-enabled as a fallback
-            if playground:
-                try:
-                    playground.query_one("#tts-generate-btn", Button).disabled = False
+            self._finish_generation_ui(playground)
 
-                    # Hide progress container
-                    def hide_progress():
-                        try:
-                            status_container = playground.query_one(
-                                "#generation-status-container"
-                            )
-                            status_container.add_class("hidden")
-                        except Exception:
-                            pass
+    def _show_generation_progress(self, playground: Any | None) -> None:
+        if playground is None:
+            return
 
-                    if hasattr(playground, "call_from_thread"):
-                        playground.call_from_thread(hide_progress)
-                    else:
-                        hide_progress()
-                except (OSError, FileNotFoundError):
-                    pass
+        def show() -> None:
+            playground.query_one("#generation-status-container").remove_class("hidden")
+            playground.query_one("#generation-progress").update(
+                total=100,
+                progress=0,
+            )
+
+        self._invoke_playground(playground, show)
+
+    def _update_generation_progress(
+        self,
+        playground: Any | None,
+        info: TTSProgress,
+    ) -> None:
+        if playground is None:
+            return
+
+        def update() -> None:
+            playground.query_one(
+                "#generation-status-text",
+                Static,
+            ).update(info.status or "Generating...")
+            if info.fraction is not None:
+                playground.query_one(
+                    "#generation-progress",
+                    ProgressBar,
+                ).update(progress=info.fraction * 100)
+            log = playground.query_one("#tts-generation-log", RichLog)
+            audio_duration = info.metrics.get("audio_duration")
+            if isinstance(audio_duration, (int, float)):
+                log.write(f"[dim]Generated {audio_duration:.1f}s of audio[/dim]")
+            elif info.processed is not None:
+                if info.total is None:
+                    log.write(f"[dim]Processed {info.processed} item(s)[/dim]")
+                else:
+                    log.write(
+                        f"[dim]Processed {info.processed}/{info.total} item(s)[/dim]"
+                    )
+
+        self._invoke_playground(playground, update)
+
+    def _deliver_generation_success(
+        self,
+        playground: Any | None,
+        artifact: STTSGeneratedAudio,
+    ) -> None:
+        if playground is None:
+            return
+
+        def deliver() -> None:
+            playground.query_one("#tts-generation-log", RichLog).write(
+                "[bold green]Generation complete[/bold green]"
+            )
+            callback = getattr(playground, "_generation_complete", None)
+            if callable(callback):
+                callback(artifact)
+                return
+            playground.query_one("#audio-play-btn", Button).disabled = False
+            playground.query_one("#audio-export-btn", Button).disabled = False
+            playground.query_one("#audio-player-status", Static).update(
+                "Audio ready to play"
+            )
+
+        self._invoke_playground(playground, deliver)
+
+    def _deliver_generation_failure(
+        self,
+        playground: Any | None,
+        message: str,
+    ) -> None:
+        if playground is None:
+            return
+
+        def deliver() -> None:
+            playground.query_one("#tts-generation-log", RichLog).write(
+                f"[bold red]Generation failed: {escape(message)}[/bold red]"
+            )
+            callback = getattr(playground, "_generation_complete", None)
+            if callable(callback):
+                callback(None)
+
+        self._invoke_playground(playground, deliver)
+
+    def _finish_generation_ui(self, playground: Any | None) -> None:
+        if playground is None:
+            return
+
+        def finish() -> None:
+            sync_generate_enabled = getattr(
+                playground,
+                "_sync_generate_enabled",
+                None,
+            )
+            if callable(sync_generate_enabled):
+                sync_generate_enabled()
+            else:
+                playground.query_one(
+                    "#tts-generate-btn",
+                    Button,
+                ).disabled = False
+            playground.query_one("#generation-status-container").add_class("hidden")
+
+        self._invoke_playground(playground, finish)
+
+    @staticmethod
+    def _invoke_playground(
+        playground: Any,
+        callback: object,
+        *args: object,
+    ) -> None:
+        try:
+            call_from_thread = getattr(playground, "call_from_thread", None)
+            if callable(call_from_thread):
+                call_from_thread(callback, *args)
+            elif callable(callback):
+                callback(*args)
+        except Exception as error:
+            logger.debug(
+                "Playground generation display update failed ({})",
+                type(error).__name__,
+            )
+
+    @staticmethod
+    def _generation_error_copy(error: Exception) -> str:
+        if isinstance(error, TTSOperationError):
+            parts = [str(error)]
+            if error.recovery_action:
+                parts.append(error.recovery_action)
+            elif error.retryable:
+                parts.append("Retry from the STTS Playground")
+            return " ".join(parts)
+        if isinstance(error, TTSProviderReconfiguringError):
+            return "TTS settings are being applied; retry shortly"
+        if isinstance(error, TTSRegistryClosedError):
+            return "The TTS service is unavailable"
+        if isinstance(error, ValueError):
+            return "TTS is not configured; open STTS Settings"
+        return "Unexpected TTS generation failure; retry"
 
     async def handle_settings_save(self, event: STTSSettingsSaveEvent) -> None:
         """Handle settings save"""
@@ -1141,7 +1110,8 @@ class STTSEventHandler:
 
     async def play_current_audio(self) -> None:
         """Play the current audio file"""
-        if not self._current_audio_file or not self._current_audio_file.exists():
+        audio_path = self._current_playground_audio_path()
+        if audio_path is None or not audio_path.exists():
             self.app.notify("No audio file to play", severity="warning")
             return
 
@@ -1151,7 +1121,7 @@ class STTSEventHandler:
                 play_audio_file,
             )
 
-            play_audio_file(self._current_audio_file)
+            play_audio_file(audio_path)
             self.app.notify("Playing audio...", severity="information")
         except Exception as e:
             logger.error(f"Failed to play audio: {e}")
@@ -1159,7 +1129,8 @@ class STTSEventHandler:
 
     async def export_current_audio(self, target_path: Path) -> None:
         """Export the current audio file"""
-        if not self._current_audio_file or not self._current_audio_file.exists():
+        audio_path = self._current_playground_audio_path()
+        if audio_path is None or not audio_path.exists():
             self.app.notify("No audio file to export", severity="warning")
             return
 
@@ -1178,13 +1149,21 @@ class STTSEventHandler:
             validated_filename = validate_filename(target_path.name)
             validated_target_path = validated_parent / validated_filename
 
-            shutil.copy2(self._current_audio_file, validated_target_path)
+            shutil.copy2(audio_path, validated_target_path)
             self.app.notify(
                 f"Audio exported to {validated_target_path}", severity="information"
             )
         except Exception as e:
             logger.error(f"Failed to export audio: {e}")
             self.app.notify(f"Failed to export audio: {e}", severity="error")
+
+    def _current_playground_audio_path(self) -> Path | None:
+        """Return artifact provenance before the compatibility path field."""
+        if self._current_playground_artifact is not None:
+            return self._current_playground_artifact.path
+        if self._current_audio_file is None:
+            return None
+        return Path(self._current_audio_file)
 
     def _start_event_task(self, coroutine: Coroutine[Any, Any, None]) -> None:
         """Start and retain an event task until it finishes."""

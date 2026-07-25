@@ -5,6 +5,7 @@
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 import asyncio
+from uuid import uuid4
 from loguru import logger
 
 # Textual imports
@@ -39,6 +40,7 @@ from ..Widgets.enhanced_file_picker import (
 )
 from ..Third_Party.textual_fspicker import Filters
 from ..Event_Handlers.STTS_Events.stts_events import STTSPlaygroundGenerateEvent
+from ..TTS import STTSPlaygroundRequest
 
 #######################################################################################################################
 #
@@ -632,13 +634,16 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
         voice = f"profile:{test_profile}"
 
         event = STTSPlaygroundGenerateEvent(
-            text=test_text,
-            provider=provider,
-            voice=voice,
-            model="default",
-            speed=1.0,
-            format="mp3",
-            extra_params={"source": "voice_cloning_test"},
+            STTSPlaygroundRequest(
+                operation_id=str(uuid4()),
+                provider_id=provider,
+                model_id="default",
+                text=test_text,
+                voice_id=voice,
+                response_format="mp3",
+                speed=1.0,
+                options={"source": "voice_cloning_test"},
+            )
         )
 
         # Post the event to be handled by the main app

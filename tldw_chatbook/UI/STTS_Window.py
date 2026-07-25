@@ -8,6 +8,7 @@ from dataclasses import replace
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 from urllib.parse import urlsplit
+from uuid import uuid4
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
 from textual.widgets import (
@@ -36,7 +37,11 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
     STTSAudioBookGenerateEvent,
 )
-from tldw_chatbook.TTS import get_tts_service
+from tldw_chatbook.TTS import (
+    STTSGeneratedAudio,
+    STTSPlaygroundRequest,
+    get_tts_service,
+)
 from tldw_chatbook.TTS.adapter_types import (
     TTSOperationError,
     TTSProviderCatalog,
@@ -50,6 +55,7 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     PlaygroundControls,
     controls_from_catalog,
     provider_options,
+    voice_id_for_request,
 )
 from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_state
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
@@ -217,6 +223,7 @@ class TTSPlaygroundWidget(Widget):
     def __init__(self):
         super().__init__()
         self.current_audio_file = None
+        self.current_audio_artifact: STTSGeneratedAudio | None = None
         self.reference_audio_path = None
         self.higgs_reference_audio_path = None
         self._progress_timer_task = None
@@ -1380,10 +1387,6 @@ class TTSPlaygroundWidget(Widget):
         format_select = self.query_one("#tts-format-select", Select)
         format = format_select.value
 
-        # Debug logging
-        logger.debug(f"Format select value: {format!r}, type: {type(format)}")
-        logger.debug(f"Format select options: {format_select._options}")
-
         # Ensure format has a valid value
         if not format or format == Select.BLANK or str(format) == "Select.BLANK":
             format = "mp3"
@@ -1391,7 +1394,6 @@ class TTSPlaygroundWidget(Widget):
         elif isinstance(format, tuple):
             # If it's a tuple, take the first element
             format = format[0]
-            logger.debug(f"Format was tuple, extracted: {format}")
 
         # Additional validation - also handle uppercase
         valid_formats = ["mp3", "opus", "aac", "flac", "wav", "pcm"]
@@ -1399,7 +1401,7 @@ class TTSPlaygroundWidget(Widget):
         if format_lower in valid_formats:
             format = format_lower
         else:
-            logger.warning(f"Invalid format '{format}', defaulting to mp3")
+            logger.warning("Invalid Playground audio format; using mp3")
             format = "mp3"
 
         # Collect provider-specific settings
@@ -1539,21 +1541,24 @@ class TTSPlaygroundWidget(Widget):
         # Log the request
         log = self.query_one("#tts-generation-log", RichLog)
         log.write("[bold blue]Generating TTS...[/bold blue]")
-        log.write(f"Provider: {provider}")
-        log.write(f"Voice: {voice}")
-        log.write(f"Model: {model}")
         log.write(f"Speed: {speed}")
         log.write(f"Format: {format}")
         log.write(f"Text length: {len(text)} characters")
 
-        # Debug log the actual values
-        logger.debug(
-            f"TTS generation - provider: {provider!r}, voice: {voice!r}, model: {model!r}"
-        )
-
-        # Log provider-specific settings
-        if extra_params:
-            log.write(f"Extra settings: {extra_params}")
+        if not isinstance(provider, str) or provider not in self._provider_ids:
+            self.app.notify("Please select a valid TTS provider", severity="warning")
+            return
+        if not isinstance(model, str) or model.startswith("__"):
+            self.app.notify("Please select a valid TTS model", severity="warning")
+            return
+        if not isinstance(format, str):
+            self.app.notify("Please select a valid audio format", severity="warning")
+            return
+        voice_id = voice_id_for_request(voice if isinstance(voice, str) else None)
+        if provider == AUDIO_CPP_PROVIDER_ID:
+            format = "wav"
+            speed = 1.0
+            extra_params = {}
 
         # Disable generate button
         self.query_one("#tts-generate-btn", Button).disabled = True
@@ -1561,25 +1566,29 @@ class TTSPlaygroundWidget(Widget):
         # Post event to generate TTS
         self.app.post_message(
             STTSPlaygroundGenerateEvent(
-                text=text,
-                provider=provider,
-                voice=voice,
-                model=model,
-                speed=speed,
-                format=format,
-                extra_params=extra_params,
+                STTSPlaygroundRequest(
+                    operation_id=str(uuid4()),
+                    provider_id=provider,
+                    model_id=model,
+                    text=text,
+                    voice_id=voice_id,
+                    response_format=format,
+                    speed=speed,
+                    options=extra_params,
+                )
             )
         )
 
     def _generation_complete(
-        self, success: bool, audio_file: Optional[Path] = None
+        self,
+        artifact: STTSGeneratedAudio | None,
     ) -> None:
-        """Handle TTS generation completion"""
-        self.query_one("#tts-generate-btn", Button).disabled = False
+        """Store one delivered artifact independently of current selectors."""
+        self._sync_generate_enabled()
 
-        if success and audio_file:
-            # Store the audio file path
-            self.current_audio_file = audio_file
+        if artifact is not None:
+            self.current_audio_artifact = artifact
+            self.current_audio_file = artifact.path
 
             log = self.query_one("#tts-generation-log", RichLog)
             log.write("[bold green]✓ TTS generation complete![/bold green]")
@@ -1593,13 +1602,20 @@ class TTSPlaygroundWidget(Widget):
                 "#stop-audio-btn", Button
             ).disabled = True  # Disabled until playing
             self.query_one("#audio-export-btn", Button).disabled = False
-            self.query_one("#audio-player-status", Static).update("Audio ready to play")
-
-            self.app.notify("TTS generation complete!", severity="information")
+            self.query_one("#audio-player-status", Static).update(
+                f"{artifact.audio_format.upper()} audio ready to play"
+            )
         else:
             log = self.query_one("#tts-generation-log", RichLog)
             log.write("[bold red]✗ TTS generation failed![/bold red]")
-            self.app.notify("TTS generation failed", severity="error")
+
+    def _current_generated_audio_path(self) -> Path | None:
+        """Return the delivered artifact path, with legacy path fallback."""
+        if self.current_audio_artifact is not None:
+            return self.current_audio_artifact.path
+        if self.current_audio_file is None:
+            return None
+        return Path(self.current_audio_file)
 
     def _play_audio(self) -> None:
         """Play the generated audio"""
@@ -1616,15 +1632,10 @@ class TTSPlaygroundWidget(Widget):
             logger.debug("Play already in progress, ignoring request")
             return
 
-        if not self.current_audio_file:
+        audio_path = self._current_generated_audio_path()
+        if audio_path is None:
             self.app.notify("No audio file to play", severity="warning")
             return
-
-        # Convert to Path if it's a string
-        if isinstance(self.current_audio_file, str):
-            audio_path = Path(self.current_audio_file)
-        else:
-            audio_path = self.current_audio_file
 
         logger.debug(
             f"Audio path: {audio_path}, exists: {audio_path.exists() if audio_path else False}"
@@ -1659,14 +1670,8 @@ class TTSPlaygroundWidget(Widget):
     async def _play_audio_async(self) -> None:
         """Play audio asynchronously using the audio player"""
         try:
-            # Use the stored audio file path - ensure it's a Path object
-            if self.current_audio_file:
-                # Convert to Path if it's a string
-                if isinstance(self.current_audio_file, str):
-                    audio_path = Path(self.current_audio_file)
-                else:
-                    audio_path = self.current_audio_file
-
+            audio_path = self._current_generated_audio_path()
+            if audio_path is not None:
                 if audio_path.exists():
                     # Get current player state before stopping
                     current_state = await self.app.audio_player.get_state()
@@ -1873,7 +1878,8 @@ class TTSPlaygroundWidget(Widget):
 
     def _export_audio(self) -> None:
         """Export the generated audio"""
-        if not self.current_audio_file:
+        original_path = self._current_generated_audio_path()
+        if original_path is None:
             self.app.notify("No audio file to export", severity="warning")
             return
 
@@ -1889,7 +1895,6 @@ class TTSPlaygroundWidget(Widget):
         )
 
         # Get original filename and extension
-        original_path = Path(self.current_audio_file)
         default_name = f"tts_export_{original_path.stem}{original_path.suffix}"
 
         file_picker = FileSave(
@@ -1903,13 +1908,13 @@ class TTSPlaygroundWidget(Widget):
 
     def _handle_audio_export(self, path: Optional[str]) -> None:
         """Handle audio file export"""
-        if not path or not self.current_audio_file:
+        source_path = self._current_generated_audio_path()
+        if not path or source_path is None:
             return
 
         try:
             import shutil
 
-            source_path = Path(self.current_audio_file)
             dest_path = Path(path)
 
             # If different format requested, we need conversion
@@ -5116,13 +5121,16 @@ class AudioBookGenerationWidget(Widget):
             # Post event to generate preview
             self.post_message(
                 STTSPlaygroundGenerateEvent(
-                    text=preview_text,
-                    provider=provider,
-                    voice=narrator_voice,
-                    model=self._get_model_for_provider(provider),
-                    speed=1.0,
-                    format="mp3",
-                    extra_params={"preview_chapter": chapter.title},
+                    STTSPlaygroundRequest(
+                        operation_id=str(uuid4()),
+                        provider_id=provider,
+                        model_id=self._get_model_for_provider(provider),
+                        text=preview_text,
+                        voice_id=narrator_voice,
+                        response_format="mp3",
+                        speed=1.0,
+                        options={"preview_chapter": chapter.title},
+                    )
                 )
             )
 
