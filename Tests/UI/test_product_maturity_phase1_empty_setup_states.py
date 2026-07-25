@@ -159,13 +159,7 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
 ) -> None:
     app = _build_clean_setup_state_app(monkeypatch, tmp_path)
 
-    with (
-        patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting),
-        patch(
-            "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting",
-            side_effect=_test_chat_window_setting,
-        ),
-    ):
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,

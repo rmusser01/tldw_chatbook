@@ -1,12 +1,8 @@
 from datetime import datetime
 from unittest.mock import Mock
 
-import pytest
-
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_models import ChatSessionData
-from tldw_chatbook.Chat.tabs import TabContext
-from tldw_chatbook.Chat.tabs.tab_state_manager import TabStateManager
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import (
     ChatScreenState,
@@ -248,64 +244,6 @@ class TestConsoleSessionSettingsPersonaLabelCompat:
         assert restored is not None
         assert restored.user_profile_label == "Explorer"
         assert asdict(restored).get("persona_label") is None
-
-
-class TestTabStateManager:
-    @pytest.mark.asyncio
-    async def test_create_tab_state_uses_explicit_assistant_and_scope_fields(self):
-        manager = TabStateManager()
-
-        state = await manager.create_tab_state(
-            "tab-1",
-            runtime_backend="server",
-            discovery_owner="ccp_persona",
-            discovery_entity_id="persona.remote.helper",
-            assistant_kind="persona",
-            assistant_id="assistant-1",
-            persona_memory_mode="workspace",
-            scope_type="workspace",
-            workspace_id="workspace-1",
-            unknown_flag="kept-in-metadata",
-        )
-
-        assert state.runtime_backend == "server"
-        assert state.discovery_owner == "ccp_persona"
-        assert state.discovery_entity_id == "persona.remote.helper"
-        assert state.assistant_kind == "persona"
-        assert state.assistant_id == "assistant-1"
-        assert state.persona_memory_mode == "workspace"
-        assert state.scope_type == "workspace"
-        assert state.workspace_id == "workspace-1"
-        assert "unknown_flag" not in state.__dict__
-        assert state.metadata["unknown_flag"] == "kept-in-metadata"
-
-
-def test_tab_context_uses_original_query_callable_after_monkey_patch(monkeypatch):
-    selectors_seen = []
-    monkeypatch.setattr(
-        "tldw_chatbook.config.get_cli_setting",
-        lambda section, key, default=None: (
-            True if (section, key) == ("chat_defaults", "enable_tabs") else default
-        ),
-    )
-
-    def original_query_one(selector, widget_type=None):
-        selectors_seen.append((selector, widget_type))
-        return f"resolved:{selector}"
-
-    def recursive_query_one(_selector, _widget_type=None):
-        raise AssertionError("patched app.query_one should not be called recursively")
-
-    app = Mock()
-    app.query_one = recursive_query_one
-    context = TabContext(
-        app,
-        ChatSessionData(tab_id="tab-a"),
-        query_one=original_query_one,
-    )
-
-    assert context.query_one("#chat-input") == "resolved:#chat-input-tab-a"
-    assert selectors_seen == [("#chat-input-tab-a", None)]
 
 
 def test_extract_messages_clears_messages_when_direct_chat_log_lookup_succeeds():

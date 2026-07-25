@@ -147,7 +147,7 @@ class ChatDiagnostics:
     def _check_for_tabs(self, root_widget: Widget) -> bool:
         """Check if the interface appears to have tabs."""
         # Look for tab-related widgets
-        tab_indicators = ["ChatTabContainer", "ChatTabBar", "TabPane", "TabbedContent"]
+        tab_indicators = ["TabPane", "TabbedContent"]
 
         for widget in root_widget.walk_children():
             if widget.__class__.__name__ in tab_indicators:
@@ -238,7 +238,7 @@ class ChatDiagnostics:
         )
         if has_tabs:
             recommendations.append(
-                "Tabbed interface detected - use ChatTabContainer methods for state"
+                "Tabbed interface detected - manage state per-tab directly"
             )
         else:
             recommendations.append(

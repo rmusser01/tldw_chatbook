@@ -112,7 +112,6 @@ def test_task_562_conversation_entry_chain_retired():
     deleted symbol set so none of it silently returns.
     """
     from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
-    from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_tabs
 
     # Unit 1 — save/clone/load-selected handlers + display fn
     # Unit 2 — new-conversation + save-details + convert-to-note handlers
@@ -139,12 +138,10 @@ def test_task_562_conversation_entry_chain_retired():
     ):
         assert not hasattr(chat_events, name), f"{name} was retired in task-562"
 
-    # Unit 1 — chat_events_tabs.py wrapper region
-    for name in (
-        "display_conversation_in_chat_tab_ui_with_tabs",
-        "handle_chat_conversation_search_changed_with_tabs",
-    ):
-        assert not hasattr(chat_events_tabs, name), f"{name} was retired in task-562"
+    # Unit 1 — chat_events_tabs.py wrapper region: the whole module was
+    # deleted outright by task-577 T2, which supersedes these per-symbol
+    # pins (display_conversation_in_chat_tab_ui_with_tabs,
+    # handle_chat_conversation_search_changed_with_tabs).
 
     for button_id in (
         "chat-save-current-chat-button",

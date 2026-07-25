@@ -250,10 +250,7 @@ from .Event_Handlers import (
     media_events,
     app_lifecycle,
 )
-from .Event_Handlers.Chat_Events import (
-    chat_events as chat_handlers,
-    chat_events_sidebar,
-)
+from .Event_Handlers.Chat_Events import chat_events as chat_handlers
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSRequestEvent,
@@ -5250,7 +5247,6 @@ class TldwCli(
 
         chat_handlers_map = {
             **chat_events.CHAT_BUTTON_HANDLERS,
-            **chat_events_sidebar.CHAT_SIDEBAR_BUTTON_HANDLERS,
             "toggle-chat-left-sidebar": functools.partial(
                 _handle_sidebar_toggle, reactive_attr="chat_sidebar_collapsed"
             ),
@@ -9310,15 +9306,6 @@ class TldwCli(
             await ccp_handlers.handle_ccp_prompts_list_view_selected(
                 self, list_view_id, event.item
             )
-
-        elif (
-            list_view_id == "chat-media-search-results-listview"
-            and current_active_tab == TAB_CHAT
-        ):
-            self.loguru_logger.debug(
-                "Dispatching to chat_events_sidebar.handle_media_item_selected"
-            )
-            await chat_events_sidebar.handle_media_item_selected(self, event.item)
 
         # Note: conv-char-search-results-list selections are handled by their respective "Load Selected" buttons.
         else:
