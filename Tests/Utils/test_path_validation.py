@@ -58,6 +58,33 @@ class TestValidatePath:
             with pytest.raises(ValueError, match="hidden files"):
                 validate_path("subdir/.config", base_dir)
 
+    def test_hidden_base_directory_blocked(self):
+        """A base_directory whose OWN final component is dotted is rejected.
+
+        task-564: callers that validate an arbitrary destination against its
+        own immediate parent (``base_directory=target.parent``) fold a hidden
+        final directory into the base itself, where the relative-parts hidden
+        check never sees it. Pin the dedicated base-name check so the branch
+        cannot regress silently.
+        """
+        with tempfile.TemporaryDirectory() as base_dir:
+            hidden_base = Path(base_dir) / ".hidden_base"
+            hidden_base.mkdir()
+            with pytest.raises(ValueError, match="hidden files"):
+                validate_path("export.json", hidden_base)
+
+    def test_base_directory_under_hidden_ancestor_allowed(self):
+        """A base dir merely LIVING UNDER a dotted ancestor stays valid.
+
+        The base-name check deliberately does not walk ancestors — app-owned
+        roots like ``~/.local/share/tldw_cli`` must keep working.
+        """
+        with tempfile.TemporaryDirectory() as base_dir:
+            nested = Path(base_dir) / ".config" / "app_data"
+            nested.mkdir(parents=True)
+            result = validate_path("export.json", nested)
+            assert result.name == "export.json"
+
     def test_symlink_resolution(self):
         """Test that symlinks are resolved correctly."""
         with tempfile.TemporaryDirectory() as base_dir:
