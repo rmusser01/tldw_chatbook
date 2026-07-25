@@ -763,14 +763,15 @@ async def resolve_scope_for_session(
 
     db = getattr(app, "chachanotes_db", None)
     media_db = getattr(app, "media_db", None)
-    is_memory_db = bool(getattr(db, "is_memory_db", False)) or bool(
+    conversation_is_memory_db = bool(getattr(db, "is_memory_db", False))
+    scope_resolution_requires_inline = conversation_is_memory_db or bool(
         getattr(media_db, "is_memory_db", False)
     )
 
     conv_scope: Optional[RagScope] = None
     if conversation_id and db is not None:
         if use_cache:
-            if is_memory_db:
+            if conversation_is_memory_db:
                 conv_scope = read_conversation_scope(db, conversation_id)
             else:
                 conv_scope = await asyncio.to_thread(
@@ -778,7 +779,7 @@ async def resolve_scope_for_session(
                 )
         else:
             try:
-                if is_memory_db:
+                if conversation_is_memory_db:
                     record = db.get_conversation_by_id(str(conversation_id))
                 else:
                     record = await asyncio.to_thread(
@@ -902,7 +903,7 @@ async def resolve_scope_for_session(
     def _existing_ids(source_type: str, ids: "frozenset[str]") -> "frozenset[str]":
         return _existing_ids_sync(app, source_type, ids)
 
-    if is_memory_db:
+    if scope_resolution_requires_inline:
         effective = resolve_effective_scope(conv_scope, ws_scope, _existing_ids)
     else:
         effective = await asyncio.to_thread(

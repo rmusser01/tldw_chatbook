@@ -1756,6 +1756,42 @@ class TestResolveEffectiveScopeMemoryDbGuard:
         finally:
             cha_db.close_connection()
 
+    @pytest.mark.asyncio
+    async def test_memory_media_does_not_force_file_chacha_authority_inline(
+        self, cha_db, monkeypatch
+    ):
+        memory_media = MediaDatabase(":memory:", client_id="task2-mixed-routing")
+        try:
+            assert memory_media.is_memory_db is True
+            assert cha_db.is_memory_db is False
+            conversation_id = cha_db.add_conversation({"title": "Mixed stores"})
+            session = SimpleNamespace(
+                persisted_conversation_id=conversation_id,
+                workspace_id=None,
+            )
+            main_thread = threading.current_thread()
+            call_threads = []
+            real_get_conversation = cha_db.get_conversation_by_id
+
+            def _recording_get_conversation(*args, **kwargs):
+                call_threads.append(threading.current_thread())
+                return real_get_conversation(*args, **kwargs)
+
+            monkeypatch.setattr(
+                cha_db, "get_conversation_by_id", _recording_get_conversation
+            )
+            app = _App(media_db=memory_media, chachanotes_db=cha_db)
+
+            resolution = await cre.resolve_scope_for_session(
+                app, session, use_cache=False
+            )
+
+            assert resolution.effective.state == "unscoped"
+            assert len(call_threads) == 1
+            assert call_threads[0] is not main_thread
+        finally:
+            memory_media.close_connection()
+
 
 class TestChatEntryPointUnscopedZeroDrift:
     """No active native-Console session (today's real default) must resolve
