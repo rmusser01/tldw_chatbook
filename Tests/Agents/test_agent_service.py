@@ -1191,6 +1191,59 @@ def test_call_with_timeout_wraps_base_exception():
     assert out.ok is False and "bye" in out.error
 
 
+def test_call_with_timeout_polls_cancellation_promptly():
+    """A blocking tool call must not wedge Stop for the full timeout ceiling.
+    While a tool is hung, run_agent_loop's own should_cancel() checks at
+    step/tool-call boundaries are unreachable -- this wait is the only place
+    that can observe a Stop until the call finishes or times out, so it must
+    poll should_cancel() itself rather than a single blocking join(seconds).
+    """
+    def slow():
+        time.sleep(2.0)
+        return ToolResult(ok=True, content="too late")
+
+    t0 = time.monotonic()
+    out = _call_with_timeout(slow, 5.0, "slow_tool", should_cancel=lambda: True)
+    elapsed = time.monotonic() - t0
+    assert out.ok is False
+    assert "cancelled" in out.error and "slow_tool" in out.error
+    # Well under the 5.0s timeout ceiling -- proves cancellation actually
+    # short-circuits the wait instead of merely being checked after it.
+    assert elapsed < 1.5
+
+
+def test_make_invoke_tool_wraps_slow_custom_tool_cancellable(db, monkeypatch):
+    """The should_cancel seam threaded through _make_invoke_tool (the
+    production wiring in _run_one) must let a Stop during a hung tool call
+    return promptly instead of waiting out max_tool_call_seconds."""
+    def chat(**kwargs):  # pragma: no cover - unused by this test
+        return {"choices": [{"message": {"content": "unused"}}]}
+
+    service = _service_with_chat(db, chat)
+
+    def slow_invoke_by_name(name, args):
+        time.sleep(2.0)
+        return ToolResult(ok=True, content="too late")
+
+    monkeypatch.setattr(service.registry, "invoke_by_name", slow_invoke_by_name)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=5.0),
+    )
+    invoke_tool = service._make_invoke_tool(
+        cfg, disclosed_names={"calculator"}, should_cancel=lambda: True
+    )
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    t0 = time.monotonic()
+    result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
+    elapsed = time.monotonic() - t0
+    assert result.ok is False
+    assert "cancelled" in result.error and "calculator" in result.error
+    assert elapsed < 1.5
+
+
 def test_make_invoke_tool_bypasses_wrapper_when_unlimited(db, monkeypatch):
     """max_tool_call_seconds=0 must skip _call_with_timeout entirely and
     call straight through to the registry -- a real closure-level test, not

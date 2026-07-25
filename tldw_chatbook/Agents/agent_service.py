@@ -161,24 +161,43 @@ def _usage_total_tokens(resp) -> int | None:
     return None
 
 
+_CANCEL_POLL_SECONDS = 0.5
+
+
 def _call_with_timeout(
-    fn: Callable[[], ToolResult], seconds: float, tool_name: str
+    fn: Callable[[], ToolResult],
+    seconds: float,
+    tool_name: str,
+    should_cancel: Callable[[], bool] = lambda: False,
 ) -> ToolResult:
     """Run ``fn`` on a daemon thread, bounded by ``seconds`` wall-clock.
 
     Always returns a ToolResult: ``fn``'s value on success, ``ok=False`` with
-    the message on a raised exception, or an ``ok=False`` timeout result if
-    ``fn`` does not finish in time. A per-call daemon thread (NOT a
-    ThreadPoolExecutor ``with`` block, whose __exit__ would join the hung
-    worker and defeat the timeout; NOT a shared pool, which a single hung
-    tool would saturate) is used; on timeout the worker is abandoned to die
-    with the process — Python cannot forcibly kill a thread, but ``daemon``
-    means it never blocks interpreter shutdown, and for a side-effecting
-    tool (notably an MCP call already past its own approval/execution
-    bounds -- see ``RunBudget.max_tool_call_seconds``'s docstring) that
-    abandoned worker may still complete and act for real after this
-    function has already reported a timeout, so a caller retrying a
-    "failed" call risks running it twice.
+    the message on a raised exception, or an ``ok=False`` timeout/cancelled
+    result if ``fn`` does not finish in time or the run is cancelled first. A
+    per-call daemon thread (NOT a ThreadPoolExecutor ``with`` block, whose
+    __exit__ would join the hung worker and defeat the timeout; NOT a shared
+    pool, which a single hung tool would saturate) is used; on timeout the
+    worker is abandoned to die with the process — Python cannot forcibly kill
+    a thread, but ``daemon`` means it never blocks interpreter shutdown, and
+    for a side-effecting tool (notably an MCP call already past its own
+    approval/execution bounds -- see ``RunBudget.max_tool_call_seconds``'s
+    docstring) that abandoned worker may still complete and act for real
+    after this function has already reported a timeout, so a caller retrying
+    a "failed" call risks running it twice.
+
+    The overall ``seconds`` wait is chunked into ``_CANCEL_POLL_SECONDS``
+    slices so ``should_cancel`` is polled while a tool is hung, instead of a
+    single blocking ``join(seconds)``: without this, a user pressing Stop
+    during a slow/wedged tool call would see nothing until the FULL
+    ``max_tool_call_seconds`` ceiling elapsed (300s at defaults) even though
+    ``run_agent_loop`` itself is cooperative-cancel and re-checks
+    ``should_cancel()`` at every call boundary -- the wait inside this one
+    call was the one place that boundary couldn't be reached. A cancellation
+    hit mid-wait is reported the same way a timeout is (``ok=False``,
+    abandoned worker left to finish/die on its own), just with a "cancelled"
+    message instead of "timed out" -- the abandon-on-timeout semantics and
+    the overall ``seconds`` ceiling are both preserved unchanged.
     """
     box: dict = {}
 
@@ -190,7 +209,11 @@ def _call_with_timeout(
 
     worker = threading.Thread(target=_runner, name=f"tool-{tool_name}", daemon=True)
     worker.start()
-    worker.join(seconds)
+    deadline = time.monotonic() + seconds
+    while worker.is_alive() and time.monotonic() < deadline:
+        worker.join(min(_CANCEL_POLL_SECONDS, max(deadline - time.monotonic(), 0)))
+        if worker.is_alive() and should_cancel():
+            return ToolResult(ok=False, error=f"tool call cancelled: {tool_name}")
     if worker.is_alive():
         return ToolResult(
             ok=False, error=f"tool call timed out after {seconds:g}s: {tool_name}"
@@ -353,7 +376,12 @@ class AgentService:
 
         return call_model
 
-    def _make_invoke_tool(self, config: AgentConfig, disclosed_names: set):
+    def _make_invoke_tool(
+        self,
+        config: AgentConfig,
+        disclosed_names: set,
+        should_cancel: Callable[[], bool] = lambda: False,
+    ):
         def invoke_tool(call: ToolCall) -> ToolResult:
             if (
                 call.name not in config.allowed_tools
@@ -366,6 +394,7 @@ class AgentService:
                     lambda: self.registry.invoke_by_name(call.name, call.args),
                     timeout,
                     call.name,
+                    should_cancel,
                 )
             return self.registry.invoke_by_name(call.name, call.args)
 
@@ -589,7 +618,9 @@ class AgentService:
         # run's spawn -- so it is budget-counted (via spawn's own shared
         # sub_agent_spawns counter -- see Finding 2 above), cancellable, and
         # DB-lineage-tracked exactly like a spawn_subagent call.
-        builtin_invoke_tool = self._make_invoke_tool(config, disclosed_names)
+        builtin_invoke_tool = self._make_invoke_tool(
+            config, disclosed_names, should_cancel
+        )
 
         def invoke_tool(call: ToolCall) -> ToolResult:
             if self.skill_runner is not None and self.skill_runner.is_skill_tool(
