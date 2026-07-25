@@ -2,6 +2,9 @@
 
 A sophisticated Terminal User Interface (TUI) application built with the Textual framework for interacting with various Large Language Model APIs. The product is organized around a chat-first **master shell**: the **Console** is the main work surface, with **Home** (triage/status) and **Library** (notes, media, study, ingestion, search) as the other top-priority destinations, alongside supporting surfaces (Personas, Artifacts, Watchlists, and model/agent tools) that hand context back into the active conversation.
 
+> 📖 **New here?** The [User Guide](Docs/User_Guide/index.md) walks through
+> every screen — what it does and how to use it.
+
 ![Screenshot](https://github.com/rmusser01/tldw_chatbook/blob/main/static/PoC-Frontpage.PNG?raw=true)
 
 ## Project Status & Recent UI Overhaul
