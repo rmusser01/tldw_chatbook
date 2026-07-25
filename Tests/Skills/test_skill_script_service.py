@@ -246,6 +246,110 @@ async def test_scratch_root_inside_skill_directory_is_rejected(script_service, m
     assert not unsafe_root.exists()
 
 
+@pytest.mark.asyncio
+async def test_cancelling_the_awaiting_task_lets_the_thread_finish_and_clean_up(
+    script_service, monkeypatch
+):
+    """Cancelling `run_skill_script`'s awaiting task must not orphan the child.
+
+    PROBED regression from the previous fix wave: once `run_script_subprocess`
+    was offloaded via `asyncio.to_thread` with the scratch-dir `rmtree` left
+    in the COROUTINE's own `finally`, cancelling the awaiting task raced that
+    `finally` against the still-running thread -- the coroutine returned (and
+    deleted the scratch dir) immediately on cancellation while the offloaded
+    thread and its child process kept running for up to `wall_clock_seconds`
+    against a now-unlinked cwd. `asyncio.to_thread` cannot interrupt a
+    `concurrent.futures.Future` once it is RUNNING (only a PENDING future can
+    actually be cancelled), so once the thread has started, cancelling the
+    coroutine only detaches it from that future -- the thread keeps going
+    regardless. The fix makes the scratch dir's whole create/run/cleanup
+    lifecycle belong to that SAME offloaded callable, so a cancelled caller
+    can never see (or cause) cleanup while the child is still alive; the
+    thread is trusted to clean up after itself once `run_script_subprocess`
+    (which itself SIGKILLs the process group before returning) finishes.
+    """
+    import asyncio
+    import tempfile as tempfile_module
+    from pathlib import Path as PathModule
+
+    from tldw_chatbook.Skills_Interop.skill_script_runner import ScriptRunLimits
+
+    service, name = script_service
+    (service._skill_dir(name) / "scripts" / "slow.py").write_text(
+        "import pathlib, time\n"
+        "cwd = pathlib.Path.cwd()\n"
+        "(cwd / 'started.marker').write_text('1')\n"
+        "time.sleep(1.0)\n"
+        "(cwd / 'finished.marker').write_text('1')\n",
+        encoding="utf-8",
+    )
+    # See test_exec_bit_file_runs_direct: a post-bootstrap file addition
+    # quarantines the whole skill until re-approved.
+    service.trust_service.trust_current_skill(name, audit_event="test_setup")
+
+    created_dirs: list[str] = []
+    real_mkdtemp = tempfile_module.mkdtemp
+
+    def _spy_mkdtemp(*args, **kwargs):
+        created = real_mkdtemp(*args, **kwargs)
+        created_dirs.append(created)
+        return created
+
+    monkeypatch.setattr(tempfile_module, "mkdtemp", _spy_mkdtemp)
+
+    task = asyncio.create_task(
+        service.run_skill_script(
+            name,
+            "scripts/slow.py",
+            [],
+            limits=ScriptRunLimits(wall_clock_seconds=10),
+        )
+    )
+
+    # Wait until the offloaded thread has actually created the scratch dir
+    # AND the child has actually started -- so the underlying
+    # concurrent.futures.Future is RUNNING (not PENDING) by the time we
+    # cancel, which is exactly the state the regression needs to be reached
+    # through: a PENDING future WOULD be cancelled outright by
+    # asyncio.to_thread, masking the bug this test pins.
+    scratch = None
+    for _ in range(500):
+        if created_dirs:
+            candidate = PathModule(created_dirs[0])
+            if (candidate / "started.marker").exists():
+                scratch = candidate
+                break
+        await asyncio.sleep(0.01)
+    assert scratch is not None, "the sandboxed script never started"
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # The child is still mid-sleep right after the coroutine returns from
+    # cancellation: the scratch dir must still be there, untouched, and the
+    # child must not have finished yet.
+    assert scratch.exists(), (
+        "the scratch dir must not be removed while the child is still alive"
+    )
+    assert not (scratch / "finished.marker").exists(), (
+        "the child should still be running at the moment of cancellation"
+    )
+
+    # The offloaded thread is unaffected by the coroutine's cancellation: it
+    # keeps the child running to completion and cleans up after itself, with
+    # no scratch dir left behind once it finishes.
+    for _ in range(500):
+        if not scratch.exists():
+            break
+        await asyncio.sleep(0.01)
+    else:
+        pytest.fail(
+            "the scratch dir was never cleaned up once the offloaded thread "
+            "finished running the child to completion"
+        )
+
+
 def test_plan_for_script_does_not_read_the_whole_file_into_memory(
     script_service, monkeypatch
 ):
@@ -256,7 +360,11 @@ def test_plan_for_script_does_not_read_the_whole_file_into_memory(
     vendored binary or model inside a trusted bundle would OOM the app on a
     mere `describe`. Actually writing a huge file here would be slow and
     disk-heavy for a unit test, so this pins the STRUCTURAL fix instead:
-    `_plan_for_script` must never call `Path.read_bytes` at all.
+    `_plan_for_script` must never call `Path.read_bytes` at all, AND the
+    sniff `fh.read(...)` it does call must pass an explicit, small byte-count
+    bound -- a regression to a bare `fh.read()` (no size, which reads to EOF)
+    would satisfy the `read_bytes`-forbidden assertion alone while still
+    being unbounded, so that check by itself is not sufficient.
 
     Exercises `_plan_for_script` directly (after resolving via
     `_resolve_script`) rather than through `describe_skill_script`: the
@@ -277,8 +385,34 @@ def test_plan_for_script_does_not_read_the_whole_file_into_memory(
         )
 
     monkeypatch.setattr(PathModule, "read_bytes", _forbidden_read_bytes)
+
+    read_calls: list[tuple[tuple, dict]] = []
+    real_open = PathModule.open
+
+    def _spy_open(self, *args, **kwargs):
+        fh = real_open(self, *args, **kwargs)
+        real_read = fh.read
+
+        def _spy_read(*read_args, **read_kwargs):
+            read_calls.append((read_args, read_kwargs))
+            return real_read(*read_args, **read_kwargs)
+
+        fh.read = _spy_read
+        return fh
+
+    monkeypatch.setattr(PathModule, "open", _spy_open)
+
     plan = service._plan_for_script(name, "scripts/hello.py", path)
+
     assert plan.mechanism == "interpreter"
+    assert read_calls, "_plan_for_script must sniff the file via fh.read(...)"
+    call_args, call_kwargs = read_calls[0]
+    size_arg = call_args[0] if call_args else call_kwargs.get("size")
+    assert isinstance(size_arg, int) and 0 < size_arg <= 65536, (
+        f"the sniff read must pass an explicit, small byte-count bound "
+        f"(got args={call_args!r} kwargs={call_kwargs!r}); an unbounded "
+        f"fh.read() would read the whole file into memory"
+    )
 
 
 @pytest.mark.asyncio

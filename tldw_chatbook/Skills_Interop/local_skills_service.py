@@ -8,6 +8,7 @@ import json
 import re
 import shutil
 import zipfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -1564,7 +1565,7 @@ class LocalSkillsService:
         self,
         skill_name: str,
         script_path: str,
-        args: list[str],
+        args: Sequence[str],
         *,
         limits: ScriptRunLimits | None = None,
     ) -> ScriptRunResult:
@@ -1603,6 +1604,8 @@ class LocalSkillsService:
 
         from .skill_script_runner import ScriptRunLimits, run_script_subprocess
 
+        self._enforce("skills.run_script.launch.local")
+        self._require_trusted_skill(skill_name)
         if not isinstance(args, (list, tuple)) or not all(
             isinstance(item, str) for item in args
         ):
@@ -1611,8 +1614,6 @@ class LocalSkillsService:
                 "of str (e.g. a bare string would be exploded into one "
                 "argv element per character)"
             )
-        self._enforce("skills.run_script.launch.local")
-        self._require_trusted_skill(skill_name)
         _skill_dir, path = self._resolve_script(skill_name, script_path)
         plan = self._plan_for_script(skill_name, script_path, path)
         effective_limits = limits or ScriptRunLimits()
@@ -1621,22 +1622,40 @@ class LocalSkillsService:
             if plan.mechanism == "direct-exec"
             else [plan.interpreter_display, str(path), *args]
         )
-        scratch = Path(
-            tempfile.mkdtemp(
-                prefix="tldw-skill-script-", dir=self._script_scratch_root()
+
+        def _run_in_scratch_dir() -> ScriptRunResult:
+            """Own the scratch dir's whole create/run/cleanup lifecycle.
+
+            This -- not the coroutine -- must own that lifecycle: cancelling
+            the awaiting task only detaches it from this thread's
+            underlying ``concurrent.futures.Future`` (once that future is
+            RUNNING, ``asyncio.to_thread`` cannot interrupt it), so the
+            thread and the subprocess it launches keep going regardless.
+            Creating and removing the scratch directory HERE, instead of in
+            a ``finally`` around the ``await``, means a cancelled caller can
+            never make cleanup race a still-live child: ``rmtree`` only
+            runs after ``run_script_subprocess`` -- which itself SIGKILLs
+            the whole process group before returning -- has actually
+            finished, from the very thread that ran it.
+            """
+            scratch = Path(
+                tempfile.mkdtemp(
+                    prefix="tldw-skill-script-", dir=self._script_scratch_root()
+                )
             )
-        )
-        try:
-            # Offloaded to a thread: run_script_subprocess is a blocking call
-            # (up to limits.wall_clock_seconds + 6.0s worst case) and this
-            # method's own signature advertises `async def` -- calling it
-            # directly would occupy whatever event loop this coroutine runs
-            # on for the full duration.
-            return await asyncio.to_thread(
-                run_script_subprocess, target_argv, cwd=scratch, limits=effective_limits
-            )
-        finally:
-            _shutil.rmtree(scratch, ignore_errors=True)
+            try:
+                return run_script_subprocess(
+                    target_argv, cwd=scratch, limits=effective_limits
+                )
+            finally:
+                _shutil.rmtree(scratch, ignore_errors=True)
+
+        # Offloaded to a thread: run_script_subprocess is a blocking call
+        # (up to limits.wall_clock_seconds + 6.0s worst case) and this
+        # method's own signature advertises `async def` -- calling it
+        # directly would occupy whatever event loop this coroutine runs on
+        # for the full duration.
+        return await asyncio.to_thread(_run_in_scratch_dir)
 
     async def seed_builtin_skills(self, *, overwrite: bool = False) -> dict[str, Any]:
         self._enforce("skills.seed.launch.local")

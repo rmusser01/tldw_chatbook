@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Sequence
 from enum import Enum
 from typing import Any
 
@@ -414,7 +415,7 @@ class SkillsScopeService:
         self,
         skill_name: str,
         script_path: str,
-        args: list[str],
+        args: Sequence[str],
         *,
         mode: SkillsBackend | str | None = None,
     ):
