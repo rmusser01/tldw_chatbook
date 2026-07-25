@@ -246,18 +246,20 @@ class StaticArtifactsChatbookService:
 
 
 @pytest.mark.asyncio
-async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_default_size():
+async def test_main_navigation_overflow_hint_does_not_overlap_scroll_viewport():
     app = _build_test_app()
     host = HomeHarness(app)
     async with host.run_test(size=(140, 42)) as pilot:
         home = _active_home_screen(host)
         await _wait_for_selector(home, pilot, "#home-triage-grid")
         nav = home.query_one(MainNavigationBar)
-        settings = nav.query_one("#nav-settings", Button)
+        strip = nav.query_one("#nav-destination-strip")
         more = nav.query_one("#nav-overflow-hint")
         _assert_no_horizontal_overlap(
-            settings, more, context="More hint overlaps Settings nav item"
+            strip, more, context="More hint overlaps destination scroll viewport"
         )
+        assert strip.virtual_size.width > strip.region.width
+        assert more.region.right == nav.region.right
 
 
 @pytest.mark.asyncio
