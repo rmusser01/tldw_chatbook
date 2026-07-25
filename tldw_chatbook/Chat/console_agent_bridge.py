@@ -1107,6 +1107,14 @@ class ConsoleAgentBridge:
                             ok=False, error="The user declined to run this script."
                         )
                     if decision.get("remember", False) and trust_service is not None:
+                        # Deliberate ordering: this persists the standing
+                        # grant BEFORE run_skill_script below actually runs,
+                        # so "remember my choice" sticks even if this
+                        # particular run then fails (e.g. trust revoked
+                        # mid-flight). That is fine -- run_skill_script
+                        # re-verifies policy/trust/path authoritatively on
+                        # every call regardless of this grant, so recording
+                        # it early never widens what is allowed to execute.
                         try:
                             trust_service.grant_script_execution(skill_name)
                         except Exception:  # noqa: BLE001 — grant is best-effort

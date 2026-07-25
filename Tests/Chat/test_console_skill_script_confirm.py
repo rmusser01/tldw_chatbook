@@ -74,13 +74,23 @@ def make_controller() -> Callable[[], ConsoleChatController]:
     round-trip tests only need to append a decision. Tests that want the
     "no UI" fail-closed path override ``controller.app``/``controller.
     set_pending_skill_script`` back to ``None`` themselves.
+
+    Every payload handed to ``set_pending_skill_script`` (the show-card
+    call AND the later clear-to-``None`` call) is recorded, in order, onto
+    ``controller.pending_skill_script_payloads`` -- tests that need to
+    inspect what was actually marshaled to the UI (e.g. that it carries
+    ``timeout_seconds``/``request_id``) read that list instead of the
+    payloads being silently discarded.
     """
 
     def _make() -> ConsoleChatController:
         store = ConsoleChatStore()
         controller = ConsoleChatController(store=store, provider_gateway=object())
         controller.app = _FakeApp()
-        controller.set_pending_skill_script = lambda payload: None
+        controller.pending_skill_script_payloads = []
+        controller.set_pending_skill_script = (
+            controller.pending_skill_script_payloads.append
+        )
         return controller
 
     return _make
@@ -393,7 +403,9 @@ def test_allow_round_trip(make_controller):
     thread = threading.Thread(target=worker)
     thread.start()
     _wait_until(lambda: controller._pending_skill_script_event is not None)
-    controller.resolve_pending_skill_script(True, False)
+    controller.resolve_pending_skill_script(
+        True, False, request_id=controller._pending_skill_script_request_id
+    )
     thread.join(timeout=5)
     assert result["decision"] == {"allow": True, "remember": False}
 
@@ -408,7 +420,9 @@ def test_always_allow_round_trip(make_controller):
     thread = threading.Thread(target=worker)
     thread.start()
     _wait_until(lambda: controller._pending_skill_script_event is not None)
-    controller.resolve_pending_skill_script(True, True)
+    controller.resolve_pending_skill_script(
+        True, True, request_id=controller._pending_skill_script_request_id
+    )
     thread.join(timeout=5)
     assert result["decision"] == {"allow": True, "remember": True}
 
@@ -445,6 +459,127 @@ def test_switch_session_denies_a_pending_skill_script_confirm(make_controller):
     controller.switch_session(other.id)
     thread.join(timeout=5)
     assert result["decision"]["allow"] is False
+
+
+def test_confirm_payload_carries_timeout_and_request_id(make_controller):
+    """The payload actually marshaled to the UI sink must carry both the
+    timeout and a per-round request id (not just the caller's own keys) --
+    a card built from an under-described payload is a security defect,
+    since that payload is exactly what the human approves on."""
+    controller = make_controller()
+    result = {}
+
+    def worker():
+        result["decision"] = controller.request_skill_script_confirm(
+            {"skill_name": "demo", "script_path": "scripts/hello.py"}
+        )
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    _wait_until(lambda: controller._pending_skill_script_event is not None)
+    shown = controller.pending_skill_script_payloads[0]
+    assert shown is not None
+    assert shown["skill_name"] == "demo"
+    assert shown["script_path"] == "scripts/hello.py"
+    assert isinstance(shown["timeout_seconds"], float)
+    assert shown["timeout_seconds"] > 0
+    assert shown["request_id"] == controller._pending_skill_script_request_id
+    assert shown["request_id"]  # non-empty
+    controller.resolve_pending_skill_script(True, False, request_id=shown["request_id"])
+    thread.join(timeout=5)
+    assert result["decision"] == {"allow": True, "remember": False}
+    # The clearing call at teardown hands `None`, not a second payload.
+    assert controller.pending_skill_script_payloads[-1] is None
+
+
+def test_stale_request_id_is_dropped_then_matching_id_resolves(make_controller):
+    """Security-critical: a resolve carrying a PRIOR round's id must not
+    authorize the CURRENT round -- see `resolve_pending_skill_script`'s
+    docstring for the exact late-button-press scenario this closes."""
+    controller = make_controller()
+
+    # Round 1: arm, capture its id, then deny it via context-change so it
+    # tears down (clearing _pending_skill_script_request_id) without ever
+    # being resolved by a matching id.
+    round_one_result = {}
+
+    def round_one():
+        round_one_result["decision"] = controller.request_skill_script_confirm(
+            {"skill_name": "demo"}
+        )
+
+    t1 = threading.Thread(target=round_one)
+    t1.start()
+    _wait_until(lambda: controller._pending_skill_script_event is not None)
+    stale_id = controller._pending_skill_script_request_id
+    assert stale_id
+    controller._deny_pending_skill_script_on_context_change()
+    t1.join(timeout=5)
+    assert round_one_result["decision"]["allow"] is False
+    assert controller._pending_skill_script_request_id is None  # torn down
+
+    # Round 2: arms a fresh id. A resolve carrying round 1's stale id must
+    # be dropped -- the round stays armed, unresolved.
+    round_two_result = {}
+
+    def round_two():
+        round_two_result["decision"] = controller.request_skill_script_confirm(
+            {"skill_name": "demo"}
+        )
+
+    t2 = threading.Thread(target=round_two)
+    t2.start()
+    _wait_until(lambda: controller._pending_skill_script_event is not None)
+    fresh_id = controller._pending_skill_script_request_id
+    assert fresh_id and fresh_id != stale_id
+
+    controller.resolve_pending_skill_script(True, False, request_id=stale_id)
+    time.sleep(0.1)
+    assert t2.is_alive(), "a stale request_id must not resolve the armed round"
+    assert controller._pending_skill_script_event is not None  # still armed
+
+    # The matching (current) id resolves it correctly.
+    controller.resolve_pending_skill_script(True, False, request_id=fresh_id)
+    t2.join(timeout=5)
+    assert round_two_result["decision"] == {"allow": True, "remember": False}
+
+
+def test_resolve_with_no_request_id_is_dropped(make_controller):
+    """A resolve carrying no id at all (e.g. a not-yet-migrated caller)
+    must be dropped by design, same as a stale one."""
+    controller = make_controller()
+    result = {}
+
+    def worker():
+        result["decision"] = controller.request_skill_script_confirm({"skill_name": "demo"})
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    _wait_until(lambda: controller._pending_skill_script_event is not None)
+
+    controller.resolve_pending_skill_script(True, False)  # request_id omitted
+    time.sleep(0.1)
+    assert thread.is_alive(), "an id-less resolve must not resolve the armed round"
+
+    controller.resolve_pending_skill_script(
+        True, False, request_id=controller._pending_skill_script_request_id
+    )
+    thread.join(timeout=5)
+    assert result["decision"] == {"allow": True, "remember": False}
+
+
+def test_confirm_timeout_denies(make_controller):
+    """`skill_script_confirm_timeout_seconds` overrides the 120s default so
+    the deadline path can be exercised quickly, mirroring the identical
+    seam on the sibling install-confirm flow
+    (`test_console_skill_install_confirm.test_confirm_timeout_denies`)."""
+    controller = make_controller()
+    controller.skill_script_confirm_timeout_seconds = lambda: 0.05
+    started = time.monotonic()
+    decision = controller.request_skill_script_confirm({"skill_name": "demo"})
+    elapsed = time.monotonic() - started
+    assert decision == {"allow": False, "remember": False}
+    assert elapsed < 2.5
 
 
 # -- Step 3b: bridge closure --------------------------------------------
@@ -486,6 +621,20 @@ def test_closure_skips_the_prompt_when_the_skill_is_granted(bridge_closure_env):
     assert env.run_calls, "the script must still actually run"
 
 
+def test_closure_confirm_payload_describes_the_run_being_approved(bridge_closure_env):
+    """The confirm payload is exactly what the human approves on -- dropping
+    a field here (e.g. the script path or args) would be a real security
+    defect even though every other closure test would still pass."""
+    env = bridge_closure_env()
+    env.closure("demo", "scripts/hello.py", ["--flag", "value"])
+    assert len(env.confirm_calls) == 1
+    payload = env.confirm_calls[0]
+    assert payload["skill_name"] == "demo"
+    assert payload["script_path"] == "scripts/hello.py"
+    assert payload["mechanism"] == "interpreter"
+    assert payload["args"] == ["--flag", "value"]
+
+
 def test_closure_records_the_grant_on_always_allow(bridge_closure_env):
     env = bridge_closure_env(confirm_result={"allow": True, "remember": True})
     env.closure("demo", "scripts/hello.py", [])
@@ -519,3 +668,85 @@ def test_nonzero_exit_is_ok_true_with_the_failure_described(bridge_closure_env):
 def test_tool_is_absent_without_a_confirm_callback(bridge_without_confirm):
     """Advertised must equal usable (the #847 lesson)."""
     assert bridge_without_confirm.run_skill_script_tool is None
+
+
+# -- Step 3c: advertised must equal usable (controller-level wiring) --------
+
+
+class _StubResolution:
+    ready = True
+    provider = "llama_cpp"
+    visible_copy = ""
+
+
+class _StubGateway:
+    """Minimal provider gateway: `resolve_for_send` is all `submit_draft`
+    needs before `run_reply` (monkeypatched to a capturing stub below) is
+    invoked directly -- no real streaming ever happens in these tests."""
+
+    async def resolve_for_send(self, selection):
+        return _StubResolution()
+
+    async def stream_chat(self, resolution, messages):  # pragma: no cover
+        yield "unused"
+
+
+def _capturing_run_reply(captured: list[dict[str, Any]]):
+    """`run_reply` stand-in: records its kwargs instead of running the
+    agent loop, so these tests can inspect exactly what the CONTROLLER
+    decided to forward to the bridge."""
+    from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
+
+    def run_reply(**kwargs):
+        captured.append(kwargs)
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="ok.")
+
+    return run_reply
+
+
+def _bridged_controller(tmp_path) -> tuple[ConsoleChatController, list[dict[str, Any]]]:
+    gateway = _StubGateway()
+    store = ConsoleChatStore()
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+    captured: list[dict[str, Any]] = []
+    controller._agent_bridge.run_reply = _capturing_run_reply(captured)
+    return controller, captured
+
+
+@pytest.mark.asyncio
+async def test_confirm_callback_absent_from_bridge_when_no_ui_sink_wired(tmp_path):
+    """The #847 lesson, applied to run_skill_script: with no
+    `set_pending_skill_script` wired, the controller must NOT forward
+    `request_skill_script_confirm` to the bridge at all -- passing the
+    (always fail-closed) bound method anyway would advertise a tool the
+    model can never successfully use."""
+    controller, captured = _bridged_controller(tmp_path)
+    assert controller.set_pending_skill_script is None  # not wired (default)
+
+    result = await controller.submit_draft("hi")
+
+    assert result.accepted is True
+    assert captured[0]["request_skill_script_confirm"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirm_callback_present_when_ui_sink_wired(tmp_path):
+    controller, captured = _bridged_controller(tmp_path)
+    controller.set_pending_skill_script = lambda payload: None
+
+    result = await controller.submit_draft("hi")
+
+    assert result.accepted is True
+    confirm = captured[0]["request_skill_script_confirm"]
+    assert confirm is not None
+    assert confirm.__self__ is controller
+    assert confirm.__func__ is ConsoleChatController.request_skill_script_confirm
