@@ -589,7 +589,7 @@ class TestChatEventsTabsStateSynchronization:
 
         # Set up query_one to return appropriate widgets
         def query_one_side_effect(selector, widget_type=None):
-            if selector == "#chat-conversation-title-input":
+            if selector == "#chat-chat-title":
                 return mock_title_input
             elif selector == "#chat-window":
                 return mock_chat_window
@@ -671,7 +671,7 @@ class TestChatEventsTabsStateSynchronization:
         mock_chat_window.tab_container = mock_tab_container
 
         def query_one_side_effect(selector, widget_type=None):
-            if selector == "#chat-conversation-title-input":
+            if selector == "#chat-chat-title":
                 return mock_title_input
             if selector == "#chat-window":
                 return mock_chat_window
@@ -851,7 +851,7 @@ class TestChatEventsTabsEdgeCases:
                 # Query both tab-specific and global widgets
                 app.query_one("#chat-log")  # Should be redirected
                 app.query_one(
-                    "#chat-conversation-title-input"
+                    "#chat-chat-title"
                 )  # Should NOT be redirected
                 app.query_one("#chat-system-prompt")  # Should NOT be redirected
 
@@ -867,7 +867,7 @@ class TestChatEventsTabsEdgeCases:
             # Verify correct selectors were captured
             assert f"#chat-log-{session_data.tab_id}" in captured_selectors
             assert (
-                "#chat-conversation-title-input" in captured_selectors
+                "#chat-chat-title" in captured_selectors
             )  # Not modified
             assert "#chat-system-prompt" in captured_selectors  # Not modified
 

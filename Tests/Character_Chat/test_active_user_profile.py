@@ -56,3 +56,91 @@ def test_resolver_never_raises_on_broken_service(_isolated_config):
         def list_user_profiles(self, active_only: bool = False):
             raise RuntimeError("store unreadable")
     assert resolve_active_user_profile_name(_Boom()) is None
+
+
+class _FakeScopeService:
+    def __init__(self, payload=None, exc=None):
+        self.payload = payload
+        self.exc = exc
+        self.calls: list[dict] = []
+
+    async def list_user_profiles(self, mode="local", **kwargs):
+        self.calls.append({"mode": mode, **kwargs})
+        if self.exc is not None:
+            raise self.exc
+        return self.payload
+
+
+@pytest.mark.asyncio
+async def test_async_resolver_server_mode_matches_server_profile(_isolated_config):
+    set_active_user_profile("Sam")
+    scope = _FakeScopeService(payload=[{"name": "Sam"}, {"name": "Rae"}])
+    import tldw_chatbook.Character_Chat.active_user_profile as mod
+    assert await mod.resolve_active_user_profile_name_async(scope, mode="server") == "Sam"
+    assert scope.calls == [{"mode": "server"}]
+
+
+@pytest.mark.asyncio
+async def test_async_resolver_server_mode_accepts_items_payload(_isolated_config):
+    set_active_user_profile("Sam")
+    scope = _FakeScopeService(payload={"items": [{"name": "Sam"}]})
+    import tldw_chatbook.Character_Chat.active_user_profile as mod
+    assert await mod.resolve_active_user_profile_name_async(scope, mode="server") == "Sam"
+
+
+@pytest.mark.asyncio
+async def test_async_resolver_server_dangling_resolves_none(_isolated_config):
+    set_active_user_profile("Ghost")
+    scope = _FakeScopeService(payload=[{"name": "Sam"}])
+    import tldw_chatbook.Character_Chat.active_user_profile as mod
+    assert await mod.resolve_active_user_profile_name_async(scope, mode="server") is None
+
+
+@pytest.mark.asyncio
+async def test_async_resolver_server_error_resolves_none(_isolated_config):
+    set_active_user_profile("Sam")
+    scope = _FakeScopeService(exc=RuntimeError("connection refused"))
+    import tldw_chatbook.Character_Chat.active_user_profile as mod
+    assert await mod.resolve_active_user_profile_name_async(scope, mode="server") is None
+
+
+@pytest.mark.asyncio
+async def test_async_resolver_server_without_scope_service_resolves_none(_isolated_config):
+    set_active_user_profile("Sam")
+    import tldw_chatbook.Character_Chat.active_user_profile as mod
+    assert await mod.resolve_active_user_profile_name_async(None, mode="server") is None
+
+
+@pytest.mark.asyncio
+async def test_async_resolver_local_and_unknown_modes_delegate_to_sync(_isolated_config):
+    set_active_user_profile("Sam")
+    local = _FakeService([{"name": "Sam"}])
+    scope = _FakeScopeService(payload=[{"name": "SERVER-ONLY"}])
+    import tldw_chatbook.Character_Chat.active_user_profile as mod
+    for mode in ("local", None, "", "LOCAL", "garbage"):
+        assert await mod.resolve_active_user_profile_name_async(
+            scope, mode=mode, local_service=local
+        ) == "Sam"
+    assert scope.calls == []  # scope service never consulted off server mode
+
+
+@pytest.mark.asyncio
+async def test_async_resolver_no_pointer_short_circuits(_isolated_config):
+    scope = _FakeScopeService(payload=[{"name": "Sam"}])
+    import tldw_chatbook.Character_Chat.active_user_profile as mod
+    assert await mod.resolve_active_user_profile_name_async(scope, mode="server") is None
+    assert scope.calls == []  # byte-compat: no backend call without a pointer
+
+
+def test_resolve_runtime_backend_mode_guards():
+    import tldw_chatbook.Character_Chat.active_user_profile as mod
+    class _App:
+        def get_authoritative_runtime_source(self):
+            return "SERVER"
+    assert mod.resolve_runtime_backend_mode(_App()) == "server"
+    class _Raises:
+        def get_authoritative_runtime_source(self):
+            raise RuntimeError("boom")
+    assert mod.resolve_runtime_backend_mode(_Raises()) == "local"
+    assert mod.resolve_runtime_backend_mode(object()) == "local"
+    assert mod.resolve_runtime_backend_mode(None) == "local"

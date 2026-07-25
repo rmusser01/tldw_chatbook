@@ -31,6 +31,10 @@ def create_comprehensive_app_mock():
     # Add thread lock for chat state management
     app._chat_state_lock = MagicMock()
 
+    # Sync accessor read by resolve_runtime_backend_mode(); the blanket
+    # AsyncMock would hand back an unawaited coroutine (RuntimeWarning noise).
+    app.get_authoritative_runtime_source = MagicMock(return_value="local")
+
     # Mock services and DBs
     app.chachanotes_db = MagicMock()
     app.notes_service = MagicMock()
@@ -120,9 +124,8 @@ def setup_mock_widgets(app):
             TextArea, text="User message", sync_methods=["clear"]
         ),
         "#chat-log": mock_chat_log,
-        "#chat-conversation-title-input": create_widget_mock(Input, value=""),
-        "#chat-conversation-keywords-input": create_widget_mock(TextArea, text=""),
-        "#chat-conversation-uuid-display": create_widget_mock(Static),
+        "#chat-chat-title": create_widget_mock(Input, value=""),
+        "#chat-chat-id": create_widget_mock(Input, value=""),
         # Chat settings
         "#chat-api-provider": create_widget_mock(Select, value="OpenAI"),
         "#chat-api-model": create_widget_mock(Select, value="gpt-4"),
@@ -150,6 +153,11 @@ def setup_mock_widgets(app):
         "#chat-character-search-results-list": create_widget_mock(
             ListView, async_methods=["clear", "append"]
         ),
+        # DEAD-ID: not in live tree; kept for legacy-handler test -- see
+        # follow-up task (task-504 blast-radius: handle_chat_load_character_button_pressed
+        # in chat_events.py still queries these six #chat-character-*-edit
+        # ids and test_handle_chat_load_character_with_greeting depends on
+        # them; that handler is out of scope for task-504's repair).
         "#chat-character-name-edit": create_widget_mock(Input),
         "#chat-character-description-edit": create_widget_mock(TextArea),
         "#chat-character-personality-edit": create_widget_mock(TextArea),
@@ -184,8 +192,6 @@ def setup_mock_widgets(app):
         # RAG checkboxes
         "#chat-rag-enabled-checkbox": create_widget_mock(Checkbox, value=False),
         "#chat-rag-search-results-checkbox": create_widget_mock(Checkbox, value=False),
-        # Sidebars
-        "#chat-right-sidebar": MagicMock(),
         # LLM Management
         "#llm-provider-select": create_widget_mock(Select, value="ollama"),
         "#llm-server-status": create_widget_mock(Static),
@@ -260,12 +266,6 @@ def setup_mock_widgets(app):
         )
     )
     app.screen.query = MagicMock(side_effect=lambda selector: app.query(selector))
-
-    # Setup sidebar query_one behavior
-    if "#chat-right-sidebar" in widgets:
-        widgets["#chat-right-sidebar"].query_one = MagicMock(
-            side_effect=lambda sel, _type=None: widgets.get(sel)
-        )
 
     # Add query method that returns multiple widgets
     def query_side_effect(selector):

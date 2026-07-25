@@ -69,7 +69,8 @@ from tldw_chatbook.Utils.Emoji_Handling import (
 )
 from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
 from tldw_chatbook.Character_Chat.active_user_profile import (
-    resolve_active_user_profile_name,
+    resolve_active_user_profile_name_async,
+    resolve_runtime_backend_mode,
 )
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import load_character_and_image
 from tldw_chatbook.DB.ChaChaNotes_DB import (
@@ -4162,13 +4163,14 @@ async def display_conversation_in_chat_tab_ui(app: "TldwCli", conversation_id: s
         app.notify(f"Error: Could not load chat {conversation_id}.", severity="error")
         # Update UI to reflect error state
         try:
-            app.query_one(
-                "#chat-conversation-title-input", Input
-            ).value = "Error: Not Found"
-            app.query_one("#chat-conversation-keywords-input", TextArea).text = ""
-            app.query_one(
-                "#chat-conversation-uuid-display", Input
-            ).value = conversation_id
+            try:
+                app.query_one("#chat-chat-title", Input).value = "Error: Not Found"
+                app.query_one("#chat-chat-id", Input).value = conversation_id
+            except QueryError as qe_sidebar_err:
+                loguru_logger.warning(
+                    f"Sidebar chat-details fields unavailable while showing not-found "
+                    f"state for {conversation_id}: {qe_sidebar_err}"
+                )
             _update_console_session_title(app, "Error Loading")
             chat_log_err = app.query_one("#chat-log", VerticalScroll)
             await chat_log_err.remove_children()
@@ -4194,16 +4196,29 @@ async def display_conversation_in_chat_tab_ui(app: "TldwCli", conversation_id: s
     app.current_chat_conversation_id = conversation_id
     app.current_chat_is_ephemeral = False
 
+    def _safe_set_system_prompt(text: str) -> None:
+        """Scoped guard: a missing #chat-system-prompt must never abort the load."""
+        try:
+            app.query_one("#chat-system-prompt", TextArea).text = text
+        except QueryError as qe_sys_prompt:
+            loguru_logger.warning(
+                f"#chat-system-prompt unavailable while loading {conversation_id}: {qe_sys_prompt}"
+            )
+
     try:
         character_id_from_conv = conv_metadata.get("character_id")
         loaded_char_data_for_ui_fields: Optional[Dict[str, Any]] = None
-        # task-442: {{user}} renders the active user profile's name; with no
+        # task-442/task-551: {{user}} renders the active user profile's name,
+        # resolved against the app-authoritative runtime backend (local
+        # persona service, or the scope service's server profiles); with no
         # active profile the pre-existing USERS_NAME fallback is preserved
         # byte-exact. The same resolved name threads into
         # load_character_and_image below, so card fields and message display
         # substitute consistently.
-        current_user_name = resolve_active_user_profile_name(
-            getattr(app, "local_character_persona_service", None)
+        current_user_name = await resolve_active_user_profile_name_async(
+            getattr(app, "character_persona_scope_service", None),
+            mode=resolve_runtime_backend_mode(app),
+            local_service=getattr(app, "local_character_persona_service", None),
         ) or app.app_config.get("USERS_NAME", "User")
 
         if (
@@ -4222,77 +4237,42 @@ async def display_conversation_in_chat_tab_ui(app: "TldwCli", conversation_id: s
                 loguru_logger.info(
                     f"Loaded char data for '{char_data_for_ui.get('name', 'Unknown')}' into app.current_chat_active_character_data."
                 )
-                app.query_one(
-                    "#chat-system-prompt", TextArea
-                ).text = char_data_for_ui.get("system_prompt", "")
+                _safe_set_system_prompt(char_data_for_ui.get("system_prompt", ""))
             else:
                 app.current_chat_active_character_data = None
                 loguru_logger.warning(
                     f"Could not load char data for char_id: {character_id_from_conv}. Active char set to None."
                 )
-                app.query_one(
-                    "#chat-system-prompt", TextArea
-                ).text = app.app_config.get("chat_defaults", {}).get(
-                    "system_prompt", "You are a helpful AI assistant."
+                _safe_set_system_prompt(
+                    app.app_config.get("chat_defaults", {}).get(
+                        "system_prompt", "You are a helpful AI assistant."
+                    )
                 )
         else:
             app.current_chat_active_character_data = None
             loguru_logger.debug(
                 f"Conversation {conversation_id} uses default/no character. Active char set to None."
             )
-            app.query_one("#chat-system-prompt", TextArea).text = app.app_config.get(
-                "chat_defaults", {}
-            ).get("system_prompt", "You are a helpful AI assistant.")
+            _safe_set_system_prompt(
+                app.app_config.get("chat_defaults", {}).get(
+                    "system_prompt", "You are a helpful AI assistant."
+                )
+            )
 
-        right_sidebar_chat_tab = app.query_one("#chat-right-sidebar")
-        if loaded_char_data_for_ui_fields:
-            right_sidebar_chat_tab.query_one(
-                "#chat-character-name-edit", Input
-            ).value = loaded_char_data_for_ui_fields.get("name") or ""
-            right_sidebar_chat_tab.query_one(
-                "#chat-character-description-edit", TextArea
-            ).text = loaded_char_data_for_ui_fields.get("description") or ""
-            right_sidebar_chat_tab.query_one(
-                "#chat-character-personality-edit", TextArea
-            ).text = loaded_char_data_for_ui_fields.get("personality") or ""
-            right_sidebar_chat_tab.query_one(
-                "#chat-character-scenario-edit", TextArea
-            ).text = loaded_char_data_for_ui_fields.get("scenario") or ""
-            right_sidebar_chat_tab.query_one(
-                "#chat-character-system-prompt-edit", TextArea
-            ).text = loaded_char_data_for_ui_fields.get("system_prompt") or ""
-            right_sidebar_chat_tab.query_one(
-                "#chat-character-first-message-edit", TextArea
-            ).text = loaded_char_data_for_ui_fields.get("first_message") or ""
-        else:
-            right_sidebar_chat_tab.query_one(
-                "#chat-character-name-edit", Input
-            ).value = ""
-            right_sidebar_chat_tab.query_one(
-                "#chat-character-description-edit", TextArea
-            ).text = ""
-            right_sidebar_chat_tab.query_one(
-                "#chat-character-personality-edit", TextArea
-            ).text = ""
-            right_sidebar_chat_tab.query_one(
-                "#chat-character-scenario-edit", TextArea
-            ).text = ""
-            right_sidebar_chat_tab.query_one(
-                "#chat-character-system-prompt-edit", TextArea
-            ).text = ""
-            right_sidebar_chat_tab.query_one(
-                "#chat-character-first-message-edit", TextArea
-            ).text = ""
-
-        app.query_one(
-            "#chat-conversation-title-input", Input
-        ).value = conv_metadata.get("title", "")
-        app.query_one("#chat-conversation-uuid-display", Input).value = conversation_id
-
-        keywords_input_disp = app.query_one(
-            "#chat-conversation-keywords-input", TextArea
-        )
-        keywords_input_disp.text = conv_metadata.get("keywords_display", "")
+        # task-504: the legacy #chat-right-sidebar + #chat-character-*-edit
+        # writes here queried ids that have not existed in the live compose
+        # tree since ChatWindowEnhanced replaced the legacy ChatWindow (no
+        # live equivalents exist -- removed, not relocated). Sidebar-detail
+        # writes are scoped so a missing field never aborts the message log.
+        try:
+            app.query_one("#chat-chat-title", Input).value = conv_metadata.get(
+                "title", ""
+            )
+            app.query_one("#chat-chat-id", Input).value = conversation_id
+        except QueryError as qe_sidebar:
+            loguru_logger.warning(
+                f"Sidebar chat-details fields unavailable while loading {conversation_id}: {qe_sidebar}"
+            )
 
         _update_console_session_title(
             app, conv_metadata.get("title", "Untitled Conversation")
@@ -4413,14 +4393,15 @@ async def display_conversation_in_chat_tab_ui(app: "TldwCli", conversation_id: s
         except Exception as e:
             loguru_logger.debug(f"Could not update token counter: {e}")
 
+        loguru_logger.info(
+            f"Displayed conversation '{conv_metadata.get('title', 'Untitled')}' (ID: {conversation_id}) in chat tab."
+        )
+
     except QueryError as qe_disp_main:
         loguru_logger.error(
             f"UI component missing during display_conversation for {conversation_id}: {qe_disp_main}"
         )
         app.notify("Error updating UI for loaded chat.", severity="error")
-    loguru_logger.info(
-        f"Displayed conversation '{conv_metadata.get('title', 'Untitled')}' (ID: {conversation_id}) in chat tab."
-    )
 
 
 async def load_branched_conversation_history_ui(
@@ -4889,53 +4870,16 @@ async def handle_chat_clear_active_character_button_pressed(
             "Could not find #chat-system-prompt to reset on clear active character."
         )
 
-    try:
-        # Get a reference to the chat tab's right sidebar
-        # This sidebar has the ID "chat-right-sidebar"
-        right_sidebar = app.query_one("#chat-right-sidebar")
-
-        # Now query within the right_sidebar for the specific character editing fields
-        right_sidebar.query_one("#chat-character-name-edit", Input).value = ""
-        right_sidebar.query_one("#chat-character-description-edit", TextArea).text = ""
-        right_sidebar.query_one("#chat-character-personality-edit", TextArea).text = ""
-        right_sidebar.query_one("#chat-character-scenario-edit", TextArea).text = ""
-        right_sidebar.query_one(
-            "#chat-character-system-prompt-edit", TextArea
-        ).text = ""
-        right_sidebar.query_one(
-            "#chat-character-first-message-edit", TextArea
-        ).text = ""
-
-        # Optional: Clear the character search input and list within the right sidebar
-        # search_input_char = right_sidebar.query_one("#chat-character-search-input", Input)
-        # search_input_char.value = ""
-        # results_list_char = right_sidebar.query_one("#chat-character-search-results-list", ListView)
-        # await results_list_char.clear()
-        # If you clear the list, you might want to repopulate it with the default characters:
-        # await _populate_chat_character_search_list(app) # Assuming _populate_chat_character_search_list is defined in this file or imported
-
-        app.notify(
-            "Active character cleared. Chat will use default settings.",
-            severity="information",
-        )
-        loguru_logger.debug(
-            "Cleared active character data and UI fields from within #chat-right-sidebar."
-        )
-
-    except QueryError as e:
-        loguru_logger.opt(exception=True).error(
-            f"UI component not found when clearing character fields within #chat-right-sidebar. "
-            f"Widget ID/Selector: {getattr(e, 'widget_id', getattr(e, 'selector', 'N/A'))}"
-        )
-        app.notify(
-            "Error clearing character fields (UI component not found).",
-            severity="error",
-        )
-    except Exception as e_unexp:
-        loguru_logger.opt(exception=True).error(
-            f"Unexpected error clearing active character: {e_unexp}"
-        )
-        app.notify("Error clearing active character.", severity="error")
+    # task-504: the #chat-right-sidebar container and its six
+    # #chat-character-*-edit fields have not existed in the live compose
+    # tree since ChatWindowEnhanced replaced the legacy ChatWindow (no live
+    # equivalents exist -- removed, not relocated). The success notify below
+    # is now unconditional after the system-prompt reset above.
+    app.notify(
+        "Active character cleared. Chat will use default settings.",
+        severity="information",
+    )
+    loguru_logger.debug("Cleared active character data on clear active character.")
 
 
 async def handle_chat_prompt_search_input_changed(

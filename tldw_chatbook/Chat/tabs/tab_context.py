@@ -39,9 +39,8 @@ class TabContext:
 
     # Widget IDs that remain global (not tab-specific)
     GLOBAL_WIDGETS: Set[str] = {
-        "#chat-conversation-title-input",
-        "#chat-conversation-keywords-input",
-        "#chat-conversation-uuid-display",
+        "#chat-chat-title",
+        "#chat-chat-id",
         "#chat-system-prompt",
     }
 

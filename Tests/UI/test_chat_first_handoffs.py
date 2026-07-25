@@ -570,6 +570,66 @@ async def test_native_start_chat_greeting_stays_user_without_active_profile(
         assert session.settings.user_profile_label == "General"
 
 
+class _StartChatServerScopeService:
+    """Async ``list_user_profiles`` double matching the T2 scope-service contract."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    async def list_user_profiles(self, **kwargs):
+        return self._payload
+
+
+@pytest.mark.asyncio
+async def test_native_start_chat_greeting_uses_server_backend_profile(monkeypatch):
+    """task-551: with the server backend authoritative, the Start-Chat handoff
+    greeting's {{user}} resolves against the scope service's server profiles
+    ("Sam"), not the (unset) local persona service."""
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    _route_active_profile_pointer(
+        monkeypatch, {("character_defaults", "active_user_profile"): "Sam"}
+    )
+
+    app = _build_test_app()
+    app.chachanotes_db = _StubCharacterCardDB(
+        {
+            "name": "Elara",
+            "first_message": "Greetings, {{user}}.",
+            "system_prompt": "You are Elara, a forest guide.",
+        }
+    )
+    app.local_character_persona_service = None
+    app.character_persona_scope_service = _StartChatServerScopeService(
+        [{"name": "Sam"}]
+    )
+    app.get_authoritative_runtime_source = lambda: "server"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+
+        app.pending_chat_handoff = _character_start_chat_payload(
+            character_id=7, name="Elara", first_message="Greetings, {{user}}."
+        )
+
+        await screen._consume_pending_chat_handoff()
+        await pilot.pause()
+
+        store = screen._ensure_console_chat_store()
+        session = store._sessions[store.active_session_id]
+        msgs = store.messages_for_session(session.id)
+        assert msgs[0].role is ConsoleMessageRole.ASSISTANT
+        assert msgs[0].content == "Greetings, Sam."
+        assert session.settings.user_profile_label == "Sam"
+        assert session.settings.character_label == "Elara"
+
+
 @pytest.mark.asyncio
 async def test_resume_restores_character_identity():
     """Resuming a saved character conversation after an app restart must

@@ -379,7 +379,7 @@ async def display_conversation_in_chat_tab_ui_with_tabs(
 
             # Update session title based on loaded conversation
             try:
-                conv_title_input = original_query_one("#chat-conversation-title-input")
+                conv_title_input = original_query_one("#chat-chat-title")
                 if conv_title_input and conv_title_input.value:
                     session_data.title = conv_title_input.value
                 else:

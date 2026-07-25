@@ -639,6 +639,53 @@ async def test_greeting_renders_active_profile_name_and_labels_user_lines(
         assert "Sam: hi" in pane.transcript_text()
 
 
+class _ServerScopeService:
+    """Async ``list_user_profiles`` double matching the T2 scope-service contract."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    async def list_user_profiles(self, **kwargs):
+        return self._payload
+
+
+async def test_greeting_renders_server_backend_profile_name(
+    _isolated_active_profile_config,
+):
+    """task-551: with the workbench in server mode, {{user}} resolves against
+    the scope service's server profiles ("Sam") - the site (a) async callers
+    (``reset_for_character``/``handle_character_loaded``) thread the resolved
+    name into ``_load_greetings`` instead of the sync local-only fallback."""
+    from tldw_chatbook.Character_Chat.active_user_profile import (
+        set_active_user_profile,
+    )
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        PersonasPreviewController,
+    )
+
+    set_active_user_profile("Sam")
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        screen = _ControllerScreen(app, None)
+        screen.app_instance.character_persona_scope_service = _ServerScopeService(
+            [{"name": "Sam"}]
+        )
+        screen.persona_handler = SimpleNamespace(current_mode=lambda: "server")
+        screen.workers = SimpleNamespace(cancel_group=lambda *a, **k: None)
+        controller = PersonasPreviewController(screen)
+
+        await controller.reset_for_character(
+            character_id="7",
+            character_name="Elara",
+            record={"first_message": "Hello {{user}}, I am {{char}}."},
+        )
+        await pilot.pause()
+
+        assert pane._user_label == "Sam"  # set_speakers(user="Sam") was called
+        assert "Hello Sam, I am Elara." in pane.transcript_text()
+
+
 async def test_greeting_falls_back_to_user_without_active_profile(
     _isolated_active_profile_config,
 ):
