@@ -32,7 +32,10 @@ from ...Character_Chat.Character_Chat_Lib import (
     list_character_tags,
     validate_character_book,
 )
-from ...Character_Chat.expression_generation import compose_expression_prompt
+from ...Character_Chat.expression_generation import (
+    EXPRESSION_PROMPT_STATES,
+    compose_expression_prompt,
+)
 from ...Character_Chat.persona_list_paging import page_user_profiles
 from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
@@ -5157,7 +5160,7 @@ class PersonasScreen(BaseAppScreen):
                 f"Image generation failed for character {character_id!r} "
                 f"state={state!r}: {exc}"
             )
-            self._notify(f"Image generation failed: {exc}", "error")
+            self._notify(f"Image generation failed for {state}: {exc}", "error")
             return False
         finally:
             self._expression_generate_inflight.discard(key)
@@ -5186,7 +5189,8 @@ class PersonasScreen(BaseAppScreen):
         generate - one state's failure does not abort the sweep. A slot
         already claimed by an independent single-slot generate click
         (started just before this sweep) is skipped rather than raced.
-        Reports a single "k/4 generated" summary at the end - counting only
+        Reports a single "k/N generated" summary at the end (N =
+        len(EXPRESSION_PROMPT_STATES)) - counting only
         the slots that actually completed before any session-identity
         mismatch stopped the sweep (see below).
 
@@ -5207,7 +5211,7 @@ class PersonasScreen(BaseAppScreen):
         style_template = getattr(self, "_expression_generate_style", None)
         succeeded = 0
         try:
-            for state in ("avatar", "thinking", "speaking", "error"):
+            for state in EXPRESSION_PROMPT_STATES:
                 if not self._character_editor_is_active():
                     break
                 try:
@@ -5224,7 +5228,9 @@ class PersonasScreen(BaseAppScreen):
                     succeeded += 1
         finally:
             self._expression_generate_inflight.discard((character_id, "all"))
-        self._notify(f"{succeeded}/4 generated.", "information")
+        self._notify(
+            f"{succeeded}/{len(EXPRESSION_PROMPT_STATES)} generated.", "information"
+        )
 
     async def _expression_style_pick_dialog_worker(self) -> None:
         """Show the style picker; store the choice and refresh the readout.
