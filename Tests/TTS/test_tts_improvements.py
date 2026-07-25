@@ -293,6 +293,47 @@ class TestTTSEventHandler:
 
         fake_player.stop.assert_not_called()
 
+    # --- fix round 2 (Qodo PR #867): single-slot tracker, no growth -----
+    #
+    # Round 1's `_last_played_audio_files` was a dict keyed by message id,
+    # written on every "play" and only ever popped by a matching "stop" or
+    # cleared at shutdown -- so an auto-played message the user never
+    # explicitly stops (the common Console case: speak, listen, move on)
+    # left a permanent entry. `SimpleAudioPlayer` itself is a single-slot
+    # global singleton (one clip "current" system-wide at a time; every
+    # `play()` stops whatever was previously loaded first), so tracking
+    # more than one pending entry was never meaningful. Replaced with a
+    # single `(message_id, path)` slot, overwritten on every play.
+
+    @pytest.mark.asyncio
+    async def test_play_path_tracks_only_a_single_slot_no_growth(
+        self, handler, tmp_path, monkeypatch
+    ):
+        """Playing N different messages in a row (none of them ever
+        explicitly stopped, mirroring Console's fire-and-auto-play flow)
+        must never accumulate more than one tracked "last played" entry."""
+        fake_player = MagicMock()
+        fake_player.play.return_value = True
+        monkeypatch.setattr(
+            "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
+        )
+
+        last_audio = None
+        for index in range(5):
+            audio = tmp_path / f"clip-{index}.mp3"
+            audio.write_bytes(b"x")
+            handler._audio_files[f"msg-{index}"] = audio
+            fake_player.get_current_file.return_value = audio
+            await handler.handle_tts_playback(
+                TTSPlaybackEvent(action="play", message_id=f"msg-{index}")
+            )
+            last_audio = audio
+
+        # No per-message dict at all -- a single slot holding at most one
+        # (message_id, path) pair, always the most recently played one.
+        assert not hasattr(handler, "_last_played_audio_files")
+        assert handler._last_played == ("msg-4", last_audio)
+
 
 class TestAudioPlayer:
     """Test audio player improvements"""
