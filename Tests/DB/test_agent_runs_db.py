@@ -300,3 +300,58 @@ def test_reopening_same_file_twice_is_idempotent(tmp_path):
     )
     assert second.get_run(run_id)["assistant_message_id"] == "b"
     assert len(second.list_runs("c")) == 2
+
+
+# --- TASK-327 Task 2 (AC#2): a hard crash between create_run's 'running'
+# insert and the service's finalizing set_status leaves a row stuck
+# 'running' forever. On DB open (file-backed only, once per file per
+# process) such rows are swept to 'error'. ---
+
+
+def test_orphaned_running_runs_reconciled_on_open(tmp_path):
+    db_path = tmp_path / "agent_runs.db"
+    db1 = AgentRunsDB(db_path)
+    r_run1 = db1.create_run(conversation_id="c1", agent_kind="primary")
+    r_run2 = db1.create_run(conversation_id="c2", agent_kind="primary")
+    r_done = db1.create_run(conversation_id="c3", agent_kind="primary")
+    db1.set_status(r_done, "done", result="the answer")
+
+    # Simulate a fresh process opening the same file (clear the once-guard).
+    AgentRunsDB._swept_paths.clear()
+    db2 = AgentRunsDB(db_path)
+
+    run1 = db2.get_run(r_run1)
+    run2 = db2.get_run(r_run2)
+    done = db2.get_run(r_done)
+    assert run1["status"] == "error"
+    assert run1["result"] == "Interrupted by app restart"
+    assert run2["status"] == "error"
+    assert done["status"] == "done"  # terminal row untouched
+    assert done["result"] == "the answer"
+
+
+def test_reconcile_preserves_existing_result(tmp_path):
+    db_path = tmp_path / "agent_runs.db"
+    db1 = AgentRunsDB(db_path)
+    rid = db1.create_run(conversation_id="c", agent_kind="primary")
+    db1.set_status(rid, "running", result="partial output")  # running WITH a result
+    AgentRunsDB._swept_paths.clear()
+    db2 = AgentRunsDB(db_path)
+    row = db2.get_run(rid)
+    assert row["status"] == "error"
+    assert row["result"] == "partial output"  # COALESCE keeps it
+
+
+def test_reconcile_idempotent_same_process(tmp_path):
+    db_path = tmp_path / "agent_runs.db"
+    db1 = AgentRunsDB(db_path)
+    db1.create_run(conversation_id="c", agent_kind="primary")
+    # second open in the SAME process (guard already set by db1) is a no-op
+    assert AgentRunsDB(db_path).reconcile_orphaned_runs() == 0
+
+
+def test_reconcile_skips_memory_db():
+    # :memory: must not error and must not register a swept path
+    AgentRunsDB._swept_paths.discard(":memory:")
+    AgentRunsDB(":memory:")  # must not raise
+    assert ":memory:" not in AgentRunsDB._swept_paths

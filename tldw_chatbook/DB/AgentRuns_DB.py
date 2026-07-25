@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Union
 
+from loguru import logger
+
 from .base_db import BaseDB
 
 
@@ -25,9 +27,21 @@ class AgentRunsDB(BaseDB):
     """Run records for the agent runtime (vertical-slice spec data model)."""
 
     _CURRENT_SCHEMA_VERSION = 2
+    _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         super().__init__(db_path, client_id)
+        # After super().__init__: the agent_runs table exists (base_db ran
+        # _initialize_schema) and self.is_memory_db is set. Reconcile once per
+        # file per process so a crash mid-run doesn't leave a 'running' row
+        # orphaned forever. reconcile_orphaned_runs() itself guards against
+        # memory DBs and against re-sweeping a path already swept this
+        # process, so a later explicit call is also a no-op (see its
+        # docstring).
+        try:
+            self.reconcile_orphaned_runs()
+        except Exception as exc:  # noqa: BLE001 — reconcile is best-effort
+            logger.warning(f"AgentRunsDB reconcile skipped: {exc}")
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = super()._get_connection()
@@ -222,6 +236,42 @@ class AgentRunsDB(BaseDB):
                 "result = COALESCE(?, result), updated_at = ? WHERE id = ?",
                 (status, result, _now_iso(), run_id),
             )
+
+    def reconcile_orphaned_runs(self) -> int:
+        """Mark runs left ``running`` by a crashed process as ``error``.
+
+        A hard crash between run start (``create_run`` -> ``running``) and run
+        end (``set_status`` at finalize) leaves a row stuck ``running``
+        forever. On open, flip all such rows to ``error`` with a default
+        ``result`` (preserving any partial result via COALESCE). Assumes a
+        single app instance per data dir: a second instance sharing the file
+        would flip the first's actively-running run — an accepted edge case,
+        matching Library_Ingest_Jobs' "Interrupted by app restart" behavior.
+
+        No-ops (returns ``0`` without touching the database) for in-memory
+        databases and for any file path already reconciled once in this
+        process (tracked via ``_swept_paths``). The guard lives here, not
+        just in ``__init__``'s auto-call, so a later *explicit* call to this
+        method within the same process is also a no-op -- it must not sweep
+        up a run that legitimately started running after the first sweep
+        (e.g. one created by this same still-live process).
+
+        Returns:
+            The number of rows reconciled (``0`` if skipped by a guard).
+        """
+        if self.is_memory_db or self.db_path_str in self._swept_paths:
+            return 0
+        self._swept_paths.add(self.db_path_str)
+        with self.transaction() as conn:
+            cur = conn.execute(
+                "UPDATE agent_runs "
+                "SET status = 'error', "
+                "    result = COALESCE(result, 'Interrupted by app restart'), "
+                "    updated_at = ? "
+                "WHERE status = 'running'",
+                (_now_iso(),),
+            )
+            return cur.rowcount
 
     def set_run_assistant_message_id(
         self, run_id: str, assistant_message_id: str | None
