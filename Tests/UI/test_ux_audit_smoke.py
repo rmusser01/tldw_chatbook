@@ -8,25 +8,21 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Select, TextArea
+from textual.widgets import Button, Select
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
-    apply_current_handoff_context,
     handle_chat_send_button_pressed,
 )
 from tldw_chatbook.runtime_policy.engine import PolicyEngine
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
 from tldw_chatbook.UI.Chatbooks_Window_Improved import ChatbooksWindowImproved
 from tldw_chatbook.UI.Screens.chatbooks_screen import ChatbooksScreen
 from tldw_chatbook.UI.Views.RAGSearch import search_rag_window
 from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow
-from tldw_chatbook.Widgets.Chat_Widgets.chat_handoff_card import ChatHandoffCard
-from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
 
 
@@ -49,111 +45,6 @@ async def test_chatbooks_screen_keeps_shared_navigation_escape(monkeypatch):
         assert app.screen.query_one(ChatbooksWindowImproved) is not None
         assert app.screen.query_one("#nav-console") is not None
         assert app.screen.query_one("#nav-artifacts") is not None
-
-
-class _HandoffSmokeHost:
-    def __init__(self, payload: ChatHandoffPayload) -> None:
-        self.pending_chat_handoff = payload
-        self.chat_enhanced_mode = False
-        self.notify = Mock()
-        self.current_chat_conversation_id = None
-        self.current_chat_is_ephemeral = True
-        self.current_chat_worker = None
-        self.current_ai_message_widget = None
-        self._current_chat_handoff_payload = None
-        self._current_chat_is_streaming = False
-
-    def set_current_chat_is_streaming(self, value: bool) -> None:
-        self._current_chat_is_streaming = value
-
-    def get_current_chat_is_streaming(self) -> bool:
-        return self._current_chat_is_streaming
-
-
-class HandoffFirstSendSmokeApp(App[None]):
-    def __init__(self, payload: ChatHandoffPayload) -> None:
-        super().__init__()
-        self.host = _HandoffSmokeHost(payload)
-        self.host.call_later = self.call_later
-        self.tab_container: ChatTabContainer | None = None
-
-    def compose(self) -> ComposeResult:
-        self.tab_container = ChatTabContainer(self.host)
-        yield self.tab_container
-
-    def on_mount(self) -> None:
-        self.host.query_one = self.query_one
-        self.host.query = self.query
-
-
-@pytest.mark.asyncio
-async def test_handoff_smoke_replays_chat_staging_and_first_send(monkeypatch):
-    payload = ChatHandoffPayload(
-        source="notes",
-        item_type="note",
-        title="Field Notes",
-        body="Observed confusing empty states.",
-        suggested_prompt="Summarize the usability issue.",
-    )
-    app = HandoffFirstSendSmokeApp(payload)
-    observed: dict[str, str | None] = {}
-
-    async def fake_send_handler(chat_app, event):
-        tab_container = app.tab_container
-        assert tab_container is not None
-        session = tab_container.sessions[tab_container.active_session_id]
-        payload = session.session_data.handoff_payload
-
-        chat_app._current_chat_handoff_payload = payload
-        observed["wrapped_prompt"] = apply_current_handoff_context(
-            chat_app,
-            "Summarize the usability issue.",
-        )
-        observed["active_handoff_title"] = chat_app._current_chat_handoff_payload.title
-
-        payload.status = "sent"
-        chat_app._current_chat_handoff_payload = None
-
-    monkeypatch.setattr(
-        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed",
-        fake_send_handler,
-    )
-
-    async with app.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.05)
-        tab_container = app.tab_container
-        assert tab_container is not None
-
-        screen = ChatScreen(app.host)
-        screen.chat_window = SimpleNamespace(_tab_container=tab_container)
-        await screen._consume_pending_chat_handoff()
-        await pilot.pause(0.05)
-
-        handoff_tab_id = tab_container.active_session_id
-        assert handoff_tab_id is not None
-        session = tab_container.sessions[handoff_tab_id]
-        assert app.host.pending_chat_handoff is None
-        assert session.session_data.conversation_id is None
-        assert session.session_data.is_ephemeral is True
-        assert session.session_data.handoff_payload.title == "Field Notes"
-        assert session.query_one(ChatHandoffCard).payload.status == "staged"
-        assert (
-            session.query_one(f"#chat-input-{handoff_tab_id}", TextArea).text
-            == "Summarize the usability issue."
-        )
-
-        session.query_one(f"#send-stop-chat-{handoff_tab_id}", Button).press()
-        await pilot.pause(0.05)
-
-        assert observed["active_handoff_title"] == "Field Notes"
-        assert "[Staged context]" in observed["wrapped_prompt"]
-        assert "Observed confusing empty states." in observed["wrapped_prompt"]
-        assert (
-            "[User prompt]\nSummarize the usability issue."
-            in observed["wrapped_prompt"]
-        )
-        assert session.session_data.handoff_payload.status == "sent"
-        assert app.host._current_chat_handoff_payload is None
 
 
 @pytest.mark.asyncio

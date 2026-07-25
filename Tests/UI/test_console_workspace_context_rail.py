@@ -1621,14 +1621,19 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
     (2) a667ffbd added the grouped conversation browser, which renders a
     *second*, independently-selected native-session placeholder row
     alongside the workspace-membership row. Driving the marker purely
-    through ``sync_shell_bar_from_session_data`` with a ``ChatSessionData``
-    that is not bound to any real native session (as the old test did)
-    leaves that placeholder stuck showing the active glyph too, producing
-    two "active" rows for one conversation -- not a genuine product
-    regression, since ``sync_shell_bar_from_session_data``'s only
-    production caller (``ChatTabContainer.ActiveSessionChanged``) is not
-    reachable from the Console screen (``ChatTabContainer`` is only
-    mounted by the legacy ``Chat_Window``/``Chat_Window_Enhanced``).
+    through a ``ChatSessionData`` that is not bound to any real native
+    session (as the old test did, via the now-retired
+    ``sync_shell_bar_from_session_data``) leaves that placeholder stuck
+    showing the active glyph too, producing two "active" rows for one
+    conversation -- not a genuine product regression, since
+    ``sync_shell_bar_from_session_data``'s only production caller
+    (``ChatTabContainer.ActiveSessionChanged``) was never reachable from
+    the Console screen (``ChatTabContainer`` was only mounted by the
+    legacy ``Chat_Window``/``Chat_Window_Enhanced``, both retired by
+    task-577). This test now calls ``_sync_console_workspace_context``
+    directly -- the one live, unconditional line
+    ``sync_shell_bar_from_session_data`` used to perform before its own
+    (dead) shell-bar branching.
 
     The real, reachable way Console marks a conversation active is
     ``ConsoleChatStore.restore_persisted_session`` (see
@@ -1670,7 +1675,7 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
             active_leaf_persisted_id=None,
         )
 
-        console.sync_shell_bar_from_session_data(
+        console._sync_console_workspace_context(
             ChatSessionData(tab_id="tab-1", conversation_id="conv-1")
         )
         await pilot.pause()

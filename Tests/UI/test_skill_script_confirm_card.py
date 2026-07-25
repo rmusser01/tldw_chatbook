@@ -386,7 +386,6 @@ def mock_chat_host():
 
 def test_set_console_pending_skill_script_preserves_other_resume_fields(mock_chat_host):
     screen = ChatScreen(mock_chat_host)
-    screen.chat_window = Mock()
     screen.chat_state.task_resume_state = TaskResumeState(
         summary="Keep me", last_step="Also keep"
     )
@@ -398,7 +397,6 @@ def test_set_console_pending_skill_script_preserves_other_resume_fields(mock_cha
     assert state.summary == "Keep me"
     assert state.last_step == "Also keep"
     assert state.pending_skill_script == payload
-    screen.chat_window.sync_task_resume_state.assert_called_once_with(state)
 
     screen._set_console_pending_skill_script(None)
     assert screen.chat_state.task_resume_state.pending_skill_script is None

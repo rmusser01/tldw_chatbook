@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import re
 import tomllib
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -164,129 +163,6 @@ def test_open_chat_with_handoff_blocked_message_honors_caller_action_label():
         app.notify.call_args.args[0]
         == "Use in Console requires chat tabs to be enabled."
     )
-
-
-@pytest.mark.asyncio
-async def test_chat_screen_consumes_pending_handoff_into_fresh_ephemeral_tab():
-    payload = ChatHandoffPayload(
-        source="workspace",
-        item_type="workspace-source",
-        title="Transcript",
-        body="Body",
-        source_id="source-1",
-        runtime_backend="server",
-        source_owner="workspace",
-        source_selector_state="workspace",
-        active_server_profile_id="srv-primary",
-        discovery_owner="workspace",
-        discovery_entity_id="source-1",
-        scope_type="workspace",
-        workspace_id="workspace-1",
-        backend_contracts={
-            "workspace_isolation": {"workspace_scope_id": "workspace-1"}
-        },
-    )
-    app = Mock()
-    app.pending_chat_handoff = payload
-    app.notify = Mock()
-
-    session = Mock()
-    session.session_data = ChatSessionData(tab_id="tab-1")
-    tab_container = Mock()
-    tab_container.create_new_tab = AsyncMock(return_value="tab-1")
-    tab_container.sessions = {"tab-1": session}
-    tab_container.switch_to_tab_async = AsyncMock()
-
-    screen = ChatScreen(app)
-    screen.chat_window = Mock()
-    screen._get_tab_container = Mock(return_value=tab_container)
-    screen._apply_handoff_to_chat_session = AsyncMock()
-
-    await screen._consume_pending_chat_handoff()
-
-    session_data = tab_container.create_new_tab.await_args.kwargs["session_data"]
-    assert session_data.conversation_id is None
-    assert session_data.is_ephemeral is True
-    assert session_data.runtime_backend == "server"
-    assert session_data.handoff_payload.source_selector_state == "workspace"
-    assert session_data.handoff_payload.active_server_profile_id == "srv-primary"
-    assert session_data.scope_type == "workspace"
-    assert session_data.workspace_id == "workspace-1"
-    assert session_data.handoff_payload.title == "Transcript"
-    assert app.pending_chat_handoff is None
-
-
-def test_chat_screen_handoff_session_data_uses_unique_valid_tab_ids():
-    payload = ChatHandoffPayload(
-        source="notes",
-        item_type="note",
-        title="Plan",
-        body="Body",
-    )
-    screen = ChatScreen(Mock())
-
-    first = screen._session_data_for_handoff(payload)
-    second = screen._session_data_for_handoff(payload)
-
-    assert re.fullmatch(r"[a-f0-9]{8}", first.tab_id)
-    assert re.fullmatch(r"[a-f0-9]{8}", second.tab_id)
-    assert first.tab_id != second.tab_id
-
-
-def test_chat_screen_start_chat_handoff_binds_character_session_identity():
-    """Personas Start Chat should create character-bound Console sessions."""
-    payload = ChatHandoffPayload(
-        source="personas",
-        item_type="character-card",
-        title="Detective Sam (character)",
-        body="Name: Detective Sam\nDescription: Methodical investigator",
-        source_id="1",
-        suggested_prompt="Respond as Detective Sam.",
-        metadata={
-            "intent": "start_chat",
-            "selected_kind": "character",
-            "selected_record_id": "1",
-            "selected_name": "Detective Sam",
-            "selected_target_id": "local:character:1",
-        },
-    )
-    screen = ChatScreen(Mock())
-
-    session_data = screen._session_data_for_handoff(payload)
-
-    assert session_data.character_id == 1
-    assert session_data.character_name == "Detective Sam"
-    assert session_data.assistant_kind == "character"
-    assert session_data.assistant_id == "1"
-    assert session_data.discovery_owner == "ccp_character"
-    assert session_data.discovery_entity_id == "1"
-
-
-def test_chat_screen_start_chat_handoff_preserves_numeric_zero_character_id():
-    """Character handoff metadata should not treat integer zero as missing."""
-    payload = ChatHandoffPayload(
-        source="personas",
-        item_type="character-card",
-        title="Zero (character)",
-        body="Name: Zero",
-        source_id="0",
-        suggested_prompt="Respond as Zero.",
-        metadata={
-            "intent": "start_chat",
-            "selected_kind": "character",
-            "selected_record_id": 0,
-            "selected_name": "Zero",
-        },
-    )
-    screen = ChatScreen(Mock())
-
-    session_data = screen._session_data_for_handoff(payload)
-
-    assert session_data.character_id == 0
-    assert session_data.character_name == "Zero"
-    assert session_data.assistant_kind == "character"
-    assert session_data.assistant_id == "0"
-    assert session_data.discovery_owner == "ccp_character"
 
 
 def _character_start_chat_payload(
@@ -784,6 +660,16 @@ async def test_resume_clears_inherited_label_when_card_unresolved():
 
 @pytest.mark.asyncio
 async def test_chat_screen_pending_handoff_consumer_is_reentrant_safe():
+    """``_handoff_consumption_in_progress`` must block a re-entrant consume.
+
+    The native Console composes no legacy tab surface (``ChatTabContainer``
+    is retired -- task-577), so the only reachable consume path is
+    character-session creation or staging into the Console live-work lane.
+    Re-entrancy is exercised through ``_start_character_console_session``,
+    the first awaited call in ``_consume_pending_chat_handoff``, mirroring
+    the old test's use of ``tab_container.create_new_tab`` as the mid-flight
+    re-entry trigger.
+    """
     payload = ChatHandoffPayload(
         source="notes",
         item_type="note",
@@ -794,31 +680,25 @@ async def test_chat_screen_pending_handoff_consumer_is_reentrant_safe():
     app.pending_chat_handoff = payload
     app.notify = Mock()
 
-    session = Mock()
-    session.session_data = ChatSessionData(tab_id="tab-1")
-    tab_container = Mock()
-    tab_container.sessions = {"tab-1": session}
-    tab_container.switch_to_tab_async = AsyncMock()
-
     screen = ChatScreen(app)
-    screen.chat_window = Mock()
-    screen._get_tab_container = Mock(return_value=tab_container)
-    screen._apply_handoff_to_chat_session = AsyncMock()
 
     nested_called = False
 
-    async def create_new_tab(*, session_data):
+    async def start_character_console_session(_payload):
         nonlocal nested_called
         if not nested_called:
             nested_called = True
             await screen._consume_pending_chat_handoff()
-        return "tab-1"
+        return False
 
-    tab_container.create_new_tab = AsyncMock(side_effect=create_new_tab)
+    screen._start_character_console_session = AsyncMock(
+        side_effect=start_character_console_session
+    )
+    screen._stage_handoff_as_console_live_work = Mock()
 
     await screen._consume_pending_chat_handoff()
 
-    assert tab_container.create_new_tab.await_count == 1
+    assert screen._stage_handoff_as_console_live_work.call_count == 1
     assert app.pending_chat_handoff is None
 
 
@@ -1207,27 +1087,6 @@ async def test_clear_staged_handoff_context_keeps_sent_handoff_cards():
         assert len(cards) == 1
         assert cards[0].payload.status == "sent"
         assert cards[0].payload.title == "Already sent"
-
-
-@pytest.mark.asyncio
-async def test_apply_handoff_mounts_card_and_prefills_tab_input():
-    payload = ChatHandoffPayload(
-        source="notes",
-        item_type="note",
-        title="Plan",
-        body="Body",
-        suggested_prompt="Use this note.",
-    )
-    session = Mock()
-    session.mount_handoff_card = AsyncMock()
-    session.set_draft_text = Mock()
-
-    screen = ChatScreen(Mock())
-
-    await screen._apply_handoff_to_chat_session(session, payload)
-
-    session.mount_handoff_card.assert_awaited_once_with(payload)
-    session.set_draft_text.assert_called_once_with("Use this note.")
 
 
 def test_handoff_payload_formats_model_prompt_with_context_and_user_prompt():

@@ -171,33 +171,18 @@ class CompactModelBar(Horizontal):
 
     @on(Button.Pressed, "#compact-sidebar-toggle")
     async def handle_sidebar_toggle(self, event: Button.Pressed) -> None:
-        """Toggle the settings sidebar."""
+        """Toggle the settings sidebar.
+
+        ``ChatWindowEnhanced`` is retired, so the only live host wiring this
+        widget always passes ``on_sidebar_toggle_requested`` (the Console
+        control bar routes it to ``ChatScreen._toggle_console_chat_sidebar``);
+        the callback is the sole toggle path now.
+        """
         event.stop()
         if self.on_sidebar_toggle_requested:
             result = self.on_sidebar_toggle_requested()
             if hasattr(result, "__await__"):
                 await result
-            return
-
-        # Find the ChatWindowEnhanced parent and toggle via its handler
-        try:
-            from ..UI.Chat_Window_Enhanced import ChatWindowEnhanced
-
-            chat_window = self.ancestors_with_self
-            for ancestor in chat_window:
-                if isinstance(ancestor, ChatWindowEnhanced):
-                    ancestor._sidebar_collapsed = not ancestor._sidebar_collapsed
-                    ancestor.app_instance.chat_sidebar_collapsed = (
-                        ancestor._sidebar_collapsed
-                    )
-                    try:
-                        sidebar = ancestor.query_one("#chat-left-sidebar")
-                        sidebar.display = not ancestor._sidebar_collapsed
-                    except NoMatches:
-                        pass
-                    break
-        except Exception as e:
-            logger.error(f"Error toggling sidebar from compact bar: {e}")
 
     def sync_from_sidebar(
         self, provider: str = None, model: str = None, temperature: str = None
