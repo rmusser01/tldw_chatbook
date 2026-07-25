@@ -4116,6 +4116,56 @@ RagProfileSwitchConfirmModal {
     background: $ds-surface-panel;
 }
 
+/* Settings > Image Gen (task 4): one row per backend inside the Backends
+   block -- label, status badge, Enabled checkbox, default marker, Test
+   button. height:auto (not the base .settings-input-row's fixed height:1)
+   so the row never clips a wrapped Checkbox/Button. */
+.settings-imagegen-backend-row {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    margin: 0 0 1 0;
+    align: left middle;
+}
+
+.settings-imagegen-backend-row Button {
+    height: 1;
+    min-height: 1;
+    margin: 0 0 0 1;
+}
+
+.settings-imagegen-badge {
+    width: auto;
+    min-width: 16;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+.settings-imagegen-default-marker {
+    width: auto;
+    min-width: 10;
+    color: $ds-status-info;
+    text-style: bold;
+}
+
+.settings-imagegen-hint {
+    width: 100%;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+.settings-imagegen-key-source {
+    color: $ds-status-warning;
+}
+
+/* SwarmUI's swarm_token is optional for local installs -- its "missing"
+   source line must not read as an error like the four remote API keys. */
+.settings-imagegen-key-source-neutral {
+    color: $ds-text-muted;
+}
+
 #library-source-browser {
     width: $ds-library-source-browser-width;
     min-width: $ds-library-source-browser-width;

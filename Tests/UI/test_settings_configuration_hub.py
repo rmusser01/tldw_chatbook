@@ -150,14 +150,14 @@ def test_internal_prompts_appears_in_settings_sidebar_expert_group():
 def test_settings_category_summaries_cover_every_category_id_exactly_once():
     """Guards the total sidebar category count.
 
-    Adding Internal Prompts brought the total from 19 to 20 categories. This
-    pins the literal count so the next addition must touch this assertion
-    deliberately, and cross-checks that summaries neither miss nor duplicate
-    an enum member.
+    Adding Internal Prompts brought the total from 19 to 20; adding Image Gen
+    (Settings > Image Gen task 4) brought it to 21. This pins the literal
+    count so the next addition must touch this assertion deliberately, and
+    cross-checks that summaries neither miss nor duplicate an enum member.
     """
     screen = SettingsScreen(_build_test_app())
     summaries = screen._category_summaries()
-    assert len(summaries) == len(list(SettingsCategoryId)) == 20
+    assert len(summaries) == len(list(SettingsCategoryId)) == 21
     assert {s.category for s in summaries} == set(SettingsCategoryId)
 
 

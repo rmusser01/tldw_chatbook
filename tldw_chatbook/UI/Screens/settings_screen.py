@@ -118,6 +118,7 @@ from .settings_config_models import (
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor
 from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel
+from ...Widgets.settings_image_gen_panel import ImageGenSettingsPanel
 from ...Internal_Prompts import authoring as internal_prompts_authoring
 from .settings_appearance_defaults import (
     SettingsAppearanceDefaults,
@@ -959,6 +960,22 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         (
             "Boundary",
             "edits apply to internal tooling prompts only; no shared Settings draft state",
+        ),
+    ),
+    SettingsCategoryId.IMAGE_GENERATION: (
+        (
+            "Affected config",
+            "[image_generation] backend enable/default, per-backend fields, and "
+            "generation defaults",
+        ),
+        (
+            "Recovery",
+            "Console's /generate-image and the command-palette demo keep working "
+            "off config.toml regardless of this page",
+        ),
+        (
+            "Boundary",
+            "read-only this task; Save/Revert/Test land in a follow-up task",
         ),
     ),
 }
@@ -1834,6 +1851,13 @@ class SettingsScreen(BaseAppScreen):
                 "Read-only",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.IMAGE_GENERATION,
+                "Image Gen",
+                "Image generation backend defaults for SwarmUI, OpenRouter, and "
+                "other backend models.",
+                "Read-only",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.DIAGNOSTICS,
                 "Diagnostics",
                 "Config validation, logs, and troubleshooting signals.",
@@ -1926,6 +1950,7 @@ class SettingsScreen(BaseAppScreen):
                     SettingsCategoryId.WORKFLOWS,
                     SettingsCategoryId.MCP_DEFAULTS,
                     SettingsCategoryId.ACP_DEFAULTS,
+                    SettingsCategoryId.IMAGE_GENERATION,
                 ),
             ),
         )
@@ -2184,6 +2209,36 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 recovery_copy=(
                     "Reset a prompt from its editor to restore the packaged default text."
+                ),
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.IMAGE_GENERATION,
+                owns_config_sections=(
+                    "image_generation.default_backend",
+                    "image_generation.enabled_backends",
+                    "image_generation.<backend>.*",
+                    "image_generation.default_batch",
+                    "image_generation.max_variants_per_message",
+                    "image_generation.context_llm_enabled",
+                    "image_generation.context_llm_turns",
+                    "image_generation.context_llm_timeout_seconds",
+                ),
+                reads_runtime_state_from=(
+                    "Image_Generation.config effective backend config",
+                    "Media_Creation generation templates",
+                ),
+                writes_allowed=False,
+                runtime_owner="Settings Image Gen panel",
+                boundary_copy=(
+                    "Settings will own image generation backend and generation-default "
+                    "config; Console's /generate-image reads it at call time."
+                ),
+                recovery_copy=(
+                    "Edit image_generation values in Advanced Config until Save/Revert land."
+                ),
+                read_only_reason=(
+                    "Save/Revert/Test are wired in a follow-up task; this page is "
+                    "read-only for now."
                 ),
             ),
             *self._domain_category_ownership_records(),
@@ -2674,6 +2729,8 @@ class SettingsScreen(BaseAppScreen):
             return "Splash defaults are saved automatically."
         if category == SettingsCategoryId.INTERNAL_PROMPTS:
             return "Use each prompt's Save / Reset buttons in the editor to manage overrides."
+        if category == SettingsCategoryId.IMAGE_GENERATION:
+            return "Read-only for now; Save/Revert/Test land in a follow-up task."
         if category is SettingsCategoryId.STORAGE:
             if self._category_has_unsaved_changes(category):
                 validation = self._storage_validation_result()
@@ -9425,6 +9482,9 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.INTERNAL_PROMPTS:
             yield Static("Internal Prompts", classes="destination-section settings-column-title")
             yield InternalPromptsPanel(id="settings-internal-prompts-panel")
+        elif category is SettingsCategoryId.IMAGE_GENERATION:
+            yield Static("Image Gen", classes="destination-section settings-column-title")
+            yield ImageGenSettingsPanel(id="settings-imagegen-panel")
         elif category is SettingsCategoryId.STORAGE:
             values = self._storage_setting_values()
             try:
