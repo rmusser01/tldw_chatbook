@@ -2,14 +2,26 @@
 
 from __future__ import annotations
 
+import json
 import math
+import re
 import sys
+from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 
 import pytest
 from loguru import logger as loguru_logger
+from pydantic import ValidationError
 
 from tldw_chatbook.Chat.citation_source_locators import CanonicalSourceKind
+from tldw_chatbook.Chat.citation_trace_builder import (
+    CitationTraceBuilder,
+    LocalRetrievalRunMetadata,
+)
+from tldw_chatbook.Chat.citation_trace_identity import (
+    CitationFingerprintCodec,
+    LocalCitationIdentityContext,
+)
 from tldw_chatbook.Chat.citation_trace_models import (
     EVIDENCE_ENTRIES_PER_PROMPT_MAX,
     RetrievalScoreKind,
@@ -26,6 +38,7 @@ from tldw_chatbook.RAG_Search.local_citation_capture import (
     format_local_evidence_context,
     normalize_local_result,
 )
+from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as cre
 from tldw_chatbook.RAG_Search import pipeline_functions_simple as pfs
 from tldw_chatbook.RAG_Search.pipeline_types import SearchResult
 
@@ -813,3 +826,344 @@ def test_weighted_score_overwrite_removes_prior_semantic_classification():
 
     assert SEMANTIC_SCORE_KIND_KEY not in merged[0].metadata
     assert normalize_local_result(merged[0]).score_kind is RetrievalScoreKind.LEGACY
+
+
+class _CaptureWidget:
+    def __init__(self, value):
+        self.value = value
+
+
+class _Rows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+
+class _ExistingMediaDB:
+    is_memory_db = True
+
+    def __init__(self, *existing_ids: str):
+        self.existing_ids = set(existing_ids)
+
+    def execute_query(self, _query, params):
+        requested = set(json.loads(params[0]))
+        return _Rows(
+            [(source_id,) for source_id in sorted(requested & self.existing_ids)]
+        )
+
+
+class _CaptureRepository:
+    def __init__(self):
+        self.builders = []
+        self.request_ids = []
+        self.generation_ids = []
+
+    def create_local_trace_builder(self, *, request_id, generation_id):
+        self.request_ids.append(request_id)
+        self.generation_ids.append(generation_id)
+        builder = CitationTraceBuilder.local(
+            request_id=request_id,
+            generation_id=generation_id,
+            identity_context=LocalCitationIdentityContext(
+                profile_id="profile-1",
+                local_authority_id="authority-1",
+                fingerprint_key_id="key-1",
+            ),
+            fingerprint_codec=CitationFingerprintCodec(b"k" * 32),
+        )
+        self.builders.append(builder)
+        return builder
+
+
+class _UnavailableCaptureRepository:
+    def create_local_trace_builder(self, *, request_id, generation_id):
+        del request_id, generation_id
+        return None
+
+
+class _CaptureApp:
+    def __init__(self, *, search_mode="plain", repository=None, media_ids=("m1",)):
+        self._widgets = {
+            "#chat-rag-enable-checkbox": _CaptureWidget(True),
+            "#chat-rag-plain-enable-checkbox": _CaptureWidget(search_mode == "plain"),
+            "#chat-rag-search-mode": _CaptureWidget(search_mode),
+            "#chat-rag-search-media-checkbox": _CaptureWidget(True),
+            "#chat-rag-search-conversations-checkbox": _CaptureWidget(False),
+            "#chat-rag-search-notes-checkbox": _CaptureWidget(False),
+            "#chat-rag-keyword-filter": _CaptureWidget(""),
+            "#chat-rag-top-k": _CaptureWidget("5"),
+            "#chat-rag-max-context-length": _CaptureWidget("500"),
+            "#chat-rag-rerank-enable-checkbox": _CaptureWidget(False),
+            "#chat-rag-reranker-model": _CaptureWidget("flashrank"),
+            "#chat-rag-chunk-size": _CaptureWidget("400"),
+            "#chat-rag-chunk-overlap": _CaptureWidget("100"),
+            "#chat-rag-chunk-type": _CaptureWidget("words"),
+            "#chat-rag-include-metadata-checkbox": _CaptureWidget(False),
+        }
+        self.media_db = _ExistingMediaDB(*media_ids)
+        self.notifications = []
+        if repository is not None:
+            self.citation_trace_repository = repository
+
+    def query_one(self, selector):
+        return self._widgets[selector]
+
+    def notify(self, message, severity="information", **_kwargs):
+        self.notifications.append((message, severity))
+
+
+def _ranked_result(
+    *,
+    result_id="m1",
+    title="Title",
+    content="body",
+    metadata=None,
+):
+    return {
+        "source": "media",
+        "id": result_id,
+        "title": title,
+        "content": content,
+        "score": 0.75,
+        "metadata": {} if metadata is None else metadata,
+    }
+
+
+def _patch_pipeline(monkeypatch, results, context):
+    async def _search(*_args, **_kwargs):
+        return results, context
+
+    for function_name in (
+        "perform_plain_rag_search",
+        "perform_full_rag_pipeline",
+        "perform_hybrid_rag_search",
+        "perform_search_with_pipeline",
+    ):
+        monkeypatch.setattr(cre, function_name, _search)
+
+    async def _semantic_service(*_args, **_kwargs):
+        return object(), None
+
+    monkeypatch.setattr(cre, "resolve_semantic_rag_service", _semantic_service)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "search_mode",
+    ["plain", "semantic", "hybrid", "custom-pipeline"],
+)
+async def test_capture_api_records_one_equivalent_run_and_prompt_for_every_mode(
+    monkeypatch, search_mode
+):
+    query = "PRIVATE-QUERY-CAPTURE-SENTINEL"
+    title = "PRIVATE-TITLE-CAPTURE-SENTINEL"
+    content = "PRIVATE-CONTENT-CAPTURE-SENTINEL"
+    expected_context = f"[S1] MEDIA — {title}\n{content}"
+    repository = _CaptureRepository()
+    app = _CaptureApp(search_mode=search_mode, repository=repository)
+    _patch_pipeline(
+        monkeypatch,
+        [_ranked_result(title=title, content=content)],
+        "legacy pipeline bytes",
+    )
+    captured_logs = []
+    sink_id = loguru_logger.add(
+        captured_logs.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        captured = await cre.get_rag_context_capture_for_chat(app, query)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert isinstance(captured, cre.LocalRagContextResult)
+    assert captured.context == expected_context
+    assert captured.citation_builder is repository.builders[0]
+    assert len(captured.citation_builder.evidence_runs) == 1
+    assert len(captured.citation_builder.prompt_evidence_sets) == 1
+    assert len(captured.citation_builder.evidence_run_payloads) == 1
+    assert len(captured.citation_builder.evidence_snapshot_payloads) == 1
+    run_payload = captured.citation_builder.evidence_run_payloads[0]
+    assert run_payload.raw_query is None
+    assert run_payload.query_fingerprint is not None
+    assert run_payload.retrieval_metadata["search_mode"] == search_mode
+    assert [candidate.rank for candidate in run_payload.candidates] == [1]
+    snapshot = captured.citation_builder.evidence_snapshot_payloads[0]
+    assert snapshot.snapshot_text == expected_context
+    assert captured.citation_builder.evidence_runs[0].ended_at is not None
+    assert re.fullmatch(r"request_[0-9a-f]{32}", repository.request_ids[0])
+    assert re.fullmatch(r"generation_[0-9a-f]{32}", repository.generation_ids[0])
+    assert repository.request_ids[0] != repository.generation_ids[0]
+
+    rendered_logs = "".join(str(message) for message in captured_logs)
+    for sentinel in (query, title, content):
+        assert sentinel not in rendered_logs
+
+
+def test_local_rag_context_result_is_frozen():
+    result = cre.LocalRagContextResult(context=None, citation_builder=None)
+
+    with pytest.raises(FrozenInstanceError):
+        result.context = "changed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "availability",
+    ["repository-absent", "writes-disabled", "key-unavailable", "identity-unavailable"],
+)
+async def test_unavailable_canonical_capture_preserves_legacy_pipeline_bytes(
+    monkeypatch, availability
+):
+    repository = (
+        None if availability == "repository-absent" else _UnavailableCaptureRepository()
+    )
+    app = _CaptureApp(repository=repository)
+    raw_context = "LEGACY\x00PIPELINE\nBYTES"
+    _patch_pipeline(monkeypatch, [_ranked_result()], raw_context)
+
+    captured = await cre.get_rag_context_capture_for_chat(app, "query")
+    legacy = await cre.get_rag_context_for_chat(app, "query")
+
+    assert captured == cre.LocalRagContextResult(
+        context=raw_context,
+        citation_builder=None,
+    )
+    assert isinstance(legacy, str)
+    assert legacy == raw_context
+
+
+@pytest.mark.asyncio
+async def test_empty_retrieval_records_only_the_empty_run(monkeypatch):
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository)
+    _patch_pipeline(monkeypatch, [], "")
+
+    captured = await cre.get_rag_context_capture_for_chat(app, "query")
+
+    assert captured.context is None
+    assert captured.citation_builder is repository.builders[0]
+    assert len(captured.citation_builder.evidence_runs) == 1
+    assert captured.citation_builder.evidence_run_payloads[0].candidates == ()
+    assert captured.citation_builder.prompt_evidence_sets == ()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_exception_returns_no_context_or_builder_and_sanitizes_log(
+    monkeypatch,
+):
+    query = "PRIVATE-PIPELINE-QUERY-SENTINEL"
+    failure = "PRIVATE-PIPELINE-FAILURE-SENTINEL"
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository)
+
+    async def _raise(*_args, **_kwargs):
+        raise RuntimeError(failure)
+
+    monkeypatch.setattr(cre, "perform_plain_rag_search", _raise)
+    captured_logs = []
+    sink_id = loguru_logger.add(
+        captured_logs.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        captured = await cre.get_rag_context_capture_for_chat(app, query)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert captured == cre.LocalRagContextResult(
+        context=None,
+        citation_builder=None,
+    )
+    rendered_logs = "".join(str(message) for message in captured_logs)
+    assert query not in rendered_logs
+    assert failure not in rendered_logs
+    assert "reason=pipeline_failure" in rendered_logs
+
+
+@pytest.mark.asyncio
+async def test_malformed_result_is_excluded_before_markers_and_logs_are_sanitized(
+    monkeypatch,
+):
+    sentinel = "PRIVATE-MALFORMED-RESULT-SENTINEL"
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository, media_ids=("m2",))
+    malformed = _ranked_result(
+        result_id="m1",
+        title=f"{sentinel}\ninvalid",
+        content=sentinel,
+    )
+    valid = _ranked_result(result_id="m2", title="Valid", content="safe")
+    _patch_pipeline(monkeypatch, [malformed, valid], sentinel)
+    captured_logs = []
+    sink_id = loguru_logger.add(
+        captured_logs.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        captured = await cre.get_rag_context_capture_for_chat(app, sentinel)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert captured.context == "[S1] MEDIA — Valid\nsafe"
+    assert captured.citation_builder is not None
+    candidates = captured.citation_builder.evidence_run_payloads[0].candidates
+    assert [candidate.rank for candidate in candidates] == [2]
+    assert (
+        captured.citation_builder.prompt_evidence_sets[0].entries[0].marker_ordinal == 1
+    )
+    rendered_logs = "".join(str(message) for message in captured_logs)
+    assert sentinel not in rendered_logs
+    assert "reason=invalid_local_result" in rendered_logs
+
+
+@pytest.mark.asyncio
+async def test_validation_failure_discards_context_and_partial_builder_without_logging(
+    monkeypatch,
+):
+    sentinel = "PRIVATE-VALIDATION-FAILURE-SENTINEL"
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository)
+    _patch_pipeline(monkeypatch, [_ranked_result()], "legacy")
+    with pytest.raises(ValidationError) as exc_info:
+        LocalRetrievalRunMetadata(
+            search_mode=f"{sentinel}/invalid",
+            requested_top_k=1,
+            max_context_characters=100,
+            rerank_enabled=False,
+            source_kinds=(CanonicalSourceKind.MEDIA_DB,),
+            scope_state="unscoped",
+        )
+    validation_error = exc_info.value
+
+    def _reject_prompt(*_args, **_kwargs):
+        raise validation_error
+
+    monkeypatch.setattr(
+        CitationTraceBuilder,
+        "record_prompt_evidence_set",
+        _reject_prompt,
+    )
+    captured_logs = []
+    sink_id = loguru_logger.add(
+        captured_logs.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        captured = await cre.get_rag_context_capture_for_chat(app, "query")
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert captured == cre.LocalRagContextResult(
+        context=None,
+        citation_builder=None,
+    )
+    rendered_logs = "".join(str(message) for message in captured_logs)
+    assert sentinel not in rendered_logs
+    assert "reason=canonical_capture_failure" in rendered_logs

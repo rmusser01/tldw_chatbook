@@ -77,6 +77,9 @@ class MockApp:
             "#chat-rag-plain-enable-checkbox": MockCheckbox(
                 rag_settings.get("enable_plain_rag", True)
             ),
+            "#chat-rag-search-mode": MockSelect(
+                rag_settings.get("search_mode", "plain")
+            ),
             "#chat-rag-search-media-checkbox": MockCheckbox(
                 rag_settings.get("search_media", True)
             ),
@@ -90,6 +93,7 @@ class MockApp:
             "#chat-rag-max-context-length": MockInput(
                 str(rag_settings.get("max_context_length", 10000))
             ),
+            "#chat-rag-keyword-filter": MockInput(""),
             "#chat-rag-rerank-enable-checkbox": MockCheckbox(
                 rag_settings.get("enable_rerank", False)
             ),
@@ -100,6 +104,7 @@ class MockApp:
             "#chat-rag-chunk-overlap": MockInput(
                 str(rag_settings.get("chunk_overlap", 100))
             ),
+            "#chat-rag-chunk-type": MockSelect(rag_settings.get("chunk_type", "words")),
             "#chat-rag-include-metadata-checkbox": MockCheckbox(
                 rag_settings.get("include_metadata", False)
             ),
@@ -413,6 +418,47 @@ async def test_context_formatting():
 
             if augmented_message.endswith(user_message):
                 logger.success("✅ Context properly formatted for message augmentation")
+
+
+@pytest.mark.asyncio
+async def test_capture_unavailable_keeps_ui_pipeline_context_and_legacy_string(
+    monkeypatch,
+):
+    """The UI-facing legacy API remains byte-compatible without a repository."""
+    from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as cre
+
+    app = MockApp(
+        {
+            "enable_plain_rag": True,
+            "search_mode": "plain",
+            "search_media": True,
+            "search_conversations": False,
+            "search_notes": False,
+        }
+    )
+    raw_context = "UI PIPELINE CONTEXT\nunchanged"
+
+    async def _plain_search(*_args, **_kwargs):
+        return [
+            {
+                "source": "media",
+                "id": "not-assembled-without-capture",
+                "title": "Pipeline title",
+                "content": "Pipeline content",
+                "score": 1.0,
+                "metadata": {},
+            }
+        ], raw_context
+
+    monkeypatch.setattr(cre, "perform_plain_rag_search", _plain_search)
+
+    captured = await cre.get_rag_context_capture_for_chat(app, "query")
+    legacy = await cre.get_rag_context_for_chat(app, "query")
+
+    assert captured.context == raw_context
+    assert captured.citation_builder is None
+    assert isinstance(legacy, str)
+    assert legacy == raw_context
 
 
 async def main():

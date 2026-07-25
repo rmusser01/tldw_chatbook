@@ -46,6 +46,11 @@ from tldw_chatbook.Chat.rag_scope import (
     note_id_params,
     write_conversation_scope,
 )
+from tldw_chatbook.Chat.citation_trace_builder import CitationTraceBuilder
+from tldw_chatbook.Chat.citation_trace_identity import (
+    CitationFingerprintCodec,
+    LocalCitationIdentityContext,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
@@ -822,6 +827,7 @@ class _ChatMockApp:
         media_db: Any = None,
         chachanotes_db: Any = None,
         rag_service: Any = None,
+        citation_trace_repository: Any = None,
     ):
         self._widgets = {
             "#chat-rag-enable-checkbox": _MockWidget(True),
@@ -844,6 +850,8 @@ class _ChatMockApp:
         self.chachanotes_db = chachanotes_db
         if rag_service is not None:
             self._rag_service = rag_service
+        if citation_trace_repository is not None:
+            self.citation_trace_repository = citation_trace_repository
         self.notifications: List[tuple] = []
 
     def query_one(self, selector):
@@ -851,6 +859,25 @@ class _ChatMockApp:
 
     def notify(self, message, severity="information", **kwargs):
         self.notifications.append((message, severity))
+
+
+class _BuilderRepository:
+    def __init__(self):
+        self.builders = []
+
+    def create_local_trace_builder(self, *, request_id, generation_id):
+        builder = CitationTraceBuilder.local(
+            request_id=request_id,
+            generation_id=generation_id,
+            identity_context=LocalCitationIdentityContext(
+                profile_id="scope-profile",
+                local_authority_id="scope-authority",
+                fingerprint_key_id="scope-key",
+            ),
+            fingerprint_codec=CitationFingerprintCodec(b"s" * 32),
+        )
+        self.builders.append(builder)
+        return builder
 
 
 class TestChatEntryPointScopedE2E:
@@ -2430,6 +2457,134 @@ class TestFreshPromptBoundaryAuthority:
         assert captured.entries[0].candidate_rank == 3
         assert "Invalid" not in captured.entries[0].snapshot_text
         assert "Unauthorized" not in captured.entries[0].snapshot_text
+
+
+class TestCapturePromptBoundaryFreshAuthority:
+    """Capture rechecks the original request identity after retrieval."""
+
+    @pytest.mark.asyncio
+    async def test_backing_row_deleted_during_retrieval_is_not_submitted(
+        self, media_db, cha_db, monkeypatch
+    ):
+        media_id = _seed_media(media_db, n=1)[0]
+        repository = _BuilderRepository()
+        app = _ChatMockApp(
+            search_mode="plain",
+            media_db=media_db,
+            chachanotes_db=cha_db,
+            citation_trace_repository=repository,
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: None)
+
+        async def _delete_then_return(*_args, **_kwargs):
+            media_db.soft_delete_media(int(media_id))
+            return [
+                {
+                    "source": "media",
+                    "id": media_id,
+                    "title": "Deleted",
+                    "content": "must not reach the prompt",
+                    "score": 1.0,
+                    "metadata": {},
+                }
+            ], "legacy context must not survive canonical capture"
+
+        monkeypatch.setattr(cre, "perform_plain_rag_search", _delete_then_return)
+
+        captured = await cre.get_rag_context_capture_for_chat(app, "query")
+
+        assert captured.context is None
+        assert captured.citation_builder is repository.builders[0]
+        assert len(captured.citation_builder.evidence_runs) == 1
+        assert captured.citation_builder.evidence_run_payloads[0].candidates == ()
+        assert captured.citation_builder.prompt_evidence_sets == ()
+
+    @pytest.mark.asyncio
+    async def test_original_session_fresh_scope_beats_stale_cache_and_later_session(
+        self, media_db, cha_db, tmp_path, monkeypatch
+    ):
+        media_ids = _seed_media(media_db, n=2)
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task4-original")
+        )
+        registry.create_workspace(workspace_id="ws-original", name="Original")
+        registry.create_workspace(workspace_id="ws-later", name="Later")
+        registry.set_workspace_scope(
+            "ws-original",
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),),
+                updated_at="unchanged-stamp",
+            ),
+        )
+        registry.set_workspace_scope(
+            "ws-later",
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),),
+                updated_at="later-stamp",
+            ),
+        )
+        original_session = SimpleNamespace(
+            id="session-original",
+            persisted_conversation_id=None,
+            workspace_id="ws-original",
+        )
+        later_session = SimpleNamespace(
+            id="session-later",
+            persisted_conversation_id=None,
+            workspace_id="ws-later",
+        )
+        active = {"session": original_session}
+        monkeypatch.setattr(
+            cre,
+            "_active_console_session",
+            lambda _app: active["session"],
+        )
+        repository = _BuilderRepository()
+        app = _ChatMockApp(
+            search_mode="plain",
+            media_db=media_db,
+            chachanotes_db=cha_db,
+            citation_trace_repository=repository,
+        )
+        app.workspace_registry_service = registry
+        cached = await cre.resolve_effective_scope_for_chat(app)
+        assert cached.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
+
+        async def _narrow_original_then_switch_session(*_args, scope=None, **_kwargs):
+            assert scope is not None
+            assert scope.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
+            registry.set_workspace_scope(
+                "ws-original",
+                RagScope(
+                    items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),),
+                    updated_at="unchanged-stamp",
+                ),
+            )
+            active["session"] = later_session
+            return [
+                {
+                    "source": "media",
+                    "id": source_id,
+                    "title": title,
+                    "content": f"{title} body",
+                    "score": 1.0,
+                    "metadata": {},
+                }
+                for source_id, title in zip(media_ids, ("Stale", "Current"))
+            ], "legacy context"
+
+        monkeypatch.setattr(
+            cre,
+            "perform_plain_rag_search",
+            _narrow_original_then_switch_session,
+        )
+
+        captured = await cre.get_rag_context_capture_for_chat(app, "query")
+
+        assert captured.context == "[S1] MEDIA — Current\nCurrent body"
+        assert captured.citation_builder is repository.builders[0]
+        candidates = captured.citation_builder.evidence_run_payloads[0].candidates
+        assert [candidate.rank for candidate in candidates] == [2]
 
 
 class TestActiveConsoleSessionRealGlue:
