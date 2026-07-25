@@ -1,26 +1,32 @@
-"""Tests for the Settings > Image Gen defaults data layer (task-2 of the
-Settings > Image Gen plan): FIELD_SCHEMA, build_backend_rows,
-effective_placeholder, ImageGenDraftValues, diff_to_sections, validate_draft,
-and the adapter's delete_values wrapper.
+"""Tests for the Settings > Image Gen defaults data layer: FIELD_SCHEMA,
+build_backend_rows, effective_placeholder, ImageGenDraftValues,
+diff_to_sections, validate_draft, and the adapter's delete_values wrapper
+(task-2), plus the backend probes / "Test" action (task-3).
 """
 
 from __future__ import annotations
 
+import os
 import tomllib
 
+import httpx
 import pytest
 import toml
 
 from tldw_chatbook.Image_Generation.config import _NON_SECRET, _SECRETS
+from tldw_chatbook.UI.Screens import settings_image_gen_defaults as sigd
 from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     BACKEND_IDS,
     BACKEND_LABELS,
     FIELD_SCHEMA,
+    PROBE_TIMEOUT_SECONDS,
     ImageGenDraftValues,
+    ImageGenProbeResult,
     build_backend_rows,
     diff_to_sections,
     effective_placeholder,
+    probe_backend,
     validate_draft,
 )
 
@@ -335,3 +341,257 @@ def test_adapter_delete_values(tmp_path, monkeypatch):
     section = saved["image_generation"]["openrouter"]
     assert "default_model" not in section
     assert section["base_url"] == "http://example"
+
+
+# --- probe_backend (task-3) -------------------------------------------------------
+
+
+def _fake_client_cls(*, response=None, raise_exc=None, calls=None):
+    """A fake httpx.Client following Tests/Image_Generation/test_http_client.py's
+    style: context-manager stub whose `.get()` either raises or returns a
+    canned response, recording every call for assertions."""
+
+    class _FakeResponse:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, headers=None):
+            if calls is not None:
+                calls.append((url, dict(headers or {})))
+            if raise_exc is not None:
+                raise raise_exc
+            return _FakeResponse(response)
+
+    return FakeClient
+
+
+@pytest.fixture(autouse=True)
+def _policy_env(monkeypatch):
+    """Deterministic egress policy for every probe test in this section,
+    mirroring Tests/Image_Generation/test_http_client.py's `_policy_env`:
+    resolve any non-IP-literal hostname to a fixed public IP, and force
+    [web_security] to its enabled/no-extra-allowlist defaults so these
+    tests are not at the mercy of a developer's local config.toml."""
+    from tldw_chatbook.Utils import egress
+
+    monkeypatch.setattr(egress, "_resolve", lambda host: ["93.184.216.34"])
+    monkeypatch.setattr(egress, "get_cli_setting", lambda s, k=None, d=None: d)
+
+
+def test_probe_timeout_constant():
+    assert PROBE_TIMEOUT_SECONDS == 5.0
+
+
+def test_probe_openrouter_reachable_2xx(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=200, calls=calls))
+    result = probe_backend("openrouter", {"base_url": "http://127.0.0.1:9900"}, "sk-real-key")
+    assert result == ImageGenProbeResult(ok=True, badge="Reachable")
+    url, headers = calls[0]
+    assert url == "http://127.0.0.1:9900/models"
+    assert headers == {"Authorization": "Bearer sk-real-key"}
+
+
+def test_probe_connect_error_is_connection_refused(monkeypatch):
+    monkeypatch.setattr(
+        sigd.httpx, "Client", _fake_client_cls(raise_exc=httpx.ConnectError("connect failed"))
+    )
+    result = probe_backend("openrouter", {"base_url": "http://127.0.0.1:9900"}, "sk-real-key")
+    assert result == ImageGenProbeResult(ok=False, badge="Unreachable: connection refused")
+
+
+def test_probe_read_timeout_is_timeout(monkeypatch):
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(raise_exc=httpx.ReadTimeout("slow")))
+    result = probe_backend("together", {"base_url": "http://127.0.0.1:9900"}, "sk-real-key")
+    assert result == ImageGenProbeResult(ok=False, badge="Unreachable: timeout")
+
+
+def test_probe_auth_failed_401_with_key(monkeypatch):
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=401))
+    result = probe_backend("openrouter", {"base_url": "http://127.0.0.1:9900"}, "sk-bad-key")
+    assert result == ImageGenProbeResult(ok=False, badge="Auth failed")
+
+
+def test_probe_auth_failed_403_with_key(monkeypatch):
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=403))
+    result = probe_backend("together", {"base_url": "http://127.0.0.1:9900"}, "sk-bad-key")
+    assert result == ImageGenProbeResult(ok=False, badge="Auth failed")
+
+
+def test_probe_other_http_status_with_key(monkeypatch):
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=500))
+    result = probe_backend("openrouter", {"base_url": "http://127.0.0.1:9900"}, "sk-real-key")
+    assert result == ImageGenProbeResult(ok=False, badge="Unreachable: HTTP 500")
+
+
+def test_probe_no_key_openrouter_reachable_auth_unverified(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=200, calls=calls))
+    result = probe_backend("openrouter", {"base_url": "http://127.0.0.1:9900"}, None)
+    assert result == ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
+    assert calls[0][1] == {}  # no Authorization header sent
+
+
+def test_probe_no_key_any_answer_counts_even_non_2xx(monkeypatch):
+    """Without a secret, status code is not interpreted at all -- any answer
+    means "server responded", per the spec's "answered" language."""
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=503))
+    result = probe_backend("together", {"base_url": "http://127.0.0.1:9900"}, None)
+    assert result == ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
+
+
+def test_probe_swarmui_any_http_answer_is_reachable(monkeypatch):
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=404))
+    result = probe_backend("swarmui", {"base_url": "http://127.0.0.1:7801"}, None)
+    assert result == ImageGenProbeResult(ok=True, badge="Reachable")
+
+
+def test_probe_novita_unauthenticated_reachability_only(monkeypatch):
+    """No cheap authenticated GET was confirmed in novita_image_adapter.py
+    (only async submit/poll routes exist) -- novita probes the same way as
+    modelstudio: unauthenticated reachability only."""
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=200))
+    result = probe_backend("novita", {"base_url": "http://127.0.0.1:9900"}, "some-key")
+    assert result == ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
+
+
+def test_probe_modelstudio_unauthenticated_reachability_only(monkeypatch):
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=200))
+    result = probe_backend("modelstudio", {"base_url": "http://127.0.0.1:9900"}, "some-key")
+    assert result == ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
+
+
+def test_probe_unknown_backend_id_raises():
+    with pytest.raises(ValueError):
+        probe_backend("not-a-real-backend", {}, None)
+
+
+# --- probe_backend: sanitization + egress pins --------------------------------
+
+
+def test_probe_sanitization_never_leaks_exception_text(monkeypatch):
+    """THE sanitization pin: an exception message carrying a fake secret and
+    URL must never reach the badge -- only the closed-set category string."""
+    monkeypatch.setattr(
+        sigd.httpx,
+        "Client",
+        _fake_client_cls(
+            raise_exc=httpx.ConnectError(
+                "secret sk-abcdef123456 in text http://10.0.0.1/leak"
+            )
+        ),
+    )
+    result = probe_backend("openrouter", {"base_url": "http://127.0.0.1:9900"}, "sk-real-key")
+    assert result.badge == "Unreachable: connection refused"
+    assert "sk-abcdef123456" not in result.badge
+    assert "10.0.0.1" not in result.badge
+
+
+def test_probe_egress_allows_private_base_url_via_self_trust(monkeypatch):
+    """A private base_url (e.g. a local SwarmUI instance) is trusted because
+    its own host is threaded in as trusted_origins(url) -- the probe still
+    reaches the transport layer instead of being blocked outright."""
+    calls = []
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=200, calls=calls))
+    result = probe_backend("swarmui", {"base_url": "http://127.0.0.1:7801"}, None)
+    assert result == ImageGenProbeResult(ok=True, badge="Reachable")
+    assert calls  # the fake transport was actually reached
+
+
+def test_probe_egress_allows_public_api_shaped_url(monkeypatch):
+    """A normal public API base_url also passes check_url_or_raise (public
+    IPs are allowed regardless of trusted_origins)."""
+    calls = []
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=200, calls=calls))
+    result = probe_backend(
+        "openrouter", {"base_url": "https://openrouter.ai/api/v1"}, "sk-real-key"
+    )
+    assert result == ImageGenProbeResult(ok=True, badge="Reachable")
+    assert calls[0][0] == "https://openrouter.ai/api/v1/models"
+
+
+def test_probe_egress_blocks_metadata_ip_even_self_trusted(monkeypatch):
+    """The one case check_url_or_raise(url, trusted_origins=origin_set(url))
+    still blocks: cloud metadata endpoints are blocked regardless of trust
+    (Utils/egress.py's hard rule)."""
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=200))
+    result = probe_backend(
+        "swarmui", {"base_url": "http://169.254.169.254/latest/meta-data/"}, None
+    )
+    assert result == ImageGenProbeResult(ok=False, badge="Unreachable: blocked by egress policy")
+
+
+# --- probe_backend: sd.cpp (filesystem-only, no network) -----------------------
+
+
+def test_probe_sd_cpp_binary_and_model_present(tmp_path):
+    binary = tmp_path / "sd-cpp-bin"
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o755)
+    model = tmp_path / "model.gguf"
+    model.write_text("fake model bytes", encoding="utf-8")
+
+    result = probe_backend(
+        "stable_diffusion_cpp",
+        {"binary_path": str(binary), "model_path": str(model)},
+        None,
+    )
+    assert result == ImageGenProbeResult(ok=True, badge="Binary found")
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root satisfies os.access(X_OK) regardless of the mode bits",
+)
+def test_probe_sd_cpp_binary_not_executable(tmp_path):
+    binary = tmp_path / "sd-cpp-bin"
+    binary.write_text("not actually executable", encoding="utf-8")
+    binary.chmod(0o644)
+    model = tmp_path / "model.gguf"
+    model.write_text("fake model bytes", encoding="utf-8")
+
+    result = probe_backend(
+        "stable_diffusion_cpp",
+        {"binary_path": str(binary), "model_path": str(model)},
+        None,
+    )
+    assert result == ImageGenProbeResult(ok=False, badge="Binary missing or not executable")
+
+
+def test_probe_sd_cpp_binary_missing_entirely(tmp_path):
+    result = probe_backend(
+        "stable_diffusion_cpp",
+        {"binary_path": str(tmp_path / "nope"), "model_path": str(tmp_path / "also-nope")},
+        None,
+    )
+    assert result == ImageGenProbeResult(ok=False, badge="Binary missing or not executable")
+
+
+def test_probe_sd_cpp_model_missing(tmp_path):
+    binary = tmp_path / "sd-cpp-bin"
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o755)
+
+    result = probe_backend(
+        "stable_diffusion_cpp",
+        {"binary_path": str(binary), "model_path": str(tmp_path / "missing-model.gguf")},
+        None,
+    )
+    assert result == ImageGenProbeResult(ok=False, badge="Model file missing")
+
+
+def test_probe_sd_cpp_empty_form_values(tmp_path):
+    """Neither field set at all -- must not raise, must report the binary
+    gap first (matches the spec's check order)."""
+    result = probe_backend("stable_diffusion_cpp", {}, None)
+    assert result == ImageGenProbeResult(ok=False, badge="Binary missing or not executable")

@@ -6,14 +6,26 @@ This module owns the pure/testable pieces the screen composes over: the
 per-backend field schema, backend status rows, and the draft -> config-write
 diffing/validation logic. No Textual widgets live here (mirrors the
 ``settings_library_rag_defaults.py`` pattern).
+
+Task 3 adds the backend probe section (``probe_backend`` et al.): a short
+live/filesystem "Test" check per backend, mirroring
+``settings_endpoint_probe.py``'s philosophy for the Settings provider probe.
+Probe outcomes are reduced to a small closed set of badge strings and never
+include endpoint URLs, exception text, headers, or secrets -- callers may
+render ``ImageGenProbeResult.badge`` directly in the UI.
 """
 
 from __future__ import annotations
 
+import os
+import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+import httpx
 
 from tldw_chatbook.Image_Generation.config import ImageGenerationConfig, _NON_SECRET
 from tldw_chatbook.Image_Generation.listing import (
@@ -25,6 +37,7 @@ from tldw_chatbook.Image_Generation.listing import (
     _is_swarmui_configured,
     _is_together_configured,
 )
+from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise, origin_set
 
 
 BACKEND_IDS: tuple[str, ...] = (
@@ -362,3 +375,184 @@ def validate_draft(draft: ImageGenDraftValues) -> tuple[list[str], list[str]]:
         )
 
     return errors, warnings
+
+
+# ---------------------------------------------------------------------------
+# Backend probes ("Test" action)
+# ---------------------------------------------------------------------------
+
+PROBE_TIMEOUT_SECONDS = 5.0
+"""Per-request timeout for a Settings > Image Gen backend probe."""
+
+
+@dataclass(frozen=True)
+class ImageGenProbeResult:
+    """Outcome of one live/filesystem backend probe.
+
+    Attributes:
+        ok: Whether the probe found the backend reachable/usable.
+        badge: One of the spec's exact short strings -- ``"Reachable"``,
+            ``"Reachable (auth unverified)"``, ``"Auth failed"``,
+            ``"Unreachable: <category>"`` (category is one of "connection
+            refused", "timeout", "HTTP <status>", "blocked by egress
+            policy"), ``"Binary found"``, ``"Binary missing or not
+            executable"``, ``"Model file missing"``. Never contains
+            exception text, URLs, headers, or credentials -- see the module
+            docstring's sanitization contract.
+    """
+
+    ok: bool
+    badge: str
+
+
+def _guarded_get(
+    url: str, *, headers: Mapping[str, str] | None = None
+) -> tuple[httpx.Response | None, str | None]:
+    """Egress-checked, sanitized GET shared by every network probe.
+
+    Runs the SSRF egress check before any request (trusting only ``url``'s
+    own host, per the spec's ``origin_set(url)`` pattern), then issues one
+    short, non-redirect-following GET.
+
+    Returns:
+        ``(response, None)`` for any HTTP answer -- including 4xx/5xx, which
+        still means the server responded -- or ``(None, badge)`` with a
+        closed-set ``"Unreachable: <category>"`` badge on failure. Exception
+        text is never propagated into the badge: it can carry hosts, ports,
+        or embedded secrets (e.g. a malformed-URL error message).
+    """
+    try:
+        check_url_or_raise(url, trusted_origins=origin_set(url))
+    except EgressBlockedError:
+        return None, "Unreachable: blocked by egress policy"
+    try:
+        with httpx.Client(timeout=PROBE_TIMEOUT_SECONDS, follow_redirects=False) as client:
+            return client.get(url, headers=dict(headers) if headers else None), None
+    except httpx.TimeoutException:
+        return None, "Unreachable: timeout"
+    except Exception:
+        # Every other transport/protocol failure (incl. ConnectError):
+        # collapse to the generic closed-set category rather than risk
+        # echoing raw exception text.
+        return None, "Unreachable: connection refused"
+
+
+def _probe_swarmui(base_url: str) -> ImageGenProbeResult:
+    """SwarmUI has no models-listing route -- a plain GET on ``base_url``
+    that gets *any* HTTP answer (even 4xx/5xx) means the server responded."""
+    _response, blocked_badge = _guarded_get(base_url)
+    if blocked_badge is not None:
+        return ImageGenProbeResult(ok=False, badge=blocked_badge)
+    return ImageGenProbeResult(ok=True, badge="Reachable")
+
+
+def _probe_reachability_only(base_url: str) -> ImageGenProbeResult:
+    """novita/modelstudio: neither has a confirmed cheap authenticated GET
+    (see ``probe_backend``'s docstring) -- unauthenticated reachability
+    only, so auth is never actually verified."""
+    _response, blocked_badge = _guarded_get(base_url)
+    if blocked_badge is not None:
+        return ImageGenProbeResult(ok=False, badge=blocked_badge)
+    return ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
+
+
+def _probe_openai_compatible(base_url: str, secret: str | None) -> ImageGenProbeResult:
+    """openrouter/together: OpenAI-compatible ``GET {base_url}/models``."""
+    url = f"{base_url.rstrip('/')}/models"
+    headers = {"Authorization": f"Bearer {secret}"} if secret else None
+    response, blocked_badge = _guarded_get(url, headers=headers)
+    if blocked_badge is not None:
+        return ImageGenProbeResult(ok=False, badge=blocked_badge)
+    if not secret:
+        return ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
+    if response.status_code in (401, 403):
+        return ImageGenProbeResult(ok=False, badge="Auth failed")
+    if 200 <= response.status_code < 300:
+        return ImageGenProbeResult(ok=True, badge="Reachable")
+    return ImageGenProbeResult(ok=False, badge=f"Unreachable: HTTP {response.status_code}")
+
+
+def _probe_sd_cpp(form_values: Mapping[str, str]) -> ImageGenProbeResult:
+    """sd.cpp is filesystem-only -- no network. Both ``binary_path`` and
+    ``model_path`` are operator-owned local config paths (config-set, never
+    user-uploaded), so this deliberately skips ``path_validation``
+    confinement, matching ``StableDiffusionCppAdapter._resolve_path`` and
+    ``listing._path_exists``'s own plain filesystem checks (cf. the
+    #862/#867/#884 review-decline precedent for this class of local,
+    operator-controlled path)."""
+    binary_raw = (form_values.get("binary_path") or "").strip()
+    binary_ok = False
+    if binary_raw:
+        if shutil.which(binary_raw):
+            binary_ok = True
+        else:
+            binary_path = Path(binary_raw).expanduser()
+            binary_ok = binary_path.is_file() and os.access(binary_path, os.X_OK)
+    if not binary_ok:
+        return ImageGenProbeResult(ok=False, badge="Binary missing or not executable")
+
+    model_raw = (form_values.get("model_path") or "").strip()
+    if not model_raw or not Path(model_raw).expanduser().is_file():
+        return ImageGenProbeResult(ok=False, badge="Model file missing")
+
+    return ImageGenProbeResult(ok=True, badge="Binary found")
+
+
+def probe_backend(
+    backend_id: str, form_values: Mapping[str, str], secret: str | None
+) -> ImageGenProbeResult:
+    """Run one short Test-action probe for a backend. BLOCKING.
+
+    Performs a blocking filesystem check or network request -- callers (the
+    Settings screen's Test action) MUST run this in a thread worker, never
+    on the UI/event loop.
+
+    Behavior per backend:
+
+    - ``stable_diffusion_cpp``: filesystem-only, no network -- see
+      ``_probe_sd_cpp``.
+    - ``swarmui``: plain reachability GET on ``base_url`` -- see
+      ``_probe_swarmui``.
+    - ``openrouter``/``together``: OpenAI-compatible ``GET
+      {base_url}/models``, authenticated when a secret is available -- see
+      ``_probe_openai_compatible``.
+    - ``novita``/``modelstudio``: unauthenticated reachability only.
+      Novita's adapter (``novita_image_adapter.py``) only exposes the
+      async submit/poll routes (``/v3/async/txt2img``,
+      ``/v3/async/task-result``) -- no cheap authenticated GET was
+      confirmed in this codebase's adapter, so novita is probed the same
+      way as modelstudio rather than guessing at an unconfirmed endpoint.
+
+    Every network probe runs the SSRF egress check
+    (``Utils.egress.check_url_or_raise``) before any request.
+
+    Args:
+        backend_id: One of ``BACKEND_IDS``.
+        form_values: The CURRENT editor fields for this backend, keyed by
+            ``FIELD_SCHEMA`` ``toml_key`` (e.g. ``"base_url"``,
+            ``"binary_path"``, ``"model_path"``). For a field the user
+            hasn't touched this session, the caller is responsible for
+            falling back to the effective (saved/env) value before calling.
+        secret: The pasted-or-effective secret for this backend, or
+            ``None`` when neither is available. Ignored by backends that
+            don't use one (``stable_diffusion_cpp``, ``swarmui``).
+
+    Returns:
+        An ``ImageGenProbeResult`` whose ``badge`` is one of the spec's
+        exact strings and never contains exception text, URLs, headers, or
+        credentials.
+
+    Raises:
+        ValueError: ``backend_id`` is not a member of ``BACKEND_IDS``.
+    """
+    if backend_id == "stable_diffusion_cpp":
+        return _probe_sd_cpp(form_values)
+
+    base_url = (form_values.get("base_url") or "").strip()
+    if backend_id == "swarmui":
+        return _probe_swarmui(base_url)
+    if backend_id in ("openrouter", "together"):
+        return _probe_openai_compatible(base_url, secret)
+    if backend_id in ("novita", "modelstudio"):
+        return _probe_reachability_only(base_url)
+    raise ValueError(f"unknown backend_id: {backend_id!r}")
