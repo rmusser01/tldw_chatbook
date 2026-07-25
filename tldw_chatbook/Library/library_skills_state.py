@@ -58,6 +58,13 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # The run_skill_script runtime tool (same drift-guard rationale as
         # skill_file/install_skill above).
         "run_skill_script",
+        # task-580: console commands from the /rewind and image-generation
+        # features. These were added to the command registry without updating
+        # this set, so the drift guard below failed and was carried as an
+        # accepted baseline across several branches -- which is exactly the
+        # signal-erosion the guard exists to prevent.
+        "rewind",
+        "generate-image",
     )
 )
 
