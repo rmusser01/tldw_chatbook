@@ -31,6 +31,7 @@ from tldw_chatbook.Chat.citation_source_locators import (
     SOURCE_INVENTORY_BY_SCOPE_V1,
     SourceCapability,
 )
+from tldw_chatbook.Chat.citation_trace_builder import CitationTraceBuilder
 from tldw_chatbook.Chat.citation_trace_identity import (
     CitationFingerprintCodec,
     CitationFingerprintDomain,
@@ -483,6 +484,37 @@ class CitationTraceRepository:
         """Return whether signed artifact bindings can currently be verified."""
 
         return self._fingerprint_codec is not None and self.identity_context is not None
+
+    def create_local_trace_builder(
+        self,
+        *,
+        request_id: str,
+        generation_id: str,
+    ) -> CitationTraceBuilder | None:
+        """Create request-scoped local capture when canonical writes are enabled."""
+
+        if not self.policy.canonical_writes_enabled:
+            return None
+        identity = self.identity_context
+        if identity is None:
+            return None
+        codec = self._fingerprint_codec
+        if codec is None:
+            return None
+        try:
+            persisted = load_local_citation_identity_context(self.db)
+        except Exception:
+            return None
+        if persisted is None:
+            return None
+        if persisted != identity:
+            return None
+        return CitationTraceBuilder.local(
+            request_id=request_id,
+            generation_id=generation_id,
+            identity_context=identity,
+            fingerprint_codec=codec,
+        )
 
     @classmethod
     def from_key_provider(

@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.citation_trace_identity import (
     LocalCitationIdentityContext,
     local_trace_namespace,
 )
+from tldw_chatbook.Chat.citation_trace_builder import CitationTraceBuilder
 from tldw_chatbook.Chat.citation_trace_models import (
     AnswerAttempt,
     AnswerAttemptKind,
@@ -358,6 +359,149 @@ def test_repository_composition_never_loads_a_key_while_writes_are_disabled(
     ):
         repository.prepare_write(_sealed_write())
     assert provider.calls == []
+
+
+def test_local_trace_builder_disabled_returns_before_identity_read(
+    db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(db, enabled=False)
+    identity_reads = 0
+
+    def fail_on_identity_read(_db: CharactersRAGDB) -> None:
+        nonlocal identity_reads
+        identity_reads += 1
+        raise AssertionError("disabled capture must not read identity")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.citation_trace_repository."
+        "load_local_citation_identity_context",
+        fail_on_identity_read,
+    )
+
+    assert (
+        repository.create_local_trace_builder(
+            request_id="request-disabled",
+            generation_id="generation-disabled",
+        )
+        is None
+    )
+    assert identity_reads == 0
+
+
+def test_local_trace_builder_canonical_capture_returns_request_scoped_builder(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+
+    builder = repository.create_local_trace_builder(
+        request_id="request-capture",
+        generation_id="generation-capture",
+    )
+
+    assert isinstance(builder, CitationTraceBuilder)
+    assert builder.request_id == "request-capture"
+    assert builder.generation_id == "generation-capture"
+    assert builder.is_sealed is False
+    assert builder.evidence_runs == ()
+    assert builder.prompt_evidence_sets == ()
+
+
+def test_local_trace_builder_canonical_capture_without_injected_identity_returns_none(
+    db: CharactersRAGDB,
+) -> None:
+    repository = CitationTraceRepository(
+        db,
+        policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+        identity_context=None,
+        fingerprint_codec=TEST_FINGERPRINT_CODEC,
+    )
+
+    assert (
+        repository.create_local_trace_builder(
+            request_id="request-no-identity",
+            generation_id="generation-no-identity",
+        )
+        is None
+    )
+
+
+def test_local_trace_builder_canonical_capture_without_codec_returns_none(
+    db: CharactersRAGDB,
+) -> None:
+    repository = CitationTraceRepository(
+        db,
+        policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+        identity_context=_identity(db),
+        fingerprint_codec=None,
+    )
+
+    assert (
+        repository.create_local_trace_builder(
+            request_id="request-no-codec",
+            generation_id="generation-no-codec",
+        )
+        is None
+    )
+
+
+def test_local_trace_builder_canonical_capture_without_persisted_identity_returns_none(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    with db.transaction() as cursor:
+        cursor.execute(
+            "DELETE FROM rag_identity_context WHERE context_name = 'default'"
+        )
+
+    assert (
+        repository.create_local_trace_builder(
+            request_id="request-no-persisted-identity",
+            generation_id="generation-no-persisted-identity",
+        )
+        is None
+    )
+
+
+def test_local_trace_builder_canonical_capture_identity_mismatch_returns_none(
+    db: CharactersRAGDB,
+) -> None:
+    mismatched = _identity(db).model_copy(
+        update={"local_authority_id": "replacement-authority"}
+    )
+    repository = _repository(db, identity=mismatched)
+
+    assert (
+        repository.create_local_trace_builder(
+            request_id="request-identity-mismatch",
+            generation_id="generation-identity-mismatch",
+        )
+        is None
+    )
+
+
+def test_local_trace_builder_canonical_capture_identity_read_failure_returns_none(
+    db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(db)
+
+    def fail_identity_read(_db: CharactersRAGDB) -> None:
+        raise sqlite3.DatabaseError("identity table unreadable")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.citation_trace_repository."
+        "load_local_citation_identity_context",
+        fail_identity_read,
+    )
+
+    assert (
+        repository.create_local_trace_builder(
+            request_id="request-identity-read-failure",
+            generation_id="generation-identity-read-failure",
+        )
+        is None
+    )
 
 
 def test_missing_existing_key_is_not_silently_provisioned_or_replaced(
