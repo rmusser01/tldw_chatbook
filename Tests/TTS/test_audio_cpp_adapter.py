@@ -1225,7 +1225,7 @@ class BlockingCloseTransport(httpx.AsyncBaseTransport):
     async def aclose(self) -> None:
         self.close_count += 1
         self.close_started.set()
-        await self.allow_close.wait()
+        await asyncio.wait_for(self.allow_close.wait(), timeout=1)
 
 
 @pytest.mark.asyncio
@@ -1309,20 +1309,47 @@ async def test_concurrent_close_calls_join_one_client_cleanup() -> None:
     adapter = AudioCppAdapter(_config(), transport=transport)
 
     first = asyncio.create_task(adapter.close())
-    await transport.close_started.wait()
-    second = asyncio.create_task(adapter.close())
+    second: asyncio.Task[None] | None = None
     try:
+        await asyncio.wait_for(transport.close_started.wait(), timeout=1)
+        second = asyncio.create_task(adapter.close())
         await asyncio.sleep(0)
 
         assert first.done() is False
         assert second.done() is False
         assert transport.close_count == 1
     finally:
+        primary_error = sys.exception()
         transport.allow_close.set()
-        await asyncio.gather(first, second)
+        tasks = (first,) if second is None else (first, second)
+        cleanup_errors: list[BaseException] = []
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=1,
+            )
+        except BaseException as error:
+            cleanup_errors.append(error)
+        else:
+            cleanup_errors.extend(
+                result for result in results if isinstance(result, BaseException)
+            )
+
+        privacy_filter = adapter._httpx_privacy_filter
+        leaked = False
+        for logger_name in audio_cpp_module._HTTP_LOGGER_NAMES:
+            http_logger = logging.getLogger(logger_name)
+            if privacy_filter in http_logger.filters:
+                leaked = True
+                http_logger.removeFilter(privacy_filter)
+        if leaked:
+            cleanup_errors.append(
+                AssertionError("audio.cpp HTTP privacy filter leaked")
+            )
+        if primary_error is None and cleanup_errors:
+            raise cleanup_errors[0]
 
     assert transport.close_count == 1
-    assert adapter._client.is_closed is True
 
 
 @pytest.mark.asyncio

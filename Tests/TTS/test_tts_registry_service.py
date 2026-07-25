@@ -5,7 +5,8 @@ import json
 import logging
 import struct
 import sys
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, cast
 
@@ -33,6 +34,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRegistryClosedError,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_module
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.legacy_bridge import legacy_provider_specs
@@ -73,6 +75,188 @@ class _BytesStream(httpx.AsyncByteStream):
 
     async def aclose(self) -> None:
         return
+
+
+class _TrackingMockTransport(httpx.MockTransport):
+    def __init__(
+        self,
+        handler: Callable[[httpx.Request], Awaitable[httpx.Response]],
+    ) -> None:
+        super().__init__(handler)
+        self.close_count = 0
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+        await super().aclose()
+
+
+@dataclass(slots=True)
+class _RealAudioCppFixture:
+    service: TTSService
+    registry: TTSAdapterRegistry
+    adapters: list[AudioCppAdapter]
+    transports: list[_TrackingMockTransport]
+    requests: list[str]
+    wav: bytes
+    initial_config: dict[str, Any]
+
+
+_TEST_WAIT_SECONDS = 2.0
+
+
+def _build_real_audio_cpp_fixture(
+    *,
+    health_started: asyncio.Event | None = None,
+    allow_health: asyncio.Event | None = None,
+) -> _RealAudioCppFixture:
+    data = b"\x00\x00\x01\x00\x02\x00\x03\x00"
+    fmt = struct.pack(
+        "<4sIHHIIHH",
+        b"fmt ",
+        16,
+        1,
+        2,
+        48_000,
+        192_000,
+        4,
+        16,
+    )
+    riff_payload = b"WAVE" + fmt + struct.pack("<4sI", b"data", len(data)) + data
+    wav = b"RIFF" + struct.pack("<I", len(riff_payload)) + riff_payload
+    health = json.dumps(
+        {"status": "ok", "backend": "cpu", "models": 1},
+        separators=(",", ":"),
+    ).encode()
+    models = json.dumps(
+        {
+            "object": "list",
+            "data": [
+                {
+                    "id": "model",
+                    "object": "model",
+                    "owned_by": "engine",
+                    "family": "family",
+                    "task": "tts",
+                    "mode": "offline",
+                }
+            ],
+        },
+        separators=(",", ":"),
+    ).encode()
+    requests: list[str] = []
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path == "/health":
+            if health_started is not None and allow_health is not None:
+                health_started.set()
+                await asyncio.wait_for(
+                    allow_health.wait(),
+                    timeout=_TEST_WAIT_SECONDS,
+                )
+            return httpx.Response(200, stream=_BytesStream(health))
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, stream=_BytesStream(models))
+        return httpx.Response(
+            200,
+            headers={
+                "Content-Type": "audio/wav",
+                "X-AudioCpp-Wall-Ms": "10",
+            },
+            stream=_BytesStream(wav),
+        )
+
+    adapters: list[AudioCppAdapter] = []
+    transports: list[_TrackingMockTransport] = []
+
+    def factory(config: Mapping[str, Any]) -> AudioCppAdapter:
+        assert all(transport.close_count == 1 for transport in transports)
+        transport = _TrackingMockTransport(respond)
+        adapter = AudioCppAdapter(
+            AudioCppConfig.from_mapping(config),
+            transport=transport,
+        )
+        transports.append(transport)
+        adapters.append(adapter)
+        return adapter
+
+    initial_config: dict[str, Any] = AudioCppConfig().to_mapping()
+    registry = TTSAdapterRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=factory,
+                initial_config=initial_config,
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+    return _RealAudioCppFixture(
+        service=TTSService(registry),
+        registry=registry,
+        adapters=adapters,
+        transports=transports,
+        requests=requests,
+        wav=wav,
+        initial_config=initial_config,
+    )
+
+
+async def _capture_bounded_cleanup(
+    awaitable: Awaitable[Any],
+    errors: list[BaseException],
+) -> None:
+    task = asyncio.ensure_future(awaitable)
+    try:
+        await asyncio.wait_for(
+            asyncio.shield(task),
+            timeout=_TEST_WAIT_SECONDS,
+        )
+    except BaseException as error:
+        errors.append(error)
+        if not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(task, return_exceptions=True),
+                    timeout=_TEST_WAIT_SECONDS,
+                )
+            except BaseException as join_error:
+                errors.append(join_error)
+
+
+async def _cleanup_real_audio_cpp_fixture(
+    fixture: _RealAudioCppFixture,
+    *,
+    response: TTSAudioResponse | None = None,
+    tasks: tuple[asyncio.Task[Any], ...] = (),
+) -> list[BaseException]:
+    errors: list[BaseException] = []
+    if response is not None:
+        await _capture_bounded_cleanup(response.aclose(), errors)
+    for task in tasks:
+        await _capture_bounded_cleanup(task, errors)
+    await _capture_bounded_cleanup(fixture.service.close(), errors)
+    await _capture_bounded_cleanup(fixture.service.wait_closed(), errors)
+    for adapter in fixture.adapters:
+        await _capture_bounded_cleanup(adapter.close(), errors)
+
+    for adapter in fixture.adapters:
+        privacy_filter = adapter._httpx_privacy_filter
+        leaked = False
+        for logger_name in audio_cpp_module._HTTP_LOGGER_NAMES:
+            http_logger = logging.getLogger(logger_name)
+            if privacy_filter in http_logger.filters:
+                leaked = True
+                http_logger.removeFilter(privacy_filter)
+        if leaked:
+            errors.append(AssertionError("audio.cpp HTTP privacy filter leaked"))
+    return errors
 
 
 def registry_for_adapter(
@@ -132,257 +316,186 @@ async def test_real_audio_cpp_concurrent_cold_catalog_coalesces_factory_and_refr
 ):
     health_started = asyncio.Event()
     allow_health = asyncio.Event()
-    requests: list[str] = []
-    created: list[AudioCppAdapter] = []
-
-    async def respond(request: httpx.Request) -> httpx.Response:
-        requests.append(request.url.path)
-        if request.url.path == "/health":
-            health_started.set()
-            await allow_health.wait()
-            body = json.dumps(
-                {"status": "ok", "backend": "cpu", "models": 1},
-                separators=(",", ":"),
-            ).encode()
-        else:
-            body = json.dumps(
-                {
-                    "object": "list",
-                    "data": [
-                        {
-                            "id": "model",
-                            "object": "model",
-                            "owned_by": "engine",
-                            "family": "family",
-                            "task": "tts",
-                            "mode": "offline",
-                        }
-                    ],
-                },
-                separators=(",", ":"),
-            ).encode()
-        return httpx.Response(200, stream=_BytesStream(body))
-
-    def factory(config: Mapping[str, Any]) -> AudioCppAdapter:
-        adapter = AudioCppAdapter(
-            AudioCppConfig.from_mapping(config),
-            transport=httpx.MockTransport(respond),
-        )
-        created.append(adapter)
-        return adapter
-
-    initial_config = AudioCppConfig().to_mapping()
-    service = TTSService(
-        TTSAdapterRegistry(
-            specs=(
-                TTSProviderSpec(
-                    descriptor=TTSProviderDescriptor(
-                        provider_id="audio_cpp",
-                        display_name="audio.cpp",
-                        native=True,
-                    ),
-                    factory=factory,
-                    initial_config=initial_config,
-                    exclusive_reconfigure=True,
-                ),
-            ),
-            aliases={},
-        )
+    fixture = _build_real_audio_cpp_fixture(
+        health_started=health_started,
+        allow_health=allow_health,
     )
+    first: asyncio.Task[Any] | None = None
+    second: asyncio.Task[Any] | None = None
     try:
-        first = asyncio.create_task(service.get_catalog("audio_cpp"))
-        await health_started.wait()
-        second = asyncio.create_task(service.get_catalog("audio_cpp"))
-        await asyncio.sleep(0)
-        allow_health.set()
+        async with asyncio.timeout(_TEST_WAIT_SECONDS):
+            first = asyncio.create_task(fixture.service.get_catalog("audio_cpp"))
+            await asyncio.wait_for(
+                health_started.wait(),
+                timeout=_TEST_WAIT_SECONDS,
+            )
+            second = asyncio.create_task(fixture.service.get_catalog("audio_cpp"))
+            await asyncio.sleep(0)
+            allow_health.set()
 
-        first_catalog, second_catalog = await asyncio.gather(first, second)
+            first_catalog, second_catalog = await asyncio.wait_for(
+                asyncio.gather(first, second),
+                timeout=_TEST_WAIT_SECONDS,
+            )
 
-        assert len(created) == 1
-        assert requests == ["/health", "/v1/models"]
-        assert first_catalog is second_catalog
-        assert first_catalog.revision == 1
+            assert len(fixture.adapters) == 1
+            assert fixture.requests == ["/health", "/v1/models"]
+            assert first_catalog is second_catalog
+            assert first_catalog.revision == 1
     finally:
+        primary_error = sys.exception()
         allow_health.set()
-        await service.close()
-        await service.wait_closed()
+        cleanup_errors = await _cleanup_real_audio_cpp_fixture(
+            fixture,
+            tasks=tuple(task for task in (first, second) if task is not None),
+        )
+        if primary_error is None and cleanup_errors:
+            raise cleanup_errors[0]
+
+    assert [transport.close_count for transport in fixture.transports] == [1]
 
 
 @pytest.mark.asyncio
-async def test_real_audio_cpp_response_preserves_complete_wav_and_adapter_lease() -> (
-    None
-):
-    data = b"\x00\x00\x01\x00\x02\x00\x03\x00"
-    fmt = struct.pack(
-        "<4sIHHIIHH",
-        b"fmt ",
-        16,
-        1,
-        2,
-        48_000,
-        192_000,
-        4,
-        16,
-    )
-    data_chunk = struct.pack("<4sI", b"data", len(data)) + data
-    riff_payload = b"WAVE" + fmt + data_chunk
-    wav = b"RIFF" + struct.pack("<I", len(riff_payload)) + riff_payload
-    health = json.dumps(
-        {"status": "ok", "backend": "cpu", "models": 1},
-        separators=(",", ":"),
-    ).encode()
-    models = json.dumps(
-        {
-            "object": "list",
-            "data": [
-                {
-                    "id": "model",
-                    "object": "model",
-                    "owned_by": "engine",
-                    "family": "family",
-                    "task": "tts",
-                    "mode": "offline",
-                }
-            ],
-        },
-        separators=(",", ":"),
-    ).encode()
-    posts = 0
-
-    def respond(request: httpx.Request) -> httpx.Response:
-        nonlocal posts
-        if request.url.path == "/health":
-            return httpx.Response(200, stream=_BytesStream(health))
-        if request.url.path == "/v1/models":
-            return httpx.Response(200, stream=_BytesStream(models))
-        posts += 1
-        return httpx.Response(
-            200,
-            headers={
-                "Content-Type": "audio/wav",
-                "X-AudioCpp-Wall-Ms": "10",
-            },
-            stream=_BytesStream(wav),
-        )
-
-    created: list[AudioCppAdapter] = []
-
-    def factory(config: Mapping[str, Any]) -> AudioCppAdapter:
-        assert all(adapter._client.is_closed for adapter in created)
-        adapter = AudioCppAdapter(
-            AudioCppConfig.from_mapping(config),
-            transport=httpx.MockTransport(respond),
-        )
-        created.append(adapter)
-        return adapter
-
+async def test_real_audio_cpp_response_and_exclusive_handoff_stay_safe() -> None:
+    fixture = _build_real_audio_cpp_fixture()
     audio_cpp_config = AudioCppConfig()
-    initial_config = audio_cpp_config.to_mapping()
-    registry = TTSAdapterRegistry(
-        specs=(
-            TTSProviderSpec(
-                descriptor=TTSProviderDescriptor(
-                    provider_id="audio_cpp",
-                    display_name="audio.cpp",
-                    native=True,
-                ),
-                factory=factory,
-                initial_config=initial_config,
-                exclusive_reconfigure=True,
-            ),
-        ),
-        aliases={},
-    )
-    service = TTSService(registry)
+    response: TTSAudioResponse | None = None
+    reconfigure: asyncio.Task[Any] | None = None
 
     async def broken_progress_sink(_progress: TTSProgress) -> None:
         raise RuntimeError("REMOTE_PROGRESS_SENTINEL")
 
-    response = await service.synthesize(
-        TTSRequest(
-            provider_id="audio_cpp",
-            model_id="model",
-            text="hello",
-            voice=None,
-            response_format="wav",
-        ),
-        broken_progress_sink,
-    )
     replacement_config = {
-        **initial_config,
+        **fixture.initial_config,
         "max_input_characters": audio_cpp_config.max_input_characters + 1,
     }
-    reconfigure = asyncio.create_task(
-        service.reconfigure_provider("audio_cpp", replacement_config)
-    )
-    async with asyncio.timeout(1):
-        while not registry._slots["audio_cpp"].reconfiguring:
-            await asyncio.sleep(0)
-
-    assert posts == 1
-    assert registry._total_leases() == 1
-    assert not reconfigure.done()
-    assert not created[0]._client.is_closed
-    with pytest.raises(TTSProviderReconfiguringError, match="audio_cpp"):
-        await service.get_catalog("audio_cpp")
-    assert response.sample_rate == 48_000
-    assert response.metadata == {
-        "adapter": "audio_cpp",
-        "contract": "audio_cpp_http_v1",
-        "delivery": "complete_wav",
-        "channels": 2,
-        "frame_count": 2,
-        "data_size": 8,
-        "wall_ms": 10.0,
-    }
-    assert [chunk async for chunk in response.byte_stream] == [wav]
-
-    await response.aclose()
-    assert await reconfigure is ReconfigureResult.CHANGED
-    assert registry._total_leases() == 0
-    assert created[0]._client.is_closed
-    assert len(created) == 1
-    assert registry._slots["audio_cpp"].active is None
-
-    unchanged = await service.reconfigure_provider(
-        "audio_cpp",
-        dict(replacement_config),
-    )
-    assert unchanged is ReconfigureResult.UNCHANGED
-    assert len(created) == 1
-
-    replacement_catalog = await service.get_catalog("audio_cpp")
-    assert replacement_catalog.health.state == "available"
-    assert len(created) == 2
-    assert created[0]._client.is_closed
-    replacement_adapter = created[1]
-    replacement_client = replacement_adapter._client
-    replacement_catalog_revision = replacement_catalog.revision
-    replacement_config_revision = registry.configuration_revision("audio_cpp")
-    assert not replacement_client.is_closed
-
-    unchanged_active = await service.reconfigure_provider(
-        "audio_cpp",
-        dict(replacement_config),
-    )
-    assert unchanged_active is ReconfigureResult.UNCHANGED
-    assert len(created) == 2
-    assert replacement_adapter._client is replacement_client
-    assert not replacement_client.is_closed
-    assert registry.configuration_revision("audio_cpp") == replacement_config_revision
-
-    same_catalog = await service.get_catalog("audio_cpp")
-    assert same_catalog is replacement_catalog
-    assert same_catalog.revision == replacement_catalog_revision
-    lease = await registry.acquire("audio_cpp")
     try:
-        assert lease.adapter is replacement_adapter
-    finally:
-        await lease.release()
+        async with asyncio.timeout(_TEST_WAIT_SECONDS):
+            response = await fixture.service.synthesize(
+                TTSRequest(
+                    provider_id="audio_cpp",
+                    model_id="model",
+                    text="hello",
+                    voice=None,
+                    response_format="wav",
+                ),
+                broken_progress_sink,
+            )
+            reconfigure = asyncio.create_task(
+                fixture.service.reconfigure_provider(
+                    "audio_cpp",
+                    replacement_config,
+                )
+            )
+            while True:
+                try:
+                    await fixture.service.get_catalog("audio_cpp")
+                except TTSProviderReconfiguringError:
+                    break
+                await asyncio.sleep(0)
 
-    await service.close()
-    await service.wait_closed()
-    assert replacement_client.is_closed
+            assert fixture.requests.count("/v1/audio/speech") == 1
+            assert reconfigure.done() is False
+            assert fixture.transports[0].close_count == 0
+            assert response.sample_rate == 48_000
+            assert response.metadata == {
+                "adapter": "audio_cpp",
+                "contract": "audio_cpp_http_v1",
+                "delivery": "complete_wav",
+                "channels": 2,
+                "frame_count": 2,
+                "data_size": 8,
+                "wall_ms": 10.0,
+            }
+            assert [chunk async for chunk in response.byte_stream] == [fixture.wav]
+
+            await response.aclose()
+            assert (
+                await asyncio.wait_for(
+                    asyncio.shield(reconfigure),
+                    timeout=_TEST_WAIT_SECONDS,
+                )
+                is ReconfigureResult.CHANGED
+            )
+            assert fixture.transports[0].close_count == 1
+            assert len(fixture.adapters) == 1
+
+            unchanged = await fixture.service.reconfigure_provider(
+                "audio_cpp",
+                dict(replacement_config),
+            )
+            assert unchanged is ReconfigureResult.UNCHANGED
+            assert len(fixture.adapters) == 1
+    finally:
+        primary_error = sys.exception()
+        cleanup_errors = await _cleanup_real_audio_cpp_fixture(
+            fixture,
+            response=response,
+            tasks=() if reconfigure is None else (reconfigure,),
+        )
+        if primary_error is None and cleanup_errors:
+            raise cleanup_errors[0]
+
+    assert [transport.close_count for transport in fixture.transports] == [1]
+
+
+@pytest.mark.asyncio
+async def test_equivalent_config_preserves_live_audio_cpp_replacement() -> None:
+    fixture = _build_real_audio_cpp_fixture()
+    replacement_config = {
+        **fixture.initial_config,
+        "max_input_characters": (AudioCppConfig().max_input_characters + 1),
+    }
+    try:
+        async with asyncio.timeout(_TEST_WAIT_SECONDS):
+            await fixture.service.get_catalog("audio_cpp")
+            changed = await fixture.service.reconfigure_provider(
+                "audio_cpp",
+                replacement_config,
+            )
+            assert changed is ReconfigureResult.CHANGED
+            assert len(fixture.adapters) == 1
+            assert fixture.transports[0].close_count == 1
+
+            replacement_catalog = await fixture.service.get_catalog("audio_cpp")
+            assert replacement_catalog.health.state == "available"
+            assert len(fixture.adapters) == 2
+            replacement_adapter = fixture.adapters[1]
+            replacement_transport = fixture.transports[1]
+            replacement_catalog_revision = replacement_catalog.revision
+            replacement_config_revision = fixture.registry.configuration_revision(
+                "audio_cpp"
+            )
+            assert replacement_transport.close_count == 0
+
+            unchanged = await fixture.service.reconfigure_provider(
+                "audio_cpp",
+                dict(replacement_config),
+            )
+            assert unchanged is ReconfigureResult.UNCHANGED
+            assert len(fixture.adapters) == 2
+            assert replacement_transport is fixture.transports[1]
+            assert replacement_transport.close_count == 0
+            assert (
+                fixture.registry.configuration_revision("audio_cpp")
+                == replacement_config_revision
+            )
+
+            same_catalog = await fixture.service.get_catalog("audio_cpp")
+            assert same_catalog is replacement_catalog
+            assert same_catalog.revision == replacement_catalog_revision
+            lease = await fixture.registry.acquire("audio_cpp")
+            try:
+                assert lease.adapter is replacement_adapter
+            finally:
+                await lease.release()
+    finally:
+        primary_error = sys.exception()
+        cleanup_errors = await _cleanup_real_audio_cpp_fixture(fixture)
+        if primary_error is None and cleanup_errors:
+            raise cleanup_errors[0]
+
+    assert [transport.close_count for transport in fixture.transports] == [1, 1]
 
 
 @pytest.mark.asyncio
