@@ -5365,12 +5365,14 @@ class PersonasScreen(BaseAppScreen):
                     db.get_character_expression_image, character_id, state
                 )
             except Exception:
+                # Fail CLOSED: unknown overwrite status must force the
+                # confirmation, never silently skip a consent gate.
                 logger.opt(exception=True).debug(
                     f"Could not check the existing {state} expression image "
-                    f"for character {character_id} before a Generate-all "
+                    f"for character {character_id}; forcing the Generate-all "
                     "overwrite confirmation."
                 )
-                continue
+                return True
             if data:
                 return True
         return False
@@ -5394,6 +5396,11 @@ class PersonasScreen(BaseAppScreen):
             logger.opt(exception=True).warning(
                 "Could not show the Generate-all overwrite confirmation "
                 "dialog; skipping the sweep."
+            )
+            self._notify(
+                "Could not show the overwrite confirmation; "
+                "Generate-all cancelled.",
+                "warning",
             )
             return False
 

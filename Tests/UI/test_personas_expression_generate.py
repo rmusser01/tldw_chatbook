@@ -1129,6 +1129,77 @@ async def test_generate_all_worker_declining_confirmation_aborts_with_no_writes(
     assert not any("generated" in msg.lower() for msg, _sev in notifications)
 
 
+async def test_generate_all_worker_unreadable_expression_state_fails_closed_into_confirmation(
+    personas_editor_with_saved_character, monkeypatch
+):
+    """A DB read failure while checking for existing images must fail CLOSED:
+    when overwrite status is unknown, the confirmation dialog is forced
+    rather than silently skipped (Qodo PR #865 — consent gate must not fail
+    open on the exception path)."""
+    app, screen, db, char_id = personas_editor_with_saved_character
+    _configure_backend(monkeypatch)
+    _set_description(screen, "A cheerful adventurer.")
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr(db, "get_character_expression_image", _raise)
+
+    push_calls: list = []
+
+    async def _fake_push_screen_wait(dialog):
+        push_calls.append(dialog)
+        return False  # Cancel — sweep must abort without writes
+
+    monkeypatch.setattr(app, "push_screen_wait", _fake_push_screen_wait)
+    run_calls: list = []
+    monkeypatch.setattr(
+        personas_screen_module,
+        "run_generation",
+        lambda request: run_calls.append(request),
+    )
+    screen._expression_generate_inflight.add((char_id, "all"))
+
+    await screen._generate_all_expression_images_worker(char_id)
+
+    assert len(push_calls) == 1  # unknown overwrite state ⇒ dialog forced
+    assert run_calls == []
+
+
+async def test_generate_all_worker_confirm_dialog_failure_notifies_user(
+    personas_editor_with_saved_character, monkeypatch
+):
+    """When the overwrite-confirmation dialog itself fails to show, the
+    aborted sweep must tell the user instead of silently doing nothing
+    (Qodo PR #865 — the feature otherwise appears broken with only a log
+    line as evidence)."""
+    app, screen, db, char_id = personas_editor_with_saved_character
+    _configure_backend(monkeypatch)
+    editor = _set_description(screen, "A cheerful adventurer.")
+    editor.set_avatar_image(b"already-staged-avatar")
+
+    async def _broken_push_screen_wait(dialog):
+        raise RuntimeError("screen stack unavailable")
+
+    monkeypatch.setattr(app, "push_screen_wait", _broken_push_screen_wait)
+    run_calls: list = []
+    monkeypatch.setattr(
+        personas_screen_module,
+        "run_generation",
+        lambda request: run_calls.append(request),
+    )
+    notifications = _capture_notifications(app)
+    screen._expression_generate_inflight.add((char_id, "all"))
+
+    await screen._generate_all_expression_images_worker(char_id)
+
+    assert run_calls == []
+    assert any(
+        "confirmation" in msg.lower() and "cancel" in msg.lower()
+        for msg, _sev in notifications
+    ), f"expected a user-facing abort notification, got: {notifications}"
+
+
 # ----- Mandatory (c): Generate-all, one failing state -----------------------
 
 
