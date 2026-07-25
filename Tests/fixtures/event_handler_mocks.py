@@ -31,6 +31,10 @@ def create_comprehensive_app_mock():
     # Add thread lock for chat state management
     app._chat_state_lock = MagicMock()
 
+    # Sync accessor read by resolve_runtime_backend_mode(); the blanket
+    # AsyncMock would hand back an unawaited coroutine (RuntimeWarning noise).
+    app.get_authoritative_runtime_source = MagicMock(return_value="local")
+
     # Mock services and DBs
     app.chachanotes_db = MagicMock()
     app.notes_service = MagicMock()

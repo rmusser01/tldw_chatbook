@@ -31,9 +31,9 @@ async substitution sites (`chat_screen._start_character_console_session`,
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 #1 With the server profile backend active, a server-side active profile's name substitutes into {{user}} at the three task-442 send surfaces
-- [x] #2 #2 A dangling pointer (profile deleted on the resolving backend) still resolves to no-active (never a stale name, never an error)
-- [x] #3 #3 With no pointer set, behavior is byte-identical (the task-442 twins keep passing)
+- [x] #1 With the server profile backend active, a server-side active profile's name substitutes into {{user}} at the three task-442 send surfaces
+- [x] #2 A dangling pointer (profile deleted on the resolving backend) still resolves to no-active (never a stale name, never an error)
+- [x] #3 With no pointer set, behavior is byte-identical (the task-442 twins keep passing)
 <!-- AC:END -->
 
 ## Implementation Plan
