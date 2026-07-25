@@ -307,6 +307,82 @@ def test_fetch_json_keeps_authorization_on_same_origin_redirect(monkeypatch, hc)
     assert all(h.get("Authorization") == "Bearer local-token" for _u, h in seen)
 
 
+def test_fetch_json_strips_authorization_on_same_host_scheme_downgrade(monkeypatch, hc):
+    """A same-host HTTPS->HTTP downgrade redirect is NOT same origin (task-568):
+    a malicious backend could otherwise use a downgrade redirect to receive the
+    token over plaintext."""
+    seen = []
+
+    class RedirResp:
+        is_redirect = True
+        headers = {"location": "http://127.0.0.1:7801/y"}
+        url = "https://127.0.0.1:7801/x"
+        def raise_for_status(self): pass
+        def json(self): return {}
+
+    class FinalResp:
+        is_redirect = False
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"ok": True}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def request(self, method, url, *, headers=None, **k):
+            seen.append((url, dict(headers or {})))
+            return RedirResp() if url.endswith("/x") else FinalResp()
+
+    monkeypatch.setattr(hc.httpx, "Client", FakeClient)
+    result = hc.fetch_json(
+        "GET", "https://127.0.0.1:7801/x",
+        headers={"Authorization": "Bearer local-token"},
+        trusted_origins=frozenset({"127.0.0.1"}),
+    )
+    assert result == {"ok": True}
+    assert len(seen) == 2
+    assert seen[0][1].get("Authorization") == "Bearer local-token"
+    assert "Authorization" not in seen[1][1]
+
+
+def test_fetch_json_strips_authorization_on_same_host_different_port(monkeypatch, hc):
+    """A same-host different-port redirect crosses an origin boundary (task-568)."""
+    seen = []
+
+    class RedirResp:
+        is_redirect = True
+        headers = {"location": "http://127.0.0.1:9999/y"}
+        url = "http://127.0.0.1:7801/x"
+        def raise_for_status(self): pass
+        def json(self): return {}
+
+    class FinalResp:
+        is_redirect = False
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"ok": True}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def request(self, method, url, *, headers=None, **k):
+            seen.append((url, dict(headers or {})))
+            return RedirResp() if url.endswith("/x") else FinalResp()
+
+    monkeypatch.setattr(hc.httpx, "Client", FakeClient)
+    result = hc.fetch_json(
+        "GET", "http://127.0.0.1:7801/x",
+        headers={"Authorization": "Bearer local-token"},
+        trusted_origins=frozenset({"127.0.0.1"}),
+    )
+    assert result == {"ok": True}
+    assert len(seen) == 2
+    assert seen[0][1].get("Authorization") == "Bearer local-token"
+    assert "Authorization" not in seen[1][1]
+
+
 def test_fetch_json_defaults_no_autofollow(hc):
     # create_client must not auto-follow redirects by default (the manual
     # validated loop in fetch_json handles them instead).

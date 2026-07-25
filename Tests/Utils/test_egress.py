@@ -9,7 +9,9 @@ from tldw_chatbook.Utils.egress import (
     evaluate_url_policy,
     evaluate_url_policy_async,
     host_of,
+    origin_of,
     origin_set,
+    same_origin,
 )
 
 
@@ -229,6 +231,84 @@ def test_origin_set_never_raises():
 
 
 # ---------------------------------------------------------------------------
+# origin_of / same_origin: scheme+host+effective-port credential-decision primitive
+# ---------------------------------------------------------------------------
+
+
+def test_origin_of_normalizes_default_ports():
+    """https defaults to 443, http to 80, so the explicit and implicit forms match."""
+    assert origin_of("https://example.com/x") == ("https", "example.com", 443)
+    assert origin_of("https://example.com:443/x") == ("https", "example.com", 443)
+    assert origin_of("http://example.com/x") == ("http", "example.com", 80)
+    assert origin_of("http://example.com:80/x") == ("http", "example.com", 80)
+
+
+def test_origin_of_explicit_non_default_port():
+    assert origin_of("http://example.com:7801/x") == ("http", "example.com", 7801)
+
+
+def test_origin_of_lowercases_scheme_and_host():
+    assert origin_of("HTTPS://Example.COM/x") == ("https", "example.com", 443)
+
+
+def test_origin_of_unparseable_or_no_host_returns_none():
+    assert origin_of("http://[::1/x") is None
+    assert origin_of("https:///nohost") is None
+    assert origin_of("not-a-url") is None
+
+
+def test_invalid_port_blocked_at_policy_boundary():
+    """A malformed/out-of-range port is rejected by the egress validator itself.
+
+    Keeps `check_url_or_raise` consistent with `origin_of()` (which treats the
+    same ValueError as unparseable) instead of passing the URL through to fail
+    later as a client-level InvalidURL (Qodo PR #870).
+    """
+    with pytest.raises(EgressBlockedError):
+        check_url_or_raise("https://example.com:99999/x")
+    with pytest.raises(EgressBlockedError):
+        check_url_or_raise("https://example.com:notaport/x")
+
+
+def test_origin_of_unknown_scheme_no_explicit_port_returns_none():
+    # No default port to fall back to for a non-http(s) scheme.
+    assert origin_of("ftp://example.com/x") is None
+
+
+def test_origin_of_unknown_scheme_with_explicit_port_still_resolves():
+    assert origin_of("ftp://example.com:21/x") == ("ftp", "example.com", 21)
+
+
+def test_same_origin_true_for_default_vs_explicit_port():
+    assert same_origin("https://h.example/a", "https://h.example:443/b") is True
+
+
+def test_same_origin_false_on_scheme_downgrade():
+    """Same host, https -> http: NOT the same origin."""
+    assert same_origin("https://h.example/a", "http://h.example/b") is False
+
+
+def test_same_origin_false_on_port_change():
+    """Same host+scheme, different port: NOT the same origin."""
+    assert same_origin("http://h.example:8000/a", "http://h.example:9000/b") is False
+
+
+def test_same_origin_false_on_different_host():
+    assert same_origin("https://a.example/x", "https://b.example/x") is False
+
+
+def test_same_origin_true_for_identical_origin_different_paths():
+    assert same_origin("https://h.example/a?x=1", "https://h.example/b?y=2") is True
+
+
+def test_same_origin_conservative_when_either_side_unparseable():
+    # Ambiguous input must never be treated as same-origin (credentials stay stripped).
+    assert same_origin("https://h.example/a", "not-a-url") is False
+    assert same_origin("not-a-url", "https://h.example/a") is False
+    assert same_origin("not-a-url", "also-not-a-url") is False
+
+
+# ---------------------------------------------------------------------------
 # Guarded httpx helpers
 # ---------------------------------------------------------------------------
 import httpx
@@ -319,6 +399,73 @@ def test_httpx_cross_origin_hop_strips_credentials(monkeypatch):
     assert "authorization" not in second.headers
     assert "cookie" not in second.headers
     assert second.headers.get("x-keep") == "y"
+
+
+def test_httpx_same_host_scheme_downgrade_strips_credentials(monkeypatch):
+    """A same-host HTTPS->HTTP downgrade redirect is NOT the same origin --
+    Authorization/Cookie must be stripped (task-568)."""
+    _resolve_to(monkeypatch, ["93.184.216.34"])
+    seen = []
+    routes = {
+        "https://h.example/": (302, {"location": "http://h.example/x"}, b""),
+        "http://h.example/": (200, {}, b"done"),
+    }
+    with httpx.Client(transport=_transport(routes, seen)) as client:
+        resp = guarded_fetch_httpx(
+            "https://h.example/start",
+            client=client,
+            max_bytes=1024,
+            headers={"Authorization": "Bearer secret", "Cookie": "sid=1"},
+        )
+    assert resp.content == b"done"
+    first, second = seen[0], seen[1]
+    assert first.headers.get("authorization") == "Bearer secret"
+    assert "authorization" not in second.headers
+    assert "cookie" not in second.headers
+
+
+def test_httpx_same_host_different_port_strips_credentials(monkeypatch):
+    """A same-host different-port redirect is NOT the same origin -- credentials
+    must be stripped (task-568)."""
+    _resolve_to(monkeypatch, ["93.184.216.34"])
+    seen = []
+    routes = {
+        "http://h.example:8000/": (302, {"location": "http://h.example:9000/x"}, b""),
+        "http://h.example:9000/": (200, {}, b"done"),
+    }
+    with httpx.Client(transport=_transport(routes, seen)) as client:
+        resp = guarded_fetch_httpx(
+            "http://h.example:8000/start",
+            client=client,
+            max_bytes=1024,
+            headers={"Authorization": "Bearer secret"},
+        )
+    assert resp.content == b"done"
+    first, second = seen[0], seen[1]
+    assert first.headers.get("authorization") == "Bearer secret"
+    assert "authorization" not in second.headers
+
+
+def test_httpx_default_port_vs_explicit_port_keeps_credentials(monkeypatch):
+    """``https://h/`` redirecting to ``https://h:443/`` is the SAME origin --
+    default-port normalization must not falsely treat this as cross-origin
+    (task-568)."""
+    _resolve_to(monkeypatch, ["93.184.216.34"])
+    seen = []
+    routes = {
+        "https://h.example/old": (302, {"location": "https://h.example:443/new"}, b""),
+        "https://h.example/new": (200, {"content-type": "text/html"}, b"done"),
+        "https://h.example:443/new": (200, {"content-type": "text/html"}, b"done"),
+    }
+    with httpx.Client(transport=_transport(routes, seen)) as client:
+        resp = guarded_fetch_httpx(
+            "https://h.example/old",
+            client=client,
+            max_bytes=1024,
+            headers={"Authorization": "Bearer secret"},
+        )
+    assert resp.content == b"done"
+    assert all(r.headers.get("authorization") == "Bearer secret" for r in seen)
 
 
 def test_httpx_client_default_header_stripped_cross_origin(monkeypatch):
@@ -423,6 +570,33 @@ async def test_httpx_async_client_default_header_stripped_cross_origin(monkeypat
     assert "authorization" not in second.headers
 
 
+@pytest.mark.asyncio
+async def test_httpx_async_same_host_scheme_downgrade_strips_auth(monkeypatch):
+    """Async variant: a same-host HTTPS->HTTP downgrade must strip a
+    client-supplied ``auth=`` and headers, not just a cross-host hop
+    (task-568)."""
+    _resolve_to(monkeypatch, ["93.184.216.34"])
+    seen = []
+    routes = {
+        "https://h.example/": (302, {"location": "http://h.example/x"}, b""),
+        "http://h.example/": (200, {}, b"done"),
+    }
+    async with httpx.AsyncClient(transport=_transport(routes, seen)) as client:
+        resp = await guarded_fetch_httpx_async(
+            "https://h.example/start",
+            client=client,
+            max_bytes=1024,
+            headers={"Cookie": "sid=1"},
+            auth=("user", "pw"),
+        )
+    assert resp.content == b"done"
+    first, second = seen[0], seen[1]
+    assert "authorization" in first.headers
+    assert "cookie" in first.headers
+    assert "authorization" not in second.headers
+    assert "cookie" not in second.headers
+
+
 # ---------------------------------------------------------------------------
 # Guarded requests helper
 # ---------------------------------------------------------------------------
@@ -506,6 +680,40 @@ def test_requests_session_auth_suppressed_cross_origin():
     )
     sess.auth = ("user", "pw")
     resp = guarded_fetch_requests("https://a.example/s", session=sess, max_bytes=64)
+    assert resp.content == b"fin"
+    assert "Authorization" in adapter.seen[0].headers
+    assert "Authorization" not in adapter.seen[1].headers
+
+
+def test_requests_session_auth_suppressed_same_host_scheme_downgrade():
+    """A same-host HTTPS->HTTP downgrade redirect must suppress ``session.auth``
+    too, not only a cross-host redirect (task-568)."""
+    sess, adapter = _session_with(
+        {
+            "https://h.example/": (302, {"location": "http://h.example/n"}, b""),
+            "http://h.example/": (200, {}, b"fin"),
+        }
+    )
+    sess.auth = ("user", "pw")
+    resp = guarded_fetch_requests("https://h.example/s", session=sess, max_bytes=64)
+    assert resp.content == b"fin"
+    assert "Authorization" in adapter.seen[0].headers
+    assert "Authorization" not in adapter.seen[1].headers
+
+
+def test_requests_session_auth_suppressed_same_host_different_port():
+    """A same-host different-port redirect must suppress ``session.auth`` too
+    (task-568)."""
+    sess, adapter = _session_with(
+        {
+            "http://h.example:8000/": (302, {"location": "http://h.example:9000/n"}, b""),
+            "http://h.example:9000/": (200, {}, b"fin"),
+        }
+    )
+    sess.auth = ("user", "pw")
+    resp = guarded_fetch_requests(
+        "http://h.example:8000/s", session=sess, max_bytes=64
+    )
     assert resp.content == b"fin"
     assert "Authorization" in adapter.seen[0].headers
     assert "Authorization" not in adapter.seen[1].headers
@@ -605,6 +813,29 @@ async def test_aiohttp_fetch_and_redirect_revalidation(monkeypatch):
             "https://example.com/r", session=session, max_bytes=64
         )
     assert all("intra.example" not in u for u, _ in session.seen)
+
+
+@pytest.mark.asyncio
+async def test_aiohttp_same_host_scheme_downgrade_strips_credentials():
+    """A same-host HTTPS->HTTP downgrade redirect is NOT the same origin --
+    Authorization must be stripped (task-568)."""
+    session = _FakeAiohttpSession(
+        {
+            "https://h.example/": (302, {"Location": "http://h.example/x"}, b""),
+            "http://h.example/": (200, {}, b"done"),
+        }
+    )
+    resp = await guarded_fetch_aiohttp(
+        "https://h.example/start",
+        session=session,
+        max_bytes=64,
+        headers={"Authorization": "Bearer secret"},
+    )
+    assert resp.content == b"done"
+    first_url, first_kwargs = session.seen[0]
+    second_url, second_kwargs = session.seen[1]
+    assert first_kwargs["headers"].get("Authorization") == "Bearer secret"
+    assert "Authorization" not in second_kwargs["headers"]
 
 
 @pytest.mark.asyncio

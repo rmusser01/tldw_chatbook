@@ -123,3 +123,73 @@ def test_fetch_image_bytes_keeps_credentials_on_same_origin_redirect(monkeypatch
     assert len(seen) == 2
     assert all(h.get("Authorization") == "Bearer local" for _u, h, _c in seen)
     assert all(c == {"swarm_token": "tok"} for _u, _h, c in seen)
+
+
+def test_fetch_image_bytes_strips_credentials_on_same_host_scheme_downgrade(monkeypatch, ifu):
+    """fetch_image_bytes drops credentials on a same-host HTTPS->HTTP downgrade hop (task-568)."""
+    from tldw_chatbook.Image_Generation import http_client as hc
+
+    seen = []
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def stream(self, method, url, *, headers=None, cookies=None, timeout=None, follow_redirects=False):
+            seen.append((url, dict(headers or {}), cookies))
+            if url == "https://127.0.0.1:7801/img":
+                return _FakeStreamResponse(302, {"location": "http://127.0.0.1:7801/img2"}, url)
+            return _FakeStreamResponse(200, {"content-type": "image/png"}, url, body=_png_bytes())
+
+    monkeypatch.setattr(hc.httpx, "Client", FakeClient)
+    content, ctype = ifu.fetch_image_bytes(
+        "https://127.0.0.1:7801/img",
+        timeout=5,
+        headers={"Authorization": "Bearer local"},
+        cookies={"swarm_token": "tok"},
+        trusted_origins=frozenset({"127.0.0.1"}),
+    )
+    assert content
+    assert len(seen) == 2
+    first_url, first_headers, first_cookies = seen[0]
+    assert first_headers.get("Authorization") == "Bearer local"
+    assert first_cookies == {"swarm_token": "tok"}
+    second_url, second_headers, second_cookies = seen[1]
+    assert second_url == "http://127.0.0.1:7801/img2"
+    assert "Authorization" not in second_headers
+    assert second_cookies is None
+
+
+def test_fetch_image_bytes_strips_credentials_on_same_host_different_port(monkeypatch, ifu):
+    """A same-host different-port hop crosses an origin boundary; credentials strip (task-568)."""
+    from tldw_chatbook.Image_Generation import http_client as hc
+
+    seen = []
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def stream(self, method, url, *, headers=None, cookies=None, timeout=None, follow_redirects=False):
+            seen.append((url, dict(headers or {}), cookies))
+            if url == "http://127.0.0.1:7801/img":
+                return _FakeStreamResponse(302, {"location": "http://127.0.0.1:9999/img2"}, url)
+            return _FakeStreamResponse(200, {"content-type": "image/png"}, url, body=_png_bytes())
+
+    monkeypatch.setattr(hc.httpx, "Client", FakeClient)
+    content, ctype = ifu.fetch_image_bytes(
+        "http://127.0.0.1:7801/img",
+        timeout=5,
+        headers={"Authorization": "Bearer local"},
+        cookies={"swarm_token": "tok"},
+        trusted_origins=frozenset({"127.0.0.1"}),
+    )
+    assert content
+    assert len(seen) == 2
+    first_url, first_headers, first_cookies = seen[0]
+    assert first_headers.get("Authorization") == "Bearer local"
+    assert first_cookies == {"swarm_token": "tok"}
+    second_url, second_headers, second_cookies = seen[1]
+    assert second_url == "http://127.0.0.1:9999/img2"
+    assert "Authorization" not in second_headers
+    assert second_cookies is None

@@ -128,6 +128,14 @@ def _pre_resolution(url: str, trusted_origins: frozenset):
         return _blocked(url, "scheme", "", "unparseable URL")
     if parsed.scheme not in ("http", "https") or not host:
         return _blocked(url, "scheme", host or "", "only http/https with a host")
+    try:
+        # urlparse defers port parsing until accessed; a malformed/out-of-range
+        # port must fail HERE, at the policy boundary, not as a downstream
+        # client InvalidURL — and it keeps this validator consistent with
+        # origin_of(), which treats the same ValueError as unparseable.
+        _ = parsed.port
+    except ValueError:
+        return _blocked(url, "scheme", host or "", "invalid port")
     h = host.lower()
     allowed_hosts = _config_allowed_hosts()
     if h in allowed_hosts:
@@ -295,6 +303,72 @@ def origin_set(url: str) -> frozenset:
     return frozenset({h}) if h else frozenset()
 
 
+def origin_of(url: str) -> tuple[str, str, int] | None:
+    """Scheme+host+effective-port origin of ``url``, or ``None`` if undetermined.
+
+    This is the STRICT origin used to gate credential forwarding
+    (``Authorization``/``Cookie``/an httpx ``auth=``/a ``requests``
+    ``session.auth``) across a redirect hop — a same-host HTTPS->HTTP
+    downgrade or a same-host different-port redirect is NOT the same
+    origin and must not carry credentials. It is deliberately NOT the
+    same thing as the SSRF ``trusted_origins`` policy (see ``host_of``/
+    ``origin_set``), which stays hostname-only by design: a user who
+    trusts a host trusts it regardless of scheme/port.
+
+    Ports are normalized to the scheme's default when omitted, so
+    ``https://h/`` and ``https://h:443/`` produce the same origin.
+
+    Args:
+        url: The URL to derive an origin for.
+
+    Returns:
+        ``(scheme, host, port)`` with ``scheme``/``host`` lowercased, or
+        ``None`` for a missing host, an unparseable URL, or a scheme other
+        than http/https with no explicit port (nothing to default it to).
+        Never raises.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return None
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    if port is None:
+        if scheme == "https":
+            port = 443
+        elif scheme == "http":
+            port = 80
+        else:
+            return None
+    return (scheme, host, port)
+
+
+def same_origin(url_a: str, url_b: str) -> bool:
+    """Whether ``url_a`` and ``url_b`` share scheme, host, and effective port.
+
+    The credential-forwarding decision for a redirect hop: use this (not
+    ``host_of`` equality) wherever a hop is judged "safe" to carry
+    ``Authorization``/``Cookie``/auth across. Conservative on ambiguity —
+    if either URL's origin can't be determined by :func:`origin_of`, this
+    returns ``False`` (strip credentials rather than guess).
+
+    Args:
+        url_a: First URL.
+        url_b: Second URL.
+
+    Returns:
+        ``True`` iff both resolve to the same ``(scheme, host, port)``.
+    """
+    origin_a = origin_of(url_a)
+    return origin_a is not None and origin_a == origin_of(url_b)
+
+
 def _hop_headers(headers, same_origin: bool) -> dict:
     hop = {str(k): v for k, v in dict(headers or {}).items()}
     if not same_origin:
@@ -314,18 +388,17 @@ def guarded_fetch_httpx(
     params: dict | None = None,
 ) -> GuardedResponse:
     """Capped GET via httpx.Client with per-hop egress re-validation."""
-    first_host = _host_of(url)
     current = url
     for hop in range(MAX_REDIRECT_HOPS + 1):
         check_url_or_raise(current, trusted_origins=trusted_origins)
-        same_origin = _host_of(current) == first_host
+        is_same_origin = same_origin(url, current)
         request = client.build_request(
             "GET",
             current,
-            headers=_hop_headers(headers, same_origin),
+            headers=_hop_headers(headers, is_same_origin),
             params=params if hop == 0 else None,
         )
-        if not same_origin:
+        if not is_same_origin:
             # Strip credentials the client attaches at the transport-object
             # level (e.g. httpx.Client(headers={"Authorization": ...})) —
             # these are merged onto the built request by httpx and are
@@ -380,24 +453,23 @@ async def guarded_fetch_httpx_async(
     suppressed by this guard — no live caller uses that flow today; this is a
     documented residual risk.
     """
-    first_host = _host_of(url)
     current = url
     for hop in range(MAX_REDIRECT_HOPS + 1):
         await check_url_or_raise_async(current, trusted_origins=trusted_origins)
-        same_origin = _host_of(current) == first_host
+        is_same_origin = same_origin(url, current)
         request = client.build_request(
             "GET",
             current,
-            headers=_hop_headers(headers, same_origin),
+            headers=_hop_headers(headers, is_same_origin),
             params=params if hop == 0 else None,
         )
-        if not same_origin:
+        if not is_same_origin:
             # Strip credentials the client attaches at the transport-object
             # level — see guarded_fetch_httpx for the rationale.
             for _h in _STRIP_HEADERS:
                 request.headers.pop(_h, None)
         send_kwargs = {"stream": True, "follow_redirects": False}
-        if auth is not None and same_origin:
+        if auth is not None and is_same_origin:
             send_kwargs["auth"] = auth
         response = await client.send(request, **send_kwargs)
         try:
@@ -448,17 +520,16 @@ def guarded_fetch_requests(
     sess = session or requests.Session()
     owns_session = session is None
     try:
-        first_host = _host_of(url)
         current = url
         for _hop in range(MAX_REDIRECT_HOPS + 1):
             check_url_or_raise(current, trusted_origins=trusted_origins)
-            same_origin = _host_of(current) == first_host
+            is_same_origin = same_origin(url, current)
             prepared = sess.prepare_request(
                 requests.Request(
-                    "GET", current, headers=_hop_headers(headers, same_origin)
+                    "GET", current, headers=_hop_headers(headers, is_same_origin)
                 )
             )
-            if not same_origin:
+            if not is_same_origin:
                 # prepare_request applies session.auth/cookies into headers;
                 # a cross-origin hop must not carry them.
                 for key in ("Authorization", "Cookie", "Proxy-Authorization"):
@@ -511,14 +582,13 @@ async def guarded_fetch_aiohttp(
     """Capped GET via aiohttp.ClientSession with per-hop re-validation."""
     from multidict import CIMultiDict
 
-    first_host = _host_of(url)
     current = url
     for _hop in range(MAX_REDIRECT_HOPS + 1):
         await check_url_or_raise_async(current, trusted_origins=trusted_origins)
-        same_origin = _host_of(current) == first_host
+        is_same_origin = same_origin(url, current)
         kwargs = {
             "allow_redirects": False,
-            "headers": _hop_headers(headers, same_origin),
+            "headers": _hop_headers(headers, is_same_origin),
         }
         if timeout is not None:
             kwargs["timeout"] = timeout
