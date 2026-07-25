@@ -270,12 +270,12 @@ def test_service_backed_policy_destinations_use_async_workers_without_asyncio_ru
     }
     # @work(thread=True) is likewise a deliberate, reviewable exception on
     # these service-backed screens (Library computes export counts, runs
-    # sync-body export service calls, and persists rail/search preferences
-    # on dedicated OS threads). Exact decorator counts per file keep new
-    # thread workers from slipping in silently; personas and skills stay
-    # on async workers only.
+    # sync-body export service calls, persists rail/search preferences, and
+    # scans ingest paths during preflight on dedicated OS threads). Exact
+    # decorator counts per file keep new thread workers from slipping in
+    # silently; personas and skills stay on async workers only.
     allowed_thread_workers = {
-        Path("tldw_chatbook/UI/Screens/library_screen.py"): 4,
+        Path("tldw_chatbook/UI/Screens/library_screen.py"): 5,
     }
     for screen_path in screen_paths:
         source = _text(screen_path)

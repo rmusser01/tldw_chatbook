@@ -1916,9 +1916,9 @@ class LibraryScreen(BaseAppScreen):
                 # Runs via asyncio.to_thread: this thread has no event loop,
                 # and the awaitable must complete here so blocking async
                 # services stay off the UI loop.
-                return asyncio.run(
+                return asyncio.run(  # policy-exception: worker-thread loop
                     await_result()
-                )  # policy-exception: worker-thread loop
+                )
             return result
 
         if isolate_in_worker:
