@@ -72,7 +72,7 @@ Evidence: `uat-ac4-mutation-reprompt.txt`.
 
 | AC | Status |
 |---|---|
-| #5 Library grant line + Revoke | **Partial** — the Skills list, trust header and on-disk grant are verified, but the per-skill grant line and the **Revoke script access** button inside the skill editor panel were not reached; driving into that panel by injected mouse click did not land within the session's budget |
+| #5 Library grant line + Revoke | **Partial** — the Skills list, trust header and on-disk grant are verified, but the per-skill grant line and the **Revoke script access** button were not reached. Both live inside `#library-skill-trust-panel`, which only renders once a skill is opened in the editor; neither an injected mouse click on the skill row nor Tab-then-Enter got there (Tab moved focus out of the Library screen entirely, back to Console). Finding the actual affordance that opens a skill for editing is the first thing to solve on resume |
 | #6 context switch does not leave the run blocked | **Not run** |
 
 The Revoke button remains the single most valuable thing left to verify: it is the
