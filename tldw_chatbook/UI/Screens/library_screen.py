@@ -211,6 +211,7 @@ from ...Widgets.Library import (
     skill_context_toggle_label,
     skill_disable_model_label,
     skill_editor_warning_lines,
+    skill_script_grant_line,
     skill_trust_panel_remediation_copy,
     skill_trust_review_enabled,
     skill_trust_review_preview,
@@ -1092,6 +1093,15 @@ class LibraryScreen(BaseAppScreen):
         # staleness reconciliation), this editor always starts a fresh
         # session per open, so no extra staleness check is needed.
         self._library_skill_active_review: dict[str, Any] | None = None
+        # Task 7 (skills-script-execution): whether the open skill has a
+        # standing "always allow scripts" grant, cached here since checking
+        # it re-scans the skill's on-disk directory (fingerprint match) and
+        # so is only ever read off-thread -- see
+        # ``_refresh_library_skill_script_grant``. Reset alongside
+        # ``_library_skill_active_review`` on every (re)open; the panel's
+        # compose default of "not granted" is corrected in place moments
+        # later by that off-thread fetch.
+        self._library_skill_script_grant: bool = False
         # task-415: inline two-step delete (mirrors
         # ``_library_media_confirming_delete``): the first Delete press
         # arms this; only the recomposed confirm button actually deletes.
@@ -7627,10 +7637,14 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_status = ""
         self._library_skill_conflict = False
         self._library_skill_active_review = None
+        self._library_skill_script_grant = False
         self._library_skill_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
             self.call_after_refresh(self._arm_library_skill_editor)
+        # Task 7: not part of ``get_skill``'s response, so it needs its own
+        # off-thread fetch -- see ``_refresh_library_skill_script_grant``.
+        self._refresh_library_skill_script_grant()
 
     def _arm_library_skill_editor(self) -> None:
         """Enable dirty-tracking once the skill editor's mount-time
@@ -7674,6 +7688,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_status = ""
         self._library_skill_conflict = False
         self._library_skill_active_review = None
+        self._library_skill_script_grant = False
         self._library_skill_confirming_delete = False
         self._library_skill_scroll_pending = False
         self._library_skill_editor_armed = False
@@ -7707,6 +7722,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_status = ""
         self._library_skill_conflict = False
         self._library_skill_active_review = None
+        self._library_skill_script_grant = False
         self._library_skill_confirming_delete = False
         self._library_skill_trust_confirming_reset = False
         self._library_skill_scroll_pending = False
@@ -7906,6 +7922,22 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-skill-trust-approve", Button).disabled = (
                 self._library_skill_active_review is None
             )
+        except (NoMatches, QueryError):
+            pass
+        # Task 7 (skills-script-execution): reads the CACHED grant
+        # (``_library_skill_script_grant``), never the trust service
+        # directly -- ``script_execution_granted`` re-scans the skill's
+        # on-disk directory to verify its fingerprint, which is blocking
+        # file I/O this method (called from synchronous event handlers) must
+        # not perform. ``_refresh_library_skill_script_grant`` is what keeps
+        # the cache current, off-thread.
+        try:
+            self.query_one("#library-skill-script-grant", Static).update(
+                skill_script_grant_line(self._library_skill_script_grant)
+            )
+            self.query_one(
+                "#library-skill-script-grant-revoke", Button
+            ).disabled = not self._library_skill_script_grant
         except (NoMatches, QueryError):
             pass
 
@@ -8274,6 +8306,10 @@ class LibraryScreen(BaseAppScreen):
             name=self._read_library_skill_live_name()
         )
         self._render_library_skill_trust_panel()
+        # Task 7: saved content changes the skill's fingerprint, which
+        # invalidates any prior standing script grant -- re-check off-thread
+        # rather than let a just-invalidated grant keep showing as active.
+        self._refresh_library_skill_script_grant()
 
     def _enter_library_skill_conflict(self) -> None:
         """Recompose into the save-conflict banner (Reload only -- see the
@@ -8717,6 +8753,61 @@ class LibraryScreen(BaseAppScreen):
         self._update_library_skill_warnings_static(
             name=self._read_library_skill_live_name()
         )
+
+    def _refresh_library_skill_script_grant(self) -> None:
+        """Kick an off-thread read of the open skill's script-execution grant.
+
+        Task 7 (skills-script-execution): mirrors
+        ``_refresh_library_skills_trust_posture``'s shape rather than
+        routing through ``_call_library_skill_trust_service`` -- that
+        helper toasts a warning whenever the trust service is unavailable,
+        which is correct for an explicit user action (Unlock/Review/
+        Approve) but would be noisy fired silently on every skill open in
+        a deployment with no local trust service wired (e.g. server mode).
+        ``SkillTrustService.script_execution_granted`` re-scans the skill's
+        on-disk directory to verify its fingerprint, so -- like
+        ``trust_posture()`` -- it is NEVER called on the compose/event-loop
+        thread, only from here via ``asyncio.to_thread`` in
+        ``_load_library_skill_script_grant`` below. Called whenever the
+        skill editor opens on an existing skill
+        (``_apply_library_skill_detail``) and after a Save
+        (``_apply_library_skill_save_success``), since editing content
+        invalidates any prior grant.
+        """
+        name = self._selected_skill_name
+        trust_service = getattr(self.app_instance, "local_skill_trust_service", None)
+        granted_fn = getattr(trust_service, "script_execution_granted", None)
+        if not name or not callable(granted_fn):
+            self._library_skill_script_grant = False
+            return
+        self.run_worker(
+            self._load_library_skill_script_grant(name, granted_fn),
+            exclusive=True,
+            group="library_skill_script_grant",
+            exit_on_error=False,
+        )
+
+    async def _load_library_skill_script_grant(self, name: str, granted_fn) -> None:
+        """Await the off-thread grant lookup and patch the trust panel.
+
+        Args:
+            name: The skill name captured at kick-off time (by
+                ``_refresh_library_skill_script_grant``), used to discard an
+                out-of-order result if a different skill is open by the
+                time this resolves.
+            granted_fn: The trust service's bound
+                ``script_execution_granted`` method (captured at kick-off
+                so this never re-reads ``local_skill_trust_service``
+                itself).
+        """
+        try:
+            granted = await asyncio.to_thread(granted_fn, name)
+        except Exception:
+            granted = False
+        if name != self._selected_skill_name or self._library_skills_view != "editor":
+            return
+        self._library_skill_script_grant = bool(granted)
+        self._render_library_skill_trust_panel()
 
     async def _request_library_skill_trust_bootstrap_passphrase(self) -> str | None:
         """Push the confirm-passphrase bootstrap modal and await a passphrase.
@@ -9169,6 +9260,47 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_skill_active_review = None
         await self._refresh_library_skill_trust_status()
+
+    @on(Button.Pressed, "#library-skill-script-grant-revoke")
+    def handle_library_skill_script_grant_revoke(self, event: Button.Pressed) -> None:
+        """Revoke the open skill's standing script-execution grant.
+
+        Args:
+            event: Button press event emitted by the trust panel's "Revoke
+                script access" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._revoke_library_skill_script_grant(),
+            exclusive=True,
+            group="library_skill_trust",
+        )
+
+    async def _revoke_library_skill_script_grant(self) -> None:
+        """Drop the open skill's standing script grant, then patch the panel.
+
+        Task 7 (skills-script-execution): the counterpart to whatever
+        confirm-card action (Task 6) called ``grant_script_execution`` in
+        the first place -- a grant the user cannot see or withdraw here
+        would be a real hole. ``revoke_script_execution`` raises
+        ``ValueError`` on a malformed skill name, which
+        ``_call_library_skill_trust_service`` already catches and reports
+        via the standard failure toast, so no extra guard is needed here.
+        The outcome is applied directly (no re-fetch) since a successful
+        revoke unambiguously means "not granted".
+        """
+        if self._library_skills_view != "editor" or not self._selected_skill_name:
+            return
+        name = self._selected_skill_name
+        _, ok = await self._call_library_skill_trust_service(
+            "revoke_script_execution", name
+        )
+        if not ok:
+            return
+        if name != self._selected_skill_name or self._library_skills_view != "editor":
+            return
+        self._library_skill_script_grant = False
+        self._render_library_skill_trust_panel()
 
     @on(Button.Pressed, "#library-prompts-import")
     def handle_library_prompts_import(self, event: Button.Pressed) -> None:

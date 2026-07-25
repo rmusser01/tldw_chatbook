@@ -533,6 +533,79 @@ def benchmark_timer():
     return Timer
 
 
+# ========== Skill Trust Service Fixtures ==========
+#
+# Promoted from ``Tests/Skills/conftest.py`` (task-7 of the skills-script-
+# execution SDD plan): ``Tests/Library/test_skill_script_grant_panel.py``
+# needs ``trust_service_with_skill`` too, and pytest fixture discovery only
+# walks a test file's own directory and its ANCESTORS -- a sibling
+# directory's ``conftest.py`` is never visible. Living here instead of being
+# duplicated means both ``Tests/Skills/`` and ``Tests/Library/`` share the
+# exact same fixture (and its future edits), rather than two copies quietly
+# drifting apart.
+
+
+@pytest.fixture
+def make_trust_service(tmp_path):
+    """Return a factory that builds `SkillTrustService` instances sharing one store.
+
+    Args:
+        tmp_path: Pytest-provided temporary directory fixture.
+
+    Returns:
+        A zero-argument callable that constructs a new `SkillTrustService`
+        bound to the same on-disk `skills_dir`/`trust_dir`, so repeated calls
+        simulate a fresh process re-reading persisted state.
+    """
+    from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
+    from tldw_chatbook.Skills_Interop.skill_trust_store import (
+        FileSkillTrustGenerationMarkerStore,
+        SkillTrustStore,
+    )
+
+    skills_dir = tmp_path / "skills"
+    trust_dir = tmp_path / "trust"
+    skills_dir.mkdir(exist_ok=True)
+    trust_dir.mkdir(exist_ok=True)
+
+    def _make() -> "SkillTrustService":
+        return SkillTrustService(
+            skills_dir=skills_dir,
+            trust_store=SkillTrustStore(
+                store_dir=trust_dir,
+                marker_store=FileSkillTrustGenerationMarkerStore(
+                    trust_dir / "marker.json"
+                ),
+            ),
+        )
+
+    return _make
+
+
+@pytest.fixture
+def trust_service_with_skill(make_trust_service):
+    """Return a `SkillTrustService` with one on-disk demo skill (with a script).
+
+    Args:
+        make_trust_service: Factory fixture for building trust-service instances.
+
+    Returns:
+        A `(service, skill_name)` tuple where `skill_name` names a skill
+        directory containing a `SKILL.md` and a `scripts/hello.py`.
+    """
+    service = make_trust_service()
+    name = "demo-skill"
+    skill_dir = service.skills_dir / name
+    (skill_dir / "scripts").mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo-skill\ndescription: demo\n---\nbody\n", encoding="utf-8"
+    )
+    (skill_dir / "scripts" / "hello.py").write_text(
+        "print('hello')", encoding="utf-8"
+    )
+    return service, name
+
+
 # ========== Pytest Configuration ==========
 
 

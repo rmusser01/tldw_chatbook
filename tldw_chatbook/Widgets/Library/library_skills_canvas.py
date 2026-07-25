@@ -230,6 +230,27 @@ def skill_trust_panel_remediation_copy(trust_status: str, skill_path: str) -> st
     return skill_trust_remediation_copy(trust_status, skill_path)
 
 
+def skill_script_grant_line(granted: bool) -> str:
+    """Return the trust-panel line describing this skill's script permission.
+
+    Task 7 (skills-script-execution): surfaces the standing "always allow
+    this skill's scripts" grant a confirm card (Task 6) may have recorded --
+    a grant the user cannot see or revoke here would be a real hole.
+
+    Args:
+        granted: Whether a standing script-execution grant is in effect.
+
+    Returns:
+        A single plain-text line for the trust panel.
+    """
+    if granted:
+        return (
+            "Scripts: this skill may run its bundled scripts without asking. "
+            "Any change to its files cancels this automatically."
+        )
+    return "Scripts: you are asked to confirm each time this skill runs a script."
+
+
 # task-414: per-file preview cap. Generous enough for any realistic
 # SKILL.md, small enough that a pathological file can't wedge the panel.
 _TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP = 4000
@@ -1056,6 +1077,28 @@ class LibrarySkillsListCanvas(VerticalScroll):
                 ),
                 id="library-skill-trust-remediation",
                 markup=False,
+            )
+            # Task 7 (skills-script-execution): the standing script-execution
+            # grant a confirm card (Task 6) may have recorded for this skill,
+            # plus a way to revoke it. Compose-time default is "not granted"
+            # (the screen only knows the real state after an off-thread
+            # fingerprint check -- see ``local_skill_trust_service
+            # .script_execution_granted``, which re-scans the skill's
+            # directory and must never run on this synchronous compose
+            # path); the screen patches both widgets in place moments later
+            # via ``_render_library_skill_trust_panel``, same contract as
+            # the always-present review-files/review-content lines above.
+            yield Static(
+                skill_script_grant_line(False),
+                id="library-skill-script-grant",
+                markup=False,
+            )
+            yield Button(
+                "Revoke script access",
+                id="library-skill-script-grant-revoke",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=True,
             )
             if editor_state.trust_status == "quarantined_manifest_error":
                 # Task 5: the manifest itself can't be verified, so nothing
