@@ -141,6 +141,15 @@ class PersonasCharacterEditorWidget(Container):
         min-height: 1;
     }
 
+    /* Static defaults to 1fr with no width set, which would otherwise let
+       this header claim the whole row and push every action button in it
+       (Style readout/pick, Generate all, Import/Export set) past the row's
+       right edge - permanently unreachable since Horizontal doesn't wrap. */
+    PersonasCharacterEditorWidget #personas-char-editor-expr-header {
+        width: auto;
+        min-width: 0;
+    }
+
     PersonasCharacterEditorWidget #personas-char-editor-expr-import,
     PersonasCharacterEditorWidget #personas-char-editor-expr-export,
     PersonasCharacterEditorWidget #personas-char-editor-expr-generate-all,
@@ -377,7 +386,11 @@ class PersonasCharacterEditorWidget(Container):
                 )
             yield Container(id="personas-char-editor-avatar-thumb")
             with Horizontal(classes="personas-char-editor-expr-set-row"):
-                yield Static("Expressions", classes="destination-section")
+                yield Static(
+                    "Expressions",
+                    id="personas-char-editor-expr-header",
+                    classes="destination-section",
+                )
                 yield Static(
                     "Style: Custom",
                     id="personas-char-editor-style-readout",
