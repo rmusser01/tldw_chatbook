@@ -140,11 +140,13 @@ def fetch_json(
     each ``Location`` — a blindly-followed redirect could reach a disallowed
     host/scheme and defeat the egress guard. ``headers``/``cookies`` are also
     re-evaluated per hop: ``Authorization``/``Cookie``/``Proxy-Authorization``
-    are stripped on any hop whose host differs from the original request's
-    host, so a redirect cannot be used to exfiltrate credentials to a
-    different (still-public, so not SSRF-blocked) origin. ``params`` is only
-    applied to the first hop — the redirected URL already carries whatever
-    query the server encoded into ``Location``.
+    are stripped on any hop whose origin (scheme + host + effective port)
+    differs from the original request's origin — a same-host HTTPS->HTTP
+    downgrade or a same-host different-port redirect is treated as
+    cross-origin too — so a redirect cannot be used to exfiltrate
+    credentials to a different (still-public, so not SSRF-blocked) origin.
+    ``params`` is only applied to the first hop — the redirected URL already
+    carries whatever query the server encoded into ``Location``.
 
     Args:
         method: HTTP method.
@@ -167,17 +169,18 @@ def fetch_json(
             a redirect without a ``Location``, or exceeding the redirect cap.
     """
     current = url
-    first_host = egress.host_of(url)
     with create_client(timeout=timeout) as client:
         for hop in range(DEFAULT_MAX_REDIRECTS + 1):
             _validate_egress_or_raise(current, trusted_origins=trusted_origins)
-            # A redirect to a DIFFERENT origin must not carry credentials --
-            # public hosts (unlike private ones) are not blocked by the SSRF
-            # policy, so this is the only guard against a compromised/malicious
-            # backend exfiltrating our Authorization/Cookie via a 30x. Mirrors
-            # Utils.egress._hop_headers, the same rule the app's other egress
-            # consumers already apply.
-            same_origin = egress.host_of(current) == first_host
+            # A redirect to a DIFFERENT origin (scheme+host+effective-port)
+            # must not carry credentials -- public hosts (unlike private
+            # ones) are not blocked by the SSRF policy, so this is the only
+            # guard against a compromised/malicious backend exfiltrating our
+            # Authorization/Cookie via a same-host scheme downgrade, a
+            # different-port redirect, or a redirect to an outright
+            # different host. Mirrors Utils.egress.same_origin, the same
+            # rule the app's other egress consumers already apply.
+            same_origin = egress.same_origin(url, current)
             resp = client.request(
                 method,
                 current,

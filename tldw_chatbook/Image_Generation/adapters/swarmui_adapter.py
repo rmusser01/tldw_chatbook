@@ -21,7 +21,7 @@ from tldw_chatbook.Image_Generation.config import (
 )
 from tldw_chatbook.Image_Generation.exceptions import ImageBackendUnavailableError, ImageGenerationError
 from tldw_chatbook.Image_Generation.request_validation import effective_inline_max_bytes
-from tldw_chatbook.Utils.egress import origin_set
+from tldw_chatbook.Utils.egress import origin_set, same_origin
 
 
 class SwarmUIAdapter:
@@ -188,37 +188,17 @@ class SwarmUIAdapter:
     @staticmethod
     def _resolve_image_url(base_url: str, image_ref: str) -> str:
         if image_ref.startswith("http://") or image_ref.startswith("https://"):
-            if not SwarmUIAdapter._same_origin(base_url, image_ref):
+            if not same_origin(base_url, image_ref):
                 raise ImageGenerationError("SwarmUI returned off-origin image URL")
             return image_ref
         parsed = urlparse(image_ref)
         if parsed.scheme in {"http", "https"}:
-            if not SwarmUIAdapter._same_origin(base_url, image_ref):
+            if not same_origin(base_url, image_ref):
                 raise ImageGenerationError("SwarmUI returned off-origin image URL")
             return image_ref
         path = image_ref.lstrip("/")
         encoded_path = "/".join(quote(part) for part in path.split("/"))
         return f"{base_url.rstrip('/')}/{encoded_path}"
-
-    @staticmethod
-    def _same_origin(base_url: str, target_url: str) -> bool:
-        base = urlparse(base_url)
-        target = urlparse(target_url)
-        return (
-            base.scheme.lower() == target.scheme.lower()
-            and (base.hostname or "").lower() == (target.hostname or "").lower()
-            and SwarmUIAdapter._origin_port(base) == SwarmUIAdapter._origin_port(target)
-        )
-
-    @staticmethod
-    def _origin_port(parsed) -> int | None:
-        if parsed.port is not None:
-            return int(parsed.port)
-        if parsed.scheme.lower() == "https":
-            return 443
-        if parsed.scheme.lower() == "http":
-            return 80
-        return None
 
     def _fetch_image_bytes(self, url: str, trusted_origins: frozenset) -> tuple[bytes, str]:
         try:

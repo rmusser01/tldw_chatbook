@@ -202,16 +202,17 @@ def fetch_image_bytes(
     trusted_origins: frozenset = frozenset(),
 ) -> tuple[bytes, str]:
     current_url = url
-    first_host = egress.host_of(url)
     try:
         with create_client(timeout=timeout) as client:
             for _redirect_count in range(DEFAULT_MAX_REDIRECTS + 1):
                 _validate_egress_or_raise(current_url, trusted_origins=trusted_origins)
                 # Strip credentials on a cross-origin hop -- same rationale as
                 # http_client.fetch_json: a redirect to a still-public (so not
-                # SSRF-blocked) different host must not carry Authorization/
-                # Cookie/Proxy-Authorization along with it.
-                same_origin = egress.host_of(current_url) == first_host
+                # SSRF-blocked) different origin (scheme+host+effective-port
+                # -- a same-host scheme downgrade or port change counts too)
+                # must not carry Authorization/Cookie/Proxy-Authorization
+                # along with it.
+                same_origin = egress.same_origin(url, current_url)
                 with client.stream(
                     "GET",
                     current_url,

@@ -1,4 +1,5 @@
 import io
+import pytest
 from PIL import Image
 
 def _png_b64():
@@ -76,3 +77,37 @@ def test_swarmui_image_fetch_threads_trusted_origins(monkeypatch):
     res = m.SwarmUIAdapter().generate(req)
     assert res.bytes_len > 0
     assert seen_kwargs["trusted_origins"] == frozenset({"127.0.0.1"})
+
+
+def test_resolve_image_url_accepts_absolute_same_origin_ref():
+    # An absolute image ref that matches base_url's scheme+host+port exactly
+    # (including the explicit port) is accepted unchanged.
+    from tldw_chatbook.Image_Generation.adapters.swarmui_adapter import SwarmUIAdapter
+
+    url = SwarmUIAdapter._resolve_image_url(
+        "http://127.0.0.1:7801", "http://127.0.0.1:7801/View/local/raw/img.png"
+    )
+    assert url == "http://127.0.0.1:7801/View/local/raw/img.png"
+
+
+def test_resolve_image_url_rejects_scheme_mismatch():
+    # task-568: this now delegates to egress.same_origin (scheme+host+port),
+    # not a hostname-only comparison -- a scheme-mismatched "same host"
+    # image ref must still be rejected as off-origin.
+    from tldw_chatbook.Image_Generation.adapters.swarmui_adapter import SwarmUIAdapter
+    from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
+    with pytest.raises(ImageGenerationError, match="off-origin"):
+        SwarmUIAdapter._resolve_image_url(
+            "http://127.0.0.1:7801", "https://127.0.0.1:7801/View/local/raw/img.png"
+        )
+
+
+def test_resolve_image_url_rejects_port_mismatch():
+    from tldw_chatbook.Image_Generation.adapters.swarmui_adapter import SwarmUIAdapter
+    from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
+    with pytest.raises(ImageGenerationError, match="off-origin"):
+        SwarmUIAdapter._resolve_image_url(
+            "http://127.0.0.1:7801", "http://127.0.0.1:9999/View/local/raw/img.png"
+        )
