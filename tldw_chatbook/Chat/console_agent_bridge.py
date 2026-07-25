@@ -912,6 +912,16 @@ class ConsoleAgentBridge:
         ``record_run_assistant_message`` once the reply is persisted; an
         unfinished/crashed run stays NULL for resume's null->ordinal fallback.
 
+        Concurrency: this bridge does NOT serialize runs. The
+        ``_live``/``_historical_cache`` dicts are per-conversation DISPLAY
+        snapshots, not a mutual-exclusion guard. The single active-run-per-
+        conversation invariant is enforced upstream by
+        ``ConsoleChatController`` (its ``_active_run_rejection`` /
+        ``run_state.is_send_allowed`` gate -- covered by
+        ``Tests/UI/test_console_run_gate.py``): a second send while a run is
+        live is rejected there before ``run_reply`` is ever called. Do not
+        add a competing guard here.
+
         Returns:
             A ``(run_id, outcome)`` tuple: the primary run's id (so the
             caller can record the produced reply's persisted id onto the run
