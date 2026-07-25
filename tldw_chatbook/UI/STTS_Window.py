@@ -680,17 +680,43 @@ class TTSPlaygroundWidget(Widget):
         """Check if a voice value is valid (not a separator)."""
         return bool(voice) and not str(voice).startswith("_separator")
 
-    @work(
-        exclusive=True,
-        group="stts-catalog-discovery",
-        exit_on_error=False,
-    )
-    async def _load_provider_catalog(
+    def _load_provider_catalog(
         self,
         provider_id: str | None = None,
         *,
         refresh: bool = False,
         initialize: bool = False,
+    ) -> None:
+        """Reserve request identity before starting exclusive catalog work."""
+        target = provider_id or self._selected_provider_id
+        request_generation = (
+            self._reserve_catalog_request(target) if isinstance(target, str) else None
+        )
+        self._load_provider_catalog_worker(
+            provider_id,
+            refresh=refresh,
+            initialize=initialize,
+            request_generation=request_generation,
+        )
+
+    def _reserve_catalog_request(self, provider_id: str) -> int:
+        """Reserve and return the next catalog request generation."""
+        generation = self._catalog_request_generations.get(provider_id, 0) + 1
+        self._catalog_request_generations[provider_id] = generation
+        return generation
+
+    @work(
+        exclusive=True,
+        group="stts-catalog-discovery",
+        exit_on_error=False,
+    )
+    async def _load_provider_catalog_worker(
+        self,
+        provider_id: str | None = None,
+        *,
+        refresh: bool = False,
+        initialize: bool = False,
+        request_generation: int | None = None,
     ) -> None:
         """Load descriptors and one selected provider catalog."""
         token: CatalogRequestToken | None = None
@@ -740,10 +766,8 @@ class TTSPlaygroundWidget(Widget):
                 return
 
             configuration_revision = service.configuration_revision(provider_id)
-            request_generation = (
-                self._catalog_request_generations.get(provider_id, 0) + 1
-            )
-            self._catalog_request_generations[provider_id] = request_generation
+            if request_generation is None:
+                request_generation = self._reserve_catalog_request(provider_id)
             token = CatalogRequestToken(
                 provider_id=provider_id,
                 configuration_revision=configuration_revision,
@@ -799,12 +823,7 @@ class TTSPlaygroundWidget(Widget):
                     self._catalog_error_copy(error, target),
                 )
 
-    @work(
-        exclusive=True,
-        group="stts-voice-discovery",
-        exit_on_error=False,
-    )
-    async def _load_provider_voices(
+    def _load_provider_voices(
         self,
         provider_id: str,
         model_id: str,
@@ -812,13 +831,36 @@ class TTSPlaygroundWidget(Widget):
         *,
         refresh: bool = False,
     ) -> None:
+        """Reserve request identity before starting exclusive voice work."""
+        request_key = (provider_id, model_id)
+        request_generation = self._voice_request_generations.get(request_key, 0) + 1
+        self._voice_request_generations[request_key] = request_generation
+        self._load_provider_voices_worker(
+            provider_id,
+            model_id,
+            catalog_revision,
+            refresh=refresh,
+            request_generation=request_generation,
+        )
+
+    @work(
+        exclusive=True,
+        group="stts-voice-discovery",
+        exit_on_error=False,
+    )
+    async def _load_provider_voices_worker(
+        self,
+        provider_id: str,
+        model_id: str,
+        catalog_revision: int,
+        *,
+        refresh: bool = False,
+        request_generation: int,
+    ) -> None:
         """Load voices for only the selected provider model."""
         service = self._tts_service
         if service is None:
             return
-        request_key = (provider_id, model_id)
-        request_generation = self._voice_request_generations.get(request_key, 0) + 1
-        self._voice_request_generations[request_key] = request_generation
         token = CatalogRequestToken(
             provider_id=provider_id,
             configuration_revision=service.configuration_revision(provider_id),

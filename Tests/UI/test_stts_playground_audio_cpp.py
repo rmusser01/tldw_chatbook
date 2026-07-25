@@ -628,6 +628,136 @@ async def test_superseded_same_model_voice_result_cannot_overwrite_newer_success
 
 
 @pytest.mark.asyncio
+async def test_catalog_generation_is_reserved_before_exclusive_worker_cancellation(
+    audio_cpp_playground: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = audio_cpp_playground
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        widget = app.query_one(TTSPlaygroundWidget)
+        baseline_catalog = widget._catalogs["audio_cpp"]
+        first_started = asyncio.Event()
+        first_returned_on_cancel = asyncio.Event()
+        second_started = asyncio.Event()
+        release_second = asyncio.Event()
+        call_count = 0
+        obsolete_catalog = _audio_catalog(revision=10)
+        newer_catalog = _audio_catalog(revision=12)
+
+        async def get_catalog(
+            provider_id: str,
+            refresh: bool = False,
+        ) -> TTSProviderCatalog:
+            nonlocal call_count
+            del refresh
+            assert provider_id == "audio_cpp"
+            call_count += 1
+            if call_count == 1:
+                first_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    first_returned_on_cancel.set()
+                    return obsolete_catalog
+            second_started.set()
+            await release_second.wait()
+            return newer_catalog
+
+        monkeypatch.setattr(service, "get_catalog", get_catalog)
+
+        widget._load_provider_catalog("audio_cpp", refresh=True)
+        await first_started.wait()
+        first_generation = widget._catalog_request_generations["audio_cpp"]
+
+        widget._load_provider_catalog("audio_cpp", refresh=True)
+
+        assert widget._catalog_request_generations["audio_cpp"] == (
+            first_generation + 1
+        )
+        await first_returned_on_cancel.wait()
+        await second_started.wait()
+        await pilot.pause()
+        assert widget._catalogs["audio_cpp"] is baseline_catalog
+
+        release_second.set()
+        await app.workers.wait_for_complete()
+        assert widget._catalogs["audio_cpp"] is newer_catalog
+
+
+@pytest.mark.asyncio
+async def test_voice_generation_is_reserved_before_exclusive_worker_cancellation(
+    audio_cpp_playground: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = audio_cpp_playground
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        widget = app.query_one(TTSPlaygroundWidget)
+        model_id = "<opaque:model>"
+        request_key = ("audio_cpp", model_id)
+        baseline_voices = widget._discovered_voices[request_key]
+        catalog_revision = service.catalogs["audio_cpp"].revision
+        first_started = asyncio.Event()
+        first_returned_on_cancel = asyncio.Event()
+        second_started = asyncio.Event()
+        release_second = asyncio.Event()
+        call_count = 0
+
+        async def get_voices(
+            provider_id: str,
+            requested_model_id: str,
+            refresh: bool = False,
+        ) -> tuple[str, ...]:
+            nonlocal call_count
+            del refresh
+            assert (provider_id, requested_model_id) == request_key
+            call_count += 1
+            if call_count == 1:
+                first_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    first_returned_on_cancel.set()
+                    return ("obsolete-on-cancel",)
+            second_started.set()
+            await release_second.wait()
+            return ("new-voice",)
+
+        monkeypatch.setattr(service, "get_voices", get_voices)
+
+        widget._load_provider_voices(
+            "audio_cpp",
+            model_id,
+            catalog_revision,
+            refresh=True,
+        )
+        await first_started.wait()
+        first_generation = widget._voice_request_generations[request_key]
+
+        widget._load_provider_voices(
+            "audio_cpp",
+            model_id,
+            catalog_revision,
+            refresh=True,
+        )
+
+        assert widget._voice_request_generations[request_key] == first_generation + 1
+        await first_returned_on_cancel.wait()
+        await second_started.wait()
+        await pilot.pause()
+        assert widget._discovered_voices[request_key] == baseline_voices
+
+        release_second.set()
+        await app.workers.wait_for_complete()
+        assert widget._discovered_voices[request_key] == ("new-voice",)
+
+
+@pytest.mark.asyncio
 async def test_voice_discovery_does_not_cancel_inflight_catalog_refresh(
     audio_cpp_playground: FakeTTSService,
 ) -> None:
