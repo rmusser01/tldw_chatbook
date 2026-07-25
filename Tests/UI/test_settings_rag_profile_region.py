@@ -3651,3 +3651,97 @@ async def test_stale_active_profile_pointer_composes_blank_instead_of_crashing(
         # Mount survived and the picker sits on the blank sentinel.
         assert select.value is Select.NULL
         assert "Active: (missing)" in _visible_text(screen)
+
+
+# --- task-627 (live UAT CRITICAL bug): Settings > RAG mouse-capture leak
+# breaks app-wide clicks. ---
+
+
+@pytest.mark.asyncio
+async def test_recompose_releases_a_capture_that_lands_in_the_deferred_teardown_window():
+    """A REAL, exploitable gap in ``BaseAppScreen.refresh``'s mouse-capture
+    guard, found while root-causing the live UAT's Settings > RAG hang/
+    click-swallow report.
+
+    ``Widget.refresh(recompose=True)`` -- what changing ``active_category``
+    (entering/leaving the RAG category, among every other category) always
+    does -- only *schedules* the actual teardown via
+    ``self.call_next(self._check_recompose)``: it runs on a LATER
+    message-loop iteration, not synchronously. ``BaseAppScreen.refresh``'s
+    pre-existing guard (added for a prior, DIFFERENT trigger -- see
+    ``test_opening_skill_editor_does_not_break_tab_bar_click_activation`` in
+    ``test_library_skills_canvas.py``) releases whatever is captured at the
+    moment ``refresh()`` is CALLED, but never re-checks before the deferred
+    teardown actually fires. So a genuine MouseDown that captures an
+    Input/TextArea/ScrollBar arriving in that window -- entirely plausible
+    over a laggy transport where down/up travel as independently-timed
+    messages, exactly the live UAT's textual-serve session -- leaks exactly
+    like the original, already-"fixed" bug: ``App.mouse_captured`` is left
+    referencing a widget the recompose is about to tear down, and every
+    mouse click anywhere in the app (including the top nav bar) is silently
+    swallowed forever after.
+
+    Empirically confirmed RED against the pre-fix code (git-stashed
+    ``base_app_screen.py``): after the sequence below, ``mouse_captured``
+    stayed stuck on the torn-down widget and the subsequent real nav-bar
+    click produced NO route change at all (``seen_routes == []`` --
+    matching live session 2's "clicking '1 Home' did nothing" finding
+    exactly).
+
+    This simulates the window deterministically (no real network/websocket
+    delay needed): set the recompose-triggering reactive, then -- before
+    yielding control back to the event loop even once, landing in the same
+    gap a genuinely-later-arriving MouseDown message would -- capture a
+    widget the recompose is about to remove, the same way
+    ``Input._on_mouse_down`` captures internally.
+
+    Fixed by also overriding ``BaseAppScreen.recompose()`` (not just
+    ``refresh()``): it releases capture as the coroutine's first
+    synchronous statement, immediately before ``super().recompose()``
+    performs the actual removal -- closing the window rather than merely
+    narrowing it.
+    """
+    app = _build_test_app()
+    seen_routes: list[str] = []
+    host = DestinationHarness(app, "settings", seen_routes)
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        victim = screen.query_one("#settings-category-search", Input)
+
+        # Trigger a recompose (active_category rebuilds the WHOLE screen
+        # content, nav bar included -- BaseAppScreen.refresh's early guard
+        # fires synchronously here; nothing is captured yet, so it's a
+        # no-op today).
+        screen.active_category = "overview"
+
+        # Immediately -- same synchronous stack, no `await` yet -- simulate
+        # a MouseDown capturing a widget the just-scheduled (but not yet
+        # run) recompose is about to tear down.
+        pilot.app.capture_mouse(victim)
+        assert pilot.app.mouse_captured is victim, (
+            "test setup didn't actually capture the victim widget"
+        )
+
+        # Let the deferred recompose (and everything else queued) run.
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.active_category == "overview"
+        assert pilot.app.mouse_captured is None, (
+            "mouse_captured is still referencing a widget the deferred "
+            "recompose already tore down -- every mouse click anywhere in "
+            "the app is now silently swallowed (task-627)"
+        )
+
+        # A real click on the top nav bar must still be delivered.
+        nav_button = screen.query_one("#nav-console", Button)
+        await pilot.click(nav_button)
+        await pilot.pause()
+        await pilot.pause()
+        assert seen_routes, (
+            "top nav bar click produced no route change -- clicks are "
+            "still being swallowed app-wide (task-627)"
+        )

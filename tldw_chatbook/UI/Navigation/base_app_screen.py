@@ -89,6 +89,52 @@ class BaseAppScreen(Screen):
             *regions, repaint=repaint, layout=layout, recompose=recompose
         )
 
+    async def recompose(self) -> None:
+        """Release any mouse capture again immediately before the actual
+        teardown -- task-627.
+
+        ``refresh(recompose=True)`` (overridden above) already releases
+        capture at the moment it is CALLED, but Textual's own
+        ``Widget.refresh(recompose=True)`` only *schedules* the real
+        teardown (``self.call_next(self._check_recompose)``) -- it runs on
+        a LATER iteration of the message loop, not synchronously. Live UAT
+        (task-627) reproduced the exact "every mouse click silently
+        swallowed app-wide" symptom the ``refresh()`` guard above was
+        supposed to prevent: reproduced headlessly by injecting a NEW
+        ``capture_mouse()`` call in that exact window (after ``refresh()``
+        released the OLD capture, before the deferred recompose actually
+        ran) and confirming ``App.mouse_captured`` was left pointing at the
+        (now torn-down) widget afterward -- i.e. a real, exploitable gap:
+        anything that captures the mouse in that window (a MouseDown on an
+        Input/TextArea/ScrollBar arriving as a separately-timed message --
+        entirely plausible over a laggy transport where down/up travel
+        independently, as this app's textual-serve-driven UAT sessions do)
+        leaks exactly like the original bug, since the earlier guard only
+        ever checks capture state once, at ``refresh()``-call time.
+
+        Overriding ``recompose()`` itself -- the coroutine Textual's
+        deferred ``_check_recompose`` actually calls to perform the
+        teardown -- releases capture as the very first synchronous
+        statement of that same coroutine. asyncio only yields control at
+        ``await`` points, so nothing else in the event loop can run between
+        this release and ``super().recompose()`` initiating the real
+        ``remove()``/``mount_all()`` teardown below it: the window is
+        closed entirely, not just narrowed. Recomposing ALWAYS removes and
+        remounts every child regardless of which specific widget currently
+        holds capture (mirrors the `refresh()` guard's own reasoning), so
+        this releases unconditionally rather than trying to identify
+        whether the captured widget is actually a descendant.
+        """
+        if self.is_running:
+            try:
+                self.app.capture_mouse(None)
+            except Exception:
+                logger.debug(
+                    "Mouse-capture release before recompose teardown skipped.",
+                    exc_info=True,
+                )
+        await super().recompose()
+
     def compose(self) -> ComposeResult:
         """Compose the screen with navigation bar and content."""
         # Imported locally (not at module level): `AppFooterStatus` imports
