@@ -133,6 +133,35 @@ def _current_dependencies_available() -> Dict[str, bool]:
     return DEPENDENCIES_AVAILABLE
 
 
+def _embeddings_rag_available() -> bool:
+    """Resolve real embeddings/RAG dependency availability, checking lazily.
+
+    ``DEPENDENCIES_AVAILABLE["embeddings_rag"]`` starts False and, under the
+    default lazy dependency-checking mode (optional_deps.py), is only ever
+    populated by ``check_embeddings_rag_deps()`` -- a function nothing in the
+    app calls automatically before this constructor runs (task-628). Without
+    this, the flag stays at its pristine False default for the app's entire
+    lifetime even when the packages are genuinely importable, so
+    EmbeddingFactory refuses every construction with a misleading
+    "install the dependencies" error.
+
+    This constructor is a genuine "first real use", so a False reading here
+    triggers the real (deep-import) probe now, resolved reload-safely
+    (mirroring ``_current_dependencies_available()``) so it keeps working
+    across the module reloads some tests perform. A True reading is trusted
+    without re-probing -- callers that explicitly reset the registry (e.g.
+    ``reset_dependency_checks()``/``force_recheck_embeddings()``) get a fresh
+    check on the next construction, same as today.
+    """
+    if _current_dependencies_available().get("embeddings_rag", False):
+        return True
+    optional_deps_module = sys.modules.get("tldw_chatbook.Utils.optional_deps")
+    check_fn = getattr(optional_deps_module, "check_embeddings_rag_deps", None)
+    if not callable(check_fn):
+        from ..Utils.optional_deps import check_embeddings_rag_deps as check_fn
+    return bool(check_fn())
+
+
 # `Tensor` is only used for type annotations (deferred at runtime by
 # `from __future__ import annotations`, at the top of this module) and in the
 # `PoolingFn` alias just below, so a plain `Any` placeholder is sufficient
@@ -661,8 +690,10 @@ class EmbeddingFactory:
         idle_seconds: int = 900,
         allow_dynamic_hf: bool = True,
     ) -> None:
-        # Check if embeddings/RAG dependencies are available
-        if not _current_dependencies_available().get("embeddings_rag", False):
+        # Check if embeddings/RAG dependencies are available (lazily checking
+        # for real on first use if nothing has populated the registry yet --
+        # see _embeddings_rag_available, task-628).
+        if not _embeddings_rag_available():
             raise ImportError(
                 "EmbeddingFactory requires embeddings/RAG dependencies. "
                 "Install with: pip install tldw_chatbook[embeddings_rag]"

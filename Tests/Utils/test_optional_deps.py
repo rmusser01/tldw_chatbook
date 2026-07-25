@@ -233,29 +233,32 @@ def test_embeddings_rag_deps_missing():
         __builtins__["__import__"] = original_import
 
 
-def test_embeddings_lib_graceful_failure():
+def test_embeddings_lib_graceful_failure(monkeypatch):
     """Test that Embeddings_Lib handles missing dependencies gracefully."""
     # This test verifies the module can be imported even if dependencies are missing
-    try:
-        # Clear optional dependency availability to simulate missing deps
-        from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
+    from tldw_chatbook.Utils import optional_deps
+    from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
-        original_rag_available = DEPENDENCIES_AVAILABLE.get("embeddings_rag")
-        DEPENDENCIES_AVAILABLE["embeddings_rag"] = False
+    # Clear optional dependency availability to simulate missing deps. A
+    # bare `DEPENDENCIES_AVAILABLE["embeddings_rag"] = False` is not enough
+    # on its own (task-628): EmbeddingFactory now runs the real dependency
+    # probe itself on a False reading (a genuine "first use", since nothing
+    # else in the app calls it under the default lazy-checking mode), so a
+    # merely-stale flag with the real packages present would get silently
+    # corrected back to True. Patching the underlying checker is what
+    # actually simulates "the real probe ran and found the packages
+    # missing".
+    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "embeddings_rag", False)
+    monkeypatch.setattr(optional_deps, "check_embeddings_rag_deps", lambda: False)
 
-        # Test that EmbeddingFactory raises helpful error
-        from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingFactory
+    # Test that EmbeddingFactory raises helpful error
+    from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingFactory
 
-        with pytest.raises(ImportError) as exc_info:
-            EmbeddingFactory({})
+    with pytest.raises(ImportError) as exc_info:
+        EmbeddingFactory({})
 
-        assert "embeddings/RAG dependencies" in str(exc_info.value)
-        assert "pip install" in str(exc_info.value)
-
-    finally:
-        # Restore original state
-        if original_rag_available is not None:
-            DEPENDENCIES_AVAILABLE["embeddings_rag"] = original_rag_available
+    assert "embeddings/RAG dependencies" in str(exc_info.value)
+    assert "pip install" in str(exc_info.value)
 
 
 def test_pdf_processing_deps():
