@@ -1,15 +1,19 @@
 """Tests for console_generate_image pure helpers."""
 
 import dataclasses
+import time
 
 import pytest
 from tldw_chatbook.Chat.console_generate_image import (
     GENERATE_IMAGE_USAGE_TEXT,
     GenerateImageArgs,
     GenerationRefusal,
+    LLMContextOptions,
     PreparedGeneration,
     build_context_prompt,
+    build_context_prompt_with_llm,
     clamp_initial_batch,
+    compose_llm_context_prompt,
     compose_styled_request,
     insert_style_token_into_draft,
     parse_generate_image_args,
@@ -17,6 +21,10 @@ from tldw_chatbook.Chat.console_generate_image import (
     prepare_generation_request,
     resolve_style_token,
     run_generation_batch,
+)
+from tldw_chatbook.Chat.console_generate_image import (
+    _clean_llm_context_response,
+    _shape_llm_context_payload,
 )
 from tldw_chatbook.Media_Creation.generation_templates import (
     BUILTIN_TEMPLATES,
@@ -600,3 +608,286 @@ def test_insert_style_token_into_draft_applying_twice_with_prompt_text():
     twice = insert_style_token_into_draft(once, "style_watercolor")
     assert twice == "/generate-image @style_watercolor a dragon"
     assert twice.count("@style_") == 1
+
+
+# ---------------------------------------------------------------------------
+# Task-559 AC1: LLM-composed conversation-context prompt
+# ---------------------------------------------------------------------------
+
+
+def _llm_options(*, chat_call=None, **overrides) -> LLMContextOptions:
+    defaults = dict(
+        enabled=True,
+        turns=10,
+        timeout_seconds=5.0,
+        provider_ready=True,
+        api_endpoint="openai",
+        model="gpt-4o-mini",
+        api_key="sk-test",
+    )
+    defaults.update(overrides)
+    return LLMContextOptions(chat_call=chat_call, **defaults)
+
+
+def _chat_response(text: str) -> dict:
+    return {"choices": [{"message": {"content": text}}]}
+
+
+# --- _shape_llm_context_payload -------------------------------------------
+
+
+def test_shape_llm_context_payload_keeps_last_n_turns_in_order():
+    pairs = [("user", f"turn {i}") for i in range(15)]
+    payload = _shape_llm_context_payload(pairs, 3)
+    assert payload == [
+        {"role": "user", "content": "turn 12"},
+        {"role": "user", "content": "turn 13"},
+        {"role": "user", "content": "turn 14"},
+    ]
+
+
+def test_shape_llm_context_payload_maps_unknown_role_to_user():
+    payload = _shape_llm_context_payload([("tool", "result text")], 10)
+    assert payload == [{"role": "user", "content": "result text"}]
+
+
+def test_shape_llm_context_payload_zero_or_negative_turns_is_empty():
+    pairs = [("user", "hello")]
+    assert _shape_llm_context_payload(pairs, 0) == []
+    assert _shape_llm_context_payload(pairs, -1) == []
+
+
+# --- _clean_llm_context_response -------------------------------------------
+
+
+def test_clean_llm_context_response_collapses_whitespace_and_newlines():
+    raw = "  A knight   \n  in a cave.\n\nDramatic light.  "
+    assert _clean_llm_context_response(raw) == "A knight in a cave. Dramatic light."
+
+
+def test_clean_llm_context_response_strips_wrapping_quotes():
+    assert _clean_llm_context_response('"a red dragon"') == "a red dragon"
+    assert _clean_llm_context_response("'a red dragon'") == "a red dragon"
+
+
+def test_clean_llm_context_response_empty_is_none():
+    assert _clean_llm_context_response("") is None
+    assert _clean_llm_context_response("   \n  ") is None
+
+
+def test_clean_llm_context_response_truncates_to_cap():
+    raw = "x" * 900
+    cleaned = _clean_llm_context_response(raw)
+    assert cleaned is not None
+    assert len(cleaned) == 500
+
+
+# --- compose_llm_context_prompt: fallback matrix ---------------------------
+
+
+def test_compose_llm_context_prompt_disabled_returns_none():
+    options = _llm_options(enabled=False, chat_call=lambda **_: _chat_response("x"))
+    assert compose_llm_context_prompt([("user", "hi")], options) is None
+
+
+def test_compose_llm_context_prompt_not_ready_returns_none():
+    options = _llm_options(
+        provider_ready=False, chat_call=lambda **_: _chat_response("x")
+    )
+    assert compose_llm_context_prompt([("user", "hi")], options) is None
+
+
+def test_compose_llm_context_prompt_no_api_endpoint_returns_none():
+    options = _llm_options(
+        api_endpoint=None, chat_call=lambda **_: _chat_response("x")
+    )
+    assert compose_llm_context_prompt([("user", "hi")], options) is None
+
+
+def test_compose_llm_context_prompt_empty_messages_returns_none():
+    options = _llm_options(chat_call=lambda **_: _chat_response("x"))
+    assert compose_llm_context_prompt([], options) is None
+
+
+def test_compose_llm_context_prompt_call_raises_returns_none():
+    def _raising(**_kwargs):
+        raise RuntimeError("provider unreachable")
+
+    options = _llm_options(chat_call=_raising)
+    assert compose_llm_context_prompt([("user", "a dragon")], options) is None
+
+
+def test_compose_llm_context_prompt_timeout_returns_none():
+    def _slow(**_kwargs):
+        time.sleep(0.3)
+        return _chat_response("too late")
+
+    options = _llm_options(chat_call=_slow, timeout_seconds=0.02)
+    assert compose_llm_context_prompt([("user", "a dragon")], options) is None
+
+
+def test_compose_llm_context_prompt_empty_response_returns_none():
+    options = _llm_options(chat_call=lambda **_: _chat_response("   "))
+    assert compose_llm_context_prompt([("user", "a dragon")], options) is None
+
+
+def test_compose_llm_context_prompt_garbage_response_shape_returns_none():
+    """A response that doesn't match the expected shape yields no content, not a crash."""
+    options = _llm_options(chat_call=lambda **_: {"unexpected": "shape"})
+    assert compose_llm_context_prompt([("user", "a dragon")], options) is None
+
+
+def test_compose_llm_context_prompt_success_returns_cleaned_text():
+    captured = {}
+
+    def _fake_call(**kwargs):
+        captured.update(kwargs)
+        return _chat_response(" A knight in a glowing cave, dramatic torchlight. ")
+
+    options = _llm_options(chat_call=_fake_call, turns=2)
+    pairs = [
+        ("user", "A knight enters a cave."),
+        ("assistant", "Crystals glow on the walls."),
+        ("user", "He raises his torch."),
+    ]
+    result = compose_llm_context_prompt(pairs, options)
+    assert result == "A knight in a glowing cave, dramatic torchlight."
+    # Only the last `turns` (2) pairs were sent, non-streaming, to the resolved provider.
+    assert captured["messages_payload"] == [
+        {"role": "assistant", "content": "Crystals glow on the walls."},
+        {"role": "user", "content": "He raises his torch."},
+    ]
+    assert captured["api_endpoint"] == "openai"
+    assert captured["model"] == "gpt-4o-mini"
+    assert captured["api_key"] == "sk-test"
+    assert captured["streaming"] is False
+    assert "system_message" in captured and captured["system_message"]
+
+
+def test_compose_llm_context_prompt_never_raises_on_unexpected_executor_error(
+    monkeypatch,
+):
+    """Even a failure inside the timeout-bounding machinery itself degrades to None."""
+    import tldw_chatbook.Chat.console_generate_image as module
+
+    def _boom(*_a, **_k):
+        raise OSError("thread pool exhausted")
+
+    monkeypatch.setattr(module.concurrent.futures, "ThreadPoolExecutor", _boom)
+    options = _llm_options(chat_call=lambda **_: _chat_response("x"))
+    assert compose_llm_context_prompt([("user", "a dragon")], options) is None
+
+
+# --- build_context_prompt_with_llm -----------------------------------------
+
+
+def test_build_context_prompt_with_llm_none_options_matches_keyword_path():
+    """`llm_context=None` behaves exactly like calling `build_context_prompt` directly."""
+    template = get_template("chat_scene_visual")
+    pairs = [("user", "a dimly lit tavern with a roaring fireplace")]
+    assert build_context_prompt_with_llm(pairs, template, None) == build_context_prompt(
+        pairs, template
+    )
+
+
+def test_build_context_prompt_with_llm_empty_pairs_returns_none_regardless():
+    template = get_template("chat_scene_visual")
+    options = _llm_options(chat_call=lambda **_: _chat_response("should not be reached"))
+    assert build_context_prompt_with_llm([], template, options) is None
+    assert build_context_prompt_with_llm([("user", "   ")], template, options) is None
+
+
+def test_build_context_prompt_with_llm_success_flows_through_template_pipeline():
+    """A successful LLM composition still goes through apply_template_to_prompt +
+    the anchor-append invariant, exactly like the keyword path -- so negative_prompt/
+    params/style label are unaffected, only the anchor text source changes."""
+    template = get_template("chat_scene_visual")
+    pairs = [("user", "a knight explores a glowing cave")]
+    llm_text = "A knight in a glowing crystal cave, dramatic torchlight."
+    options = _llm_options(chat_call=lambda **_: _chat_response(llm_text))
+    result = build_context_prompt_with_llm(pairs, template, options)
+    assert result is not None
+    prompt, negative, params = result
+    assert llm_text in prompt
+    assert prompt.startswith("scene depicting")
+    assert negative == template.negative_prompt
+    assert params == template.default_params
+    # The raw keyword-extracted last_message must NOT be the anchor when the
+    # LLM path succeeded -- it's fully superseded, not merely appended.
+    assert "a knight explores a glowing cave" not in prompt
+
+
+def test_build_context_prompt_with_llm_falls_back_on_llm_failure():
+    """Any LLM failure -> identical output to calling build_context_prompt directly."""
+    template = get_template("chat_scene_visual")
+    pairs = [("user", "a dimly lit tavern with a roaring fireplace")]
+
+    def _raising(**_kwargs):
+        raise RuntimeError("boom")
+
+    options = _llm_options(chat_call=_raising)
+    result = build_context_prompt_with_llm(pairs, template, options)
+    assert result == build_context_prompt(pairs, template)
+
+
+def test_build_context_prompt_with_llm_falls_back_when_disabled():
+    template = get_template("chat_scene_visual")
+    pairs = [("user", "a dimly lit tavern with a roaring fireplace")]
+    options = _llm_options(
+        enabled=False, chat_call=lambda **_: _chat_response("should not be reached")
+    )
+    result = build_context_prompt_with_llm(pairs, template, options)
+    assert result == build_context_prompt(pairs, template)
+
+
+# --- prepare_generation_request: llm_context threading ----------------------
+
+
+def test_prepare_empty_prompt_llm_context_success_used_over_keyword_extractor():
+    args = GenerateImageArgs(backend=None, prompt="", style=None)
+    pairs = [("user", "a quiet lakeside cabin at dawn")]
+    llm_text = "A serene lakeside cabin at sunrise, soft mist rising off the water."
+    options = _llm_options(chat_call=lambda **_: _chat_response(llm_text))
+    result = prepare_generation_request(args, pairs, options)
+    assert isinstance(result, PreparedGeneration)
+    assert llm_text in result.prompt
+    template = get_template("chat_scene_visual")
+    assert result.style_name == template.name
+    assert result.negative_prompt == template.negative_prompt
+
+
+def test_prepare_empty_prompt_llm_context_failure_falls_back_to_keyword_result():
+    args = GenerateImageArgs(backend=None, prompt="", style=None)
+    pairs = [("user", "a quiet lakeside cabin at dawn")]
+    options = _llm_options(chat_call=lambda **_: (_ for _ in ()).throw(RuntimeError("x")))
+    with_llm = prepare_generation_request(args, pairs, options)
+    without_llm = prepare_generation_request(args, pairs, None)
+    assert with_llm == without_llm
+    assert isinstance(with_llm, PreparedGeneration)
+    assert "a quiet lakeside cabin at dawn" in with_llm.prompt
+
+
+def test_prepare_empty_prompt_llm_context_default_none_matches_pre_ac1_behavior():
+    """Omitting llm_context entirely (positional-arg call sites elsewhere in the
+    suite) is unaffected by this AC -- default is None, pure keyword path."""
+    args = GenerateImageArgs(backend=None, prompt="", style=None)
+    pairs = [("user", "a quiet lakeside cabin at dawn")]
+    assert prepare_generation_request(args, pairs) == prepare_generation_request(
+        args, pairs, None
+    )
+
+
+def test_prepare_nonempty_prompt_ignores_llm_context():
+    """llm_context is only ever consulted on the no-prompt path."""
+    args = GenerateImageArgs(backend=None, prompt="a red dragon", style=None)
+    options = _llm_options(chat_call=lambda **_: (_ for _ in ()).throw(AssertionError("must not be called")))
+    result = prepare_generation_request(args, [], options)
+    assert result == PreparedGeneration(
+        prompt="a red dragon",
+        negative_prompt=None,
+        style_name=None,
+        width=None,
+        height=None,
+        steps=None,
+        cfg_scale=None,
+    )

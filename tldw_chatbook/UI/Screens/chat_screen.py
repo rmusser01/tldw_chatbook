@@ -98,6 +98,7 @@ from ...Chat.console_prefill import (
 )
 from ...Chat.console_generate_image import (
     GenerationRefusal,
+    LLMContextOptions,
     PreparedGeneration,
     clamp_initial_batch,
     generation_content_marker,
@@ -11918,6 +11919,71 @@ class ChatScreen(BaseAppScreen):
             if message.status == "complete" and message.content and message.content.strip()
         ]
 
+    async def _console_generate_image_llm_context_options(
+        self, cfg: Any
+    ) -> LLMContextOptions:
+        """Resolve the LLM-composed conversation-context path's config +
+        active provider identity (Task-559 AC1).
+
+        Mirrors how a normal Console chat send resolves provider/model --
+        `_build_console_provider_selection` + `ConsoleProviderGateway.
+        resolve_for_send` -- rather than inventing new resolution logic, so
+        `/generate-image` with no prompt always composes against whatever
+        provider+model the session is actually configured to chat with.
+        `resolve_for_send` itself performs no network I/O (config/env only),
+        so calling it directly on the UI loop here is cheap; the resulting
+        `LLMContextOptions` is what later runs the ACTUAL (potentially
+        slow/blocking) LLM call off the UI loop, inside
+        `asyncio.to_thread(prepare_generation_request, ...)`.
+
+        Never raises -- any failure resolving the provider (an unexpected
+        exception from the gateway) degrades to a not-ready
+        `LLMContextOptions`, which `compose_llm_context_prompt` treats
+        exactly like "no provider configured": skip straight to the
+        keyword extractor. The config kill-switch
+        (`cfg.context_llm_enabled`) is checked first so a disabled session
+        never even attempts the (cheap but still not free) provider
+        resolution.
+
+        Args:
+            cfg: The current `ImageGenerationConfig`
+                (`Image_Generation.config.get_image_generation_config`).
+
+        Returns:
+            An `LLMContextOptions` ready to hand to
+            `prepare_generation_request`.
+        """
+        if not cfg.context_llm_enabled:
+            return LLMContextOptions(
+                enabled=False,
+                turns=cfg.context_llm_turns,
+                timeout_seconds=cfg.context_llm_timeout_seconds,
+                provider_ready=False,
+            )
+        try:
+            selection = self._build_console_provider_selection()
+            gateway = self._ensure_console_provider_gateway()
+            resolution = await gateway.resolve_for_send(selection)
+        except Exception as exc:  # noqa: BLE001 - graceful fallback is load-bearing here
+            logger.debug(
+                f"generate-image: provider resolution for LLM context failed: {exc!r}"
+            )
+            return LLMContextOptions(
+                enabled=True,
+                turns=cfg.context_llm_turns,
+                timeout_seconds=cfg.context_llm_timeout_seconds,
+                provider_ready=False,
+            )
+        return LLMContextOptions(
+            enabled=True,
+            turns=cfg.context_llm_turns,
+            timeout_seconds=cfg.context_llm_timeout_seconds,
+            provider_ready=resolution.ready,
+            api_endpoint=resolution.execution_key or None,
+            model=resolution.model,
+            api_key=resolution.api_key,
+        )
+
     async def _console_command_generate_image(self, parse: CommandParse) -> None:
         """Resolve and run one `/generate-image` batch.
 
@@ -11926,8 +11992,8 @@ class ChatScreen(BaseAppScreen):
         context. `prepare_generation_request` (`Chat/console_generate_image.py`)
         owns all of that decision logic -- style-token resolution, prompt
         composition against a template, and the conversation-context
-        fallback -- so it stays independently unit-testable; this handler
-        just executes its result.
+        fallback (optionally LLM-composed, Task-559 AC1) -- so it stays
+        independently unit-testable; this handler just executes its result.
 
         Refusals (a `GenerationRefusal` from `prepare_generation_request`,
         no resolvable/configured backend, or a batch already running for
@@ -11949,6 +12015,17 @@ class ChatScreen(BaseAppScreen):
         is always cleared in a `finally`, so a crashed/cancelled batch
         never wedges the session against further `/generate-image`
         commands.
+
+        `prepare_generation_request` itself now also runs via
+        `asyncio.to_thread` (not called directly on the UI loop, unlike
+        before this AC): on the no-prompt path it may attempt an LLM call
+        (`compose_llm_context_prompt`) to compose a richer prompt from
+        conversation context, which is blocking network I/O and must never
+        run on the event loop -- exactly the same offloading rule
+        `run_generation_batch` already follows below. The provider identity
+        for that call is resolved first, on the loop, via
+        `_console_generate_image_llm_context_options` (cheap config/env
+        reads only, no network I/O).
         """
         args = parse_generate_image_args(parse.args)
         store = self._ensure_console_chat_store()
@@ -11959,13 +12036,16 @@ class ChatScreen(BaseAppScreen):
         conversation_pairs = self._console_generate_image_conversation_pairs(
             store, session.id
         )
-        prepared: PreparedGeneration | GenerationRefusal = prepare_generation_request(
-            args, conversation_pairs
+        cfg = get_image_generation_config()
+        llm_context: LLMContextOptions | None = None
+        if not args.prompt.strip():
+            llm_context = await self._console_generate_image_llm_context_options(cfg)
+        prepared: PreparedGeneration | GenerationRefusal = await asyncio.to_thread(
+            prepare_generation_request, args, conversation_pairs, llm_context
         )
         if isinstance(prepared, GenerationRefusal):
             await self._append_native_console_system_message(prepared.reason)
             return
-        cfg = get_image_generation_config()
         backend = args.backend or cfg.default_backend
         if not backend:
             await self._append_native_console_system_message(

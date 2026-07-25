@@ -1,10 +1,10 @@
 ---
 id: TASK-559
 title: Image-gen P2b follow-ups
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-24 13:30'
-updated_date: '2026-07-25 10:47'
+updated_date: '2026-07-25 11:59'
 labels:
   - image-generation
   - console
@@ -21,7 +21,7 @@ Deferred/polish items from the image-gen P2b slice (PR #850: speak 🔊, @style 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Richer conversation-context extraction for `/generate-image` with no prompt: the current `extract_context_from_messages` is keyword-shallow (mood via keyword match; `mentioned_characters`/`mentioned_settings` never populated). Design and implement a better context builder (e.g. LLM-composed prompt from the last N turns), keeping the composed-prompt-visible-in-card behavior.
+- [x] #1 Richer conversation-context extraction for `/generate-image` with no prompt: the current `extract_context_from_messages` is keyword-shallow (mood via keyword match; `mentioned_characters`/`mentioned_settings` never populated). Design and implement a better context builder (e.g. LLM-composed prompt from the last N turns), keeping the composed-prompt-visible-in-card behavior.
 - [x] #2 Console TTS playback controls: speak is fire-and-forget today; add stop (and optionally pause/save) for Console-originated speech, reusing the legacy widgets' `TTSPlaybackEvent` actions.
 - [x] #3 Style picker offers template previews (base-prompt/negative snippet) in the row or a detail pane, not just name — category — id.
 - [x] #4 Per-style user-defined templates (beyond the 13 built-ins) loadable from config or a templates dir.
@@ -204,4 +204,98 @@ change needed (the ⏹ button reuses the existing generic
 `console-transcript-action-button` styling).
 
 Deferred to unit 3 (untouched here): AC1 (richer context extraction).
+
+### Unit 3 (AC1) -- 2026-07-25
+
+LLM-composed `/generate-image` conversation-context prompt, with graceful
+fallback to the existing keyword extractor on any failure -- the load-
+bearing requirement per the brief.
+
+**Provider resolution reused, not reinvented.** `ChatScreen._build_console_
+provider_selection()` + `ConsoleProviderGateway.resolve_for_send()` (both
+pre-existing, the exact seam a normal Console chat send already resolves
+provider/model through, config/env-only, no network I/O) are wrapped by a
+new `ChatScreen._console_generate_image_llm_context_options(cfg)`, called
+on the UI loop only when the invocation has no prompt. Any resolution
+failure (or the `context_llm_enabled` kill-switch being off) degrades to a
+not-ready `LLMContextOptions` -- never raises.
+
+**Config** (`[image_generation]`, unit-1's flat-global-key convention):
+`context_llm_enabled` (bool, default true), `context_llm_turns` (int,
+default 10, clamped >=1), `context_llm_timeout_seconds` (float, default 15,
+clamped >=0.1). New `Image_Generation/config.py` fields + `_coerce_bool`
+helper; documented in `config.py`'s shipped `CONFIG_TOML_CONTENT`.
+
+**Composition + pipeline reuse.** New `Chat/console_generate_image.py`
+pieces: `LLMContextOptions` (resolved config + provider identity, plus a
+`chat_call` test-injection seam defaulting to the real `chat_api_call`),
+`compose_llm_context_prompt` (the actual `chat_api_call(streaming=False,
+system_message=<concise-image-prompt instruction>)` call, response cleaned
+via `_clean_llm_context_response` -- whitespace/newline collapse to one
+paragraph, wrapping-quote strip, 500-char cap, refuse-empty -- never
+raises, returns `None` on ANY failure), and `build_context_prompt_with_llm`
+(tries the LLM path first, falls back to the untouched `build_context_
+prompt` on `None`). Rather than bypassing the existing template machinery,
+the LLM-composed text stands in for the keyword extractor's `last_message`
+inside the identical context-dict shape `apply_template_to_prompt` already
+consumes -- extracted the shared render+anchor-append logic into
+`_apply_template_with_anchor` so both paths use it identically. This keeps
+negative_prompt/params/style-label sourced from the resolved template
+exactly as before (unchanged), and keeps the composed-prompt-visible-in-
+card behavior structurally unchanged -- only the anchor text's source gets
+richer. `prepare_generation_request` gained an optional `llm_context`
+param (default `None` preserves every prior call site byte-for-byte).
+
+**Threading.** The handler (`_console_command_generate_image`) previously
+called `prepare_generation_request` directly on the UI loop. Since the
+no-prompt path can now perform blocking network I/O, the whole decision
+function now runs via `await asyncio.to_thread(prepare_generation_request,
+...)` -- the same offload idiom `run_generation_batch` already used below
+it -- resolved-provider-identity is fetched on the loop first (cheap,
+config/env only). Inside the threaded call, `compose_llm_context_prompt`
+additionally bounds the network call itself to `context_llm_timeout_
+seconds` via a dedicated single-worker `ThreadPoolExecutor` +
+`future.result(timeout=...)`, `shutdown(wait=False)` on timeout (not the
+`with:` form, which would otherwise block on exit waiting for the hung
+call anyway).
+
+**Fallback matrix** (kill-switch off / not-ready provider / resolution
+exception / `chat_call` raises / timeout / empty response / garbage
+response shape / executor failure) all proven with tests exercising the
+REAL timeout machinery (a mocked 0.3s-sleep call against a 0.02s timeout),
+not mocked abstractly -- every scenario falls back to the keyword-
+extractor result and generation still dispatches; no exception ever
+escapes. Never logs conversation content above debug level (turn count +
+`repr(exception)` only). No new persistent state or caching -- each
+invocation composes fresh.
+
+Files: `tldw_chatbook/Chat/console_generate_image.py`,
+`tldw_chatbook/UI/Screens/chat_screen.py`,
+`tldw_chatbook/Image_Generation/config.py`, `tldw_chatbook/config.py`.
+Tests: `Tests/Chat/test_console_generate_image.py` (+26: payload shaping,
+response cleaning, the full fallback matrix on `compose_llm_context_
+prompt`, `build_context_prompt_with_llm`, `prepare_generation_request`
+threading), `Tests/Chat/test_console_generation_actions.py` (+10: 4
+isolated `_console_generate_image_llm_context_options` tests + 6
+handler-level end-to-end wiring tests incl. the fallback matrix and a
+"prompt present -> LLM path never resolved" regression pin),
+`Tests/Image_Generation/test_config_loader.py` (+5: defaults, overrides,
+string-bool coercion, min-clamping). All TDD red-then-green (one genuine
+red caught mid-authoring: a truncated `Edit` read left a stray dangling
+assertion line, surfaced immediately as a `NameError`, diagnosed against
+`git show HEAD:...` and fixed). Full suite green: 168 tests across the
+three touched test files/dirs; broader `Tests/Chat -k "generate_image or
+style_picker or console"` sweep (1115 tests) and `Tests/UI/test_personas_
+expression_generate.py` (38) both green. `Tests/UI/test_console_native_
+chat_flow.py` (199 tests) green on repeated full-file runs both before and
+after this diff; one single flaky failure seen in an earlier combined run
+was bisected via stash/unstash to be a pre-existing, order/timing-
+dependent flake unrelated to this diff (passed identically on a clean
+stashed checkout). `ruff check` clean on touched files (one pre-existing,
+unrelated `config.py` F841 pair confirmed via `git blame` to predate this
+branch, left untouched); `python -c "import tldw_chatbook.app"` clean.
+
+Full report: `.superpowers/sdd/task-559-unit3-report.md`.
+
+All four ACs now complete -- program done.
 <!-- SECTION:NOTES:END -->

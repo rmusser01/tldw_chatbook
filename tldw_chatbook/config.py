@@ -2778,6 +2778,16 @@ inline_max_bytes = 4000000
 default_batch = 1
 max_variants_per_message = 8
 
+# `/generate-image` with no prompt text composes from conversation context.
+# When context_llm_enabled, an LLM call (the session's active provider+
+# model, same as a normal Console send) composes a richer prompt from the
+# last context_llm_turns messages; ANY failure (kill-switch off, no ready
+# provider, error, timeout, empty response) falls back to the built-in
+# keyword extractor -- generation is never blocked by this.
+context_llm_enabled = true
+context_llm_turns = 10
+context_llm_timeout_seconds = 15
+
 [image_generation.stable_diffusion_cpp]
 binary_path = ""                      # local `sd` CLI; empty = backend unusable
 diffusion_model_path = ""             # OR model_path
