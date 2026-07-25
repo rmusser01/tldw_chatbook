@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Union
 
+from loguru import logger
+
 from .base_db import BaseDB
 
 
@@ -25,13 +27,37 @@ class AgentRunsDB(BaseDB):
     """Run records for the agent runtime (vertical-slice spec data model)."""
 
     _CURRENT_SCHEMA_VERSION = 2
+    _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         super().__init__(db_path, client_id)
+        # After super().__init__: the agent_runs table exists (base_db ran
+        # _initialize_schema) and self.is_memory_db is set. Reconcile once per
+        # file per process so a crash mid-run doesn't leave a 'running' row
+        # orphaned forever. reconcile_orphaned_runs() itself guards against
+        # memory DBs and against re-sweeping a path already swept this
+        # process, so a later explicit call is also a no-op (see its
+        # docstring).
+        try:
+            self.reconcile_orphaned_runs()
+        except Exception as exc:  # noqa: BLE001 — reconcile is best-effort
+            logger.warning(f"AgentRunsDB reconcile skipped: {exc}")
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = super()._get_connection()
         conn.execute("PRAGMA foreign_keys = ON")
+        # busy_timeout FIRST: the journal_mode=WAL conversion below is the
+        # one PRAGMA here that can itself contend (switching a rollback-
+        # journal file to WAL briefly needs an exclusive lock), so it must
+        # not run while busy_timeout is still 0 -- a contended cross-process
+        # first conversion would otherwise raise 'database is locked'
+        # immediately instead of waiting. busy_timeout is harmless to set
+        # for in-memory DBs too, so it's unconditional (kept for
+        # uniformity); WAL itself is unavailable for in-memory DBs, so that
+        # one stays guarded on is_memory_db.
+        conn.execute("PRAGMA busy_timeout = 5000")
+        if not self.is_memory_db:
+            conn.execute("PRAGMA journal_mode = WAL")
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -222,6 +248,71 @@ class AgentRunsDB(BaseDB):
                 "result = COALESCE(?, result), updated_at = ? WHERE id = ?",
                 (status, result, _now_iso(), run_id),
             )
+
+    def reconcile_orphaned_runs(self) -> int:
+        """Mark runs left ``running`` by a crashed process as ``error``.
+
+        A hard crash between run start (``create_run`` -> ``running``) and run
+        end (``set_status`` at finalize) leaves a row stuck ``running``
+        forever. On open, flip all such rows to ``error`` with a default
+        ``result`` (preserving any partial result via COALESCE). Assumes a
+        single app instance per data dir: a second instance sharing the file
+        would flip the first's actively-running run — an accepted edge case,
+        matching Library_Ingest_Jobs' "Interrupted by app restart" behavior.
+
+        No-ops (returns ``0`` without touching the database) for in-memory
+        databases and for any file path already reconciled once in this
+        process (tracked via ``_swept_paths``). The guard lives here, not
+        just in ``__init__``'s auto-call, so a later *explicit* call to this
+        method within the same process is also a no-op -- it must not sweep
+        up a run that legitimately started running after the first sweep
+        (e.g. one created by this same still-live process).
+
+        The path is registered in ``_swept_paths`` only *after* the sweep's
+        transaction has committed successfully (i.e. after the ``with
+        self.transaction()`` block below exits normally). ``transaction()``
+        rolls back and re-raises on any error -- e.g. a transient
+        ``sqlite3.OperationalError: database is locked`` -- so registering
+        beforehand would leave the path permanently marked "swept" even
+        though nothing was actually reconciled, silently defeating AC#2's
+        crash-recovery guarantee for the rest of the process. A clean sweep
+        that finds zero orphaned rows still registers the path (it commits
+        successfully; it just has nothing to update).
+
+        Timing note: despite this being framed as an "on app start" sweep
+        (see the backlog AC), it actually fires lazily -- the first time
+        something constructs an ``AgentRunsDB`` on this path, which today is
+        ``ChatScreen._ensure_console_agent_bridge()``'s first call, not app
+        boot. No surface can currently observe a stale ``running`` row
+        before that: the only readers of ``agent_runs.db`` are that bridge
+        itself and the chat-screen rail's sub-agent-count summary, which
+        also routes through ``_ensure_console_agent_bridge()`` first. A
+        future entry point that opens this DB file WITHOUT going through
+        that bridge construction path would not inherit this guarantee and
+        could observe a not-yet-reconciled orphaned row.
+
+        Returns:
+            The number of rows reconciled (``0`` if skipped by a guard).
+
+        Raises:
+            Exception: Re-raised (from ``transaction()``) on any error
+                while sweeping; the path is left unregistered so a later
+                call in this process retries the sweep.
+        """
+        if self.is_memory_db or self.db_path_str in self._swept_paths:
+            return 0
+        with self.transaction() as conn:
+            cur = conn.execute(
+                "UPDATE agent_runs "
+                "SET status = 'error', "
+                "    result = COALESCE(result, 'Interrupted by app restart'), "
+                "    updated_at = ? "
+                "WHERE status = 'running'",
+                (_now_iso(),),
+            )
+            rowcount = cur.rowcount
+        self._swept_paths.add(self.db_path_str)
+        return rowcount
 
     def set_run_assistant_message_id(
         self, run_id: str, assistant_message_id: str | None

@@ -314,9 +314,16 @@ class ToolCatalogRegistry:
         # distinct from an empty-but-built cache. The two dicts are always
         # populated from the SAME `list_catalog()` sweep (see
         # _build_owner_cache()), so a name resolved from `_name_to_id_cache`
-        # is always present in `_owner_cache` too — `resolve_name()` and
-        # `_owner_and_id()` can never observe different generations of the
-        # catalog within one lookup.
+        # is always present in `_owner_cache` too PROVIDED the two reads
+        # aren't interleaved with a concurrent rebuild — true when every
+        # `invoke_by_name()` call ran serialized on one thread, which is no
+        # longer guaranteed: task-327's per-call timeout runs each call on
+        # its own daemon thread and abandons (never joins) one that hangs,
+        # so an abandoned call's `resolve_name()`/`_owner_and_id()` pair can
+        # now overlap a later call's own pair, or a `register_provider()`
+        # invalidation, with no lock guarding `_owner_cache`/
+        # `_name_to_id_cache` — two concurrent lookups CAN observe different
+        # generations of the catalog.
         self._owner_cache: dict[str, ToolProvider] | None = None
         self._name_to_id_cache: dict[str, str] | None = None
 
@@ -381,7 +388,15 @@ class ToolCatalogRegistry:
         # provider on every call, so invoke_by_name() (resolve_name() then
         # _owner_and_id()) still paid a full per-provider sweep on every
         # invocation despite the owner-map cache existing.
-        if self._owner_cache is None:
+        # Guard BOTH caches, not just _owner_cache: the two stores are
+        # assigned together as a tuple below, but task-327's per-call daemon
+        # threads mean an abandoned thread can still be mid-flight when
+        # reset_catalog_cache() runs on a later call, interleaving with this
+        # method elsewhere and leaving one store populated while the other
+        # was reset to None. A single-cache guard would then skip the
+        # rebuild and leave _name_to_id_cache (or _owner_cache) permanently
+        # None for the rest of the run.
+        if self._owner_cache is None or self._name_to_id_cache is None:
             self._owner_cache, self._name_to_id_cache = self._build_owner_cache()
 
     def _owner_and_id(self, tool_id: str):
@@ -396,7 +411,8 @@ class ToolCatalogRegistry:
 
     def resolve_name(self, name: str) -> str | None:
         self._ensure_catalog_cache()
-        return self._name_to_id_cache.get(name)
+        cache = self._name_to_id_cache
+        return cache.get(name) if cache else None
 
     def invoke_by_name(self, name: str, args: dict) -> ToolResult:
         tool_id = self.resolve_name(name)
@@ -404,13 +420,16 @@ class ToolCatalogRegistry:
             return ToolResult(ok=False, error=f"Unknown tool: {name}")
         provider = self._owner_and_id(tool_id)
         if provider is None:
-            # Defensive only: resolve_name()/_owner_and_id() now share one
-            # cache built atomically from a single list_catalog() sweep, so
-            # a name resolved above is always present in the owner map too
-            # within the SAME cache generation — this branch is no longer
-            # reachable via a same-lookup race. It stays as insurance
-            # against a future change to the cache-building code, and never
-            # lets a `None` owner surface as an AttributeError.
+            # resolve_name()/_owner_and_id() share one cache built from a
+            # single list_catalog() sweep, so within one SERIALIZED lookup
+            # a name resolved above is always present in the owner map too.
+            # That no longer makes this branch unreachable, though: this
+            # registry has no lock, and task-327's per-call timeout can run
+            # invoke_by_name() calls concurrently (one call's cache read
+            # racing another call's, or a register_provider() rebuild), so
+            # `tool_id` above can genuinely belong to a since-superseded
+            # generation by the time this line runs. This fallback never
+            # lets a `None` owner surface as an AttributeError either way.
             return ToolResult(ok=False, error=f"Tool provider not found for: {name}")
         return provider.invoke(tool_id, args)
 

@@ -1,6 +1,7 @@
 """AgentRunsDB against a real on-disk SQLite file."""
 
 import sqlite3
+from contextlib import contextmanager
 
 import pytest
 
@@ -300,3 +301,121 @@ def test_reopening_same_file_twice_is_idempotent(tmp_path):
     )
     assert second.get_run(run_id)["assistant_message_id"] == "b"
     assert len(second.list_runs("c")) == 2
+
+
+# --- TASK-327 Task 2 (AC#2): a hard crash between create_run's 'running'
+# insert and the service's finalizing set_status leaves a row stuck
+# 'running' forever. On DB open (file-backed only, once per file per
+# process) such rows are swept to 'error'. ---
+
+
+def test_orphaned_running_runs_reconciled_on_open(tmp_path):
+    db_path = tmp_path / "agent_runs.db"
+    db1 = AgentRunsDB(db_path)
+    r_run1 = db1.create_run(conversation_id="c1", agent_kind="primary")
+    r_run2 = db1.create_run(conversation_id="c2", agent_kind="primary")
+    r_done = db1.create_run(conversation_id="c3", agent_kind="primary")
+    db1.set_status(r_done, "done", result="the answer")
+
+    # Simulate a fresh process opening the same file: remove only this
+    # test's own path from the shared once-guard, not every path any other
+    # AgentRunsDB constructed earlier in this pytest process has
+    # registered (AgentRunsDB._swept_paths.clear() would be an
+    # order-dependent test hazard).
+    AgentRunsDB._swept_paths.discard(db1.db_path_str)
+    db2 = AgentRunsDB(db_path)
+
+    run1 = db2.get_run(r_run1)
+    run2 = db2.get_run(r_run2)
+    done = db2.get_run(r_done)
+    assert run1["status"] == "error"
+    assert run1["result"] == "Interrupted by app restart"
+    assert run2["status"] == "error"
+    assert done["status"] == "done"  # terminal row untouched
+    assert done["result"] == "the answer"
+
+
+def test_reconcile_preserves_existing_result(tmp_path):
+    db_path = tmp_path / "agent_runs.db"
+    db1 = AgentRunsDB(db_path)
+    rid = db1.create_run(conversation_id="c", agent_kind="primary")
+    db1.set_status(rid, "running", result="partial output")  # running WITH a result
+    # Simulate a fresh process opening the same file (scoped to this
+    # test's own path -- see the discard() comment above).
+    AgentRunsDB._swept_paths.discard(db1.db_path_str)
+    db2 = AgentRunsDB(db_path)
+    row = db2.get_run(rid)
+    assert row["status"] == "error"
+    assert row["result"] == "partial output"  # COALESCE keeps it
+
+
+def test_reconcile_idempotent_same_process(tmp_path):
+    db_path = tmp_path / "agent_runs.db"
+    db1 = AgentRunsDB(db_path)
+    db1.create_run(conversation_id="c", agent_kind="primary")
+    # second open in the SAME process (guard already set by db1) is a no-op
+    assert AgentRunsDB(db_path).reconcile_orphaned_runs() == 0
+
+
+def test_reconcile_skips_memory_db():
+    # :memory: must not error and must not register a swept path
+    AgentRunsDB._swept_paths.discard(":memory:")
+    AgentRunsDB(":memory:")  # must not raise
+    assert ":memory:" not in AgentRunsDB._swept_paths
+
+
+def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(tmp_path, monkeypatch):
+    """A transient failure (e.g. a locked DB) during the sweep must NOT
+    register the path -- otherwise no later AgentRunsDB(path) construction
+    in this process ever retries, silently defeating AC#2's crash-recovery
+    guarantee for the rest of the process (review Finding 1)."""
+    db_path = tmp_path / "agent_runs.db"
+
+    # Seed a file with an orphaned 'running' row, as a prior process would
+    # have left the table before crashing again.
+    setup = AgentRunsDB(db_path)
+    rid = setup.create_run(conversation_id="c", agent_kind="primary")
+    path_str = setup.db_path_str
+    # Simulate a fresh process: this path hasn't been swept yet.
+    AgentRunsDB._swept_paths.discard(path_str)
+
+    real_transaction = AgentRunsDB.transaction
+    call_count = {"n": 0}
+
+    @contextmanager
+    def flaky_transaction(self):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise sqlite3.OperationalError("database is locked")
+        with real_transaction(self) as conn:
+            yield conn
+
+    monkeypatch.setattr(AgentRunsDB, "transaction", flaky_transaction)
+
+    # Construction must not raise (reconcile is best-effort in __init__),
+    # but the failed sweep must leave the path unregistered and the row
+    # untouched.
+    db2 = AgentRunsDB(db_path)
+    assert path_str not in AgentRunsDB._swept_paths
+    assert db2.get_run(rid)["status"] == "running"
+
+    # A later reconcile (e.g. the next AgentRunsDB(path) construction in
+    # this process) retries and actually sweeps the orphaned row.
+    assert db2.reconcile_orphaned_runs() == 1
+    assert db2.get_run(rid)["status"] == "error"
+    assert path_str in AgentRunsDB._swept_paths
+
+
+def test_file_db_uses_wal_and_busy_timeout(tmp_path):
+    db = AgentRunsDB(tmp_path / "agent_runs.db")
+    with db.connection() as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+
+
+def test_memory_db_skips_wal():
+    # :memory: cannot use WAL; must not raise and must stay 'memory'
+    db = AgentRunsDB(":memory:")
+    with db.connection() as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "memory"
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000

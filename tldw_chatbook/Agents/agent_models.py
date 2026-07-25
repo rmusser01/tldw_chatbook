@@ -45,6 +45,8 @@ RUNTIME_TOOL_NAMES = frozenset(
 
 DIRECT_DISCLOSE_THRESHOLD = 8
 LOOP_DETECTION_N = 3
+# Longest tool-call cycle period the runtime detects (A->B->A->B is period 2).
+MAX_LOOP_PERIOD = 4
 
 
 @dataclass
@@ -139,6 +141,30 @@ class RunBudget:
     # 0 = unlimited (default), keeping existing runs byte-identical. This is a
     # SPEND ceiling (the growing prompt is re-sent each call), not a window size.
     max_total_tokens: int = 0
+    # task-327: per-tool-call wall-clock ceiling. A single custom/blocking
+    # tool provider must not be able to wedge a cooperative-cancel run
+    # forever. 0 = unlimited (opt-out). Enforced in agent_service's impure
+    # seam (the pure runtime stays timeout-free). MCP tools DO flow through
+    # this same wrapper (MCPToolProvider is registered into the same
+    # per-run ToolCatalogRegistry as builtins), so the default is set
+    # deliberately above MCP's own worst case rather than independent of
+    # it: an "ask"-gated call can wait up to ~121s for human approval
+    # (`_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS = 120.0` in
+    # `Chat/console_chat_controller.py`, polled every
+    # `_MCP_APPROVAL_POLL_SECONDS = 1.0`) and then up to 65s to execute
+    # (`_tool_call_timeout() = 60.0` in
+    # `MCP/unified_control_plane_service.py` plus
+    # `_RESULT_WAIT_SLACK_SECONDS = 5.0` in `Agents/mcp_tool_provider.py`)
+    # -- ~186s end to end AT MCP'S DEFAULT CONFIG. Both cited MCP bounds are
+    # user-tunable (`[mcp] tool_call_timeout_seconds`, and the approval
+    # timeout resolved from config in `console_chat_controller`), so this
+    # invariant only holds while MCP itself stays at its shipped defaults --
+    # a user who raises either MCP-side bound can still reopen the
+    # double-execution window this default is meant to avoid. Lowering this
+    # below that risks the wrapper reporting "timed out" for a call that
+    # later really executes on its abandoned thread (see
+    # `_call_with_timeout`'s docstring).
+    max_tool_call_seconds: float = 300.0
 
 
 @dataclass
@@ -187,4 +213,5 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
         max_subagent_result_chars=child.max_subagent_result_chars,
         max_model_turns=child.max_model_turns,
         max_total_tokens=child.max_total_tokens,
+        max_tool_call_seconds=child.max_tool_call_seconds,
     )

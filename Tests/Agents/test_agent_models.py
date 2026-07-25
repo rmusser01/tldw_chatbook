@@ -149,6 +149,13 @@ def test_clamp_child_budget_preserves_max_total_tokens():
     assert clamp_child_budget(child, 10.0).max_total_tokens == 7000
 
 
+def test_clamp_child_budget_propagates_tool_call_seconds():
+    parent = RunBudget(max_tool_call_seconds=45.0)
+    child = clamp_child_budget(parent, 30.0)
+    assert child.max_tool_call_seconds == 45.0   # taken from the child arg (== parent here)
+    assert child.max_subagents == 0              # existing invariant still holds
+
+
 def test_pure_module_has_no_forbidden_imports():
     import tldw_chatbook.Agents.agent_models as mod
 
