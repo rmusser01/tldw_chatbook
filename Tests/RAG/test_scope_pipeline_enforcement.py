@@ -23,6 +23,7 @@ mirroring ``Tests/RAG_Search/test_pipeline_notes_search.py`` and
 """
 
 import asyncio
+import threading
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
@@ -2023,6 +2024,52 @@ class TestFreshPromptBoundaryAuthority:
 
         assert len(authorized) == 6
         assert calls == {"media": 1, "chacha": 1}
+
+    @pytest.mark.asyncio
+    async def test_mixed_stores_dispatch_each_read_on_its_required_thread(
+        self, monkeypatch
+    ):
+        main_thread = threading.current_thread()
+        calls = {"media": [], "chacha": []}
+
+        class _Cursor:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def fetchall(self):
+                return self._rows
+
+        class _MemoryMediaDB:
+            is_memory_db = True
+
+            def execute_query(self, *_args, **_kwargs):
+                calls["media"].append(threading.current_thread())
+                return _Cursor([("m1",)])
+
+        class _FileChachaDB:
+            is_memory_db = False
+
+            def execute_query(self, *_args, **_kwargs):
+                calls["chacha"].append(threading.current_thread())
+                return _Cursor([("notes", "n1"), ("chat_history", "c1")])
+
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: None)
+        candidates = (
+            self._normalized("media", "m1", "Media", rank=1),
+            self._normalized("note", "n1", "Note", rank=2),
+            self._normalized("conversation", "c1", "Conversation", rank=3),
+        )
+
+        authorized = await cre.authorize_local_results_for_prompt(
+            _App(media_db=_MemoryMediaDB(), chachanotes_db=_FileChachaDB()),
+            candidates,
+        )
+
+        assert len(authorized) == 3
+        assert len(calls["media"]) == 1
+        assert len(calls["chacha"]) == 1
+        assert calls["media"][0] is main_thread
+        assert calls["chacha"][0] is not main_thread
 
     @pytest.mark.asyncio
     async def test_opt_in_assembly_filters_before_assigning_markers(

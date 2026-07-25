@@ -898,11 +898,62 @@ async def resolve_effective_scope_for_chat(
 _resolve_effective_scope_for_chat = resolve_effective_scope_for_chat
 
 
-def _current_local_evidence_ids_sync(
+def _current_media_evidence_ids_sync(
+    media_db: Any,
+    media_ids: frozenset[str],
+) -> Optional[frozenset[tuple[CanonicalSourceKind, str]]]:
+    """Return current media identities with one batched database read."""
+
+    try:
+        rows = media_db.execute_query(
+            "SELECT id FROM Media "
+            "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
+            (json.dumps(sorted(media_ids)),),
+        ).fetchall()
+    except Exception:
+        logger.opt(exception=True).warning(
+            "Prompt-boundary media existence read failed"
+        )
+        return None
+    return frozenset((CanonicalSourceKind.MEDIA_DB, str(row[0])) for row in rows)
+
+
+def _current_chacha_evidence_ids_sync(
+    db: Any,
+    note_ids: frozenset[str],
+    conversation_ids: frozenset[str],
+) -> Optional[frozenset[tuple[CanonicalSourceKind, str]]]:
+    """Return current note/conversation identities with one batched DB read."""
+
+    try:
+        rows = db.execute_query(
+            "SELECT 'notes' AS source_kind, id FROM notes "
+            "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0 "
+            "UNION ALL "
+            "SELECT 'chat_history' AS source_kind, id FROM conversations "
+            "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
+            (
+                json.dumps(sorted(note_ids)),
+                json.dumps(sorted(conversation_ids)),
+            ),
+        ).fetchall()
+    except Exception:
+        logger.opt(exception=True).warning(
+            "Prompt-boundary notes/conversations existence read failed"
+        )
+        return None
+    source_kinds = {
+        "notes": CanonicalSourceKind.NOTES,
+        "chat_history": CanonicalSourceKind.CHAT_HISTORY,
+    }
+    return frozenset((source_kinds[str(row[0])], str(row[1])) for row in rows)
+
+
+async def _current_local_evidence_ids(
     app: "TldwCli",
     ids_by_source: Dict[CanonicalSourceKind, frozenset[str]],
 ) -> Optional[frozenset[tuple[CanonicalSourceKind, str]]]:
-    """Return current non-deleted local identities using batched DB reads."""
+    """Read each backing store on the thread required by that store."""
 
     found: set[tuple[CanonicalSourceKind, str]] = set()
     media_ids = ids_by_source.get(CanonicalSourceKind.MEDIA_DB, frozenset())
@@ -910,18 +961,15 @@ def _current_local_evidence_ids_sync(
         media_db = getattr(app, "media_db", None)
         if media_db is None:
             return None
-        try:
-            rows = media_db.execute_query(
-                "SELECT id FROM Media "
-                "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
-                (json.dumps(sorted(media_ids)),),
-            ).fetchall()
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Prompt-boundary media existence read failed"
+        if bool(getattr(media_db, "is_memory_db", False)):
+            media_found = _current_media_evidence_ids_sync(media_db, media_ids)
+        else:
+            media_found = await asyncio.to_thread(
+                _current_media_evidence_ids_sync, media_db, media_ids
             )
+        if media_found is None:
             return None
-        found.update((CanonicalSourceKind.MEDIA_DB, str(row[0])) for row in rows)
+        found.update(media_found)
 
     note_ids = ids_by_source.get(CanonicalSourceKind.NOTES, frozenset())
     conversation_ids = ids_by_source.get(CanonicalSourceKind.CHAT_HISTORY, frozenset())
@@ -929,28 +977,20 @@ def _current_local_evidence_ids_sync(
         db = getattr(app, "chachanotes_db", None)
         if db is None:
             return None
-        try:
-            rows = db.execute_query(
-                "SELECT 'notes' AS source_kind, id FROM notes "
-                "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0 "
-                "UNION ALL "
-                "SELECT 'chat_history' AS source_kind, id FROM conversations "
-                "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
-                (
-                    json.dumps(sorted(note_ids)),
-                    json.dumps(sorted(conversation_ids)),
-                ),
-            ).fetchall()
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Prompt-boundary notes/conversations existence read failed"
+        if bool(getattr(db, "is_memory_db", False)):
+            chacha_found = _current_chacha_evidence_ids_sync(
+                db, note_ids, conversation_ids
             )
+        else:
+            chacha_found = await asyncio.to_thread(
+                _current_chacha_evidence_ids_sync,
+                db,
+                note_ids,
+                conversation_ids,
+            )
+        if chacha_found is None:
             return None
-        source_kinds = {
-            "notes": CanonicalSourceKind.NOTES,
-            "chat_history": CanonicalSourceKind.CHAT_HISTORY,
-        }
-        found.update((source_kinds[str(row[0])], str(row[1])) for row in rows)
+        found.update(chacha_found)
 
     return frozenset(found)
 
@@ -991,19 +1031,7 @@ async def authorize_local_results_for_prompt(
         source_kind: frozenset(source_ids)
         for source_kind, source_ids in ids_by_source.items()
     }
-    dbs = (
-        getattr(app, "media_db", None),
-        getattr(app, "chachanotes_db", None),
-    )
-    run_inline = any(
-        bool(getattr(db, "is_memory_db", False)) for db in dbs if db is not None
-    )
-    if run_inline:
-        existing = _current_local_evidence_ids_sync(app, frozen_ids)
-    else:
-        existing = await asyncio.to_thread(
-            _current_local_evidence_ids_sync, app, frozen_ids
-        )
+    existing = await _current_local_evidence_ids(app, frozen_ids)
     if existing is None:
         return ()
 

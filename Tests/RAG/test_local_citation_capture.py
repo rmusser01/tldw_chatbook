@@ -7,6 +7,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from loguru import logger as loguru_logger
 
 from tldw_chatbook.Chat.citation_source_locators import CanonicalSourceKind
 from tldw_chatbook.Chat.citation_trace_models import (
@@ -353,6 +354,14 @@ class _SemanticService:
         return [self.result]
 
 
+class _Citation:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def to_dict(self):
+        return dict(self.payload)
+
+
 @pytest.mark.asyncio
 async def test_search_semantic_propagates_allowlisted_metadata_source_and_score_marker():
     app = SimpleNamespace(
@@ -405,6 +414,39 @@ async def test_search_semantic_replaces_untrusted_internal_score_metadata():
         normalize_local_result(result).score_kind
         is RetrievalScoreKind.VECTOR_SIMILARITY
     )
+
+
+@pytest.mark.asyncio
+async def test_citation_semantic_result_keeps_shape_and_governed_source():
+    producer = _SemanticResult(
+        source="unknown",
+        metadata={
+            "source_type": "note",
+            "source_id": "note-7",
+            "safe_lineage": "kept",
+        },
+    )
+    producer.id = "note_note-7_chunk_0"
+    producer.citations = [_Citation({"document_id": "note-7", "text": "quote"})]
+    app = SimpleNamespace(_rag_service=_SemanticService(producer))
+
+    result = (await pfs.search_semantic(app, "query", {"notes": True}))[0]
+
+    assert isinstance(result, SearchResult)
+    assert result.source == "note"
+    assert result.id == "note_note-7_chunk_0"
+    assert result.title == "Semantic"
+    assert result.content == "semantic body"
+    assert result.score == 0.73
+    assert result.metadata["source_id"] == "note-7"
+    assert result.metadata["safe_lineage"] == "kept"
+    assert result.metadata["_has_citations"] is True
+    assert result.metadata["_citations"] == [{"document_id": "note-7", "text": "quote"}]
+    assert (
+        result.metadata[SEMANTIC_SCORE_KIND_KEY]
+        == SEMANTIC_SCORE_KIND_VECTOR_SIMILARITY
+    )
+    assert FINAL_SCORE_KIND_KEY not in result.metadata
 
 
 def _install_flashrank(monkeypatch, *, ranked=None, init_error=None, run_error=None):
@@ -468,9 +510,40 @@ def test_invalid_flashrank_score_falls_back_without_marker(monkeypatch):
     )
 
 
+def _prior_score_result(prior_kind):
+    if prior_kind is RetrievalScoreKind.RRF:
+        return _result(
+            score=0.3 / 61,
+            metadata={
+                "hybrid_fusion": {
+                    "fts_rank": 1,
+                    "vector_rank": None,
+                    "fts_rrf": 1 / 61,
+                    "vector_rrf": 0.0,
+                    "alpha": 0.7,
+                    "rrf_k": 60,
+                }
+            },
+        )
+    if prior_kind is RetrievalScoreKind.VECTOR_SIMILARITY:
+        return _result(
+            score=0.73,
+            metadata={SEMANTIC_SCORE_KIND_KEY: SEMANTIC_SCORE_KIND_VECTOR_SIMILARITY},
+        )
+    return _result(score=-4.2, metadata={"producer": "opaque"})
+
+
 @pytest.mark.parametrize("failure_stage", ["import", "initialization", "execution"])
+@pytest.mark.parametrize(
+    "prior_kind",
+    [
+        RetrievalScoreKind.RRF,
+        RetrievalScoreKind.VECTOR_SIMILARITY,
+        RetrievalScoreKind.LEGACY,
+    ],
+)
 def test_flashrank_fallback_never_claims_reranker_and_keeps_prior_semantics(
-    monkeypatch, failure_stage
+    monkeypatch, failure_stage, prior_kind
 ):
     if failure_stage == "import":
         monkeypatch.setitem(sys.modules, "flashrank", None)
@@ -478,26 +551,35 @@ def test_flashrank_fallback_never_claims_reranker_and_keeps_prior_semantics(
         _install_flashrank(monkeypatch, init_error=RuntimeError("init failed"))
     else:
         _install_flashrank(monkeypatch, run_error=RuntimeError("run failed"))
-    score = 0.3 / 61
-    result = _result(
-        score=score,
-        metadata={
-            "hybrid_fusion": {
-                "fts_rank": 1,
-                "vector_rank": None,
-                "fts_rrf": 1 / 61,
-                "vector_rrf": 0.0,
-                "alpha": 0.7,
-                "rrf_k": 60,
-            }
-        },
-    )
+    result = _prior_score_result(prior_kind)
 
     fallback = pfs.rerank_results([result], "query", top_k=1)
 
     assert fallback == [result]
     assert FINAL_SCORE_KIND_KEY not in fallback[0].metadata
-    assert normalize_local_result(fallback[0]).score_kind is RetrievalScoreKind.RRF
+    assert normalize_local_result(fallback[0]).score_kind is prior_kind
+
+
+def test_flashrank_execution_failure_log_omits_exception_and_content(monkeypatch):
+    sentinel = "PRIVATE-RAG-CONTENT-SENTINEL"
+    _install_flashrank(monkeypatch, run_error=RuntimeError(sentinel))
+    result = _result(title=sentinel, content=sentinel)
+    captured = []
+    sink_id = loguru_logger.add(
+        captured.append,
+        level="WARNING",
+        format="{message}",
+    )
+    try:
+        fallback = pfs.rerank_results([result], sentinel, top_k=1)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    rendered = "".join(str(message) for message in captured)
+    assert fallback == [result]
+    assert sentinel not in rendered
+    assert "status=fallback" in rendered
+    assert "reason=execution_failure" in rendered
 
 
 def test_weighted_score_overwrite_removes_prior_semantic_classification():

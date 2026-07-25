@@ -671,8 +671,9 @@ def rerank_results(
             logger.warning("FlashRank not available, returning original order")
             return results[:top_k]
         except Exception:
-            logger.opt(exception=True).warning(
-                "FlashRank reranking failed; returning original order"
+            logger.warning(
+                "FlashRank reranking unavailable; status=fallback; "
+                "reason=execution_failure; returning original order"
             )
             return results[:top_k]
 
