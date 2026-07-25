@@ -22,8 +22,11 @@ from textual.widgets import Button, DataTable, Input, Label, Static, TextArea
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
 from .personas_pane_messages import (
+    CharacterAvatarGenerateRequested,
     CharacterEditorCancelled,
     CharacterExpressionClearRequested,
+    CharacterExpressionGenerateAllRequested,
+    CharacterExpressionGenerateRequested,
     CharacterExpressionSetExportRequested,
     CharacterExpressionSetImportRequested,
     CharacterExpressionUploadRequested,
@@ -110,7 +113,8 @@ class PersonasCharacterEditorWidget(Container):
     }
 
     PersonasCharacterEditorWidget #personas-char-editor-avatar-upload,
-    PersonasCharacterEditorWidget #personas-char-editor-avatar-remove {
+    PersonasCharacterEditorWidget #personas-char-editor-avatar-remove,
+    PersonasCharacterEditorWidget #personas-char-editor-avatar-generate {
         width: auto;
         min-width: 0;
         height: 1;
@@ -137,7 +141,8 @@ class PersonasCharacterEditorWidget(Container):
     }
 
     PersonasCharacterEditorWidget #personas-char-editor-expr-import,
-    PersonasCharacterEditorWidget #personas-char-editor-expr-export {
+    PersonasCharacterEditorWidget #personas-char-editor-expr-export,
+    PersonasCharacterEditorWidget #personas-char-editor-expr-generate-all {
         width: auto;
         min-width: 0;
         height: 1;
@@ -172,7 +177,8 @@ class PersonasCharacterEditorWidget(Container):
     }
 
     PersonasCharacterEditorWidget .personas-char-editor-expr-upload,
-    PersonasCharacterEditorWidget .personas-char-editor-expr-clear {
+    PersonasCharacterEditorWidget .personas-char-editor-expr-clear,
+    PersonasCharacterEditorWidget .personas-char-editor-expr-generate {
         width: auto;
         min-width: 0;
         height: 1;
@@ -350,6 +356,11 @@ class PersonasCharacterEditorWidget(Container):
                     classes="console-action-subdued",
                 )
                 yield Button(
+                    "✨ Generate",
+                    id="personas-char-editor-avatar-generate",
+                    classes="console-action-subdued",
+                )
+                yield Button(
                     "Remove",
                     id="personas-char-editor-avatar-remove",
                     classes="console-action-subdued",
@@ -357,6 +368,12 @@ class PersonasCharacterEditorWidget(Container):
             yield Container(id="personas-char-editor-avatar-thumb")
             with Horizontal(classes="personas-char-editor-expr-set-row"):
                 yield Static("Expressions", classes="destination-section")
+                yield Button(
+                    "✨ Generate all",
+                    id="personas-char-editor-expr-generate-all",
+                    classes="console-action-subdued",
+                    disabled=True,
+                )
                 yield Button(
                     "Import set…",
                     id="personas-char-editor-expr-import",
@@ -386,6 +403,12 @@ class PersonasCharacterEditorWidget(Container):
                             "Upload",
                             id=f"personas-char-editor-expr-{state}-upload",
                             classes="console-action-subdued personas-char-editor-expr-upload",
+                            disabled=True,
+                        )
+                        yield Button(
+                            "✨ Generate",
+                            id=f"personas-char-editor-expr-{state}-generate",
+                            classes="console-action-subdued personas-char-editor-expr-generate",
                             disabled=True,
                         )
                         yield Button(
@@ -585,9 +608,15 @@ class PersonasCharacterEditorWidget(Container):
         hint_text = "" if enabled else "Save the character to add expressions."
         self.query_one("#personas-char-editor-expr-import", Button).disabled = not enabled
         self.query_one("#personas-char-editor-expr-export", Button).disabled = not enabled
+        self.query_one(
+            "#personas-char-editor-expr-generate-all", Button
+        ).disabled = not enabled
         for state in EXPRESSION_IMAGE_STATES:
             self.query_one(
                 f"#personas-char-editor-expr-{state}-upload", Button
+            ).disabled = not enabled
+            self.query_one(
+                f"#personas-char-editor-expr-{state}-generate", Button
             ).disabled = not enabled
             self.query_one(
                 f"#personas-char-editor-expr-{state}-clear", Button
@@ -1047,6 +1076,11 @@ class PersonasCharacterEditorWidget(Container):
         event.stop()
         self.post_message(CharacterImageRemoveRequested())
 
+    @on(Button.Pressed, "#personas-char-editor-avatar-generate")
+    def _generate_avatar_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(CharacterAvatarGenerateRequested())
+
     @staticmethod
     def _expression_state_from_button_id(button_id: str | None, *, suffix: str) -> str | None:
         """Recover the ``state`` a per-slot upload/clear button id encodes.
@@ -1068,12 +1102,24 @@ class PersonasCharacterEditorWidget(Container):
         if state is not None:
             self.post_message(CharacterExpressionUploadRequested(state))
 
+    @on(Button.Pressed, ".personas-char-editor-expr-generate")
+    def _expression_generate_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        state = self._expression_state_from_button_id(event.button.id, suffix="-generate")
+        if state is not None:
+            self.post_message(CharacterExpressionGenerateRequested(state))
+
     @on(Button.Pressed, ".personas-char-editor-expr-clear")
     def _expression_clear_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         state = self._expression_state_from_button_id(event.button.id, suffix="-clear")
         if state is not None:
             self.post_message(CharacterExpressionClearRequested(state))
+
+    @on(Button.Pressed, "#personas-char-editor-expr-generate-all")
+    def _expression_generate_all_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(CharacterExpressionGenerateAllRequested())
 
     @on(Button.Pressed, "#personas-char-editor-expr-import")
     def _expression_set_import_pressed(self, event: Button.Pressed) -> None:
