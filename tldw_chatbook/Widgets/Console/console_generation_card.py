@@ -145,6 +145,14 @@ def _detail_rows(spec: ConsoleGenerationCardSpec) -> list[tuple[str, str]]:
     ]
     if meta.negative_prompt:
         rows.append(("Negative", meta.negative_prompt))
+    # task-558 fix round 1: `GenerationVariantMeta.model` is only populated
+    # when the adapter could determine it with certainty (currently
+    # SwarmUI/stable-diffusion.cpp -- see `run_generation_batch`); omitted
+    # (not "Model: None"/"Model: ") the same way the Negative row above
+    # omits itself for an empty/unset value -- matches spec §2's "plus
+    # model/size when known" (an addendum, not always-present).
+    if meta.model:
+        rows.append(("Model", meta.model))
     return rows
 
 
