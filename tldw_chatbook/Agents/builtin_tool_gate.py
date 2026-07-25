@@ -134,6 +134,26 @@ class BuiltinToolGate:
             logger.warning(f"session approval read failed: {exc}")
             return False
 
+    def is_session_approved(self, tool_name: str) -> bool:
+        """Public read of whether ``tool_name`` has a live session approval.
+
+        Review finding 1 (task-545/T6): exposed for
+        ``console_chat_controller.build_tool_review_hook``, which must
+        skip adding a pending row for a tool that is already
+        session-approved -- ``resolve()``/``resolve_builtin_state`` read
+        the permission store ONLY and never consult session approvals (by
+        design, mirroring ``resolve_effective_state``'s own store-only
+        contract), so without this read a user who picks "Approve for
+        session" would be re-prompted on the very next turn even though
+        ``check()`` (via ``_session_approved``, below) already honors it
+        at execution time. Thin wrapper over the existing private
+        ``_session_approved`` -- kept as two names so ``check()``'s own
+        call site never has to change, and so this public one reads as
+        the intentional, stable seam a caller outside this class should
+        use.
+        """
+        return self._session_approved(tool_name)
+
     def check(self, tool: Tool) -> str | None:
         """Execution-time verdict.
 

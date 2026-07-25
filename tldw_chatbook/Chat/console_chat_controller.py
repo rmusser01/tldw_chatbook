@@ -303,6 +303,15 @@ def build_tool_review_hook(
     row: `"allow"` never prompts, and `"deny"` is refused outright by
     `invoke()`'s own gate WITHOUT ever reaching the user -- a tool the
     operator switched Off must not appear on the approval card at all.
+    Nor does an `"ask"` tool that already has a live session approval
+    (`builtin_gate.is_session_approved(name)`) -- review finding 1
+    (T6 review): `resolve()`/`resolve_builtin_state` read the permission
+    store ONLY, never session approvals, so without this check a user who
+    picked "Approve for session" on turn 1 would be re-prompted on turn 2
+    even though `invoke()`'s own `check()` already honors that same
+    session approval and would execute it anyway. Mirrors MCP's own
+    `pending_gate_for`, which applies the identical
+    `_is_session_approved_safe` skip for exactly this reason.
 
     `options=("approve_once", "approve_session", "deny")` -- deliberately
     excluding ONLY `"always_allow"` (verified at
@@ -386,6 +395,16 @@ def build_tool_review_hook(
             if state.state != "ask":
                 # "allow" never prompts; "deny" is refused outright by
                 # invoke()'s own gate -- neither is offered a card.
+                continue
+            if builtin_gate.is_session_approved(call.name):
+                # Review finding 1 (T6 review): already approved for this
+                # session -- `invoke()`'s own `check()` will honor it via
+                # the identical `is_session_approved` read, so re-asking
+                # here would just re-prompt for a decision the user
+                # already made. Not added to `builtin_pending` and so
+                # never mentioned in the returned verdict map either --
+                # exactly as undecided-but-not-needed-this-turn MCP calls
+                # already work (see this function's own docstring).
                 continue
             builtin_pending.append(
                 MCPPendingCall(

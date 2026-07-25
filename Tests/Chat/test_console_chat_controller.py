@@ -1989,6 +1989,14 @@ class _FakeBuiltinGate:
     def stamp(self, name: str, decision: str) -> None:
         self.stamped.append((name, decision))
 
+    def is_session_approved(self, name: str) -> bool:
+        # Every existing test drives a single turn with a fresh gate and
+        # never expects a session approval to already be live -- real
+        # session tracking is covered separately by
+        # `test_approve_for_session_is_not_re_prompted_next_turn`, which
+        # uses the REAL `BuiltinToolGate` instead of this fake.
+        return False
+
 
 class _FakeBuiltinProvider:
     """Minimal stand-in for `BuiltinToolProvider` -- only `.tool_for` is used."""
@@ -2135,6 +2143,89 @@ def test_mcp_and_builtin_share_one_round_trip():
         "mcp__srv__run": "approve_once"
     }
     assert gate.stamped == [("write_thing", "approve_once")]
+
+
+class _FakeSessionApprovalService:
+    """A minimal `unified_mcp_service`-shaped double exercising the REAL
+    `BuiltinToolGate`'s session-approval read/write seam (`approve_for_
+    session`/`is_session_approved`) -- deliberately not a fake `Builtin
+    ToolGate` itself, so this test proves the actual persistence path
+    `BuiltinToolGate.stamp()`/`is_session_approved()` use, not a test
+    double's own bookkeeping."""
+
+    def __init__(self) -> None:
+        self._approved: set[tuple[str, str]] = set()
+
+    def get_kill_switch(self) -> bool:
+        return False
+
+    def approve_for_session(self, server_key: str, tool_name: str) -> None:
+        self._approved.add((server_key, tool_name))
+
+    def is_session_approved(self, server_key: str, tool_name: str) -> bool:
+        return (server_key, tool_name) in self._approved
+
+
+class _FakeMutatingRiskyTool:
+    """A `Tool`-shaped double whose `risk_tags` actually intersect
+    `HIGH_RISK_TAGS`, so the REAL `resolve_builtin_state` floors an
+    inherited `allow` to `ask` from an empty (`{}`) permission payload --
+    `_FakeMutatingTool` (used by the fake-gate tests above) has no
+    `risk_tags`/`description`/`parameters` at all, which is fine for a
+    fake gate that never calls `tool_ref()`, but the REAL `BuiltinToolGate.
+    resolve()` does call it."""
+
+    name = "write_thing"
+    description = "writes a thing"
+    parameters = {"type": "object", "properties": {}}
+    risk_tags = ("mutates",)
+
+
+def test_approve_for_session_is_not_re_prompted_next_turn():
+    """Review finding 1 (T6 review, Important): `BuiltinToolGate.resolve()`
+    reads the permission store ONLY -- never session approvals -- so
+    without the hook's own `is_session_approved` skip, a user who picks
+    "Approve for session" on turn 1 is silently re-prompted on turn 2 even
+    though `invoke()`'s own `check()` already honors that same session
+    approval. Drives the REAL `BuiltinToolGate` (not the fake used above)
+    against a fake service that actually tracks session approvals, so this
+    proves the real persistence path, not a test double's bookkeeping."""
+    from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    service = _FakeSessionApprovalService()
+    gate = BuiltinToolGate(service)
+    tool = _FakeMutatingRiskyTool()
+    provider = _FakeBuiltinProvider(tool)
+    round_trips: list[list[MCPPendingCall]] = []
+
+    def approve_session(pending: list[MCPPendingCall]) -> dict[str, str]:
+        round_trips.append(pending)
+        return {row.llm_name: "approve_session" for row in pending}
+
+    hook = build_tool_review_hook(gate, provider, None, approve_session)
+
+    # Turn 1: no session approval yet -- a card IS shown, and the user
+    # approves for session.
+    verdict1 = hook([_builtin_call("write_thing")])
+    assert len(round_trips) == 1
+    assert round_trips[0][0].llm_name == "write_thing"
+    assert verdict1 == {"write_thing": "proceed"}
+
+    # Turn 2: `begin_turn()` clears the turn-scoped `_stamps` dict, but the
+    # SESSION approval lives on the fake service, not in `_stamps` -- no
+    # second round trip.
+    verdict2 = hook([_builtin_call("write_thing")])
+    assert len(round_trips) == 1  # still just the one round trip
+    # Nothing needed gating this turn, so the call is absent from the
+    # returned map entirely -- purely documentary, exactly like an
+    # already-session-approved MCP call today (`build_mcp_review_hook`'s
+    # own docstring: `run_agent_loop` defaults any unmentioned name to
+    # "proceed").
+    assert verdict2 == {}
+    # And the call genuinely still proceeds: this is the EXACT verdict
+    # `BuiltinToolProvider.invoke()` consults on dispatch.
+    assert gate.check(tool) is None
 
 
 # -----------------------------------------------------------------------------

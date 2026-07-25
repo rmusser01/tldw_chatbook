@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
@@ -1094,6 +1095,55 @@ async def test_mcp_provider_wired_when_eligible(tmp_path):
     assert len(provider.list_catalog()) == 1
     assert callable(captured[0]["review_tool_calls"])
     assert captured[0]["builtin_gate"] is not None
+
+
+class _SentinelBuiltinGate:
+    """A `BuiltinToolGate` double whose IDENTITY is the entire point of
+    `test_review_hook_and_run_reply_share_one_builtin_gate` -- it need not
+    implement `resolve()`/`stamp()`/`is_session_approved()` at all, since
+    that test drives the captured hook with an EMPTY call batch (nothing
+    to resolve), only proving `begin_turn()` runs on the SAME object
+    `run_reply` received."""
+
+    def __init__(self) -> None:
+        self.begin_turn_calls = 0
+
+    def begin_turn(self) -> None:
+        self.begin_turn_calls += 1
+
+
+@pytest.mark.asyncio
+async def test_review_hook_and_run_reply_share_one_builtin_gate(tmp_path, monkeypatch):
+    """Review finding 2 (T6 review, Important): the headline invariant --
+    ONE `BuiltinToolGate` shared between the review hook and the
+    `BuiltinToolProvider` `run_reply` threads into the run's registry --
+    had no regression test at the controller seam. Prior tests only
+    asserted `captured[0]["builtin_gate"] is not None`; a future refactor
+    that built a SECOND gate for the hook (or for `run_reply`) would pass
+    the whole suite while silently breaking stamp sharing. Monkeypatches
+    `build_builtin_gate` to return a sentinel and proves BOTH halves of the
+    wiring see that exact instance: the kwarg handed to `run_reply`, and
+    the object the captured `review_tool_calls` hook actually calls
+    `begin_turn()` on."""
+    controller, store, _db = _controller(tmp_path, [["ok."]])
+    captured = []
+    controller._agent_bridge.run_reply = _capturing_run_reply(captured)
+    controller.app = _fake_app()  # no unified_mcp_service -- MCP is irrelevant here
+
+    sentinel = _SentinelBuiltinGate()
+    monkeypatch.setattr(
+        controller_module, "build_builtin_gate", lambda service=None: sentinel
+    )
+
+    result = await controller.submit_draft("hi")
+
+    assert result.accepted is True
+    assert captured[0]["builtin_gate"] is sentinel
+
+    review_hook = captured[0]["review_tool_calls"]
+    assert sentinel.begin_turn_calls == 0
+    review_hook([])  # empty batch: nothing to resolve, only begin_turn() matters
+    assert sentinel.begin_turn_calls == 1
 
 
 @pytest.mark.asyncio
