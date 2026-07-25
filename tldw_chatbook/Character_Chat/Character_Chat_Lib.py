@@ -32,7 +32,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (  # noqa: E402
     ConflictError,
     InputError,
 )
-from tldw_chatbook.Utils.path_validation import validate_path  # noqa: E402
+from tldw_chatbook.Utils.path_validation import (  # noqa: E402
+    validate_path,
+    validate_path_simple,
+)
 
 #
 ###############################################
@@ -40,6 +43,35 @@ from tldw_chatbook.Utils.path_validation import validate_path  # noqa: E402
 # Constants
 DEFAULT_CHARACTER_ID = 1
 #
+
+# String boolean vocabularies for loosely-typed card/lorebook fields
+# (mirrors world_info_processor._coerce_bool; bool("false") is True in
+# Python, so plain bool() coercion must never be used on raw card data).
+_TRUE_STRINGS = {"true", "1", "yes", "on"}
+_FALSE_STRINGS = {"false", "0", "no", "off"}
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    """Best-effort bool coercion for loosely-typed card fields.
+
+    None -> ``default``; actual bools pass through; ints/floats map by
+    ``!= 0``; recognized string booleans (true/false/1/0/yes/no/on/off,
+    case-insensitive) map by value; anything else -> ``default``.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in _TRUE_STRINGS:
+            return True
+        if token in _FALSE_STRINGS:
+            return False
+        return default
+    return default
 
 
 # --- New Functions
@@ -1120,9 +1152,7 @@ def parse_character_book(book_data: Dict[str, Any]) -> Dict[str, Any]:
         elif not isinstance(content, str):
             content = str(content)
 
-        enabled = entry_raw.get("enabled", True)
-        if not isinstance(enabled, bool):
-            enabled = bool(enabled)
+        enabled = _coerce_bool(entry_raw.get("enabled"), True)
 
         insertion_order = entry_raw.get("insertion_order", fallback_order)
         if not isinstance(insertion_order, (int, float)) or isinstance(
@@ -1148,14 +1178,14 @@ def parse_character_book(book_data: Dict[str, Any]) -> Dict[str, Any]:
             else {},
             "enabled": enabled,
             "insertion_order": insertion_order,
-            "case_sensitive": bool(entry_raw.get("case_sensitive", False)),
+            "case_sensitive": _coerce_bool(entry_raw.get("case_sensitive"), False),
             "name": entry_raw.get("name", ""),
             "priority": entry_raw.get("priority"),
             "id": entry_raw.get("id"),  # Can be None
             "comment": entry_raw.get("comment", ""),
-            "selective": bool(entry_raw.get("selective", False)),
+            "selective": _coerce_bool(entry_raw.get("selective"), False),
             "secondary_keys": secondary_keys,
-            "constant": bool(entry_raw.get("constant", False)),
+            "constant": _coerce_bool(entry_raw.get("constant"), False),
             "position": position,
         }
         parsed_book["entries"].append(parsed_entry)
@@ -3897,8 +3927,8 @@ def load_character_card_from_file(
     It supports:
     - Text files (.json, .yaml, .yml, .md, .txt) containing card data as raw
       JSON, YAML frontmatter, or a fenced JSON code block.
-    - Image files (.png, .webp, .jpg, .jpeg, .gif) with embedded 'chara'
-      (V1/V2) or 'ccv3' (V3) base64 JSON metadata.
+    - Image files (.png, .webp) with embedded card metadata: 'chara' (V1/V2)
+      or 'ccv3' (V3) text chunks for PNG, EXIF UserComment for WebP.
 
     Args:
         file_path (Union[str, Path]): Path to the character card file.
@@ -3914,7 +3944,17 @@ def load_character_card_from_file(
             YAML frontmatter) but is not installed.
     """
     try:
-        path_obj = Path(file_path)
+        # Validate the user-supplied path per the path_validation policy.
+        # validate_path_simple (not validate_path) is the right tool here:
+        # character cards are user-picked files that may legitimately live
+        # anywhere on disk (e.g. another drive), so no base-directory
+        # restriction applies - but traversal/shell-metacharacter checks do.
+        try:
+            path_obj = Path(validate_path_simple(file_path, require_exists=True))
+        except ValueError as e:
+            logger.error(f"Invalid character card file path '{file_path}': {e}")
+            return None
+
         if not path_obj.is_file():
             logger.error(f"Character card file not found: {file_path}")
             return None
@@ -3922,19 +3962,24 @@ def load_character_card_from_file(
         ext = path_obj.suffix.lower()
         card_content_str: Optional[str]
 
-        if ext in (".png", ".webp", ".jpg", ".jpeg", ".gif"):
-            # Read the bytes ourselves and hand Pillow a stream: this avoids
-            # the base-directory path restriction in extract_json_from_image_file,
-            # which would otherwise reject user-picked files outside the app
-            # data directory (e.g. cards on another drive).
+        if ext in (".png", ".webp"):
+            # Read the bytes ourselves and hand Pillow a stream: this keeps
+            # extraction working for user-picked files anywhere on disk.
             with open(path_obj, "rb") as f_img:
                 image_bytes = f_img.read()
             card_content_str = extract_json_from_image_file(io.BytesIO(image_bytes))
             if not card_content_str:
                 logger.error(
-                    f"No embedded character metadata ('chara'/'ccv3') found in image file: {path_obj.name}"
+                    f"No embedded character metadata ('chara'/'ccv3'/EXIF) found in image file: {path_obj.name}"
                 )
                 return None
+        elif ext in (".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".avif"):
+            # Other image formats have no verified embedded-card extraction
+            # path; reject explicitly instead of failing obscurely as text.
+            logger.error(
+                f"Unsupported image format for character cards: '{ext}'. Use PNG or WebP cards."
+            )
+            return None
         else:
             with open(path_obj, "r", encoding="utf-8") as f_text:
                 card_content_str = f_text.read()

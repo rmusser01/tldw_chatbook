@@ -339,3 +339,48 @@ def test_load_webp_card_end_to_end(tmp_path):
 
     assert parsed is not None
     assert parsed["name"] == "Test Char"
+
+
+# ---------------------------------------------------------------------------
+# Qodo review follow-ups: bool coercion, path validation, format honesty
+# ---------------------------------------------------------------------------
+
+
+def test_character_book_string_booleans_parse_by_value():
+    # bool("false") is True in Python - string flags must parse by value.
+    book = {
+        "entries": [
+            {"keys": ["a"], "content": "x", "enabled": "false", "case_sensitive": "0"},
+            {"keys": ["b"], "content": "y", "enabled": "true", "selective": "no", "constant": 0},
+            {"keys": ["c"], "content": "z", "enabled": "yes", "constant": "on"},
+            {"keys": ["d"], "content": "w", "enabled": "maybe"},  # unknown -> default True
+            {"keys": ["e"], "content": "v", "enabled": 1, "case_sensitive": 0},
+        ]
+    }
+
+    parsed = parse_character_book(book)
+    a, b, c, d, e = parsed["entries"]
+
+    assert a["enabled"] is False
+    assert a["case_sensitive"] is False
+    assert b["enabled"] is True
+    assert b["selective"] is False
+    assert b["constant"] is False
+    assert c["enabled"] is True
+    assert c["constant"] is True
+    assert d["enabled"] is True  # unrecognized string falls back to the default
+    assert e["enabled"] is True
+    assert e["case_sensitive"] is False
+
+
+def test_unsupported_image_extension_rejected_explicitly(tmp_path):
+    # .jpg has no verified embedded-card extraction path; it must fail with a
+    # clear unsupported-format path, not an obscure text-decode failure.
+    jpg_path = tmp_path / "card.jpg"
+    Image.new("RGB", (10, 10)).save(jpg_path, "JPEG")
+    assert load_character_card_from_file(jpg_path) is None
+
+
+def test_traversal_path_rejected():
+    assert load_character_card_from_file("../../etc/passwd.json") is None
+    assert load_character_card_from_file("..\\..\\Windows\\win.ini") is None
