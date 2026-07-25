@@ -122,13 +122,53 @@ def test_diff_emits_only_changed_keys_to_nested_sections():
     assert deletions == {}
 
 
-def test_diff_never_copies_env_resolved_secret(monkeypatch):
-    """THE no-secret-copy pin: effective cfg holds env-resolved keys; the diff
-    must not see them because it only reads the draft + raw config."""
-    draft = _draft()  # user typed nothing
-    sections, _ = diff_to_sections(draft, raw_config={"image_generation": {}})
-    flat = {k: v for sec in sections.values() for k, v in sec.items()}
-    assert "api_key" not in flat and "swarm_token" not in flat
+def test_diff_never_copies_preexisting_secret_when_editing_other_field():
+    """THE no-secret-copy pin, realistic leak shape: raw_config ALREADY has a
+    config-saved secret for a backend; editing a DIFFERENT (non-secret)
+    field on that same backend must emit only the edited key -- never the
+    pre-existing secret riding along via a wholesale section rewrite. (A
+    draft signature that never accepts an ImageGenerationConfig makes
+    copying an *env-resolved* secret a code-level impossibility; this test
+    guards the separate, equally real risk of leaking an already-saved
+    *config* secret when the diff logic touches that backend's section at
+    all.)"""
+    raw_config = {
+        "image_generation": {
+            "openrouter": {"api_key": "already-saved-secret", "default_model": "old-model"},
+            "swarmui": {"swarm_token": "already-saved-token", "base_url": "http://old"},
+        }
+    }
+    draft = _draft(
+        backend_fields={
+            "openrouter": {"default_model": "new-model"},
+            "swarmui": {"base_url": "http://new"},
+        }
+    )
+
+    sections, _ = diff_to_sections(draft, raw_config)
+
+    assert sections == {
+        "image_generation.openrouter": {"default_model": "new-model"},
+        "image_generation.swarmui": {"base_url": "http://new"},
+    }
+    assert "api_key" not in sections["image_generation.openrouter"]
+    assert "swarm_token" not in sections["image_generation.swarmui"]
+
+
+def test_diff_emits_typed_secret_exactly_and_nothing_else():
+    """A secret the user actually typed this session is emitted verbatim
+    and alone -- the diff neither drops a deliberately-typed secret nor
+    smuggles in any other field (secret or not) from raw_config alongside it."""
+    raw_config = {
+        "image_generation": {
+            "openrouter": {"api_key": "already-saved-secret", "default_model": "old-model"},
+        }
+    }
+    draft = _draft(backend_fields={"openrouter": {"api_key": "typed-this-session"}})
+
+    sections, _ = diff_to_sections(draft, raw_config)
+
+    assert sections == {"image_generation.openrouter": {"api_key": "typed-this-session"}}
 
 
 def test_cleared_field_becomes_deletion_not_empty_write():
@@ -236,7 +276,7 @@ def test_build_backend_rows_status_and_sources(monkeypatch):
         },
         keyring={"together": "kr-secret"},
     )
-    rows = {r.backend_id: r for r in build_backend_rows(cfg, raw_section={})}
+    rows = {r.backend_id: r for r in build_backend_rows(cfg)}
 
     assert set(rows) == set(BACKEND_IDS)
     assert rows["openrouter"].key_source == "env:OPENROUTER_API_KEY"

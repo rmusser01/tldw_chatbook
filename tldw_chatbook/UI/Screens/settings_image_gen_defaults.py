@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
-from tldw_chatbook.Image_Generation.config import _NON_SECRET
+from tldw_chatbook.Image_Generation.config import ImageGenerationConfig, _NON_SECRET
 from tldw_chatbook.Image_Generation.listing import (
     _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS,
     _is_modelstudio_configured,
@@ -131,21 +131,15 @@ class ImageGenBackendRow:
     secret_optional: bool
 
 
-def build_backend_rows(cfg, raw_section: Mapping) -> list[ImageGenBackendRow]:
+def build_backend_rows(cfg: ImageGenerationConfig) -> list[ImageGenBackendRow]:
     """Build one status row per backend from the effective config.
 
     Args:
         cfg: The effective ``ImageGenerationConfig`` (``get_image_generation_config()``).
-        raw_section: The raw ``[image_generation]`` TOML table (from
-            ``SettingsConfigAdapter.load()``). Accepted for interface symmetry
-            with the spec's set-vs-baked-default distinction; the current row
-            fields (configured/enabled/is_default/key_source) are all already
-            available on ``cfg`` and don't need it.
 
     Returns:
         One ``ImageGenBackendRow`` per entry in ``BACKEND_IDS``, in that order.
     """
-    del raw_section  # not needed for the current row fields; see docstring
     enabled_backends = set(cfg.enabled_backends or [])
     key_sources = cfg.key_sources or {}
     rows: list[ImageGenBackendRow] = []
@@ -170,7 +164,7 @@ def build_backend_rows(cfg, raw_section: Mapping) -> list[ImageGenBackendRow]:
     return rows
 
 
-def effective_placeholder(cfg, backend_id: str, toml_key: str) -> str:
+def effective_placeholder(cfg: ImageGenerationConfig, backend_id: str, toml_key: str) -> str:
     """Return the resolved effective value for an unset non-secret field.
 
     Used as the editor's placeholder text so an empty field never hides what
@@ -250,7 +244,16 @@ def diff_to_sections(
     values; reading it here would risk silently copying an env-provided
     secret into plaintext config.toml. This function only ever sees the
     draft and the raw ``[image_generation]`` TOML table (e.g. from
-    ``SettingsConfigAdapter.load()``).
+    ``SettingsConfigAdapter.load()``) -- a signature-level guarantee that
+    holds regardless of what the diff logic below does.
+
+    That logic is also, independently, field-level rather than a wholesale
+    per-backend section rewrite: editing one field (e.g. ``default_model``)
+    never carries a *different*, already-saved field on the same backend
+    (e.g. a pre-existing ``api_key``) along with it -- only keys the draft
+    actually names in ``backend_fields``/``cleared_fields`` can appear in
+    the output at all. A secret is emitted only when the draft carries it
+    verbatim (the user typed it this session).
 
     Args:
         draft: The pending edits.
