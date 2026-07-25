@@ -10,6 +10,7 @@ import os
 import re
 import time  # For default titles, etc.
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Union, Set
 
 import yaml
@@ -31,7 +32,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (  # noqa: E402
     ConflictError,
     InputError,
 )
-from tldw_chatbook.Utils.path_validation import validate_path  # noqa: E402
+from tldw_chatbook.Utils.path_validation import (  # noqa: E402
+    validate_path,
+    validate_path_simple,
+)
 
 #
 ###############################################
@@ -39,6 +43,35 @@ from tldw_chatbook.Utils.path_validation import validate_path  # noqa: E402
 # Constants
 DEFAULT_CHARACTER_ID = 1
 #
+
+# String boolean vocabularies for loosely-typed card/lorebook fields
+# (mirrors world_info_processor._coerce_bool; bool("false") is True in
+# Python, so plain bool() coercion must never be used on raw card data).
+_TRUE_STRINGS = {"true", "1", "yes", "on"}
+_FALSE_STRINGS = {"false", "0", "no", "off"}
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    """Best-effort bool coercion for loosely-typed card fields.
+
+    None -> ``default``; actual bools pass through; ints/floats map by
+    ``!= 0``; recognized string booleans (true/false/1/0/yes/no/on/off,
+    case-insensitive) map by value; anything else -> ``default``.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in _TRUE_STRINGS:
+            return True
+        if token in _FALSE_STRINGS:
+            return False
+        return default
+    return default
 
 
 # --- New Functions
@@ -1089,41 +1122,71 @@ def parse_character_book(book_data: Dict[str, Any]) -> Dict[str, Any]:
         "entries": [],
     }
 
-    for entry_raw in book_data.get("entries", []):
+    # SillyTavern lorebooks use numeric positions; normalize the common ones
+    # to the V2 spec's string values and keep anything else as-is.
+    numeric_position_map = {0: "before_char", 1: "after_char"}
+
+    raw_entries = book_data.get("entries", [])
+    if not isinstance(raw_entries, list):
+        logger.warning(
+            f"character_book 'entries' is not a list ({type(raw_entries).__name__}); importing book with no entries."
+        )
+        raw_entries = []
+
+    for fallback_order, entry_raw in enumerate(raw_entries):
         if not isinstance(entry_raw, dict):
             logger.warning(f"Skipping non-dict entry in character_book: {entry_raw}")
             continue
 
-        # Ensure required fields for an entry are present
-        if (
-            not entry_raw.get("keys")
-            or not isinstance(entry_raw["keys"], list)
-            or "content" not in entry_raw
-            or "enabled" not in entry_raw
-            or "insertion_order" not in entry_raw
+        # Lenient parsing: default missing core fields instead of dropping the
+        # entry. 'keys' and 'content' default to empty (entry never triggers),
+        # 'enabled' defaults to True, 'insertion_order' to list position.
+        raw_keys = entry_raw.get("keys", [])
+        if not isinstance(raw_keys, list):
+            raw_keys = [raw_keys] if raw_keys else []
+        keys = [str(k) for k in raw_keys if k is not None and str(k).strip()]
+
+        content = entry_raw.get("content", "")
+        if content is None:
+            content = ""
+        elif not isinstance(content, str):
+            content = str(content)
+
+        enabled = _coerce_bool(entry_raw.get("enabled"), True)
+
+        insertion_order = entry_raw.get("insertion_order", fallback_order)
+        if not isinstance(insertion_order, (int, float)) or isinstance(
+            insertion_order, bool
         ):
-            logger.warning(
-                f"Skipping invalid character_book entry due to missing core fields: {entry_raw.get('name', 'N/A')}"
-            )
-            continue
+            insertion_order = fallback_order
+
+        position = entry_raw.get("position", "before_char")
+        if isinstance(position, bool):
+            position = "before_char"
+        elif isinstance(position, (int, float)):
+            position = numeric_position_map.get(int(position), position)
+
+        secondary_keys = entry_raw.get("secondary_keys", [])
+        if not isinstance(secondary_keys, list):
+            secondary_keys = []
 
         parsed_entry = {
-            "keys": entry_raw["keys"],
-            "content": entry_raw["content"],
-            "extensions": entry_raw.get("extensions", {}),
-            "enabled": entry_raw["enabled"],
-            "insertion_order": entry_raw["insertion_order"],
-            "case_sensitive": entry_raw.get("case_sensitive", False),
+            "keys": keys,
+            "content": content,
+            "extensions": entry_raw.get("extensions", {})
+            if isinstance(entry_raw.get("extensions"), dict)
+            else {},
+            "enabled": enabled,
+            "insertion_order": insertion_order,
+            "case_sensitive": _coerce_bool(entry_raw.get("case_sensitive"), False),
             "name": entry_raw.get("name", ""),
             "priority": entry_raw.get("priority"),
             "id": entry_raw.get("id"),  # Can be None
             "comment": entry_raw.get("comment", ""),
-            "selective": entry_raw.get("selective", False),
-            "secondary_keys": entry_raw.get("secondary_keys", []),
-            "constant": entry_raw.get("constant", False),
-            "position": entry_raw.get(
-                "position", "before_char"
-            ),  # Default if not specified
+            "selective": _coerce_bool(entry_raw.get("selective"), False),
+            "secondary_keys": secondary_keys,
+            "constant": _coerce_bool(entry_raw.get("constant"), False),
+            "position": position,
         }
         parsed_book["entries"].append(parsed_entry)
     return parsed_book
@@ -1207,19 +1270,48 @@ def extract_json_from_image_file(
 
         # 'text' attribute in Pillow Image objects holds metadata chunks.
         # For PNGs, these are tEXt, zTXt, or iTXt chunks.
-        if (
-            hasattr(img_obj, "info")
-            and isinstance(img_obj.info, dict)
-            and "chara" in img_obj.info
-        ):
-            chara_base64_str = img_obj.info["chara"]
+        # 'chara' holds V1/V2 cards; 'ccv3' holds V3 cards.
+        metadata_key: Optional[str] = None
+        if hasattr(img_obj, "info") and isinstance(img_obj.info, dict):
+            for candidate_key in ("chara", "ccv3"):
+                if candidate_key in img_obj.info:
+                    metadata_key = candidate_key
+                    break
+
+        # WebP (and JPEG) character cards embed the base64 card JSON in the
+        # EXIF UserComment tag (37510) instead of a 'chara' text chunk.
+        exif_user_comment: Optional[Any] = None
+        if metadata_key is None:
+            try:
+                exif_data = img_obj.getexif()
+                if exif_data:
+                    exif_user_comment = exif_data.get(37510)  # UserComment
+            except Exception as exif_err:
+                logger.debug(
+                    f"Could not read EXIF from '{file_name_for_log}': {exif_err}"
+                )
+            if exif_user_comment:
+                metadata_key = "exif_user_comment"
+
+        if metadata_key:
+            if metadata_key == "exif_user_comment":
+                chara_base64_str = exif_user_comment
+            else:
+                chara_base64_str = img_obj.info[metadata_key]
+            if isinstance(chara_base64_str, bytes):
+                raw_b64_bytes = chara_base64_str
+                # EXIF UserComment values often carry an 8-byte charset
+                # prefix, e.g. b'ASCII\x00\x00\x00' - strip it if present.
+                if len(raw_b64_bytes) > 8 and raw_b64_bytes[:5] == b"ASCII":
+                    raw_b64_bytes = raw_b64_bytes[8:]
+                chara_base64_str = raw_b64_bytes.decode("utf-8", errors="replace")
             try:
                 decoded_chara_json_str = base64.b64decode(chara_base64_str).decode(
                     "utf-8"
                 )
                 json.loads(decoded_chara_json_str)  # Validate it's JSON
                 logger.info(
-                    f"Successfully extracted and decoded 'chara' JSON from '{file_name_for_log}'."
+                    f"Successfully extracted and decoded '{metadata_key}' JSON from '{file_name_for_log}'."
                 )
                 return decoded_chara_json_str
             except (
@@ -1228,19 +1320,19 @@ def extract_json_from_image_file(
                 json.JSONDecodeError,
             ) as decode_err:
                 logger.error(
-                    f"Error decoding 'chara' metadata from '{file_name_for_log}': {decode_err}. Content (start): {str(chara_base64_str)[:100]}..."
+                    f"Error decoding '{metadata_key}' metadata from '{file_name_for_log}': {decode_err}. Content (start): {str(chara_base64_str)[:100]}..."
                 )
                 return None  # Explicitly return None on decode error
             except (
                 Exception
             ) as e:  # Catch any other unexpected error during decode/load
                 logger.opt(exception=True).error(
-                    f"Unexpected error during 'chara' processing from '{file_name_for_log}': {e}"
+                    f"Unexpected error during '{metadata_key}' processing from '{file_name_for_log}': {e}"
                 )
                 return None
         else:
             logger.debug(
-                f"'chara' key not found in image metadata for '{file_name_for_log}'. Available metadata keys: {list(img_obj.info.keys()) if isinstance(img_obj.info, dict) else 'N/A'}"
+                f"'chara'/'ccv3'/EXIF-UserComment metadata not found in image '{file_name_for_log}'. Available metadata keys: {list(img_obj.info.keys()) if isinstance(img_obj.info, dict) else 'N/A'}"
             )
             return None
 
@@ -1262,6 +1354,80 @@ def extract_json_from_image_file(
     return None
 
 
+def _coerce_card_text(value: Any, default: str = "") -> str:
+    """Coerces a character card field to a string for DB storage.
+
+    Cards in the wild sometimes use lists (e.g. personality traits) or
+    numbers where the spec expects strings. Lists are joined with newlines,
+    scalars are stringified, and None/missing becomes the default.
+    """
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n".join(str(item) for item in value if item is not None)
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    logger.debug(
+        f"Card text field has unsupported type {type(value).__name__}; using default empty string."
+    )
+    return default
+
+
+def _coerce_card_str_list(value: Any) -> List[str]:
+    """Coerces a card field to a list of strings (for tags/alt greetings)."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, list):
+        return [str(item) for item in value if item is not None and str(item).strip()]
+    return []
+
+
+def _find_source_card_name(card_data_json: Dict[str, Any]) -> str:
+    """Finds a usable character name in a raw card dict, if one exists.
+
+    Checks the locations used by every supported format: the V2/V3 'data'
+    node, the V1 root 'name', TextGen's 'char_name', CharacterAI's
+    'participant__name' and nested 'info.character.name', and the generic
+    fallbacks 'character_name'/'title'.
+
+    Returns:
+        str: The stripped name, or "" if the card has no usable name.
+    """
+    if not isinstance(card_data_json, dict):
+        return ""
+
+    data_node = card_data_json.get("data")
+    if isinstance(data_node, dict):
+        name = _coerce_card_text(data_node.get("name")).strip()
+        if name:
+            return name
+
+    for field in (
+        "name",
+        "char_name",
+        "character_name",
+        "title",
+        "participant__name",
+    ):
+        name = _coerce_card_text(card_data_json.get(field)).strip()
+        if name:
+            return name
+
+    info_node = card_data_json.get("info")
+    if isinstance(info_node, dict):
+        character_node = info_node.get("character")
+        if isinstance(character_node, dict):
+            name = _coerce_card_text(character_node.get("name")).strip()
+            if name:
+                return name
+
+    return ""
+
+
 def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Parses a V2 character card (spec_version '2.0') JSON data.
 
@@ -1269,8 +1435,11 @@ def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     extracts relevant fields from its 'data' node (or root if 'data' is
     absent but structure is V2-like), and maps them to a new dictionary
     with keys corresponding to the application's database schema.
-    It assumes basic structural validity (e.g., presence of key fields)
-    may have been checked by a prior validation step.
+
+    Lenient by design: only 'name' is strictly required. Fields the V2 spec
+    mandates (description, personality, scenario, first_mes, mes_example)
+    default to an empty string when missing or null, and non-string values
+    are coerced, because real-world cards frequently omit them.
 
     Args:
         card_data_json (Dict[str, Any]): The dictionary parsed from a V2
@@ -1279,7 +1448,7 @@ def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     Returns:
         Optional[Dict[str, Any]]: A dictionary containing the parsed and
         mapped character data (e.g., 'first_mes' becomes 'first_message').
-        Returns None if essential V2 fields are missing or if an unexpected
+        Returns None only if 'name' is missing/unusable or an unexpected
         error occurs during parsing.
     """
     try:
@@ -1291,47 +1460,46 @@ def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             )
             return None
 
-        # Required fields in the source V2 card (using original spec names for parsing)
-        # This parsing function relies on these fields existing as per V2 spec.
-        required_spec_fields = [
-            "name",
-            "description",
-            "personality",
-            "scenario",
-            "first_mes",
-            "mes_example",
-        ]
-        for field in required_spec_fields:
-            if field not in data_node or data_node[field] is None:
-                logger.error(
-                    f"Missing required field '{field}' in V2 card data node during parsing."
-                )
-                return None
+        # Only 'name' is strictly required for a usable character.
+        name = _coerce_card_text(data_node.get("name")).strip()
+        if not name:
+            logger.error(
+                "Missing or empty required field 'name' in V2 card data node during parsing."
+            )
+            return None
 
-        # Map to DB schema names
+        # Map to DB schema names, defaulting/coercing as needed
         parsed_data = {
-            "name": data_node["name"],
-            "description": data_node["description"],
-            "personality": data_node["personality"],
-            "scenario": data_node["scenario"],
-            "first_message": data_node["first_mes"],
-            "message_example": data_node["mes_example"],
-            "creator_notes": data_node.get("creator_notes", ""),
-            "system_prompt": data_node.get("system_prompt", ""),
-            "post_history_instructions": data_node.get("post_history_instructions", ""),
-            "alternate_greetings": data_node.get("alternate_greetings", []),
-            "tags": data_node.get("tags", []),
-            "creator": data_node.get("creator", ""),
-            "character_version": data_node.get("character_version", ""),
-            "extensions": data_node.get("extensions", {}),
+            "name": name,
+            "description": _coerce_card_text(data_node.get("description")),
+            "personality": _coerce_card_text(data_node.get("personality")),
+            "scenario": _coerce_card_text(data_node.get("scenario")),
+            "first_message": _coerce_card_text(data_node.get("first_mes")),
+            "message_example": _coerce_card_text(data_node.get("mes_example")),
+            "creator_notes": _coerce_card_text(data_node.get("creator_notes")),
+            "system_prompt": _coerce_card_text(data_node.get("system_prompt")),
+            "post_history_instructions": _coerce_card_text(
+                data_node.get("post_history_instructions")
+            ),
+            "alternate_greetings": _coerce_card_str_list(
+                data_node.get("alternate_greetings")
+            ),
+            "tags": _coerce_card_str_list(data_node.get("tags")),
+            "creator": _coerce_card_text(data_node.get("creator")),
+            "character_version": _coerce_card_text(
+                data_node.get("character_version")
+            ),
+            # Shallow copy so the character_book insertion below can never
+            # mutate the caller's original card dict.
+            "extensions": dict(data_node["extensions"])
+            if isinstance(data_node.get("extensions"), dict)
+            else {},
             "image_base64": data_node.get("char_image") or data_node.get("image"),
         }
 
         if "character_book" in data_node and isinstance(
             data_node["character_book"], dict
         ):
-            if not isinstance(parsed_data["extensions"], dict):
-                parsed_data["extensions"] = {}
             parsed_data["extensions"]["character_book"] = parse_character_book(
                 data_node["character_book"]
             )
@@ -1340,15 +1508,13 @@ def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         spec = card_data_json.get("spec")
         spec_version = card_data_json.get("spec_version")
         if spec and spec != "chara_card_v2":
-            logger.warning(f"Parsing V2-like card with unexpected 'spec': {spec}.")
-        if spec_version and spec_version != "2.0":
-            logger.warning(
-                f"Parsing V2-like card with 'spec_version': {spec_version} (expected '2.0')."
+            logger.info(f"Parsing V2-like card with 'spec': {spec} (lenient mode).")
+        if spec_version and str(spec_version) != "2.0":
+            logger.info(
+                f"Parsing V2-like card with 'spec_version': {spec_version} (expected '2.0', lenient mode)."
             )
 
         return parsed_data
-    except KeyError as e:
-        logger.error(f"Missing key during V2 card parsing: {e}")
     except Exception as e:
         logger.opt(exception=True).error(f"Error parsing V2 card data: {e}")
     return None
@@ -1372,67 +1538,65 @@ def parse_v1_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         mapped character data. Returns None if an unexpected error occurs.
 
     Raises:
-        ValueError: If any of the required V1 fields ('name', 'description',
-            'personality', 'scenario', 'first_mes', 'mes_example') are missing
-            from `card_data_json`.
+        ValueError: If the required V1 field 'name' is missing or empty in
+            `card_data_json`. Other spec-required fields default to empty
+            strings when absent (lenient parsing).
     """
     try:
-        # Required fields in the source V1 card (using original spec names)
-        required_spec_fields = [
-            "name",
-            "description",
-            "personality",
-            "scenario",
-            "first_mes",
-            "mes_example",
-        ]
-        for field in required_spec_fields:
-            if (
-                field not in card_data_json
-            ):  # V1 cards are flat, check directly in card_data_json
-                raise ValueError(f"Missing required field in V1 card: {field}")
+        # Only 'name' is strictly required; other spec-required V1 fields are
+        # commonly absent in the wild and default to empty strings.
+        name = _coerce_card_text(card_data_json.get("name")).strip()
+        if not name:
+            raise ValueError("Missing required field in V1 card: name")
 
         # Map to DB schema names
         v2_like_data: Dict[str, Any] = {
-            "name": card_data_json["name"],
-            "description": card_data_json["description"],
-            "personality": card_data_json["personality"],
-            "scenario": card_data_json["scenario"],
-            "first_message": card_data_json[
-                "first_mes"
-            ],  # Map first_mes -> first_message
-            "message_example": card_data_json[
-                "mes_example"
-            ],  # Map mes_example -> message_example
-            "creator_notes": card_data_json.get("creator_notes", ""),
-            "system_prompt": card_data_json.get("system_prompt", ""),
-            "post_history_instructions": card_data_json.get(
-                "post_history_instructions", ""
+            "name": name,
+            "description": _coerce_card_text(card_data_json.get("description")),
+            "personality": _coerce_card_text(card_data_json.get("personality")),
+            "scenario": _coerce_card_text(card_data_json.get("scenario")),
+            "first_message": _coerce_card_text(
+                card_data_json.get("first_mes")
+            ),  # Map first_mes -> first_message
+            "message_example": _coerce_card_text(
+                card_data_json.get("mes_example")
+            ),  # Map mes_example -> message_example
+            "creator_notes": _coerce_card_text(card_data_json.get("creator_notes")),
+            "system_prompt": _coerce_card_text(card_data_json.get("system_prompt")),
+            "post_history_instructions": _coerce_card_text(
+                card_data_json.get("post_history_instructions")
             ),
-            "alternate_greetings": card_data_json.get("alternate_greetings", []),
-            "tags": card_data_json.get("tags", []),  # Ensure tags is a list
-            "creator": card_data_json.get("creator", ""),
-            "character_version": card_data_json.get("character_version", ""),
+            "alternate_greetings": _coerce_card_str_list(
+                card_data_json.get("alternate_greetings")
+            ),
+            "tags": _coerce_card_str_list(card_data_json.get("tags")),
+            "creator": _coerce_card_text(card_data_json.get("creator")),
+            "character_version": _coerce_card_text(
+                card_data_json.get("character_version")
+            ),
             "extensions": {},  # Initialize extensions
             "image_base64": card_data_json.get("char_image")
             or card_data_json.get("image"),
         }
 
         # Collect any non-standard V1 fields into 'extensions'
-        standard_v1_keys_mapped_or_known = set(
-            required_spec_fields
-            + [
-                "creator_notes",
-                "system_prompt",
-                "post_history_instructions",
-                "alternate_greetings",
-                "tags",
-                "creator",
-                "character_version",
-                "char_image",
-                "image",
-            ]
-        )
+        standard_v1_keys_mapped_or_known = {
+            "name",
+            "description",
+            "personality",
+            "scenario",
+            "first_mes",
+            "mes_example",
+            "creator_notes",
+            "system_prompt",
+            "post_history_instructions",
+            "alternate_greetings",
+            "tags",
+            "creator",
+            "character_version",
+            "char_image",
+            "image",
+        }
 
         extra_extensions = {}
         for key, value in card_data_json.items():
@@ -1465,9 +1629,11 @@ def parse_v1_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 def validate_character_book(book_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
     """Validates the structure and content of a 'character_book' dictionary.
 
-    Checks for required fields, correct data types, and valid values within
-    the character book data, including its entries. This is typically part
-    of validating a V2 character card.
+    Lenient by design: character books (lorebooks) in the wild frequently use
+    integer positions, omit 'enabled'/'insertion_order', or contain empty
+    entries. All such issues are reported as non-fatal warnings; the parser
+    applies sensible defaults instead of rejecting the card. This function
+    only returns `False` when `book_data` itself is not a dictionary.
 
     Args:
         book_data (Dict[str, Any]): The character book dictionary to validate.
@@ -1476,12 +1642,15 @@ def validate_character_book(book_data: Dict[str, Any]) -> Tuple[bool, List[str]]
 
     Returns:
         Tuple[bool, List[str]]: A tuple where:
-            - The first element (bool) is `True` if the book data is valid,
-              `False` otherwise.
-            - The second element (List[str]) is a list of error messages
-              describing validation failures. Empty if valid.
+            - The first element (bool) is `True` if the book is usable,
+              `False` only if `book_data` is not a dictionary.
+            - The second element (List[str]) is a list of warning messages
+              describing deviations from the spec. Empty if fully clean.
     """
-    validation_messages = []
+    if not isinstance(book_data, dict):
+        return False, ["'character_book' must be a dictionary."]
+
+    validation_messages: List[str] = []
 
     # Optional fields with expected types
     optional_fields = {
@@ -1491,40 +1660,43 @@ def validate_character_book(book_data: Dict[str, Any]) -> Tuple[bool, List[str]]
         "token_budget": (int, float),
         "recursive_scanning": bool,
         "extensions": dict,
-        # 'entries' is technically required if 'character_book' exists
     }
 
     for field, expected_type in optional_fields.items():
-        if field in book_data:
+        if field in book_data and book_data[field] is not None:
             if not isinstance(book_data[field], expected_type):
                 validation_messages.append(
-                    f"Field 'character_book.{field}' must be of type '{expected_type.__name__ if isinstance(expected_type, type) else expected_type}'."
+                    f"Field 'character_book.{field}' should be of type '{expected_type}'. Tolerated."
                 )
 
-    # 'entries' is required if character_book itself is present
-    if "entries" not in book_data or not isinstance(book_data["entries"], list):
+    # 'entries' is expected if character_book itself is present, but a
+    # missing/mistyped entries list is not fatal (parsed as no entries).
+    if "entries" not in book_data:
         validation_messages.append(
-            "Field 'character_book.entries' is required and must be a list if 'character_book' is defined."
+            "Field 'character_book.entries' is missing; the book will be imported with no entries."
         )
-        return False, validation_messages  # Cannot proceed without entries
+        return True, validation_messages
+    if not isinstance(book_data["entries"], list):
+        validation_messages.append(
+            "Field 'character_book.entries' should be a list; the book will be imported with no entries."
+        )
+        return True, validation_messages
 
-    # Validate each entry in 'entries'
+    # Validate each entry in 'entries' (all findings are non-fatal warnings)
     entries = book_data.get("entries", [])
     entry_ids: Set[Union[int, float]] = set()  # Store IDs to check for uniqueness
     for idx, entry in enumerate(entries):
         if not isinstance(entry, dict):
             validation_messages.append(
-                f"Entry {idx} in 'character_book.entries' is not a dictionary."
+                f"Entry {idx} in 'character_book.entries' is not a dictionary and will be skipped."
             )
             continue
-        is_valid_entry, entry_messages = validate_character_book_entry(
+        _is_valid_entry, entry_messages = validate_character_book_entry(
             entry, idx, entry_ids
         )
-        if not is_valid_entry:
-            validation_messages.extend(entry_messages)
+        validation_messages.extend(entry_messages)
 
-    is_valid = len(validation_messages) == 0
-    return is_valid, validation_messages
+    return True, validation_messages
 
 
 def validate_character_book_entry(
@@ -1532,9 +1704,10 @@ def validate_character_book_entry(
 ) -> Tuple[bool, List[str]]:
     """Validates a single entry within a 'character_book.entries' list.
 
-    Checks an individual character book entry for required fields (like 'keys',
-    'content'), correct data types, valid 'position' values, constraints
-    related to 'selective' entries, and uniqueness of 'id' if present.
+    Lenient: every finding is a non-fatal warning. Real-world lorebook
+    entries often use integer positions (SillyTavern), omit 'enabled' or
+    'insertion_order', or carry empty 'content'; the parser defaults these
+    instead of rejecting the card.
 
     Args:
         entry (Dict[str, Any]): The character book entry dictionary to validate.
@@ -1547,37 +1720,39 @@ def validate_character_book_entry(
 
     Returns:
         Tuple[bool, List[str]]: A tuple where:
-            - The first element (bool) is `True` if the entry is valid,
-              `False` otherwise.
-            - The second element (List[str]) is a list of error messages
-              describing validation failures. Empty if valid.
+            - The first element (bool) is always `True` (kept for API
+              compatibility; all findings are warnings).
+            - The second element (List[str]) is a list of warning messages.
     """
-    validation_messages = []
-    required_fields_entry = {
+    validation_messages: List[str] = []
+
+    # Fields the V2 spec requires; the parser defaults them when missing.
+    spec_required_fields = {
         "keys": list,
         "content": str,
-        # 'extensions': dict, # Extensions can be missing
         "enabled": bool,
         "insertion_order": (int, float),
     }
 
-    for field, expected_type in required_fields_entry.items():
-        if field not in entry:
+    for field, expected_type in spec_required_fields.items():
+        if field not in entry or entry[field] is None:
             validation_messages.append(
-                f"Entry {idx}: Missing required field '{field}'."
+                f"Entry {idx}: Missing spec-required field '{field}'; a default will be used."
             )
         elif not isinstance(entry[field], expected_type):
+            # bool is a subclass of int - avoid flagging bools for numeric fields
+            if expected_type == (int, float) and isinstance(entry[field], bool):
+                validation_messages.append(
+                    f"Entry {idx}: Field '{field}' should be a number; a default will be used."
+                )
+            else:
+                validation_messages.append(
+                    f"Entry {idx}: Field '{field}' should be of type '{expected_type}'; it will be coerced or defaulted."
+                )
+        elif field == "keys" and not entry[field]:
             validation_messages.append(
-                f"Entry {idx}: Field '{field}' must be of type '{expected_type.__name__ if isinstance(expected_type, type) else expected_type}'."
+                f"Entry {idx}: Field 'keys' is empty; the entry will never trigger."
             )
-        elif (
-            field == "content" and not entry[field].strip() and entry[field] is not None
-        ):  # Allow None content if type check allows, but not empty string
-            validation_messages.append(
-                f"Entry {idx}: Field 'content' cannot be an empty or whitespace-only string if present."
-            )
-        elif field == "keys" and not entry[field]:  # Must have at least one key
-            validation_messages.append(f"Entry {idx}: Field 'keys' cannot be empty.")
 
     # Optional fields
     optional_fields_entry = {
@@ -1590,7 +1765,7 @@ def validate_character_book_entry(
         "selective": bool,
         "secondary_keys": list,
         "constant": bool,
-        "position": str,  # Should be 'before_char' or 'after_char' or 'after_prompt' etc.
+        "position": (str, int, float),  # str per spec; numeric in the wild
     }
 
     for field, expected_type in optional_fields_entry.items():
@@ -1598,67 +1773,76 @@ def validate_character_book_entry(
             field in entry
             and entry[field] is not None
             and not isinstance(entry[field], expected_type)
-        ):  # Check type only if field is present and not None
+        ):
             validation_messages.append(
-                f"Entry {idx}: Field '{field}' must be of type '{expected_type.__name__ if isinstance(expected_type, type) else expected_type}'."
+                f"Entry {idx}: Field '{field}' should be of type '{expected_type}'. Tolerated."
             )
 
-    # Validate 'position' value if present
+    # Validate 'position' value if present. Spec says 'before_char'/'after_char';
+    # SillyTavern lorebooks also use integers (0=before_char, 1=after_char, ...)
+    # and other strings ('before_history', 'after_prompt'). All tolerated.
     if "position" in entry and entry["position"] is not None:
-        # This list might need to be expanded based on spec (e.g. SillyTavern lorebook positions)
-        valid_positions = [
+        position_val = entry["position"]
+        known_string_positions = [
             "before_char",
             "after_char",
             "after_prompt",
             "before_history",
+            "before_prompt",
+            "at_depth",
         ]
-        if entry["position"] not in valid_positions:
+        if isinstance(position_val, str) and position_val not in known_string_positions:
             validation_messages.append(
-                f"Entry {idx}: Field 'position' ('{entry['position']}') is not a recognized value (e.g., {', '.join(valid_positions)})."
+                f"Entry {idx}: Field 'position' ('{position_val}') is not a recognized string value (e.g., {', '.join(known_string_positions)}). Tolerated."
+            )
+        elif isinstance(position_val, bool) or not isinstance(
+            position_val, (str, int, float)
+        ):
+            validation_messages.append(
+                f"Entry {idx}: Field 'position' has an unexpected type ({type(position_val).__name__}). Tolerated."
             )
 
     # Validate 'secondary_keys' if 'selective' is True
-    if entry.get("selective") is True:  # Check for explicit True
-        if "secondary_keys" not in entry or not isinstance(
-            entry.get("secondary_keys"), list
-        ):
+    if entry.get("selective") is True:
+        if not isinstance(entry.get("secondary_keys"), list):
             validation_messages.append(
-                f"Entry {idx}: 'secondary_keys' must be a list when 'selective' is True."
+                f"Entry {idx}: 'secondary_keys' should be a list when 'selective' is True. Tolerated."
             )
-        elif not entry.get(
-            "secondary_keys"
-        ):  # If list exists, it must not be empty for selective=true
+        elif not entry.get("secondary_keys"):
             validation_messages.append(
-                f"Entry {idx}: 'secondary_keys' cannot be empty when 'selective' is True."
+                f"Entry {idx}: 'secondary_keys' is empty while 'selective' is True; the entry may never trigger."
             )
 
-    # Validate 'keys' list elements (must be non-empty strings)
+    # Validate 'keys' list elements (should be non-empty strings)
     if "keys" in entry and isinstance(entry["keys"], list):
         for i, key_val in enumerate(entry["keys"]):
             if not isinstance(key_val, str) or not key_val.strip():
                 validation_messages.append(
-                    f"Entry {idx}: Element {i} in 'keys' must be a non-empty string."
+                    f"Entry {idx}: Element {i} in 'keys' is not a non-empty string; it will be coerced or dropped."
                 )
 
-    # Validate 'secondary_keys' list elements (must be non-empty strings)
+    # Validate 'secondary_keys' list elements (should be non-empty strings)
     if "secondary_keys" in entry and isinstance(entry.get("secondary_keys"), list):
         for i, skey_val in enumerate(entry["secondary_keys"]):
             if not isinstance(skey_val, str) or not skey_val.strip():
                 validation_messages.append(
-                    f"Entry {idx}: Element {i} in 'secondary_keys' must be a non-empty string."
+                    f"Entry {idx}: Element {i} in 'secondary_keys' is not a non-empty string; it will be coerced or dropped."
                 )
 
     # Validate 'id' uniqueness
     if "id" in entry and entry["id"] is not None:
         entry_id_val = entry["id"]
-        if entry_id_val in entry_ids:
-            validation_messages.append(
-                f"Entry {idx}: Duplicate 'id' value '{entry_id_val}'. Each entry 'id' in a book must be unique."
-            )
-        else:
-            entry_ids.add(entry_id_val)
+        if isinstance(entry_id_val, (int, float)) and not isinstance(
+            entry_id_val, bool
+        ):
+            if entry_id_val in entry_ids:
+                validation_messages.append(
+                    f"Entry {idx}: Duplicate 'id' value '{entry_id_val}'. Tolerated."
+                )
+            else:
+                entry_ids.add(entry_id_val)
 
-    # Validate 'extensions' keys are namespaced (convention)
+    # Validate 'extensions' keys are namespaced (convention, non-fatal)
     if "extensions" in entry and isinstance(entry.get("extensions"), dict):
         # Common platform keys that are allowed without namespacing
         allowed_unnamespaced_keys = {
@@ -1666,29 +1850,45 @@ def validate_character_book_entry(
             "depth",
             "weight",
             "exclude_from_recursion",
+            "position",
+            "probability",
+            "use_probability",
+            "display_index",
+            "role",
+            "vectorized",
         }
         for ext_key in entry["extensions"].keys():
             if not isinstance(ext_key, str):
                 validation_messages.append(
-                    f"Entry {idx}: Extension key '{ext_key}' in 'extensions' must be a string."
+                    f"Entry {idx}: Extension key '{ext_key}' in 'extensions' is not a string. Tolerated."
                 )
             elif ext_key not in allowed_unnamespaced_keys and (
                 "/" not in ext_key and "_" not in ext_key and ":" not in ext_key
             ):
                 validation_messages.append(
-                    f"Entry {idx}: Extension key '{ext_key}' in 'extensions' should be namespaced (e.g., 'myorg/mykey') to prevent conflicts."
+                    f"Entry {idx}: Extension key '{ext_key}' in 'extensions' is not namespaced (e.g., 'myorg/mykey'). Tolerated."
                 )
 
-    is_valid = len(validation_messages) == 0
-    return is_valid, validation_messages
+    return True, validation_messages
 
 
 def validate_v2_card(card_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
     """Validates a character card dictionary against the V2 specification.
 
-    Checks top-level fields like 'spec' and 'spec_version', the presence and
-    type of the 'data' node, and required/optional fields within 'data'.
-    It also invokes `validate_character_book` if a 'character_book' is present.
+    This validator is intentionally lenient: real-world cards (Chub.ai,
+    SillyTavern exports, older generators) routinely omit spec-required
+    fields, use numeric lorebook positions, or add un-namespaced extension
+    keys. Only problems that would make the card unusable are treated as
+    fatal errors; everything else is reported as a non-fatal warning so the
+    caller can log it without rejecting the card.
+
+    Fatal errors:
+    - 'data' node missing or not a dictionary (when the card claims to be V2)
+    - 'data.name' missing, not a string, or empty/whitespace
+
+    Everything else (missing description/personality/scenario/first_mes/
+    mes_example, wrong types on optional fields, extension namespacing,
+    character_book issues, unexpected spec/spec_version values) is a warning.
 
     Args:
         card_data (Dict[str, Any]): The full character card dictionary (parsed
@@ -1696,80 +1896,99 @@ def validate_v2_card(card_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
 
     Returns:
         Tuple[bool, List[str]]: A tuple where:
-            - The first element (bool) is `True` if the card is valid according
-              to V2 spec, `False` otherwise.
-            - The second element (List[str]) is a list of error messages
-              describing validation failures. Empty if valid.
+            - The first element (bool) is `True` if the card has no fatal
+              errors, `False` otherwise.
+            - The second element (List[str]) is a list of messages describing
+              fatal errors (prefixed 'ERROR:') and non-fatal warnings
+              (prefixed 'WARNING:'). Empty if the card is fully spec-clean.
     """
-    validation_messages = []
+    errors: List[str] = []
+    warnings: List[str] = []
 
-    # Check top-level fields for full V2 spec compliance
+    # Check top-level fields for full V2 spec compliance (non-fatal: many
+    # V3 cards and V2-ish exports use different spec markers but still carry
+    # a usable 'data' node).
     if "spec" not in card_data:
-        validation_messages.append(
-            "Missing 'spec' field (expected 'chara_card_v2' for V2 spec)."
+        warnings.append(
+            "WARNING: Missing 'spec' field (expected 'chara_card_v2' for V2 spec)."
         )
     elif card_data["spec"] != "chara_card_v2":
-        validation_messages.append(
-            f"Invalid 'spec' value: '{card_data['spec']}'. Expected 'chara_card_v2'."
+        warnings.append(
+            f"WARNING: Unexpected 'spec' value: '{card_data['spec']}'. Expected 'chara_card_v2'; will attempt lenient parsing."
         )
 
     if "spec_version" not in card_data:
-        validation_messages.append(
-            "Missing 'spec_version' field (expected '2.0' for V2 spec)."
+        warnings.append(
+            "WARNING: Missing 'spec_version' field (expected '2.0' for V2 spec)."
         )
     else:
         try:
             # Spec version should be a string like "2.0"
             if isinstance(card_data["spec_version"], str):
-                spec_version_float = float(
-                    card_data["spec_version"]
-                )  # TODO: More robust version comparison if needed (e.g., major.minor)
+                spec_version_float = float(card_data["spec_version"])
                 if spec_version_float < 2.0:
-                    validation_messages.append(
-                        f"'spec_version' must be '2.0' or higher. Found '{card_data['spec_version']}'."
+                    warnings.append(
+                        f"WARNING: 'spec_version' should be '2.0' or higher. Found '{card_data['spec_version']}'."
                     )
-            else:
-                validation_messages.append(
-                    f"Invalid 'spec_version' format: {card_data['spec_version']}. Must be a string (e.g., '2.0')."
+            elif isinstance(card_data["spec_version"], (int, float)):
+                warnings.append(
+                    f"WARNING: 'spec_version' is a number ({card_data['spec_version']}), not a string (e.g., '2.0'). Tolerated."
                 )
-        except ValueError:
-            validation_messages.append(
-                f"Invalid 'spec_version' format: {card_data['spec_version']}. Must be a number as a string (e.g., '2.0')."
+            else:
+                warnings.append(
+                    f"WARNING: Invalid 'spec_version' format: {card_data['spec_version']}. Expected a string (e.g., '2.0'). Tolerated."
+                )
+        except (ValueError, TypeError):
+            warnings.append(
+                f"WARNING: Unparseable 'spec_version': {card_data['spec_version']}. Tolerated."
             )
 
-    if "data" not in card_data or not isinstance(
-        card_data.get("data"), dict
-    ):  # Use .get for safety before isinstance
-        validation_messages.append(
+    if "data" not in card_data or not isinstance(card_data.get("data"), dict):
+        # Fatal only when the card *claims* to be V2/V3; a flat card without a
+        # 'data' node may be a V1 card and is handled by the V1 parser.
+        claims_v2 = (
+            card_data.get("spec") in ("chara_card_v2", "chara_card_v3")
+            or str(card_data.get("spec_version", "")).startswith(("2.", "3."))
+        )
+        msg = (
             "Missing 'data' field, or it's not a dictionary. V2 spec requires character data under a 'data' key."
         )
-        # If 'data' is missing, further checks on data_node will likely fail or be irrelevant.
-        # However, some V2 cards might be flat if spec is missing, so we don't hard return here
-        # unless spec explicitly stated V2. The calling function will decide based on results.
-        data_node = {}  # Avoid None for data_node if it's missing for subsequent checks to not error out
+        if claims_v2:
+            errors.append(f"ERROR: {msg}")
+        else:
+            warnings.append(f"WARNING: {msg}")
+        data_node = {}  # Avoid None for subsequent checks
     else:
         data_node = card_data["data"]
 
-    # Required fields in 'data' node
-    required_data_fields = [
-        "name",
-        "description",
-        "personality",
-        "scenario",
-        "first_mes",
-        "mes_example",
-    ]
-    for field in required_data_fields:
-        if field not in data_node:
-            validation_messages.append(f"Missing required field in 'data': '{field}'.")
+    # Required-by-spec fields in 'data' node. Only 'name' is fatal; the rest
+    # are commonly absent in the wild and default to "" during parsing.
+    name_val = data_node.get("name")
+    if name_val is None:
+        errors.append("ERROR: Missing required field in 'data': 'name'.")
+    elif not isinstance(name_val, str):
+        if isinstance(name_val, (int, float, bool)):
+            warnings.append(
+                f"WARNING: Field 'data.name' is not a string ({type(name_val).__name__}); it will be coerced."
+            )
+        else:
+            errors.append(
+                f"ERROR: Field 'data.name' must be a string, got {type(name_val).__name__}."
+            )
+    elif not name_val.strip():
+        errors.append("ERROR: Field 'data.name' cannot be empty or just whitespace.")
+
+    for field in ["description", "personality", "scenario", "first_mes", "mes_example"]:
+        if field not in data_node or data_node[field] is None:
+            warnings.append(
+                f"WARNING: Missing field in 'data': '{field}'. It will default to an empty string."
+            )
         elif not isinstance(data_node[field], str):
-            validation_messages.append(f"Field 'data.{field}' must be a string.")
-        elif field in ["name", "first_mes"] and not data_node[field].strip():
-            validation_messages.append(
-                f"Field 'data.{field}' cannot be empty or just whitespace."
+            warnings.append(
+                f"WARNING: Field 'data.{field}' should be a string (got {type(data_node[field]).__name__}); it will be coerced."
             )
 
-    # Optional fields with expected types in 'data' node
+    # Optional fields with expected types in 'data' node (all non-fatal)
     optional_data_fields = {
         "creator_notes": str,
         "system_prompt": str,
@@ -1787,29 +2006,34 @@ def validate_v2_card(card_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
     for field, expected_type in optional_data_fields.items():
         if field in data_node and data_node[field] is not None:
             if not isinstance(data_node[field], expected_type):
-                validation_messages.append(
-                    f"Field 'data.{field}' must be of type '{expected_type.__name__}'."
+                warnings.append(
+                    f"WARNING: Field 'data.{field}' should be of type '{expected_type.__name__}' (got {type(data_node[field]).__name__}). Tolerated."
                 )
-            elif field == "extensions" and isinstance(
-                data_node[field], dict
-            ):  # Check only if it's a dict
+            elif field == "extensions" and isinstance(data_node[field], dict):
                 # Common platform keys that are allowed without namespacing
                 allowed_unnamespaced_keys = {
                     "chub",
                     "depth",
                     "weight",
                     "exclude_from_recursion",
+                    # SillyTavern built-in extension keys
+                    "world",
+                    "talkativeness",
+                    "fav",
+                    "depth_prompt",
+                    "regex_scripts",
+                    "character_book",
                 }
                 for ext_key in data_node[field].keys():
                     if not isinstance(ext_key, str):
-                        validation_messages.append(
-                            f"Extension key '{ext_key}' in 'data.extensions' must be a string."
+                        warnings.append(
+                            f"WARNING: Extension key '{ext_key}' in 'data.extensions' is not a string. Tolerated."
                         )
                     elif ext_key not in allowed_unnamespaced_keys and (
                         "/" not in ext_key and "_" not in ext_key and ":" not in ext_key
                     ):
-                        validation_messages.append(
-                            f"Extension key '{ext_key}' in 'data.extensions' should be namespaced (e.g., 'myorg/mykey')."
+                        warnings.append(
+                            f"WARNING: Extension key '{ext_key}' in 'data.extensions' is not namespaced (e.g., 'myorg/mykey'). Tolerated."
                         )
 
     if "alternate_greetings" in data_node and isinstance(
@@ -1817,31 +2041,34 @@ def validate_v2_card(card_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
     ):
         for idx, greeting in enumerate(data_node["alternate_greetings"]):
             if not isinstance(greeting, str) or not greeting.strip():
-                validation_messages.append(
-                    f"Element {idx} in 'data.alternate_greetings' must be a non-empty string."
+                warnings.append(
+                    f"WARNING: Element {idx} in 'data.alternate_greetings' is not a non-empty string. It will be dropped or coerced."
                 )
 
     if "tags" in data_node and isinstance(data_node.get("tags"), list):
         for idx, tag_val in enumerate(data_node["tags"]):
             if not isinstance(tag_val, str) or not tag_val.strip():
-                validation_messages.append(
-                    f"Element {idx} in 'data.tags' must be a non-empty string."
+                warnings.append(
+                    f"WARNING: Element {idx} in 'data.tags' is not a non-empty string. It will be dropped or coerced."
                 )
 
     if "character_book" in data_node and data_node["character_book"] is not None:
         if isinstance(data_node["character_book"], dict):
-            is_valid_book, book_messages = validate_character_book(
+            _book_ok, book_messages = validate_character_book(
                 data_node["character_book"]
             )
-            if not is_valid_book:
-                validation_messages.extend(book_messages)
+            # Character book issues never block import; keep them as warnings.
+            warnings.extend(
+                m if m.startswith(("WARNING:", "ERROR:")) else f"WARNING: {m}"
+                for m in book_messages
+            )
         else:
-            validation_messages.append(
-                "'data.character_book' must be a dictionary if present."
+            warnings.append(
+                "WARNING: 'data.character_book' should be a dictionary if present. It will be ignored."
             )
 
-    is_valid = len(validation_messages) == 0
-    return is_valid, validation_messages
+    is_valid = len(errors) == 0
+    return is_valid, errors + warnings
 
 
 def import_character_card_from_json_string(
@@ -1899,44 +2126,78 @@ def import_character_card_from_json_string(
 
         if attempt_v2_processing:
             logger.debug("Attempting V2 validation based on card structure/spec.")
-            is_valid_v2_struct, v2_errors = validate_v2_card(card_data_dict)
+            is_valid_v2_struct, v2_messages = validate_v2_card(card_data_dict)
 
             if not is_valid_v2_struct:
-                logger.error(
-                    f"V2 Card structural validation failed: {'; '.join(v2_errors)}."
+                # Even for explicitly-V2 cards, validation failures are not
+                # fatal: parse_v2_card is lenient and only 'name' is truly
+                # required. Log the findings and try to parse anyway.
+                logger.warning(
+                    f"V2 card structural validation reported problems: {'; '.join(v2_messages)}. Attempting lenient V2 parsing."
                 )
-                if is_explicit_v2_spec or is_explicit_v2_version:
-                    logger.error(
-                        "Card explicitly declared as V2 but failed V2 structural validation. Import aborted."
-                    )
-                    return None
-                else:  # Implicit V2 guess failed validation
-                    logger.warning(
-                        "Heuristically identified V2 card failed V2 structural validation. Will attempt V1 parsing as fallback."
-                    )
-                    # No 'return None' here, proceed to V1 attempt below
-            else:  # V2 structural validation passed
+            elif v2_messages:
+                logger.debug(
+                    f"V2 card passed validation with warnings: {'; '.join(v2_messages)}"
+                )
+            else:
                 logger.info(
                     "V2 Card structural validation passed. Attempting to parse as V2 character card."
                 )
-                parsed_card = parse_v2_card(card_data_dict)
-                if not parsed_card:
-                    logger.warning(
-                        "V2 parsing failed despite passing V2 structural validation. This might indicate an issue with the parser or an edge case. Attempting V1 parsing as fallback."
-                    )
-                    # `parsed_card` is None, will fall through to V1 attempt
+
+            parsed_card = parse_v2_card(card_data_dict)
+            if not parsed_card:
+                logger.warning(
+                    "Lenient V2 parsing failed (likely missing 'name'). Attempting V1 parsing as fallback."
+                )
+                # `parsed_card` is None, will fall through to V1 attempt
 
         # Fallback to V1 if V2 processing was not attempted, or if it was attempted but `parsed_card` is still None
         if parsed_card is None:
             logger.info("Attempting to parse as V1 character card.")
             try:
-                # parse_v1_card raises ValueError if required fields are missing, or returns None on other errors
+                # parse_v1_card raises ValueError if 'name' is missing/empty, or returns None on other errors
                 parsed_card = parse_v1_card(card_data_dict)
             except ValueError as ve_v1:
-                logger.error(
-                    f"V1 card parsing error (likely missing required V1 fields): {ve_v1}"
-                )
+                logger.warning(f"V1 card parsing error: {ve_v1}")
                 parsed_card = None  # Ensure parsed_card is None on this error
+
+        # Last resort: multi-format detector (Agnai, CharacterAI, KoboldAI,
+        # TextGen, generic field mapping)
+        if parsed_card is None:
+            logger.info("Attempting generic multi-format character card parsing.")
+            try:
+                from .character_card_formats import detect_and_parse_character_card
+
+                detected_card, detected_format = detect_and_parse_character_card(
+                    card_data_dict
+                )
+                if detected_card:
+                    # The detector returns a V2-envelope card; run it through
+                    # the lenient V2 parser to get DB schema field names.
+                    parsed_card = parse_v2_card(detected_card)
+                    if parsed_card:
+                        # The detector substitutes an "Unknown" placeholder when
+                        # no name exists where it looked. If the source card
+                        # genuinely has no name, reject the import: accepting
+                        # the placeholder would silently merge distinct
+                        # nameless cards through name-conflict resolution
+                        # downstream. If a real name exists elsewhere in the
+                        # source card, use it instead of the placeholder.
+                        if parsed_card.get("name") == "Unknown":
+                            source_name = _find_source_card_name(card_data_dict)
+                            if not source_name:
+                                logger.error(
+                                    "Generic parsing produced placeholder name 'Unknown' and the source card has no name; rejecting import to avoid merging distinct nameless cards."
+                                )
+                                parsed_card = None
+                            else:
+                                parsed_card["name"] = source_name
+                        if parsed_card:
+                            logger.info(
+                                f"Parsed card via '{detected_format}' format fallback."
+                            )
+            except Exception as e_generic:
+                logger.warning(f"Generic multi-format parsing failed: {e_generic}")
 
         # Final check and return
         if parsed_card and parsed_card.get("name"):  # Name is fundamental
@@ -3657,8 +3918,89 @@ def export_conversation_to_text(
 #################################################################################
 
 
+def load_character_card_from_file(
+    file_path: Union[str, Path],
+) -> Optional[Dict[str, Any]]:
+    """Loads and parses a character card from a file (parse-only, no DB save).
+
+    This is the parse-only counterpart to `import_and_save_character_from_file`.
+    It supports:
+    - Text files (.json, .yaml, .yml, .md, .txt) containing card data as raw
+      JSON, YAML frontmatter, or a fenced JSON code block.
+    - Image files (.png, .webp) with embedded card metadata: 'chara' (V1/V2)
+      or 'ccv3' (V3) text chunks for PNG, EXIF UserComment for WebP.
+
+    Args:
+        file_path (Union[str, Path]): Path to the character card file.
+
+    Returns:
+        Optional[Dict[str, Any]]: A dictionary with character data mapped to
+        DB schema field names (e.g., 'first_message', 'message_example') if
+        parsing succeeds. Returns None if the file cannot be read or no valid
+        card data can be extracted.
+
+    Raises:
+        ImportError: If PyYAML is required for parsing (e.g., Markdown with
+            YAML frontmatter) but is not installed.
+    """
+    try:
+        # Validate the user-supplied path per the path_validation policy.
+        # validate_path_simple (not validate_path) is the right tool here:
+        # character cards are user-picked files that may legitimately live
+        # anywhere on disk (e.g. another drive), so no base-directory
+        # restriction applies - but traversal/shell-metacharacter checks do.
+        try:
+            path_obj = Path(validate_path_simple(file_path, require_exists=True))
+        except ValueError as e:
+            logger.error(f"Invalid character card file path '{file_path}': {e}")
+            return None
+
+        if not path_obj.is_file():
+            logger.error(f"Character card file not found: {file_path}")
+            return None
+
+        ext = path_obj.suffix.lower()
+        card_content_str: Optional[str]
+
+        if ext in (".png", ".webp"):
+            # Read the bytes ourselves and hand Pillow a stream: this keeps
+            # extraction working for user-picked files anywhere on disk.
+            with open(path_obj, "rb") as f_img:
+                image_bytes = f_img.read()
+            card_content_str = extract_json_from_image_file(io.BytesIO(image_bytes))
+            if not card_content_str:
+                logger.error(
+                    f"No embedded character metadata ('chara'/'ccv3'/EXIF) found in image file: {path_obj.name}"
+                )
+                return None
+        elif ext in (".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".avif"):
+            # Other image formats have no verified embedded-card extraction
+            # path; reject explicitly instead of failing obscurely as text.
+            logger.error(
+                f"Unsupported image format for character cards: '{ext}'. Use PNG or WebP cards."
+            )
+            return None
+        else:
+            with open(path_obj, "r", encoding="utf-8") as f_text:
+                card_content_str = f_text.read()
+
+        parsed_card = load_character_card_from_string_content(card_content_str)
+        if not parsed_card:
+            logger.error(
+                f"Could not parse a valid character card from file: {path_obj.name}"
+            )
+            return None
+        return parsed_card
+
+    except ImportError:  # PyYAML missing for frontmatter parsing
+        raise
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Unexpected error loading character card from file '{file_path}': {e}"
+        )
+        return None
+
+
 #
 # End of File
 ########################################################################################################################
-def load_character_card_from_file(param):
-    return None

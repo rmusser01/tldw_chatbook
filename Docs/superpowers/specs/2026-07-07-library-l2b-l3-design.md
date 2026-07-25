@@ -85,6 +85,16 @@
 
 ## Phase L3b — Ingest canvas + Running feed + final cleanup
 
+> **Superseded detail (2026-07-09):** The interaction model, job-registry
+> topology, Local/Server capability rules, security boundary, administration
+> ownership, and lifetime semantics in this L3b section are superseded by
+> `Docs/superpowers/specs/2026-07-09-library-ingest-upload-redesign-design.md`
+> and `backlog/decisions/014-library-ingest-service-authority-and-recovery.md`
+> (which supersedes ADR-013).
+> The parity bar, real-database smoke requirement, Home integration, and
+> legacy-retirement gates remain binding where the newer design does not refine
+> them.
+
 **Parity bar:** capability parity with **whatever TAB_INGEST ships today**. Planning opens with an inventory of `MediaIngestWindowRebuilt` — including which backend seams it actually calls and whether it carries server/API ingest. The Ingest screen deprecates only when the inventory is covered.
 
 **Backend seam (decided by inventory, not assumption):** default to the seams the working ingest screen uses today. `Widgets/NewIngest/`'s `ProcessingJob`/`ProcessingState` are reused as *model shapes only*; its `UnifiedProcessor`/`BackendIntegration` are adopted only if the inventory shows the working screen already uses them. **Task 0:** headless smoke — ingest a small text file through the chosen seam to a real MediaDatabase row before any UI is built.
