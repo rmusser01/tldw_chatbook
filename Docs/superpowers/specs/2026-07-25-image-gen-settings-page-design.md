@@ -60,6 +60,7 @@ Follows the Providers & Models convention exactly:
 - **Clear** removes only the config-saved value and says so: "Clears the locally saved key — env/keyring sources still apply." After clearing, the source line re-renders from the reloaded config (may flip to env/keyring/missing).
 - Pasted keys never enter logs, notifications, probe results, or draft persistence. `redact_secret_text` guards any validation output that could contain them.
 - ModelStudio's two env vars (`DASHSCOPE_API_KEY`, `QWEN_API_KEY`) render as `env: DASHSCOPE_API_KEY` etc. per whichever won.
+- SwarmUI's `swarm_token` is optional for local installs: its `missing` source renders neutrally (no error styling), unlike the four remote API keys where `missing` implies not-configured.
 
 ## Enabled/default coupling
 
@@ -68,16 +69,19 @@ Follows the Providers & Models convention exactly:
 - Disabling ALL backends is allowed (runtime already refuses generation cleanly) but shows a non-blocking inline warning.
 - `default_batch` > `max_variants_per_message` shows a non-blocking inline hint ("runtime clamps to the cap") — the runtime `clamp_initial_batch` already guarantees safety.
 
-## Data flow
+## Save model & data flow
 
+- **Draft/dirty idiom (mandatory):** the page participates in Settings' existing draft + dirty-marker system — edits accumulate in a draft, the rail shows the dirty marker (`*` / `settings-dirty-category`), and an explicit Save applies them. No per-field immediate writes. Revert discards the draft.
 - **Read:** `get_image_generation_config()` (effective values incl. `key_sources`) + the raw `[image_generation]` table from `SettingsConfigAdapter.load()` (set-vs-default distinction). Re-read on category open and after every save.
-- **Write:** known keys only, to the correct nested sections, via `SettingsConfigAdapter.save_values("image_generation.<backend>", {...})` / `save_values("image_generation", {...})` — `save_setting_to_cli_config` handles dotted nested sections and forces the CLI-config cache reload itself (verified).
+- **Write:** known keys only, to the correct nested sections, in ONE write via `SettingsConfigAdapter.save_sections({...})` (not the per-key `save_values` loop — that rewrites the file N times). `save_setting_to_cli_config`/`save_settings_to_cli_config` handle dotted nested sections and force the CLI-config cache reload (verified).
+- **Writes come ONLY from user-edited draft fields — never from the effective config object.** The loader resolves env/keyring secrets INTO the effective config's fields; persisting "current effective state" would silently copy an env-provided API key into plaintext config.toml. `diff_to_sections` takes the draft, not the cfg, and a module test pins that an env-resolved secret never reaches the write payload.
+- **Clearing a field deletes its key** via `delete_settings_from_cli_config(section, keys)` (exists at config.py; the adapter gains a thin `delete_values(section, keys)` wrapper). Never write `""`/`None` as a cleared sentinel. After deletion the placeholder shows the baked default that now applies.
 - **Live reload:** after a successful save, call `reset_image_generation_config_cache()` (exists) so the running Console's next `/generate-image` sees the change without restart. The task-621 unknown-key warnings are unaffected: this page writes only mapped keys to correct sections.
-- Values are written only when set/edited; clearing a field removes the key from config (falling back to baked default, which the placeholder then shows).
 
 ## Probes
 
 - On-demand only (Test button). One probe at a time; all Test buttons disable while one runs.
+- **Probes test the CURRENT FORM VALUES** (including a pasted-but-unsaved key/base_url) — the user is verifying what they just typed, independent of save state. The probe never persists anything.
 - Runs in a worker (`run_worker(..., exit_on_error=False)`, try/except in body). Timeout ~5s per probe regardless of the backend's configured generation timeout.
 - Network probes go through the egress policy with `trusted_origins=origin_set(<configured base_url>)` — identical trust shape to the adapters (local SwarmUI must probe successfully; API-returned URLs are not involved here).
 - Transport: reuse `settings_endpoint_probe`'s machinery where it fits; otherwise a minimal guarded GET via `Utils/egress` helpers. Never import the image-gen adapters for probing (they're generation-shaped, not probe-shaped).
@@ -93,9 +97,9 @@ Follows the Providers & Models convention exactly:
 
 ## Testing
 
-- **Module tests** (`Tests/UI/test_settings_image_gen_defaults.py` or sibling-consistent name): `build_backend_rows` from crafted cfg+raw pairs (configured/env/keyring/missing matrix); `diff_to_sections` mapping incl. nested section names and clear-key removal; `FIELD_SCHEMA` completeness vs `_NON_SECRET`/`_SECRETS` (a drift test: every schema field maps to a real loader key); probe-result mapping incl. sanitization (a fake error carrying a header/token must not surface it).
+- **Module tests** (`Tests/UI/test_settings_image_gen_defaults.py` or sibling-consistent name): `build_backend_rows` from crafted cfg+raw pairs (configured/env/keyring/missing matrix); `diff_to_sections` mapping incl. nested section names and clear-key removal; `FIELD_SCHEMA` completeness vs `_NON_SECRET`/`_SECRETS` (a drift test: every schema field maps to a real loader key); probe-result mapping incl. sanitization (a fake error carrying a header/token must not surface it); the no-secret-copy pin (env-resolved secret never appears in `diff_to_sections` output).
 - **Loader tests:** `key_sources` for each precedence winner; existing loader tests unmodified.
-- **Screen tests** (Textual `run_test`): rail entry present + search finds the category; fields populate from a scratch `TLDW_CONFIG_PATH` config; edit → save → the scratch file contains the nested TOML and `reset_image_generation_config_cache` took effect (`get_image_generation_config()` reflects the edit); key paste → saved + input cleared + never re-echoed; env-provided key shows `env:` source and Clear behaves per spec; disabled-default block; probe button renders a faked ProbeResult.
+- **Screen tests** (Textual `run_test`): rail entry present + search finds the category; fields populate from a scratch `TLDW_CONFIG_PATH` config; edit → save → the scratch file contains the nested TOML and `reset_image_generation_config_cache` took effect (`get_image_generation_config()` reflects the edit); key paste → saved + input cleared + never re-echoed; env-provided key shows `env:` source and Clear behaves per spec; disabled-default block; probe button renders a faked ProbeResult and receives the CURRENT form values (edit base_url, don't save, probe → fake prober sees the edited value); draft dirty-marker appears on edit and clears on save/revert.
 - CSS bundle reproducibility (`check_bundle_sync`).
 
 ## Risks / traps for the plan
