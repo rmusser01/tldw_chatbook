@@ -246,6 +246,41 @@ def _hand_set_legacy_query_time_keys() -> dict:
     return found
 
 
+def _has_legacy_rag_config_material() -> bool:
+    """True when the user has ANY hand-set ``[AppRAGSearchConfig.rag.*]``
+    content at all -- the signal (task-635) that they're upgrading from
+    before the profile system existed, not installing fresh.
+
+    Deliberately broader than ``_hand_set_legacy_query_time_keys`` (which
+    only surfaces the allow-listed query-time keys that get MERGED into the
+    first-run snapshot, per task-495): a legacy user who hand-set
+    embedding/chunking/vector_store keys under the deprecated section --
+    never merged, see that function's module-level docstring -- still has a
+    real pre-profile collection worth preserving SP1 fingerprint continuity
+    for, even though none of those specific keys end up in the imported
+    snapshot. Any non-empty ``[AppRAGSearchConfig.rag]`` subsection is
+    therefore treated as "genuine legacy material", regardless of which
+    keys it contains.
+
+    A genuinely fresh install has no ``[AppRAGSearchConfig.rag]`` section at
+    all (a config.toml that never had RAG settings hand-edited before the
+    profile system shipped), so this returns False and
+    ``ensure_imported_profile()`` leaves that user on the default builtin
+    profile instead of auto-creating and silently activating "Imported
+    settings" underneath them.
+
+    Returns:
+        True when ``[AppRAGSearchConfig.rag]`` resolves to a non-empty
+        dict; False when it's absent/empty or unreadable (never raises).
+    """
+    try:
+        rag_section = get_cli_setting("AppRAGSearchConfig", "rag", {}) or {}
+        return isinstance(rag_section, dict) and bool(rag_section)
+    except Exception as e:
+        logger.debug(f"Could not probe for legacy AppRAGSearchConfig.rag section: {e}")
+        return False
+
+
 def _merge_legacy_query_time_keys(config: RAGConfig) -> dict:
     """Merge hand-set legacy query-time keys onto `config.search`, in place.
 
@@ -274,8 +309,20 @@ def _merge_legacy_query_time_keys(config: RAGConfig) -> dict:
 
 def ensure_imported_profile() -> Optional[str]:
     """On first run, capture the currently-resolved RAG config into a writable
-    'Imported settings' profile and set it active. Idempotent (returns None if it
-    already exists). The captured config's SP1 fingerprint matches what SP1 adopts
+    'Imported settings' profile and set it active -- but ONLY for a user
+    upgrading from before the profile system existed (task-635: has any
+    hand-set ``[AppRAGSearchConfig.rag.*]`` material, see
+    ``_has_legacy_rag_config_material``). A genuinely fresh install has no
+    legacy collection to preserve continuity for, so this is a no-op for
+    them and they stay on the default builtin profile (``hybrid_basic``)
+    with no profile created and no active-pointer write -- previously this
+    ran unconditionally on first touch, which silently created and
+    activated "Imported settings" underneath a brand-new user the first
+    time anything called ``get_shared_rag_service()`` (e.g. Backfill),
+    flipping their active profile to one they never chose.
+
+    Idempotent (returns None if the profile already exists). For a genuine
+    upgrader, the captured config's SP1 fingerprint matches what SP1 adopts
     the legacy collection under, so the user keeps their index on upgrade.
 
     Also merges (task-495) any hand-set, non-index-determining legacy
@@ -298,7 +345,10 @@ def ensure_imported_profile() -> Optional[str]:
     import "done" -- if a previous run persisted the profile but failed before
     (or otherwise never got to) activating it, that leaves it created-but-never-
     active forever with no retry. So every call also checks the active pointer
-    and (re)activates the imported profile if it isn't already active.
+    and (re)activates the imported profile if it isn't already active. This
+    healing path runs regardless of ``_has_legacy_rag_config_material()`` --
+    once the profile exists, healing its activation is not a fresh-install
+    concern.
 
     Exception-safe: any failure here must never block RAG service creation, so
     every error is caught and logged, returning None (as if already imported /
@@ -307,8 +357,9 @@ def ensure_imported_profile() -> Optional[str]:
     Returns:
         The new profile's id (``"imported_settings"``) on the run that
         creates and activates it; ``None`` when it already existed (no-op,
-        after healing the active pointer if needed) or when import failed
-        (logged, swallowed).
+        after healing the active pointer if needed), when there is no
+        genuine legacy material to import (fresh install), or when import
+        failed (logged, swallowed).
     """
     try:
         mgr = _manager()
@@ -316,6 +367,10 @@ def ensure_imported_profile() -> Optional[str]:
         if existing is not None:
             if _active_profile_id() != _IMPORTED_ID:
                 set_active_profile(_IMPORTED_ID)  # heal a half-done first run
+            return None
+        if not _has_legacy_rag_config_material():
+            # task-635: nothing legacy to preserve continuity for -- leave a
+            # fresh install on the default builtin profile untouched.
             return None
         # Snapshot the resolved config (active pointer may name a builtin default today).
         snapshot = resolve_active_rag_config()
