@@ -38,6 +38,18 @@ class Tool(ABC):
         """JSON Schema for the tool's parameters."""
         pass
 
+    @property
+    def risk_tags(self) -> tuple[str, ...]:
+        """Risk classes for the permission gate, e.g. ``("mutates",)``.
+
+        Concrete with an empty default so every existing subclass keeps
+        working unchanged. The vocabulary is the permission store's
+        ``HIGH_RISK_TAGS`` (``mutates``/``process``) -- a tool tagged with
+        one of those has an INHERITED ``allow`` floored to ``ask`` by
+        ``resolve_builtin_state``. Read-only tools leave this empty.
+        """
+        return ()
+
     @abstractmethod
     async def execute(self, **kwargs) -> Dict[str, Any]:
         """
