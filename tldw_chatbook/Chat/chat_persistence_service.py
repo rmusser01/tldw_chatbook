@@ -557,8 +557,15 @@ class ChatPersistenceService:
             CitationPersistenceUnavailable: If citation persistence is
                 disabled, misconfigured, invalid, or bound to another DB.
             CharactersRAGDBError: For database integrity errors during the
-                insert, the attachment-table write, or the
-                generation-metadata write.
+                row insert -- ``CharactersRAGDB.add_message`` wraps
+                ``sqlite3.IntegrityError`` into this explicitly. The
+                attachment-table and generation-metadata sidecar writes
+                (``set_message_attachments``/``set_message_generation_metadata``)
+                run through the plain transaction cursor with no
+                independent wrap, matching ``update_message_content``'s
+                sibling contract for the identical ``set_message_attachments``
+                call -- a raw ``sqlite3.Error`` can propagate from those two
+                writes instead.
         """
         prepared_citation = None
         if citation_write is not None:

@@ -464,6 +464,41 @@ def test_generation_message_ignores_text_sibling_fields():
     assert "keep" in actions
 
 
+def test_generation_message_precedence_over_conflicting_sibling_state():
+    """task-558: a stronger precedence pin than
+    ``test_generation_message_ignores_text_sibling_fields`` above -- that
+    test's ``sibling_count=1`` wouldn't trigger the old sibling-only
+    ``elif message.sibling_count > 1`` branch anyway, so it can't actually
+    distinguish "generation gating won" from "the old branch just didn't
+    fire". Here the stale sibling fields (``sibling_index=2``,
+    ``sibling_count=3``) would produce the OPPOSITE previous/next enabled
+    states from the generation kwargs if sibling-count gating won instead
+    of generation gating: sibling gating would enable previous (``2 > 0``)
+    and disable next (``2 < 3 - 1`` is False); the generation kwargs
+    (``generation_browsed_index=0`` of ``generation_variant_count=3``)
+    disable previous and enable next.
+    """
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="[image] x",
+        sibling_index=2,
+        sibling_count=3,
+    )
+
+    actions = {
+        action.action_id: action
+        for action in service.available_actions(
+            message, generation_variant_count=3, generation_browsed_index=0
+        )
+    }
+
+    assert "variant-previous" in actions
+    assert "variant-next" in actions
+    assert actions["variant-previous"].enabled is False
+    assert actions["variant-next"].enabled is True
+
+
 def test_generation_regenerate_stays_visible_and_enabled():
     """Regenerate (`♻`) stays visible on a generation message, still gated
     only by assistant-role as today (spec §7)."""

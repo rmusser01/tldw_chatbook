@@ -43,7 +43,13 @@ class SwarmUIAdapter:
         trusted_origins = origin_set(base_url)
         session_id = self._ensure_session(base_url, trusted_origins)
 
-        payload = self._build_payload(request, session_id)
+        # task-558: capture the model this request actually resolved to
+        # (request override, else the configured default, else none) so the
+        # Console generation card can show it instead of always blank --
+        # this is client-side resolution of a value already fully known
+        # before the call, not anything guessed from SwarmUI's response.
+        resolved_model = self._resolve_model(request)
+        payload = self._build_payload(request, session_id, resolved_model)
         generate_url = f"{base_url}/API/GenerateText2Image"
         data = self._post_generate(generate_url, payload, trusted_origins)
 
@@ -59,7 +65,12 @@ class SwarmUIAdapter:
                 output_format,
                 max_bytes=self._max_output_bytes(),
             )
-            return ImageGenResult(content=content, content_type=content_type, bytes_len=len(content))
+            return ImageGenResult(
+                content=content,
+                content_type=content_type,
+                bytes_len=len(content),
+                resolved_model=resolved_model,
+            )
 
         image_url = self._resolve_image_url(base_url, image_ref)
         content, content_type = self._fetch_image_bytes(image_url, trusted_origins)
@@ -69,7 +80,12 @@ class SwarmUIAdapter:
             output_format,
             max_bytes=self._max_output_bytes(),
         )
-        return ImageGenResult(content=content, content_type=content_type, bytes_len=len(content))
+        return ImageGenResult(
+            content=content,
+            content_type=content_type,
+            bytes_len=len(content),
+            resolved_model=resolved_model,
+        )
 
     def _resolve_base_url(self) -> str:
         raw = (self._config.swarmui_base_url or DEFAULT_SWARMUI_BASE_URL or "").strip()
@@ -104,7 +120,13 @@ class SwarmUIAdapter:
             raise ImageGenerationError("SwarmUI did not return a session_id")
         return str(session_id)
 
-    def _build_payload(self, request: ImageGenRequest, session_id: str) -> dict[str, Any]:
+    def _resolve_model(self, request: ImageGenRequest) -> str | None:
+        """Return the model this request will actually use (override or configured default)."""
+        return request.model or (self._config.swarmui_default_model or None)
+
+    def _build_payload(
+        self, request: ImageGenRequest, session_id: str, resolved_model: str | None
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "session_id": session_id,
             "images": 1,
@@ -125,9 +147,8 @@ class SwarmUIAdapter:
         if request.sampler:
             payload["sampler"] = request.sampler
 
-        model = request.model or (self._config.swarmui_default_model or None)
-        if model:
-            payload["model"] = model
+        if resolved_model:
+            payload["model"] = resolved_model
 
         extra_params = request.extra_params or {}
         if isinstance(extra_params, dict):

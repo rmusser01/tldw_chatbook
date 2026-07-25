@@ -120,7 +120,18 @@ class StableDiffusionCppAdapter:
             output_format,
             max_bytes=effective_inline_max_bytes(self._config),
         )
-        return ImageGenResult(content=content, content_type=content_type, bytes_len=len(content))
+        return ImageGenResult(
+            content=content,
+            content_type=content_type,
+            bytes_len=len(content),
+            # task-558: `resolved_model_path` is already the exact model
+            # file this run used (request override, else the configured
+            # diffusion/model path) -- known deterministically before the
+            # binary is even invoked, not guessed from any output. The bare
+            # filename (not the full local path) avoids leaking the host's
+            # directory layout onto a card that may be exported/shared.
+            resolved_model=resolved_model_path.name,
+        )
 
     @staticmethod
     def _resolve_path(raw_path: str | None, label: str) -> Path:

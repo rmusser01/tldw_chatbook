@@ -318,10 +318,13 @@ def test_generation_message_reload_round_trip_keeps_variant_and_hydrates_metadat
     ``ChatScreen._console_messages_from_conversation_tree`` flatten +
     ``restore_persisted_session`` load/ingest path (mirrors
     ``Tests/integration/test_console_branching_e2e.py``'s
-    ``_resume_into_fresh_store``) -- and completes the round trip with the
-    store's own hydration seam: a batch ``get_generation_metadata_for_messages``
-    fetch feeding ``hydrate_generation_metadata`` (per both methods'
-    docstrings and the design spec's Task 9 Step 1).
+    ``_resume_into_fresh_store``). ``restore_persisted_session`` itself now
+    drives the generation-metadata hydration seam (a batch
+    ``get_generation_metadata_for_messages`` fetch feeding
+    ``hydrate_generation_metadata``, see both methods' docstrings) --
+    task-558: this test used to also call that seam manually on top of
+    ``restore_persisted_session``, which was redundant leftover from before
+    the store took over driving it internally.
 
     Asserts the reloaded message's position-0/canonical bytes are the KEPT
     variant's, ``generation_metadata`` order matches the DB (kept first),
@@ -370,24 +373,9 @@ def test_generation_message_reload_round_trip_keeps_variant_and_hydrates_metadat
             active_leaf_persisted_id=active_leaf_id,
         )
 
-        # The load/ingest path (``restore_persisted_session`` fed by the real
-        # tree flatten) restores the tree, ids, and position-0 bytes, but --
-        # like the real ``ChatScreen`` resume flow -- does not itself fetch
-        # the generation-metadata sidecar; the store exposes the seam that
-        # completes it (``get_generation_metadata_for_messages`` batch fetch
-        # + ``hydrate_generation_metadata``), which the caller (here, this
-        # test, standing in for ``ChatScreen``'s own resume path) drives
-        # once, covering every restored message.
-        persisted_ids = [
-            m.persisted_message_id
-            for m in fresh_store.messages_for_session(fresh_session.id)
-            if m.persisted_message_id
-        ]
-        rows_by_message = fresh_persistence.get_generation_metadata_for_messages(
-            persisted_ids
-        )
-        fresh_store.hydrate_generation_metadata(fresh_session.id, rows_by_message)
-
+        # ``restore_persisted_session`` (above) already drove the
+        # generation-metadata hydration seam internally -- no further
+        # manual fetch/hydrate call needed here.
         reloaded = fresh_store.messages_for_session(fresh_session.id)
         reloaded_generation_msg = next(m for m in reloaded if m.generation_metadata)
 

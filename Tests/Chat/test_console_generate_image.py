@@ -142,6 +142,18 @@ def test_content_marker_default_limit():
     assert marker.endswith("…")
 
 
+def test_content_marker_exact_80_char_boundary_not_trimmed():
+    """task-558: the boundary itself -- a prompt of EXACTLY the 80-char
+    default limit -- must render whole, no ellipsis. `len(flattened) >
+    limit` is a strict `>`, so 80 must be the last un-trimmed length; only
+    `test_content_marker_default_limit` (81, one past the boundary) was
+    covered before this."""
+    prompt = "a" * 80
+    marker = generation_content_marker(prompt)
+    assert marker == "[image] " + "a" * 80
+    assert not marker.endswith("…")
+
+
 def test_content_marker_custom_limit():
     """Test generation_content_marker with custom limit."""
     prompt = "a" * 50
@@ -285,6 +297,71 @@ def test_batch_default_style_and_dims_are_none():
     assert captured[0]["steps"] is None
     assert captured[0]["cfg_scale"] is None
     assert out.successes[0][2].style is None
+
+
+class _ResWithResolved(_Res):
+    """ImageGenResult-shaped fake also carrying resolved_seed/resolved_model
+    (task-558) -- distinct from the plain `_Res` fake every other batch
+    test above uses, so those keep exercising the no-such-attribute
+    fallback path unmodified."""
+
+    def __init__(self, b, *, resolved_seed=None, resolved_model=None):
+        super().__init__(b)
+        self.resolved_seed = resolved_seed
+        self.resolved_model = resolved_model
+
+
+def test_batch_uses_resolved_seed_and_model_when_reported():
+    """task-558: when the adapter's result reports a resolved seed/model,
+    the variant meta uses those instead of the request's own seed/``None``."""
+
+    def gen(req):
+        return _ResWithResolved(b"img", resolved_seed=999, resolved_model="sdxl")
+
+    out = run_generation_batch(
+        backend="swarmui", prompt="p", negative_prompt=None,
+        seed=-1, count=1, generate=gen,
+    )
+    assert len(out.successes) == 1
+    meta = out.successes[0][2]
+    assert meta.seed == 999
+    assert meta.model == "sdxl"
+
+
+def test_batch_falls_back_to_variant_seed_when_result_has_no_resolved_fields():
+    """Regression guard: a plain ImageGenResult-shaped fake with no
+    resolved_seed/resolved_model attributes at all (the existing `_Res`
+    fake every other batch test above uses) must not raise, and must
+    preserve prior behavior -- meta.seed is the request's own variant seed,
+    meta.model stays ``None``."""
+
+    def gen(req):
+        return _Res(b"img")
+
+    out = run_generation_batch(
+        backend="swarmui", prompt="p", negative_prompt=None,
+        seed=42, count=1, generate=gen,
+    )
+    meta = out.successes[0][2]
+    assert meta.seed == 42
+    assert meta.model is None
+
+
+def test_batch_resolved_seed_none_falls_back_to_variant_seed():
+    """A result that carries the attribute but leaves it ``None`` (every
+    real adapter's default today) still falls back to the variant's own
+    seed -- never ``None`` when a real request seed was used."""
+
+    def gen(req):
+        return _ResWithResolved(b"img", resolved_seed=None, resolved_model=None)
+
+    out = run_generation_batch(
+        backend="swarmui", prompt="p", negative_prompt=None,
+        seed=7, count=1, generate=gen,
+    )
+    meta = out.successes[0][2]
+    assert meta.seed == 7
+    assert meta.model is None
 
 
 # --- build_context_prompt ---------------------------------------------

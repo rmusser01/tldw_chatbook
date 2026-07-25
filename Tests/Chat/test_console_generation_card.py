@@ -265,6 +265,7 @@ def test_generation_card_details_text_contains_all_fields():
         backend="swarmui",
         seed=7,
         style="watercolor",
+        model="sdxl_base_1.0",
     )
     spec = _card_spec("gen-1", browsed_index=1, variant_count=3, meta=meta)
 
@@ -275,7 +276,24 @@ def test_generation_card_details_text_contains_all_fields():
     assert "Seed: 7" in text
     assert "Prompt: a lighthouse at dusk" in text
     assert "Negative: oversaturated" in text
+    assert "Model: sdxl_base_1.0" in text
     assert "2/3" in text  # n/N indicator, 1-based
+
+
+def test_generation_card_details_text_omits_model_row_when_absent():
+    """task-558 fix round 1: `resolved_model` is only known for some
+    backends/requests (e.g. no configured SwarmUI default AND no explicit
+    ``:model`` override) -- the Model row must not render "Model: None" or
+    an empty value in that case, mirroring the Negative row's own
+    conditional-omission idiom."""
+    meta = _meta(model=None)
+    spec = _card_spec("gen-1", meta=meta)
+
+    text = generation_card_details_text(spec)
+
+    assert "Model" not in text
+    # Sanity: omission is targeted -- every other row still renders.
+    assert "Style: cinematic" in text
 
 
 def test_generation_card_details_text_uses_named_style_not_custom():
@@ -314,6 +332,23 @@ def test_generation_card_details_text_omits_indicator_for_single_variant():
     text = generation_card_details_text(spec)
 
     assert "1/1" not in text
+
+
+def test_generation_card_details_text_omits_negative_row_when_empty():
+    """task-558: `_detail_rows` only appends the Negative row `if
+    meta.negative_prompt`; every other test in this file uses the
+    default truthy "blurry" negative prompt, so the empty-string branch
+    (an unstyled/raw-prompt generation with no negative prompt at all) was
+    never exercised."""
+    meta = _meta(negative_prompt="")
+    spec = _card_spec("gen-1", meta=meta)
+
+    text = generation_card_details_text(spec)
+
+    assert "Negative" not in text
+    # Sanity: the omission is targeted -- every other row still renders.
+    assert "Prompt: a red dragon" in text
+    assert "Style: cinematic" in text
 
 
 # --- Widget build: both modes + byte-less placeholder -------------------------
