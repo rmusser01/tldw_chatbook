@@ -8402,7 +8402,14 @@ class SettingsScreen(BaseAppScreen):
         options = self._library_rag_profile_select_options(grouped)
         valid_ids = {value for _, value in options}
         active_id = grouped["active_id"]
-        select_value = active_id if active_id in valid_ids else Select.BLANK
+        # PR #863 review: fall back to `Select.NULL`, NOT `Select.BLANK` --
+        # the latter doesn't exist on this Textual version's `Select`
+        # (resolves to `Widget.BLANK` == False) and composing
+        # `Select(value=False)` raises `InvalidSelectValueError`, breaking
+        # the whole Settings screen the one time this fallback is hit (a
+        # stale/deleted active-profile pointer -> synthetic "(missing)"
+        # active id absent from the options).
+        select_value = active_id if active_id in valid_ids else Select.NULL
         active_label = f"{info['name']} (built-in)" if info["read_only"] else info["name"]
 
         # Task 4 (541 v2 UX AC1): the "Profiles" heading is now the
@@ -10223,7 +10230,12 @@ class SettingsScreen(BaseAppScreen):
         inside it is focused. Collapsing the currently-active group falls
         back to whatever `_active_settings_field_id` would otherwise
         resolve to (typically the static fallback, since focus can't land
-        on a hidden collapsed field)."""
+        on a hidden collapsed field).
+
+        Args:
+            event: The Collapsible toggle whose widget id names the group
+                this handler maps to a Scope Inspector context.
+        """
         if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
             return
         collapsible_id = str(getattr(event.collapsible, "id", "") or "")
@@ -10934,6 +10946,12 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Select.Changed, "#settings-library-rag-distance-metric")
     def handle_library_rag_distance_metric_changed(self, event: Select.Changed) -> None:
+        """Stage a distance-metric change on the active profile's draft.
+
+        Args:
+            event: The Select change; ``event.value`` is the metric name
+                (falls back to ``"cosine"`` when blank).
+        """
         event.stop()
         if self._library_rag_edits_suppressed():
             return
@@ -10944,6 +10962,15 @@ class SettingsScreen(BaseAppScreen):
     def handle_library_rag_enable_reranking_changed(
         self, event: Checkbox.Changed
     ) -> None:
+        """Stage the reranking toggle and live-update the rerank fields.
+
+        Task 1 (541 v2 UX AC4): flipping the checkbox immediately dims or
+        re-enables the reranker model / rerank results Inputs.
+
+        Args:
+            event: The Checkbox change; ``event.value`` is the new
+                enable-reranking state to stage.
+        """
         event.stop()
         if self._library_rag_edits_suppressed():
             return
@@ -10996,7 +11023,12 @@ class SettingsScreen(BaseAppScreen):
             return
         selected = event.value
         active_id = active_profile_info()["id"]
-        if selected is None or selected is Select.BLANK or str(selected) == active_id:
+        # PR #863 review: `Select.NULL` is the real blank sentinel on this
+        # Textual version (`Select.BLANK` doesn't exist -- it silently
+        # resolves to the unrelated `Widget.BLANK`). The picker is
+        # `allow_blank=True`, so a user CAN pick the blank row: treat it as
+        # "exit preview", never as a profile id to preview.
+        if selected is None or selected is Select.NULL or str(selected) == active_id:
             self._rag_preview_profile_id = None
         else:
             self._rag_preview_profile_id = str(selected)
@@ -12651,7 +12683,13 @@ class SettingsScreen(BaseAppScreen):
         shows. No-op outside LIBRARY_RAG or while an Input/TextArea has
         focus (same guard shape as s/r/t; matters for direct callers, since
         a real keypress while typing is already swallowed by the focused
-        widget before it would reach this binding)."""
+        widget before it would reach this binding).
+
+        Args:
+            allow_text_entry_focus: Skip the focused-text-entry no-op guard
+                (for direct callers such as buttons/tests; a real keypress
+                never arrives with a text entry focused).
+        """
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
@@ -12662,7 +12700,12 @@ class SettingsScreen(BaseAppScreen):
         self, *, allow_text_entry_focus: bool = False
     ) -> None:
         """'c' -- Clone the profile the picker currently shows. Same guard
-        as action_settings_rag_set_active."""
+        as action_settings_rag_set_active.
+
+        Args:
+            allow_text_entry_focus: Skip the focused-text-entry no-op guard
+                (for direct callers; see action_settings_rag_set_active).
+        """
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
@@ -12673,7 +12716,12 @@ class SettingsScreen(BaseAppScreen):
         self, *, allow_text_entry_focus: bool = False
     ) -> None:
         """'b' -- Backfill the active profile's index. Same guard as
-        action_settings_rag_set_active."""
+        action_settings_rag_set_active.
+
+        Args:
+            allow_text_entry_focus: Skip the focused-text-entry no-op guard
+                (for direct callers; see action_settings_rag_set_active).
+        """
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:

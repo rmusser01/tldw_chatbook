@@ -131,10 +131,22 @@ async def _open_rag_category(pilot) -> None:
 
 
 def _make_qa_app_class(theme):
+    """Build a minimal App class hosting the real SettingsScreen.
+
+    Args:
+        theme: The Textual theme to register and activate, so captures use
+            production colors.
+
+    Returns:
+        An ``App`` subclass whose only job is to push a real
+        ``SettingsScreen`` styled by the real generated CSS bundle.
+    """
     from textual.app import App
     from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
     class QAApp(App):
+        """Bare capture host: real bundle CSS + real SettingsScreen."""
+
         # The real generated bundle: gives the QA captures production styling.
         CSS_PATH = str(REPO_ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss")
 
@@ -151,6 +163,14 @@ def _make_qa_app_class(theme):
 
 
 async def main() -> None:
+    """Drive the five task-541 v2 UX states and snapshot each to SVG.
+
+    Each numbered block wires the hermetic fake adapter into the state
+    under capture (first-run panel, preview-on-select, re-index confirm
+    modal, checkbox/dimmed-rerank fields, context-sensitive inspector),
+    drives any needed interaction through the pilot, and exports the
+    frame via ``App.export_screenshot``.
+    """
     from textual.widgets import Button, Checkbox, Collapsible, Input, Select
 
     from tldw_chatbook.css.Themes.themes import agentic_terminal_theme

@@ -1,5 +1,5 @@
 ---
-id: TASK-564
+id: TASK-567
 title: 'SettingsScreen help flattener: support Binding objects'
 status: To Do
 assignee: []
@@ -19,5 +19,6 @@ SettingsScreen.action_show_workbench_help (541 AC6 fix) flattens only tuple/list
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Binding instances are rendered in the screen help output,Regression test covers a mixed tuple+Binding BINDINGS list
+- [ ] #1 Binding instances are rendered in the screen help output
+- [ ] #2 Regression test covers a mixed tuple+Binding BINDINGS list
 <!-- AC:END -->

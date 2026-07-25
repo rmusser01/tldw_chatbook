@@ -1,5 +1,5 @@
 ---
-id: TASK-563
+id: TASK-566
 title: Cancel settings-rag-index-status workers on category nav
 status: To Do
 assignee: []
@@ -20,5 +20,7 @@ The exclusive worker group settings-rag-index-status (SP3-era) lets a stale off-
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Leaving the Library/RAG category cancels in-flight index-status workers,No modal or status write can land after nav-away (regression test),Re-entry still triggers a fresh fetch
+- [ ] #1 Leaving the Library/RAG category cancels in-flight index-status workers
+- [ ] #2 No modal or status write can land after nav-away (regression test)
+- [ ] #3 Re-entry still triggers a fresh fetch
 <!-- AC:END -->

@@ -3212,3 +3212,82 @@ async def test_rag_category_footer_advertises_the_new_accelerators(
         theme_footer = screen.query_one(AppFooterStatus)
         for token in ("a set active", "c clone", "b backfill"):
             assert token not in theme_footer.shortcut_text
+
+
+# --- PR #863 review: Select blank-sentinel handling ---
+
+
+def test_blank_select_row_exits_preview_instead_of_becoming_a_bogus_id(
+    monkeypatch, tmp_path, fake_app
+):
+    """PR #863 review item 5: the picker is ``allow_blank=True``, so a user
+    CAN pick the blank row, which delivers ``Select.NULL`` -- the real blank
+    sentinel on this Textual version (``Select.BLANK`` doesn't exist; it
+    resolves to the unrelated ``Widget.BLANK``). Pre-fix, the handler
+    stringified the sentinel into ``_rag_preview_profile_id = 'Select.NULL'``
+    and rendered a bogus preview; it must instead exit preview cleanly."""
+    mgr, _profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    mgr.save_profile(other)
+
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    screen._rag_preview_profile_id = other.id
+    synced: list[bool] = []
+    monkeypatch.setattr(
+        screen, "_sync_rag_editor_display", lambda: synced.append(True)
+    )
+
+    event = SimpleNamespace(value=Select.NULL, stop=lambda: None)
+    screen.handle_library_rag_profile_select_changed(event)
+
+    assert screen._rag_preview_profile_id is None
+    assert synced == [True]
+
+
+@pytest.mark.asyncio
+async def test_stale_active_profile_pointer_composes_blank_instead_of_crashing(
+    monkeypatch, tmp_path
+):
+    """PR #863 review item 4 (task-565's motivating case): when the active
+    profile pointer names an id that is NOT in the picker options (the
+    synthetic "(missing)" scenario for a stale/deleted pointer), the compose
+    fallback must be ``Select.NULL`` -- pre-fix it was ``Select.BLANK``
+    (== ``Widget.BLANK`` == ``False``), and ``Select(value=False)`` raises
+    ``InvalidSelectValueError`` at mount, breaking the whole Settings
+    screen."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path, active_id="hybrid_basic")
+
+    real_info = settings_screen_module.active_profile_info
+    real_grouped = settings_screen_module.list_profiles_grouped
+
+    def ghost_info():
+        info = dict(real_info())
+        info["id"] = "ghost-deleted-profile"
+        info["name"] = "(missing)"
+        return info
+
+    def ghost_grouped():
+        # The compose path takes the picker's active id from
+        # ``grouped["active_id"]`` (not ``active_profile_info()``): point it
+        # at an id that is absent from the option lists to hit the fallback.
+        grouped = dict(real_grouped())
+        grouped["active_id"] = "ghost-deleted-profile"
+        return grouped
+
+    monkeypatch.setattr(settings_screen_module, "active_profile_info", ghost_info)
+    monkeypatch.setattr(
+        settings_screen_module, "list_profiles_grouped", ghost_grouped
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        # Mount survived and the picker sits on the blank sentinel.
+        assert select.value is Select.NULL
+        assert "Active: (missing)" in _visible_text(screen)
