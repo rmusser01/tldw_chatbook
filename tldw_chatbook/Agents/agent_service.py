@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import threading
 import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -158,6 +159,40 @@ def _usage_total_tokens(resp) -> int | None:
     ):
         return prompt + completion
     return None
+
+
+def _call_with_timeout(
+    fn: "Callable[[], ToolResult]", seconds: float, tool_name: str
+) -> ToolResult:
+    """Run ``fn`` on a daemon thread, bounded by ``seconds`` wall-clock.
+
+    Always returns a ToolResult: ``fn``'s value on success, ``ok=False`` with
+    the message on a raised exception, or an ``ok=False`` timeout result if
+    ``fn`` does not finish in time. A per-call daemon thread (NOT a
+    ThreadPoolExecutor ``with`` block, whose __exit__ would join the hung
+    worker and defeat the timeout; NOT a shared pool, which a single hung
+    tool would saturate) is used; on timeout the worker is abandoned to die
+    with the process — Python cannot forcibly kill a thread, but ``daemon``
+    means it never blocks interpreter shutdown.
+    """
+    box: dict = {}
+
+    def _runner() -> None:
+        try:
+            box["result"] = fn()
+        except Exception as exc:  # noqa: BLE001 — surfaced as a failed ToolResult
+            box["error"] = str(exc)
+
+    worker = threading.Thread(target=_runner, name=f"tool-{tool_name}", daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        return ToolResult(
+            ok=False, error=f"tool call timed out after {seconds:g}s: {tool_name}"
+        )
+    if "error" in box:
+        return ToolResult(ok=False, error=box["error"])
+    return box["result"]
 
 
 class AgentService:
@@ -315,6 +350,13 @@ class AgentService:
                 or call.name not in disclosed_names
             ):
                 return ToolResult(ok=False, error=f"Tool not permitted: {call.name}")
+            timeout = config.budget.max_tool_call_seconds
+            if timeout and timeout > 0:
+                return _call_with_timeout(
+                    lambda: self.registry.invoke_by_name(call.name, call.args),
+                    timeout,
+                    call.name,
+                )
             return self.registry.invoke_by_name(call.name, call.args)
 
         return invoke_tool

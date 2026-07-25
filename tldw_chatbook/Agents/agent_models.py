@@ -141,6 +141,12 @@ class RunBudget:
     # 0 = unlimited (default), keeping existing runs byte-identical. This is a
     # SPEND ceiling (the growing prompt is re-sent each call), not a window size.
     max_total_tokens: int = 0
+    # task-327: per-tool-call wall-clock ceiling. A single custom/blocking
+    # tool provider must not be able to wedge a cooperative-cancel run
+    # forever. 0 = unlimited (opt-out). Enforced in agent_service's impure
+    # seam (the pure runtime stays timeout-free); MCP tools self-time-out
+    # via run_coroutine_threadsafe and are unaffected.
+    max_tool_call_seconds: float = 120.0
 
 
 @dataclass
@@ -189,4 +195,5 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
         max_subagent_result_chars=child.max_subagent_result_chars,
         max_model_turns=child.max_model_turns,
         max_total_tokens=child.max_total_tokens,
+        max_tool_call_seconds=child.max_tool_call_seconds,
     )

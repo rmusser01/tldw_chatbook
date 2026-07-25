@@ -3,6 +3,7 @@
 
 import dataclasses
 import json
+import time
 
 import pytest
 
@@ -22,6 +23,7 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_service import (
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
+    _call_with_timeout,
     _usage_total_tokens,
 )
 from tldw_chatbook.Agents.tool_catalog import (
@@ -1142,3 +1144,77 @@ def test_call_model_native_path_reports_provider_tokens(db):
     turn = call_model([{"role": "user", "content": "2+2?"}], ())
     assert turn.tokens == 77
     assert turn.tool_calls
+
+
+# task-327 (AC#4): per-tool-call timeout, enforced entirely in this impure
+# seam via a module-level helper. `agent_runtime.run_agent_loop` and
+# `LoopDeps.invoke_tool`'s type are unaffected -- the wrapping happens here,
+# around the builtin/custom registry.invoke_by_name path only.
+
+
+def test_call_with_timeout_returns_result_when_fast():
+    out = _call_with_timeout(lambda: ToolResult(ok=True, content="hi"), 5.0, "fast_tool")
+    assert out.ok and out.content == "hi"
+
+
+def test_call_with_timeout_trips_on_slow_call():
+    def slow():
+        time.sleep(2.0)
+        return ToolResult(ok=True, content="late")
+    out = _call_with_timeout(slow, 0.2, "slow_tool")
+    assert out.ok is False
+    assert "timed out" in out.error and "slow_tool" in out.error
+
+
+def test_call_with_timeout_wraps_exception():
+    def boom():
+        raise ValueError("kaboom")
+    out = _call_with_timeout(boom, 5.0, "bad_tool")
+    assert out.ok is False and "kaboom" in out.error
+
+
+def test_make_invoke_tool_bypasses_wrapper_when_unlimited(db):
+    """max_tool_call_seconds=0 must skip _call_with_timeout entirely and
+    call straight through to the registry -- a real closure-level test, not
+    just a check of the branch condition."""
+    def chat(**kwargs):  # pragma: no cover - unused by this test
+        return {"choices": [{"message": {"content": "unused"}}]}
+
+    service = _service_with_chat(db, chat)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=0),
+    )
+    invoke_tool = service._make_invoke_tool(cfg, disclosed_names={"calculator"})
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
+    assert result.ok is True
+    assert json.loads(result.content)["result"] == 4
+
+
+def test_make_invoke_tool_wraps_slow_custom_tool_in_timeout(db, monkeypatch):
+    """A blocking custom tool provider must not wedge the run past
+    max_tool_call_seconds -- the boundary this task exists to add."""
+    def chat(**kwargs):  # pragma: no cover - unused by this test
+        return {"choices": [{"message": {"content": "unused"}}]}
+
+    service = _service_with_chat(db, chat)
+
+    def slow_invoke_by_name(name, args):
+        time.sleep(2.0)
+        return ToolResult(ok=True, content="too late")
+
+    monkeypatch.setattr(service.registry, "invoke_by_name", slow_invoke_by_name)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=0.2),
+    )
+    invoke_tool = service._make_invoke_tool(cfg, disclosed_names={"calculator"})
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
+    assert result.ok is False
+    assert "timed out" in result.error and "calculator" in result.error
