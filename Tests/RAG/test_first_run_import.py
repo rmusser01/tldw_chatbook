@@ -256,13 +256,60 @@ def test_imported_profile_preserves_hand_set_legacy_query_time_keys(monkeypatch,
 
     new_id = ensure_imported_profile()
 
-    imported = mgr.get_profile(new_id).rag_config
+    imported_profile = mgr.get_profile(new_id)
+    imported = imported_profile.rag_config
     assert imported.search.default_top_k == 25
     assert imported.search.score_threshold == 0.42
     assert imported.search.include_citations is False
     assert imported.search.enable_reranking is True
     assert imported.search.reranker_model == "cross-encoder/legacy"
     assert imported.search.reranker_top_k == 7
+    # PR #874 Qodo finding 2: rag_factory.create_rag_service() decides
+    # reranking enablement from `profile.reranking_config is not None`
+    # (rag_factory.py:65), NOT `rag_config.search.enable_reranking` -- that
+    # field only mirrors for UI display (see settings_rag_profile_adapter.py
+    # apply_defaults_to_profile). A legacy user with reranking enabled must
+    # therefore also get a populated `reranking_config`, or reranking stays
+    # silently OFF for them after import despite `search.enable_reranking`
+    # being True above.
+    assert imported_profile.reranking_config is not None
+    assert imported_profile.reranking_config.model_name == "cross-encoder/legacy"
+    assert imported_profile.reranking_config.top_k_to_rerank == 7
+
+
+def test_imported_profile_reranking_config_absent_when_legacy_reranking_unset(monkeypatch, tmp_path):
+    """No legacy `enable_reranking` key set -> no `reranking_config` is
+    fabricated (mirrors today's "nothing to merge" behavior for the other
+    legacy keys)."""
+    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    _wire_legacy_rag_config(monkeypatch, {
+        "search": {"default_top_k": 25},
+    })
+
+    new_id = ensure_imported_profile()
+
+    assert mgr.get_profile(new_id).reranking_config is None
+
+
+def test_imported_profile_reranking_config_keeps_model_default_when_legacy_model_blank(monkeypatch, tmp_path):
+    """Legacy reranking enabled but no `reranker_model` hand-set -> the
+    fabricated `RerankingConfig`'s `model_name` keeps its own default rather
+    than being stomped with an empty/missing value (same "blank means leave
+    alone" convention as `apply_defaults_to_profile`)."""
+    from tldw_chatbook.RAG_Search.reranker import RerankingConfig
+    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    _wire_legacy_rag_config(monkeypatch, {
+        "processor": {"enable_reranking": True, "reranker_top_k": 12},
+    })
+
+    new_id = ensure_imported_profile()
+
+    imported_profile = mgr.get_profile(new_id)
+    assert imported_profile.reranking_config is not None
+    assert imported_profile.reranking_config.model_name == RerankingConfig().model_name
+    assert imported_profile.reranking_config.top_k_to_rerank == 12
 
 
 def test_imported_profile_fingerprint_invariant_with_legacy_query_keys_set(monkeypatch, tmp_path):

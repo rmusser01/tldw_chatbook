@@ -19,6 +19,7 @@ from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from .config import RAGConfig, _normalized_type_setting
 from ..config_profiles import get_profile_manager, ProfileConfig, _slugify
 from ..ingestion_indexing import reset_shared_rag_service
+from ..reranker import RerankingConfig
 
 DEFAULT_PROFILE = "hybrid_basic"
 _IMPORTED_ID = "imported_settings"
@@ -236,7 +237,7 @@ def _hand_set_legacy_query_time_keys() -> dict:
     return found
 
 
-def _merge_legacy_query_time_keys(config: RAGConfig) -> RAGConfig:
+def _merge_legacy_query_time_keys(config: RAGConfig) -> dict:
     """Merge hand-set legacy query-time keys onto `config.search`, in place.
 
     Only ever called from ensure_imported_profile()'s one-time first-run
@@ -248,15 +249,18 @@ def _merge_legacy_query_time_keys(config: RAGConfig) -> RAGConfig:
         config: The RAGConfig to mutate (the first-run snapshot).
 
     Returns:
-        The same `config` instance, mutated in place, for convenient
-        chaining at the call site.
+        The dict of hand-set legacy keys that were found (possibly empty),
+        so callers that need to act on a key `SearchConfig` alone can't
+        represent (e.g. reranking presence -- see `ensure_imported_profile`)
+        don't have to re-read the legacy TOML section a second time.
     """
-    for key, value in _hand_set_legacy_query_time_keys().items():
+    legacy = _hand_set_legacy_query_time_keys()
+    for key, value in legacy.items():
         try:
             setattr(config.search, key, value)
         except Exception as e:
             logger.debug(f"Could not apply legacy query-time key {key}={value!r}: {e}")
-    return config
+    return legacy
 
 
 def ensure_imported_profile() -> Optional[str]:
@@ -271,6 +275,15 @@ def ensure_imported_profile() -> Optional[str]:
     citations, reranking) onto the snapshot, so a user's query-time tuning
     survives the import instead of being silently discarded. See
     `_merge_legacy_query_time_keys` / `_LEGACY_SEARCH_KEYS`.
+
+    Legacy reranking enablement additionally populates the new profile's
+    `reranking_config` (not just `rag_config.search.enable_reranking`):
+    `rag_factory.create_rag_service()` decides reranking enablement from
+    `profile.reranking_config is not None` -- `search.enable_reranking` is
+    UI-display-only and ignored by the live service (see
+    `settings_rag_profile_adapter.py`'s `apply_defaults_to_profile`, the
+    established convention this mirrors). Without this, a legacy user with
+    reranking enabled would silently end up with it OFF after import.
 
     Self-healing: existence of the profile is not enough to consider first-run
     import "done" -- if a previous run persisted the profile but failed before
@@ -300,11 +313,23 @@ def ensure_imported_profile() -> Optional[str]:
         # task-495: preserve a user's hand-tuned, non-index-determining
         # query-time legacy keys instead of silently discarding them --
         # never affects the fingerprint (see _LEGACY_SEARCH_KEYS docstring).
-        _merge_legacy_query_time_keys(snapshot)
+        legacy = _merge_legacy_query_time_keys(snapshot)
         profile = ProfileConfig(id=_IMPORTED_ID, name="Imported settings",
                                 description="Snapshot of your active RAG profile (plus any RAG_* env "
                                             "overrides) captured on first run; edit freely.",
                                 profile_type="custom", rag_config=snapshot)
+        if legacy.get("enable_reranking"):
+            # Presence, not the mirrored search.enable_reranking flag, is
+            # what actually turns reranking on for the live service (see the
+            # docstring above) -- fabricate reranking_config here so a
+            # legacy user's setting actually takes effect post-import.
+            profile.reranking_config = RerankingConfig()
+            reranker_model = legacy.get("reranker_model")
+            if reranker_model:
+                profile.reranking_config.model_name = reranker_model
+            reranker_top_k = legacy.get("reranker_top_k")
+            if reranker_top_k is not None:
+                profile.reranking_config.top_k_to_rerank = int(reranker_top_k)
         mgr.save_profile(profile)
         set_active_profile(_IMPORTED_ID)
         return _IMPORTED_ID
