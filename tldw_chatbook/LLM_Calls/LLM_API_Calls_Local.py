@@ -500,8 +500,18 @@ def chat_with_local_llm(
         model = None
 
     # --- Settings Load ---
-    cfg = settings.get("local-llm", {})
-    api_base_url = cfg.get("api_ip")  # api_url passed via chat_api_call or from config
+    # task-625: read from the [api_settings] table, like every sibling local
+    # provider in this module. This previously read a TOP-LEVEL "local-llm"
+    # key, which config.toml has no way to produce -- load_settings() does not
+    # preserve arbitrary top-level sections -- so the provider was unusable
+    # from its own documented configuration and always failed with the
+    # "API URL is required" error below.
+    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cfg = cli_api_settings.get("local-llm", {})
+    # `api_url` is the documented key (see the [api_settings.local-llm] example
+    # in config.py); `api_ip` is what this function historically read, kept as a
+    # fallback so an existing working setup does not break.
+    api_base_url = cfg.get("api_url") or cfg.get("api_ip")
     if not api_base_url:
         raise ChatConfigurationError(
             provider="local-llm",
