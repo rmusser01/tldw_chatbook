@@ -252,6 +252,49 @@ def test_console_budget_floor_plus_two_extra_rounds_completes():
     assert len(out.steps) == 16
 
 
+def test_console_budget_step_cap_admits_a_full_model_turn_run():
+    """The Console budget's three caps must be sized together.
+
+    ``max_model_turns`` is meant to be the PRIMARY limiter, so ``max_steps``
+    must be large enough for a full run of fence tool rounds to reach it.
+    A fence round costs 3 steps (STEP_MODEL + STEP_TOOL_CALL +
+    STEP_TOOL_RESULT) and the wrap-up reply costs 1 more, so N model turns
+    need 3*(N-1)+1 steps. Raising the turn cap without raising the step cap
+    would silently move the wall back to the step check.
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import CONSOLE_RUN_BUDGET
+
+    turns = CONSOLE_RUN_BUDGET.max_model_turns
+    assert CONSOLE_RUN_BUDGET.max_steps >= 3 * (turns - 1) + 1
+
+
+def test_console_budget_reaches_its_model_turn_cap_before_step_cap():
+    """Drive a real run to the Console turn cap: it must stop on the
+    model-turn budget, not the step budget."""
+    from tldw_chatbook.Chat.console_agent_bridge import CONSOLE_RUN_BUDGET
+
+    turns = CONSOLE_RUN_BUDGET.max_model_turns
+    # Never-ending distinct tool calls: only a budget can stop this run.
+    # Distinct args keep loop detection out of it.
+    scripted = [
+        ModelTurn(text=fence("calculator", {"expression": f"{i}+{i}"}))
+        for i in range(turns + 5)
+    ]
+    tick = iter(float(i) for i in range(1000))
+    out = run(
+        scripted,
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=CONSOLE_RUN_BUDGET,
+        ),
+        clock=lambda: next(tick),
+    )
+    assert out.steps[-1].summary == "model-turn budget exhausted"
+    assert sum(1 for s in out.steps if s.kind == STEP_MODEL) == turns
+
+
 def test_identical_consecutive_calls_trip_loop_detection():
     same = ModelTurn(text=fence("calculator", {"expression": "6*7"}))
     out = run(

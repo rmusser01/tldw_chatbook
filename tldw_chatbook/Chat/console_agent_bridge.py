@@ -86,22 +86,36 @@ _KNOWN_SUBAGENT_PREFIXES: set[str] = {SUBAGENT_SYSTEM_PROMPT}
 # task-244 adds a model-turn budget tier (agent_models.RunBudget.
 # max_model_turns) and makes IT, not the raw step count, this run's PRIMARY
 # limiter. Two additional real tool rounds beyond the 4-turn/10-step floor
-# cost 2 more turns / 6 more steps (6 turns / 16 steps total); under
-# max_model_turns=8 the floor plus those two extra rounds fits with 2 turns
-# to spare. max_steps=32 is a backstop, not a derived worst case: fence
-# turns cost at most 3 steps (one tool call per reply), but a NATIVE
-# multi-call batch (task-243) costs 1 + 2N steps per turn, so a run of
-# heavy parallel batches can legitimately hit the step backstop before the
-# 8-turn cap — that is the backstop doing its job. Either way it can no
-# longer starve a discovery run one step short of its wrap-up the way the
-# bare step default once did.
-# max_wall_seconds stays at the prior 480s (25-50s/turn x up to 8 model
-# turns at the slow local-model pace this gate exercises). The engine's own
-# RunBudget defaults (agent_models.RunBudget) are left UNCHANGED -- this
-# override applies only at the Console bridge's own config-assembly site
-# (run_reply below); other callers of RunBudget()/AgentConfig keep the bare
-# engine default.
-CONSOLE_RUN_BUDGET = RunBudget(max_steps=32, max_wall_seconds=480.0, max_model_turns=8)
+# cost 2 more turns / 6 more steps (6 turns / 16 steps total), so even the
+# old 8-turn cap cleared the floor with room to spare.
+#
+# The three numbers below are sized TOGETHER so that max_model_turns stays
+# the primary limiter -- raising it alone would just move the wall to
+# whichever of the other two binds first:
+#   * max_model_turns=20 gives ~20 tool-calling rounds per user message
+#     (raised from 8).
+#   * max_steps=64: a fence tool round costs 3 steps (STEP_MODEL +
+#     STEP_TOOL_CALL + STEP_TOOL_RESULT), so 19 rounds + 1 wrap-up
+#     STEP_MODEL = 3*19 + 1 = 58 steps. At the old 32 the step check would
+#     have fired around round 10, never letting the 20-turn cap be reached.
+#     64 clears 58 while staying a real backstop: a NATIVE multi-call batch
+#     (task-243) costs 1 + 2N steps per turn, so a run of heavy parallel
+#     batches can still legitimately hit the step backstop before the turn
+#     cap -- that is the backstop doing its job.
+#   * max_wall_seconds=1200: the prior 480s was derived as 25-50s/turn x up
+#     to 8 model turns at the slow local-model pace this gate exercises; at
+#     20 turns that same pace needs ~500-1000s, so 480 would have become
+#     the new binding limit around turn 10. 1200s covers the 20-turn worst
+#     case. This is a backstop, not a target -- fast cloud models finish 20
+#     turns in a fraction of it, and the user can Stop at any point (the
+#     tool-call wrapper polls cancellation every 0.5s, task-327).
+# The engine's own RunBudget defaults (agent_models.RunBudget) keep the
+# bare max_steps=8, so this override applies only at the Console bridge's
+# own config-assembly site (run_reply below); other callers of
+# RunBudget()/AgentConfig keep the conservative engine default.
+CONSOLE_RUN_BUDGET = RunBudget(
+    max_steps=64, max_wall_seconds=1200.0, max_model_turns=20
+)
 
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 

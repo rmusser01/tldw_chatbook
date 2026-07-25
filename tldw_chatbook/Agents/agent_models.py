@@ -122,11 +122,14 @@ class RunBudget:
 
     ``max_model_turns`` counts ``STEP_MODEL`` steps and is checked in
     ``agent_runtime.run_agent_loop`` immediately after the step-budget
-    check. At the defaults below it equals ``max_steps``, which makes it
-    provably unreachable: every model turn appends at least one step (the
-    ``STEP_MODEL`` step itself), so the step-budget check always fires
-    first (or ties) before the model-turn check can — engine-default
-    behavior is therefore byte-identical to the pre-task-244 loop.
+    check. At the defaults below it EXCEEDS ``max_steps``, which makes it
+    provably unreachable *at engine defaults*: every model turn appends at
+    least one step (the ``STEP_MODEL`` step itself), so with
+    ``max_model_turns >= max_steps`` the step-budget check always fires
+    first — engine-default behavior stays byte-identical to the
+    pre-task-244 loop. The cap only becomes the operative limiter for a
+    caller that also raises ``max_steps`` (the Console bridge does; see
+    ``console_agent_bridge.CONSOLE_RUN_BUDGET``).
     """
 
     max_steps: int = 8
@@ -135,10 +138,13 @@ class RunBudget:
     max_active_tools: int = 8
     max_subagent_result_chars: int = 4000
     # Primary provider-call limiter (task-244): counts STEP_MODEL turns.
-    # At defaults it equals max_steps, which makes it provably unreachable
-    # (every model turn appends >=1 step, so the step check fires first) —
-    # engine-default behavior is byte-identical to the pre-task-244 loop.
-    max_model_turns: int = 8
+    # Raised 8 -> 20 so an agent gets ~20 tool-calling rounds per user
+    # message rather than ~8. It stays >= max_steps at engine defaults, so
+    # it remains provably unreachable here (every model turn appends >=1
+    # step, so the step check fires first) — engine-default behavior is
+    # unchanged. It bites only where max_steps is raised to match; the
+    # Console bridge sizes both together (CONSOLE_RUN_BUDGET).
+    max_model_turns: int = 20
     # task-326: cumulative prompt+completion token spend ceiling for one run.
     # 0 = unlimited (default), keeping existing runs byte-identical. This is a
     # SPEND ceiling (the growing prompt is re-sent each call), not a window size.
