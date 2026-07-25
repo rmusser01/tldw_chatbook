@@ -14,7 +14,7 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-The skill-script confirm bridge in `console_chat_controller.py` holds a single pending slot (`_pending_skill_script_event` / `_pending_skill_script_decision` / `_pending_skill_script_request_id`). If two confirm rounds are ever armed at once, the second overwrites the first's state and both worker threads then block until their 120s timeout expires.
+The skill-script confirm bridge in `tldw_chatbook/Chat/console_chat_controller.py` holds a single pending slot (`_pending_skill_script_event` / `_pending_skill_script_decision` / `_pending_skill_script_request_id`). If two confirm rounds are ever armed at once, the second overwrites the first's state and both worker threads then block until their 120s timeout expires.
 
 This currently fails closed and is bounded, so it is not a security defect — and it is not reachable today, because the agent loop dispatches tool calls one at a time on a single worker thread. It becomes reachable the moment anything runs tool calls concurrently, or a second agent run overlaps the first.
 

@@ -13,7 +13,7 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-The skill-script sandbox budget (`ScriptRunLimits` in `Skills_Interop/skill_script_runner.py`) is a set of hardcoded defaults: 10s CPU, 512 MiB address space, 128 open files, 8 MiB max file size, 60s wall clock, 64 KiB retained output per stream. The design anticipated these being overridable from a `[skills]` config block, but only `script_scratch_root` was actually wired, and the feature documentation currently states plainly that the limits are not configurable.
+The skill-script sandbox budget (`ScriptRunLimits` in `tldw_chatbook/Skills_Interop/skill_script_runner.py`) is a set of hardcoded defaults: 10s CPU, 512 MiB address space, 128 open files, 8 MiB max file size, 60s wall clock, 64 KiB retained output per stream. The design anticipated these being overridable from a `[skills]` config block, but only `script_scratch_root` was actually wired, and the feature documentation currently states plainly that the limits are not configurable.
 
 The defaults are deliberately conservative, which means a legitimate long-running or output-heavy skill script has no way to be accommodated short of a code change. Conversely, a user who wants a tighter budget cannot impose one.
 
