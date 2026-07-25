@@ -35,6 +35,7 @@ from tldw_chatbook.Metrics.metrics_logger import (
     timeit,
 )
 from .citations import Citation, CitationType, SearchResultWithCitations
+from .config import validate_chroma_persist_directory
 
 
 # Import constants from rag_service
@@ -196,7 +197,12 @@ class ChromaVectorStore:
             collection_metadata: Extra metadata merged into the collection's
                 metadata at creation time (alongside ``hnsw:space``)
         """
-        self.persist_directory = Path(persist_directory)
+        # Validated/normalized once here so this and collection_indexes.py's
+        # _client() (the other PersistentClient construction site for the
+        # same directory) always agree on the exact path string -- see
+        # validate_chroma_persist_directory's docstring for why a divergence
+        # here would collide with chromadb's SharedSystemClient cache.
+        self.persist_directory = validate_chroma_persist_directory(persist_directory)
         self.collection_name = collection_name
         self.distance_metric = distance_metric
         self.collection_metadata = dict(collection_metadata or {})

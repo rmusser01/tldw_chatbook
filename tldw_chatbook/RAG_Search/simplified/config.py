@@ -18,6 +18,7 @@ from tldw_chatbook.config import (
     load_cli_config_and_ensure_existence,
     get_user_data_dir,
 )
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 # Server-parity hybrid fusion default (alpha weights the vector leg)
 from ..fusion import DEFAULT_HYBRID_ALPHA
@@ -167,6 +168,52 @@ def default_chroma_persist_directory() -> Path:
     if explicit:
         return Path(explicit).expanduser()
     return get_user_data_dir() / "chromadb"
+
+
+def validate_chroma_persist_directory(persist_directory: Union[str, Path]) -> Path:
+    """Validate and normalize a config-sourced Chroma ``persist_directory``.
+
+    Both ``ChromaVectorStore`` (``vector_store.py``) and
+    ``collection_indexes._client()`` construct a ``chromadb.PersistentClient``
+    against this same directory. chromadb's ``SharedSystemClient`` caches one
+    client per persist-directory *string* within a process and raises
+    ``ValueError`` if the same directory is requested again with different
+    ``Settings`` -- but even a harmless string-normalization difference
+    between the two call sites (e.g. one wrapped in ``Path(...)``, one used
+    as a raw string) would produce two different path strings for the same
+    on-disk directory, defeating that cache and constructing two independent
+    clients against it. This function is the single normalization point both
+    call sites route through so they always agree on the exact string.
+
+    ``persist_directory`` is config-sourced (TOML setting or ``RAG_PERSIST_DIR``
+    env var), not untrusted network input, and is not confined to any single
+    base directory -- a user may legitimately point it anywhere. That rules
+    out ``path_validation.validate_path``, which requires a base directory
+    and would also false-positive on the common default persist directory,
+    which lives under a dotted ancestor (``~/.local/share/tldw_cli/...``).
+    ``validate_path_simple`` fits instead: it rejects null bytes and other
+    dangerous patterns without requiring a base directory or rejecting
+    hidden/dotted path segments.
+
+    Args:
+        persist_directory: The configured Chroma persist directory. May use
+            ``~`` for the user's home directory.
+
+    Returns:
+        The validated, ``~``-expanded ``Path``.
+
+    Raises:
+        ValueError: If the path contains null bytes or another dangerous
+            pattern (see ``validate_path_simple``).
+    """
+    expanded = Path(persist_directory).expanduser()
+    try:
+        validate_path_simple(str(expanded))
+    except ValueError as e:
+        raise ValueError(
+            f"Invalid Chroma persist_directory {str(persist_directory)!r}: {e}"
+        ) from e
+    return expanded
 
 
 @dataclass
