@@ -2,10 +2,10 @@
 id: TASK-564
 title: >-
   Fix three pre-existing personas/library test failures
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-24 23:34'
-updated_date: '2026-07-24 23:34'
+updated_date: '2026-07-25 02:30'
 labels:
   - tests
   - library
