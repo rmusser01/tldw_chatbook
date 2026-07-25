@@ -2023,6 +2023,12 @@ class ChatScreen(BaseAppScreen):
         self._console_model_option_warnings: dict[tuple[str, str], str] = {}
         self._last_console_action: ConsoleActionResult | None = None
         self._pending_console_delete_message_id: str | None = None
+        #: task-501: sibling-swipe selection handoff. Held on the SCREEN (not
+        #: the transcript widget) because the transcript can be remounted by a
+        #: recompose between the swipe and the next message push — the sync
+        #: transfers this onto whichever transcript instance is current when
+        #: it pushes the post-swipe messages.
+        self._pending_console_swipe_selection: str | None = None
         self._console_transcript_sync_timer: Any | None = None
         self._console_sync_in_progress = False
         self._console_sync_requested = False
@@ -10715,6 +10721,15 @@ class ChatScreen(BaseAppScreen):
 
         messages = self._native_console_messages()
         if transcript is not None:
+            # task-501: transfer a sibling-swipe selection handoff onto the
+            # CURRENT transcript instance right before the push — the widget
+            # applies it at ingest time once the landed sibling's id is in
+            # the pushed set (see ConsoleTranscript.pending_selection_id).
+            if self._pending_console_swipe_selection is not None:
+                transcript.pending_selection_id = (
+                    self._pending_console_swipe_selection
+                )
+                self._pending_console_swipe_selection = None
             transcript.set_messages(messages)
             # SP2 /rewind: derive the "summarize up to here" banner boundary
             # from the active session's stored summary state. Render-derived
@@ -13142,10 +13157,25 @@ class ChatScreen(BaseAppScreen):
             action_id in {"variant-previous", "variant-next"}
             and result.status == "completed"
         ):
+            landed_sibling_id: str | None = None
             if message.generation_metadata:
                 self._select_console_generation_variant(message, direction=action_id)
             else:
-                self._select_console_message_variant(message_id, direction=action_id)
+                landed_sibling_id = self._select_console_message_variant(
+                    message_id, direction=action_id
+                )
+            # task-501: keep the selection (and its action row) on the swapped
+            # sibling so repeated `<`/`>` presses work without re-clicking the
+            # row. The post-swipe view reaches the transcript asynchronously
+            # (possibly coalesced), so hand the target off as a PENDING
+            # selection the transcript applies at ingest time — selecting
+            # eagerly here would either miss its membership guard or be
+            # cleared by reconciliation against the stale set. Other
+            # selection-clearing actions ("continue" etc.) are untouched.
+            if landed_sibling_id is not None:
+                # Held on the screen (remount-proof); the sync below transfers
+                # it onto whichever transcript instance receives the push.
+                self._pending_console_swipe_selection = landed_sibling_id
             await self._sync_native_console_chat_ui()
             return True
         if action_id == "keep" and result.status == "completed":
@@ -13858,8 +13888,13 @@ class ChatScreen(BaseAppScreen):
 
     def _select_console_message_variant(
         self, message_id: str, *, direction: str
-    ) -> None:
+    ) -> str | None:
         """Move the active leaf across ``message_id``'s persisted siblings.
+
+        Returns the target sibling's native id when the swipe moved (so the
+        caller can re-select that row after the UI sync — task-501: repeated
+        ``<``/``>`` presses must not require re-clicking the row), or ``None``
+        on a no-op at either end of the sibling list.
 
         ``message_id`` identifies the transcript ROW the swipe control was
         clicked on -- this may be off the CURRENT active leaf's own subtree
@@ -13881,12 +13916,13 @@ class ChatScreen(BaseAppScreen):
         elif direction == "variant-next":
             target_index = index + 1
         else:
-            return
+            return None
         if target_index < 0 or target_index >= count:
-            return
+            return None
         target_sibling_id = siblings[target_index].id
         session_id = store.session_id_for_message(message_id)
         store.set_active_leaf(session_id, store._leaf_under(target_sibling_id))
+        return target_sibling_id
 
     def _select_console_generation_variant(
         self, message: ConsoleChatMessage, *, direction: str

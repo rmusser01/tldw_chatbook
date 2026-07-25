@@ -1923,7 +1923,12 @@ class ConsoleChatController:
 
         try:
             # Build the next-send payload as submit_draft would, but do not persist.
-            provider_messages = self._provider_messages_for_session(session_id)
+            # task-548: annotate native ids so the boundary-summary compaction
+            # below can anchor by identity, exactly like the real dispatch path
+            # (the keys are stripped again before the snapshot is returned).
+            provider_messages = self._provider_messages_for_session(
+                session_id, annotate_ids=True
+            )
 
             # Append a synthetic user turn for the draft so the preview matches what would be sent.
             attachment_tuple = tuple(attachments or ())
@@ -1952,6 +1957,22 @@ class ConsoleChatController:
             # Chat dictionaries are safe to apply (string replacements only).
             provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
 
+            # task-548: mirror the dispatch choke point's boundary-summary
+            # compaction so the preview matches what is actually sent when a
+            # `/rewind` summary is active (pre-boundary turns replaced by the
+            # summary folded into the leading system row). Applied after the
+            # transforms, exactly like the send path; a payload without the
+            # boundary row (or no stored summary) is untouched. The private
+            # id-threading key is stripped immediately after, so it can never
+            # appear in the preview rows.
+            provider_messages = self._apply_context_summary_compaction(
+                session_id, provider_messages
+            )
+            provider_messages = [
+                {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
+                for row in provider_messages
+            ]
+
             # task-401: mirror the send path's response prefill exactly --
             # same resolution (one-shot wins over pinned) and same trailing
             # assistant turn -- WITHOUT consuming the one-shot (this is a
@@ -1976,7 +1997,17 @@ class ConsoleChatController:
 
             # Redact secrets before returning.
             redacted_messages = self._redact_secrets(provider_messages)
-            redacted_system = self._redact_secrets(self._leading_system_message())
+            # task-548: derive the duplicated `system` field from the payload's
+            # own leading system row when present, so a folded boundary summary
+            # shows there too (falling back to the bare session prompt when the
+            # payload carries no system row).
+            leading_system: list[dict[str, Any]] = (
+                [provider_messages[0]]
+                if provider_messages
+                and provider_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
+                else self._leading_system_message()
+            )
+            redacted_system = self._redact_secrets(leading_system)
 
             # Deep-copy messages so the snapshot is independent of the store.
             copied_messages = copy.deepcopy(current_messages)
@@ -2018,9 +2049,16 @@ class ConsoleChatController:
             )
             # Preserve whatever was assembled before the failure so the viewer
             # still sees the transcript-derived payload and effective system
-            # prompt rather than an empty placeholder.
+            # prompt rather than an empty placeholder. A failure inside the
+            # annotate->strip window leaves the private id-threading key on the
+            # assembled rows, so strip it here too (Qodo, PR #860).
             degraded_messages = self._replace_image_data_with_placeholders(
-                self._redact_secrets(provider_messages)
+                self._redact_secrets(
+                    [
+                        {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
+                        for row in provider_messages
+                    ]
+                )
             )
             degraded_system = self._redact_secrets(self._leading_system_message())
             return ConsoleContextSnapshot(
