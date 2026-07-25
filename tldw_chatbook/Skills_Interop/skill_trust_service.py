@@ -350,6 +350,72 @@ class SkillTrustService:
             last_verified_at=_now_iso(),
         )
 
+    def trusted_file_paths(self, skill_name: str) -> frozenset[str]:
+        """Return the bundle-relative paths the trust manifest vouches for.
+
+        The authoritative allow-list for "is this file trust material?".
+        `status_for_skill` compares the manifest's per-file entries against a
+        LIVE scan, and that scan deliberately prunes VCS/OS/build junk
+        (`skill_trust_scanner.SUPPORTING_JUNK_DIRS`/`_FILES`/`_SUFFIXES`) so a
+        real bundle's `node_modules/` or `*.pyc` litter cannot make the skill
+        permanently untrustable. The consequence is that a pruned path is
+        never fingerprinted, never diffed, and never shown in a trust review
+        -- so "the skill is trusted" says NOTHING about it. Callers that gate
+        an action on a specific file (notably script execution) must ask THIS
+        method, not merely `ensure_skill_trusted`.
+
+        Read-side: never raises, and fails CLOSED. An uninitialized, locked,
+        unreadable, or schema-invalid manifest, a malformed `skill_name`, or a
+        skill absent from the manifest all yield an EMPTY set -- i.e. nothing
+        is trusted -- rather than a permissive default. Mirrors
+        `status_for_skill`/`script_execution_granted`'s tolerance of malformed
+        or untrusted input names.
+
+        Note this reports what the manifest RECORDS, not whether live content
+        still matches it; pair it with `ensure_skill_trusted` (which does the
+        live-diff check) to gate an action on a specific trusted file.
+
+        Args:
+            skill_name: Skill name (normalized internally).
+
+        Returns:
+            The manifest's recorded relative paths for this skill (POSIX,
+            relative to the skill directory), or an empty frozenset whenever
+            trust cannot be established.
+        """
+        try:
+            normalized_name = self._normalize_skill_name(skill_name)
+        except ValueError:
+            return frozenset()
+        if self._keys is None or not self.trust_store.has_manifest():
+            return frozenset()
+        try:
+            manifest = self._load_valid_manifest()
+            trusted = manifest["skills"].get(normalized_name)
+            if trusted is None:
+                return frozenset()
+            return frozenset(self._trusted_file_map(trusted))
+        except Exception:  # noqa: BLE001 — unreadable trust state ⇒ nothing trusted
+            return frozenset()
+
+    def is_trusted_file(self, skill_name: str, relative_path: str) -> bool:
+        """Return whether one bundle-relative path is recorded trust material.
+
+        Convenience wrapper over `trusted_file_paths` with the same
+        never-raises, fail-closed semantics; see that method for why manifest
+        membership -- not "the scanner did not reject it" -- is the question
+        that matters.
+
+        Args:
+            skill_name: Skill name (normalized internally).
+            relative_path: POSIX path relative to the skill directory.
+
+        Returns:
+            True only when the manifest records a fingerprint for exactly this
+            path under this skill.
+        """
+        return relative_path in self.trusted_file_paths(skill_name)
+
     def ensure_skill_trusted(self, skill_name: str) -> None:
         """Raise only at use time when a local skill is trust-blocked."""
 

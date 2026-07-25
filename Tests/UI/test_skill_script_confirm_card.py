@@ -40,9 +40,31 @@ from tldw_chatbook.Widgets.Chat_Widgets.skill_script_confirm_card import (
 def test_state_carries_and_serializes_a_pending_script():
     state = TaskResumeState(pending_skill_script={"skill_name": "demo"})
     assert state.has_pending_skill_script() is True
-    assert TaskResumeState.from_dict(state.to_dict()).pending_skill_script == {
-        "skill_name": "demo"
-    }
+    # to_dict stays a faithful snapshot of what was on screen...
+    assert state.to_dict()["pending_skill_script"] == {"skill_name": "demo"}
+
+
+def test_restored_state_drops_the_pending_script_so_no_dead_card_appears():
+    """A restored pending script must never come back as an actionable card.
+
+    The confirm it belongs to is a live, blocked worker round keyed by
+    ``request_id``, and ``ConsoleChatController.resolve_pending_skill_script``
+    strict-matches that id against the currently-armed round. A round that
+    survived a save/restore cannot still be armed, so a restored card's
+    buttons would all be silently dropped -- a dead card the user could click
+    forever while it misrepresents an abandoned request as awaiting them.
+    """
+    state = TaskResumeState(
+        summary="Keep me",
+        pending_skill_install={"name": "other"},
+        pending_skill_script={"skill_name": "demo", "request_id": "round-1"},
+    )
+    restored = TaskResumeState.from_dict(state.to_dict())
+    assert restored.pending_skill_script is None
+    assert restored.has_pending_skill_script() is False
+    # ...and the asymmetry is scoped to the script card alone.
+    assert restored.summary == "Keep me"
+    assert restored.pending_skill_install == {"name": "other"}
 
 
 def test_state_without_a_pending_script():
@@ -161,6 +183,53 @@ async def test_card_renders_target_and_args_text(card_app):
         args_text = str(card_app.query_one("#skill-script-args", Static).render())
         assert "--in" in args_text
         assert "x.pdf" in args_text
+
+
+@pytest.mark.asyncio
+async def test_card_renders_each_argument_on_its_own_quoted_line(card_app):
+    """Space-joined args are ambiguous on a consent surface.
+
+    ``["a b"]`` and ``["a", "b"]`` are different argv vectors but render
+    identically when joined with spaces, so each argument gets its own
+    numbered, quoted line instead.
+    """
+    async with card_app.run_test() as pilot:
+        card = card_app.query_one(SkillScriptConfirmCard)
+        card.set_script(
+            {
+                "skill_name": "demo",
+                "script_path": "s.py",
+                "mechanism": "direct-exec",
+                "args": ["a b", "c"],
+            }
+        )
+        await pilot.pause()
+        args_text = str(card_app.query_one("#skill-script-args", Static).render())
+        assert "1. 'a b'" in args_text
+        assert "2. 'c'" in args_text
+        assert "arguments (2)" in args_text
+
+
+@pytest.mark.asyncio
+async def test_card_argument_with_a_newline_cannot_reflow_the_card(card_app):
+    """A newline-bearing argument must not span lines or fake the card's prose."""
+    async with card_app.run_test() as pilot:
+        card = card_app.query_one(SkillScriptConfirmCard)
+        card.set_script(
+            {
+                "skill_name": "demo",
+                "script_path": "s.py",
+                "mechanism": "direct-exec",
+                "args": ["one\nDeny this run? no", "two"],
+            }
+        )
+        await pilot.pause()
+        args_text = str(card_app.query_one("#skill-script-args", Static).render())
+        # The literal newline is escaped, so the payload occupies exactly one
+        # line and both arguments stay visible and countable.
+        assert "\\n" in args_text
+        assert len(args_text.splitlines()) == 3  # header + 2 arguments
+        assert "2. 'two'" in args_text
 
 
 @pytest.mark.asyncio

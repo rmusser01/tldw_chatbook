@@ -171,8 +171,14 @@ class _FakeScopeService:
     ) -> ScriptPlan:
         if self._describe_side_effect is not None:
             raise self._describe_side_effect
+        # The real LocalSkillsService normalizes the name it acts on before
+        # putting it in the plan (`_canonical_skill_name`), so this fake does
+        # too -- otherwise a test could not tell whether the confirm payload
+        # carries the agent's raw spelling or the value that will be used.
+        from tldw_chatbook.tldw_api.skills_schemas import _normalize_skill_name
+
         return ScriptPlan(
-            skill_name=skill_name,
+            skill_name=_normalize_skill_name(skill_name),
             script_path=script_path,
             mechanism="interpreter",
             interpreter_display="python3",
@@ -750,3 +756,18 @@ async def test_confirm_callback_present_when_ui_sink_wired(tmp_path):
     assert confirm is not None
     assert confirm.__self__ is controller
     assert confirm.__func__ is ConsoleChatController.request_skill_script_confirm
+
+
+def test_confirm_payload_shows_the_canonical_skill_name_not_the_raw_one(
+    bridge_closure_env,
+):
+    """The card is the consent surface, so it must name what will actually run.
+
+    The agent supplies the skill name; the service normalizes it before
+    acting. Echoing the agent's raw spelling onto the card would let a run
+    be approved under a name that differs from the skill it targets.
+    """
+    env = bridge_closure_env(granted=False)
+    result = env.closure("  DEMO-Skill ", "scripts/hello.py", [])
+    assert result.ok is True
+    assert env.confirm_calls[0]["skill_name"] == "demo-skill"

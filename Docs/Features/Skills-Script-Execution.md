@@ -12,8 +12,19 @@ Every single execution passes all three, in this order:
 1. **Runtime policy.** The `skills.run_script.launch.local` action must be allowed.
    Unknown action ids fail closed, so a missing registry row denies rather than permits.
 2. **Trust re-verification.** The skill's on-disk fingerprints are re-scanned on *every*
-   run. A skill that is revoked, mutated, or quarantined mid-conversation stops being
-   runnable immediately — nothing is cached from an earlier check.
+   run, and the requested script must itself appear in the skill's trusted manifest. A
+   skill that is revoked, mutated, or quarantined mid-conversation stops being runnable
+   immediately — nothing is cached from an earlier check.
+
+   The manifest check matters because trust review is not a whole-directory guarantee.
+   The fingerprint scan deliberately prunes VCS/OS/build junk (`node_modules/`, `.git/`,
+   `__pycache__/`, `*.tmp`, `*.pyc`, `*~`, `.DS_Store`) so a real bundle's litter cannot
+   make a skill permanently untrustable. A pruned file is therefore never fingerprinted,
+   never shown in the trust review, and never covered by any of the guarantees on this
+   page — so it is **not runnable at all**, executable bit or not. Execution asks the
+   manifest, not the path validator: explicitly trusted, or refused. A file that exists
+   but is not trust material is refused with the same "script not found" error as a
+   missing one, so the refusal cannot be used to probe what a bundle contains.
 3. **A human decision.** An in-chat card shows the skill, the script path, how it will be
    invoked, and the arguments, with **Allow once**, **Always allow this skill**, and
    **Deny**. Policy and resolution failures happen *before* the card, so you are never
@@ -21,9 +32,13 @@ Every single execution passes all three, in this order:
    path denies.
 
 "Always allow this skill" records a standing grant pinned to the skill's current
-fingerprint digest. **Any change to the skill's files invalidates that grant
-automatically** and the next run asks again. Grants are visible and revocable per skill
-in **Library ▸ Skills**, in the trust panel ("Revoke script access").
+fingerprint digest. **Any change to a fingerprinted file invalidates that grant
+automatically** — content, size, or executable bit, on any file the trust review covers —
+and the next run asks again. (Junk-pruned paths are outside that digest, which is exactly
+why they are not runnable in the first place; nothing a grant can cover falls outside it.)
+Deleting a skill also drops its grant, so reinstalling the same name never silently
+reactivates a permission you gave to a previous installation. Grants are visible and
+revocable per skill in **Library ▸ Skills**, in the trust panel ("Revoke script access").
 
 ## What can be run
 
@@ -33,13 +48,19 @@ Two mechanisms, chosen by the file itself:
   `.sh` → `sh`, `.bash` → `bash`, `.js` → `node`. Interpreters resolve only against a
   scrubbed `PATH` (`/usr/bin:/bin`), never your environment, so a skill cannot shadow
   `sh` or `node`. Shebangs are ignored for these files.
-- **Direct execution** — a file whose executable bit was captured in the trust
-  fingerprint runs directly, shebang and all. This includes compiled binaries; the
-  confirm card labels those explicitly, because a human cannot meaningfully review a
+- **Direct execution** — a file that is executable *on disk at run time* runs directly,
+  shebang and all. The mechanism is chosen from a live `stat()`, not from the manifest;
+  the manifest is what decides whether the file may run at all. The two cannot drift
+  apart in practice, because the executable bit is itself part of a file's fingerprint:
+  flipping it changes that file's manifest entry, which quarantines the skill
+  (`quarantined_modified`) and drops any standing grant, so the change has to be
+  re-reviewed before anything runs again. Direct execution includes compiled binaries;
+  the confirm card labels those explicitly, because a human cannot meaningfully review a
   binary at trust time.
 
-Anything else (a text file with no mapped extension and no exec bit) is refused.
-`SKILL.md` itself is never runnable.
+Anything else (a text file with no mapped extension and no exec bit) is refused. Files
+the trust manifest does not fingerprint are refused before this classification even
+happens. `SKILL.md` itself is never runnable.
 
 ## Sandbox
 
@@ -49,7 +70,9 @@ Scripts run with:
 - **A scrubbed environment** — only `PATH=/usr/bin:/bin`, `HOME`, `TMPDIR`, and locale
   variables. **Your API keys are never passed to a skill script.**
 - **A fresh scratch working directory** per run, deleted afterwards. It is never the
-  skill's own directory, so a script cannot tamper with its own trusted bundle.
+  skill's own directory, so *relative* writes land in scratch rather than in the bundle.
+  This is a default, not confinement: a script that writes to an absolute path can still
+  write anywhere your user account can (see Residual risks).
 - **Resource limits** applied in the child before exec: CPU seconds, address space,
   open files, and maximum file size.
 - **A wall-clock deadline**, after which the whole process *group* is killed — so a
@@ -58,8 +81,9 @@ Scripts run with:
   remainder is drained and discarded, so a runaway writer can neither exhaust memory nor
   deadlock on a full pipe.
 
-Only stdout, stderr, and the exit code come back to the agent. Files a script writes are
-discarded with the scratch directory.
+Only stdout, stderr, and the exit code come back to the agent. Files a script writes into
+its working directory are discarded with the scratch directory; files it writes elsewhere
+by absolute path are not.
 
 ### Current limits
 
@@ -102,8 +126,15 @@ The sandbox is best-effort, not a jail. Known and accepted:
 - **Network access is not blocked.** A script may open sockets. Blocking this requires
   real OS-level sandboxing.
 - **Reads outside the scratch directory are still possible.** The scrubbed environment
-  and scratch cwd stop casual access and self-tampering, but a determined script can read
-  files your user account can read.
+  and scratch cwd stop casual access, but a determined script can read files your user
+  account can read.
+- **Writes outside the scratch directory are still possible.** Only the *working
+  directory* is scratch; nothing blocks an absolute path. A script can write anywhere
+  your user account can — including back into its own bundle or another skill's. Such a
+  write does not go unnoticed for anything that matters: a new or modified fingerprinted
+  file quarantines the skill and drops any standing grant at the next check. But a write
+  to a junk-pruned path (`node_modules/`, `*.tmp`, ...) leaves the digest untouched — it
+  simply produces nothing runnable, since only manifest-fingerprinted files can execute.
 - **Memory is not capped on macOS/BSD.** `RLIMIT_AS` cannot be lowered there, so peak
   memory is bounded only by the CPU and wall-clock limits. A warning is surfaced with the
   run when this applies.

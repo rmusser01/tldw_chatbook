@@ -643,6 +643,36 @@ class LocalSkillsService:
             audit_event="trust_chatbook_mutation",
         )
 
+    def _revoke_script_grant_best_effort(self, skill_name: str) -> None:
+        """Drop any standing 'always allow scripts' grant for a deleted skill.
+
+        The grant sidecar is keyed by skill NAME and pinned to a content
+        digest, so an orphaned entry silently reactivates when a skill of the
+        same name is reinstalled with byte-identical content -- trust itself
+        gets re-reviewed on reinstall, but the script grant would not, handing
+        an unattended run to an installation the user never granted. Deleting
+        the skill is the moment to drop it.
+
+        Best-effort by design: the skill directory and index entry are already
+        gone by the time this runs, so a sidecar write failure (or a trust
+        service that cannot answer) must not turn a completed delete into a
+        raised error. `revoke_script_execution` itself raises on a malformed
+        name, hence the guard.
+
+        Args:
+            skill_name: Normalized name of the skill just deleted.
+        """
+        revoke = getattr(self.trust_service, "revoke_script_execution", None)
+        if not callable(revoke):
+            return
+        try:
+            revoke(skill_name)
+        except Exception:  # noqa: BLE001 — the delete itself already succeeded
+            logger.warning(
+                "Could not revoke the script-execution grant for deleted skill {!r}",
+                skill_name,
+            )
+
     def _verify_exact_skill_content(self, skill: dict[str, Any]) -> None:
         if self.trust_service is None:
             self._require_trusted_skill(str(skill["name"]))
@@ -941,6 +971,7 @@ class LocalSkillsService:
             records.pop(normalized_name, None)
             shutil.rmtree(self._skill_dir(normalized_name), ignore_errors=True)
             self._save_index(records)
+            self._revoke_script_grant_best_effort(normalized_name)
             return True
 
     async def import_skill(
@@ -1362,6 +1393,56 @@ class LocalSkillsService:
             return {"content": text, "truncated": True, "size": raw_size}
         return {"content": text, "truncated": False, "size": raw_size}
 
+    def _script_path_is_trust_material(self, skill_name: str, relative_path: str) -> bool:
+        """Return whether the trust manifest actually fingerprints this file.
+
+        Trust review is NOT a whole-directory guarantee: the trust scanner
+        deliberately prunes VCS/OS/build junk (``node_modules/``, ``.git/``,
+        ``__pycache__/``, ``*.tmp``/``*.pyc``/``*~``/``.DS_Store``, ...) so a
+        real bundle's litter cannot make a skill permanently untrustable. A
+        pruned file therefore has NO fingerprint: it never appears in the
+        human's review, never contributes to the digest a script grant is
+        pinned to, and changing its bytes never quarantines the skill. Gating
+        execution on "the path validator did not reject it" would let exactly
+        those invisible files run -- and keep running, unattended, after
+        arbitrary content swaps. So execution asks the manifest instead:
+        explicitly trusted, or not runnable.
+
+        Args:
+            skill_name: Canonical skill name.
+            relative_path: POSIX path of the script relative to the bundle.
+
+        Returns:
+            True only when the wired trust service records a fingerprint for
+            this exact path. Fails CLOSED: a trust service that cannot answer
+            (locked, unreadable manifest, or missing the accessor entirely)
+            yields False. The sole exception is the explicit
+            ``allow_untrusted_without_trust_service`` escape hatch, whose
+            semantics are kept identical to ``_require_trusted_skill``'s --
+            with no trust service at all there is no manifest to consult, so
+            that flag alone decides, and it is not widened here.
+        """
+        if self.trust_service is None:
+            return self.allow_untrusted_without_trust_service
+        accessor = getattr(self.trust_service, "trusted_file_paths", None)
+        if not callable(accessor):
+            # Fail closed, matching _verify_exact_skill_content's handling of
+            # a trust service missing verify_skill_content.
+            logger.warning(
+                "Skill trust service exposes no trusted_file_paths(); refusing "
+                "to run bundled scripts for skill {!r}",
+                skill_name,
+            )
+            return False
+        try:
+            return relative_path in accessor(skill_name)
+        except Exception:  # noqa: BLE001 — an unanswerable trust query is a refusal
+            logger.warning(
+                "trusted_file_paths() failed for skill {!r}; refusing script run",
+                skill_name,
+            )
+            return False
+
     def _resolve_script(self, skill_name: str, script_path: str) -> tuple[Path, Path]:
         """Resolve a bundle-relative script path, containment-first.
 
@@ -1374,12 +1455,15 @@ class LocalSkillsService:
 
         Raises:
             ValueError: Unknown skill, or a path that is unsafe, missing, a
-                symlink, or the canonical body -- all surfaced as the same
+                symlink, the canonical body, or NOT recorded in the skill's
+                trusted manifest (see ``_script_path_is_trust_material``) --
+                all surfaced as the same
                 ``local_skill_script_not_found:<script_path>`` error KIND
                 (the caller's own ``script_path`` is echoed back, but the
                 PREFIX never varies with the reason) so an escape can never
                 be distinguished from a genuinely missing file, a rejected
-                symlink, or the reserved body path by its error text alone.
+                symlink, an untrusted-but-present file, or the reserved body
+                path by its error text alone.
         """
         from ..tldw_api.skills_schemas import validate_supporting_file_path
 
@@ -1395,11 +1479,46 @@ class LocalSkillsService:
         # directory, or the target itself, planted inside the bundle would
         # otherwise let is_file()/is_symlink() act as an existence oracle
         # for paths outside skill_dir.
-        if get_safe_relative_path(path, skill_dir) is None:
+        relative = get_safe_relative_path(path, skill_dir)
+        if relative is None:
+            raise ValueError(f"{_SCRIPT_NOT_FOUND_ERROR}:{script_path}")
+        # Trusted-manifest membership BEFORE any stat, and before
+        # classification: it is a pure manifest lookup (no filesystem probe of
+        # the candidate), so an untrusted path is refused with the SAME error
+        # kind as a missing one, leaking nothing about its existence. Both
+        # describe_skill_script and run_skill_script inherit this by sharing
+        # this helper.
+        # ``relative`` is an OS Path; the manifest keys are POSIX strings.
+        if not self._script_path_is_trust_material(skill_name, relative.as_posix()):
             raise ValueError(f"{_SCRIPT_NOT_FOUND_ERROR}:{script_path}")
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"{_SCRIPT_NOT_FOUND_ERROR}:{script_path}")
         return skill_dir, path
+
+    @staticmethod
+    def _canonical_skill_name(skill_name: str) -> str:
+        """Return the normalized name this service will actually act on.
+
+        Every path this service takes runs the caller's name through
+        ``_normalize_skill_name`` (via ``_skill_dir``), so a caller-supplied
+        ``"  Demo-SKILL "`` addresses the skill ``demo-skill``. A ScriptPlan
+        is fed straight into a human consent card, which must show the value
+        that will be used rather than the agent's raw spelling of it.
+
+        Args:
+            skill_name: Caller-supplied skill name.
+
+        Returns:
+            The normalized skill name.
+
+        Raises:
+            ValueError: If ``skill_name`` cannot be normalized (callers reach
+                this only after ``_resolve_script`` already normalized the
+                same name successfully).
+        """
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
+        return _normalize_skill_name(skill_name)
 
     def _plan_for_script(self, skill_name: str, script_path: str, path: Path) -> ScriptPlan:
         """Classify how a resolved script should be invoked.
@@ -1559,7 +1678,9 @@ class LocalSkillsService:
         self._enforce("skills.run_script.launch.local")
         self._require_trusted_skill(skill_name)
         _skill_dir, path = self._resolve_script(skill_name, script_path)
-        return self._plan_for_script(skill_name, script_path, path)
+        return self._plan_for_script(
+            self._canonical_skill_name(skill_name), script_path, path
+        )
 
     async def run_skill_script(
         self,
@@ -1615,7 +1736,9 @@ class LocalSkillsService:
                 "argv element per character)"
             )
         _skill_dir, path = self._resolve_script(skill_name, script_path)
-        plan = self._plan_for_script(skill_name, script_path, path)
+        plan = self._plan_for_script(
+            self._canonical_skill_name(skill_name), script_path, path
+        )
         effective_limits = limits or ScriptRunLimits()
         target_argv = (
             [str(path), *args]

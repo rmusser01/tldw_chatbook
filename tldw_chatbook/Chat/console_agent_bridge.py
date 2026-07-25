@@ -1090,7 +1090,13 @@ class ConsoleAgentBridge:
                     try:
                         decision = request_skill_script_confirm(
                             {
-                                "skill_name": skill_name,
+                                # plan.skill_name, not the agent's raw
+                                # spelling: the service normalizes the name
+                                # it acts on, and a consent card must show
+                                # the value that will actually be used.
+                                "skill_name": str(
+                                    getattr(plan, "skill_name", None) or skill_name
+                                ),
                                 "script_path": script_path,
                                 "mechanism": plan.mechanism,
                                 "interpreter": plan.interpreter_display,

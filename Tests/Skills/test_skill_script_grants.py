@@ -112,3 +112,75 @@ def test_revoke_script_execution_raises_for_malformed_name(
     service, _name = trust_service_with_skill
     with pytest.raises(ValueError):
         service.revoke_script_execution(bad_name)
+
+
+# ---------------------------------------------------------------------------
+# Deleting a skill must revoke its standing script grant.
+#
+# The grant sidecar is keyed by skill NAME and pinned to a content digest, so
+# an orphaned entry silently reactivates when a skill of the same name is
+# reinstalled with byte-identical content: trust itself is re-reviewed on
+# reinstall, but the script grant would not be -- handing an UNATTENDED run to
+# an installation the user never granted.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_skill_revokes_the_standing_script_grant(script_service):
+    from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+
+    service, name = script_service
+    trust = service.trust_service
+
+    # `delete_skill` requires an index record, which the fixture's on-disk
+    # bundle does not have; register one through the real create path.
+    other = "grant-demo"
+    await service.create_skill(
+        name=other,
+        content="---\nname: grant-demo\ndescription: demo\n---\nbody\n",
+        supporting_files={"scripts/hello.py": "print('hello')"},
+        trust_approved=True,
+    )
+    trust.grant_script_execution(other)
+    assert trust.script_execution_granted(other) is True
+
+    assert await service.delete_skill(other) is True
+    assert trust.script_grant_digest(other) is None, (
+        "a deleted skill's grant must not survive to be reactivated by a "
+        "byte-identical reinstall of the same name"
+    )
+
+    # Reinstalling identical content re-derives the SAME digest, so a
+    # surviving sidecar entry would have silently re-granted here.
+    await service.create_skill(
+        name=other,
+        content="---\nname: grant-demo\ndescription: demo\n---\nbody\n",
+        supporting_files={"scripts/hello.py": "print('hello')"},
+        trust_approved=True,
+    )
+    assert trust.script_execution_granted(other) is False
+    assert isinstance(service, LocalSkillsService)
+
+
+@pytest.mark.asyncio
+async def test_delete_skill_survives_a_failing_grant_revoke(script_service):
+    """Revocation is best-effort: it must never fail an already-done delete."""
+    service, _name = script_service
+    other = "revoke-boom"
+    await service.create_skill(
+        name=other,
+        content="---\nname: revoke-boom\ndescription: demo\n---\nbody\n",
+        trust_approved=True,
+    )
+
+    real_trust = service.trust_service
+
+    class _ExplodingRevokeTrustService:
+        def __getattr__(self, item):
+            return getattr(real_trust, item)
+
+        def revoke_script_execution(self, skill_name):
+            raise RuntimeError("sidecar unwritable")
+
+    service.trust_service = _ExplodingRevokeTrustService()
+    assert await service.delete_skill(other) is True

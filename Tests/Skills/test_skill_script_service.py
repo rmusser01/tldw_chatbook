@@ -476,3 +476,174 @@ async def test_scope_enforce_run_script_denies_when_policy_off(script_scope_serv
     scope, _name = script_scope_service_denied
     with pytest.raises(PolicyDeniedError):
         scope.enforce_run_script()
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed manifest membership: a script is runnable ONLY if the trust
+# manifest actually fingerprints it.
+#
+# The trust scanner deliberately PRUNES VCS/OS/build junk (`node_modules/`,
+# `.git/`, `__pycache__/`, `*.tmp`/`*.pyc`/`*~`/`.DS_Store`) so a real bundle's
+# litter cannot make a skill permanently untrustable -- but
+# `validate_supporting_file_path` ACCEPTS those same paths. Before the fix the
+# run seam sat on the permissive side of that disagreement, so a file the
+# human's trust review never saw (and whose bytes could be swapped afterwards
+# without perturbing the digest a standing grant is pinned to) was fully
+# runnable inside a "trusted" skill.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pruned_node_modules_script_is_not_runnable(script_service):
+    """A file under a scanner-pruned dir is invisible to trust, so it cannot run."""
+    service, name = script_service
+    skill_dir = service._skill_dir(name)
+    (skill_dir / "node_modules").mkdir()
+    pwn = skill_dir / "node_modules" / "pwn.sh"
+    pwn.write_text("#!/bin/sh\necho PWNED\n", encoding="utf-8")
+    os.chmod(pwn, pwn.stat().st_mode | stat.S_IXUSR)
+    # Re-approving cannot help: the scanner never fingerprints this path, so
+    # the skill still reads as fully trusted with no changed files.
+    service.trust_service.trust_current_skill(name, audit_event="test_setup")
+    assert service.trust_service.status_for_skill(name).trust_status == "trusted"
+
+    with pytest.raises(ValueError) as describe_exc:
+        await service.describe_skill_script(name, "node_modules/pwn.sh")
+    with pytest.raises(ValueError) as run_exc:
+        await service.run_skill_script(name, "node_modules/pwn.sh", [])
+    # Indistinguishable from a genuinely missing file: refusing with a
+    # distinct "exists but untrusted" error would itself be an oracle.
+    for exc in (describe_exc, run_exc):
+        assert str(exc.value) == "local_skill_script_not_found:node_modules/pwn.sh"
+
+
+@pytest.mark.asyncio
+async def test_pruned_tmp_suffix_exec_script_is_not_runnable(script_service):
+    """`*.tmp` is pruned by suffix; an exec bit must not make it runnable."""
+    service, name = script_service
+    backup = service._skill_dir(name) / "backup.sh.tmp"
+    backup.write_text("#!/bin/sh\necho TMP_PWNED\n", encoding="utf-8")
+    os.chmod(backup, backup.stat().st_mode | stat.S_IXUSR)
+    service.trust_service.trust_current_skill(name, audit_event="test_setup")
+
+    with pytest.raises(ValueError) as excinfo:
+        await service.run_skill_script(name, "backup.sh.tmp", [])
+    assert str(excinfo.value) == "local_skill_script_not_found:backup.sh.tmp"
+
+
+@pytest.mark.asyncio
+async def test_a_pruned_path_is_absent_from_the_human_trust_review(script_service):
+    """Pins WHY the gate must be manifest membership, not path validation."""
+    service, name = script_service
+    skill_dir = service._skill_dir(name)
+    (skill_dir / "node_modules").mkdir()
+    (skill_dir / "node_modules" / "pwn.sh").write_text("echo hi\n", encoding="utf-8")
+    service.trust_service.trust_current_skill(name, audit_event="test_setup")
+
+    review = service.trust_service.capture_review(name)
+    reviewed = {entry["relative_path"] for entry in review["current_fingerprints"]}
+    assert "node_modules/pwn.sh" not in reviewed
+    assert "scripts/hello.py" in reviewed
+    trusted = service.trust_service.trusted_file_paths(name)
+    assert "node_modules/pwn.sh" not in trusted
+    assert "scripts/hello.py" in trusted
+
+
+@pytest.mark.asyncio
+async def test_a_normally_fingerprinted_script_still_runs(script_service):
+    """The fail-closed gate must not break the ordinary case."""
+    service, name = script_service
+    plan = await service.describe_skill_script(name, "scripts/hello.py")
+    assert plan.mechanism == "interpreter"
+    result = await service.run_skill_script(name, "scripts/hello.py", [])
+    assert result.exit_code == 0
+    assert "hello" in result.stdout
+
+
+@pytest.mark.asyncio
+async def test_a_trust_service_without_the_accessor_fails_closed(script_service):
+    """A trust service that cannot answer "is this trusted?" refuses the run.
+
+    Mirrors `_verify_exact_skill_content`'s handling of a trust service
+    missing `verify_skill_content`: an unanswerable trust query is a refusal,
+    never a permissive default.
+    """
+    service, name = script_service
+    real_trust = service.trust_service
+
+    class _NoAccessorTrustService:
+        """Passes `ensure_skill_trusted` but exposes no `trusted_file_paths`."""
+
+        def ensure_skill_trusted(self, skill_name):
+            real_trust.ensure_skill_trusted(skill_name)
+
+    service.trust_service = _NoAccessorTrustService()
+    with pytest.raises(ValueError) as excinfo:
+        await service.run_skill_script(name, "scripts/hello.py", [])
+    assert str(excinfo.value) == "local_skill_script_not_found:scripts/hello.py"
+
+
+@pytest.mark.asyncio
+async def test_trusted_file_paths_fails_closed_when_trust_is_locked(script_service):
+    """A locked trust service vouches for nothing (rather than everything)."""
+    service, name = script_service
+    trust = service.trust_service
+    assert "scripts/hello.py" in trust.trusted_file_paths(name)
+    trust._keys = None
+    assert trust.trusted_file_paths(name) == frozenset()
+    assert trust.is_trusted_file(name, "scripts/hello.py") is False
+
+
+def test_trusted_file_paths_fails_closed_on_a_malformed_name(script_service):
+    service, _name = script_service
+    assert service.trust_service.trusted_file_paths("Not A Skill!") == frozenset()
+
+
+def test_trusted_file_paths_fails_closed_for_an_unknown_skill(script_service):
+    service, _name = script_service
+    assert service.trust_service.trusted_file_paths("never-installed") == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_no_trust_service_escape_hatch_keeps_its_existing_semantics(tmp_path):
+    """`allow_untrusted_without_trust_service` is unchanged, not widened.
+
+    With NO trust service there is no manifest to consult, so the manifest
+    membership gate defers to exactly the flag `_require_trusted_skill`
+    already keys off: True runs, False refuses (and refuses at the trust gate,
+    before path resolution).
+    """
+    from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+
+    skill_dir = tmp_path / "skills" / "demo-skill" / "scripts"
+    skill_dir.mkdir(parents=True)
+    (skill_dir.parent / "SKILL.md").write_text(
+        "---\nname: demo-skill\ndescription: demo\n---\nbody\n", encoding="utf-8"
+    )
+    (skill_dir / "hello.py").write_text("print('hello')", encoding="utf-8")
+
+    permissive = LocalSkillsService(
+        store_dir=tmp_path,
+        trust_service=None,
+        allow_untrusted_without_trust_service=True,
+    )
+    result = await permissive.run_skill_script("demo-skill", "scripts/hello.py", [])
+    assert "hello" in result.stdout
+
+    strict = LocalSkillsService(
+        store_dir=tmp_path,
+        trust_service=None,
+        allow_untrusted_without_trust_service=False,
+    )
+    with pytest.raises(SkillTrustBlockedError):
+        await strict.run_skill_script("demo-skill", "scripts/hello.py", [])
+
+
+@pytest.mark.asyncio
+async def test_plan_reports_the_canonical_skill_name_not_the_callers_spelling(
+    script_service,
+):
+    """The plan feeds a human consent card, so it must name what will run."""
+    service, name = script_service
+    plan = await service.describe_skill_script("  DEMO-Skill ", "scripts/hello.py")
+    assert plan.skill_name == name == "demo-skill"

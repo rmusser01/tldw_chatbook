@@ -112,10 +112,37 @@ class SkillScriptConfirmCard(Container):
             f"{skill_name} — {script_path} ({how})"
         )
         args = payload.get("args") or []
-        self.query_one("#skill-script-args", Static).update(
-            ("arguments: " + " ".join(str(a) for a in args)) if args else "no arguments"
-        )
+        self.query_one("#skill-script-args", Static).update(self._args_text(args))
         self.display = True
+
+    @staticmethod
+    def _args_text(args: Any) -> str:
+        """Render arguments so each one is unambiguously delimited.
+
+        Space-joining is not safe for a consent surface: the args are
+        agent-supplied and are passed to the subprocess as SEPARATE argv
+        entries (never shell-parsed), so a joined line makes ``["a b"]``
+        indistinguishable from ``["a", "b"]``, and an argument containing a
+        newline reflows the card -- letting later arguments be pushed out of
+        view, or made to look like the card's own prose. One quoted argument
+        per line, numbered, keeps the rendered text a faithful picture of the
+        argv the user is approving.
+
+        Args:
+            args: The payload's ``args`` sequence (may be empty/None).
+
+        Returns:
+            The text for the args Static.
+        """
+        items = list(args or [])
+        if not items:
+            return "no arguments"
+        lines = [f"arguments ({len(items)}):"]
+        for index, item in enumerate(items, start=1):
+            # repr() renders embedded newlines/tabs/quotes as escapes, so a
+            # crafted argument can never span lines or fake a delimiter.
+            lines.append(f"  {index}. {str(item)!r}")
+        return "\n".join(lines)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Translate a button press into a `ScriptDecided` message.
