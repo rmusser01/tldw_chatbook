@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-24 01:29'
+updated_date: '2026-07-25 03:01'
 labels:
   - tech-debt
   - dead-code
@@ -22,7 +23,7 @@ display_conversation_in_chat_tab_ui() (Event_Handlers/Chat_Events/chat_events.py
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Loading a saved conversation in the live Chat tab (ChatWindowEnhanced) populates the title, keywords, UUID display, and full message log without hitting the #chat-right-sidebar QueryError path
+- [ ] #1 Loading a saved conversation through display_conversation_in_chat_tab_ui populates the live sidebar title (#chat-chat-title), the conversation id display (#chat-chat-id), and the full message log without hitting the #chat-right-sidebar QueryError path (keywords dropped: no live keywords field exists -- user-approved amendment 2026-07-24)
 - [ ] #2 The character-detail-edit fields this function tries to populate (chat-character-name-edit etc.) are either restored somewhere reachable in the live UI, or the dead write attempt is removed without regressing conversation loading
 - [ ] #3 A regression test loads a conversation through display_conversation_in_chat_tab_ui (or its tab-aware wrapper) against a live-shaped widget tree (no #chat-right-sidebar) and asserts the message log and title actually populate
 <!-- AC:END -->
