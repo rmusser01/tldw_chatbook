@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Tasks: TASK-402, TASK-551
+Related Tasks: TASK-561, TASK-560
 Supersedes: N/A
 
 ## Decision
@@ -54,7 +54,7 @@ Slices 1 and 2 are implemented. The sealed registry registers the exact native
 provider `audio_cpp` first, with no provider alias and exclusive lazy
 reconfiguration, followed by the six unchanged legacy bridge entries.
 
-TASK-551 implements external connection mode only. It reads
+TASK-560 implements external connection mode only. It reads
 `[app_tts.audio_cpp]` with `mode = "external"`, a canonical HTTP(S) origin,
 five-second connect and 600-second overall synthesis timeouts, and positive
 bounds for input characters, response bytes, metadata bytes, catalog models,
@@ -78,7 +78,7 @@ They require `GET /health`, `GET /v1/models`, and complete-WAV
 
 Slice 3 remains the catalog-driven external STTS Playground vertical. Slices
 4–5 remain user-provided prebuilt binary plus user-provided `server.json`
-launch/supervision and managed UI. No process or UI work is part of TASK-551.
+launch/supervision and managed UI. No process or UI work is part of TASK-560.
 
 ## Context
 
@@ -239,7 +239,7 @@ policy, and a cross-module interface.
 ## Links
 
 - [Design spec](../../Docs/superpowers/specs/2026-07-23-audio-cpp-tts-adapter-registry-design.md)
-- [TASK-551](<../tasks/task-551 - Add-external-audio.cpp-native-TTS-adapter.md>)
+- [TASK-560](<../tasks/task-560 - Add-external-audio.cpp-native-TTS-adapter.md>)
 - [Pinned audio.cpp server guide](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/README.md)
 - [Pinned audio.cpp server runtime](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/runtime.cpp)
 - [Pinned audio.cpp busy guard](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/busy_guard.h)

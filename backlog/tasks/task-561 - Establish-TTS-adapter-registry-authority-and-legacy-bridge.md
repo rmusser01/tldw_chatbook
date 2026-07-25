@@ -1,11 +1,11 @@
 ---
-id: TASK-402
+id: TASK-561
 title: Establish TTS adapter registry authority and legacy bridge
 status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 00:42'
-updated_date: '2026-07-24 19:40'
+updated_date: '2026-07-25 01:27'
 labels:
   - tts
   - architecture
@@ -63,6 +63,11 @@ Reason: ADR-023 governs the service lifecycle, provider-scoped reconfiguration, 
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented the app-owned sealed TTSAdapterRegistry and application-bound TTSService with exact provider IDs, cancellation-safe leases, targeted reconfiguration, and a single shutdown deadline. Preserved all six existing providers behind isolated legacy adapters with enumerated routing, per-backend locking, bounded cleanup, and value-free diagnostics. Reconciled the rebased PR review fixes by restoring canonical Textual Select values, complete settings-key persistence for OpenAI, Chatterbox, Higgs, and AllTalk, explicit OpenAI endpoint reset and organization clearing, validated endpoint/header configuration, serialized concurrent saves, and service retrieval without ignored compatibility configuration. Kept playground generation in its already-retained same-loop event task and documented why a nested worker would break ownership. Fresh post-format verification: 301 passed and 14 optional skips across TTS, STTS UI, audio-service, and media-reading regressions; Ruff check/format, compileall, scoped mypy, boundary isolation, ADR/scope audit, and git diff hygiene passed. ADR-023 remains governing. Native audio.cpp transport and process supervision remain intentionally deferred to later slices.
+
+After merge, this task was renumbered from TASK-402 to TASK-561 because the
+latest `dev` already contained an unrelated TASK-402. The filename,
+frontmatter, ADR, design, Slice 1 plan, and Slice 2 dependency were updated
+without changing the shipped implementation.
 <!-- SECTION:NOTES:END -->
 
 ## Definition of Done
