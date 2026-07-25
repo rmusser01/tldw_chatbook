@@ -145,9 +145,8 @@ def _scan_file(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
             diagnostics.append(_call_entry(path, source, node))
         parts = _attribute_parts(node.func)
         call_name = parts[-1] if parts else ""
-        is_loguru_add = (
-            call_name == "add"
-            and any(part in symbols for part in parts[:-1])
+        is_loguru_add = call_name == "add" and any(
+            part in symbols for part in parts[:-1]
         )
         is_console_loguru_add = (
             is_loguru_add
