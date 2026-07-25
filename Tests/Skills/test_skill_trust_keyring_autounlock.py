@@ -115,8 +115,12 @@ def test_a_raising_key_cache_never_escapes(cached):
     assert fresh.trust_posture() == "locked"
 
 
-def test_cached_unlock_is_attempted_once_not_per_query(cached):
-    """Keychain access is not free; posture is queried on every render."""
+def test_successful_unlock_reads_the_keychain_only_once(cached):
+    """The happy path must not re-read the keychain on every render.
+
+    No latch is needed for this: a successful load sets the in-memory keys,
+    which short-circuits the attempt thereafter.
+    """
     tmp_path, skills_dir, key_cache = cached
 
     class Counting:
@@ -134,3 +138,35 @@ def test_cached_unlock_is_attempted_once_not_per_query(cached):
         fresh.trust_posture()
         fresh.status_for_skill("demo")
     assert counting.calls == 1
+
+
+def test_a_transient_failure_does_not_suppress_a_later_unlock(cached):
+    """Regression: a one-shot latch made a transient keyring error permanent.
+
+    `trust_posture()` documents an unavailable keyring as recoverable by Retry,
+    so a failed attempt must never bar the next one.
+    """
+    tmp_path, skills_dir, key_cache = cached
+
+    class FlakyOnce:
+        def __init__(self, inner):
+            self.inner = inner
+            self.calls = 0
+
+        def load_keys(self, *, expected_salt):
+            self.calls += 1
+            if self.calls == 1:
+                raise OSError("keychain temporarily unavailable")
+            return self.inner.load_keys(expected_salt=expected_salt)
+
+    flaky = FlakyOnce(key_cache)
+    fresh = _fresh_service(tmp_path, skills_dir, flaky)
+    assert fresh.trust_posture() == "locked"
+    assert fresh.trust_posture() == "ready", "a retry must be able to succeed"
+
+
+def test_settings_posture_also_auto_unlocks(cached):
+    """overall_status() is a lockedness decision point too (Settings surface)."""
+    tmp_path, skills_dir, key_cache = cached
+    fresh = _fresh_service(tmp_path, skills_dir, key_cache)
+    assert fresh.overall_status() == "trusted"

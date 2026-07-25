@@ -73,11 +73,6 @@ class SkillTrustService:
         self._keys: SkillTrustKeys | None = None
         self._salt: bytes | None = None
         self._reviews: dict[str, dict[str, Any]] = {}
-        # task-624: one-shot latch for the cached-key unlock. Keychain reads
-        # are not free and posture is queried on every Library render, so the
-        # attempt is made at most once per state generation rather than per
-        # query. Cleared whenever the trust state itself changes.
-        self._keyring_unlock_attempted = False
 
     def unlock_with_passphrase(
         self, passphrase: str, *, salt: bytes | None = None
@@ -112,12 +107,20 @@ class SkillTrustService:
 
         Deliberately silent and non-raising: a missing, stale, or broken cache
         simply leaves the session locked, so the existing Unlock path stays the
-        fallback. Attempted at most once per trust-state generation, because
-        keychain reads are not free and posture is queried on every render.
+        fallback.
+
+        NOT latched on failure. An earlier revision cached the negative result
+        to spare the keychain on every render, but a *transient* backend error
+        would then suppress every later attempt for the life of the process --
+        directly contradicting ``trust_posture()``'s contract that an
+        unavailable keyring is recoverable by Retry. A successful load needs no
+        latch anyway: it sets ``self._keys``, which short-circuits this method
+        thereafter, so the happy path still reads the keychain exactly once.
         """
-        if self._keys is not None or self._keyring_unlock_attempted:
+        if self._keys is not None or self.key_cache is None:
+            # Already unlocked, or there is no cache to consult -- the only
+            # definitively hopeless case, and it costs nothing to re-check.
             return
-        self._keyring_unlock_attempted = True
         try:
             self.unlock_from_keyring_convenience()
         except Exception:  # noqa: BLE001 — an unusable cache is just "locked"
@@ -145,6 +148,7 @@ class SkillTrustService:
     def overall_status(self) -> str:
         """Return a global Settings-friendly trust posture from live files."""
 
+        self._try_cached_unlock()
         if not self.trust_store.has_manifest():
             missing_status = self._manifest_missing_status("<all>")
             return missing_status.trust_status
@@ -187,7 +191,6 @@ class SkillTrustService:
         self._keys = None
         self._salt = None
         self.keyring_convenience_enabled = False
-        self._keyring_unlock_attempted = False
 
     def _safe_load_marker(self) -> tuple[dict[str, Any] | None, bool]:
         """Return (marker, available). available=False iff the marker store raised."""
