@@ -1019,6 +1019,7 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("skills.execute", actions=(LAUNCH,)),
             _resource("skills.read_file", actions=(LAUNCH,)),
             _resource("skills.install_remote", actions=(LAUNCH,)),
+            _resource("skills.run_script", actions=(LAUNCH,)),
             _resource("skills.seed", actions=(LAUNCH,)),
             _resource(
                 "skills.trust",

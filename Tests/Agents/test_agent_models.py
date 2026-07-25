@@ -10,6 +10,7 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     RUN_ERROR,
     RUN_RUNNING,
+    RUN_SKILL_SCRIPT_TOOL_NAME,
     RUN_STUCK,
     RUN_SUPERSEDED,
     RUNTIME_TOOL_NAMES,
@@ -55,6 +56,7 @@ def test_runtime_tool_names():
         "load_tools",
         "skill_file",
         INSTALL_SKILL_TOOL_NAME,
+        RUN_SKILL_SCRIPT_TOOL_NAME,
     }
     assert DIRECT_DISCLOSE_THRESHOLD == 8 and LOOP_DETECTION_N == 3
 

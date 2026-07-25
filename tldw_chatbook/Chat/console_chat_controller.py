@@ -10,6 +10,7 @@ import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Protocol
+from uuid import uuid4
 
 from tldw_chatbook.Chat.attachment_core import (
     image_url_part,
@@ -77,6 +78,10 @@ _MCP_APPROVAL_POLL_SECONDS = 1.0
 #: injected -- mirrors `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`'s role for
 #: `request_skill_install_confirm`'s own wait loop.
 _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS = 120.0
+#: Fallback used when no `skill_script_confirm_timeout_seconds` seam is
+#: injected -- mirrors `_DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS`'s
+#: role for `request_skill_script_confirm`'s own wait loop.
+_DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 120.0
 
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
@@ -426,6 +431,25 @@ class ConsoleChatController:
         #: The active confirm round's release Event + shared decision box.
         self._pending_skill_install_event: threading.Event | None = None
         self._pending_skill_install_decision: dict[str, bool] | None = None
+        #: UI-thread callback that pushes/clears the pending skill-SCRIPT
+        #: confirm payload into the owning screen's task-resume state.
+        #: Invoked through self.app.call_from_thread from
+        #: request_skill_script_confirm. Mirrors set_pending_skill_install,
+        #: but the round-trip decision carries a "remember" flag too.
+        self.set_pending_skill_script: Callable[[dict | None], None] | None = None
+        #: Optional test override for the confirm timeout, mirroring
+        #: `skill_install_confirm_timeout_seconds`.
+        self.skill_script_confirm_timeout_seconds: Callable[[], float] | None = None
+        #: The active script-confirm round's release Event + shared
+        #: decision box ({"allow": bool, "remember": bool}).
+        self._pending_skill_script_event: threading.Event | None = None
+        self._pending_skill_script_decision: dict[str, bool] | None = None
+        #: The currently-armed round's unique id (see `request_skill_script_
+        #: confirm` / `resolve_pending_skill_script`). A resolve carrying any
+        #: other id (including None) is dropped -- this is what stops a
+        #: late button press from a torn-down round 1 from authorizing
+        #: round 2's script. `None` whenever no round is armed.
+        self._pending_skill_script_request_id: str | None = None
 
     async def submit_draft(self, draft: str) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution."""
@@ -722,6 +746,7 @@ class ConsoleChatController:
         # whenever no round is in flight.
         self._deny_pending_approval_on_context_change()
         self._deny_pending_skill_install_on_context_change()
+        self._deny_pending_skill_script_on_context_change()
         return session
 
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
@@ -1187,6 +1212,129 @@ class ConsoleChatController:
     def _deny_pending_skill_install_on_context_change(self) -> None:
         """Force-deny a pending confirm (Event set, decision left False)."""
         event = self._pending_skill_install_event
+        if event is not None:
+            event.set()
+
+    # -- Skill-script confirm bridge -----------------------------------------
+
+    def request_skill_script_confirm(self, payload: dict[str, Any]) -> dict[str, bool]:
+        """WORKER THREAD: ask the user to confirm running a skill's script.
+
+        Mirrors request_skill_install_confirm, but carries a two-part decision:
+        allow this run, and whether to remember the choice for this skill.
+
+        Each call arms a fresh round under a newly-generated request id
+        (stashed in ``self._pending_skill_script_request_id`` and also
+        embedded in the payload handed to the UI as ``"request_id"``) so
+        that ``resolve_pending_skill_script`` can reject a decision left
+        over from a prior, already-torn-down round -- see that method's
+        docstring for why this matters.
+
+        Args:
+            payload: Confirm details to render ({"skill_name", "script_path",
+                "mechanism", "args", ...}); "timeout_seconds" and
+                "request_id" keys are added before marshaling to the UI.
+
+        Returns:
+            ``{"allow": bool, "remember": bool}``. Every non-Allow path (deny,
+            cancel, stop, timeout, context change, no wired UI) returns
+            ``allow=False``.
+        """
+        if self.app is None or self.set_pending_skill_script is None:
+            return {"allow": False, "remember": False}
+
+        event = threading.Event()
+        decision: dict[str, bool] = {}
+        request_id = str(uuid4())
+        self._pending_skill_script_event = event
+        self._pending_skill_script_decision = decision
+        self._pending_skill_script_request_id = request_id
+
+        timeout_seconds = (
+            self.skill_script_confirm_timeout_seconds()
+            if self.skill_script_confirm_timeout_seconds is not None
+            else _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS
+        )
+        deadline = time.monotonic() + timeout_seconds
+        card_payload = dict(payload)
+        card_payload["timeout_seconds"] = timeout_seconds
+        card_payload["request_id"] = request_id
+        try:
+            self._marshal_pending_skill_script(card_payload)
+            while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+                if self._stop_requested or (
+                    self._active_cancel_event is not None
+                    and self._active_cancel_event.is_set()
+                ):
+                    break
+                if time.monotonic() >= deadline:
+                    break
+            return {
+                "allow": bool(decision.get("allow", False)),
+                "remember": bool(decision.get("remember", False)),
+            }
+        finally:
+            self._pending_skill_script_event = None
+            self._pending_skill_script_decision = None
+            self._pending_skill_script_request_id = None
+            try:
+                self._marshal_pending_skill_script(None)
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).debug(
+                    "Failed to clear skill-script confirm during teardown"
+                )
+
+    def _marshal_pending_skill_script(self, payload: dict[str, Any] | None) -> None:
+        """WORKER THREAD: hand a skill-script confirm payload to the UI thread.
+
+        Args:
+            payload: The pending confirm dict to show, or None to hide it.
+        """
+        if self.app is not None and self.set_pending_skill_script is not None:
+            self.app.call_from_thread(self.set_pending_skill_script, payload)
+
+    def resolve_pending_skill_script(
+        self, allow: bool, remember: bool, request_id: str | None = None
+    ) -> None:
+        """UI THREAD: apply the user's decision, releasing the worker thread.
+
+        ``request_id`` must be the exact ``"request_id"`` value the pending
+        confirm's payload carried (``request_skill_script_confirm`` embeds
+        a fresh one per round, and the confirm card built in a later task
+        MUST echo it back here unchanged). This is a strict match: a
+        resolve carrying no id, or an id from any round other than the one
+        currently armed, is silently dropped rather than resolved.
+
+        This guards against a real arbitrary-code-execution hazard: if
+        round 1 ends (deadline, cancel, stop, conversation switch) and the
+        agent immediately issues a second ``run_skill_script`` call
+        arming round 2, a ``Button.Pressed`` queued for round 1 just
+        before its teardown could otherwise be handled after round 2 is
+        armed -- resolving round 2 (a script the user never saw) with
+        round 1's stale click. Widget messages and ``call_from_thread``
+        calls are separate queues, so ordering across a round boundary is
+        not guaranteed.
+
+        Args:
+            allow: True to run the script this once.
+            remember: True to also grant this skill standing permission.
+            request_id: The armed round's id, as echoed back by the UI.
+                ``None`` (the default) never matches an armed round, so an
+                un-migrated or malformed caller fails closed by omission.
+        """
+        decision = self._pending_skill_script_decision
+        event = self._pending_skill_script_event
+        if decision is None or event is None:
+            return
+        if request_id is None or request_id != self._pending_skill_script_request_id:
+            return
+        decision["allow"] = bool(allow)
+        decision["remember"] = bool(remember)
+        event.set()
+
+    def _deny_pending_skill_script_on_context_change(self) -> None:
+        """Force-deny a pending script confirm (Event set, decision left False)."""
+        event = self._pending_skill_script_event
         if event is not None:
             event.set()
 
@@ -3319,6 +3467,19 @@ class ConsoleChatController:
                 turn_skill_bindings=skill_bindings,
                 turn_bundle_block=skill_bundle_block,
                 request_skill_install_confirm=self.request_skill_install_confirm,
+                # Advertised must equal usable (the #847 lesson, restated in
+                # the run_skill_script docstring below): only pass the
+                # confirm callback -- and therefore only let the bridge
+                # build/advertise the run_skill_script tool at all -- once a
+                # UI sink is actually wired. Until then
+                # `request_skill_script_confirm`'s own no-UI guard would
+                # auto-deny every call, offering the model a tool it can
+                # never successfully use.
+                request_skill_script_confirm=(
+                    self.request_skill_script_confirm
+                    if self.set_pending_skill_script is not None
+                    else None
+                ),
             )
         except asyncio.CancelledError:
             if self._stop_requested:

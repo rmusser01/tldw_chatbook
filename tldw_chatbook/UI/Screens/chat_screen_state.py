@@ -209,6 +209,7 @@ class TaskResumeState:
     last_step: str = ""
     pending_approval: Optional[Dict[str, Any]] = None
     pending_skill_install: Optional[Dict[str, Any]] = None
+    pending_skill_script: Optional[Dict[str, Any]] = None
     diff_summary: str = ""
     next_action: str = ""
 
@@ -235,6 +236,14 @@ class TaskResumeState:
         """
         return bool(self.pending_skill_install)
 
+    def has_pending_skill_script(self) -> bool:
+        """Return True when a skill-script confirm should be shown.
+
+        Returns:
+            True when a skill-script confirm should be shown.
+        """
+        return bool(self.pending_skill_script)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
@@ -242,13 +251,34 @@ class TaskResumeState:
             "last_step": self.last_step,
             "pending_approval": self.pending_approval,
             "pending_skill_install": self.pending_skill_install,
+            "pending_skill_script": self.pending_skill_script,
             "diff_summary": self.diff_summary,
             "next_action": self.next_action,
         }
 
     @classmethod
     def from_dict(cls, data: Optional[Dict[str, Any]]) -> "TaskResumeState":
-        """Create from dictionary."""
+        """Create from dictionary, deliberately DROPPING a pending script.
+
+        ``pending_skill_script`` is round-trip-asymmetric on purpose.
+        ``to_dict`` still records it so a saved snapshot stays a faithful
+        picture of what was on screen, but restoring it as an ACTIONABLE card
+        would be a lie: the confirm it belongs to is a live, blocked worker
+        round keyed by ``request_id``, and
+        ``ConsoleChatController.resolve_pending_skill_script`` strict-matches
+        that id against the currently-armed round. A round that survived a
+        save/restore is by definition no longer armed, so every button on a
+        restored card would be silently dropped -- a dead card the user can
+        click forever with no effect, and one that misrepresents an
+        already-abandoned request as still awaiting them. Dropping it means
+        the card simply does not reappear.
+
+        Args:
+            data: Previously serialized state, or None.
+
+        Returns:
+            The restored state, with ``pending_skill_script`` always None.
+        """
         if not data:
             return cls()
 
@@ -257,6 +287,7 @@ class TaskResumeState:
             last_step=data.get("last_step", ""),
             pending_approval=data.get("pending_approval"),
             pending_skill_install=data.get("pending_skill_install"),
+            pending_skill_script=None,
             diff_summary=data.get("diff_summary", ""),
             next_action=data.get("next_action", ""),
         )

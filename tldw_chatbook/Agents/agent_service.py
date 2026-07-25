@@ -48,6 +48,7 @@ from .tool_catalog import (
     FIND_TOOLS_SCHEMA,
     INSTALL_SKILL_TOOL_SCHEMA,
     LOAD_TOOLS_SCHEMA,
+    RUN_SKILL_SCRIPT_TOOL_SCHEMA,
     SKILL_FILE_TOOL_SCHEMA,
     SPAWN_TOOL_SCHEMA,
     ToolCatalogRegistry,
@@ -244,6 +245,8 @@ class AgentService:
         review_state_scope: Callable[[], "contextlib.AbstractContextManager"]
         | None = None,
         install_skill_tool: Callable[[str], ToolResult] | None = None,
+        run_skill_script_tool: Callable[[str, str, list[str]], ToolResult]
+        | None = None,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -288,6 +291,11 @@ class AgentService:
         # (agent_kind == primary) in _run_one; a spawned subagent never gets
         # it. `None` (the default) means the run is not wired for install.
         self._install_skill_tool = install_skill_tool
+        # Agent-callable skill script execution (6th runtime tool). All-agents
+        # scope (spec §4.3): NO agent_kind gate, unlike install_skill above --
+        # see the schema-pin comment in _run_one for the rationale. `None`
+        # (the default) means the run is not wired for it.
+        self._run_skill_script_tool = run_skill_script_tool
 
     # -- internals -------------------------------------------------------
 
@@ -451,6 +459,13 @@ class AgentService:
             runtime_schemas.append(SKILL_FILE_TOOL_SCHEMA)
         if agent_kind == AGENT_KIND_PRIMARY and self._install_skill_tool is not None:
             runtime_schemas.append(INSTALL_SKILL_TOOL_SCHEMA)
+        # All-agents scope (spec §4.3): NO agent_kind gate. _run_one recurses
+        # on this same service instance, so this intentionally reaches every
+        # depth -- primary, skill forks, and spawned subagents alike. The gate
+        # for each run is policy + trust + the confirm card / per-skill grant,
+        # applied in the bridge closure and the service, not here.
+        if self._run_skill_script_tool is not None:
+            runtime_schemas.append(RUN_SKILL_SCRIPT_TOOL_SCHEMA)
 
         def find_tools(query: str):
             # Q7(b): never surface a disallowed tool through find_tools,
@@ -721,6 +736,7 @@ class AgentService:
                 and self._install_skill_tool is not None
                 else None
             ),
+            run_skill_script=self._run_skill_script_tool,
         )
         try:
             outcome = run_agent_loop(config, messages, active, deps)
