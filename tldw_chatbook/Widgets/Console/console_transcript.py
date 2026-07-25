@@ -934,7 +934,9 @@ class ConsoleTranscript(VerticalScroll):
     def _paint_debug_dump(self, label: str) -> None:
         """task-623 live probe: append DOM truth about action rows to the file
         named by ``TLDW_TRANSCRIPT_PAINT_LOG``. No-op unless the env var is
-        set; never raises."""
+        set; never raises. The DOM snapshot is taken synchronously (that
+        timing is the point) but the file append is deferred off the caller's
+        critical section via ``call_later``."""
         import os
         path = os.environ.get("TLDW_TRANSCRIPT_PAINT_LOG")
         if not path:
@@ -952,10 +954,23 @@ class ConsoleTranscript(VerticalScroll):
                     f" parent_is_transcript={r.parent is self}"
                     f" display={r.display} region={r.region}"
                 )
-            with open(path, "a") as f:
-                f.write("\n".join(lines) + "\n")
+            self.call_later(self._append_paint_log, path, "\n".join(lines) + "\n")
         except Exception:
-            pass
+            logger.opt(exception=True).debug("Paint-debug DOM snapshot failed.")
+
+    def _append_paint_log(self, path: str, text: str) -> None:
+        """Best-effort append for `_paint_debug_dump`; warns ONCE if the
+        operator-supplied log path is unwritable so a dead probe is visible."""
+        try:
+            with open(path, "a", encoding="utf-8", errors="backslashreplace") as f:
+                f.write(text)
+        except OSError as exc:
+            if not getattr(self, "_paint_log_warned", False):
+                self._paint_log_warned = True
+                logger.warning(
+                    f"TLDW_TRANSCRIPT_PAINT_LOG write failed ({exc}); "
+                    "paint-debug output is being dropped."
+                )
 
     def action_invoke_selected_action(self, action_id: str) -> None:
         """Press the selected message's action button for ``action_id``.
