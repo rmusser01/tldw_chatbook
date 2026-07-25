@@ -155,9 +155,15 @@ class RunBudget:
     # (`_tool_call_timeout() = 60.0` in
     # `MCP/unified_control_plane_service.py` plus
     # `_RESULT_WAIT_SLACK_SECONDS = 5.0` in `Agents/mcp_tool_provider.py`)
-    # -- ~186s end to end. Lowering this below that risks the wrapper
-    # reporting "timed out" for a call that later really executes on its
-    # abandoned thread (see `_call_with_timeout`'s docstring).
+    # -- ~186s end to end AT MCP'S DEFAULT CONFIG. Both cited MCP bounds are
+    # user-tunable (`[mcp] tool_call_timeout_seconds`, and the approval
+    # timeout resolved from config in `console_chat_controller`), so this
+    # invariant only holds while MCP itself stays at its shipped defaults --
+    # a user who raises either MCP-side bound can still reopen the
+    # double-execution window this default is meant to avoid. Lowering this
+    # below that risks the wrapper reporting "timed out" for a call that
+    # later really executes on its abandoned thread (see
+    # `_call_with_timeout`'s docstring).
     max_tool_call_seconds: float = 300.0
 
 
