@@ -288,10 +288,13 @@ def test_clone_builtin_creates_writable_copy(tmp_path):
     assert clone.id != "high_accuracy"
     assert clone.rag_config.chunking.chunk_size == m.get_profile("high_accuracy").rag_config.chunking.chunk_size
     assert (tmp_path / "profiles" / f"{clone.id}.json").exists()
-    # Editing the clone does not touch the builtin:
-    clone.rag_config.chunking.chunk_size = 111
+    # Editing the clone does not touch the builtin. 300 (not just any value
+    # like 111) is deliberate: high_accuracy's builtin chunk_overlap is 128,
+    # and task-621 made save_profile reject a chunk_overlap >= chunk_size as
+    # hard-invalid, so the edited value must stay above that overlap.
+    clone.rag_config.chunking.chunk_size = 300
     m.save_profile(clone)
-    assert m.get_profile("high_accuracy").rag_config.chunking.chunk_size != 111
+    assert m.get_profile("high_accuracy").rag_config.chunking.chunk_size != 300
 
 
 def test_rename_keeps_id_and_file(tmp_path):
@@ -937,3 +940,101 @@ def test_save_profile_does_not_register_when_the_disk_write_fails(tmp_path, monk
 
     assert m.get_profile("my_profile") is None
     assert "my_profile" not in m.list_profiles()
+
+
+# --- task-621: validate RAGConfig at the load and save boundaries. ---------
+#
+# RAGConfig.validate() already exists (the settings adapter's hard/soft split
+# -- settings_rag_profile_adapter.hard_config_errors -- is its first live
+# caller). These tests wire it up at the two other, untrusted-input
+# boundaries: per-profile JSON load (must degrade gracefully, never take down
+# the manager) and save_profile (must reject hard-invalid configs outright).
+
+
+def test_save_profile_rejects_hard_invalid_rag_config(tmp_path):
+    # chunk_overlap >= chunk_size is one of RAGConfig.validate()'s checks.
+    m = _mgr(tmp_path)
+    bad = ProfileConfig(
+        id="bad_profile", name="Bad", description="d", profile_type="custom",
+        rag_config=RAGConfig(
+            chunking=ChunkingConfig(chunk_size=10, chunk_overlap=20),
+            vector_store=VectorStoreConfig(type="memory"),
+        ),
+        read_only=False,
+    )
+
+    with pytest.raises(ValueError, match="chunk_overlap"):
+        m.save_profile(bad)
+
+    # Rejected before registration or disk write (same transactional
+    # guarantee as the OSError case above).
+    assert m.get_profile("bad_profile") is None
+    assert "bad_profile" not in m.list_profiles()
+    assert not (tmp_path / "profiles" / "bad_profile.json").exists()
+
+
+def test_save_profile_accepts_a_valid_rag_config(tmp_path):
+    # Companion happy-path: a config with no validate() errors is unaffected.
+    m = _mgr(tmp_path)
+    good = ProfileConfig(
+        id="good_profile", name="Good", description="d", profile_type="custom",
+        rag_config=RAGConfig(vector_store=VectorStoreConfig(type="memory")),
+        read_only=False,
+    )
+    m.save_profile(good)
+    assert m.get_profile("good_profile") is good
+    assert (tmp_path / "profiles" / "good_profile.json").exists()
+
+
+def test_load_degrades_gracefully_on_hand_corrupted_profile_json(tmp_path):
+    # A hand-edited (or otherwise poisoned) profile file with a bad enum
+    # value and a negative top_k must not crash the manager, must not be
+    # silently dropped, and must be logged.
+    from loguru import logger
+
+    pdir = tmp_path / "profiles"
+    pdir.mkdir(parents=True)
+    corrupted = ProfileConfig(
+        id="corrupted", name="Corrupted", description="d", profile_type="custom",
+        rag_config=RAGConfig(vector_store=VectorStoreConfig(type="memory")),
+        read_only=False,
+    )
+    data = corrupted.to_dict()
+    data["rag_config"]["vector_store"]["type"] = "not_a_real_store"
+    data["rag_config"]["search"]["default_top_k"] = -5
+    (pdir / "corrupted.json").write_text(_json.dumps(data, default=str))
+
+    # Capture loguru output directly (not caplog -- loguru doesn't propagate
+    # to stdlib logging in this repo; see Tests/Agents/test_agent_runtime_
+    # review_hook.py::test_hook_exception_is_logged for the same pattern).
+    records = []
+    sink_id = logger.add(lambda m: records.append(m), level="WARNING")
+    try:
+        m = ConfigProfileManager(profiles_dir=pdir)  # must not raise
+    finally:
+        logger.remove(sink_id)
+
+    loaded = m.get_profile("corrupted")
+    assert loaded is not None, "a validate()-invalid (but structurally parseable) profile must still load"
+    assert loaded.rag_config.vector_store.type == "not_a_real_store"
+    assert loaded.rag_config.search.default_top_k == -5
+
+    messages = " ".join(r.record["message"] for r in records)
+    assert "top_k" in messages.lower() or "vector store" in messages.lower(), (
+        f"expected a validate() warning to be logged, got: {[r.record['message'] for r in records]}"
+    )
+
+
+def test_load_still_skips_a_structurally_unparseable_profile_file(tmp_path):
+    # Companion to the above: genuine structural corruption (not just an
+    # invalid-but-well-formed rag_config) must still be isolated per-file and
+    # logged as an error, exactly as before -- this is the pre-existing
+    # try/except in _load_custom_profiles, unchanged by task-621.
+    pdir = tmp_path / "profiles"
+    pdir.mkdir(parents=True)
+    (pdir / "broken.json").write_text("{not valid json")
+
+    m = ConfigProfileManager(profiles_dir=pdir)  # must not raise
+
+    assert m.get_profile("broken") is None
+    assert "broken" not in m.list_profiles()

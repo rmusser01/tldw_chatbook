@@ -590,6 +590,32 @@ class ConfigProfileManager:
                     profile = ProfileConfig.from_dict(json.load(f))
                 profile.read_only = False
 
+                # task-621: proportionate validation at the load boundary.
+                # A profile file is untrusted input -- it may be hand-edited,
+                # migrated from an older version, or otherwise corrupted.
+                # RAGConfig.validate() issues (a bad enum value, a negative
+                # top_k, ...) are logged as warnings but never block the load
+                # or drop the profile: a poisoned profile must degrade
+                # gracefully, not take down the whole manager. This is
+                # deliberately NOT the same thing as the structural-parse
+                # failures the enclosing try/except already handles (a
+                # missing/blank name, invalid JSON, an unknown rag_config
+                # sub-key) -- those remain fatal-for-this-file, unchanged.
+                # validate() itself is called defensively so a bug in it can
+                # never turn an otherwise-successfully-parsed profile into a
+                # skipped one.
+                try:
+                    validation_issues = profile.rag_config.validate()
+                except Exception as e:
+                    validation_issues = None
+                    logger.warning(f"Could not validate profile {path.name}: {e}")
+                if validation_issues:
+                    for issue in validation_issues:
+                        logger.warning(
+                            f"Profile {path.name} has an invalid rag_config "
+                            f"value: {issue}"
+                        )
+
                 desired_id = _slugify(path.stem)
                 canonical_path = self._profile_path(desired_id)
                 if (
@@ -758,7 +784,19 @@ class ConfigProfileManager:
 
         Refuses to persist a read-only builtin, whether the incoming
         ``profile`` object is itself read-only or its id merely collides
-        with an existing read-only builtin.
+        with an existing read-only builtin. Also refuses to persist a
+        profile whose ``rag_config`` is hard-invalid per
+        ``RAGConfig.validate()`` (task-621).
+
+        This is the single choke point every non-screen caller (``clone_
+        profile``, ``create_custom_profile``, ``active_config.ensure_
+        imported_profile``, and any future CLI/import path) goes through, so
+        validating here protects all of them. The Settings screen itself
+        already runs ``settings_rag_profile_adapter.hard_config_errors``
+        (which calls ``RAGConfig.validate()`` too) BEFORE it ever reaches
+        ``save_rag_defaults_to_active_profile`` -> ``save_profile``, so in
+        the normal screen flow this guard is a no-op backstop, not a second
+        user-facing report of the same problem.
 
         Args:
             profile: The profile to save. Its ``id`` determines both the
@@ -773,7 +811,9 @@ class ConfigProfileManager:
                 immutable ``self._builtin_ids`` set, which cannot be
                 defeated by flipping ``read_only`` on a shared instance), or
                 ``profile.id`` collides with a different, read-only,
-                already-registered profile.
+                already-registered profile, or ``profile.rag_config.
+                validate()`` reports any hard-invalid value (e.g. a negative
+                ``top_k``, ``chunk_overlap >= chunk_size``).
             OSError: Propagated from a failed disk write (``_save_one``).
                 Transactional: the write happens BEFORE the profile is
                 registered in ``self._profiles``, so a failed write never
@@ -786,6 +826,12 @@ class ConfigProfileManager:
         if existing is not None and existing is not profile and existing.read_only:
             raise ValueError(
                 f"Profile id '{profile.id}' collides with read-only builtin '{existing.name}'"
+            )
+        validation_issues = profile.rag_config.validate()
+        if validation_issues:
+            raise ValueError(
+                f"Profile '{profile.id}' has an invalid rag_config: "
+                + "; ".join(validation_issues)
             )
         self._save_one(profile)
         self._profiles[profile.id] = profile
