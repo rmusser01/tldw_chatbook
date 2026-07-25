@@ -635,6 +635,137 @@ DOMAIN_CONTRACT_BY_CATEGORY = _build_domain_contract_by_category(
 DOMAIN_SETTINGS_CATEGORY_IDS = frozenset(DOMAIN_CONTRACT_BY_CATEGORY)
 _WORKSPACE_RECORD_UNSET = object()
 
+# Task 3 (541 v2 UX AC3): RAG widget id -> guidance-group key. Mirrors the
+# ids `_library_rag_field_selector` and the LIBRARY_RAG compose branch mint
+# (search around "settings-library-rag-" in this file). Used by
+# `_rag_field_guidance_rows()` so the Scope Inspector follows the focused
+# field; falls back to `_active_rag_scope_group` (the last-expanded
+# Collapsible) when the focused widget isn't one of these.
+_RAG_FIELD_GROUP_BY_ID: dict[str, str] = {
+    "settings-library-rag-search-mode": "search",
+    "settings-library-rag-default-top-k": "search",
+    "settings-library-rag-fts-top-k": "search",
+    "settings-library-rag-vector-top-k": "search",
+    "settings-library-rag-hybrid-alpha": "search",
+    "settings-library-rag-score-threshold": "search",
+    "settings-library-rag-include-citations": "search",
+    "settings-library-rag-citation-style": "search",
+    "settings-library-rag-snippet-max-chars": "search",
+    "settings-library-rag-max-context-size": "search",
+    "settings-library-rag-embedding-model": "embedding",
+    "settings-library-rag-embedding-device": "embedding",
+    "settings-library-rag-embedding-batch-size": "embedding",
+    "settings-library-rag-embedding-max-length": "embedding",
+    "settings-library-rag-chunk-size": "chunking",
+    "settings-library-rag-chunk-overlap": "chunking",
+    "settings-library-rag-chunking-method": "chunking",
+    "settings-library-rag-distance-metric": "vector_store",
+    "settings-library-rag-enable-reranking": "reranking",
+    "settings-library-rag-reranker-model": "reranking",
+    "settings-library-rag-reranker-top-k": "reranking",
+    "settings-library-rag-profile-select": "profile",
+    "settings-library-rag-profile-set-active": "profile",
+    "settings-library-rag-profile-clone": "profile",
+    "settings-library-rag-profile-rename": "profile",
+    "settings-library-rag-profile-delete": "profile",
+    "settings-library-rag-index-backfill": "index",
+}
+
+# Collapsible id -> the same group keys. `@on(Collapsible.Toggled)` uses this
+# so expanding a group (e.g. "Chunking") already switches the inspector's
+# context even before any field inside it is focused. Textual 8.2.7: focus
+# on Tab lands on the inner CollapsibleTitle, not the Collapsible itself, and
+# `.collapsible--header` is a dead CSS class -- neither is used here; this
+# keys off `event.collapsible.id`/`.collapsed` instead (see
+# handle_settings_library_rag_collapsible_toggled).
+_RAG_GROUP_BY_COLLAPSIBLE_ID: dict[str, str] = {
+    "settings-library-rag-search-group": "search",
+    "settings-library-rag-embedding-group": "embedding",
+    "settings-library-rag-chunking-group": "chunking",
+    "settings-library-rag-vector-store-group": "vector_store",
+    "settings-library-rag-reranking-group": "reranking",
+}
+
+# One concise, fixed-length (5-row) entry per group (Task 3, 541 AC3).
+# Fixed-length matters: `_refresh_rag_field_guidance` updates existing rows
+# in place by index (`_set_static_text`, no recompose) the same way
+# `_refresh_provider_field_guidance` does for Providers -- a variable row
+# count would leave stale rows behind when switching groups. The "index-
+# determining" facts (embedding model, embedding max length, every chunking
+# field, distance metric) mirror
+# RAG_Search/simplified/collection_fingerprint.py's `_index_fields()` --
+# exactly what `index_change_pending()` (settings_rag_profile_adapter.py)
+# fingerprints. Strings kept within the rail width (SP3 fit lesson, UX
+# review item 9) -- no mid-sentence clipping at the QA viewport.
+#
+# Fallback when no RAG field is focused and no group has ever been expanded
+# this session -- UNCHANGED from the terse rows the UX review (item 9)
+# shortened this to; regression-locked by
+# test_settings_library_rag_inspector_uses_shortened_terse_guidance. Defined
+# ahead of `_RAG_GROUP_GUIDANCE` because the "search" entry below reuses it
+# verbatim: Textual's Collapsible posts its own `Expanded` message from
+# inside `__init__` whenever constructed with `collapsed=False` (the
+# reactive's default is `True`, so the explicit `False` is a real change,
+# queued and delivered once the widget starts running) -- which is exactly
+# how the "Search" group (collapsed=False, expanded-by-default) composes.
+# That message reaches `handle_settings_library_rag_collapsible_toggled`
+# before the first `_render_impact_pane` pass finishes, so
+# `_active_rag_scope_group` is ALREADY "search" at first paint, not None.
+# Reusing the fallback tuple for "search" makes that a no-op: first paint
+# reads identically whether the resolved group is None or "search".
+_RAG_GROUP_GUIDANCE_FALLBACK: tuple[tuple[str, str], ...] = (
+    ("Search mode", "plain=keyword, semantic=embeddings, hybrid=blend"),
+    ("Result limits", "bounds default/keyword/vector result counts"),
+    ("Hybrid balance", "0.0=keyword, 1.0=semantic"),
+    ("Citations", "adds source markers to answers when supported"),
+    ("Snippet/context", "snippet length + context budget for retrieved text"),
+)
+_RAG_GROUP_GUIDANCE: dict[str, tuple[tuple[str, str], ...]] = {
+    "search": _RAG_GROUP_GUIDANCE_FALLBACK,
+    "embedding": (
+        ("Focused group", "Embedding"),
+        ("Fields", "model, device, batch size, max length"),
+        ("Purpose", "what the vector index is built from"),
+        ("Impact", "⚠ model + max length rebuild the index -- Backfill after"),
+        ("Saved as", "the profile's embedding settings"),
+    ),
+    "chunking": (
+        ("Focused group", "Chunking"),
+        ("Fields", "chunk size, overlap, method"),
+        ("Purpose", "how source text is split before embedding"),
+        ("Impact", "⚠ every field here rebuilds the index -- Backfill after"),
+        ("Saved as", "the profile's chunking settings"),
+    ),
+    "vector_store": (
+        ("Focused group", "Vector store"),
+        ("Fields", "distance metric"),
+        ("Purpose", "how embeddings are compared during retrieval"),
+        ("Impact", "⚠ rebuilds the index -- Backfill after saving"),
+        ("Saved as", "the profile's vector store settings"),
+    ),
+    "reranking": (
+        ("Focused group", "Reranking"),
+        ("Fields", "enable, reranker model, rerank results"),
+        ("Purpose", "optional post-retrieval reordering of results"),
+        ("Impact", "no index rebuild -- toggling adds/removes config"),
+        ("Saved as", "the profile's reranking settings"),
+    ),
+    "profile": (
+        ("Focused group", "Profiles"),
+        ("Fields", "select, set active, clone, rename, delete"),
+        ("Purpose", "switch which profile these fields edit"),
+        ("Impact", "Set active is immediate; built-ins are read-only"),
+        ("Saved as", "the [rag.service].profile pointer"),
+    ),
+    "index": (
+        ("Focused group", "Index"),
+        ("Fields", "Backfill"),
+        ("Purpose", "rebuild the active profile's vector index"),
+        ("Impact", "⚠ run after saving any warning field; safe to re-run"),
+        ("Saved as", "not a config field -- runs Library ingestion"),
+    ),
+}
+
 # Impact-pane guidance rows keyed by non-domain Settings category. Domain
 # categories (DOMAIN_SETTINGS_CATEGORY_IDS) derive their guidance from their
 # ownership contract instead and are intentionally absent here. Every other
@@ -1197,6 +1328,13 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_appearance_defaults = False
         self._syncing_storage_defaults = False
         self._active_settings_field_id: str | None = None
+        #: Task 3 (541 v2 UX AC3): the last-expanded Library/RAG Collapsible
+        #: group (a key into `_RAG_GROUP_GUIDANCE`, e.g. "chunking"), used by
+        #: `_rag_field_guidance_rows()` as the fallback scope when no RAG
+        #: field is currently focused. Set by
+        #: handle_settings_library_rag_collapsible_toggled; reset to None on
+        #: any category switch away from LIBRARY_RAG (see _select_category).
+        self._active_rag_scope_group: str | None = None
         self._navigation_provider: str | None = None
         self._navigation_model: str | None = None
         self._navigation_field: str | None = None
@@ -6666,6 +6804,30 @@ class SettingsScreen(BaseAppScreen):
                 f"{label}: {value}",
             )
 
+    def _rag_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
+        """Task 3 (541 v2 UX AC3): context-sensitive Library/RAG guidance.
+
+        Mirrors `_provider_field_guidance_rows` / `_storage_field_guidance_rows`:
+        keyed first on the focused field (`_active_settings_field_id`, via
+        `_RAG_FIELD_GROUP_BY_ID`), then on the last-expanded Collapsible
+        group (`_active_rag_scope_group`), then the unchanged static
+        fallback so a first-ever visit (nothing focused, nothing expanded
+        beyond the default "Search" group) reads exactly as before this
+        task.
+        """
+        field_id = self._active_settings_field_id or ""
+        group = _RAG_FIELD_GROUP_BY_ID.get(field_id) or self._active_rag_scope_group
+        return _RAG_GROUP_GUIDANCE.get(group or "", _RAG_GROUP_GUIDANCE_FALLBACK)
+
+    def _refresh_rag_field_guidance(self) -> None:
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
+        for index, (label, value) in enumerate(self._rag_field_guidance_rows()):
+            self._set_static_text(
+                f"#settings-library-rag-field-guide-{index}",
+                f"{label}: {value}",
+            )
+
     def _split_detail_row(self, text: str) -> Static:
         label, separator, value = text.partition(":")
         if not separator:
@@ -9057,30 +9219,23 @@ class SettingsScreen(BaseAppScreen):
                 classes="destination-section",
             )
             yield Static("Control guide", classes="destination-section")
-            # Guidance values below are intentionally terse (UX review item
-            # 9): the original prose wrapped across enough lines in this
-            # narrow rail that the "Citations" row clipped mid-sentence
-            # ("...source markers when") at the pane's unscrolled fold.
-            yield self._detail_row(
-                "Search mode",
-                "plain=keyword, semantic=embeddings, hybrid=blend",
-            )
-            yield self._detail_row(
-                "Result limits",
-                "bounds default/keyword/vector result counts",
-            )
-            yield self._detail_row(
-                "Hybrid balance",
-                "0.0=keyword, 1.0=semantic",
-            )
-            yield self._detail_row(
-                "Citations",
-                "adds source markers to answers when supported",
-            )
-            yield self._detail_row(
-                "Snippet/context",
-                "snippet length + context budget for retrieved text",
-            )
+            # Task 3 (541 v2 UX AC3): context-sensitive -- follows the
+            # focused field or the last-expanded Collapsible group instead
+            # of always showing the same static blurb (see
+            # _rag_field_guidance_rows, refreshed by handle_descendant_focus
+            # and handle_settings_library_rag_collapsible_toggled). Guidance
+            # values are intentionally terse (UX review item 9): the
+            # original prose wrapped across enough lines in this narrow rail
+            # that the "Citations" row clipped mid-sentence ("...source
+            # markers when") at the pane's unscrolled fold.
+            for index, (label, value) in enumerate(
+                self._rag_field_guidance_rows()
+            ):
+                yield self._detail_row(
+                    label,
+                    value,
+                    identifier=f"settings-library-rag-field-guide-{index}",
+                )
             yield Static("Boundary", classes="destination-section")
             yield self._detail_row(
                 "Library owns",
@@ -9448,6 +9603,13 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._active_settings_field_id = None
+        # Task 3 (541 v2 UX AC3): the remembered "last-expanded RAG group"
+        # scope must not leak into a later LIBRARY_RAG visit -- e.g. leaving
+        # with "Chunking" expanded and coming back to a freshly recomposed
+        # (all-collapsed-but-Search) detail pane should start at the same
+        # fallback guidance a first-ever visit shows.
+        if category_value != SettingsCategoryId.LIBRARY_RAG.value:
+            self._active_rag_scope_group = None
         # Task 2 review (Important): a stale re-index-confirm in-flight
         # guard must never survive navigating away from (or back into) the
         # category -- e.g. the user backs out mid-fetch. Unconditional
@@ -9503,6 +9665,16 @@ class SettingsScreen(BaseAppScreen):
             )
             self._refresh_storage_field_guidance()
             return
+        if active_category is SettingsCategoryId.LIBRARY_RAG:
+            # Task 3 (541 v2 UX AC3): membership uses the shared
+            # _RAG_FIELD_GROUP_BY_ID table (also read by
+            # _rag_field_guidance_rows and the Collapsible.Toggled handler
+            # below) instead of a locally-duplicated id set.
+            self._active_settings_field_id = (
+                widget_id if widget_id in _RAG_FIELD_GROUP_BY_ID else None
+            )
+            self._refresh_rag_field_guidance()
+            return
         if active_category is not SettingsCategoryId.PROVIDERS_MODELS:
             self._active_settings_field_id = None
             return
@@ -9533,6 +9705,29 @@ class SettingsScreen(BaseAppScreen):
             widget_id if widget_id in provider_field_ids else None
         )
         self._refresh_provider_field_guidance()
+
+    @on(Collapsible.Toggled)
+    def handle_settings_library_rag_collapsible_toggled(
+        self, event: Collapsible.Toggled
+    ) -> None:
+        """Task 3 (541 v2 UX AC3): expanding a Library/RAG group already
+        switches the Scope Inspector's context, even before any field
+        inside it is focused. Collapsing the currently-active group falls
+        back to whatever `_active_settings_field_id` would otherwise
+        resolve to (typically the static fallback, since focus can't land
+        on a hidden collapsed field)."""
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
+        collapsible_id = str(getattr(event.collapsible, "id", "") or "")
+        group = _RAG_GROUP_BY_COLLAPSIBLE_ID.get(collapsible_id)
+        if group is None:
+            return
+        if event.collapsible.collapsed:
+            if self._active_rag_scope_group == group:
+                self._active_rag_scope_group = None
+        else:
+            self._active_rag_scope_group = group
+        self._refresh_rag_field_guidance()
 
     @on(Button.Pressed, "#settings-open-appearance")
     def open_appearance_settings(self) -> None:

@@ -26,7 +26,7 @@ import inspect
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Checkbox, Input, Select, Static
+from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -1737,3 +1737,297 @@ def test_reindex_confirm_in_flight_cleared_on_cancel(monkeypatch, tmp_path, fake
 
     assert screen._rag_reindex_confirm_in_flight is False
     assert worker_calls == []
+
+
+# --- Task 3 (541 v2 UX AC3): context-sensitive Scope Inspector guidance --
+# the impact pane follows the focused RAG field / expanded Collapsible
+# group instead of always showing the same static blurb. Mirrors the
+# Providers-category machinery (_provider_field_guidance_rows /
+# _refresh_provider_field_guidance / the DescendantFocus hook). ---
+
+
+def _flattened_guidance_text(rows) -> str:
+    return " ".join(f"{label} {value}" for label, value in rows).lower()
+
+
+def test_rag_field_guidance_no_field_focused_matches_static_fallback(
+    monkeypatch, tmp_path
+):
+    """RED case 1: with nothing focused and no group ever expanded (fresh
+    first paint), the guidance must be byte-for-byte the same terse rows
+    the UX review (item 9) shortened this to -- unchanged by this task."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    assert screen._active_settings_field_id is None
+    assert screen._active_rag_scope_group is None
+    assert screen._rag_field_guidance_rows() == (
+        ("Search mode", "plain=keyword, semantic=embeddings, hybrid=blend"),
+        ("Result limits", "bounds default/keyword/vector result counts"),
+        ("Hybrid balance", "0.0=keyword, 1.0=semantic"),
+        ("Citations", "adds source markers to answers when supported"),
+        ("Snippet/context", "snippet length + context budget for retrieved text"),
+    )
+    # Calling the refresh on an unmounted screen must be a safe no-op
+    # (query_one raises, caught the same way _refresh_provider_field_guidance
+    # already handles it) rather than raising.
+    screen._refresh_rag_field_guidance()
+
+
+def test_rag_field_guidance_reranking_field_focused_mentions_reranking(
+    monkeypatch, tmp_path
+):
+    """RED case 2: focusing a Reranking field yields guidance rows
+    mentioning reranking (simulated the way the brief describes: set
+    `_active_settings_field_id` directly, then call the refresh)."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    screen._active_settings_field_id = "settings-library-rag-reranker-model"
+    screen._refresh_rag_field_guidance()
+
+    text = _flattened_guidance_text(screen._rag_field_guidance_rows())
+    assert "reranking" in text
+    # Reranking is explicitly NOT index-determining -- must not tell the
+    # user to Backfill (the guidance does say "no index rebuild", which is
+    # the informative negative, not a rebuild instruction).
+    assert "backfill" not in text
+
+
+def test_rag_field_guidance_chunking_field_focused_mentions_reindex_backfill(
+    monkeypatch, tmp_path
+):
+    """RED case 3: focusing a Chunking field yields re-index/backfill
+    guidance (chunk_size/chunk_overlap/chunking_method are all
+    index-determining -- see collection_fingerprint._index_fields())."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    for field_id in (
+        "settings-library-rag-chunk-size",
+        "settings-library-rag-chunk-overlap",
+        "settings-library-rag-chunking-method",
+    ):
+        screen._active_settings_field_id = field_id
+        text = _flattened_guidance_text(screen._rag_field_guidance_rows())
+        assert "backfill" in text, field_id
+        assert "rebuild" in text, field_id
+
+
+def test_rag_field_guidance_embedding_and_vector_store_fields_flag_index_rebuild(
+    monkeypatch, tmp_path
+):
+    """The other two index-determining groups (embedding model/max length,
+    distance metric) also surface the Backfill/rebuild warning. Guidance is
+    per-GROUP (one concise entry, not one per field -- see
+    _RAG_GROUP_GUIDANCE), so device/batch-size (in the same Embedding
+    group, but NOT themselves index-determining) show the identical
+    group entry -- which is worded to name model/max length specifically
+    as the ⚠ fields, not device/batch size."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    for field_id in (
+        "settings-library-rag-embedding-model",
+        "settings-library-rag-embedding-max-length",
+        "settings-library-rag-embedding-device",
+        "settings-library-rag-embedding-batch-size",
+        "settings-library-rag-distance-metric",
+    ):
+        screen._active_settings_field_id = field_id
+        text = _flattened_guidance_text(screen._rag_field_guidance_rows())
+        assert "backfill" in text, field_id
+        assert "rebuild" in text, field_id
+
+    screen._active_settings_field_id = "settings-library-rag-embedding-device"
+    embedding_text = _flattened_guidance_text(screen._rag_field_guidance_rows())
+    # The group entry itself scopes the ⚠ down to model + max length, not
+    # every field in the group.
+    assert "model + max length" in embedding_text
+
+
+def test_rag_field_guidance_profile_and_index_fields_have_dedicated_entries(
+    monkeypatch, tmp_path
+):
+    """Profile controls (select/set-active/clone/rename/delete) and the
+    index row (Backfill button) each get their own group entry -- not the
+    generic search-mode fallback."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    screen._active_settings_field_id = "settings-library-rag-profile-set-active"
+    profile_text = _flattened_guidance_text(screen._rag_field_guidance_rows())
+    assert "profile" in profile_text
+
+    screen._active_settings_field_id = "settings-library-rag-index-backfill"
+    index_text = _flattened_guidance_text(screen._rag_field_guidance_rows())
+    assert "index" in index_text
+    assert "backfill" in index_text
+
+
+def test_rag_field_guidance_focused_field_takes_priority_over_expanded_group(
+    monkeypatch, tmp_path
+):
+    """A focused field's own group always wins over a merely-expanded
+    group -- e.g. tabbing into the Reranking checkbox while Chunking is
+    still expanded from an earlier click must show Reranking guidance."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    screen._active_rag_scope_group = "chunking"
+    screen._active_settings_field_id = "settings-library-rag-enable-reranking"
+
+    text = _flattened_guidance_text(screen._rag_field_guidance_rows())
+    assert "reranking" in text
+    assert "chunking" not in text
+
+
+def test_every_rag_field_group_has_a_guidance_entry():
+    """Coverage: no field-id -> group mapping can point at a group key
+    with no `_RAG_GROUP_GUIDANCE` entry (a typo'd key would otherwise
+    silently fall back to the generic guidance instead of failing loud)."""
+    assert settings_screen_module._RAG_FIELD_GROUP_BY_ID
+    for field_id, group in settings_screen_module._RAG_FIELD_GROUP_BY_ID.items():
+        assert group in settings_screen_module._RAG_GROUP_GUIDANCE, (
+            f"{field_id} -> {group!r} has no guidance entry"
+        )
+
+
+def test_every_library_rag_editable_field_id_has_a_guidance_group(
+    monkeypatch, tmp_path
+):
+    """Coverage: every widget id `_library_rag_field_selector` resolves
+    (the 19 validated/staged fields) plus the two Checkbox ids Task 1
+    introduced must each map to a guidance group -- so no RAG control is
+    ever focusable without the inspector explaining it."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    field_keys = [
+        "default_search_mode",
+        "default_top_k",
+        "fts_top_k",
+        "vector_top_k",
+        "hybrid_alpha",
+        "score_threshold",
+        "citation_style",
+        "snippet_max_chars",
+        "max_context_size",
+        "embedding_model",
+        "embedding_device",
+        "embedding_batch_size",
+        "embedding_max_length",
+        "chunk_size",
+        "chunk_overlap",
+        "chunking_method",
+        "distance_metric",
+        "reranker_model",
+        "reranker_top_k",
+    ]
+    for key in field_keys:
+        selector = screen._library_rag_field_selector(key)
+        assert selector is not None, key
+        widget_id = selector.removeprefix("#")
+        assert widget_id in settings_screen_module._RAG_FIELD_GROUP_BY_ID, key
+
+    for checkbox_id in (
+        "settings-library-rag-include-citations",
+        "settings-library-rag-enable-reranking",
+    ):
+        assert checkbox_id in settings_screen_module._RAG_FIELD_GROUP_BY_ID
+
+
+@pytest.mark.asyncio
+async def test_expanding_chunking_collapsible_switches_context_without_focus(
+    monkeypatch, tmp_path
+):
+    """Expanding a group (without focusing any field inside it) already
+    switches the inspector's context, via `@on(Collapsible.Toggled)`."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        # First paint: "Search" composes with collapsed=False, so Textual's
+        # Collapsible posts its own Expanded message during construction
+        # (see the comment on _RAG_GROUP_GUIDANCE_FALLBACK) -- the resolved
+        # scope is "search" here, not None. That's harmless: the "search"
+        # entry is the same fallback tuple, so the rendered text is
+        # unaffected either way.
+        assert screen._active_rag_scope_group == "search"
+        chunking = screen.query_one(
+            "#settings-library-rag-chunking-group", Collapsible
+        )
+        assert chunking.collapsed is True
+
+        chunking.collapsed = False
+        screen.handle_settings_library_rag_collapsible_toggled(
+            Collapsible.Toggled(chunking)
+        )
+        await pilot.pause()
+
+        assert screen._active_rag_scope_group == "chunking"
+        await _wait_for_settings_text(screen, pilot, "Focused group: Chunking")
+        text = _visible_text(screen)
+        assert "Backfill" in text
+
+        # Collapsing the same group again falls back to the static guidance.
+        chunking.collapsed = True
+        screen.handle_settings_library_rag_collapsible_toggled(
+            Collapsible.Toggled(chunking)
+        )
+        await pilot.pause()
+
+        assert screen._active_rag_scope_group is None
+        await _wait_for_settings_text(screen, pilot, "Snippet/context:")
+
+
+@pytest.mark.asyncio
+async def test_focusing_reranker_model_input_updates_inspector_end_to_end(
+    monkeypatch, tmp_path
+):
+    """End-to-end (not simulated): focusing a real mounted Reranking Input
+    via the actual DescendantFocus path updates `_active_settings_field_id`
+    and the rendered pane, exactly like the Providers category's own
+    focus-follows-field behavior."""
+    from tldw_chatbook.RAG_Search.reranker import RerankingConfig
+
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.reranking_config = RerankingConfig()
+    mgr.save_profile(profile)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        reranker_input = screen.query_one(
+            "#settings-library-rag-reranker-model", Input
+        )
+        assert reranker_input.disabled is False
+        reranker_input.focus()
+        await pilot.pause()
+
+        assert (
+            screen._active_settings_field_id
+            == "settings-library-rag-reranker-model"
+        )
+        await _wait_for_settings_text(screen, pilot, "Focused group: Reranking")
