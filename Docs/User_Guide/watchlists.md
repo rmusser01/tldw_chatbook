@@ -12,5 +12,4 @@ Mixed | Local/Server". This screen was previously called "Subscriptions."
 ## Getting there
 
 - Click **Watchlists** in the nav bar, or press **Ctrl+P** → "Switch to
-  Watchlists". (Pressing **6** can also work when no text field has focus —
-  see the [number-key note](index.md) in the index.)
+  Watchlists". (Or press **Ctrl+6** from anywhere.)

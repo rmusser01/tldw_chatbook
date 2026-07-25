@@ -11,4 +11,4 @@ Logs shows application logs and diagnostics (on-screen subtitle:
 ## Getting there
 
 - Click **Logs** in the nav bar, or press **Ctrl+P** → "Switch to Logs".
-  There is no dedicated number key for Logs.
+  There is no hotkey digit for Logs.

@@ -13,5 +13,4 @@ Permissions, and Audit.
 ## Getting there
 
 - Click **MCP** in the nav bar, or press **Ctrl+P** → "Switch to MCP".
-  (Pressing **9** can also work when no text field has focus — see the
-  [number-key note](index.md) in the index.)
+  (Or press **Ctrl+9** from anywhere.)
