@@ -196,6 +196,48 @@ async def test_set_batch_renders_one_row_per_unique_name_with_tooltips():
 
 
 @pytest.mark.asyncio
+async def test_set_batch_row_with_options_key_narrows_the_select_and_stays_valid_default():
+    """Task-5: a row's ``options`` key narrows its ``Select`` choices.
+
+    Mirrors what task-6 will do for built-in tools (offer only the
+    session-scoped choices, since persistent decisions for them cannot yet
+    be undone in the UI). ``approve_once`` (the global default) is
+    deliberately excluded here to prove the row-default guard: when the
+    module default isn't among the narrowed options, the ``Select``'s
+    initial value must fall back to the FIRST narrowed option rather than
+    an out-of-list value (which `Select` would reject/misrender).
+    """
+    calls = _sample_calls()
+    calls[0]["options"] = ["approve_session", "deny"]
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        rows = list(app.query(".approval-row"))
+        narrowed_select = rows[0].query_one(".approval-row-decision", Select)
+        unfiltered_select = rows[1].query_one(".approval-row-decision", Select)
+
+        assert [value for _label, value in narrowed_select._options] == [
+            "approve_session",
+            "deny",
+        ]
+        assert narrowed_select.value == "approve_session"
+
+        # The row with no `options` key is untouched: full four choices,
+        # default `approve_once` (MCP behavior unchanged, byte-identical).
+        assert [value for _label, value in unfiltered_select._options] == [
+            "approve_once",
+            "approve_session",
+            "always_allow",
+            "deny",
+        ]
+        assert unfiltered_select.value == "approve_once"
+
+
+@pytest.mark.asyncio
 async def test_approve_all_and_deny_all_bulk_set_every_row():
     app = _CardHarnessApp()
     async with app.run_test() as pilot:
