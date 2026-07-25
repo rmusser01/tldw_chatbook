@@ -3884,6 +3884,7 @@ async def test_console_rag_query_validation_blocks_unsafe_markup():
 @pytest.mark.asyncio
 async def test_console_rag_action_without_service_stages_recoverable_blocker():
     app = _build_test_app()
+    app.library_rag_search_service = None
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(196, 48)) as pilot:
