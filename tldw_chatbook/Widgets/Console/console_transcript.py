@@ -929,6 +929,48 @@ class ConsoleTranscript(VerticalScroll):
         if self.is_mounted:
             self.call_later(self.refresh_messages)
             self.call_later(self._notify_selection_changed)
+            self.call_later(self._paint_debug_dump, "after-clear-selection")
+
+    def _paint_debug_dump(self, label: str) -> None:
+        """task-623 live probe: append DOM truth about action rows to the file
+        named by ``TLDW_TRANSCRIPT_PAINT_LOG``. No-op unless the env var is
+        set; never raises. The DOM snapshot is taken synchronously (that
+        timing is the point) but the file append is deferred off the caller's
+        critical section via ``call_later``."""
+        import os
+        path = os.environ.get("TLDW_TRANSCRIPT_PAINT_LOG")
+        if not path:
+            return
+        try:
+            import time
+            rows = list(self.query(".console-transcript-action-row"))
+            lines = [
+                f"{time.strftime('%H:%M:%S')} {label}: selected={self.selected_message_id!r} "
+                f"action_rows={len(rows)} children={len(self.children)}"
+            ]
+            for r in rows:
+                lines.append(
+                    f"  row id={r.id!r} parent={type(r.parent).__name__}"
+                    f" parent_is_transcript={r.parent is self}"
+                    f" display={r.display} region={r.region}"
+                )
+            self.call_later(self._append_paint_log, path, "\n".join(lines) + "\n")
+        except Exception:
+            logger.opt(exception=True).debug("Paint-debug DOM snapshot failed.")
+
+    def _append_paint_log(self, path: str, text: str) -> None:
+        """Best-effort append for `_paint_debug_dump`; warns ONCE if the
+        operator-supplied log path is unwritable so a dead probe is visible."""
+        try:
+            with open(path, "a", encoding="utf-8", errors="backslashreplace") as f:
+                f.write(text)
+        except OSError as exc:
+            if not getattr(self, "_paint_log_warned", False):
+                self._paint_log_warned = True
+                logger.warning(
+                    f"TLDW_TRANSCRIPT_PAINT_LOG write failed ({exc}); "
+                    "paint-debug output is being dropped."
+                )
 
     def action_invoke_selected_action(self, action_id: str) -> None:
         """Press the selected message's action button for ``action_id``.
@@ -1212,6 +1254,7 @@ class ConsoleTranscript(VerticalScroll):
                 else:
                     self.move_child(widget, after=previous_widget)
             previous_widget = widget
+        self._paint_debug_dump("after-reconcile")
 
     def _build_row_widget(self, row: _TranscriptRow, *, track: bool) -> Widget:
         if track:
