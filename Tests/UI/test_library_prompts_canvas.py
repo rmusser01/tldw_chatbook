@@ -1200,6 +1200,13 @@ async def test_library_shell_create_prompt_write_time_conflict_overwrite_retries
                 break
             await pilot.pause(0.02)
 
+        # The create retry starts a broad source-snapshot refresh.  Its
+        # recompose must finish before we assert the saved editor contract:
+        # checking only for the conflict banner to disappear can observe a
+        # transient clean frame before that worker remounts the fields.
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
         assert calls["count"] == 2
         assert len(screen.query("#library-prompt-conflict-overwrite")) == 0
         assert screen._library_prompt_dirty is False
@@ -1352,6 +1359,39 @@ async def test_library_prompt_editing_shows_unsaved_marker_and_save_clears_it(tm
         meta_after_save = screen.query_one("#library-prompt-meta", Static)
         assert meta_after_save is meta_before
         assert "Unsaved" not in str(meta_after_save.renderable)
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_source_snapshot_preserves_live_dirty_edit(tmp_path):
+    """A background source refresh must not discard an in-flight prompt edit."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Nu", author="Original", details="d", user_prompt="x"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        screen.query_one("#library-prompt-author", Input).value = "Live edit"
+        await pilot.pause()
+        assert screen._library_prompt_dirty is True
+
+        screen._refresh_local_source_snapshot()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen._selected_prompt_id == prompt_id
+        assert screen._library_prompt_dirty is True
+        assert screen.query_one("#library-prompt-author", Input).value == "Live edit"
+        assert "Unsaved" in str(
+            screen.query_one("#library-prompt-meta", Static).renderable
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2106,6 +2146,16 @@ async def test_library_shell_create_prompt_save_creates_and_increments_count(tmp
                 break
             await pilot.pause(0.02)
         assert "(2)" in rail_label
+
+        # The count changes through a broad source-snapshot worker.  Once
+        # that worker and its recompose have settled, the just-saved editor
+        # must still be clean and show the persisted values.
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen._library_prompt_dirty is False
+        assert screen._selected_prompt_id == created_id
+        assert screen.query_one("#library-prompt-name", Input).value == "Brand New"
+        assert screen.query_one("#library-prompt-user", TextArea).text == "Hello {name}"
 
 
 @pytest.mark.asyncio

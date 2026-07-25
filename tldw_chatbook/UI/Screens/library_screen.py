@@ -1822,7 +1822,66 @@ class LibraryScreen(BaseAppScreen):
         self._library_loaded = True
         self._invalidate_library_workspace_depth_state()
         if self.is_mounted:
+            rearm_prompt_editor = (
+                self._preserve_library_prompt_editor_for_source_recompose()
+            )
             self.refresh(recompose=True)
+            if rearm_prompt_editor:
+                self.call_after_refresh(self._defer_library_prompt_editor_rearm)
+
+    def _preserve_library_prompt_editor_for_source_recompose(self) -> bool:
+        """Keep live prompt fields stable across a source-snapshot recompose.
+
+        A successful prompt create refreshes the broad Library source
+        snapshot so the Prompts rail count and list include the new record.
+        Applying that snapshot recomposes the whole screen.  Textual emits
+        mount-time ``Changed`` events for the rebuilt prompt fields, so an
+        editor left armed is immediately marked dirty again even though the
+        user has made no new edit.
+
+        Capture the live fields into the editor's current render source,
+        then disarm only for the remount.  This also preserves genuine edits
+        made while the snapshot worker was in flight: the existing dirty bit
+        is left unchanged and the live values, rather than an older detail
+        mapping or conflict snapshot, seed the rebuilt widgets.
+
+        Returns:
+            ``True`` when a mounted prompt editor was prepared and must be
+            re-armed after the source-snapshot refresh.
+        """
+        if self._library_prompts_view != "editor":
+            return False
+        fields = self._read_library_prompt_editor_fields()
+        if fields is None:
+            return False
+        name, author, details, system_prompt, user_prompt, keywords_text = fields
+        if self._library_prompt_conflict_snapshot is not None:
+            self._library_prompt_conflict_snapshot = dataclasses.replace(
+                self._library_prompt_conflict_snapshot,
+                name=name,
+                author=author,
+                details=details,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                keywords_csv=keywords_text,
+            )
+        elif isinstance(self._library_prompt_detail, Mapping):
+            detail = dict(self._library_prompt_detail)
+            detail.update(
+                {
+                    "name": name,
+                    "author": author,
+                    "details": details,
+                    "system_prompt": system_prompt,
+                    "user_prompt": user_prompt,
+                    "keywords": keywords_text,
+                }
+            )
+            self._library_prompt_detail = detail
+        else:
+            return False
+        self._library_prompt_editor_armed = False
+        return True
 
     def _apply_source_snapshot_timeout(self) -> None:
         """Avoid leaving Library in an indefinite loading state."""
@@ -6455,7 +6514,7 @@ class LibraryScreen(BaseAppScreen):
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
             self._start_library_export_counts_worker()
         if row_id == LIBRARY_ROW_CREATE_PROMPT and self.is_mounted:
-            self.call_after_refresh(self._arm_library_prompt_editor)
+            self.call_after_refresh(self._defer_library_prompt_editor_rearm)
         if row_id == LIBRARY_ROW_CREATE_SKILL and self.is_mounted:
             self.call_after_refresh(self._arm_library_skill_editor)
 
@@ -8746,7 +8805,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
-            self.call_after_refresh(self._arm_library_prompt_editor)
+            self.call_after_refresh(self._defer_library_prompt_editor_rearm)
 
     def _arm_library_prompt_editor(self) -> None:
         """Enable dirty-tracking once the prompt editor's mount-time
@@ -8755,6 +8814,16 @@ class LibraryScreen(BaseAppScreen):
         for a real edit.
         """
         self._library_prompt_editor_armed = True
+
+    def _defer_library_prompt_editor_rearm(self) -> None:
+        """Re-arm after child mount-time change messages have drained.
+
+        ``call_after_refresh`` runs after this screen's refresh, but child
+        ``Input``/``TextArea`` mount messages can be queued one turn later.
+        A final ``call_later`` keeps dirty tracking disarmed through those
+        messages.
+        """
+        self.call_later(self._arm_library_prompt_editor)
 
     def _enter_library_prompt_create_editor(self) -> None:
         """Open the in-canvas prompt editor on a blank, not-yet-saved record.
@@ -9287,7 +9356,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
-            self.call_after_refresh(self._arm_library_prompt_editor)
+            self.call_after_refresh(self._defer_library_prompt_editor_rearm)
 
     async def _flush_library_prompt_save(self) -> bool:
         """Veto leaving the prompt editor while an edit is unsaved.
@@ -9572,7 +9641,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
-            self.call_after_refresh(self._arm_library_prompt_editor)
+            self.call_after_refresh(self._defer_library_prompt_editor_rearm)
 
     @on(Button.Pressed, "#library-prompt-delete")
     def handle_library_prompt_delete(self, event: Button.Pressed) -> None:
@@ -9836,7 +9905,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_prompt_editor_armed = False
             if self.is_mounted:
                 self.refresh(recompose=True)
-                self.call_after_refresh(self._arm_library_prompt_editor)
+                self.call_after_refresh(self._defer_library_prompt_editor_rearm)
             return
 
         fresh_version = build_prompt_editor_state(detail).version
@@ -9914,7 +9983,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
-            self.call_after_refresh(self._arm_library_prompt_editor)
+            self.call_after_refresh(self._defer_library_prompt_editor_rearm)
 
     async def _resolve_library_prompt_create_conflict(
         self, *, overwrite: bool, snapshot: PromptEditorState
@@ -9957,7 +10026,7 @@ class LibraryScreen(BaseAppScreen):
             self._enter_library_prompt_create_editor()
             if self.is_mounted:
                 self.refresh(recompose=True)
-                self.call_after_refresh(self._arm_library_prompt_editor)
+                self.call_after_refresh(self._defer_library_prompt_editor_rearm)
             return
 
         service = getattr(self.app_instance, "prompt_scope_service", None)
@@ -10049,13 +10118,30 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_dirty = False
         self._library_prompt_status = LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"]
         self._library_prompt_editor_armed = False
+        if self.is_mounted:
+            # Remove the conflict banner first, then re-arm and start the
+            # broad count/list refresh from the settled DOM. Starting both
+            # recomposes concurrently lets this callback re-arm the editor
+            # while the snapshot's fields are still mounting, which turns
+            # their synthetic ``Changed`` events into a false dirty edit.
+            self.refresh(recompose=True)
+            self.call_after_refresh(
+                self._resume_library_prompt_editor_after_create_retry
+            )
+        else:
+            self._refresh_local_source_snapshot()
+
+    def _resume_library_prompt_editor_after_create_retry(self) -> None:
+        """Re-arm a successful create retry, then refresh its rail snapshot."""
+        self.call_later(self._arm_library_prompt_editor_and_refresh_source_snapshot)
+
+    def _arm_library_prompt_editor_and_refresh_source_snapshot(self) -> None:
+        """Finish create-retry remounting before starting the count refresh."""
+        self._arm_library_prompt_editor()
         # Mirrors `_save_library_prompt`'s own create-success branch: a
         # brand-new prompt changes the list's membership/count, so the
         # Prompts rail badge/list must pick up the new row now.
         self._refresh_local_source_snapshot()
-        if self.is_mounted:
-            self.refresh(recompose=True)
-            self.call_after_refresh(self._arm_library_prompt_editor)
 
     def _return_to_library_prompt_create_draft(
         self, snapshot: PromptEditorState, outcome: str
@@ -10098,7 +10184,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
-            self.call_after_refresh(self._arm_library_prompt_editor)
+            self.call_after_refresh(self._defer_library_prompt_editor_rearm)
 
     @on(Button.Pressed, "#library-prompt-conflict-overwrite")
     def handle_library_prompt_conflict_overwrite(self, event: Button.Pressed) -> None:
