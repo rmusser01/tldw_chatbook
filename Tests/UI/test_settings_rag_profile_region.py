@@ -1385,9 +1385,13 @@ def test_rag_backfill_worker_failure_notifies_and_clears_in_flight_without_raisi
         settings_screen_module, "semantic_indexing_available", lambda: True
     )
     # M5's pre-resolve call must never be the real (potentially heavy/
-    # network-touching) service construction in a unit test.
+    # network-touching) service construction in a unit test -- a cheap
+    # non-None sentinel stand-in instead (task-634 review: None now has its
+    # OWN dedicated early-return guard, tested separately in
+    # test_rag_backfill_worker_guards_against_none_pre_resolved_service, so
+    # it must not also be used here to reach backfill_semantic_index).
     monkeypatch.setattr(
-        settings_screen_module, "get_shared_rag_service", lambda: None
+        settings_screen_module, "get_shared_rag_service", lambda: object()
     )
 
     def _boom(*, media_db, chachanotes_db, rag_service=None):
@@ -1457,6 +1461,61 @@ def test_rag_backfill_worker_pre_resolves_the_shared_service_outside_the_loop(
 
     assert resolve_calls == [True]
     assert captured_kwargs.get("rag_service") is sentinel_service
+
+
+# --- task-634 review (Important): get_shared_rag_service() can now return
+# None not only on a genuine construction failure but also when a
+# concurrent reset/set-active discarded an in-flight build (the two-lock
+# construction in ingestion_indexing.py -- see _shared_service_generation).
+# Falling through to backfill_semantic_index's own default arg
+# (`rag_service or get_shared_rag_service()`) would retry construction for
+# the FIRST time INSIDE the transient asyncio.run loop below -- exactly the
+# PR #700 hazard the pre-resolution above exists to prevent. Mirrors
+# SearchRAGWindow._run_index_backfill's explicit None guard (~:1005): notify
+# + return, never fall through. ---
+
+
+def test_rag_backfill_worker_guards_against_none_pre_resolved_service(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module, "semantic_indexing_available", lambda: True
+    )
+    # Simulates a build discarded by a concurrent reset (task-634) -- not a
+    # deps/config problem, just a since-superseded construction attempt.
+    monkeypatch.setattr(
+        settings_screen_module, "get_shared_rag_service", lambda: None
+    )
+    backfill_calls: list = []
+
+    async def _fake_backfill(**kwargs):
+        backfill_calls.append(kwargs)
+        return {"status": "ok", "indexed": 0, "skipped": 0, "failed": 0, "errors": []}
+
+    monkeypatch.setattr(
+        settings_screen_module, "backfill_semantic_index", _fake_backfill
+    )
+
+    app_instance = SimpleNamespace(
+        app_config={}, media_db=object(), chachanotes_db=None
+    )
+    screen = SettingsScreen(app_instance)
+    screen._library_rag_backfill_in_flight = True
+
+    worker = SettingsScreen.__dict__["_rag_backfill_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen)  # invoke the thread-body directly, bypassing @work dispatch
+
+    # The transient asyncio.run loop must never even start -- backfill_
+    # semantic_index's own default-arg re-resolution never gets a chance to
+    # run inside it.
+    assert backfill_calls == []
+    # The in-flight flag must still be cleared (finally-block contract).
+    assert screen._library_rag_backfill_in_flight is False
+    message, severity = fake_app.notifications[-1]
+    assert severity == "error"
+    assert "backfill" in message.lower()
 
 
 # --- Task 4 review Finding 2: _rag_after_set_active must not misreport a

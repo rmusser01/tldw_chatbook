@@ -8420,6 +8420,24 @@ class SettingsScreen(BaseAppScreen):
             # FIRST time from inside that loop, and the loop closes the
             # instant this run finishes.
             rag_service = get_shared_rag_service()
+            if rag_service is None:
+                # task-634 review: get_shared_rag_service() can return None
+                # not only on a genuine construction failure but also when a
+                # concurrent reset/set-active discarded an in-flight build
+                # (the two-lock construction in ingestion_indexing.py). Never
+                # fall through to backfill_semantic_index's own default arg
+                # here -- that would retry construction for the FIRST time
+                # INSIDE the transient asyncio.run loop below, exactly the
+                # PR #700 hazard the pre-resolution above exists to prevent.
+                # Mirrors SearchRAGWindow._run_index_backfill's explicit None
+                # guard.
+                self.app.call_from_thread(
+                    self.app.notify,
+                    "RAG backfill could not start: the shared RAG service "
+                    "is unavailable right now. Try again shortly.",
+                    severity="error",
+                )
+                return
             summary = asyncio.run(
                 backfill_semantic_index(
                     media_db=media_db,
