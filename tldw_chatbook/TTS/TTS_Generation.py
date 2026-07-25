@@ -117,6 +117,7 @@ class _ManagedAudioResponse(TTSAudioResponse):
             content_type=response.content_type,
             byte_stream=response.byte_stream,
             sample_rate=response.sample_rate,
+            metadata=response.metadata,
         )
         self._response = response
         self._resources = resources
@@ -203,11 +204,22 @@ class TTSService:
             await _cleanup_preserving_primary(resources.close, error)
             raise
 
-        managed_response = _ManagedAudioResponse(
-            response,
-            resources,
-            self._responses.discard,
-        )
+        try:
+            managed_response = _ManagedAudioResponse(
+                response,
+                resources,
+                self._responses.discard,
+            )
+        except BaseException as error:
+
+            async def close_unmanaged_response() -> None:
+                try:
+                    await response.aclose()
+                finally:
+                    await resources.close()
+
+            await _cleanup_preserving_primary(close_unmanaged_response, error)
+            raise
         self._responses.add(managed_response)
         if self._close_signal.is_set():
             closed_error = TTSRegistryClosedError("The TTS service is closed")
@@ -277,6 +289,28 @@ class TTSService:
             The provider's current catalog.
         """
         return await self.registry.get_catalog(provider_id, refresh=refresh)
+
+    async def get_voices(
+        self,
+        provider_id: str,
+        model_id: str,
+        refresh: bool = False,
+    ) -> tuple[str, ...]:
+        """Return voices for one provider model.
+
+        Args:
+            provider_id: Canonical provider identifier.
+            model_id: Exact provider model identifier.
+            refresh: Whether to refresh the provider's voice data.
+
+        Returns:
+            The provider's current voices for the selected model.
+        """
+        return await self.registry.get_voices(
+            provider_id,
+            model_id,
+            refresh=refresh,
+        )
 
     async def reconfigure_provider(
         self,

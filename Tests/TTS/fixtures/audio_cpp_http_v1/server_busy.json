@@ -1,0 +1,6 @@
+{
+  "error": {
+    "message": "model 'pocket-tts' is busy: timed out after 30000 ms waiting for the inference lock",
+    "type": "server_busy"
+  }
+}

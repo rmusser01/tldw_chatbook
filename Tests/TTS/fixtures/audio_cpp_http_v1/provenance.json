@@ -1,0 +1,17 @@
+{
+  "repository": "https://github.com/0xShug0/audio.cpp",
+  "commit": "d3d748179e5ace353386fbf17bcaedfacf482d75",
+  "reviewed": "2026-07-23",
+  "endpoints": [
+    "GET /health",
+    "GET /v1/models",
+    "GET /v1/audio/voices",
+    "POST /v1/audio/speech"
+  ],
+  "source_paths": [
+    "app/server/README.md",
+    "app/server/runtime.cpp",
+    "app/server/http.cpp",
+    "app/server/busy_guard.h"
+  ]
+}

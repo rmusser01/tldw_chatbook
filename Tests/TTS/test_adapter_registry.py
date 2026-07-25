@@ -181,7 +181,7 @@ async def test_get_catalog_materializes_lazily_and_releases_its_lease() -> None:
     adapter = factory.instances[0]
 
     assert catalog.provider_id == "openai"
-    assert adapter.ensure_ready_calls == 1
+    assert adapter.ensure_ready_calls == 0
     assert factory.calls == 1
     assert (
         await registry.reconfigure_provider("openai", {"key": "second"})
@@ -189,6 +189,61 @@ async def test_get_catalog_materializes_lazily_and_releases_its_lease() -> None:
     )
     assert adapter.close_calls == 1
     assert factory.calls == 1
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_get_voices_materializes_lazily_and_releases_its_lease() -> None:
+    voices_started = asyncio.Event()
+    allow_voices = asyncio.Event()
+    instances: list[FakeAdapter] = []
+
+    class BlockingVoiceAdapter(FakeAdapter):
+        async def get_voices(
+            self,
+            model_id: str,
+            refresh: bool = False,
+        ) -> tuple[str, ...]:
+            self.get_voices_calls += 1
+            self.get_voices_requests.append((model_id, refresh))
+            voices_started.set()
+            await allow_voices.wait()
+            return ("voice-a", "voice-b")
+
+    def factory(config: Mapping[str, Any]) -> BlockingVoiceAdapter:
+        del config
+        adapter = BlockingVoiceAdapter("openai")
+        instances.append(adapter)
+        return adapter
+
+    registry = TTSAdapterRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=provider_spec(
+                    "openai",
+                    FakeAdapterFactory("unused"),
+                ).descriptor,
+                factory=factory,
+                initial_config={"key": "first"},
+            ),
+        ),
+        aliases={"oa": "openai"},
+    )
+
+    assert instances == []
+    voice_lookup = asyncio.create_task(registry.get_voices("oa", "model", refresh=True))
+    await voices_started.wait()
+    adapter = instances[0]
+    result = await registry.reconfigure_provider("openai", {"key": "second"})
+
+    assert result is ReconfigureResult.CHANGED
+    assert adapter.ensure_ready_calls == 0
+    assert adapter.get_voices_requests == [("model", True)]
+    assert adapter.close_calls == 0
+
+    allow_voices.set()
+    assert await voice_lookup == ("voice-a", "voice-b")
+    assert adapter.close_calls == 1
     await registry.close()
 
 

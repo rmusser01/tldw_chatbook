@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 import re
+import struct
+import sys
+import traceback
+from collections.abc import AsyncIterator, Awaitable, Mapping
 from pathlib import Path
+from typing import Any
 
+import httpx
 import pytest
 from loguru import logger
 
@@ -13,9 +21,113 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
 )
 from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
+from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
+from tldw_chatbook.TTS.adapter_types import (
+    TTSAudioResponse,
+    TTSOperationError,
+    TTSProviderDescriptor,
+    TTSProviderSpec,
+    TTSRequest,
+)
+from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_module
+from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
+from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.legacy_bridge import LEGACY_ROUTES
+from tldw_chatbook.TTS.TTS_Generation import TTSService
 
 GUIDE_PATH = Path(__file__).parents[2] / "Docs/Development/TTS/TTS_MODULE_GUIDE.md"
+_TEST_WAIT_SECONDS = 2.0
+
+
+class _PrivacyStream(httpx.AsyncByteStream):
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self._body
+
+    async def aclose(self) -> None:
+        return
+
+
+def _privacy_response(
+    body: bytes,
+    *,
+    status: int = 200,
+    headers: dict[str, str] | None = None,
+    extensions: dict[str, Any] | None = None,
+) -> httpx.Response:
+    return httpx.Response(
+        status,
+        headers=headers,
+        extensions=extensions,
+        stream=_PrivacyStream(body),
+    )
+
+
+def _exception_graph(error: BaseException) -> list[BaseException]:
+    pending = [error]
+    seen: set[int] = set()
+    graph: list[BaseException] = []
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        graph.append(current)
+        for linked in (current.__context__, current.__cause__):
+            if linked is not None:
+                pending.append(linked)
+    return graph
+
+
+async def _capture_bounded_cleanup(
+    awaitable: Awaitable[Any],
+    errors: list[BaseException],
+) -> None:
+    task = asyncio.ensure_future(awaitable)
+    try:
+        await asyncio.wait_for(
+            asyncio.shield(task),
+            timeout=_TEST_WAIT_SECONDS,
+        )
+    except BaseException as error:
+        errors.append(error)
+        if not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(task, return_exceptions=True),
+                    timeout=_TEST_WAIT_SECONDS,
+                )
+            except BaseException as join_error:
+                errors.append(join_error)
+
+
+async def _cleanup_audio_cpp_privacy_resources(
+    service: TTSService,
+    adapters: list[AudioCppAdapter],
+    response: TTSAudioResponse | None,
+) -> list[BaseException]:
+    errors: list[BaseException] = []
+    if response is not None:
+        await _capture_bounded_cleanup(response.aclose(), errors)
+    await _capture_bounded_cleanup(service.close(), errors)
+    await _capture_bounded_cleanup(service.wait_closed(), errors)
+    for adapter in adapters:
+        await _capture_bounded_cleanup(adapter.close(), errors)
+
+    for adapter in adapters:
+        privacy_filter = adapter._httpx_privacy_filter
+        leaked = False
+        for logger_name in audio_cpp_module._HTTP_LOGGER_NAMES:
+            http_logger = logging.getLogger(logger_name)
+            if privacy_filter in http_logger.filters:
+                leaked = True
+                http_logger.removeFilter(privacy_filter)
+        if leaked:
+            errors.append(AssertionError("audio.cpp HTTP privacy filter leaked"))
+    return errors
 
 
 def test_tts_package_exports_only_stable_adapter_service_api() -> None:
@@ -26,6 +138,8 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
         "ProviderHealth",
         "TTSAudioResponse",
         "TTSModelInfo",
+        "TTSOperationCode",
+        "TTSOperationError",
         "TTSProgress",
         "TTSProviderCatalog",
         "TTSProviderDescriptor",
@@ -71,9 +185,14 @@ def test_tts_guide_documents_exact_legacy_routes_and_working_example() -> None:
         "`TTSService.synthesize()`." in normalized_architecture
     )
     assert (
-        "Until `audio_cpp` lands, all currently registered providers are "
-        "compatibility adapters and callers use `generate_audio_stream()` "
-        "with an enumerated legacy internal model ID." in normalized_architecture
+        "`audio_cpp` is the first native adapter. It is registered first, by the "
+        "exact canonical ID `audio_cpp`, with display label `audio.cpp` and no alias."
+        in normalized_architecture
+    )
+    assert (
+        "The following six entries remain unchanged behind the temporary "
+        "compatibility bridge: `openai`, `elevenlabs`, `kokoro`, `chatterbox`, "
+        "`higgs`, and `alltalk`." in normalized_architecture
     )
     assert documented_routes == LEGACY_ROUTES
     assert 'internal_model_id = "openai_official_tts-1"' in usage
@@ -281,3 +400,188 @@ async def test_stts_settings_save_does_not_echo_reconfiguration_error_secret(
     assert str(len(secret)) not in rendered
     assert hashlib.sha256(secret.encode()).hexdigest() not in rendered
     assert "length" not in rendered.lower()
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_service_boundary_never_exposes_private_http_or_request_values(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    base_url = "http://private-audio-origin-sentinel.invalid:8181"
+    text = "PRIVATE_SYNTHESIS_TEXT_SENTINEL"
+    invalid_model = "PRIVATE_INVALID_MODEL_SENTINEL"
+    invalid_voice = "PRIVATE_INVALID_VOICE_SENTINEL\u0000"
+    raw_config_value = "PRIVATE_RAW_CONFIG_VALUE_SENTINEL"
+    remote_body = "PRIVATE_REMOTE_BODY_SENTINEL"
+    remote_reason = "PRIVATE_REMOTE_REASON_SENTINEL"
+    remote_cookie = "PRIVATE_REMOTE_COOKIE_SENTINEL"
+    speech_calls = 0
+    created: list[AudioCppAdapter] = []
+    loguru_messages: list[str] = []
+
+    fixture_dir = Path(__file__).parent / "fixtures/audio_cpp_http_v1"
+    health = (fixture_dir / "health.json").read_bytes()
+    models = (fixture_dir / "models.json").read_bytes()
+    model_id = "pocket-tts"
+    samples = b"\x00\x00\x01\x00"
+    fmt = struct.pack(
+        "<4sIHHIIHH",
+        b"fmt ",
+        16,
+        1,
+        1,
+        24_000,
+        48_000,
+        2,
+        16,
+    )
+    riff_payload = b"WAVE" + fmt + struct.pack("<4sI", b"data", len(samples)) + samples
+    wav = b"RIFF" + struct.pack("<I", len(riff_payload)) + riff_payload
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal speech_calls
+        assert "cookie" not in request.headers
+        if request.url.path == "/health":
+            return _privacy_response(health)
+        if request.url.path == "/v1/models":
+            return _privacy_response(models)
+
+        speech_calls += 1
+        if speech_calls == 1:
+            logging.getLogger("httpx").info(
+                "HTTP Request: POST %s body=%s",
+                request.url,
+                remote_body,
+            )
+            logging.getLogger("httpcore.http11").debug(
+                "response headers cookie=%s reason=%s",
+                remote_cookie,
+                remote_reason,
+            )
+            body = (
+                b'{"error":{"message":"'
+                + remote_body.encode()
+                + b'","type":"server_error"}}'
+            )
+            return _privacy_response(
+                body,
+                status=503,
+                headers={"Set-Cookie": f"private={remote_cookie}; Path=/"},
+                extensions={"reason_phrase": remote_reason.encode()},
+            )
+        return _privacy_response(
+            wav,
+            headers={"Content-Type": "audio/wav"},
+        )
+
+    def factory(config: Mapping[str, Any]) -> AudioCppAdapter:
+        assert config["private_test_value"] == raw_config_value
+        adapter = AudioCppAdapter(
+            AudioCppConfig.from_mapping(config),
+            transport=httpx.MockTransport(respond),
+        )
+        created.append(adapter)
+        return adapter
+
+    def speech_request(
+        *,
+        model: str = model_id,
+        voice: str | None = None,
+    ) -> TTSRequest:
+        return TTSRequest(
+            provider_id="audio_cpp",
+            model_id=model,
+            text=text,
+            voice=voice,
+            response_format="wav",
+        )
+
+    initial_config: dict[str, Any] = {
+        **AudioCppConfig(base_url=base_url).to_mapping(),
+        "private_test_value": raw_config_value,
+    }
+    service = TTSService(
+        TTSAdapterRegistry(
+            specs=(
+                TTSProviderSpec(
+                    descriptor=TTSProviderDescriptor(
+                        provider_id="audio_cpp",
+                        display_name="audio.cpp",
+                        native=True,
+                    ),
+                    factory=factory,
+                    initial_config=initial_config,
+                    exclusive_reconfigure=True,
+                ),
+            ),
+            aliases={},
+        )
+    )
+    errors: list[TTSOperationError] = []
+    response: TTSAudioResponse | None = None
+    caplog.set_level(logging.DEBUG)
+    sink_id = logger.add(loguru_messages.append, level="DEBUG", format="{message}")
+    try:
+        try:
+            async with asyncio.timeout(_TEST_WAIT_SECONDS):
+                requests = (
+                    speech_request(voice=invalid_voice),
+                    speech_request(model=invalid_model),
+                    speech_request(),
+                )
+                for request in requests:
+                    with pytest.raises(TTSOperationError) as captured:
+                        await service.synthesize(request)
+                    errors.append(captured.value)
+
+                response = await service.synthesize(speech_request())
+                assert [chunk async for chunk in response.byte_stream] == [wav]
+                catalog = await service.get_catalog("audio_cpp")
+                retained_metadata = dict(response.metadata)
+        finally:
+            primary_error = sys.exception()
+            cleanup_errors = await _cleanup_audio_cpp_privacy_resources(
+                service,
+                created,
+                response,
+            )
+            if primary_error is None and cleanup_errors:
+                raise cleanup_errors[0]
+    finally:
+        logger.remove(sink_id)
+
+    assert [error.code for error in errors] == [
+        "request_invalid",
+        "model_invalid",
+        "connection_unavailable",
+    ]
+    exception_graphs = [_exception_graph(error) for error in errors]
+    assert all(graph == [error] for graph, error in zip(exception_graphs, errors))
+    exception_notes = [
+        getattr(node, "__notes__", ()) for graph in exception_graphs for node in graph
+    ]
+    rendered_tracebacks = [
+        "".join(traceback.format_exception(error)) for error in errors
+    ]
+    public_output = " ".join(
+        (
+            caplog.text,
+            "\n".join(loguru_messages),
+            repr([(error.args, str(error)) for error in errors]),
+            repr(exception_graphs),
+            repr(exception_notes),
+            "\n".join(rendered_tracebacks),
+            repr(catalog),
+            repr(retained_metadata),
+        )
+    )
+    private_values = (
+        base_url,
+        text,
+        invalid_model,
+        "PRIVATE_INVALID_VOICE_SENTINEL",
+        raw_config_value,
+        remote_body,
+        remote_reason,
+        remote_cookie,
+    )
+    assert all(value not in public_output for value in private_values)

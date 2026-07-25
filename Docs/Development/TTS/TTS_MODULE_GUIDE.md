@@ -10,19 +10,18 @@ The TTS module in tldw_chatbook provides a flexible, extensible system for gener
 
 The application owns one sealed `TTSAdapterRegistry` and one `TTSService`.
 Native adapters use canonical provider IDs and `TTSService.synthesize()`.
-Until `audio_cpp` lands, all currently registered providers are compatibility
-adapters and callers use `generate_audio_stream()` with an enumerated legacy
-internal model ID.
+`audio_cpp` is the first native adapter. It is registered first, by the exact
+canonical ID `audio_cpp`, with display label `audio.cpp` and no alias. The
+adapter remains unmaterialized until its first operation.
 
-The temporary bridge has exactly six provider entries: `openai`, `elevenlabs`,
-`kokoro`, `chatterbox`, `higgs`, and `alltalk`. Each adapter lazily owns one
-provider-scoped `TTSBackendManager`; application and UI code must not access
-that manager or a concrete backend. The bridge is removed only after every
-retained provider has a native adapter and all legacy internal-model callers
-have migrated.
+The following six entries remain unchanged behind the temporary compatibility
+bridge: `openai`, `elevenlabs`, `kokoro`, `chatterbox`, `higgs`, and `alltalk`.
+Each bridge adapter lazily owns one provider-scoped `TTSBackendManager`;
+application and UI code must not access that manager or any concrete adapter.
+The bridge is removed only after every retained provider has a native adapter
+and all legacy internal-model callers have migrated.
 
-New providers are implemented as native adapters; `audio_cpp` is the first
-planned native adapter. See
+New providers are implemented as native adapters. See
 [ADR-023](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
 and the approved
 [audio.cpp adapter design](../../superpowers/specs/2026-07-23-audio-cpp-tts-adapter-registry-design.md).
@@ -36,6 +35,10 @@ tldw_chatbook/TTS/
 ├── adapter_registry.py      # Sealed app-scoped provider registry
 ├── adapter_bootstrap.py     # Application service construction
 ├── legacy_bridge.py         # Temporary provider-scoped compatibility adapters
+├── audio_cpp_config.py      # Immutable external-server configuration
+├── audio_cpp_contract.py    # Pinned JSON and PCM16 WAV validation
+├── adapters/
+│   └── audio_cpp.py         # Native external audio.cpp adapter
 ├── audio_schemas.py         # Pydantic schemas for requests/responses
 ├── TTS_Generation.py        # Main TTS service orchestration
 ├── TTS_Backends.py          # Legacy bridge manager and base class
@@ -61,7 +64,8 @@ tldw_chatbook/TTS/
 #### 1. TTSService (`TTS_Generation.py`)
 The main orchestration layer that:
 - Routes canonical provider IDs through the sealed registry
-- Exposes provider-neutral synthesis, catalog, and reconfiguration operations
+- Exposes provider-neutral synthesis, catalog, voice, and reconfiguration
+  operations
 - Retains adapter resources until each audio response is closed
 - Preserves the legacy byte-stream interface during migration
 
@@ -73,6 +77,92 @@ shutdown. Registration is sealed at construction time.
 `TTSBackendBase`, `TTSBackendManager`, and the class-global legacy backend
 registry are compatibility-bridge internals. They are not the extension point
 for new providers.
+
+### Native audio.cpp adapter (external mode)
+
+Slice 2 connects to one existing `audiocpp_server`; it does not launch or
+supervise a process. Configuration comes only from `[app_tts.audio_cpp]`:
+
+```toml
+[app_tts.audio_cpp]
+mode = "external"
+base_url = "http://127.0.0.1:8080"
+connect_timeout_seconds = 5
+synthesis_timeout_seconds = 600
+max_input_characters = 10000
+max_response_bytes = 134217728
+max_metadata_bytes = 1048576
+max_catalog_models = 1000
+max_voices_per_model = 1000
+max_identifier_characters = 256
+```
+
+`base_url` must be a canonical absolute HTTP or HTTPS origin. Credentials,
+non-root paths, query strings, fragments, and invalid ports are rejected. The
+configuration has no environment override, authentication or custom-header
+field, binary path, `server.json` path, or other process field. HTTPS keeps
+certificate verification enabled. Invalid configuration is rejected during
+local projection or adapter materialization with a safe, value-independent
+`ValueError`, before any provider operation; the external adapter does not emit
+`configuration_invalid`.
+
+`connect_timeout_seconds` configures HTTP connection establishment and also
+bounds the complete required health-plus-models discovery sequence, including
+an eligible safe-GET retry. The same value independently bounds each optional
+voice-discovery operation. `synthesis_timeout_seconds` bounds the speech request
+through complete response consumption; the HTTP connect timeout still applies
+inside it. There is no read-inactivity timer.
+
+The adapter implements the pinned `audio_cpp_http_v1` structure from
+audio.cpp commit
+[`d3d748179e5ace353386fbf17bcaedfacf482d75`](https://github.com/0xShug0/audio.cpp/tree/d3d748179e5ace353386fbf17bcaedfacf482d75):
+
+- Required readiness surfaces: `GET /health` and `GET /v1/models`.
+- Optional lazy voice metadata:
+  `GET /v1/audio/voices?model=<id>`.
+- Complete speech response: `POST /v1/audio/speech`.
+
+Readiness retains only bounded TTS model metadata. Voice discovery is lazy,
+bounded, per model, and cached by provider configuration and catalog revision.
+A missing or invalid optional voices endpoint produces no discovered voices;
+it does not make an otherwise compatible provider unavailable. Callers
+represent the server-selected voice as `None`: the UI-facing “Server default”
+sentinel is not sent in the speech payload.
+
+Requests accept a known model, non-empty bounded text, an optional safe voice,
+WAV output, speed exactly `1.0`, and no adapter options. Synthesis sends one
+non-retried POST containing only `model`, `input`, `response_format: "wav"`,
+and an optional `voice`. Safe GET operations may receive one bounded retry.
+All requests disable redirects and request identity encoding.
+
+The adapter bounds metadata and audio reads before parsing. It rejects
+compressed, oversized, malformed, or incompatible responses and validates the
+entire response as structurally complete, uncompressed PCM16 RIFF/WAV.
+Validated bytes are then yielded as one asynchronous chunk. The asynchronous
+stream contract is preserved, but Slice 2 does not provide incremental audio
+streaming.
+
+`TTSOperationError` exposes only a stable code, safe message, retryability,
+local operation ID, and optional recovery action. Connectivity and
+required-contract failures make cached health stale; invalid requests, optional
+voice failures, busy responses, generation failures, invalid audio, and
+cancellation do not. There is no automatic fallback to another model or a
+legacy provider.
+Successful response metadata contains only safe scalar provenance, sample, and
+bounded timing values. Logs exclude submitted text, configured origins and
+values, response bodies, and rejected identifiers.
+
+The registry admits only one active audio.cpp adapter. An unchanged normalized
+configuration is a no-op. A changed configuration blocks new operations,
+drains active leases, closes the old adapter, and only then installs the new
+configuration; the replacement remains lazy, so old and new instances never
+overlap.
+
+Normal tests use fake HTTP transport and fixtures pinned to the reviewed
+upstream commit. They require neither an audio.cpp binary nor model downloads.
+The next ordered slice makes the STTS Playground catalog-driven for the
+external server. User-provided binary and user-provided `server.json`
+launch/supervision and its managed UI remain Slices 4–5.
 
 #### 3. Audio Service (`audio_service.py`)
 Handles audio format conversion with:
@@ -348,11 +438,12 @@ async for chunk in tts_service.generate_audio_stream(request, internal_model_id)
     audio_file.write(chunk)
 ```
 
-`TTSService.synthesize(TTSRequest)` is the native-adapter API. The six current
-registry entries are compatibility adapters and require private bridge metadata
-that `generate_audio_stream()` supplies. Do not call `synthesize()` directly for
-those entries. Native callers can use `synthesize()` after the first native
-adapter, `audio_cpp`, lands.
+`TTSService.synthesize(TTSRequest)` is the native-adapter API. Use it directly
+for `audio_cpp`. Its complete validated WAV is exposed as one chunk through the
+response's asynchronous iterator, and callers must close the response. The six
+legacy registry entries require private bridge metadata that
+`generate_audio_stream()` supplies; do not call `synthesize()` directly for
+those entries.
 
 ### Event System Integration
 
@@ -613,10 +704,16 @@ class OpenAISpeechRequest(BaseModel):
 ### Native Adapter Methods
 
 #### ensure_ready()
-Initialize or connect to provider resources lazily.
+Initialize or connect to provider resources lazily. The service synthesis path
+invokes this as its prerequisite.
 
 #### get_catalog()
-Return provider health, models, formats, voices, and supported controls.
+Own readiness and return provider health, models, formats, voices, and
+supported controls. Callers do not pre-resolve a concrete adapter.
+
+#### get_voices(model_id, refresh=False)
+Own readiness and lazily return bounded voices for one model. A refresh bypasses
+the adapter's current voice result without exposing the adapter to callers.
 
 #### synthesize()
 Return a provider-neutral `TTSAudioResponse` with an asynchronous byte stream.
@@ -645,8 +742,10 @@ Release provider resources. The registry controls when adapter shutdown occurs.
 ### Adding a Native Adapter
 
 1. Implement the asynchronous adapter contract (`ensure_ready`,
-   `get_catalog`, `synthesize`, and `close`) using the provider-neutral request,
-   response, catalog, health, and progress types.
+   `get_catalog`, `get_voices`, `synthesize`, and `close`) using the
+   provider-neutral request, response, catalog, health, and progress types.
+   `get_catalog()` and `get_voices()` own their readiness step;
+   `ensure_ready()` remains the service synthesis prerequisite.
 2. Add one explicit provider specification to application service
    construction.
 3. Add configuration validation, contract tests, and provider documentation.
@@ -665,7 +764,8 @@ pytest Tests/TTS/
 1. **API Keys**: Never log or display API keys
 2. **Input Validation**: All text inputs are sanitized
 3. **File Paths**: Temporary files use secure generation
-4. **Network**: HTTPS only for API calls
+4. **Network**: External audio.cpp accepts an explicit HTTP or HTTPS origin;
+   HTTPS certificate verification remains enabled and redirects are disabled
 5. **Local Models**: Verify model file integrity
 6. **Voice Cloning**: Be aware of ethical implications
    - Only clone voices with permission
