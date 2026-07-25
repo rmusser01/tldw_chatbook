@@ -127,8 +127,14 @@ def test_theme_and_splash_appear_in_settings_sidebar():
 
 
 def test_theme_and_splash_not_in_guided_mutation_categories():
-    assert SettingsCategoryId.THEME not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
-    assert SettingsCategoryId.SPLASH_SCREEN not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+    assert (
+        SettingsCategoryId.THEME
+        not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+    )
+    assert (
+        SettingsCategoryId.SPLASH_SCREEN
+        not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+    )
 
 
 class FakeSettingsModelDiscoveryScope:
@@ -2907,13 +2913,9 @@ async def test_settings_category_search_escape_clears_filter():
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch):
+async def test_settings_overview_paste_summary_updates_after_toggle():
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda *_args, **_kwargs: True,
-    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -2930,13 +2932,9 @@ async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypatch):
+async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh():
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda *_args, **_kwargs: True,
-    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -3693,6 +3691,21 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
     }
 
 
+def _capture_settings_section_saves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[dict[str, dict]]:
+    """Replace the active Settings persistence boundary and return its calls."""
+    save_calls: list[dict[str, dict]] = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            save_calls.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    return save_calls
+
+
 @pytest.mark.asyncio
 async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
     app = _build_test_app()
@@ -3705,20 +3718,7 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
         "temperature": 0.7,
         "top_p": 0.95,
     }
-    legacy_calls = []
-    batched_calls = []
-
-    class FakeAdapter:
-        def save_sections(self, section_values):
-            batched_calls.append(section_values)
-            return True
-
-    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
-    monkeypatch.setattr(
-        settings_screen_module,
-        "save_setting_to_cli_config",
-        lambda *args, **kwargs: legacy_calls.append(args) or True,
-    )
+    batched_calls = _capture_settings_section_saves(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -3741,7 +3741,6 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
 
-    assert legacy_calls == []
     assert batched_calls == [
         {
             "console": {"paste_collapse_threshold": 120},
@@ -3808,11 +3807,7 @@ async def test_settings_console_behavior_rejects_invalid_global_defaults(
         "top_p": 0.95,
         "max_tokens": 2048,
     }
-    saved = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    saved = _capture_settings_section_saves(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -3844,11 +3839,7 @@ async def test_settings_console_behavior_revert_restores_global_defaults(monkeyp
         "top_p": 0.95,
         "max_tokens": 2048,
     }
-    saved = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    saved = _capture_settings_section_saves(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -3898,11 +3889,7 @@ async def test_settings_console_behavior_revert_button_works_with_input_focus(
         "top_p": 0.95,
         "max_tokens": 2048,
     }
-    saved = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    saved = _capture_settings_section_saves(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -3935,12 +3922,7 @@ async def test_settings_console_behavior_revert_button_works_with_input_focus(
 async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
-    saved = []
-
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    saved = _capture_settings_section_saves(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
