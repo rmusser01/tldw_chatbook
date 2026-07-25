@@ -388,7 +388,15 @@ class ToolCatalogRegistry:
         # provider on every call, so invoke_by_name() (resolve_name() then
         # _owner_and_id()) still paid a full per-provider sweep on every
         # invocation despite the owner-map cache existing.
-        if self._owner_cache is None:
+        # Guard BOTH caches, not just _owner_cache: the two stores are
+        # assigned together as a tuple below, but task-327's per-call daemon
+        # threads mean an abandoned thread can still be mid-flight when
+        # reset_catalog_cache() runs on a later call, interleaving with this
+        # method elsewhere and leaving one store populated while the other
+        # was reset to None. A single-cache guard would then skip the
+        # rebuild and leave _name_to_id_cache (or _owner_cache) permanently
+        # None for the rest of the run.
+        if self._owner_cache is None or self._name_to_id_cache is None:
             self._owner_cache, self._name_to_id_cache = self._build_owner_cache()
 
     def _owner_and_id(self, tool_id: str):
@@ -403,7 +411,8 @@ class ToolCatalogRegistry:
 
     def resolve_name(self, name: str) -> str | None:
         self._ensure_catalog_cache()
-        return self._name_to_id_cache.get(name)
+        cache = self._name_to_id_cache
+        return cache.get(name) if cache else None
 
     def invoke_by_name(self, name: str, args: dict) -> ToolResult:
         tool_id = self.resolve_name(name)
