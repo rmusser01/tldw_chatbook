@@ -7,24 +7,25 @@ from collections.abc import Coroutine, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, Dict, Any, NamedTuple
 from pathlib import Path
+from typing import Any, Dict, NamedTuple, Optional
+
 from loguru import logger
 from rich.markup import escape
 
 #
 # Third-party imports
 from textual.message import Message
-from textual.widgets import Button, RichLog, Static, ProgressBar
+from textual.widgets import Button, ProgressBar, RichLog, Static
 
 #
 # Local imports
 from tldw_chatbook.TTS import (
-    get_tts_service,
     OpenAISpeechRequest,
     STTSGeneratedAudio,
     STTSPlaygroundRequest,
     TTSRequest,
+    get_tts_service,
 )
 from tldw_chatbook.TTS.adapter_registry import ReconfigureResult
 from tldw_chatbook.TTS.adapter_types import (
@@ -41,6 +42,7 @@ from tldw_chatbook.Utils.secure_temp_files import (
     create_secure_temp_file,
     secure_delete_file,
 )
+
 #
 #######################################################################################################################
 #
@@ -1109,8 +1111,8 @@ class STTSEventHandler:
         try:
             from tldw_chatbook.TTS.audiobook_generator import (
                 AudioBookGenerator,
-                AudioBookRequest,
                 AudioBookProgress,
+                AudioBookRequest,
             )
 
             logger.info("AudioBook generation requested")
@@ -1314,6 +1316,7 @@ class STTSEventHandler:
 
         try:
             import shutil
+
             from tldw_chatbook.Utils.path_validation import (
                 validate_filename,
                 validate_path_simple,

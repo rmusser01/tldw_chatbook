@@ -13,8 +13,10 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Select, Static, TextArea
 
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
+    STTSEventHandler,
     STTSPlaygroundGenerateEvent,
 )
+from tldw_chatbook.TTS.audio_player import PlaybackState
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
     TTSModelInfo,
@@ -27,7 +29,10 @@ from tldw_chatbook.TTS.playground_types import STTSGeneratedAudio
 from tldw_chatbook.TTS.legacy_catalogs import legacy_catalog
 from tldw_chatbook.UI import STTS_Window
 from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
-from tldw_chatbook.UI.stts_playground_catalog import SERVER_DEFAULT_VOICE_ID
+from tldw_chatbook.UI.stts_playground_catalog import (
+    LOADING_SELECT_VALUE,
+    SERVER_DEFAULT_VOICE_ID,
+)
 
 
 PROVIDER_IDS = (
@@ -314,6 +319,56 @@ async def test_mount_uses_descriptors_and_resolves_only_selected_provider(
 
 
 @pytest.mark.asyncio
+async def test_playground_generates_with_sentinel_shaped_remote_ids(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    remote_model_id = "__opaque_model__"
+    remote_voice_id = "__server_default__"
+    service.catalogs["audio_cpp"] = TTSProviderCatalog(
+        provider_id="audio_cpp",
+        revision=12,
+        health=ProviderHealth(state="available", fresh=True),
+        models=(
+            TTSModelInfo(
+                model_id=remote_model_id,
+                display_name="Opaque model",
+                family="test",
+                upstream_mode="tts",
+                formats=("wav",),
+                voices=(),
+                supports_speed=False,
+                omit_voice_uses_server_default=True,
+            ),
+        ),
+    )
+    service.voices[("audio_cpp", remote_model_id)] = (remote_voice_id,)
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        widget = app.query_one(TTSPlaygroundWidget)
+        model_select = app.query_one("#tts-model-select", Select)
+        voice_select = app.query_one("#tts-voice-select", Select)
+
+        assert model_select.value == remote_model_id
+        assert service.voice_calls == [("audio_cpp", remote_model_id, False)]
+        assert _option_values(voice_select) == (
+            SERVER_DEFAULT_VOICE_ID,
+            remote_voice_id,
+        )
+
+        voice_select.value = remote_voice_id
+        await pilot.pause()
+        widget._generate_tts()
+
+        request = app.generation_events[-1].request
+        assert request.model_id == remote_model_id
+        assert request.voice_id == remote_voice_id
+
+
+@pytest.mark.asyncio
 async def test_configuration_change_marks_catalog_stale_without_connecting(
     audio_cpp_playground: FakeTTSService,
     tmp_path: Path,
@@ -365,11 +420,71 @@ async def test_catalog_result_is_discarded_when_configuration_revision_changes(
         await pilot.pause()
 
         assert _option_values(app.query_one("#tts-model-select", Select)) == (
-            "__loading__",
+            LOADING_SELECT_VALUE,
         )
         assert app.query_one("#tts-generate-btn", Button).disabled is True
         status = str(app.query_one("#tts-provider-status", Static).render()).lower()
         assert "settings changed" in status
+
+
+@pytest.mark.asyncio
+async def test_superseded_catalog_failure_cannot_overwrite_newer_success(
+    audio_cpp_playground: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = audio_cpp_playground
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        widget = app.query_one(TTSPlaygroundWidget)
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        call_count = 0
+        newer_catalog = _audio_catalog(revision=12)
+
+        async def get_catalog(
+            provider_id: str,
+            refresh: bool = False,
+        ) -> TTSProviderCatalog:
+            nonlocal call_count
+            del refresh
+            call_count += 1
+            if call_count == 1:
+                first_started.set()
+                try:
+                    await release_first.wait()
+                except asyncio.CancelledError:
+                    await release_first.wait()
+                raise RuntimeError("obsolete refresh failed")
+            assert provider_id == "audio_cpp"
+            return newer_catalog
+
+        monkeypatch.setattr(service, "get_catalog", get_catalog)
+
+        widget._load_provider_catalog("audio_cpp", refresh=True)
+        await first_started.wait()
+        widget._load_provider_catalog("audio_cpp", refresh=True)
+        await _wait_until(
+            pilot,
+            lambda: (
+                call_count == 2
+                and widget._catalogs.get("audio_cpp") is newer_catalog
+                and "ready"
+                in str(app.query_one("#tts-provider-status", Static).render()).lower()
+            ),
+        )
+
+        release_first.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert widget._catalogs["audio_cpp"] is newer_catalog
+        assert "audio_cpp" not in widget._stale_providers
+        assert (
+            "ready"
+            in str(app.query_one("#tts-provider-status", Static).render()).lower()
+        )
 
 
 @pytest.mark.asyncio
@@ -1059,6 +1174,123 @@ async def test_playback_uses_artifact_captured_before_worker_runs(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("pause_before_replacement", "terminal_action"),
+    (
+        (False, "stop"),
+        (True, "stop"),
+        (False, "finish"),
+        (False, "unmount"),
+    ),
+    ids=("playing-stop", "paused-stop", "natural-finish", "unmount"),
+)
+async def test_playback_lease_survives_replacement_until_playback_ends(
+    audio_cpp_playground: FakeTTSService,
+    tmp_path: Path,
+    pause_before_replacement: bool,
+    terminal_action: str,
+) -> None:
+    del audio_cpp_playground
+    old_path = tmp_path / "old.wav"
+    new_path = tmp_path / "new.wav"
+    old_path.write_bytes(b"old")
+    new_path.write_bytes(b"new")
+    old_artifact = STTSGeneratedAudio(
+        path=old_path,
+        provider_id="audio_cpp",
+        model_id="old-model",
+        voice_id=None,
+        source_text="old",
+        operation_id="old-operation",
+        audio_format="wav",
+        content_type="audio/wav",
+    )
+    new_artifact = STTSGeneratedAudio(
+        path=new_path,
+        provider_id="audio_cpp",
+        model_id="new-model",
+        voice_id=None,
+        source_text="new",
+        operation_id="new-operation",
+        audio_format="wav",
+        content_type="audio/wav",
+    )
+
+    class Player:
+        def __init__(self) -> None:
+            self.state = PlaybackState.IDLE
+
+        async def get_state(self) -> PlaybackState:
+            return self.state
+
+        async def stop(self) -> bool:
+            self.state = PlaybackState.IDLE
+            return True
+
+        async def play(self, _path: Path) -> bool:
+            self.state = PlaybackState.PLAYING
+            return True
+
+        async def is_playing(self) -> bool:
+            return self.state == PlaybackState.PLAYING
+
+        async def pause(self) -> bool:
+            self.state = PlaybackState.PAUSED
+            return True
+
+        async def resume(self) -> bool:
+            self.state = PlaybackState.PLAYING
+            return True
+
+        async def get_position(self) -> float:
+            return 0.0
+
+        async def get_duration(self) -> float:
+            return 1.0
+
+    app = _PlaygroundHost()
+    handler = STTSEventHandler(app)
+    handler._accept_playground_artifact(old_artifact)
+    app._stts_handler = handler
+    player = Player()
+    app.audio_player = player
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        widget = app.query_one(TTSPlaygroundWidget)
+
+        widget._play_audio()
+        await _wait_until(
+            pilot,
+            lambda: (
+                player.state == PlaybackState.PLAYING
+                and widget._play_worker_task is None
+            ),
+        )
+        if pause_before_replacement:
+            widget._pause_audio()
+            await _wait_until(
+                pilot,
+                lambda: player.state == PlaybackState.PAUSED,
+            )
+
+        handler._accept_playground_artifact(new_artifact)
+        widget._store_delivered_artifact(new_artifact, announce=False)
+
+        assert old_path.exists()
+        assert handler._playground_file_leases[old_path] == 1
+
+        if terminal_action == "stop":
+            await widget._stop_audio_async()
+        elif terminal_action == "finish":
+            player.state = PlaybackState.FINISHED
+            await _wait_until(pilot, lambda: not old_path.exists())
+
+    assert not old_path.exists()
+    assert old_path not in handler._playground_file_leases
+
+
+@pytest.mark.asyncio
 async def test_export_uses_artifact_captured_before_dialog_completes(
     audio_cpp_playground: FakeTTSService,
     monkeypatch: pytest.MonkeyPatch,
@@ -1161,6 +1393,31 @@ async def test_export_cancel_releases_captured_artifact(
         callbacks[0](None)
 
         lease_handler.release_playground_artifact.assert_called_once_with(artifact)
+
+
+@pytest.mark.asyncio
+async def test_audio_export_rejects_unsafe_dialog_destination(
+    audio_cpp_playground: FakeTTSService,
+    tmp_path: Path,
+) -> None:
+    del audio_cpp_playground
+    source = tmp_path / "source.wav"
+    unsafe_destination = tmp_path / "bad;name.wav"
+    source.write_bytes(b"audio")
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)):
+        await app.workers.wait_for_complete()
+        widget = app.query_one(TTSPlaygroundWidget)
+
+        widget._handle_audio_export(
+            str(unsafe_destination),
+            source_path=source,
+        )
+
+    assert not unsafe_destination.exists()
+    assert app.notices[-1][1] == "error"
+    assert "dangerous pattern" in app.notices[-1][0]
 
 
 @pytest.mark.asyncio

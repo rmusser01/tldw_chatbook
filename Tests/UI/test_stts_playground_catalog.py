@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
     TTSModelInfo,
@@ -65,6 +67,19 @@ def test_provider_options_preserve_descriptor_order_and_canonical_values() -> No
         ("[bold]OpenAI[/]", "openai"),
         ("<Kokoro>", "kokoro"),
     )
+
+
+@pytest.mark.parametrize(
+    "public_callable",
+    (CatalogRequestToken.matches, provider_options),
+)
+def test_public_catalog_callables_have_google_style_docstrings(
+    public_callable: object,
+) -> None:
+    docstring = getattr(public_callable, "__doc__", "") or ""
+
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
 
 
 def test_audio_cpp_initial_controls_force_wav_speed_and_server_default() -> None:
@@ -131,6 +146,28 @@ def test_audio_cpp_without_discovered_voices_keeps_only_server_default() -> None
 
     assert controls.voice_options == (("Server default", SERVER_DEFAULT_VOICE_ID),)
     assert controls.selected_voice_id == SERVER_DEFAULT_VOICE_ID
+
+
+def test_audio_cpp_preserves_sentinel_shaped_remote_ids() -> None:
+    remote_model_id = "__opaque_model__"
+    remote_voice_id = "__server_default__"
+    controls = controls_from_catalog(
+        _catalog(models=(_model(model_id=remote_model_id),)),
+        selected_model_id=remote_model_id,
+        selected_voice_id=remote_voice_id,
+        discovered_voices=(remote_voice_id,),
+        selected_format="wav",
+        speed=1.0,
+    )
+
+    assert controls.selected_model_id == remote_model_id
+    assert controls.voice_options == (
+        ("Server default", SERVER_DEFAULT_VOICE_ID),
+        (remote_voice_id, remote_voice_id),
+    )
+    assert controls.selected_voice_id == remote_voice_id
+    assert voice_id_for_request(remote_voice_id) == remote_voice_id
+    assert voice_id_for_request(SERVER_DEFAULT_VOICE_ID) is None
 
 
 def test_removed_model_falls_back_and_stale_health_disables_generation() -> None:
@@ -218,12 +255,14 @@ def test_catalog_request_token_matches_every_revision_dimension() -> None:
         configuration_revision=3,
         catalog_revision=7,
         model_id="model-a",
+        request_generation=9,
     )
     current = {
         "provider_id": "audio_cpp",
         "configuration_revision": 3,
         "catalog_revision": 7,
         "model_id": "model-a",
+        "request_generation": 9,
     }
 
     assert token.matches(**current) is True
@@ -232,6 +271,7 @@ def test_catalog_request_token_matches_every_revision_dimension() -> None:
         ("configuration_revision", 4),
         ("catalog_revision", 8),
         ("model_id", "model-b"),
+        ("request_generation", 10),
     ):
         changed = dict(current)
         changed[field] = replacement_value

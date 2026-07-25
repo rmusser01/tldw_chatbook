@@ -1,7 +1,10 @@
+"""Pure projection helpers for catalog-driven STTS Playground controls."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from enum import Enum, auto
 
 from tldw_chatbook.TTS.adapter_types import (
     TTSModelInfo,
@@ -10,11 +13,25 @@ from tldw_chatbook.TTS.adapter_types import (
 )
 
 AUDIO_CPP_PROVIDER_ID = "audio_cpp"
-FIRST_AVAILABLE_MODEL_ID = "__first_available_model__"
-SERVER_DEFAULT_VOICE_ID = "__server_default__"
 SERVER_DEFAULT_VOICE_LABEL = "Server default"
 
-SelectOption = tuple[str, str]
+
+class SelectSentinel(Enum):
+    """Out-of-band values owned by local STTS Select controls."""
+
+    FIRST_AVAILABLE_MODEL = auto()
+    SERVER_DEFAULT_VOICE = auto()
+    LOADING = auto()
+    UNAVAILABLE = auto()
+
+
+FIRST_AVAILABLE_MODEL_ID = SelectSentinel.FIRST_AVAILABLE_MODEL
+SERVER_DEFAULT_VOICE_ID = SelectSentinel.SERVER_DEFAULT_VOICE
+LOADING_SELECT_VALUE = SelectSentinel.LOADING
+UNAVAILABLE_SELECT_VALUE = SelectSentinel.UNAVAILABLE
+
+SelectValue = str | SelectSentinel
+SelectOption = tuple[str, SelectValue]
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +42,7 @@ class CatalogRequestToken:
     configuration_revision: int
     catalog_revision: int | None = None
     model_id: str | None = None
+    request_generation: int | None = None
 
     def matches(
         self,
@@ -33,13 +51,27 @@ class CatalogRequestToken:
         configuration_revision: int,
         catalog_revision: int | None,
         model_id: str | None,
+        request_generation: int | None = None,
     ) -> bool:
-        """Return whether every captured request dimension is still current."""
+        """Return whether every captured request dimension is still current.
+
+        Args:
+            provider_id: Currently selected canonical provider identifier.
+            configuration_revision: Current provider configuration revision.
+            catalog_revision: Current provider catalog revision, when applicable.
+            model_id: Currently selected opaque model identifier, when applicable.
+            request_generation: Latest request generation, when applicable.
+
+        Returns:
+            ``True`` when every captured dimension matches current state.
+
+        """
         return (
             self.provider_id == provider_id
             and self.configuration_revision == configuration_revision
             and self.catalog_revision == catalog_revision
             and self.model_id == model_id
+            and self.request_generation == request_generation
         )
 
 
@@ -51,7 +83,7 @@ class PlaygroundControls:
     model_options: tuple[SelectOption, ...]
     selected_model_id: str | None
     voice_options: tuple[SelectOption, ...]
-    selected_voice_id: str | None
+    selected_voice_id: SelectValue | None
     format_options: tuple[str, ...]
     selected_format: str | None
     format_locked: bool
@@ -64,29 +96,58 @@ class PlaygroundControls:
 def provider_options(
     descriptors: Iterable[TTSProviderDescriptor],
 ) -> tuple[SelectOption, ...]:
-    """Return display labels paired with exact canonical provider IDs."""
+    """Return display labels paired with exact canonical provider IDs.
+
+    Args:
+        descriptors: Sealed registry descriptors in display order.
+
+    Returns:
+        Select options containing display labels and canonical provider IDs.
+
+    """
     return tuple(
         (descriptor.display_name, descriptor.provider_id) for descriptor in descriptors
     )
 
 
-def voice_id_for_request(selected_voice_id: str | None) -> str | None:
-    """Translate the local Server-default sentinel into adapter omission."""
-    if selected_voice_id == SERVER_DEFAULT_VOICE_ID:
+def voice_id_for_request(selected_voice_id: object) -> str | None:
+    """Translate the local Server-default sentinel into adapter omission.
+
+    Args:
+        selected_voice_id: Selected remote voice ID or local default sentinel.
+
+    Returns:
+        The exact remote voice ID, or ``None`` to request the server default.
+
+    """
+    if selected_voice_id is SERVER_DEFAULT_VOICE_ID:
         return None
-    return selected_voice_id
+    return selected_voice_id if isinstance(selected_voice_id, str) else None
 
 
 def controls_from_catalog(
     catalog: TTSProviderCatalog,
     *,
     selected_model_id: str | None,
-    selected_voice_id: str | None,
+    selected_voice_id: SelectValue | None,
     discovered_voices: tuple[str, ...] | None,
     selected_format: str | None,
     speed: float,
 ) -> PlaygroundControls:
-    """Resolve one provider catalog into deterministic control state."""
+    """Resolve one provider catalog into deterministic control state.
+
+    Args:
+        catalog: Current provider catalog.
+        selected_model_id: Previously selected opaque model ID.
+        selected_voice_id: Previously selected opaque voice ID.
+        discovered_voices: Lazily discovered voice IDs, when available.
+        selected_format: Previously selected response format.
+        speed: Previously selected synthesis speed.
+
+    Returns:
+        Provider-neutral state for the Playground controls.
+
+    """
     model_options = tuple(
         (model.display_name or model.model_id, model.model_id)
         for model in catalog.models
@@ -98,7 +159,7 @@ def controls_from_catalog(
     )
 
     voice_options: tuple[SelectOption, ...]
-    resolved_voice_id: str | None
+    resolved_voice_id: SelectValue | None
     format_options: tuple[str, ...]
     resolved_format: str | None
     if catalog.provider_id == AUDIO_CPP_PROVIDER_ID:
@@ -161,12 +222,11 @@ def _selected_model(
 
 def _audio_cpp_voices(
     voices: tuple[str, ...],
-    selected_voice_id: str | None,
-) -> tuple[tuple[SelectOption, ...], str, bool]:
-    remote_voices = tuple(voice for voice in voices if voice != SERVER_DEFAULT_VOICE_ID)
-    options = (
+    selected_voice_id: SelectValue | None,
+) -> tuple[tuple[SelectOption, ...], SelectValue, bool]:
+    options: tuple[SelectOption, ...] = (
         (SERVER_DEFAULT_VOICE_LABEL, SERVER_DEFAULT_VOICE_ID),
-        *((voice, voice) for voice in remote_voices),
+        *((voice, voice) for voice in voices),
     )
     valid_ids = {value for _, value in options}
     if selected_voice_id is None:
@@ -179,7 +239,7 @@ def _audio_cpp_voices(
 def _legacy_voices(
     catalog_voices: tuple[str, ...],
     discovered_voices: tuple[str, ...] | None,
-    selected_voice_id: str | None,
+    selected_voice_id: SelectValue | None,
 ) -> tuple[tuple[SelectOption, ...], str | None, bool]:
     voices = catalog_voices if discovered_voices is None else discovered_voices
     options = tuple((voice, voice) for voice in voices)
@@ -189,7 +249,7 @@ def _legacy_voices(
 
 
 def _retain_or_first(
-    selected: str | None,
+    selected: SelectValue | None,
     values: tuple[str, ...],
 ) -> str | None:
     if selected in values:

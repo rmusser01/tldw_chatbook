@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import ast
 import inspect
 import textwrap
@@ -153,7 +154,52 @@ async def test_audio_cpp_stored_defaults_mount_and_save_without_nulls(
         assert settings["default_model"] == "<opaque:model>"
         assert settings["default_voice"] == "[voice]"
         assert settings["default_format"] == "wav"
-        assert settings["default_speed"] == 1.0
+    assert settings["default_speed"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_settings_preserve_sentinel_shaped_remote_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    remote_model_id = "__opaque_model__"
+    remote_voice_id = "__server_default__"
+    stored = {
+        ("app_tts", "default_provider"): "audio_cpp",
+        ("app_tts", "default_model"): remote_model_id,
+        ("app_tts", "default_voice"): remote_voice_id,
+        ("app_tts", "default_format"): "wav",
+        ("app_tts", "audio_cpp"): AudioCppConfig().to_mapping(),
+    }
+    monkeypatch.setattr(
+        STTS_Window,
+        "get_cli_setting",
+        lambda section, key, default=None: stored.get((section, key), default),
+    )
+    monkeypatch.setattr(
+        TTSSettingsWidget,
+        "_load_kokoro_voice_blends",
+        lambda self: None,
+    )
+    app = _SettingsHost()
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await pilot.pause()
+        model_select = app.query_one("#default-model-select", Select)
+        voice_select = app.query_one("#default-voice-select", Select)
+
+        assert model_select.value == remote_model_id
+        assert voice_select.value == remote_voice_id
+        voice_values = tuple(value for _label, value in voice_select._options)
+        assert SERVER_DEFAULT_VOICE_ID in voice_values
+        assert remote_voice_id in voice_values
+        assert SERVER_DEFAULT_VOICE_ID != remote_voice_id
+
+        app.query_one(TTSSettingsWidget)._save_settings()
+        await pilot.pause()
+
+    settings = app.saved_events[-1].settings
+    assert settings["default_model"] == remote_model_id
+    assert settings["default_voice"] == remote_voice_id
 
 
 @pytest.mark.asyncio
@@ -185,8 +231,8 @@ async def test_selecting_audio_cpp_defaults_uses_non_materializing_sentinels(
 
         settings = app.saved_events[-1].settings
         assert settings["default_provider"] == "audio_cpp"
-        assert settings["default_model"] == FIRST_AVAILABLE_MODEL_ID
-        assert settings["default_voice"] == SERVER_DEFAULT_VOICE_ID
+        assert settings["default_model"] == ""
+        assert settings["default_voice"] == ""
 
 
 @pytest.mark.asyncio
@@ -515,4 +561,108 @@ async def test_audio_cpp_settings_discovery_discards_changed_revision(
 
     assert app.notices == [
         ("audio.cpp settings changed; retry the check", "warning"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_settings_discovery_failure_rechecks_revision(
+    settings_config: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del settings_config
+    request_started = asyncio.Event()
+    release_request = asyncio.Event()
+
+    async def get_catalog(
+        provider_id: str,
+        refresh: bool = False,
+    ) -> TTSProviderCatalog:
+        del provider_id, refresh
+        request_started.set()
+        await release_request.wait()
+        raise RuntimeError("obsolete settings failed")
+
+    service = SimpleNamespace(
+        configuration_revision=Mock(side_effect=(7, 8)),
+        get_catalog=get_catalog,
+    )
+    monkeypatch.setattr(
+        STTS_Window,
+        "get_tts_service",
+        AsyncMock(return_value=service),
+    )
+    app = _SettingsHost()
+
+    async with app.run_test(size=(180, 80)) as pilot:
+        await pilot.pause()
+        await pilot.click("#audio-cpp-test-connection-btn")
+        await request_started.wait()
+        release_request.set()
+        await app.workers.wait_for_complete()
+
+        status = str(app.query_one("#audio-cpp-discovery-status", Static).render())
+
+    assert status == "Settings changed; retry"
+    assert app.notices == [
+        ("audio.cpp settings changed; retry the check", "warning"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_superseded_settings_discovery_failure_cannot_overwrite_success(
+    settings_config: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del settings_config
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    second_returned = asyncio.Event()
+    call_count = 0
+
+    async def get_catalog(
+        provider_id: str,
+        refresh: bool = False,
+    ) -> TTSProviderCatalog:
+        nonlocal call_count
+        del provider_id, refresh
+        call_count += 1
+        if call_count == 1:
+            first_started.set()
+            try:
+                await release_first.wait()
+            except asyncio.CancelledError:
+                await release_first.wait()
+            raise RuntimeError("superseded action failed")
+        second_returned.set()
+        return _available_audio_cpp_catalog()
+
+    service = SimpleNamespace(
+        configuration_revision=Mock(return_value=7),
+        get_catalog=get_catalog,
+    )
+    monkeypatch.setattr(
+        STTS_Window,
+        "get_tts_service",
+        AsyncMock(return_value=service),
+    )
+    app = _SettingsHost()
+
+    async with app.run_test(size=(180, 80)) as pilot:
+        await pilot.pause()
+        widget = app.query_one(TTSSettingsWidget)
+        widget._discover_audio_cpp("test")
+        await first_started.wait()
+        widget._discover_audio_cpp("refresh")
+        await second_returned.wait()
+        await pilot.pause()
+
+        release_first.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        status = str(app.query_one("#audio-cpp-discovery-status", Static).render())
+
+    assert status == "audio.cpp models refreshed (1 model)"
+    assert app.notices == [
+        ("audio.cpp models refreshed (1 model)", "information"),
     ]

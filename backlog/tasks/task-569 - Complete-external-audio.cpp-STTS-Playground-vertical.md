@@ -1,11 +1,11 @@
 ---
 id: TASK-569
 title: Complete external audio.cpp STTS Playground vertical
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-25 13:47'
-updated_date: '2026-07-25 16:30'
+updated_date: '2026-07-25 16:55'
 labels:
   - tts
   - audio-cpp

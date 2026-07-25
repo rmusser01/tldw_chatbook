@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic import BaseModel, ValidationError
 
 
 DEFAULT_CONFIG = {
@@ -43,6 +43,12 @@ def _config_api() -> tuple[Any, Any]:
     return AudioCppConfig, project_audio_cpp_config
 
 
+def test_audio_cpp_config_is_a_pydantic_validation_model() -> None:
+    AudioCppConfig, _ = _config_api()
+
+    assert issubclass(AudioCppConfig, BaseModel)
+
+
 def test_defaults_are_immutable_and_bounded() -> None:
     AudioCppConfig, project_audio_cpp_config = _config_api()
 
@@ -50,7 +56,7 @@ def test_defaults_are_immutable_and_bounded() -> None:
 
     assert config == AudioCppConfig()
     assert config.to_mapping() == DEFAULT_CONFIG
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(ValidationError):
         config.base_url = "http://example.test"  # type: ignore[misc]
 
 
