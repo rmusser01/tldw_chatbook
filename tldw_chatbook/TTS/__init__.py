@@ -11,6 +11,10 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRequest,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest, NormalizationOptions
+from tldw_chatbook.TTS.playground_types import (
+    STTSGeneratedAudio,
+    STTSPlaygroundRequest,
+)
 from tldw_chatbook.TTS.TTS_Generation import (
     TTSService,
     bind_tts_service,
@@ -24,6 +28,8 @@ __all__ = [
     "OpenAISpeechRequest",
     "ProgressSink",
     "ProviderHealth",
+    "STTSGeneratedAudio",
+    "STTSPlaygroundRequest",
     "TTSAudioResponse",
     "TTSModelInfo",
     "TTSOperationCode",

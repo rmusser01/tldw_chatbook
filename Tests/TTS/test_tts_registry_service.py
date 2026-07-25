@@ -1325,7 +1325,7 @@ def test_default_bootstrap_prepends_audio_cpp_without_changing_legacy_specs(
     )
 
     service = build_default_tts_service({})
-    descriptors = service.registry.descriptors()
+    descriptors = service.provider_descriptors()
 
     assert tuple(item.provider_id for item in descriptors) == (
         "audio_cpp",
@@ -1337,7 +1337,9 @@ def test_default_bootstrap_prepends_audio_cpp_without_changing_legacy_specs(
         native=True,
     )
     assert service.registry.aliases() == {}
+    assert service.configuration_revision("audio_cpp") == 1
     assert service.registry._slots["audio_cpp"].spec.exclusive_reconfigure is True
+    assert all(slot.active is None for slot in service.registry._slots.values())
     assert all(factory.calls == 0 for factory in factories.values())
 
 
