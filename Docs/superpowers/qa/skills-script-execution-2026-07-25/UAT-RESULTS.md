@@ -68,43 +68,48 @@ then raised a fresh card, and allowing it executed the **new** content
 (`QA579 MUTATED SCRIPT v2`), confirming the run is not serving a stale copy.
 Evidence: `uat-ac4-mutation-reprompt.txt`.
 
-## Not verified
+### AC#5 — Library grant line and Revoke ✅
+
+Opening a skill in the in-canvas editor (clicking the skill row button) and scrolling
+to the trust panel shows, with a grant in force:
+
+> Scripts: this skill may run its bundled scripts without asking. Any change to its
+> files cancels this automatically.
+
+Clicking **Revoke script access** flipped it to:
+
+> Scripts: you are asked to confirm each time this skill runs a script.
+
+and the on-disk grant store went to `{}`. The button → handler → panel-refresh path is
+therefore proven end to end, which was the single most valuable untested path in this
+feature: it is the user's only way to withdraw a standing permission.
+Evidence: `uat-ac5-grant-line.txt`, `uat-ac5-after-revoke.txt`.
+
+### AC#6 — a context switch does not leave the run blocked ✅
+
+With a confirm card pending, switching session cleared the card and released the run
+within ~45s — well inside the 120s confirm timeout, so the worker is not left blocked.
+Evidence: `uat-ac6-context-switch.txt`.
+
+Two observations worth recording rather than filing:
+- The clear is not instantaneous. At 24s the card was still rendered; by 45s it was
+  gone. Anyone re-testing should allow for that rather than concluding it failed.
+- Opening a **new tab** (Ctrl+T) with a card pending did *not* clear it — the card
+  followed into the new tab and remained actionable, and clicking Deny there resolved
+  the original run correctly. That is consistent with the code, which wires the
+  deny-on-context-change into `switch_session` specifically. It is defensible (the
+  decision still belongs to the user and still fails closed), but a card that follows
+  you into a different conversation is worth a UX look.
+
+## All acceptance criteria verified
+
+Every behavioural criterion (#1-#6) is now verified against the running application
+with real subprocesses, and #7 (evidence) is this directory.
+
+## Superseded — earlier "not verified" section
 
 | AC | Status |
 |---|---|
 | #5 Library grant line + Revoke | **Partial** — the Skills list, trust header and on-disk grant are verified, but the per-skill grant line and the **Revoke script access** button were not reached. Both live inside `#library-skill-trust-panel`, which only renders once a skill is opened in the editor; neither an injected mouse click on the skill row nor Tab-then-Enter got there (Tab moved focus out of the Library screen entirely, back to Console). Finding the actual affordance that opens a skill for editing is the first thing to solve on resume |
 | #6 context switch does not leave the run blocked | **Not run** |
 
-The Revoke button remains the single most valuable thing left to verify: it is the
-user's only way to withdraw a standing permission, and task-579 exists partly because
-nothing tests its wire-up. Its *service* half is covered by unit tests and was
-exercised here indirectly (grants written and cleared on disk), but the button →
-handler → panel-refresh path is still unproven in a running app.
-
-## Findings
-
-### F1 — keyring convenience never auto-unlocked → **fixed** (task-624, PR #883 merged)
-
-### F2 — `local-llm` provider is unusable from its documented config → filed as task-625
-
-`chat_with_local_llm` reads a **top-level** `local-llm` settings key; the provider's
-config lives at `api_settings.local-llm`, which is where the app's own documented
-example puts it. Every sibling local-provider function in the same file resolves via
-`settings["api_settings"]` correctly. There is no config workaround — `load_settings()`
-does not preserve arbitrary top-level sections, verified. Surfaced in the Console as
-*"Agent run failed: provider returned HTTP 502 … configuration error"*. Blocked this
-UAT until it was switched to the `llama_cpp` provider.
-
-### F3 — the trust posture header is accurate and discoverable (positive)
-
-Exercised across marker/manifest mismatch, manifest-without-keys, and ready.
-
-## Driving notes for whoever resumes
-
-- Clicking a card button moves focus off the composer; click the composer line
-  before typing the next prompt or the keystrokes go nowhere.
-- Give the model room: this Gemma build spends heavily on `reasoning_content`, and
-  at `max_tokens = 512` it produced "No response was generated." 3000 works.
-- A vague skill body makes the model delegate via `spawn_subagent`, which then got
-  stuck. A body that names the tool and its exact arguments — and says not to spawn —
-  produces a direct call reliably.
