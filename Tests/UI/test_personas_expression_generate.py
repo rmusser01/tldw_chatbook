@@ -909,3 +909,108 @@ async def test_style_pick_button_posts_style_pick_requested():
         await pilot.pause()
         assert len(app.style_pick) == 1
         assert isinstance(app.style_pick[0], CharacterExpressionStylePickRequested)
+
+
+# ===== Fix round 1: the picked style must not bleed across editor sessions =
+#
+# Verified finding: _expression_generate_style was set once (style pick) and
+# never reset, so it lived for the whole PersonasScreen instance's lifetime
+# rather than "this editor session" (the spec's own words). Opening a
+# different character (or starting a new create session, or cancelling)
+# after picking a style on character A would silently carry that style over
+# to character B. The fix resets it (+ the readout) at the same 3 sites
+# where ``_character_editor_generation`` bumps to mark a genuinely NEW/ended
+# session - NOT the other bump sites in this file (avatar Remove, expression
+# -set apply, expression upload/clear, save-in-place), which bump the same
+# counter merely to invalidate a stale in-flight render within the SAME
+# session and must leave a picked style untouched.
+
+
+async def test_style_pick_reset_on_new_create_session(
+    personas_editor_with_saved_character, monkeypatch
+):
+    """Mandatory fix-round-1 pin: pick a style, cross a real session
+    boundary (_begin_create_character - the cheapest boundary to drive
+    directly in this harness), then assert the style is cleared, the
+    readout reverts, and the NEXT generation's build_request carries no
+    template params."""
+    app, screen, db, char_id = personas_editor_with_saved_character
+    template = get_template("portrait_realistic")
+    screen._expression_generate_style = template
+    screen._update_expression_style_readout()
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    readout = editor.query_one("#personas-char-editor-style-readout", Static)
+    assert str(readout.renderable) == "Style: Realistic Portrait"  # sanity
+
+    await screen._begin_create_character()
+
+    assert screen._expression_generate_style is None
+    assert str(readout.renderable) == "Style: Custom"
+
+    # The next generation (now an unsaved/id-less avatar, post-create) must
+    # carry no template params - proves the reset actually affects
+    # composition, not just the bookkeeping fields.
+    _configure_backend(monkeypatch)
+    editor._area("description").text = "A cheerful adventurer."
+    captured_kwargs: dict = {}
+
+    def _fake_build_request(**kwargs):
+        captured_kwargs.update(kwargs)
+        return SimpleNamespace(backend=kwargs.get("backend"))
+
+    monkeypatch.setattr(personas_screen_module, "build_request", _fake_build_request)
+    fake_result = SimpleNamespace(content=b"avatar-bytes", content_type="image/png")
+    monkeypatch.setattr(
+        personas_screen_module, "run_generation", lambda request: fake_result
+    )
+    _capture_avatar_render_worker(screen)
+    screen._expression_generate_inflight.add((None, "avatar"))
+
+    await screen._generate_expression_image_worker(None, "avatar")
+
+    assert captured_kwargs["negative_prompt"] is None
+    assert captured_kwargs["width"] is None
+    assert captured_kwargs["height"] is None
+    assert captured_kwargs["steps"] is None
+    assert captured_kwargs["cfg_scale"] is None
+
+
+async def test_style_pick_reset_on_edit_requested_reopen(
+    personas_editor_with_saved_character
+):
+    """Opening a character for edit (EditCharacterRequested - the
+    "open-different-character" boundary the review flagged by name) also
+    clears a previously-picked style."""
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+        EditCharacterRequested,
+    )
+
+    app, screen, db, char_id = personas_editor_with_saved_character
+    template = get_template("portrait_realistic")
+    screen._expression_generate_style = template
+    screen._update_expression_style_readout()
+
+    screen._handle_edit_requested(EditCharacterRequested(str(char_id)))
+
+    assert screen._expression_generate_style is None
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    readout = editor.query_one("#personas-char-editor-style-readout", Static)
+    assert str(readout.renderable) == "Style: Custom"
+
+
+async def test_style_pick_reset_on_cancel_edit(
+    personas_editor_with_saved_character
+):
+    """Cancelling the editor (_finish_cancel_edit) also clears a
+    previously-picked style - the session it belonged to just ended."""
+    app, screen, db, char_id = personas_editor_with_saved_character
+    template = get_template("portrait_realistic")
+    screen._expression_generate_style = template
+    screen._update_expression_style_readout()
+
+    screen._finish_cancel_edit()
+
+    assert screen._expression_generate_style is None
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    readout = editor.query_one("#personas-char-editor-style-readout", Static)
+    assert str(readout.renderable) == "Style: Custom"

@@ -3791,6 +3791,9 @@ class PersonasScreen(BaseAppScreen):
 
     async def _begin_create_character(self) -> None:
         self._character_editor_generation += 1
+        # A picked image-gen style is scoped to the editor session that
+        # picked it (fix round 1) - must not bleed into this new one.
+        self._reset_expression_generate_style()
         self._edit_mode = "create"
         self.state.clear_selection()
         # A new session starts unclaimed - re-arms the save-in-place dedup
@@ -4176,6 +4179,10 @@ class PersonasScreen(BaseAppScreen):
             self._notify("Character data is not loaded yet.", severity="warning")
             return
         self._character_editor_generation += 1
+        # A picked image-gen style is scoped to the editor session that
+        # picked it (fix round 1) - opening this (possibly different)
+        # character must not silently inherit the previous session's style.
+        self._reset_expression_generate_style()
         self._edit_mode = "edit"
         # A new session starts unclaimed (see _begin_create_character).
         self._character_save_inflight = False
@@ -5231,6 +5238,28 @@ class PersonasScreen(BaseAppScreen):
         template = self._expression_generate_style
         text = f"Style: {template.name}" if template is not None else "Style: Custom"
         editor.set_style_readout(text)
+
+    def _reset_expression_generate_style(self) -> None:
+        """Clear the picked style template at a genuine editor-session
+        boundary (fix round 1).
+
+        The picked style is scoped to "this editor session, not persisted"
+        (Task 4's spec) - without this, a style picked while editing
+        character A silently bleeds into character B once opened in the
+        same screen session, since ``_expression_generate_style`` is
+        otherwise screen-lifetime state.
+
+        Called only from the 3 sites where ``_character_editor_generation``
+        bumps to mark a genuinely NEW/ended character-editor session
+        (``_begin_create_character``, ``_handle_edit_requested``,
+        ``_finish_cancel_edit``) - NOT from the other bump sites in this
+        file (avatar Remove, expression-set apply, expression upload/clear,
+        save-in-place), which bump the same counter merely to invalidate a
+        stale in-flight render within the SAME session and must leave a
+        picked style untouched.
+        """
+        self._expression_generate_style = None
+        self._update_expression_style_readout()
 
     # ===== Expression SET import/export (Roleplay P3d-2 Task 4) =====
     #
@@ -6624,6 +6653,9 @@ class PersonasScreen(BaseAppScreen):
 
     def _finish_cancel_edit(self) -> None:
         self._character_editor_generation += 1
+        # A picked image-gen style is scoped to the editor session that
+        # picked it (fix round 1) - the session just ended.
+        self._reset_expression_generate_style()
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
         inspector = self.query_one(PersonasInspectorPane)
