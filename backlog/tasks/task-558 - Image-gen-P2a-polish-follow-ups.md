@@ -2,10 +2,10 @@
 id: TASK-558
 title: >-
   Image-gen P2a polish follow-ups
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-24 09:05'
-updated_date: '2026-07-24 13:30'
+updated_date: '2026-07-25 00:30'
 labels:
   - image-generation
   - console
