@@ -7857,6 +7857,82 @@ def test_restore_native_console_state_rehydrates_generation_metadata_end_to_end(
     )
 
 
+def test_restore_generation_metadata_survives_stale_session_key_in_payload():
+    """A ``messages_by_session`` key with no matching ``sessions`` entry must
+    not abort the restore. Pinned as evidence against a review claim that the
+    generation-metadata rehydrate loop could hit
+    ``hydrate_generation_metadata``'s unknown-session lookup: it structurally
+    cannot, because ``_restore_native_console_state`` REBUILDS
+    ``restored_messages_by_session`` keyed only by the ids of sessions it
+    actually constructs (``messages_by_session.get(session.id)``), so a
+    stale/orphaned payload key never reaches the hydrate loop at all.
+    """
+    screen = ChatScreen(_build_test_app())
+    screen.app_instance.chachanotes_db = Mock(
+        get_generation_metadata_for_messages=Mock(
+            return_value={
+                "msg-123": [
+                    {
+                        "position": 0,
+                        "prompt": "a red dragon",
+                        "negative_prompt": "",
+                        "backend": "swarmui",
+                        "model": None,
+                        "seed": 7,
+                        "style": None,
+                        "params_json": "{}",
+                    }
+                ]
+            }
+        ),
+        get_message_by_id=Mock(return_value=None),
+    )
+    payload = {
+        "version": "1.0",
+        "active_session_id": "session-1",
+        "sessions": [
+            {
+                "id": "session-1",
+                "title": "Saved",
+                "workspace_id": None,
+                "persisted_conversation_id": None,
+                "draft": "",
+                "settings": None,
+                "updated_at": None,
+            }
+        ],
+        "messages_by_session": {
+            "session-1": [
+                {
+                    "role": "assistant",
+                    "content": "[image] a red dragon",
+                    "id": "m-1",
+                    "status": "complete",
+                    "persisted_message_id": "msg-123",
+                    "image_mime_type": "image/png",
+                }
+            ],
+            "session-stale": [
+                {
+                    "role": "assistant",
+                    "content": "[image] orphaned",
+                    "id": "m-2",
+                    "status": "complete",
+                    "persisted_message_id": "msg-999",
+                    "image_mime_type": "image/png",
+                }
+            ],
+        },
+    }
+
+    screen._restore_native_console_state(payload)
+
+    store = screen._ensure_console_chat_store()
+    restored = store.messages_for_session("session-1")
+    assert len(restored) == 1
+    assert len(restored[0].generation_metadata) == 1
+
+
 @pytest.mark.asyncio
 async def test_clear_attachment_button_resyncs_composer_blocked_state(monkeypatch):
     """Verify clicking Clear on a staged image resyncs the composer's blocked visuals.

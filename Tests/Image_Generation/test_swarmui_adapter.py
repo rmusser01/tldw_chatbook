@@ -141,6 +141,7 @@ def test_swarmui_generate_reports_resolved_model_from_configured_default(monkeyp
 
 
 def test_swarmui_generate_resolved_model_prefers_explicit_request_model(monkeypatch):
+    """An explicit request model wins over the configured default in resolved_model."""
     from dataclasses import replace as dc_replace
     from tldw_chatbook.Image_Generation.adapters import swarmui_adapter as m
     from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest
@@ -156,6 +157,7 @@ def test_swarmui_generate_resolved_model_prefers_explicit_request_model(monkeypa
 
 
 def test_swarmui_generate_resolved_model_none_when_unconfigured(monkeypatch):
+    """resolved_model stays None when neither request nor config names a model."""
     from dataclasses import replace as dc_replace
     from tldw_chatbook.Image_Generation.adapters import swarmui_adapter as m
     from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest
