@@ -7,7 +7,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Mock Textual UI elements before they are imported by the module under test
-from textual.widgets import Button, TextArea, ListItem, Markdown
+from textual.widgets import Button, TextArea, Markdown
 
 # Mock DB Errors
 
@@ -15,7 +15,6 @@ from textual.widgets import Button, TextArea, ListItem, Markdown
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
     handle_chat_send_button_pressed,
     handle_chat_action_button_pressed,
-    handle_chat_load_character_button_pressed,
     _console_chatbook_artifact_metadata,
     # ... import other handlers as you write tests for them
 )
@@ -574,42 +573,3 @@ async def test_console_chatbook_artifact_metadata_does_not_copy_citation_payload
     serialized = repr(metadata)
     assert "Incident Review" not in serialized
     assert "Expired credential caused the incident." not in serialized
-
-
-@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.load_character_and_image")
-async def test_handle_chat_load_character_with_greeting(mock_load_char, mock_app):
-    """Test that loading a character into an empty, ephemeral chat posts a greeting."""
-    mock_app.current_chat_is_ephemeral = True
-    mock_app.query_one("#chat-log").query.return_value = []  # Empty chat log
-
-    char_data = {
-        "id": "char_abc",
-        "name": "Greeter",
-        "first_message": "Hello, adventurer!",
-    }
-    mock_load_char.return_value = (char_data, None, None)
-
-    # Mock the list item from the character search list
-    mock_list_item = MagicMock(spec=ListItem)
-    mock_list_item.character_id = "char_abc"
-    mock_app.query_one(
-        "#chat-character-search-results-list"
-    ).highlighted_child = mock_list_item
-
-    # Use MagicMock instead of AsyncMock for ChatMessage since it's not async
-    with patch(
-        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage"
-    ) as mock_chat_msg_class:
-        # Create a proper mock instance
-        mock_greeting_msg = MagicMock(spec=ChatMessage)
-        mock_chat_msg_class.return_value = mock_greeting_msg
-        await handle_chat_load_character_button_pressed(mock_app, MagicMock())
-
-        # Assert character data is loaded
-        assert mock_app.current_chat_active_character_data == char_data
-
-        # Assert greeting message was created and mounted
-        mock_chat_msg_class.assert_called_with(
-            message="Hello, adventurer!", role="Greeter", generation_complete=True
-        )
-        mock_app.query_one("#chat-log").mount.assert_called_once_with(mock_greeting_msg)

@@ -90,7 +90,6 @@ def create_comprehensive_app_mock():
     app.get_current_chat_is_streaming = MagicMock(return_value=False)
 
     # Timers
-    app._conversation_search_timer = None
     app._media_sidebar_search_timer = None
     app._character_search_timer = None
 
@@ -147,21 +146,6 @@ def setup_mock_widgets(app):
         "#chat-llm-tool-choice": create_widget_mock(Input, value=""),
         "#chat-llm-fixed-tokens-kobold": create_widget_mock(Checkbox, value=False),
         "#chat-strip-thinking-tags-checkbox": create_widget_mock(Checkbox, value=True),
-        # Character UI
-        "#chat-character-search-results-list": create_widget_mock(
-            ListView, async_methods=["clear", "append"]
-        ),
-        # DEAD-ID: not in live tree; kept for legacy-handler test -- see
-        # follow-up task (task-504 blast-radius: handle_chat_load_character_button_pressed
-        # in chat_events.py still queries these six #chat-character-*-edit
-        # ids and test_handle_chat_load_character_with_greeting depends on
-        # them; that handler is out of scope for task-504's repair).
-        "#chat-character-name-edit": create_widget_mock(Input),
-        "#chat-character-description-edit": create_widget_mock(TextArea),
-        "#chat-character-personality-edit": create_widget_mock(TextArea),
-        "#chat-character-scenario-edit": create_widget_mock(TextArea),
-        "#chat-character-system-prompt-edit": create_widget_mock(TextArea),
-        "#chat-character-first-message-edit": create_widget_mock(TextArea),
         # Media sidebar
         "#chat-media-search-results-listview": create_widget_mock(
             ListView, async_methods=["clear", "append"]

@@ -56,7 +56,7 @@ from textual.widgets import (
     Switch,
     Markdown,
 )
-from textual.containers import Container, VerticalScroll
+from textual.containers import Container
 from textual.reactive import reactive
 from textual.worker import Worker
 from textual.binding import Binding
@@ -3025,7 +3025,6 @@ class TldwCli(
     # see _media_search_generation for why this is needed now that the DB
     # work runs via asyncio.to_thread.
     _ccp_conversation_search_generation: int = 0
-    _conversation_search_timer: Optional[Timer] = None
     _notes_search_timer: Optional[Timer] = None
     _chat_sidebar_prompt_search_timer: Optional[Timer] = None  # New timer
 
@@ -6913,61 +6912,6 @@ class TldwCli(
                     f"UI component '{new_view}' not found in #llm-content-pane: {e}"
                 )
 
-    def watch_current_chat_is_ephemeral(self, is_ephemeral: bool) -> None:
-        self.loguru_logger.debug(f"Chat ephemeral state changed to: {is_ephemeral}")
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-        try:
-            # --- Controls for EPHEMERAL chat actions ---
-            save_current_chat_button = self.query_one(
-                "#chat-save-current-chat-button", Button
-            )
-            save_current_chat_button.disabled = not is_ephemeral  # Enable if ephemeral
-
-            # --- Controls for PERSISTENT chat metadata ---
-            title_input = self.query_one("#chat-conversation-title-input", Input)
-            keywords_input = self.query_one(
-                "#chat-conversation-keywords-input", TextArea
-            )
-            save_details_button = self.query_one(
-                "#chat-save-conversation-details-button", Button
-            )
-            uuid_display = self.query_one("#chat-conversation-uuid-display", Input)
-
-            title_input.disabled = is_ephemeral  # Disable if ephemeral
-            keywords_input.disabled = is_ephemeral  # Disable if ephemeral
-            save_details_button.disabled = is_ephemeral  # Disable if ephemeral (cannot save details for non-existent chat)
-
-            if is_ephemeral:
-                # Clear details and set UUID display when switching TO ephemeral
-                title_input.value = ""
-                keywords_input.text = ""
-                # Ensure UUID display is also handled
-                try:
-                    uuid_display = self.query_one(
-                        "#chat-conversation-uuid-display", Input
-                    )
-                    uuid_display.value = "Ephemeral Chat"
-                except QueryError:
-                    loguru_logger.warning(
-                        "Could not find #chat-conversation-uuid-display to update for ephemeral state."
-                    )
-            # ELSE: If switching TO persistent (is_ephemeral is False),
-            # the calling function (e.g., load chat, save ephemeral chat button handler)
-            # is responsible for POPULATING the title/keywords fields.
-            # This watcher correctly enables them here.
-
-        except QueryError as e:
-            self.loguru_logger.warning(
-                f"UI component not found while watching ephemeral state: {e}. Tab might not be fully composed or active."
-            )
-        except Exception as e_watch:
-            self.loguru_logger.opt(exception=True).error(
-                f"Unexpected error in watch_current_chat_is_ephemeral: {e_watch}"
-            )
-
     # --- Add explicit methods to update reactives from Select changes ---
     def update_chat_provider_reactive(self, new_value: Optional[str]) -> None:
         self.chat_api_provider_value = (
@@ -8602,33 +8546,6 @@ class TldwCli(
             f"Chat sidebar collapsed state changed to: {collapsed}"
         )
 
-    def watch_chat_right_sidebar_collapsed(self, collapsed: bool) -> None:
-        """Hide or show the character settings sidebar."""
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-        try:
-            sidebar = self.query_one(
-                "#chat-right-sidebar"
-            )  # ID from create_chat_right_sidebar
-            sidebar.display = not collapsed
-        except QueryError:
-            logging.error("Character sidebar widget (#chat-right-sidebar) not found.")
-
-    def watch_chat_right_sidebar_width(self, width: int) -> None:
-        """Update the width of the chat right sidebar."""
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-        try:
-            sidebar = self.query_one("#chat-right-sidebar", VerticalScroll)
-            sidebar.styles.width = f"{width}%"
-        except QueryError:
-            # Sidebar might not be created yet
-            pass
-
     def watch_conv_char_sidebar_left_collapsed(self, collapsed: bool) -> None:
         """Hide or show the Conversations, Characters & Prompts left sidebar pane."""
         if not hasattr(self, "app") or not self.app:  # Check if app is ready
@@ -9261,27 +9178,6 @@ class TldwCli(
         )
         return
 
-    async def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        """Handles text area changes, e.g., for live updates to character data."""
-        control_id = event.control.id
-        current_active_tab = self.current_tab
-
-        if (
-            current_active_tab == TAB_CHAT
-            and control_id
-            and control_id.startswith("chat-character-")
-        ):
-            # Ensure it's one of the actual attribute TextAreas, not something else
-            if control_id in [
-                "chat-character-description-edit",
-                "chat-character-personality-edit",
-                "chat-character-scenario-edit",
-                "chat-character-system-prompt-edit",
-                "chat-character-first-message-edit",
-            ]:
-                await chat_handlers.handle_chat_character_attribute_changed(self, event)
-        # Notes editor changes are handled inside the Library screen, not dispatched here.
-
     def _update_model_download_log(self, message: str) -> None:
         """Helper to write messages to the model download log widget."""
         LogWidgetManager.update_model_download_log(self, message)
@@ -9324,13 +9220,6 @@ class TldwCli(
                     self, event.value.strip()
                 ),
             )
-        elif (
-            input_id == "chat-character-search-input" and current_active_tab == TAB_CHAT
-        ):
-            # No debouncer here, direct call as per existing handler
-            await chat_handlers.handle_chat_character_search_input_changed(self, event)
-        elif input_id == "chat-character-name-edit" and current_active_tab == TAB_CHAT:
-            await chat_handlers.handle_chat_character_attribute_changed(self, event)
         elif (
             input_id == "chat-template-search-input" and current_active_tab == TAB_CHAT
         ):
@@ -9444,19 +9333,6 @@ class TldwCli(
             from .config import save_setting_to_cli_config
 
             save_setting_to_cli_config("chat.images", "show_attach_button", event.value)
-
-            # Update the UI if enhanced chat window is active
-            use_enhanced_chat = get_cli_setting(
-                "chat_defaults", "use_enhanced_window", False
-            )
-            if use_enhanced_chat:
-                try:
-                    from .UI.Chat_Window_Enhanced import ChatWindowEnhanced
-
-                    chat_window = self.query_one("#chat-window", ChatWindowEnhanced)
-                    await chat_window.toggle_attach_button_visibility(event.value)
-                except Exception as e:
-                    loguru_logger.error(f"Error toggling attach button visibility: {e}")
         elif (
             checkbox_id == "chat-show-dictation-button-checkbox"
             and current_active_tab == TAB_CHAT
