@@ -741,6 +741,7 @@ def _compose_run_registry_and_allowed(
     context: Mapping[str, Any],
     *,
     mcp_provider: Any | None = None,
+    builtin_gate: Any | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -761,6 +762,15 @@ def _compose_run_registry_and_allowed(
             on the main loop BEFORE this function runs), or ``None`` when
             no MCP tools should be offered this run (no service, kill
             switch on, or composition yielded nothing).
+        builtin_gate: task-545/T6 -- THIS run's ``BuiltinToolGate``,
+            threaded into the freshly-constructed ``BuiltinToolProvider``
+            so its ``invoke()`` enforces the SAME gate instance the run's
+            review hook stamps (``console_chat_controller.
+            build_tool_review_hook``). ``None`` leaves the provider to
+            build its own lazy gate on first use (``BuiltinToolProvider``'s
+            own fail-closed default) -- callers that care about the hook
+            and ``invoke()`` agreeing on stamps must pass the same object
+            to both.
 
     Returns:
         ``(registry, allowed_tools, builtin_names)`` -- the per-run
@@ -771,7 +781,7 @@ def _compose_run_registry_and_allowed(
         so a skill's sub-agent can never call another skill).
     """
     registry = ToolCatalogRegistry()
-    builtin_provider = BuiltinToolProvider()
+    builtin_provider = BuiltinToolProvider(gate=builtin_gate)
     registry.register_provider(builtin_provider)
     builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
     eligible = _non_colliding_skill_entries(context, builtin_names)
@@ -928,6 +938,7 @@ class ConsoleAgentBridge:
         should_cancel: Callable[[], bool],
         supersede_previous: bool = False,
         mcp_provider: Any | None = None,
+        builtin_gate: Any | None = None,
         review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
@@ -957,6 +968,17 @@ class ConsoleAgentBridge:
         idle one -- while any run is live is rejected there before
         ``run_reply`` is ever called. Do not add a competing guard here.
 
+        task-545/T6: ``builtin_gate`` (when passed) is threaded into this
+        run's freshly-built ``BuiltinToolProvider`` so its ``invoke()``
+        checks the SAME gate instance the caller's review hook
+        (``console_chat_controller.build_tool_review_hook``) already
+        stamped -- see ``_compose_run_registry_and_allowed``'s own
+        docstring for why two independently-built gates would silently
+        desynchronize. Passing ``None`` (the default -- existing callers
+        that don't care about built-in gating are unaffected) leaves a
+        skills/MCP-free run on the shared, construction-time
+        ``self._registry``/``self._allowed_tools`` fast path unchanged.
+
         Returns:
             A ``(run_id, outcome)`` tuple: the primary run's id (so the
             caller can record the produced reply's persisted id onto the run
@@ -964,8 +986,9 @@ class ConsoleAgentBridge:
             persisted) and its terminal ``RunOutcome``.
         """
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
-        # MCP): rebuilt FRESH for this run whenever there is a skills
-        # service OR an already-composed MCP provider for this run (never
+        # MCP, and by task-545/T6 for a per-run builtin_gate): rebuilt FRESH
+        # for this run whenever there is a skills service, an already-
+        # composed MCP provider, OR a builtin_gate for this run (never
         # cached across runs, and never the shared self._registry/
         # self._allowed_tools built at construction) -- so a skill or MCP
         # tool approved/edited/revoked since the last run always takes
@@ -974,10 +997,18 @@ class ConsoleAgentBridge:
         # provider, on the running Textual main loop, BEFORE this method
         # is dispatched onto asyncio.to_thread) -- see MCPToolProvider's
         # own module docstring for why `compose_catalog()`'s async I/O can
-        # never run from inside this worker-thread method. Neither a
-        # skills service nor an MCP provider: the shipped shared
-        # registry/allow-list is used unchanged -- the no-skills, no-MCP
-        # path stays byte-identical to before this task.
+        # never run from inside this worker-thread method. `builtin_gate`
+        # MUST route through this fresh-build branch rather than the
+        # shared fast path below: the shared path's own `BuiltinToolProvider`
+        # is built once at bridge-construction time with `gate=None` (its
+        # own lazy default), which would be a SECOND, independently-built
+        # gate the run's review hook never stamps -- see
+        # `_compose_run_registry_and_allowed`'s own docstring for the
+        # desync this would cause. None of skills service, MCP provider,
+        # or builtin_gate: the shipped shared registry/allow-list is used
+        # unchanged -- the no-skills, no-MCP, no-gate path stays
+        # byte-identical to before this task (existing callers that never
+        # pass `builtin_gate` see no behavior change at all).
         registry = self._registry
         allowed_tools = self._allowed_tools
         skill_runner = None
@@ -991,12 +1022,16 @@ class ConsoleAgentBridge:
         # service read, matching _BridgeSkillRunner.run's own
         # asyncio.run-in-worker-thread pattern just below.
         skill_file_bindings = None
-        if self._skills_service is not None or mcp_provider is not None:
+        if (
+            self._skills_service is not None
+            or mcp_provider is not None
+            or builtin_gate is not None
+        ):
             context: Mapping[str, Any] = {}
             if self._skills_service is not None:
                 context = asyncio.run(self._skills_service.get_context(mode="local"))
             registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(
-                context, mcp_provider=mcp_provider
+                context, mcp_provider=mcp_provider, builtin_gate=builtin_gate
             )
             if self._skills_service is not None:
                 skill_names = frozenset(

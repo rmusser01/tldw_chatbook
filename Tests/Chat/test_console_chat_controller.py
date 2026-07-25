@@ -29,6 +29,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 
 class BlockedGateway:
@@ -1958,6 +1959,182 @@ def test_build_mcp_review_hook_clears_stamp_at_entry_before_a_raising_round_trip
 
     # No stale stamp from turn 1 must survive the raise for invoke() to peek.
     assert provider.stamped_decision("mcp__srv__run") is None
+
+
+# ---------------------------------------------------------------------------
+# build_tool_review_hook (task-545/T6: run-level hook, gates built-ins even
+# with no MCP provider composed for the run)
+# ---------------------------------------------------------------------------
+
+
+class _FakeBuiltinGate:
+    """Minimal stand-in for `BuiltinToolGate` in `build_tool_review_hook` tests."""
+
+    def __init__(self, state: str = "ask", risk_floored: bool = True) -> None:
+        self._state = state
+        self._floored = risk_floored
+        self.turns = 0
+        self.stamped: list[tuple[str, str]] = []
+
+    def begin_turn(self) -> None:
+        self.turns += 1
+
+    def resolve(self, tool) -> EffectiveToolState:
+        return EffectiveToolState(
+            state=self._state,
+            origin="builtin_default",
+            risk_floored=self._floored,
+        )
+
+    def stamp(self, name: str, decision: str) -> None:
+        self.stamped.append((name, decision))
+
+
+class _FakeBuiltinProvider:
+    """Minimal stand-in for `BuiltinToolProvider` -- only `.tool_for` is used."""
+
+    def __init__(self, tool) -> None:
+        self._tool = tool
+
+    def tool_for(self, name: str):
+        return self._tool if name == self._tool.name else None
+
+
+class _FakeMutatingTool:
+    """A `Tool`-shaped double; `BuiltinToolGate.resolve` never inspects it
+    beyond identity in these tests (the fake gate ignores its argument), so
+    only `.name` needs to be real."""
+
+    name = "write_thing"
+
+
+def _builtin_call(name: str) -> ToolCall:
+    # ToolCall is (name, args, call_id) -- there is NO llm_name on it (that
+    # belongs to MCPPendingCall, the approval-row type). The verdict map
+    # the runtime consumes is keyed by the LLM-facing name, which equals
+    # ToolCall.name.
+    return ToolCall(name=name, args={})
+
+
+def test_review_hook_gates_builtins_with_no_mcp_provider():
+    """The whole point of T6: a user with no MCP servers must still be gated."""
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    gate = _FakeBuiltinGate()
+    asked: dict[str, list[MCPPendingCall]] = {}
+
+    def request_approvals(pending: list[MCPPendingCall]) -> dict[str, str]:
+        asked["pending"] = pending
+        return {p.llm_name: "approve_once" for p in pending}
+
+    hook = build_tool_review_hook(
+        gate, _FakeBuiltinProvider(_FakeMutatingTool()), None, request_approvals
+    )
+    verdicts = hook([_builtin_call("write_thing")])
+
+    assert gate.turns == 1  # begin_turn ran first
+    assert gate.stamped == [("write_thing", "approve_once")]
+    # Rows are MCPPendingCall dataclasses (what request_mcp_approvals takes),
+    # NOT dicts -- the dict conversion happens inside it.
+    row = asked["pending"][0]
+    assert row.server_key == "agent:builtin"
+    assert row.server_label == "Built-in"
+    assert row.reason == "risk_floored"
+    # Exclude ONLY always_allow -- deny is a turn-scoped refusal, not a
+    # persistent write, so it must stay offered (spec correction 0e6e8a56d).
+    assert row.options == ("approve_once", "approve_session", "deny")
+    assert verdicts == {"write_thing": "proceed"}
+
+
+def test_allow_resolved_builtin_never_prompts():
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    calls: list[list[MCPPendingCall]] = []
+    hook = build_tool_review_hook(
+        _FakeBuiltinGate(state="allow", risk_floored=False),
+        _FakeBuiltinProvider(_FakeMutatingTool()),
+        None,
+        lambda pending: calls.append(pending) or {},
+    )
+    assert hook([_builtin_call("write_thing")]) == {}
+    assert calls == []  # no card shown
+
+
+def test_deny_resolved_builtin_is_not_offered_to_the_user():
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    calls: list[list[MCPPendingCall]] = []
+    hook = build_tool_review_hook(
+        _FakeBuiltinGate(state="deny", risk_floored=False),
+        _FakeBuiltinProvider(_FakeMutatingTool()),
+        None,
+        lambda pending: calls.append(pending) or {},
+    )
+    hook([_builtin_call("write_thing")])
+    assert calls == []  # a tool that is Off gets no approval card
+
+
+def test_begin_turn_runs_even_when_approvals_raise():
+    """A raising approval path must not leave stale stamps for next turn."""
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    gate = _FakeBuiltinGate()
+
+    def boom(pending):
+        raise RuntimeError("ui gone")
+
+    hook = build_tool_review_hook(
+        gate, _FakeBuiltinProvider(_FakeMutatingTool()), None, boom
+    )
+    with pytest.raises(RuntimeError):
+        hook([_builtin_call("write_thing")])
+    assert gate.turns == 1
+
+
+def test_unknown_names_are_returned_unreviewed():
+    """Skill tools and native spawn are owned by neither gate."""
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    hook = build_tool_review_hook(
+        _FakeBuiltinGate(),
+        _FakeBuiltinProvider(_FakeMutatingTool()),
+        None,
+        lambda pending: {},
+    )
+    assert hook([_builtin_call("some_skill")]) == {}
+
+
+def test_mcp_and_builtin_share_one_round_trip():
+    """One turn, one MCP call + one built-in call: exactly ONE
+    `request_approvals` round trip carrying BOTH rows."""
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    mcp_provider = _FakeReviewProvider(gated_names={"mcp__srv__run"})
+    gate = _FakeBuiltinGate()
+    round_trips: list[list[MCPPendingCall]] = []
+
+    def _approve(pending: list[MCPPendingCall]) -> dict[str, str]:
+        round_trips.append(pending)
+        return {row.llm_name: "approve_once" for row in pending}
+
+    hook = build_tool_review_hook(
+        gate, _FakeBuiltinProvider(_FakeMutatingTool()), mcp_provider, _approve
+    )
+    calls = [
+        ToolCall(name="mcp__srv__run", args={"x": 1}, call_id="1"),
+        _builtin_call("write_thing"),
+    ]
+
+    verdicts = hook(calls)
+
+    assert len(round_trips) == 1
+    names_asked = {row.llm_name for row in round_trips[0]}
+    assert names_asked == {"mcp__srv__run", "write_thing"}
+    assert verdicts == {"mcp__srv__run": "proceed", "write_thing": "proceed"}
+    assert mcp_provider.apply_batch_decisions_calls[-1] == {
+        "mcp__srv__run": "approve_once"
+    }
+    assert gate.stamped == [("write_thing", "approve_once")]
 
 
 # -----------------------------------------------------------------------------

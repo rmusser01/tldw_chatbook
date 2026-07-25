@@ -205,6 +205,44 @@ def test_tool_turn_renders_a_tool_marker_not_prose(tmp_path):
     assert store.get_message(aid).content == "It is 42."
 
 
+class _RefusingBuiltinGate:
+    """A `BuiltinToolGate` double that refuses every call -- proves
+    `run_reply`'s `builtin_gate=` argument is the SAME object
+    `BuiltinToolProvider.invoke()` ends up checking, end to end."""
+
+    def __init__(self) -> None:
+        self.checked: list[str] = []
+
+    def check(self, tool):
+        self.checked.append(tool.name)
+        return f"disabled for test: {tool.name}"
+
+
+def test_run_reply_threads_builtin_gate_end_to_end(tmp_path):
+    """task-545/T6: a `builtin_gate` handed to `run_reply` must be the
+    exact instance the run's own `BuiltinToolProvider.invoke()` consults --
+    a second, independently-built gate would silently desync from
+    whatever the caller's review hook already decided (the core risk this
+    task's wiring exists to avoid)."""
+    scripts = [
+        [_fence("calculator", {"expression": "6*7"})],
+        ["it was refused."],
+    ]
+    bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
+    gate = _RefusingBuiltinGate()
+    outcome = _run(bridge, store, session, aid, builtin_gate=gate)
+    assert outcome.status == "done"
+    assert gate.checked == ["calculator"]
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert tool_rows, "a refused tool call still drops a TOOL marker"
+    assert "disabled for test: calculator" in tool_rows[0].content
+    assert store.get_message(aid).content == "it was refused."
+
+
 def test_leaked_prose_before_disobedient_fence_is_reset_not_garbled(tmp_path):
     # Finding A repro: a disobedient turn streams prose live, THEN a tool
     # fence, in the same response. The gate has already forwarded the prose
@@ -1554,6 +1592,43 @@ def test_compose_run_registry_and_allowed_absent_mcp_provider_is_unchanged():
     registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed({})
     assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
     assert len(registry.list_catalog()) == 2
+
+
+class _FakeBuiltinGateForRegistry:
+    """Minimal `BuiltinToolGate` double -- only `.check()` is exercised by
+    `BuiltinToolProvider.invoke()`."""
+
+    def __init__(self, refuse: bool) -> None:
+        self.refuse = refuse
+        self.checked: list[str] = []
+
+    def check(self, tool):
+        self.checked.append(tool.name)
+        return f"disabled for test: {tool.name}" if self.refuse else None
+
+
+def test_compose_run_registry_and_allowed_threads_builtin_gate_into_the_provider():
+    """task-545/T6: `builtin_gate=` must reach the freshly-built
+    `BuiltinToolProvider` -- NOT a second, independently-built gate --
+    else a decision the caller's review hook stamped on that gate would
+    never be visible to `invoke()`."""
+    gate = _FakeBuiltinGateForRegistry(refuse=True)
+    registry, _allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+        {}, builtin_gate=gate
+    )
+    result = registry.invoke_by_name("calculator", {"expression": "6*7"})
+    assert result.ok is False
+    assert result.error == "disabled for test: calculator"
+    assert gate.checked == ["calculator"]
+
+
+def test_compose_run_registry_and_allowed_no_builtin_gate_is_unchanged():
+    """`builtin_gate=None` (the default) must not alter the pre-task-545
+    no-skills/no-MCP behavior -- the provider builds its own lazy gate."""
+    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed({})
+    assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
+    result = registry.invoke_by_name("calculator", {"expression": "6*7"})
+    assert result.ok is True
 
 
 def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_builtin():

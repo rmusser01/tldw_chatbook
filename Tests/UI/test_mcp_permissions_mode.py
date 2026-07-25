@@ -268,7 +268,7 @@ async def test_update_matrix_sets_kill_switch_label_without_posting_a_toggle():
         await canvas.update_matrix([_global_row()], kill_switch=True, preview="")
         await pilot.pause()
         button = app.query_one("#mcp-perm-kill-switch", Button)
-        assert str(button.label) == "block MCP tools in chat: yes ▸"
+        assert str(button.label) == "block tool calls in chat: yes ▸"
         assert app.events == []
 
 
@@ -277,7 +277,7 @@ async def test_kill_switch_button_default_label_reads_no():
     app = PermissionsModeApp()
     async with app.run_test():
         button = app.query_one("#mcp-perm-kill-switch", Button)
-        assert str(button.label) == "block MCP tools in chat: no ▸"
+        assert str(button.label) == "block tool calls in chat: no ▸"
 
 
 @pytest.mark.asyncio

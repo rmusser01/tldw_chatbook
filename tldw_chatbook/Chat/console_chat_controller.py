@@ -48,9 +48,12 @@ from tldw_chatbook.Chat.console_skill_resolver import (
 )
 from loguru import logger
 
-from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
+from tldw_chatbook.Agents.builtin_tool_gate import build_builtin_gate
+from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
+from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
+from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
@@ -60,7 +63,7 @@ from tldw_chatbook.model_capabilities import is_vision_capable
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_models import ToolCall
-    from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+    from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 
 
@@ -69,6 +72,19 @@ if TYPE_CHECKING:
 #: default (task-201/T2), read directly here since the controller has no
 #: dependency on that service (T6 wires the service into `MCPToolProvider`,
 #: not into this controller).
+#:
+#: task-545/T6: built-in tool approvals reuse this SAME timeout (routed
+#: through `request_mcp_approvals`/`build_tool_review_hook`), so this value
+#: must stay strictly BELOW `RunBudget.max_tool_call_seconds` (300s at
+#: defaults, `Agents/agent_models.py`) -- never equal, never above. The
+#: approval wait happens INSIDE `agent_service._call_with_timeout`'s own
+#: per-call wrapper (task-327): if the approval timeout were >= the
+#: tool-call ceiling, `_call_with_timeout` would fire first, tell the agent
+#: the call failed/timed out, and the underlying `invoke()` call would
+#: still be running on the (by then abandoned) worker thread -- so a late
+#: approval from the user would execute the tool for real after the
+#: runtime already moved on and reported failure. Any future change to
+#: either constant must preserve `approval_timeout < max_tool_call_seconds`.
 _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS = 120.0
 #: Poll granularity for `request_mcp_approvals`'s wait loop (binding, from
 #: the Phase-5 plan) -- also the worst-case slack added on top of a
@@ -128,6 +144,28 @@ def _normalize_world_info_history(
             text = ""
         out.append({"role": message.get("role", ""), "content": text})
     return out
+
+
+def _collect_mcp_pending(
+    provider: MCPToolProvider, calls: list["ToolCall"]
+) -> list["MCPPendingCall"]:
+    """Resolve each call's MCP gate; return the subset that needs asking.
+
+    Extracted so `build_mcp_review_hook` (MCP-only, still used directly by
+    its own long-standing tests) and `build_tool_review_hook` (T6: the
+    run-level hook that folds built-ins in too) share this ONE walk over
+    `provider.pending_gate_for` rather than one copying the other's body.
+    `None` per call means either "not an MCP call this provider owns" or
+    "an MCP call whose current state doesn't need asking" -- see
+    `pending_gate_for`'s own docstring for why callers do not need to
+    distinguish those two cases.
+    """
+    pending: list["MCPPendingCall"] = []
+    for call in calls:
+        gate = provider.pending_gate_for(call.name, call.args)
+        if gate is not None:
+            pending.append(gate)
+    return pending
 
 
 def build_mcp_review_hook(
@@ -218,16 +256,165 @@ def build_mcp_review_hook(
         # prior-turn stamp live for the fail-open runtime to hand straight
         # to `invoke()`.
         provider.apply_batch_decisions({})
-        pending: list["MCPPendingCall"] = []
-        for call in calls:
-            gate = provider.pending_gate_for(call.name, call.args)
-            if gate is not None:
-                pending.append(gate)
+        pending = _collect_mcp_pending(provider, calls)
         if not pending:
             return {}
         decisions = request_mcp_approvals(pending)
         provider.apply_batch_decisions(decisions)
         return {call.llm_name: "proceed" for call in pending}
+
+    return review_tool_calls
+
+
+def build_tool_review_hook(
+    builtin_gate: "BuiltinToolGate",
+    builtin_provider: "BuiltinToolProvider",
+    mcp_provider: MCPToolProvider | None,
+    request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
+) -> Callable[[list["ToolCall"]], dict[str, str]]:
+    """Build THIS run's run-level `review_tool_calls` hook (P5-T6/task-545).
+
+    Unlike `build_mcp_review_hook`, this is wired UNCONDITIONALLY -- every
+    run gets one, even a user with no MCP servers configured at all --
+    because built-in tools (calculator/datetime today, more later) must be
+    gated regardless of whether MCP happens to be composed this turn.
+    `BuiltinToolProvider.invoke` already enforces the gate as defense in
+    depth, but without this hook the ONLY review a built-in call would ever
+    get is that per-call fallback -- never the batched, one-card-per-turn
+    review MCP calls already get, and never a chance to ask before
+    dispatch for calls this hook doesn't stamp.
+
+    Routing per call, MCP first: `mcp_provider.pending_gate_for` (when a
+    provider was composed this run) is asked before the built-in provider,
+    so a name that provider actually owns is never mistakenly re-resolved
+    against the built-in side too -- this matters because a collision
+    between an MCP tool name and a built-in name is exactly what
+    `console_agent_bridge._non_colliding_mcp_names` already filters out of
+    the run's registry, and asking MCP first here keeps this hook's own
+    routing consistent with that precedent. A name neither provider claims
+    (a skill, `spawn_subagent`, `find_tools`, ...) passes through
+    unreviewed, exactly as it does for `build_mcp_review_hook` today.
+
+    Built-in rows use `server_key=BUILTIN_TOOL_SERVER_KEY`
+    (`"agent:builtin"`), `server_label="Built-in"`, and `reason=
+    "risk_floored"` when `EffectiveToolState.risk_floored` else `"ask"`
+    (built-ins never set `config_changed` -- see `resolve_builtin_state`'s
+    own docstring for why). Only a resolved `"ask"` state ever produces a
+    row: `"allow"` never prompts, and `"deny"` is refused outright by
+    `invoke()`'s own gate WITHOUT ever reaching the user -- a tool the
+    operator switched Off must not appear on the approval card at all.
+
+    `options=("approve_once", "approve_session", "deny")` -- deliberately
+    excluding ONLY `"always_allow"` (verified at
+    `Agents/mcp_tool_provider.py:556-564`: `always_allow` is the sole
+    PERSISTENT write via `set_tool_state`; `approve_session` is an
+    in-memory session cache and `deny`/`timeout` are turn-scoped refusals
+    that persist nothing). `"deny"` MUST stay offered -- an earlier draft
+    of this design mistakenly dropped it too, which would have made a
+    built-in row impossible to refuse from the card at all (the bulk "Deny
+    all" button would silently leave it on whatever the row's default
+    was).
+
+    Mirrors `build_mcp_review_hook`'s I3 clear-at-entry discipline, extended
+    to the built-in side: `builtin_gate.begin_turn()` runs FIRST,
+    unconditionally -- before the MCP stamp clear, before any
+    `pending_gate_for`/`resolve` call, before the `request_approvals` round
+    trip -- so a raising round trip can never leave a stale built-in stamp
+    (or a stale cached permission payload) live for the next turn to
+    consume. `mcp_provider.apply_batch_decisions({})` follows the same
+    reasoning for the MCP side, only when a provider was actually composed
+    this run.
+
+    Exactly ONE `request_approvals` round trip is made per turn, carrying
+    BOTH the MCP and built-in pending rows together -- never one call per
+    owner. Decisions are then applied back to each owner separately:
+    `mcp_provider.apply_batch_decisions(...)` for MCP rows,
+    `builtin_gate.stamp(name, decision)` for built-in rows. The returned
+    verdict map is `{name: "proceed"}` for every call this hook gated this
+    turn (MCP or built-in), purely documentary like
+    `build_mcp_review_hook`'s own -- the actual allow/deny outcome is left
+    to `invoke()`'s gate on dispatch, which is the single place that
+    produces refusal copy and records the audit decision.
+
+    Args:
+        builtin_gate: THIS run's `BuiltinToolGate` -- the SAME instance
+            the run's `BuiltinToolProvider.invoke` checks, so a stamp
+            written here is visible there. Two separate instances would
+            mean a decision made here is invisible to `invoke()`, silently
+            re-prompting (a stamp `invoke()` never sees) or failing closed
+            (an approval that never reaches the gate that checks it).
+        builtin_provider: THIS run's `BuiltinToolProvider` (only
+            `.tool_for(name)` is used here, to resolve a `ToolCall.name`
+            to the `Tool` object `builtin_gate.resolve` needs).
+        mcp_provider: THIS run's already-composed `MCPToolProvider`, or
+            `None` when no MCP tools should be offered this run (no
+            service, kill switch on, or composition yielded nothing) --
+            the entire point of this hook existing separately from
+            `build_mcp_review_hook` is that built-in gating must not
+            depend on this being non-`None`.
+        request_approvals: The bound `ConsoleChatController.
+            request_mcp_approvals` method for THIS run (the name predates
+            built-in gating; the method itself is owner-agnostic -- it
+            only reads `MCPPendingCall` fields, never assumes MCP
+            ownership).
+
+    Returns:
+        A `review_tool_calls`-shaped callable suitable for `LoopDeps`/
+        `AgentService(review_tool_calls=...)`.
+    """
+
+    def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
+        builtin_gate.begin_turn()
+        if mcp_provider is not None:
+            mcp_provider.apply_batch_decisions({})
+
+        mcp_pending = (
+            _collect_mcp_pending(mcp_provider, calls)
+            if mcp_provider is not None
+            else []
+        )
+        mcp_claimed_names = {row.llm_name for row in mcp_pending}
+
+        builtin_pending: list["MCPPendingCall"] = []
+        for call in calls:
+            if call.name in mcp_claimed_names:
+                continue
+            tool = builtin_provider.tool_for(call.name)
+            if tool is None:
+                continue  # not ours either -- a skill/native tool, unreviewed
+            state = builtin_gate.resolve(tool)
+            if state.state != "ask":
+                # "allow" never prompts; "deny" is refused outright by
+                # invoke()'s own gate -- neither is offered a card.
+                continue
+            builtin_pending.append(
+                MCPPendingCall(
+                    llm_name=call.name,
+                    server_key=BUILTIN_TOOL_SERVER_KEY,
+                    tool_name=call.name,
+                    server_label="Built-in",
+                    arguments=dict(call.args or {}),
+                    reason="risk_floored" if state.risk_floored else "ask",
+                    options=("approve_once", "approve_session", "deny"),
+                )
+            )
+
+        all_pending = mcp_pending + builtin_pending
+        if not all_pending:
+            return {}
+        decisions = request_approvals(all_pending)
+        if mcp_provider is not None:
+            mcp_decisions = {
+                name: decisions[name]
+                for name in mcp_claimed_names
+                if name in decisions
+            }
+            mcp_provider.apply_batch_decisions(mcp_decisions)
+        for row in builtin_pending:
+            decision = decisions.get(row.llm_name)
+            if decision is not None:
+                builtin_gate.stamp(row.llm_name, decision)
+        return {row.llm_name: "proceed" for row in all_pending}
 
     return review_tool_calls
 
@@ -3463,8 +3650,48 @@ class ConsoleChatController:
         # from the worker thread. `(None, None)` (no service, kill switch
         # on, or nothing composed) leaves the bridge's MCP-free path
         # byte-identical to before this task.
-        mcp_provider, mcp_review_hook = await self._compose_mcp_provider()
+        #
+        # task-545/T6: `_compose_mcp_provider`'s own `mcp_review_hook`
+        # (built from `build_mcp_review_hook`) is deliberately discarded
+        # here rather than wired -- it is `None` whenever MCP is not
+        # eligible for this run, and built-in tools (calculator/datetime
+        # today) must be gated regardless of MCP eligibility. Changing
+        # `_compose_mcp_provider`'s own return contract to drop that
+        # second element was considered and rejected: several existing
+        # test suites (`Tests/Chat/test_console_agent_swap.py`,
+        # `Tests/UI/test_console_internals_decomposition.py`) assert its
+        # exact `(provider, hook)` / `(None, None)` shape directly and sit
+        # outside this task's file scope, so keeping that function
+        # byte-identical and building the run-level hook separately here
+        # is the lower-blast-radius choice.
+        mcp_provider, _unused_mcp_only_review_hook = await self._compose_mcp_provider()
         self._mcp_provider = mcp_provider
+
+        # task-545/T6: build THIS run's built-in permission gate and hand
+        # the SAME instance to both the review hook (below) and
+        # `ConsoleAgentBridge.run_reply` (which threads it into the
+        # `BuiltinToolProvider` that actually invokes tools) -- a second,
+        # independently-built gate would silently desynchronize stamps:
+        # a decision made here would never be visible to `invoke()`'s own
+        # gate, and vice versa. `build_builtin_gate(None)` (no
+        # `unified_mcp_service` on the app) is fail-closed-correct, not
+        # "ungated" -- see that function's own docstring.
+        builtin_gate = build_builtin_gate(
+            getattr(self.app, "unified_mcp_service", None)
+        )
+        # Only `.tool_for(name)` is used by the review hook below, to
+        # resolve a `ToolCall.name` to the `Tool` object `builtin_gate.
+        # resolve` needs -- this instance is never used to invoke a tool,
+        # so it does not need to be the SAME `BuiltinToolProvider` object
+        # the bridge's registry actually dispatches through (its `_tools`
+        # dict is stateless data rebuilt identically by any instance).
+        builtin_review_provider = BuiltinToolProvider(gate=builtin_gate)
+        review_hook = build_tool_review_hook(
+            builtin_gate,
+            builtin_review_provider,
+            mcp_provider,
+            self.request_mcp_approvals,
+        )
 
         # Swap site: the agent loop runs synchronously on a worker thread via
         # asyncio.to_thread, so Stop is cooperative-only -- `should_cancel` is
@@ -3490,7 +3717,8 @@ class ConsoleChatController:
                 should_cancel=should_cancel,
                 supersede_previous=bool(prepare_retry or variant_mode),
                 mcp_provider=mcp_provider,
-                review_tool_calls=mcp_review_hook,
+                builtin_gate=builtin_gate,
+                review_tool_calls=review_hook,
                 turn_skill_bindings=skill_bindings,
                 turn_bundle_block=skill_bundle_block,
                 request_skill_install_confirm=self.request_skill_install_confirm,

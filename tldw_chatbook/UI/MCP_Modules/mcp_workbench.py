@@ -1275,7 +1275,11 @@ class MCPWorkbench(Container):
             try:
                 kill_switch = bool(get_kill_switch())
             except Exception as exc:
-                logger.warning(f"MCP kill switch read failed: {exc}")
+                # task-545/T6: this switch is global -- it also gates every
+                # built-in tool via `BuiltinToolGate._kill_switch()` -- so
+                # the log line no longer says "MCP" (matches that method's
+                # own "kill switch read failed" wording).
+                logger.warning(f"kill switch read failed: {exc}")
 
         standalone_resync = effective is None
         if effective is None:
@@ -1681,8 +1685,10 @@ class MCPWorkbench(Container):
         try:
             set_kill_switch(event.value)
         except Exception as exc:
-            logger.warning(f"MCP kill switch save failed: {exc}")
-            self.app.notify(_toast(f"Failed to save MCP tools in chat: {exc}"), severity="error")
+            # task-545/T6: global switch (MCP + built-in tools) -- see the
+            # matching read-path comment in `_sync_permissions_mode` above.
+            logger.warning(f"kill switch save failed: {exc}")
+            self.app.notify(_toast(f"Failed to save kill switch: {exc}"), severity="error")
             return
         # Task 3: pinned mutation-echo shape for the kill switch --
         # `"kill switch → on/off · "`.

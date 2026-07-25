@@ -1030,7 +1030,11 @@ async def test_mcp_provider_not_wired_when_no_unified_mcp_service(tmp_path):
 
     assert result.accepted is True
     assert captured[0]["mcp_provider"] is None
-    assert captured[0]["review_tool_calls"] is None
+    # task-545/T6: `review_tool_calls` is now wired UNCONDITIONALLY -- a
+    # user with no `unified_mcp_service` at all still gets built-in tools
+    # gated by `build_tool_review_hook`, so this is never `None` anymore.
+    assert callable(captured[0]["review_tool_calls"])
+    assert captured[0]["builtin_gate"] is not None
 
 
 @pytest.mark.asyncio
@@ -1048,7 +1052,10 @@ async def test_mcp_provider_not_wired_when_kill_switch_on(tmp_path):
 
     assert result.accepted is True
     assert captured[0]["mcp_provider"] is None
-    assert captured[0]["review_tool_calls"] is None
+    # task-545/T6: unconditional now -- see the sibling "no service" test's
+    # own comment above.
+    assert callable(captured[0]["review_tool_calls"])
+    assert captured[0]["builtin_gate"] is not None
 
 
 @pytest.mark.asyncio
@@ -1063,7 +1070,10 @@ async def test_mcp_provider_not_wired_when_catalog_empty(tmp_path):
 
     assert result.accepted is True
     assert captured[0]["mcp_provider"] is None
-    assert captured[0]["review_tool_calls"] is None
+    # task-545/T6: unconditional now -- see the "no service" test's own
+    # comment above.
+    assert callable(captured[0]["review_tool_calls"])
+    assert captured[0]["builtin_gate"] is not None
 
 
 @pytest.mark.asyncio
@@ -1083,6 +1093,7 @@ async def test_mcp_provider_wired_when_eligible(tmp_path):
     assert isinstance(provider, MCPToolProvider)
     assert len(provider.list_catalog()) == 1
     assert callable(captured[0]["review_tool_calls"])
+    assert captured[0]["builtin_gate"] is not None
 
 
 @pytest.mark.asyncio
