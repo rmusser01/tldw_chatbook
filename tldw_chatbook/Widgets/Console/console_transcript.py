@@ -929,6 +929,33 @@ class ConsoleTranscript(VerticalScroll):
         if self.is_mounted:
             self.call_later(self.refresh_messages)
             self.call_later(self._notify_selection_changed)
+            self.call_later(self._paint_debug_dump, "after-clear-selection")
+
+    def _paint_debug_dump(self, label: str) -> None:
+        """task-623 live probe: append DOM truth about action rows to the file
+        named by ``TLDW_TRANSCRIPT_PAINT_LOG``. No-op unless the env var is
+        set; never raises."""
+        import os
+        path = os.environ.get("TLDW_TRANSCRIPT_PAINT_LOG")
+        if not path:
+            return
+        try:
+            import time
+            rows = list(self.query(".console-transcript-action-row"))
+            lines = [
+                f"{time.strftime('%H:%M:%S')} {label}: selected={self.selected_message_id!r} "
+                f"action_rows={len(rows)} children={len(self.children)}"
+            ]
+            for r in rows:
+                lines.append(
+                    f"  row id={r.id!r} parent={type(r.parent).__name__}"
+                    f" parent_is_transcript={r.parent is self}"
+                    f" display={r.display} region={r.region}"
+                )
+            with open(path, "a") as f:
+                f.write("\n".join(lines) + "\n")
+        except Exception:
+            pass
 
     def action_invoke_selected_action(self, action_id: str) -> None:
         """Press the selected message's action button for ``action_id``.
@@ -1212,6 +1239,7 @@ class ConsoleTranscript(VerticalScroll):
                 else:
                     self.move_child(widget, after=previous_widget)
             previous_widget = widget
+        self._paint_debug_dump("after-reconcile")
 
     def _build_row_widget(self, row: _TranscriptRow, *, track: bool) -> Widget:
         if track:

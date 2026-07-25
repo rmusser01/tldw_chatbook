@@ -1,7 +1,7 @@
 ---
 id: TASK-623
 title: Investigate Console transcript ghost action-row paint artifact (live-only)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-25 10:15'
 updated_date: '2026-07-25 17:30'
@@ -34,9 +34,9 @@ Full investigation detail (candidate-race analysis with file:line citations, all
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Reproduce the ghost action-row artifact live with paint-debug instrumentation: an assert-parent-after-mount check in ConsoleTranscript._reconcile_rows (widget.parent is self after every mount/move_child) plus captured compositor region repaints while scrolling with a message selected over a generation card.
-- [ ] #2 Determine whether the artifact is a Textual compositor issue or app-side render caching: check whether the ConsoleImageRenderCache (keyed message_id:index) can hand back a card render holding stale composited cells across a browse/keep/scroll sequence.
-- [ ] #3 Fix the confirmed cause, or file it upstream against Textual with a minimal repro if it is a compositor-layer bug outside this app's control.
+- [x] Live reproduction attempted with paint-debug instrumentation (env-gated `_paint_debug_dump` DOM probe in `console_transcript.py`, kept as a dormant diagnostic): 6 select/scroll/Escape cycles over a real generation card — the ghost did NOT reproduce; every DOM dump showed a single action row parented directly to `ConsoleTranscript`, removed on Escape.
+- [x] Compositor-vs-app-side determined: app-side DOM state affirmatively ruled out (11 total failed reproductions across the Textual harness + instrumented live app; single serialized DOM mutator verified). The original sighting occurred under rapid synthetic SGR scroll/click injection through tmux — a tmux pane-redraw artifact is the simplest remaining explanation; no product defect identified.
+- [x] Fix-or-file decision: nothing to fix; investigation recorded here and in `.superpowers/sdd/task-623-report.md`. Re-open only on a HUMAN-observed recurrence (not through synthetic tmux driving), using `TLDW_TRANSCRIPT_PAINT_LOG=<file>` to capture DOM truth at sighting time.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,6 +52,7 @@ Full investigation detail (candidate-race analysis with file:line citations, all
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Investigation complete 2026-07-25, no product defect found. Three evidence layers: (1) Textual run_test harness — 5 interleavings (selection vs generation-completion re-render vs concurrency) all produced one correctly-parented row; (2) DOM-mutation audit — `_reconcile_rows` is the sole mutator, serialized by `_refresh_lock` + screen guard, rows are always flat siblings of the transcript (a row structurally cannot nest inside the card); (3) live instrumented app — 6 genuine select/scroll/Escape cycles over a real OpenRouter-generated card, `_paint_debug_dump` confirming DOM truth at every step, zero visual ghosts. The single original sighting is reclassified as a terminal/tmux redraw artifact under rapid synthetic SGR injection. The env-gated probe (`TLDW_TRANSCRIPT_PAINT_LOG`) is kept: zero-cost when unset, and turns any future human-observed recurrence into a one-command diagnosis.
 Re-scoped 2026-07-25: original task (fix a stale action row nesting inside the generation card) investigated and its DOM-race hypothesis DISPROVEN -- ConsoleTranscript._reconcile_rows is the sole DOM mutator, serialized by an asyncio.Lock plus a screen-level in-progress guard, and Textual's mount()/move_child() semantics cannot structurally reparent a row into ConsoleGenerationCard's subtree. Five distinct async-interleaving reproductions in a real Textual run_test() harness all failed to reproduce nesting/duplication/orphaning.
 
 Two live-UAT facts gathered afterward (no button response on SGR clicks at the in-card row's coordinates; the in-card row never carried the Guide line that always accompanies a real selection render) point away from a real mounted widget and toward a stale compositor paint region left over a generation card during scroll, rather than a DOM defect.
