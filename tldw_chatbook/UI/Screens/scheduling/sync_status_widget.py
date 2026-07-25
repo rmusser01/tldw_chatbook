@@ -43,14 +43,31 @@ class SyncStatusWidget(Horizontal):
 
     def compose(self):
         local_variant = "primary" if self.current_owner == "local" else "default"
-        server_variant = "primary" if self.current_owner.startswith("server:") else "default"
+        server_variant = (
+            "primary" if self.current_owner.startswith("server:") else "default"
+        )
         server_label = f"Server ({self.active_server_id or 'unavailable'})"
-        yield Button("Local", id="scheduling-owner-local", variant=local_variant)
-        yield Button(server_label, id="scheduling-owner-server", variant=server_variant, disabled=not self.server_available)
+        yield Button(
+            "Local",
+            id="scheduling-owner-local",
+            variant=local_variant,
+            tooltip="Make this device's local schedules authoritative.",
+        )
+        yield Button(
+            server_label,
+            id="scheduling-owner-server",
+            variant=server_variant,
+            disabled=not self.server_available,
+            tooltip="Make the connected server's schedules authoritative.",
+        )
         yield Static("Last pull: —", id="scheduling-last-pull")
         yield Static("Last push: —", id="scheduling-last-push")
         yield Static("", id="scheduling-sync-error")
-        yield Button("Clear", id="scheduling-clear-error")
+        yield Button(
+            "Clear",
+            id="scheduling-clear-error",
+            tooltip="Clear all schedule sync errors.",
+        )
 
     def set_owner_state(
         self,
@@ -67,7 +84,9 @@ class SyncStatusWidget(Horizontal):
         server_btn = self.query_one("#scheduling-owner-server", Button)
 
         local_btn.variant = "primary" if current_owner == "local" else "default"
-        server_btn.variant = "primary" if current_owner.startswith("server:") else "default"
+        server_btn.variant = (
+            "primary" if current_owner.startswith("server:") else "default"
+        )
         server_btn.label = f"Server ({active_server_id or 'unavailable'})"
         server_btn.disabled = not server_available
 

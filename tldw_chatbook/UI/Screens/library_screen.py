@@ -727,9 +727,7 @@ class IngestGuardrailModal(ModalScreen[bool]):
                             classes="copy-command",
                         )
             with Horizontal(id="ingest-guardrail-actions"):
-                yield Button(
-                    "Cancel", id="ingest-guardrail-cancel", variant="error"
-                )
+                yield Button("Cancel", id="ingest-guardrail-cancel", variant="error")
                 yield Button(
                     "Start ingest anyway",
                     id="ingest-guardrail-confirm",
@@ -3364,7 +3362,14 @@ class LibraryScreen(BaseAppScreen):
         Returns a primary Ingest button that jumps directly to the Ingest
         media canvas, surfaced above the rail search box for discoverability.
         """
-        return [Button("Ingest content…", variant="primary", id="library-ingest-top-button")]
+        return [
+            Button(
+                "Ingest content…",
+                variant="primary",
+                id="library-ingest-top-button",
+                tooltip="Open the Library Ingest canvas to add content.",
+            )
+        ]
 
     def _compose_workspaces_rail_body(self) -> list[Any]:
         """Build the Workspaces body for the rail Details section.
@@ -5184,7 +5189,9 @@ class LibraryScreen(BaseAppScreen):
         runtime_state = getattr(
             getattr(self.app_instance, "runtime_policy", None), "state", None
         )
-        runtime_source = str(getattr(runtime_state, "active_source", "local") or "local")
+        runtime_source = str(
+            getattr(runtime_state, "active_source", "local") or "local"
+        )
         # Sync generic top-level form fields into the generic options group so
         # the canvas renders current values for analyze/chunk/chunk_size.
         form = self._library_ingest_form
@@ -10870,9 +10877,7 @@ class LibraryScreen(BaseAppScreen):
         else:
             self._do_submit_ingest(submitted_source)
 
-    def _do_submit_ingest(
-        self, submitted_source: str, confirmed: bool = True
-    ) -> None:
+    def _do_submit_ingest(self, submitted_source: str, confirmed: bool = True) -> None:
         """Perform the actual Library ingest job submission.
 
         The ``confirmed`` parameter lets this method be used directly as the
