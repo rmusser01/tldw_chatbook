@@ -26,6 +26,7 @@ from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     build_backend_rows,
     diff_to_sections,
     effective_placeholder,
+    effective_secret_value,
     load_user_image_generation_table,
     probe_backend,
     validate_draft,
@@ -317,6 +318,29 @@ def test_effective_placeholder_shows_configured_value(monkeypatch):
 def test_effective_placeholder_empty_when_unset_and_no_baked_default(monkeypatch):
     cfg = _fake_cfg(monkeypatch)
     assert effective_placeholder(cfg, "stable_diffusion_cpp", "model_path") == ""
+
+
+# --- effective_secret_value (task-6: Test probe secret fallback) -----------------
+
+
+def test_effective_secret_value_returns_resolved_config_secret(monkeypatch):
+    cfg = _fake_cfg(monkeypatch, section={"openrouter": {"api_key": "sk-config-key"}})
+    assert effective_secret_value(cfg, "openrouter") == "sk-config-key"
+
+
+def test_effective_secret_value_returns_resolved_env_secret(monkeypatch):
+    cfg = _fake_cfg(monkeypatch, env={"OPENROUTER_API_KEY": "sk-env-key"})
+    assert effective_secret_value(cfg, "openrouter") == "sk-env-key"
+
+
+def test_effective_secret_value_none_when_unresolved(monkeypatch):
+    cfg = _fake_cfg(monkeypatch)
+    assert effective_secret_value(cfg, "openrouter") is None
+
+
+def test_effective_secret_value_none_for_backend_without_secret(monkeypatch):
+    cfg = _fake_cfg(monkeypatch, section={"stable_diffusion_cpp": {}})
+    assert effective_secret_value(cfg, "stable_diffusion_cpp") is None
 
 
 # --- load_user_image_generation_table (Fix Round 1: set-vs-default blur) ----------

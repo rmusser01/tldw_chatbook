@@ -11,6 +11,7 @@ from ``Tests/Internal_Prompts/conftest.py``).
 
 from __future__ import annotations
 
+import threading
 import tomllib
 
 import pytest
@@ -33,7 +34,10 @@ from tldw_chatbook.Image_Generation.config import (
     reset_image_generation_config_cache,
 )
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-from tldw_chatbook.UI.Screens.settings_image_gen_defaults import effective_placeholder
+from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
+    ImageGenProbeResult,
+    effective_placeholder,
+)
 from tldw_chatbook.Widgets.settings_image_gen_panel import ImageGenSettingsPanel
 
 
@@ -247,7 +251,11 @@ async def test_env_key_shows_env_source_line(scratch_config, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_save_revert_test_buttons_present_but_disabled(scratch_config):
+async def test_save_revert_disabled_test_buttons_enabled(scratch_config):
+    """Save/Revert stay disabled with nothing staged, but the six Test
+    buttons (task 6: wired to `probe_backend`) are clickable regardless of
+    dirty state -- a probe reads the CURRENT form values, so it is useful
+    even with no unsaved edits at all."""
     scratch_config("")
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -266,7 +274,7 @@ async def test_save_revert_test_buttons_present_but_disabled(scratch_config):
             "together",
             "modelstudio",
         ):
-            assert panel.query_one(
+            assert not panel.query_one(
                 f"#settings-imagegen-test-{backend_id}", Button
             ).disabled
 
@@ -699,3 +707,318 @@ enabled_backends = ["openrouter"]
 
     after = config_path.read_text(encoding="utf-8")
     assert after == before
+
+
+# ---------------------------------------------------------------------------
+# Task 6: Test button probe wiring.
+#
+# Every test here monkeypatches `probe_backend` at its settings_screen.py
+# import site (`tldw_chatbook.UI.Screens.settings_screen.image_gen_probe_backend`
+# -- the module-level name that module binds it to), never the real network/
+# filesystem probe -- Task 3's probe_backend contract is covered by
+# ``Tests/UI/test_settings_image_gen_defaults.py`` instead.
+# ---------------------------------------------------------------------------
+
+_PROBE_BACKEND_PATCH_TARGET = (
+    "tldw_chatbook.UI.Screens.settings_screen.image_gen_probe_backend"
+)
+
+_ALL_BACKEND_IDS = (
+    "stable_diffusion_cpp",
+    "swarmui",
+    "openrouter",
+    "novita",
+    "together",
+    "modelstudio",
+)
+
+
+@pytest.mark.asyncio
+async def test_probe_uses_current_form_values(scratch_config, monkeypatch):
+    """Test gathers the CURRENT form values: an edited-but-unsaved Input
+    wins over the saved config value, and a field the user never touched
+    (timeout_seconds) falls back to the resolved effective value rather
+    than an empty string."""
+    scratch_config(
+        """
+[image_generation]
+default_backend = "swarmui"
+enabled_backends = ["swarmui"]
+
+[image_generation.swarmui]
+base_url = "http://original-host:7801"
+"""
+    )
+    captured: dict[str, object] = {}
+
+    def fake_probe_backend(backend_id, form_values, secret):
+        captured["backend_id"] = backend_id
+        captured["form_values"] = dict(form_values)
+        captured["secret"] = secret
+        return ImageGenProbeResult(ok=True, badge="Reachable")
+
+    monkeypatch.setattr(_PROBE_BACKEND_PATCH_TARGET, fake_probe_backend)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        base_url_input = panel.query_one(
+            "#settings-imagegen-field-swarmui-base_url", Input
+        )
+        base_url_input.value = "http://edited-not-saved:9999"
+        await pilot.pause()
+
+        # `.press()` (not a coordinate `pilot.click`) -- this
+        # DestinationHarness has no CSS_PATH, so the Test button can land
+        # outside the (unstyled, default-sized) scroll viewport at this
+        # terminal size. Posting Button.Pressed directly is the same real
+        # message a click sends, without depending on pixel geometry this
+        # harness doesn't style (see test_clear_key_deletes_not_blanks for
+        # the established precedent).
+        screen.query_one("#settings-imagegen-test-swarmui", Button).press()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert captured["backend_id"] == "swarmui"
+    assert captured["form_values"]["base_url"] == "http://edited-not-saved:9999"
+    # Untouched this session -- falls back to the resolved effective value,
+    # never a blank string.
+    assert captured["form_values"]["timeout_seconds"] == str(
+        DEFAULT_SWARMUI_TIMEOUT_SECONDS
+    )
+
+
+@pytest.mark.asyncio
+async def test_probe_secret_uses_pasted_unsaved_key(scratch_config, monkeypatch):
+    for var in _ALL_SECRET_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    scratch_config(
+        """
+[image_generation]
+default_backend = "openrouter"
+enabled_backends = ["openrouter"]
+
+[image_generation.openrouter]
+api_key = "sk-saved-key"
+"""
+    )
+    captured: dict[str, object] = {}
+
+    def fake_probe_backend(backend_id, form_values, secret):
+        captured["secret"] = secret
+        return ImageGenProbeResult(ok=True, badge="Reachable")
+
+    monkeypatch.setattr(_PROBE_BACKEND_PATCH_TARGET, fake_probe_backend)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        key_input = panel.query_one(
+            "#settings-imagegen-field-openrouter-api_key", Input
+        )
+        key_input.value = "sk-pasted-this-session"
+        await pilot.pause()
+
+        screen.query_one("#settings-imagegen-test-openrouter", Button).press()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    # The pasted-but-unsaved value wins over the saved "sk-saved-key".
+    assert captured["secret"] == "sk-pasted-this-session"
+
+
+@pytest.mark.asyncio
+async def test_probe_secret_falls_back_to_effective_when_nothing_pasted(
+    scratch_config, monkeypatch
+):
+    for var in _ALL_SECRET_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    scratch_config(
+        """
+[image_generation]
+default_backend = "openrouter"
+enabled_backends = ["openrouter"]
+
+[image_generation.openrouter]
+api_key = "sk-saved-key"
+"""
+    )
+    captured: dict[str, object] = {}
+
+    def fake_probe_backend(backend_id, form_values, secret):
+        captured["secret"] = secret
+        return ImageGenProbeResult(ok=True, badge="Reachable")
+
+    monkeypatch.setattr(_PROBE_BACKEND_PATCH_TARGET, fake_probe_backend)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+
+        screen.query_one("#settings-imagegen-test-openrouter", Button).press()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert captured["secret"] == "sk-saved-key"
+
+
+@pytest.mark.asyncio
+async def test_probe_renders_badge_and_reenables_buttons(scratch_config, monkeypatch):
+    """All six Test buttons disable for the duration of one probe (gated
+    via a real `threading.Event` on the probe's own worker thread) and
+    re-enable once it completes; the result badge lands on the right
+    backend's status Static."""
+    scratch_config(
+        """
+[image_generation]
+default_backend = "swarmui"
+enabled_backends = ["swarmui"]
+
+[image_generation.swarmui]
+base_url = "http://localhost:7801"
+"""
+    )
+    gate = threading.Event()
+    entered = threading.Event()
+
+    def fake_probe_backend(backend_id, form_values, secret):
+        entered.set()
+        gate.wait(timeout=10.0)
+        return ImageGenProbeResult(ok=True, badge="Reachable")
+
+    monkeypatch.setattr(_PROBE_BACKEND_PATCH_TARGET, fake_probe_backend)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        screen.query_one("#settings-imagegen-test-swarmui", Button).press()
+
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if entered.is_set():
+                break
+        else:
+            raise AssertionError("Probe worker never started.")
+
+        for backend_id in _ALL_BACKEND_IDS:
+            assert screen.query_one(
+                f"#settings-imagegen-test-{backend_id}", Button
+            ).disabled, f"{backend_id} Test button should be disabled mid-probe"
+
+        gate.set()
+
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if not screen._image_gen_probe_in_flight:
+                break
+        else:
+            raise AssertionError("Probe never completed after gate release.")
+        await pilot.pause()
+
+        for backend_id in _ALL_BACKEND_IDS:
+            assert not screen.query_one(
+                f"#settings-imagegen-test-{backend_id}", Button
+            ).disabled, f"{backend_id} Test button should re-enable after the probe"
+
+        badge = panel.query_one("#settings-imagegen-status-swarmui", Static)
+        assert str(badge.renderable) == "Reachable"
+
+
+@pytest.mark.asyncio
+async def test_probe_escaped_exception_renders_probe_error_badge(
+    scratch_config, monkeypatch
+):
+    """Any exception `probe_backend` fails to catch itself must degrade to
+    the closed-set "Unreachable: probe error" badge -- never propagate
+    exception text into the badge or a notify(), and buttons must still
+    re-enable via the worker's `finally`."""
+    scratch_config(
+        """
+[image_generation]
+default_backend = "swarmui"
+enabled_backends = ["swarmui"]
+
+[image_generation.swarmui]
+base_url = "http://localhost:7801"
+"""
+    )
+
+    def fake_probe_backend(backend_id, form_values, secret):
+        raise RuntimeError("leaked-exception-text-must-never-render")
+
+    monkeypatch.setattr(_PROBE_BACKEND_PATCH_TARGET, fake_probe_backend)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        screen.query_one("#settings-imagegen-test-swarmui", Button).press()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        badge = panel.query_one("#settings-imagegen-status-swarmui", Static)
+        assert str(badge.renderable) == "Unreachable: probe error"
+        assert "leaked-exception-text-must-never-render" not in _visible_text(screen)
+        assert not screen.query_one(
+            "#settings-imagegen-test-swarmui", Button
+        ).disabled
+
+
+@pytest.mark.asyncio
+async def test_probe_badge_resets_on_category_reopen(scratch_config, monkeypatch):
+    """Probe state is ephemeral -- leaving Image Gen and coming back must
+    show the normal Configured/Not-configured badge again, never a probe
+    result from the prior visit."""
+    scratch_config(
+        """
+[image_generation]
+default_backend = "swarmui"
+enabled_backends = ["swarmui"]
+
+[image_generation.swarmui]
+base_url = "http://localhost:7801"
+"""
+    )
+
+    def fake_probe_backend(backend_id, form_values, secret):
+        return ImageGenProbeResult(ok=True, badge="Reachable")
+
+    monkeypatch.setattr(_PROBE_BACKEND_PATCH_TARGET, fake_probe_backend)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        screen.query_one("#settings-imagegen-test-swarmui", Button).press()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        badge = panel.query_one("#settings-imagegen-status-swarmui", Static)
+        assert str(badge.renderable) == "Reachable"
+
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        await _open_image_gen(pilot)
+
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        badge = panel.query_one("#settings-imagegen-status-swarmui", Static)
+        assert str(badge.renderable) == "Configured"

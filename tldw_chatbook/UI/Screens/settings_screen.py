@@ -126,9 +126,13 @@ from ...Widgets.settings_image_gen_panel import (
 from ...Internal_Prompts import authoring as internal_prompts_authoring
 from .settings_image_gen_defaults import (
     BACKEND_IDS as IMAGE_GEN_BACKEND_IDS,
+    FIELD_SCHEMA as IMAGE_GEN_FIELD_SCHEMA,
     ImageGenDraftValues,
     diff_to_sections as image_gen_diff_to_sections,
+    effective_placeholder as image_gen_effective_placeholder,
+    effective_secret_value as image_gen_effective_secret_value,
     key_source_after_clear as image_gen_key_source_after_clear,
+    probe_backend as image_gen_probe_backend,
     validate_draft as validate_image_gen_draft,
 )
 from ...Image_Generation.config import (
@@ -1516,6 +1520,21 @@ class SettingsScreen(BaseAppScreen):
         #: ignores exactly one matching entry per message. Cleared on any
         #: category switch away from IMAGE_GENERATION (see _select_category).
         self._image_gen_select_suppress_queue: list = []
+        #: Task 6: guards the single-in-flight backend Test probe. Set
+        #: True for the duration of one `_image_gen_probe_worker` run
+        #: (Test buttons disabled meanwhile); a re-entrant Test click is a
+        #: no-op while True (belt-and-suspenders alongside the disabled
+        #: buttons themselves).
+        self._image_gen_probe_in_flight: bool = False
+        #: Bumped every time the user navigates AWAY from IMAGE_GENERATION
+        #: (see _select_category). A probe result callback captures the
+        #: session value at dispatch time; if it no longer matches when
+        #: the callback lands (the category was left -- and possibly
+        #: re-entered, minting a brand-new panel with fresh "Configured"/
+        #: "Not configured" badges -- since dispatch), the stale result is
+        #: dropped rather than clobbering an unrelated, freshly (re)opened
+        #: panel's badge or in-flight state.
+        self._image_gen_probe_session: int = 0
         self._navigation_provider: str | None = None
         self._navigation_model: str | None = None
         self._navigation_field: str | None = None
@@ -3055,6 +3074,138 @@ class SettingsScreen(BaseAppScreen):
             pass
         self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
 
+    # ------------------------------------------------------------------
+    # Image Gen (task 6): backend "Test" probes.
+    #
+    # A probe never persists anything -- it's a short live/filesystem
+    # reachability check (`probe_backend`, settings_image_gen_defaults.py)
+    # run against the CURRENT (possibly-unsaved) form values for one
+    # backend. `probe_backend` is BLOCKING (a plain HTTP GET or filesystem
+    # stat), so it always runs off the UI thread via `@work(thread=True)`;
+    # any exception it fails to catch itself degrades to a safe closed-set
+    # badge here rather than ever propagating exception text into a badge
+    # or a notify(). Only one probe may be in flight at a time
+    # (`_image_gen_probe_in_flight` + all six Test buttons disabled
+    # meanwhile) -- see `_image_gen_probe_session`'s docstring (near its
+    # declaration) for how a stale callback from a since-left-and-
+    # reentered category is safely dropped instead of clobbering an
+    # unrelated, freshly (re)opened panel.
+
+    def _image_gen_test_form_values(
+        self, panel: ImageGenSettingsPanel, backend_id: str
+    ) -> dict[str, str]:
+        """Gather the CURRENT non-secret form values for `backend_id`'s Test
+        probe -- an edited-but-unsaved Input wins; a blank (untouched)
+        Input falls back to the resolved effective value it's currently
+        showing as its own placeholder (see `effective_placeholder`),
+        never a blank string `probe_backend` could mistake for
+        "explicitly cleared"."""
+        cfg = get_image_generation_config(reload=True)
+        form_values: dict[str, str] = {}
+        for spec in IMAGE_GEN_FIELD_SCHEMA[backend_id]:
+            if spec.kind == "secret":
+                continue
+            try:
+                current = panel.query_one(
+                    f"#settings-imagegen-field-{backend_id}-{spec.toml_key}", Input
+                ).value.strip()
+            except QueryError:
+                current = ""
+            form_values[spec.toml_key] = current or image_gen_effective_placeholder(
+                cfg, backend_id, spec.toml_key
+            )
+        return form_values
+
+    def _image_gen_test_secret(
+        self, panel: ImageGenSettingsPanel, backend_id: str
+    ) -> str | None:
+        """The secret to probe with: this session's pasted-but-unsaved
+        value if present, else the effective resolved secret (env/config/
+        keyring) -- see `probe_backend`'s `secret` parameter docstring."""
+        secret_spec = next(
+            (
+                spec
+                for spec in IMAGE_GEN_FIELD_SCHEMA[backend_id]
+                if spec.kind == "secret"
+            ),
+            None,
+        )
+        if secret_spec is None:
+            return None
+        try:
+            pasted = panel.query_one(
+                f"#settings-imagegen-field-{backend_id}-{secret_spec.toml_key}", Input
+            ).value.strip()
+        except QueryError:
+            pasted = ""
+        if pasted:
+            return pasted
+        cfg = get_image_generation_config(reload=True)
+        return image_gen_effective_secret_value(cfg, backend_id)
+
+    def _image_gen_set_test_buttons_disabled(self, disabled: bool) -> None:
+        for backend_id in IMAGE_GEN_BACKEND_IDS:
+            try:
+                self.query_one(
+                    f"#settings-imagegen-test-{backend_id}", Button
+                ).disabled = disabled
+            except QueryError:
+                continue
+
+    def _handle_image_gen_test(self, backend_id: str) -> None:
+        if self._image_gen_probe_in_flight:
+            return
+        try:
+            panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        except QueryError:
+            return
+        form_values = self._image_gen_test_form_values(panel, backend_id)
+        secret = self._image_gen_test_secret(panel, backend_id)
+        self._image_gen_probe_in_flight = True
+        self._image_gen_set_test_buttons_disabled(True)
+        self._image_gen_probe_worker(
+            backend_id, form_values, secret, self._image_gen_probe_session
+        )
+
+    @work(thread=True, exclusive=False, exit_on_error=False)
+    def _image_gen_probe_worker(
+        self,
+        backend_id: str,
+        form_values: dict[str, str],
+        secret: str | None,
+        session: int,
+    ) -> None:
+        try:
+            badge = image_gen_probe_backend(backend_id, form_values, secret).badge
+        except Exception as exc:  # noqa: BLE001 - any escape must degrade safely
+            logger.debug(f"Image Gen probe for {backend_id!r} raised: {exc}")
+            badge = "Unreachable: probe error"
+        finally:
+            self.app.call_from_thread(
+                self._apply_image_gen_probe_result, backend_id, badge, session
+            )
+
+    def _apply_image_gen_probe_result(
+        self, backend_id: str, badge: str, session: int
+    ) -> None:
+        if session != self._image_gen_probe_session:
+            # Stale: the category was left (and possibly re-entered, minting
+            # a brand-new panel) since this probe was dispatched. Dropping
+            # it here -- rather than clearing `_image_gen_probe_in_flight`
+            # or touching any widget -- is what keeps a leftover result from
+            # a PREVIOUS visit from ever re-enabling buttons for (or
+            # overwriting a badge on) an unrelated, currently active probe
+            # or freshly (re)opened panel.
+            return
+        self._image_gen_probe_in_flight = False
+        self._image_gen_set_test_buttons_disabled(False)
+        try:
+            self.query_one(f"#settings-imagegen-status-{backend_id}", Static).update(
+                badge
+            )
+        except QueryError:
+            pass
+
     def _handle_image_gen_save(self) -> None:
         try:
             panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
@@ -3110,6 +3261,12 @@ class SettingsScreen(BaseAppScreen):
             self._queue_image_gen_select_suppression({})
             await panel.recompose()
             self._set_static_text("#settings-imagegen-save-result", message)
+            # A fresh panel mounts its Test buttons enabled by default; if a
+            # probe is still in flight (Save clicked mid-probe), re-assert
+            # the disabled state on the newly-mounted buttons rather than
+            # letting them render as clickable while ignored.
+            if self._image_gen_probe_in_flight:
+                self._image_gen_set_test_buttons_disabled(True)
         self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
         self.app.notify(message, severity="warning" if warnings else "information")
 
@@ -3124,6 +3281,9 @@ class SettingsScreen(BaseAppScreen):
             self._queue_image_gen_select_suppression({})
             await panel.recompose()
             self._set_static_text("#settings-imagegen-save-result", "")
+            # See the matching comment in _apply_image_gen_save_result.
+            if self._image_gen_probe_in_flight:
+                self._image_gen_set_test_buttons_disabled(True)
         self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
 
     @on(Button.Pressed)
@@ -3136,6 +3296,13 @@ class SettingsScreen(BaseAppScreen):
         if button_id == "settings-imagegen-revert":
             event.stop()
             await self._handle_image_gen_revert()
+            return
+        test_prefix = "settings-imagegen-test-"
+        if button_id.startswith(test_prefix):
+            backend_id = button_id[len(test_prefix):]
+            if backend_id in IMAGE_GEN_BACKEND_IDS:
+                event.stop()
+                self._handle_image_gen_test(backend_id)
             return
         prefix = "settings-imagegen-clear-"
         if not button_id.startswith(prefix):
@@ -10781,6 +10948,15 @@ class SettingsScreen(BaseAppScreen):
             # recomposed detail pane mints a brand-new one that owes it
             # nothing.
             self._image_gen_select_suppress_queue.clear()
+            # Task 6: bump the probe session and drop the in-flight guard
+            # -- see `_image_gen_probe_session`'s docstring. A probe
+            # already running keeps running (best-effort only, matching
+            # the RAG index-status precedent above -- an in-flight thread
+            # worker can't be interrupted mid-blocking-call), but its
+            # eventual callback will find this session stale and no-op
+            # instead of touching a since-recomposed, unrelated panel.
+            self._image_gen_probe_session += 1
+            self._image_gen_probe_in_flight = False
         # Task 2 review (Important): a stale re-index-confirm in-flight
         # guard must never survive navigating away from (or back into) the
         # category -- e.g. the user backs out mid-fetch. Unconditional

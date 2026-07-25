@@ -205,6 +205,32 @@ def effective_placeholder(cfg: ImageGenerationConfig, backend_id: str, toml_key:
     return "" if value is None else str(value)
 
 
+def effective_secret_value(cfg: ImageGenerationConfig, backend_id: str) -> str | None:
+    """Return the resolved EFFECTIVE secret for ``backend_id``, or ``None``.
+
+    ``cfg``'s secret fields already have env/config/keyring precedence
+    applied (see ``_resolve_secret``) -- this just looks up the right flat
+    attribute for ``backend_id`` via ``_SECRETS``. Used by the Settings >
+    Image Gen Test action as the probe's ``secret`` fallback when the user
+    hasn't pasted a fresh value this session (see ``probe_backend``'s
+    ``secret`` parameter docstring).
+
+    Args:
+        cfg: The effective ``ImageGenerationConfig``.
+        backend_id: One of ``BACKEND_IDS``.
+
+    Returns:
+        The resolved secret string, or ``None`` when the backend has no
+        secret field (``stable_diffusion_cpp``) or none is currently
+        resolved.
+    """
+    secret_entry = _SECRETS.get(backend_id)
+    if secret_entry is None:
+        return None
+    value = getattr(cfg, secret_entry[0], None)
+    return value if isinstance(value, str) and value else None
+
+
 def load_user_image_generation_table() -> Mapping[str, Any]:
     """Read the user's OWN ``[image_generation]`` table, UNMERGED with baked defaults.
 

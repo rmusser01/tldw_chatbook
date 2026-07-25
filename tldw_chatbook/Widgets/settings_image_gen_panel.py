@@ -205,7 +205,6 @@ class ImageGenSettingsPanel(Vertical):
                 yield Button(
                     "Test",
                     id=f"settings-imagegen-test-{row.backend_id}",
-                    disabled=True,
                 )
 
         yield Static("Backend settings", classes="destination-section")
