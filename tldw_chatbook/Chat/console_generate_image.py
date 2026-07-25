@@ -25,6 +25,7 @@ which the caller refuses.
 from __future__ import annotations
 
 import concurrent.futures
+import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
@@ -540,19 +541,110 @@ def _clean_llm_context_response(text: str) -> str | None:
     return collapsed or None
 
 
+_LLM_CONTEXT_STATE_LOCK = threading.Lock()
+"""Guards the two globals below -- creation of the shared executor and the
+saturation check-and-submit must be atomic, or two near-simultaneous calls
+could both see "not saturated" and both submit."""
+
+_LLM_CONTEXT_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
+"""Process-wide, lazily-created, NEVER-shut-down single-worker executor for
+LLM-context calls (Qodo PR #867 fix: a fresh-per-call executor that
+`shutdown(wait=False)` on timeout accumulates one abandoned thread per
+timed-out `/generate-image` attempt, unbounded over a session. A single
+shared 1-worker pool bounds the abandoned-thread count at exactly one,
+ever, regardless of how many attempts time out -- each new abandoned call
+just occupies the SAME one worker slot the previous abandoned call was
+already occupying."""
+
+_LLM_CONTEXT_INFLIGHT_FUTURE: concurrent.futures.Future | None = None
+"""The most recently submitted (possibly still-running-past-its-own-
+timeout) LLM-context call's Future, or ``None``. Checked before every new
+submission -- see `_submit_llm_context_call`."""
+
+
+class LLMContextExecutorSaturatedError(RuntimeError):
+    """Raised when a previous LLM-context call is still occupying the
+    shared single-worker executor (it timed out from its caller's
+    perspective but the underlying call -- which cannot be cancelled -- is
+    still running). The new call fails fast instead of queueing behind an
+    indefinitely-stuck predecessor; `compose_llm_context_prompt`'s blanket
+    exception handling treats this exactly like any other failure and
+    degrades to the keyword extractor."""
+
+
+def _submit_llm_context_call(
+    chat_call: Callable[..., Any], **kwargs: Any
+) -> concurrent.futures.Future:
+    """Submit ``chat_call(**kwargs)`` to the shared single-worker executor.
+
+    Lazily creates the module-level shared executor on first use (never
+    recreated or shut down afterward -- see `_LLM_CONTEXT_EXECUTOR`).
+    Before submitting, checks whether the previously submitted call is
+    still outstanding (`Future.done()` is ``False``): if so, the sole
+    worker is occupied by a call that has already outlived its own caller's
+    timeout window, and queueing a second task behind it would mean the new
+    call could wait indefinitely (bounded by nothing) rather than by its
+    own `timeout_seconds`. In that case this raises
+    `LLMContextExecutorSaturatedError` immediately -- no submission, no
+    wait, ``chat_call`` is never invoked for the new attempt.
+
+    Args:
+        chat_call: The blocking callable to run.
+        **kwargs: Forwarded to ``chat_call``.
+
+    Returns:
+        The submitted `concurrent.futures.Future`.
+
+    Raises:
+        LLMContextExecutorSaturatedError: The shared executor's one worker
+            is still occupied by a prior call past its timeout.
+    """
+    global _LLM_CONTEXT_EXECUTOR, _LLM_CONTEXT_INFLIGHT_FUTURE
+    with _LLM_CONTEXT_STATE_LOCK:
+        previous = _LLM_CONTEXT_INFLIGHT_FUTURE
+        if previous is not None and not previous.done():
+            raise LLMContextExecutorSaturatedError(
+                "a previous LLM-context call has not returned within its "
+                "own timeout yet; refusing to queue behind it"
+            )
+        if _LLM_CONTEXT_EXECUTOR is None:
+            _LLM_CONTEXT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="imagegen-llm-context"
+            )
+        future = _LLM_CONTEXT_EXECUTOR.submit(chat_call, **kwargs)
+        _LLM_CONTEXT_INFLIGHT_FUTURE = future
+        return future
+
+
+def reset_llm_context_executor() -> None:
+    """Test-only reset of the shared LLM-context executor + saturation
+    tracking. Never called from any production code path -- exists purely
+    so tests get a fresh executor per test rather than bleeding
+    still-running fake-slow-call state across unrelated tests."""
+    global _LLM_CONTEXT_EXECUTOR, _LLM_CONTEXT_INFLIGHT_FUTURE
+    with _LLM_CONTEXT_STATE_LOCK:
+        if _LLM_CONTEXT_EXECUTOR is not None:
+            _LLM_CONTEXT_EXECUTOR.shutdown(wait=False)
+        _LLM_CONTEXT_EXECUTOR = None
+        _LLM_CONTEXT_INFLIGHT_FUTURE = None
+
+
 def _call_chat_api_with_timeout(
     chat_call: Callable[..., Any], timeout_seconds: float, **kwargs: Any
 ) -> Any:
     """Bound a blocking ``chat_call(**kwargs)`` to ``timeout_seconds`` wall-clock.
 
-    Runs ``chat_call`` on a dedicated single-worker thread pool and waits
-    up to ``timeout_seconds`` for a result. On timeout, raises
-    ``concurrent.futures.TimeoutError`` -- the orphaned call keeps running
-    in the background (``shutdown(wait=False)``, never joined) rather than
-    blocking the caller further: a plain ``with ThreadPoolExecutor():``
-    block would otherwise wait for the hung call to finish anyway when the
-    ``with`` exits, defeating the point of a hard timeout against an
-    unresponsive provider/server.
+    Submits to the process-wide shared single-worker executor
+    (`_submit_llm_context_call`) and waits up to ``timeout_seconds`` for a
+    result. On timeout, raises ``concurrent.futures.TimeoutError`` -- the
+    orphaned call keeps running in the background (never cancelled; that
+    needs provider-level network timeouts, out of scope here) rather than
+    blocking the caller further. Unlike a fresh-per-call executor, this
+    does NOT accumulate one abandoned thread per timed-out attempt: the
+    shared executor has exactly one worker, so at most ONE call can ever be
+    "abandoned but still running" at a time -- a second call attempted
+    while that's true fails fast via `LLMContextExecutorSaturatedError`
+    (raised by `_submit_llm_context_call`) instead of queueing behind it.
 
     Args:
         chat_call: The blocking callable to run (typically
@@ -564,16 +656,14 @@ def _call_chat_api_with_timeout(
         Whatever ``chat_call`` returns.
 
     Raises:
+        LLMContextExecutorSaturatedError: The shared executor's one worker
+            is still occupied by a prior call past its own timeout.
         concurrent.futures.TimeoutError: ``chat_call`` did not finish
             within ``timeout_seconds``.
         Exception: Whatever ``chat_call`` itself raised.
     """
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(chat_call, **kwargs)
-    try:
-        return future.result(timeout=timeout_seconds)
-    finally:
-        executor.shutdown(wait=False)
+    future = _submit_llm_context_call(chat_call, **kwargs)
+    return future.result(timeout=timeout_seconds)
 
 
 def compose_llm_context_prompt(

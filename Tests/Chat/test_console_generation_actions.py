@@ -31,7 +31,11 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_command_grammar import CommandParse
-from tldw_chatbook.Chat.console_generate_image import BatchResult, LLMContextOptions
+from tldw_chatbook.Chat.console_generate_image import (
+    BatchResult,
+    LLMContextOptions,
+    reset_llm_context_executor,
+)
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
@@ -40,6 +44,19 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
 )
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+
+@pytest.fixture(autouse=True)
+def _reset_llm_context_executor_state():
+    """Same rationale as `test_console_generate_image.py`'s fixture of the
+    same name: the shared single-worker LLM-context executor (Qodo PR #867
+    fix) is process-wide module state -- reset around every test so this
+    file's own slow/timeout fake calls can never bleed a spurious
+    saturation failure into an unrelated later test (in this file, another
+    test file in the same session, or vice versa)."""
+    reset_llm_context_executor()
+    yield
+    reset_llm_context_executor()
 
 
 def _meta(
@@ -876,7 +893,7 @@ async def test_llm_context_options_resolves_ready_provider():
                 ready=True,
                 execution_key="openai",
                 model="gpt-4o-mini",
-                api_key="sk-x",
+                api_key="fake-test-api-key",
             )
 
     screen._ensure_console_provider_gateway = lambda: _FakeGateway()
@@ -886,7 +903,7 @@ async def test_llm_context_options_resolves_ready_provider():
     assert options.provider_ready is True
     assert options.api_endpoint == "openai"
     assert options.model == "gpt-4o-mini"
-    assert options.api_key == "sk-x"
+    assert options.api_key == "fake-test-api-key"
     assert options.turns == 7
     assert options.timeout_seconds == 9.5
 
@@ -982,7 +999,7 @@ async def test_generate_image_handler_no_prompt_uses_llm_composed_context_end_to
             provider_ready=True,
             api_endpoint="openai",
             model="gpt-4o-mini",
-            api_key="sk-x",
+            api_key="fake-test-api-key",
             chat_call=lambda **_kwargs: _chat_response(llm_text),
         )
 
@@ -1036,7 +1053,7 @@ async def test_generate_image_handler_no_prompt_llm_call_raises_falls_back(
             provider_ready=True,
             api_endpoint="openai",
             model="gpt-4o-mini",
-            api_key="sk-x",
+            api_key="fake-test-api-key",
             chat_call=lambda **_kwargs: (_ for _ in ()).throw(
                 RuntimeError("provider unreachable")
             ),
@@ -1085,7 +1102,7 @@ async def test_generate_image_handler_no_prompt_llm_timeout_falls_back(monkeypat
             provider_ready=True,
             api_endpoint="openai",
             model="gpt-4o-mini",
-            api_key="sk-x",
+            api_key="fake-test-api-key",
             chat_call=_slow_call,
         )
 
@@ -1127,7 +1144,7 @@ async def test_generate_image_handler_no_prompt_llm_empty_response_falls_back(
             provider_ready=True,
             api_endpoint="openai",
             model="gpt-4o-mini",
-            api_key="sk-x",
+            api_key="fake-test-api-key",
             chat_call=lambda **_kwargs: _chat_response("   "),
         )
 

@@ -1,9 +1,11 @@
 """Tests for console_generate_image pure helpers."""
 
 import dataclasses
+import threading
 import time
 
 import pytest
+from tldw_chatbook.Chat import console_generate_image as module
 from tldw_chatbook.Chat.console_generate_image import (
     GENERATE_IMAGE_USAGE_TEXT,
     GenerateImageArgs,
@@ -23,13 +25,26 @@ from tldw_chatbook.Chat.console_generate_image import (
     run_generation_batch,
 )
 from tldw_chatbook.Chat.console_generate_image import (
+    LLMContextExecutorSaturatedError,
     _clean_llm_context_response,
     _shape_llm_context_payload,
+    reset_llm_context_executor,
 )
 from tldw_chatbook.Media_Creation.generation_templates import (
     BUILTIN_TEMPLATES,
     get_template,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_llm_context_executor_state():
+    """The shared single-worker LLM-context executor (Qodo PR #867 fix) is
+    process-wide/module-level state -- reset it around every test so a
+    still-"running" fake-slow-call from one test can never bleed a spurious
+    `LLMContextExecutorSaturatedError` into an unrelated later test."""
+    reset_llm_context_executor()
+    yield
+    reset_llm_context_executor()
 
 
 @pytest.mark.parametrize(
@@ -623,7 +638,7 @@ def _llm_options(*, chat_call=None, **overrides) -> LLMContextOptions:
         provider_ready=True,
         api_endpoint="openai",
         model="gpt-4o-mini",
-        api_key="sk-test",
+        api_key="fake-test-api-key",
     )
     defaults.update(overrides)
     return LLMContextOptions(chat_call=chat_call, **defaults)
@@ -759,7 +774,7 @@ def test_compose_llm_context_prompt_success_returns_cleaned_text():
     ]
     assert captured["api_endpoint"] == "openai"
     assert captured["model"] == "gpt-4o-mini"
-    assert captured["api_key"] == "sk-test"
+    assert captured["api_key"] == "fake-test-api-key"
     assert captured["streaming"] is False
     assert "system_message" in captured and captured["system_message"]
 
@@ -776,6 +791,93 @@ def test_compose_llm_context_prompt_never_raises_on_unexpected_executor_error(
     monkeypatch.setattr(module.concurrent.futures, "ThreadPoolExecutor", _boom)
     options = _llm_options(chat_call=lambda **_: _chat_response("x"))
     assert compose_llm_context_prompt([("user", "a dragon")], options) is None
+
+
+# --- shared executor: bounded accumulation (Qodo PR #867) -------------------
+
+
+def test_second_call_while_first_still_hung_fails_fast_without_reinvoking():
+    """A fresh-per-call executor that `shutdown(wait=False)` on timeout would
+    accumulate one abandoned thread per timed-out attempt, unbounded over a
+    session. The shared single-worker executor bounds that at exactly one:
+    a second call while the first (timed-out-but-still-running) call still
+    occupies that one worker must fail FAST -- no queueing, no re-invoking
+    `chat_call`, and no waiting anywhere near either call's own timeout."""
+    calls: list = []
+    release = threading.Event()
+
+    def _hang(**kwargs):
+        calls.append(kwargs)
+        release.wait(2.0)
+        return _chat_response("finally back")
+
+    options = _llm_options(chat_call=_hang, timeout_seconds=0.05)
+    try:
+        start = time.monotonic()
+        first = compose_llm_context_prompt([("user", "a dragon")], options)
+        first_elapsed = time.monotonic() - start
+        assert first is None
+        assert first_elapsed < 0.5
+        assert len(calls) == 1  # the hung call genuinely started running
+
+        start = time.monotonic()
+        second = compose_llm_context_prompt([("user", "another dragon")], options)
+        second_elapsed = time.monotonic() - start
+        assert second is None
+        # Fails fast: nowhere near the 0.05s timeout, let alone queued behind
+        # the still-hung first call indefinitely.
+        assert second_elapsed < 0.02
+        assert len(calls) == 1  # chat_call was NOT invoked a second time
+    finally:
+        release.set()  # let the hung fake finish so nothing leaks past this test
+
+
+def test_executor_recovers_once_the_stuck_future_finally_completes():
+    """Saturation is temporary, not a permanent lockout: once the abandoned
+    call actually finishes, the shared executor's one worker is free again
+    and a subsequent call proceeds normally."""
+    calls: list = []
+    release = threading.Event()
+
+    def _hang_then_return(**kwargs):
+        calls.append(kwargs)
+        release.wait(2.0)
+        return _chat_response("finally back")
+
+    options = _llm_options(chat_call=_hang_then_return, timeout_seconds=0.05)
+    assert compose_llm_context_prompt([("user", "x")], options) is None  # times out
+    assert compose_llm_context_prompt([("user", "y")], options) is None  # saturated
+    assert len(calls) == 1
+
+    release.set()
+    for _ in range(50):  # bounded poll, not a fixed sleep -- avoids flakiness
+        if not module._LLM_CONTEXT_INFLIGHT_FUTURE.done():
+            time.sleep(0.02)
+            continue
+        break
+
+    third = compose_llm_context_prompt([("user", "z")], options)
+    assert third == "finally back"
+    assert len(calls) == 2
+
+
+def test_call_chat_api_with_timeout_submit_raises_saturated_error_directly():
+    """Unit-level pin on `_submit_llm_context_call`'s contract, independent
+    of `compose_llm_context_prompt`'s blanket exception handling."""
+    module.reset_llm_context_executor()
+    release = threading.Event()
+
+    def _hang(**_kwargs):
+        release.wait(2.0)
+        return None
+
+    try:
+        first_future = module._submit_llm_context_call(_hang)
+        assert not first_future.done()
+        with pytest.raises(LLMContextExecutorSaturatedError):
+            module._submit_llm_context_call(_hang)
+    finally:
+        release.set()
 
 
 # --- build_context_prompt_with_llm -----------------------------------------
