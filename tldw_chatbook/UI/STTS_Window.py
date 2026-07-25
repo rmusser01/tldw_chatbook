@@ -792,52 +792,68 @@ class TTSPlaygroundWidget(Widget):
         refresh: bool = False,
     ) -> None:
         """Load voices for only the selected provider model."""
+        service = self._tts_service
+        if service is None:
+            return
+        token = CatalogRequestToken(
+            provider_id=provider_id,
+            configuration_revision=service.configuration_revision(provider_id),
+            catalog_revision=catalog_revision,
+            model_id=model_id,
+        )
         try:
-            service = self._tts_service
-            if service is None:
-                return
-            token = CatalogRequestToken(
-                provider_id=provider_id,
-                configuration_revision=service.configuration_revision(provider_id),
-                catalog_revision=catalog_revision,
-                model_id=model_id,
-            )
             voices = await service.get_voices(
                 provider_id,
                 model_id,
                 refresh=refresh,
             )
-            catalog = self._catalogs.get(provider_id)
-            current_revision = catalog.revision if catalog is not None else None
-            current_model = self._current_select_value("#tts-model-select")
-            if not token.matches(
-                provider_id=self._selected_provider_id or "",
-                configuration_revision=service.configuration_revision(provider_id),
-                catalog_revision=current_revision,
-                model_id=current_model,
-            ):
-                return
-            self._discovered_voices[(provider_id, model_id)] = tuple(voices)
-            if catalog is not None:
-                self._apply_catalog(provider_id, catalog)
         except asyncio.CancelledError:
             raise
         except Exception as error:
+            if not self._voice_token_is_current(token):
+                return
             logger.warning(
                 "TTS voice discovery failed ({})",
                 type(error).__name__,
             )
-            if provider_id == self._selected_provider_id:
-                self._pending_voice_selections.pop(provider_id, None)
-                self._provider_control_snapshots.setdefault(provider_id, {})[
-                    "voice_id"
-                ] = SERVER_DEFAULT_VOICE_ID
-                catalog = self._catalogs.get(provider_id)
-                if catalog is not None:
-                    self._apply_catalog(provider_id, catalog)
-                self._set_provider_status(
-                    "Voices are unavailable; the provider default remains available"
-                )
+            self._discovered_voices[(provider_id, model_id)] = ()
+            self._pending_voice_selections.pop(provider_id, None)
+            self._provider_control_snapshots.setdefault(provider_id, {})["voice_id"] = (
+                SERVER_DEFAULT_VOICE_ID
+            )
+            catalog = self._catalogs.get(provider_id)
+            if catalog is not None:
+                self._apply_catalog(provider_id, catalog)
+            self._set_provider_status(
+                "Voices are unavailable; the provider default remains available"
+            )
+            return
+
+        if not self._voice_token_is_current(token):
+            return
+        self._discovered_voices[(provider_id, model_id)] = tuple(voices)
+        catalog = self._catalogs.get(provider_id)
+        if catalog is not None:
+            self._apply_catalog(provider_id, catalog)
+
+    def _voice_token_is_current(self, token: CatalogRequestToken) -> bool:
+        """Return whether a voice result still targets the displayed model."""
+        service = self._tts_service
+        if service is None or not self.is_mounted:
+            return False
+        catalog = self._catalogs.get(token.provider_id)
+        current_revision = catalog.revision if catalog is not None else None
+        current_model = self._current_select_value("#tts-model-select")
+        try:
+            configuration_revision = service.configuration_revision(token.provider_id)
+        except (KeyError, TTSRegistryClosedError):
+            return False
+        return token.matches(
+            provider_id=self._selected_provider_id or "",
+            configuration_revision=configuration_revision,
+            catalog_revision=current_revision,
+            model_id=current_model,
+        )
 
     def _catalog_token_is_current(self, token: CatalogRequestToken) -> bool:
         service = self._tts_service
@@ -1057,7 +1073,9 @@ class TTSPlaygroundWidget(Widget):
 
     def _current_select_value(self, selector: str) -> str | None:
         value = self.query_one(selector, Select).value
-        if not isinstance(value, str) or value.startswith("__"):
+        if not isinstance(value, str):
+            return None
+        if value.startswith("__") and value != SERVER_DEFAULT_VOICE_ID:
             return None
         return value
 

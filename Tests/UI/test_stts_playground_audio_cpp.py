@@ -101,6 +101,17 @@ class FakeTTSService:
         self.voice_started: asyncio.Event | None = None
         self.allow_voices: asyncio.Event | None = None
         self.voice_error: Exception | None = None
+        self.voice_started_by_request: dict[
+            tuple[str, str],
+            asyncio.Event,
+        ] = {}
+        self.voice_finished_by_request: dict[
+            tuple[str, str],
+            asyncio.Event,
+        ] = {}
+        self.voice_gates: dict[tuple[str, str], asyncio.Event] = {}
+        self.voice_errors: dict[tuple[str, str], Exception] = {}
+        self.voice_ignore_cancellation: set[tuple[str, str]] = set()
 
     def provider_descriptors(self) -> tuple[TTSProviderDescriptor, ...]:
         self.descriptor_calls += 1
@@ -143,13 +154,29 @@ class FakeTTSService:
         refresh: bool = False,
     ) -> tuple[str, ...]:
         self.voice_calls.append((provider_id, model_id, refresh))
+        request_key = (provider_id, model_id)
         if self.voice_started is not None:
             self.voice_started.set()
-        if self.allow_voices is not None:
-            await self.allow_voices.wait()
-        if self.voice_error is not None:
-            raise self.voice_error
-        return self.voices.get((provider_id, model_id), ())
+        request_started = self.voice_started_by_request.get(request_key)
+        if request_started is not None:
+            request_started.set()
+        try:
+            gate = self.voice_gates.get(request_key, self.allow_voices)
+            if gate is not None:
+                try:
+                    await gate.wait()
+                except asyncio.CancelledError:
+                    if request_key not in self.voice_ignore_cancellation:
+                        raise
+                    await gate.wait()
+            error = self.voice_errors.get(request_key, self.voice_error)
+            if error is not None:
+                raise error
+            return self.voices.get(request_key, ())
+        finally:
+            request_finished = self.voice_finished_by_request.get(request_key)
+            if request_finished is not None:
+                request_finished.set()
 
     async def synthesize(self, *_args: Any, **_kwargs: Any) -> None:
         self.synthesize_calls += 1
@@ -497,6 +524,145 @@ async def test_voice_discovery_failure_releases_pending_explicit_voice(
         assert len(app.generation_events) == 1
         assert app.generation_events[0].request.voice_id is None
         assert "untrusted upstream detail" not in str(app.notices)
+
+
+@pytest.mark.asyncio
+async def test_voice_discovery_failure_overrides_configured_explicit_default(
+    audio_cpp_playground: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = audio_cpp_playground
+
+    def get_setting(section: str, key: str, default: Any = None) -> Any:
+        configured = {
+            ("app_tts", "default_provider"): "audio_cpp",
+            ("app_tts", "default_voice"): "[voice]",
+        }
+        return configured.get((section, key), default)
+
+    monkeypatch.setattr(STTS_Window, "get_cli_setting", get_setting)
+    service.voice_error = RuntimeError("untrusted upstream detail")
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        app.query_one("#tts-text-input", TextArea).text = "configured fallback"
+        await pilot.pause()
+
+        widget = app.query_one(TTSPlaygroundWidget)
+        assert app.query_one("#tts-voice-select", Select).value == (
+            SERVER_DEFAULT_VOICE_ID
+        )
+        assert widget._pending_voice_selections == {}
+        assert app.query_one("#tts-generate-btn", Button).disabled is False
+
+        widget.action_generate_tts()
+        await pilot.pause()
+
+        assert len(app.generation_events) == 1
+        assert app.generation_events[0].request.voice_id is None
+        assert "untrusted upstream detail" not in str(app.notices)
+
+
+@pytest.mark.asyncio
+async def test_server_default_override_survives_provider_switch(
+    audio_cpp_playground: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del audio_cpp_playground
+
+    def get_setting(section: str, key: str, default: Any = None) -> Any:
+        configured = {
+            ("app_tts", "default_provider"): "audio_cpp",
+            ("app_tts", "default_voice"): "[voice]",
+        }
+        return configured.get((section, key), default)
+
+    monkeypatch.setattr(STTS_Window, "get_cli_setting", get_setting)
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        provider_select = app.query_one("#tts-provider-select", Select)
+        voice_select = app.query_one("#tts-voice-select", Select)
+        assert voice_select.value == "[voice]"
+
+        voice_select.value = SERVER_DEFAULT_VOICE_ID
+        provider_select.value = "openai"
+        await _wait_until(
+            pilot,
+            lambda: app.query_one("#tts-model-select", Select).value == "tts-1",
+        )
+        provider_select.value = "audio_cpp"
+        await _wait_until(
+            pilot,
+            lambda: (
+                app.query_one("#tts-model-select", Select).value == "<opaque:model>"
+            ),
+        )
+
+        assert voice_select.value == SERVER_DEFAULT_VOICE_ID
+
+
+@pytest.mark.asyncio
+async def test_stale_model_voice_failure_cannot_release_current_pending_voice(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        widget = app.query_one(TTSPlaygroundWidget)
+        voice_select = app.query_one("#tts-voice-select", Select)
+        model_select = app.query_one("#tts-model-select", Select)
+        voice_select.value = "[voice]"
+        app.query_one("#tts-text-input", TextArea).text = "current pending voice"
+        await pilot.pause()
+
+        old_key = ("audio_cpp", "<opaque:model>")
+        current_key = ("audio_cpp", "second-model")
+        service.voice_started_by_request[old_key] = asyncio.Event()
+        service.voice_finished_by_request[old_key] = asyncio.Event()
+        service.voice_gates[old_key] = asyncio.Event()
+        service.voice_errors[old_key] = RuntimeError("late old-model failure")
+        service.voice_ignore_cancellation.add(old_key)
+        service.voice_started_by_request[current_key] = asyncio.Event()
+        service.voice_finished_by_request[current_key] = asyncio.Event()
+        service.voice_gates[current_key] = asyncio.Event()
+
+        widget._load_provider_voices(
+            "audio_cpp",
+            "<opaque:model>",
+            service.catalogs["audio_cpp"].revision,
+            refresh=True,
+        )
+        await service.voice_started_by_request[old_key].wait()
+
+        model_select.value = "second-model"
+        await service.voice_started_by_request[current_key].wait()
+        await pilot.pause()
+
+        assert widget._pending_voice_selections == {"audio_cpp": "[voice]"}
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+
+        service.voice_gates[old_key].set()
+        await service.voice_finished_by_request[old_key].wait()
+        await pilot.pause()
+
+        assert widget._pending_voice_selections == {"audio_cpp": "[voice]"}
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        widget.action_generate_tts()
+        await pilot.pause()
+        assert app.generation_events == []
+        assert app.notices[-1] == (
+            "Voices are still loading; wait before generating",
+            "warning",
+        )
+
+        service.voice_gates[current_key].set()
+        await service.voice_finished_by_request[current_key].wait()
+        await _wait_until(pilot, lambda: widget._pending_voice_selections == {})
 
 
 @pytest.mark.asyncio
