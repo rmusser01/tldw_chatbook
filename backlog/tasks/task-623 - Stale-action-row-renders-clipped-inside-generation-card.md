@@ -2,10 +2,10 @@
 id: TASK-623
 title: >-
   Stale action row renders clipped inside the generation card and survives Escape
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-25 10:15'
-updated_date: '2026-07-25 10:15'
+updated_date: '2026-07-25 10:45'
 labels:
   - image-generation
   - console

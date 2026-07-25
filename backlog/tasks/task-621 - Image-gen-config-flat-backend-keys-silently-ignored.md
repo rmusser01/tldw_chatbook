@@ -2,10 +2,10 @@
 id: TASK-621
 title: >-
   Image-gen config silently ignores flat backend keys in [image_generation]
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-25 10:15'
-updated_date: '2026-07-25 10:15'
+updated_date: '2026-07-25 10:45'
 labels:
   - image-generation
   - config

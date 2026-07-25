@@ -2,10 +2,10 @@
 id: TASK-620
 title: >-
   Replace stale OpenRouter image default model (gpt-image-1 404s)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-25 10:15'
-updated_date: '2026-07-25 10:15'
+updated_date: '2026-07-25 10:45'
 labels:
   - image-generation
   - bug

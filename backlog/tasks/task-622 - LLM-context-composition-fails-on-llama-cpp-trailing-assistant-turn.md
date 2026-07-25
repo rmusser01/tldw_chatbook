@@ -2,10 +2,10 @@
 id: TASK-622
 title: >-
   LLM context composition 400s on llama.cpp when conversation ends with an assistant turn
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-25 10:15'
-updated_date: '2026-07-25 10:15'
+updated_date: '2026-07-25 10:45'
 labels:
   - image-generation
   - bug
