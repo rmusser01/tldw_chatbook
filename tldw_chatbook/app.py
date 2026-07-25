@@ -265,6 +265,7 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSPlaygroundGenerateEvent,
+    STTSProviderConfigurationChanged,
     STTSSettingsSaveEvent,
     STTSAudioBookGenerateEvent,
 )
@@ -6042,11 +6043,12 @@ class TldwCli(
     ) -> None:
         """Handle S/TT/S playground generation request."""
         self.loguru_logger.info(
-            f"S/TT/S generation request: provider={event.provider}, model={event.model}"
+            "S/TT/S generation request accepted for provider={}",
+            event.request.provider_id,
         )
         handler = await self._ensure_stts_handler()
         if handler:
-            await handler.handle_playground_generate(event)
+            handler.start_playground_generation(event)
         else:
             self.loguru_logger.error("S/TT/S handler not initialized")
             self.notify("S/TT/S service not available", severity="error")
@@ -6059,6 +6061,16 @@ class TldwCli(
         handler = await self._ensure_stts_handler()
         if handler:
             await handler.handle_settings_save(event)
+
+    @on(STTSProviderConfigurationChanged)
+    def handle_stts_provider_configuration_changed(
+        self,
+        event: STTSProviderConfigurationChanged,
+    ) -> None:
+        """Forward provider invalidation to the retained STTS handler."""
+        handler = getattr(self, "_stts_handler", None)
+        if handler is not None:
+            handler.on_stts_provider_configuration_changed(event)
 
     @on(STTSAudioBookGenerateEvent)
     async def handle_stts_audiobook_generate_event(

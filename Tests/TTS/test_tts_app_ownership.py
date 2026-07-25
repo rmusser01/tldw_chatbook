@@ -16,8 +16,10 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSPlaygroundGenerateEvent,
+    STTSProviderConfigurationChanged,
     STTSSettingsSaveEvent,
 )
+from tldw_chatbook.TTS import STTSPlaygroundRequest
 from tldw_chatbook.TTS.adapter_types import ProgressSink, TTSProgress
 from tldw_chatbook.TTS.TTS_Generation import (
     get_tts_service,
@@ -27,6 +29,23 @@ from tldw_chatbook.app import TldwCli
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _playground_event(
+    *,
+    response_format: str = "wav",
+) -> STTSPlaygroundGenerateEvent:
+    return STTSPlaygroundGenerateEvent(
+        STTSPlaygroundRequest(
+            operation_id="ownership-test-operation",
+            provider_id="openai",
+            model_id="tts-1",
+            text="hello",
+            voice_id="alloy",
+            response_format=response_format,
+            speed=1.0,
+        )
+    )
 
 
 class FakeOwnedService:
@@ -196,6 +215,20 @@ async def test_stts_initialization_only_retrieves_the_bound_service(
     assert handler._stts_service is service
 
 
+def test_app_forwards_provider_configuration_change_to_stts_handler() -> None:
+    callback = Mock()
+    owner = SimpleNamespace(
+        _stts_handler=SimpleNamespace(
+            on_stts_provider_configuration_changed=callback,
+        )
+    )
+    event = STTSProviderConfigurationChanged("audio_cpp", 2)
+
+    TldwCli.handle_stts_provider_configuration_changed(owner, event)
+
+    callback.assert_called_once_with(event)
+
+
 def test_existing_mount_binds_before_screen_work() -> None:
     method = _method_node(REPO_ROOT / "tldw_chatbook/app.py", "TldwCli", "on_mount")
     bind_calls = _self_method_calls(method, "_bind_tts_service")
@@ -324,24 +357,17 @@ async def test_stts_forwards_typed_progress_sink_to_service(
         query_one=query_one,
         call_from_thread=call_from_thread,
     )
-    event = STTSPlaygroundGenerateEvent(
-        text="hello",
-        provider="openai",
-        voice="alloy",
-        model="tts-1",
-        speed=1.0,
-        format="wav",
-    )
+    app.query_one = Mock(return_value=playground)
+    event = _playground_event()
 
-    await handler._generate_tts_worker(event, playground)
+    await handler.handle_playground_generate(event)
 
     assert service.progress_sink is not None
     assert scheduled
     status_text.update.assert_called_with("Generating")
     progress_bar.update.assert_any_call(progress=50.0)
     generation_log.write.assert_any_call("[dim]Processed 1/2 item(s)[/dim]")
-    assert created_tasks
-    assert all(task.done() for task in created_tasks)
+    assert created_tasks == []
     assert handler._current_audio_file is not None
     audio_file = handler._current_audio_file
 
@@ -367,18 +393,12 @@ async def test_stts_playground_generation_stays_in_the_owned_event_task(
     handler._stts_service = object()
     generation = AsyncMock()
     monkeypatch.setattr(handler, "_generate_tts_worker", generation)
-    event = STTSPlaygroundGenerateEvent(
-        text="hello",
-        provider="openai",
-        voice="alloy",
-        model="tts-1",
-        speed=1.0,
-        format="wav",
-    )
+    event = _playground_event()
 
     await handler.handle_playground_generate(event)
 
-    generation.assert_awaited_once_with(event, playground)
+    generation.assert_awaited_once_with(event)
+    app.query_one.assert_not_called()
     playground.run_worker.assert_not_called()
 
 
@@ -480,14 +500,7 @@ async def test_stts_conversion_cancellation_tracks_and_deletes_partial_output(
     )
     handler = STTSEventHandler(app=SimpleNamespace(notify=Mock()))
     handler._stts_service = OneChunkService()
-    event = STTSPlaygroundGenerateEvent(
-        text="hello",
-        provider="openai",
-        voice="alloy",
-        model="tts-1",
-        speed=1.0,
-        format="mp3",
-    )
+    event = _playground_event(response_format="mp3")
     generation = asyncio.create_task(handler._generate_tts_worker(event))
 
     try:
@@ -504,6 +517,7 @@ async def test_stts_conversion_cancellation_tracks_and_deletes_partial_output(
         assert process_terminated.is_set()
         assert process_waited.is_set()
         assert not output_path.exists()
+        assert handler._playground_operation_files == {}
     finally:
         if not generation.done():
             generation.cancel()
@@ -588,14 +602,7 @@ async def test_stts_cleanup_seals_handler_against_late_generation(
     handler._stts_service = object()
     generate = AsyncMock()
     monkeypatch.setattr(handler, "_generate_tts_worker", generate)
-    event = STTSPlaygroundGenerateEvent(
-        text="hello",
-        provider="openai",
-        voice="alloy",
-        model="tts-1",
-        speed=1.0,
-        format="wav",
-    )
+    event = _playground_event()
 
     await handler.cleanup_tts_resources()
     await handler.handle_playground_generate(event)

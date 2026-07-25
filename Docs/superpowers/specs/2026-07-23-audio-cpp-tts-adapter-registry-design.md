@@ -2,7 +2,7 @@
 
 **Status:** approved by the user on 2026-07-23; review amendments approved on 2026-07-23
 **Date:** 2026-07-23
-**Related tasks:** [TASK-561](<../../../backlog/tasks/task-561 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md>) and [TASK-560](<../../../backlog/tasks/task-560 - Add-external-audio.cpp-native-TTS-adapter.md>)
+**Related tasks:** [TASK-561](<../../../backlog/tasks/task-561 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md>), [TASK-560](<../../../backlog/tasks/task-560 - Add-external-audio.cpp-native-TTS-adapter.md>), and [TASK-569](<../../../backlog/tasks/task-569 - Complete-external-audio.cpp-STTS-Playground-vertical.md>)
 **Canonical ADR:** [ADR-023](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
 **Upstream contract reviewed:** `0xShug0/audio.cpp` commit `d3d748179e5ace353386fbf17bcaedfacf482d75`
 
@@ -27,12 +27,14 @@ save it.
   adapter, bounded discovery, lazy voices, and complete-WAV synthesis. Its
   exact, alias-free, lazy, exclusive provider spec is registered before the six
   unchanged legacy entries.
-- Slice 3 remains the catalog-driven external STTS Playground vertical.
+- Slice 3, tracked by TASK-569, implements the catalog-driven external STTS
+  Playground from settings and lazy discovery through complete-WAV generation,
+  playback, and export.
 - Slices 4–5 remain user-provided binary plus user-provided `server.json`
   launch/supervision and its managed Playground UI.
 
 No process launching, supervision, binary handling, `server.json` ownership,
-or STTS UI behavior is part of the Slice 2 implementation.
+or managed-process UI behavior is part of Slices 1–3.
 
 ## Pre-implementation baseline
 
@@ -491,31 +493,36 @@ Cancellation closes Chatbook's HTTP operation but may not cancel native
 inference already running on the server. Cancellation does not restart the
 server or mark it unhealthy.
 
-## Future STTS Playground (Slices 3 and 5)
+## Landed external STTS Playground (Slice 3) and future managed UI (Slice 5)
 
 ### Provider and settings UI
 
 Opening STTS lists registry provider descriptors without initializing every
-provider. Only the selected provider is resolved. Selecting audio.cpp is a
-first use and may connect or lazily launch managed mode.
+provider. Descriptor enumeration does not resolve adapter factories. Only the
+selected provider is resolved. In Slice 3, selecting audio.cpp is a first use
+that performs bounded readiness and model discovery against the saved external
+origin.
 
-The audio.cpp settings panel contains:
+The landed external audio.cpp settings panel contains:
 
-- External or Managed mode.
+- External mode.
 - External base URL.
-- Managed binary path.
-- Managed `server.json` path.
-- Advanced timeout, input, audio-response, metadata, catalog, identifier, and
-  log bounds.
+- Advanced timeout, input, audio-response, metadata, catalog, voice, and
+  identifier bounds.
 - Test Connection and Refresh Models for external mode.
-- Start & Test and Restart & Rediscover for managed mode.
+- A notice that synthesis sends submitted text to the configured server.
 
 Save performs local validation and effective-configuration comparison. It does
-not connect or start a process. If configuration changed, the old adapter is
-retired safely. An active audio.cpp provider becomes `reconfiguring`; Generate,
-Test, Refresh, Start, and Restart report a retryable state until existing leases
-finish and the old adapter closes. A managed old child stops during that
-handoff. Save never launches the replacement or kills an in-flight operation.
+not connect. If configuration changed, the old adapter is retired safely. An
+active audio.cpp provider becomes `reconfiguring`; Generate, Test, and Refresh
+report a retryable state until existing leases finish and the old adapter
+closes. Save never materializes the replacement or interrupts an in-flight
+operation.
+
+Slice 5 will add the managed-mode selector, user-provided binary path,
+user-provided `server.json` path, bounded log settings, and ownership-aware
+Start & Test and Restart & Rediscover actions after the Slice 4 supervisor
+exists. None of those settings or actions is available in Slice 3.
 
 ### Catalog-driven controls
 
@@ -555,10 +562,14 @@ Catalog and voice results carry the selected IDs and configuration revision.
 They also carry the catalog revision used for voice discovery. Stale results are
 discarded. Generation captures a request snapshot.
 
-The generated result retains provider, model, voice, actual format, source text
-snapshot, and local operation ID. Switching providers does not relabel it.
-Playback and Save use response metadata, including the `.wav` extension, rather
-than current selector state.
+Generation crosses an immutable provider-neutral request boundary. audio.cpp
+uses native `TTSService.synthesize(TTSRequest)` while the six existing providers
+retain the temporary `generate_audio_stream()` compatibility path.
+
+The generated artifact retains provider, model, voice, actual format/content
+type, safe response metadata, source-text snapshot, and local operation ID.
+Switching providers does not relabel it. Playback and Save use artifact
+provenance, including the `.wav` extension, rather than current selector state.
 
 If a refresh fails, prior catalog data may remain visible and marked stale, but
 Generate is disabled until readiness returns. Existing generated audio remains
@@ -747,11 +758,11 @@ Unit tests use fakes rather than sleeps or real ports and cover:
 A separate small subprocess integration test verifies actual launch, readiness,
 and termination behavior without audio models.
 
-### Future Textual tests (Slices 3 and 5)
+### Landed Textual tests (Slice 3)
 
-- Save does not launch.
-- Selecting audio.cpp and Start & Test trigger lazy readiness.
-- External and managed actions differ.
+- Save does not connect or materialize audio.cpp.
+- Selecting audio.cpp and explicit Test Connection or Refresh Models trigger
+  lazy readiness.
 - Stale provider, model, voice, and configuration-revision results are ignored.
 - Server default remains the initial selection when discovered voices exist.
 - An explicitly selected Server-default sentinel becomes `None`.
@@ -765,6 +776,12 @@ and termination behavior without audio models.
   changes.
 - Stale catalogs remain visible while generation is disabled.
 - Recovery actions map from core action codes without core Textual imports.
+- A mounted Playground completes descriptor discovery, selection, generation,
+  playback/export artifact delivery, unmount/remount, and cleanup using service
+  fakes; normal CI needs no audio.cpp binary, server, or model download.
+
+Slice 5 adds separate Textual coverage for managed versus external actions,
+Start & Test, Restart & Rediscover, and owned-child recovery.
 
 ### Future optional live smoke test (Slice 4)
 
@@ -776,11 +793,11 @@ CI.
 
 ## Documentation and licensing
 
-Slice 2 documentation covers the external text boundary, Server default
-omission, WAV-only complete responses, configuration recovery, and safe
-failure behavior. Later user documentation will add the loopback-only managed
-boundary and the potentially sensitive nature of explicitly displayed managed
-child logs.
+Slices 2–3 documentation covers external setup, the external text boundary,
+Server default omission, WAV-only complete responses, configuration recovery,
+safe failure behavior, playback, and export. Later user documentation will add
+the loopback-only managed boundary and the potentially sensitive nature of
+explicitly displayed managed child logs.
 
 audio.cpp is Apache-2.0 licensed. This milestone links to and interoperates with
 a user-provided binary; it does not redistribute audio.cpp. Automatic download,
@@ -800,12 +817,12 @@ falls back.
 This feature-level design is delivered as five ordered, single-PR slices rather
 than one omnibus implementation task:
 
-1. Establish registry authority and contain existing providers in the legacy
-   bridge, including the compatibility generation and progress paths.
-2. Add the external audio.cpp contract and native adapter, proving discovery
-   and complete WAV synthesis through the service boundary.
-3. Make the STTS Playground catalog-driven and complete the external audio.cpp
-   end-to-end flow.
+1. Implemented: establish registry authority and contain existing providers in
+   the legacy bridge, including compatibility generation and progress paths.
+2. Implemented: add the external audio.cpp contract and native adapter, proving
+   discovery and complete WAV synthesis through the service boundary.
+3. Implemented by TASK-569: make the STTS Playground catalog-driven and
+   complete the external audio.cpp end-to-end flow.
 4. Add the managed audio.cpp supervisor for lazy launch, monitoring, restart,
    and owned-child shutdown.
 5. Add managed audio.cpp settings and actions to the STTS Playground, completing

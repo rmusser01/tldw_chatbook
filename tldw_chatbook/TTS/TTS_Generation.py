@@ -17,6 +17,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSAudioResponse,
     TTSProgress,
     TTSProviderCatalog,
+    TTSProviderDescriptor,
     TTSRequest,
     TTSRegistryClosedError,
 )
@@ -273,6 +274,21 @@ class TTSService:
             raise
         else:
             await response.aclose()
+
+    def provider_descriptors(self) -> tuple[TTSProviderDescriptor, ...]:
+        """Return ordered provider metadata without materializing adapters."""
+        return self.registry.descriptors()
+
+    def configuration_revision(self, provider_id: str) -> int:
+        """Return the current registry configuration revision for a provider.
+
+        Args:
+            provider_id: Canonical provider identifier.
+
+        Returns:
+            The provider's monotonically increasing configuration revision.
+        """
+        return self.registry.configuration_revision(provider_id)
 
     async def get_catalog(
         self,

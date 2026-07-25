@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import tomllib
 from collections.abc import Mapping
 from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock, call
@@ -12,10 +14,15 @@ from loguru import logger
 
 from Tests.TTS.adapter_fakes import FakeAdapter, FakeAdapterFactory, provider_spec
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
+    STTSProviderConfigurationChanged,
     STTSEventHandler,
     STTSSettingsSaveEvent,
 )
-from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
+from tldw_chatbook.TTS.adapter_registry import ReconfigureResult, TTSAdapterRegistry
+from tldw_chatbook.TTS.audio_cpp_config import (
+    AudioCppConfig,
+    project_audio_cpp_config,
+)
 from tldw_chatbook.TTS.legacy_bridge import (
     legacy_provider_config,
     legacy_provider_specs,
@@ -36,9 +43,14 @@ class RecordingFactory(FakeAdapterFactory):
 class RecordingApp:
     def __init__(self) -> None:
         self.notifications: list[tuple[str, str]] = []
+        self.messages: list[object] = []
 
     def notify(self, message: str, *, severity: str) -> None:
         self.notifications.append((message, severity))
+
+    def post_message(self, message: object) -> bool:
+        self.messages.append(message)
+        return True
 
 
 PROVIDER_SETTING_KEYS = {
@@ -681,3 +693,177 @@ async def test_concurrent_settings_saves_are_serialized(
 
     assert saved_values == ["first", "second"]
     assert reconfigure_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_save_persists_nested_plain_mapping_without_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = AudioCppConfig(
+        base_url="https://voice.example.test:8443",
+        connect_timeout_seconds=2.5,
+        synthesis_timeout_seconds=45,
+        max_input_characters=1234,
+        max_response_bytes=1_048_576,
+        max_metadata_bytes=4096,
+        max_catalog_models=12,
+        max_voices_per_model=34,
+        max_identifier_characters=128,
+    ).to_mapping()
+    expected = deepcopy(candidate)
+    effective = {
+        "COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"audio_cpp": deepcopy(expected)}}
+    }
+    saved_batches: list[dict[str, dict[str, object]]] = []
+    service = SimpleNamespace(
+        reconfigure_provider=AsyncMock(return_value=ReconfigureResult.CHANGED),
+        configuration_revision=Mock(return_value=2),
+        get_catalog=AsyncMock(side_effect=AssertionError("catalog requested")),
+        get_voices=AsyncMock(side_effect=AssertionError("voices requested")),
+        synthesize=AsyncMock(side_effect=AssertionError("synthesis requested")),
+    )
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    handler._stts_service = service
+
+    def save_batch(
+        section_values: Mapping[str, Mapping[object, object]],
+    ) -> bool:
+        saved_batches.append(deepcopy(dict(section_values)))
+        return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        save_batch,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.load_settings",
+        Mock(return_value=effective),
+    )
+
+    event = STTSSettingsSaveEvent({"audio_cpp": candidate})
+    candidate["base_url"] = "http://mutated.invalid"
+    await handler.handle_settings_save(event)
+
+    assert type(saved_batches[0]["app_tts"]["audio_cpp"]) is dict
+    assert saved_batches == [{"app_tts": {"audio_cpp": expected}}]
+    service.reconfigure_provider.assert_awaited_once_with(
+        "audio_cpp",
+        project_audio_cpp_config(effective).to_mapping(),
+    )
+    service.get_catalog.assert_not_awaited()
+    service.get_voices.assert_not_awaited()
+    service.synthesize.assert_not_awaited()
+    assert len(app.messages) == 1
+    changed = app.messages[0]
+    assert isinstance(changed, STTSProviderConfigurationChanged)
+    assert changed.provider_id == "audio_cpp"
+    assert changed.configuration_revision == 2
+
+
+@pytest.mark.asyncio
+async def test_unchanged_audio_cpp_save_emits_no_configuration_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = AudioCppConfig().to_mapping()
+    effective = {
+        "COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"audio_cpp": deepcopy(candidate)}}
+    }
+    service = SimpleNamespace(
+        reconfigure_provider=AsyncMock(return_value=ReconfigureResult.UNCHANGED),
+        configuration_revision=Mock(side_effect=AssertionError("revision requested")),
+    )
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    handler._stts_service = service
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        Mock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.load_settings",
+        Mock(return_value=effective),
+    )
+
+    await handler.handle_settings_save(STTSSettingsSaveEvent({"audio_cpp": candidate}))
+
+    service.reconfigure_provider.assert_awaited_once()
+    service.configuration_revision.assert_not_called()
+    assert app.messages == []
+
+
+@pytest.mark.asyncio
+async def test_changed_audio_cpp_config_retires_only_audio_cpp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = AudioCppConfig().to_mapping()
+    replacement = AudioCppConfig(base_url="http://127.0.0.1:18080").to_mapping()
+    audio_cpp_factory = RecordingFactory("audio_cpp")
+    legacy_factory = RecordingFactory("openai")
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                audio_cpp_factory,
+                original,
+                exclusive=True,
+            ),
+            provider_spec("openai", legacy_factory, {}),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry)
+    for provider_id in ("audio_cpp", "openai"):
+        lease = await registry.acquire(provider_id)
+        await lease.release()
+
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    handler._stts_service = service
+    effective = {
+        "COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"audio_cpp": deepcopy(replacement)}}
+    }
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        Mock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.load_settings",
+        Mock(return_value=effective),
+    )
+
+    await handler.handle_settings_save(
+        STTSSettingsSaveEvent({"audio_cpp": replacement})
+    )
+
+    assert audio_cpp_factory.instances[0].close_calls == 1
+    assert audio_cpp_factory.calls == 1
+    assert legacy_factory.instances[0].close_calls == 0
+    assert registry.configuration_revision("audio_cpp") == 2
+    assert registry.configuration_revision("openai") == 1
+    assert len(app.messages) == 1
+    assert isinstance(app.messages[0], STTSProviderConfigurationChanged)
+
+    await service.close()
+    await service.wait_closed()
+
+
+def test_audio_cpp_mapping_serializes_as_nested_toml_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+
+    config_path = tmp_path / "config.toml"
+    candidate = AudioCppConfig(
+        base_url="http://127.0.0.1:18080",
+        max_catalog_models=42,
+    ).to_mapping()
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    assert config_module.save_settings_to_cli_config(
+        {"app_tts": {"audio_cpp": dict(candidate)}}
+    )
+
+    persisted = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert persisted["app_tts"]["audio_cpp"] == candidate

@@ -25,6 +25,33 @@ LEGACY_MODELS = {
     "higgs": ("higgs-audio-v2",),
     "alltalk": ("alltalk",),
 }
+LEGACY_DEFAULT_MODELS = {
+    "openai": "tts-1",
+    "elevenlabs": "eleven_multilingual_v2",
+    "kokoro": "kokoro",
+    "chatterbox": "chatterbox",
+    "higgs": "higgs-audio-v2",
+    "alltalk": "alltalk",
+}
+LEGACY_MODEL_LABELS = {
+    "openai": {
+        "tts-1": "TTS-1 (Standard)",
+        "tts-1-hd": "TTS-1-HD (High Quality)",
+    },
+    "elevenlabs": {
+        "eleven_monolingual_v1": "Eleven Monolingual v1",
+        "eleven_multilingual_v1": "Eleven Multilingual v1",
+        "eleven_multilingual_v2": "Eleven Multilingual v2 (Default)",
+        "eleven_turbo_v2": "Eleven Turbo v2",
+        "eleven_turbo_v2_5": "Eleven Turbo v2.5",
+        "eleven_flash_v2": "Eleven Flash v2 (Low Latency)",
+        "eleven_flash_v2_5": "Eleven Flash v2.5 (Ultra Low Latency)",
+    },
+    "kokoro": {"kokoro": "Kokoro 82M"},
+    "chatterbox": {"chatterbox": "Chatterbox 0.5B"},
+    "higgs": {"higgs-audio-v2": "Higgs Audio V2 3B"},
+    "alltalk": {"alltalk": "AllTalk TTS"},
+}
 OPENAI_VOICES = (
     "alloy",
     "ash",
@@ -68,6 +95,70 @@ KOKORO_VOICES = (
     "bm_george",
     "bm_lewis",
 )
+LEGACY_DEFAULT_VOICES = {
+    "openai": "alloy",
+    "elevenlabs": "21m00Tcm4TlvDq8ikWAM",
+    "kokoro": "af_alloy",
+    "chatterbox": "default",
+    "higgs": "professional_female",
+    "alltalk": "female_01.wav",
+}
+LEGACY_VOICE_OPTIONS = {
+    "openai": tuple((voice.title(), voice) for voice in OPENAI_VOICES),
+    "elevenlabs": (
+        ("Rachel", "21m00Tcm4TlvDq8ikWAM"),
+        ("Domi", "AZnzlk1XvdvUeBnXmlld"),
+        ("Bella", "EXAVITQu4vr4xnSDxMaL"),
+        ("Antoni", "ErXwobaYiN019PkySvjV"),
+        ("Elli", "MF3mGyEYCl7XYWbV9V6O"),
+        ("Josh", "TxGEqnHWrfWFTfGW9XjX"),
+        ("Arnold", "VR6AewLTigWG4xSOukaG"),
+        ("Adam", "pNInz6obpgDQGcFmaJgB"),
+        ("Sam", "yoZ06aMxZJJ28mfd3POQ"),
+    ),
+    "kokoro": (
+        ("Alloy (US Female)", "af_alloy"),
+        ("Aoede (US Female)", "af_aoede"),
+        ("Bella (US Female)", "af_bella"),
+        ("Heart (US Female)", "af_heart"),
+        ("Jessica (US Female)", "af_jessica"),
+        ("Kore (US Female)", "af_kore"),
+        ("Nicole (US Female)", "af_nicole"),
+        ("Nova (US Female)", "af_nova"),
+        ("River (US Female)", "af_river"),
+        ("Sarah (US Female)", "af_sarah"),
+        ("Sky (US Female)", "af_sky"),
+        ("Adam (US Male)", "am_adam"),
+        ("Michael (US Male)", "am_michael"),
+        ("Emma (UK Female)", "bf_emma"),
+        ("Isabella (UK Female)", "bf_isabella"),
+        ("George (UK Male)", "bm_george"),
+        ("Lewis (UK Male)", "bm_lewis"),
+    ),
+    "chatterbox": (
+        ("Default Voice", "default"),
+        ("Upload Reference Audio", "custom"),
+    ),
+    "higgs": (
+        ("Professional Female", "professional_female"),
+        ("Warm Female", "warm_female"),
+        ("Storyteller Male", "storyteller_male"),
+        ("Deep Male", "deep_male"),
+        ("Energetic Female", "energetic_female"),
+        ("Soft Female", "soft_female"),
+        ("Upload Reference Audio", "custom"),
+    ),
+    "alltalk": (
+        ("Female 01", "female_01.wav"),
+        ("Female 02", "female_02.wav"),
+        ("Female 03", "female_03.wav"),
+        ("Female 04", "female_04.wav"),
+        ("Male 01", "male_01.wav"),
+        ("Male 02", "male_02.wav"),
+        ("Male 03", "male_03.wav"),
+        ("Male 04", "male_04.wav"),
+    ),
+}
 
 _ALL_VISIBLE_FORMATS = ("mp3", "opus", "aac", "flac", "wav", "pcm")
 _VOICES = {
@@ -115,7 +206,7 @@ def legacy_catalog(provider_id: str) -> TTSProviderCatalog:
         models=tuple(
             TTSModelInfo(
                 model_id=model_id,
-                display_name=model_id.replace("_", " ").title(),
+                display_name=LEGACY_MODEL_LABELS[provider_id][model_id],
                 family=provider_id,
                 upstream_mode="legacy",
                 formats=_ALL_VISIBLE_FORMATS,

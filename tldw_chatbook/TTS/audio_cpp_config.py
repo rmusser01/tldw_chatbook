@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
 from ipaddress import AddressValueError, IPv4Address, IPv6Address
 from numbers import Real
 from typing import Any, Literal
@@ -11,6 +10,13 @@ from unicodedata import category
 from urllib.parse import urlsplit
 
 import idna
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 
 _CONFIG_DIAGNOSTIC = "audio.cpp configuration must be a mapping"
 _MODE_DIAGNOSTIC = "audio.cpp mode must be external"
@@ -155,9 +161,30 @@ def _validate_limit(field_name: str, value: object) -> int:
     return value
 
 
-@dataclass(frozen=True, slots=True)
-class AudioCppConfig:
+def _safe_validation_error(error: ValidationError) -> ValueError:
+    """Translate Pydantic failures into fixed value-independent diagnostics."""
+    details = error.errors(include_context=False, include_input=False)
+    field_name = details[0]["loc"][0] if details and details[0]["loc"] else None
+    if field_name == "mode":
+        return ValueError(_MODE_DIAGNOSTIC)
+    if field_name == "base_url":
+        return _invalid_url()
+    if field_name in _TIMEOUT_FIELDS:
+        return ValueError(f"audio.cpp {field_name} must be a finite positive number")
+    if field_name in _LIMIT_FIELDS:
+        return ValueError(f"audio.cpp {field_name} must be a positive integer")
+    return ValueError(_CONFIG_DIAGNOSTIC)
+
+
+class AudioCppConfig(BaseModel):
     """Validated external audio.cpp connection and safety limits."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        hide_input_in_errors=True,
+        strict=True,
+    )
 
     mode: Literal["external"] = "external"
     base_url: str = "http://127.0.0.1:8080"
@@ -170,26 +197,35 @@ class AudioCppConfig:
     max_voices_per_model: int = 1000
     max_identifier_characters: int = 256
 
-    def __post_init__(self) -> None:
-        if self.mode != "external":
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _validate_mode(cls, value: object) -> str:
+        if value != "external":
             raise ValueError(_MODE_DIAGNOSTIC)
-        object.__setattr__(
-            self,
-            "base_url",
-            _canonicalize_http_origin(self.base_url),
-        )
-        for field_name in _TIMEOUT_FIELDS:
-            object.__setattr__(
-                self,
-                field_name,
-                _validate_timeout(field_name, getattr(self, field_name)),
-            )
-        for field_name in _LIMIT_FIELDS:
-            object.__setattr__(
-                self,
-                field_name,
-                _validate_limit(field_name, getattr(self, field_name)),
-            )
+        return "external"
+
+    @field_validator("base_url", mode="before")
+    @classmethod
+    def _validate_base_url(cls, value: object) -> str:
+        return _canonicalize_http_origin(value)
+
+    @field_validator(*_TIMEOUT_FIELDS, mode="before")
+    @classmethod
+    def _validate_timeout_field(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> float:
+        return _validate_timeout(info.field_name, value)
+
+    @field_validator(*_LIMIT_FIELDS, mode="before")
+    @classmethod
+    def _validate_limit_field(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> int:
+        return _validate_limit(info.field_name, value)
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any]) -> AudioCppConfig:
@@ -211,10 +247,18 @@ class AudioCppConfig:
             for field_name in _CONFIG_FIELDS
             if field_name in values
         }
-        return cls(**projected)
+        try:
+            return cls(**projected)
+        except ValidationError as error:
+            raise _safe_validation_error(error) from None
 
     def to_mapping(self) -> dict[str, AudioCppConfigValue]:
-        """Return an independent registry mapping of approved fields."""
+        """Return an independent registry mapping of approved fields.
+
+        Returns:
+            A plain mapping containing only approved configuration fields.
+
+        """
         return {
             "mode": self.mode,
             "base_url": self.base_url,

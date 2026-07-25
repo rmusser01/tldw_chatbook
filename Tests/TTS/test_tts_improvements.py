@@ -119,17 +119,26 @@ class TestTTSEventHandler:
             "default_speed": 1.0,
         }
 
-        # Generate TTS
-        await handler._generate_tts("Test text", "test_msg", "alloy")
+        generated_path = None
+        try:
+            # Generate TTS
+            await handler._generate_tts("Test text", "test_msg", "alloy")
+            generated_path = handler._audio_files["test_msg"]
 
-        # Check for progress events
-        progress_events = [
-            m for m in handler.messages if isinstance(m, TTSProgressEvent)
-        ]
-        assert len(progress_events) >= 2  # At least initial and final
-        assert progress_events[0].progress == 0.0
-        assert progress_events[-1].progress == 1.0
-        assert progress_events[-1].status == "Audio generation complete"
+            # Check for progress events
+            progress_events = [
+                m for m in handler.messages if isinstance(m, TTSProgressEvent)
+            ]
+            assert len(progress_events) >= 2  # At least initial and final
+            assert progress_events[0].progress == 0.0
+            assert progress_events[-1].progress == 1.0
+            assert progress_events[-1].status == "Audio generation complete"
+        finally:
+            await handler.cleanup_tts_resources()
+
+        assert handler._audio_files == {}
+        assert generated_path is not None
+        assert not generated_path.exists()
 
     @pytest.mark.asyncio
     async def test_export_functionality(self, handler, tmp_path):
