@@ -1451,6 +1451,20 @@ class SettingsScreen(BaseAppScreen):
         #: `_handle_reindex_confirmation_result`.
         self._rag_reindex_confirm_in_flight = False
         self._library_rag_backfill_in_flight = False
+        #: Task 5 review (541 v2 UX AC5, Important): tracks whether the LAST
+        #: `_refresh_rag_first_run_panel_state` evaluation found the
+        #: first-run starter panel active -- lets that method detect the
+        #: actual first-run -> not-first-run TRANSITION (clone completes /
+        #: backfill completes) rather than reacting to every ordinary status
+        #: refresh. Without this, the fix that re-expands the Search group
+        #: on first-run exit would fire unconditionally on every trigger
+        #: (category show / Save / set-active), forcibly reopening Search
+        #: even for a user in normal (non-first-run) state who deliberately
+        #: collapsed it. False at construction to match the optimistic
+        #: "not first-run" compose (`_render_library_rag_detail`, cache
+        #: cold): the entering-first-run transition then fires correctly
+        #: the first time a genuinely first-run status lands.
+        self._rag_first_run_active = False
         self._appearance_result = (
             "Appearance defaults have not been saved this session."
         )
@@ -8116,6 +8130,19 @@ class SettingsScreen(BaseAppScreen):
         touching the index. Swallows ``QueryError``: this runs from
         off-thread worker callbacks and a not-yet-mounted or already-
         navigated-away-from screen must never crash it.
+
+        Task 5 review (Important): the Search group's ``collapsed`` state is
+        only ever touched on the actual first-run <-> not-first-run
+        TRANSITION (tracked via ``_rag_first_run_active``), never on every
+        ordinary re-evaluation. Before this, exiting first-run (clone
+        completes / backfill completes) hid the starter panel but left
+        Search collapsed behind it -- the user who just did what the panel
+        told them saw editable fields hidden until an unrelated recompose
+        self-healed it. Gating on the transition (rather than forcing
+        ``collapsed`` unconditionally every time this runs) keeps a
+        DIFFERENT user's deliberate collapse of Search, in ordinary
+        already-not-first-run state, from being forcibly reopened by an
+        unrelated status refresh (category show / Save / set-active).
         """
         try:
             panel = self.query_one("#settings-library-rag-starter-panel")
@@ -8123,24 +8150,41 @@ class SettingsScreen(BaseAppScreen):
             return
         info = active_profile_info()
         first_run = self._library_rag_first_run_active(info=info)
+        was_first_run = self._rag_first_run_active
+        self._rag_first_run_active = first_run
         if not first_run:
             panel.display = False
+            if was_first_run:
+                # First-run just ENDED -- restore the Search group to its
+                # ordinary expanded default so the newly-cloned/backfilled
+                # profile's fields are immediately visible, not hidden
+                # behind a collapse this predicate itself imposed on entry.
+                try:
+                    self.query_one(
+                        "#settings-library-rag-search-group", Collapsible
+                    ).collapsed = False
+                except QueryError:
+                    pass
             return
         self._set_static_text(
             "#settings-library-rag-starter-copy",
             self._library_rag_starter_panel_copy(info),
         )
         panel.display = True
-        # The starter panel, not the disabled wall, is the first impression
-        # while first-run -- collapse the Search group too (the only one
-        # that composes expanded by default; Embedding/Chunking/Vector
-        # store/Reranking already compose collapsed).
-        try:
-            self.query_one(
-                "#settings-library-rag-search-group", Collapsible
-            ).collapsed = True
-        except QueryError:
-            pass
+        if not was_first_run:
+            # The starter panel, not the disabled wall, is the first
+            # impression while first-run -- collapse the Search group too
+            # (the only one that composes expanded by default; Embedding/
+            # Chunking/Vector store/Reranking already compose collapsed).
+            # Symmetric with the exit branch above: only on the ENTERING
+            # transition, never re-forced on every already-first-run
+            # re-evaluation.
+            try:
+                self.query_one(
+                    "#settings-library-rag-search-group", Collapsible
+                ).collapsed = True
+            except QueryError:
+                pass
 
     @work(exclusive=True, thread=True, group="settings-rag-index-status")
     def _rag_index_status_worker(self) -> None:
@@ -8496,6 +8540,17 @@ class SettingsScreen(BaseAppScreen):
         # already warm, composes the correct first-run appearance from the
         # very first paint -- no flicker either way.
         first_run = self._library_rag_first_run_active(info=info)
+        # Task 5 review (Important): keep `_rag_first_run_active` -- the
+        # transition tracker `_refresh_rag_first_run_panel_state` uses to
+        # decide whether to force Search's collapsed state -- in lockstep
+        # with whatever THIS compose actually rendered. Without this, a
+        # recompose that lands with a warm cache (composing the correct
+        # first-run appearance directly, per the comment above, entirely
+        # bypassing `_refresh_rag_first_run_panel_state`) would leave the
+        # tracker stale at its pre-compose value, so the NEXT first-run-exit
+        # trigger (clone/backfill completing) could wrongly see "no
+        # transition" and skip re-expanding Search.
+        self._rag_first_run_active = first_run
 
         yield Static(
             "RAG", classes="destination-section settings-column-title"

@@ -2611,7 +2611,14 @@ async def test_starter_panel_hidden_when_the_index_is_already_built(
 async def test_starter_panel_disappears_after_a_clone_completes(monkeypatch, tmp_path):
     """State-driven, no dismissal persistence: a successful clone gives the
     active builtin its first user profile, which falsifies the predicate on
-    the very next sync -- no explicit "dismiss" affordance needed."""
+    the very next sync -- no explicit "dismiss" affordance needed.
+
+    Reviewer finding (541 v2 UX AC5, Important): the fix must be
+    TRANSITION-gated, not unconditional -- the Search group is forced back
+    OPEN here specifically because first-run just ENDED, not merely because
+    a status happened to refresh. See
+    ``test_normal_state_status_refresh_never_reopens_a_deliberately_collapsed_search_group``
+    below for the companion guard."""
     mgr, _state = _wire_rag_profile_adapter_no_user_profiles(monkeypatch, tmp_path)
     _stub_index_status(monkeypatch, "absent")
 
@@ -2624,6 +2631,12 @@ async def test_starter_panel_disappears_after_a_clone_completes(monkeypatch, tmp
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         assert screen.query_one("#settings-library-rag-starter-panel").display is True
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is True
+        )
 
         clone = mgr.clone_profile("hybrid_basic", "My Clone")
         mgr.save_profile(clone)
@@ -2631,6 +2644,15 @@ async def test_starter_panel_disappears_after_a_clone_completes(monkeypatch, tmp
         await pilot.pause()
 
         assert screen.query_one("#settings-library-rag-starter-panel").display is False
+        # The user who just cloned to tune retrieval must land on an
+        # editable, EXPANDED Search group -- not one still collapsed behind
+        # a now-hidden starter panel.
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is False
+        )
 
 
 @pytest.mark.asyncio
@@ -2652,6 +2674,12 @@ async def test_starter_panel_disappears_after_backfill_completes(monkeypatch, tm
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         assert screen.query_one("#settings-library-rag-starter-panel").display is True
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is True
+        )
 
         _stub_index_status(monkeypatch, "built")
         screen._refresh_library_rag_index_status()
@@ -2659,6 +2687,138 @@ async def test_starter_panel_disappears_after_backfill_completes(monkeypatch, tm
         await pilot.pause()
 
         assert screen.query_one("#settings-library-rag-starter-panel").display is False
+        # Same reviewer finding as the clone path above: Backfill completing
+        # is exactly as much a first-run EXIT as a clone is -- the Search
+        # group must not stay collapsed behind a now-hidden starter panel.
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_normal_state_status_refresh_never_reopens_a_deliberately_collapsed_search_group(
+    monkeypatch, tmp_path
+):
+    """Guard for the transition-gating itself: a user already in NORMAL
+    (non-first-run) state who deliberately collapses Search must not have it
+    forcibly reopened by an ordinary status refresh (category re-show / Save
+    / 't' test / set-active) that lands while first-run was never active this
+    session. Only the actual first-run -> not-first-run TRANSITION (see the
+    two tests above) may flip ``collapsed`` back to False."""
+    # `_wire_rag_profile_adapter` (not the `_no_user_profiles` variant) seeds
+    # a writable "My RAG" user profile as active -- never first-run, per
+    # `is_first_run_state`.
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    _stub_index_status(monkeypatch, "built")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen.query_one("#settings-library-rag-starter-panel").display is False
+
+        search_group = screen.query_one(
+            "#settings-library-rag-search-group", Collapsible
+        )
+        search_group.collapsed = True
+
+        # An unchanged, still-non-first-run status landing again (e.g. a
+        # plain category re-show or Save-path refresh) must leave the
+        # user's own collapse alone.
+        screen._apply_library_rag_index_status(
+            {"state": "built", "count": 3, "provenance": {}}
+        )
+        await pilot.pause()
+
+        assert screen.query_one("#settings-library-rag-starter-panel").display is False
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is True
+        )
+
+
+@pytest.mark.asyncio
+async def test_preview_started_while_starter_panel_visible_leaves_panel_state_coherent(
+    monkeypatch, tmp_path
+):
+    """Reviewer-requested coverage: browsing the profile picker into a
+    PREVIEW of a different builtin (via the Select's own Changed handler,
+    exactly like a real user browse) while the first-run starter panel is
+    showing must not crash or desync the panel -- previewing never touches
+    the first-run predicate's own trigger funnel
+    (`_apply_library_rag_index_status` / `_rag_after_profile_action`)."""
+    _wire_rag_profile_adapter_no_user_profiles(monkeypatch, tmp_path)
+    _stub_index_status(monkeypatch, "absent")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen.query_one("#settings-library-rag-starter-panel").display is True
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = "bm25_only"
+        await pilot.pause()
+
+        assert screen._rag_preview_profile_id == "bm25_only"
+        assert screen.query_one("#settings-library-rag-starter-panel").display is True
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is True
+        )
+
+
+@pytest.mark.asyncio
+async def test_set_active_to_another_first_run_eligible_builtin_keeps_panel_visible(
+    monkeypatch, tmp_path
+):
+    """Reviewer-requested coverage: switching the active profile from one
+    read-only builtin to ANOTHER read-only builtin, still with no user
+    profiles and an absent index, stays first-run throughout
+    (`is_first_run_state` doesn't care WHICH builtin is active) -- no
+    spurious collapse/expand thrash across a non-transition."""
+    _wire_rag_profile_adapter_no_user_profiles(
+        monkeypatch, tmp_path, active_id="bm25_only"
+    )
+    _stub_index_status(monkeypatch, "absent")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen.query_one("#settings-library-rag-starter-panel").display is True
+
+        screen._rag_after_set_active(
+            True, "", {"state": "absent", "count": 0, "provenance": {}}
+        )
+        await pilot.pause()
+
+        assert screen.query_one("#settings-library-rag-starter-panel").display is True
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is True
+        )
 
 
 def test_starter_panel_clone_button_opens_the_same_clone_modal(
