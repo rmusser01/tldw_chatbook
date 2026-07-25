@@ -632,8 +632,8 @@ ConsoleSystemPromptModal {
 }
 
 #watchlists-header-bar {
-    /* The backend Select widget needs more than one row to render. */
-    height: auto;
+    /* The backend Select needs three rows; auto height consumes the shell. */
+    height: 3;
     min-height: 3;
 }
 

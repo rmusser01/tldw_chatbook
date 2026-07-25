@@ -1,0 +1,358 @@
+{
+  "schema_version": 1,
+  "fixture_version": "rag-citation-provenance-v1",
+  "description": "Deterministic synthetic, non-sensitive local RAG provenance corpus.",
+  "sources": [
+    {
+      "id": "ragcp-v1-source-media-001",
+      "kind": "media",
+      "title": "Synthetic launch transcript",
+      "text": "At 09:30 UTC, the synthetic research vessel Aurora began its calibration run."
+    },
+    {
+      "id": "ragcp-v1-source-note-001",
+      "kind": "note",
+      "title": "Synthetic calibration note",
+      "text": "Calibration target α stayed within 0.25 percent of the reference value."
+    },
+    {
+      "id": "ragcp-v1-source-conversation-001",
+      "kind": "conversation",
+      "title": "Synthetic operator conversation",
+      "text": "Operator: retain the offline snapshot. Assistant: confirmed; no network refresh is required."
+    }
+  ],
+  "evidence_shapes": [
+    {
+      "id": "ragcp-v1-shape-001",
+      "submitted_evidence_count": 1,
+      "cited_evidence_count": 1,
+      "additional_evidence_count": 0
+    },
+    {
+      "id": "ragcp-v1-shape-008",
+      "submitted_evidence_count": 8,
+      "cited_evidence_count": 3,
+      "additional_evidence_count": 5
+    },
+    {
+      "id": "ragcp-v1-shape-032",
+      "submitted_evidence_count": 32,
+      "cited_evidence_count": 8,
+      "additional_evidence_count": 24
+    },
+    {
+      "id": "ragcp-v1-shape-064",
+      "submitted_evidence_count": 64,
+      "cited_evidence_count": 16,
+      "additional_evidence_count": 48
+    }
+  ],
+  "answers": [
+    {
+      "id": "ragcp-v1-answer-unicode-001",
+      "case": "unicode",
+      "body": "Aurora began at 09:30 UTC [S1], and target α stayed within tolerance [S2].",
+      "citation_occurrences": 2
+    },
+    {
+      "id": "ragcp-v1-answer-repeated-001",
+      "case": "repeated_markers",
+      "body": "The run was synthetic [S1]. Its start time was recorded [S1], then confirmed [S1].",
+      "citation_occurrences": 3
+    },
+    {
+      "id": "ragcp-v1-answer-grouped-001",
+      "case": "grouped_markers",
+      "body": "The retained offline account is consistent across the note and conversation [S1][S2][S3].",
+      "citation_occurrences": 3
+    },
+    {
+      "id": "ragcp-v1-answer-repaired-001",
+      "case": "repaired_answer",
+      "original_body": "Aurora began at 10:00 UTC [S9].",
+      "body": "Aurora began at 09:30 UTC [S1].",
+      "citation_occurrences": 1
+    }
+  ],
+  "storage_cases": [
+    {
+      "id": "ragcp-v1-storage-embedded-001",
+      "storage_mode": "embedded",
+      "descriptor": {
+        "snapshot_text": "Synthetic embedded evidence."
+      }
+    },
+    {
+      "id": "ragcp-v1-storage-server-reference-001",
+      "storage_mode": "server_reference",
+      "descriptor": {
+        "opaque_reference": "srv-ref-synthetic-001",
+        "authority": "synthetic-authority"
+      }
+    },
+    {
+      "id": "ragcp-v1-storage-ephemeral-001",
+      "storage_mode": "ephemeral",
+      "descriptor": {
+        "snapshot_text": null,
+        "reason": "retention-disabled"
+      }
+    },
+    {
+      "id": "ragcp-v1-storage-redacted-001",
+      "storage_mode": "redacted",
+      "descriptor": {
+        "snapshot_text": null,
+        "reason": "synthetic-policy-redaction"
+      }
+    }
+  ],
+  "legacy_records": [
+    {
+      "id": "ragcp-v1-legacy-evidence-bundle-001",
+      "record_type": "EvidenceBundle",
+      "payload": {
+        "query": "synthetic calibration",
+        "sources": [
+          {
+            "source_id": "legacy-source-001",
+            "text": "Legacy synthetic evidence."
+          }
+        ]
+      }
+    },
+    {
+      "id": "ragcp-v1-legacy-citation-ref-001",
+      "record_type": "CitationRef",
+      "payload": {
+        "number": 1,
+        "source_id": "legacy-source-001",
+        "snippet": "Legacy synthetic evidence."
+      }
+    },
+    {
+      "id": "ragcp-v1-legacy-sidecar-001",
+      "record_type": "chat_rag_context_sidecar",
+      "payload": {
+        "conversation_id": "legacy-conversation-001",
+        "message_id": "legacy-message-001",
+        "citation_validation": {
+          "valid": true
+        }
+      }
+    }
+  ],
+  "boundary_cases": [
+    {
+      "id": "ragcp-v1-bound-aggregate-json-exact",
+      "limit_name": "aggregate_json_bytes",
+      "kind": "json_bytes",
+      "units": 262144,
+      "expected": "accept"
+    },
+    {
+      "id": "ragcp-v1-bound-aggregate-json-over",
+      "limit_name": "aggregate_json_bytes",
+      "kind": "json_bytes",
+      "units": 262145,
+      "expected": "reject"
+    },
+    {
+      "id": "ragcp-v1-bound-snapshot-exact",
+      "limit_name": "snapshot_utf8_bytes",
+      "kind": "utf8_bytes",
+      "units": 65536,
+      "expected": "accept"
+    },
+    {
+      "id": "ragcp-v1-bound-snapshot-over",
+      "limit_name": "snapshot_utf8_bytes",
+      "kind": "utf8_bytes",
+      "units": 65537,
+      "expected": "reject"
+    },
+    {
+      "id": "ragcp-v1-bound-governed-trace-exact",
+      "limit_name": "governed_trace_bytes",
+      "kind": "utf8_bytes",
+      "units": 4194304,
+      "expected": "accept"
+    },
+    {
+      "id": "ragcp-v1-bound-governed-trace-over",
+      "limit_name": "governed_trace_bytes",
+      "kind": "utf8_bytes",
+      "units": 4194305,
+      "expected": "reject"
+    },
+    {
+      "id": "ragcp-v1-bound-prompt-sets-exact",
+      "limit_name": "prompt_sets",
+      "kind": "count",
+      "units": 8,
+      "expected": "accept"
+    },
+    {
+      "id": "ragcp-v1-bound-prompt-sets-over",
+      "limit_name": "prompt_sets",
+      "kind": "count",
+      "units": 9,
+      "expected": "reject"
+    },
+    {
+      "id": "ragcp-v1-bound-evidence-per-prompt-exact",
+      "limit_name": "evidence_per_prompt",
+      "kind": "count",
+      "units": 64,
+      "expected": "accept"
+    },
+    {
+      "id": "ragcp-v1-bound-evidence-per-prompt-over",
+      "limit_name": "evidence_per_prompt",
+      "kind": "count",
+      "units": 65,
+      "expected": "reject"
+    },
+    {
+      "id": "ragcp-v1-bound-answer-attempts-exact",
+      "limit_name": "answer_attempts",
+      "kind": "count",
+      "units": 8,
+      "expected": "accept"
+    },
+    {
+      "id": "ragcp-v1-bound-answer-attempts-over",
+      "limit_name": "answer_attempts",
+      "kind": "count",
+      "units": 9,
+      "expected": "reject"
+    },
+    {
+      "id": "ragcp-v1-bound-occurrences-exact",
+      "limit_name": "citation_occurrences",
+      "kind": "count",
+      "units": 512,
+      "expected": "accept"
+    },
+    {
+      "id": "ragcp-v1-bound-occurrences-over",
+      "limit_name": "citation_occurrences",
+      "kind": "count",
+      "units": 513,
+      "expected": "reject"
+    },
+    {
+      "id": "ragcp-v1-bound-candidates-exact",
+      "limit_name": "retrieval_candidates_per_run",
+      "kind": "count",
+      "units": 200,
+      "expected": "accept"
+    },
+    {
+      "id": "ragcp-v1-bound-candidates-over",
+      "limit_name": "retrieval_candidates_per_run",
+      "kind": "count",
+      "units": 201,
+      "expected": "reject"
+    },
+    {
+      "id": "ragcp-v1-bound-locator-json-exact",
+      "limit_name": "locator_json_bytes",
+      "kind": "json_bytes",
+      "units": 16384,
+      "expected": "accept"
+    },
+    {
+      "id": "ragcp-v1-bound-locator-json-over",
+      "limit_name": "locator_json_bytes",
+      "kind": "json_bytes",
+      "units": 16385,
+      "expected": "reject"
+    },
+    {
+      "id": "ragcp-v1-bound-observation-json-exact",
+      "limit_name": "observation_json_bytes",
+      "kind": "json_bytes",
+      "units": 8192,
+      "expected": "accept"
+    },
+    {
+      "id": "ragcp-v1-bound-observation-json-over",
+      "limit_name": "observation_json_bytes",
+      "kind": "json_bytes",
+      "units": 8193,
+      "expected": "reject"
+    },
+    {
+      "id": "ragcp-v1-bound-error-code-exact",
+      "limit_name": "error_code_characters",
+      "kind": "characters",
+      "units": 256,
+      "expected": "accept"
+    },
+    {
+      "id": "ragcp-v1-bound-error-code-over",
+      "limit_name": "error_code_characters",
+      "kind": "characters",
+      "units": 257,
+      "expected": "reject"
+    },
+    {
+      "id": "ragcp-v1-bound-opaque-id-exact",
+      "limit_name": "opaque_id_utf8_bytes",
+      "kind": "utf8_bytes",
+      "units": 256,
+      "expected": "accept"
+    },
+    {
+      "id": "ragcp-v1-bound-opaque-id-over",
+      "limit_name": "opaque_id_utf8_bytes",
+      "kind": "utf8_bytes",
+      "units": 257,
+      "expected": "reject"
+    },
+    {
+      "id": "ragcp-v1-bound-attempt-body-exact",
+      "limit_name": "answer_attempt_body_utf8_bytes",
+      "kind": "utf8_bytes",
+      "units": 1048576,
+      "expected": "accept"
+    },
+    {
+      "id": "ragcp-v1-bound-attempt-body-over",
+      "limit_name": "answer_attempt_body_utf8_bytes",
+      "kind": "utf8_bytes",
+      "units": 1048577,
+      "expected": "reject"
+    },
+    {
+      "id": "ragcp-v1-bound-sidecar-exact",
+      "limit_name": "legacy_sidecar_bytes",
+      "kind": "json_bytes",
+      "units": 33554432,
+      "expected": "accept"
+    },
+    {
+      "id": "ragcp-v1-bound-sidecar-over",
+      "limit_name": "legacy_sidecar_bytes",
+      "kind": "json_bytes",
+      "units": 33554433,
+      "expected": "reject"
+    },
+    {
+      "id": "ragcp-v1-bound-migration-batch-exact",
+      "limit_name": "migration_batch_messages",
+      "kind": "count",
+      "units": 100,
+      "expected": "accept"
+    },
+    {
+      "id": "ragcp-v1-bound-migration-batch-over",
+      "limit_name": "migration_batch_messages",
+      "kind": "count",
+      "units": 101,
+      "expected": "reject"
+    }
+  ]
+}

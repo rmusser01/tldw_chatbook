@@ -1,7 +1,6 @@
 """Unit tests for the Console history token-budget trimmer."""
 
 from tldw_chatbook.Chat.console_history_budget import (
-    BoundResult,
     DEFAULT_RESPONSE_RESERVATION,
     bound_messages_to_window,
     count_console_messages_tokens,

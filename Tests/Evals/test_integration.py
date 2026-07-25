@@ -114,7 +114,7 @@ class TestFullEvaluationPipeline:
         )
 
         with patch(
-            "tldw_chatbook.Evals.specialized_runners.QuestionAnswerRunner._call_llm"
+            "tldw_chatbook.Evals.eval_runner.QuestionAnswerRunner._call_llm"
         ) as mock_llm:
             mock_llm.side_effect = mock_responses
 

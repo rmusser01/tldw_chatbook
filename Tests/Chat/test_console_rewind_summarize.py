@@ -479,12 +479,12 @@ async def test_compaction_anchors_after_skill_substitution_inline_rewrite():
         skills_service=_SkillsFake(),
     )
     session = store.ensure_session()
-    u1 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="q1")
-    a1 = store.append_message(
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q1")
+    store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content="a1"
     )
-    u2 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="q2")
-    a2 = store.append_message(
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q2")
+    store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content="a2"
     )
     # The boundary is the final user row, and its content resolves to a

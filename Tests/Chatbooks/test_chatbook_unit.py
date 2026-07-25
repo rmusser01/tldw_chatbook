@@ -170,10 +170,18 @@ class TestChatbookCreator:
             "character_id": 123,
         }
         mock_db.get_messages_for_conversation.return_value = []
+        mock_conversation_service = Mock()
+        mock_conversation_service.get_messages_with_context.return_value = []
 
-        with patch(
-            "tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB",
-            return_value=mock_db,
+        with (
+            patch(
+                "tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB",
+                return_value=mock_db,
+            ),
+            patch(
+                "tldw_chatbook.Chatbooks.chatbook_creator.build_local_citation_conversation_service",
+                return_value=(mock_conversation_service, None, None),
+            ),
         ):
             work_dir = temp_dir / "work"
             work_dir.mkdir()

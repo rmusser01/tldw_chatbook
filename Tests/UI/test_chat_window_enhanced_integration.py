@@ -68,14 +68,8 @@ def chat_window_settings(monkeypatch):
         "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", get_setting
     )
     monkeypatch.setattr(
-        "tldw_chatbook.Widgets.compact_model_bar.get_cli_setting", get_setting
-    )
-    monkeypatch.setattr(
         "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
         lambda: providers,
-    )
-    monkeypatch.setattr(
-        "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_setting", get_setting
     )
     monkeypatch.setattr(
         "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_providers_and_models",

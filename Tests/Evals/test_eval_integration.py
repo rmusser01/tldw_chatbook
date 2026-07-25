@@ -1011,7 +1011,7 @@ class TestConcurrentEvaluations:
 
                 # Mock at the runner level
                 with patch(
-                    "tldw_chatbook.Evals.specialized_runners.QuestionAnswerRunner._call_llm"
+                    "tldw_chatbook.Evals.eval_runner.QuestionAnswerRunner._call_llm"
                 ) as mock_llm:
                     # Return correct answers for each sample
                     mock_llm.side_effect = ["Answer 1", "Answer 2"]
@@ -1093,7 +1093,7 @@ class TestConcurrentEvaluations:
             ):
                 # Mock at the runner level
                 with patch(
-                    "tldw_chatbook.Evals.specialized_runners.QuestionAnswerRunner._call_llm"
+                    "tldw_chatbook.Evals.eval_runner.QuestionAnswerRunner._call_llm"
                 ) as mock_llm:
                     # Return correct answer for the sample
                     mock_llm.return_value = f"A{index}"
@@ -1197,7 +1197,7 @@ class TestErrorRecoveryIntegration:
         ):
             # Mock at the runner level
             with patch(
-                "tldw_chatbook.Evals.specialized_runners.QuestionAnswerRunner._call_llm",
+                "tldw_chatbook.Evals.eval_runner.QuestionAnswerRunner._call_llm",
                 side_effect=mock_llm_call,
             ):
                 run_id = await orchestrator.run_evaluation(
@@ -1284,7 +1284,7 @@ class TestErrorRecoveryIntegration:
             ):
                 # Mock at the runner level
                 with patch(
-                    "tldw_chatbook.Evals.specialized_runners.QuestionAnswerRunner._call_llm"
+                    "tldw_chatbook.Evals.eval_runner.QuestionAnswerRunner._call_llm"
                 ) as mock_llm:
                     mock_llm.return_value = "Test"
 
@@ -1361,7 +1361,7 @@ class TestPerformanceIntegration:
         ):
             # Mock at the runner level
             with patch(
-                "tldw_chatbook.Evals.specialized_runners.QuestionAnswerRunner._call_llm"
+                "tldw_chatbook.Evals.eval_runner.QuestionAnswerRunner._call_llm"
             ) as mock_llm:
                 # Generate appropriate responses
                 mock_llm.side_effect = [
@@ -1439,7 +1439,7 @@ class TestPerformanceIntegration:
         ):
             # Mock at the runner level
             with patch(
-                "tldw_chatbook.Evals.specialized_runners.QuestionAnswerRunner._call_llm"
+                "tldw_chatbook.Evals.eval_runner.QuestionAnswerRunner._call_llm"
             ) as mock_llm:
                 # Generate appropriate responses
                 mock_llm.side_effect = [

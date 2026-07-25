@@ -157,7 +157,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 26  # Adds conversations.context_summary / summary_boundary_message_id (Console /rewind).
+    _CURRENT_SCHEMA_VERSION = 27  # Adds local-only canonical RAG citation provenance.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -3970,6 +3970,86 @@ UPDATE db_schema_version
             logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V25→V26] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V25 to V26 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _execute_citation_migration_statement(
+        self,
+        cursor: sqlite3.Cursor,
+        statement: str,
+    ) -> None:
+        """Execute one complete v26→v27 DDL statement."""
+
+        cursor.execute(statement)
+
+    def _update_citation_schema_version(self, cursor: sqlite3.Cursor) -> None:
+        """Advance v26→v27 only after all provenance DDL and identity setup."""
+
+        cursor.execute(
+            """
+            UPDATE db_schema_version
+               SET version = 27
+             WHERE schema_name = ?
+               AND version = 26
+            """,
+            (self._SCHEMA_NAME,),
+        )
+        if cursor.rowcount != 1:
+            raise SchemaError("Citation provenance schema version update was not applied")
+
+    def _migrate_from_v26_to_v27(self, conn: sqlite3.Connection) -> None:
+        """Create canonical citation provenance through the active transaction."""
+
+        if self._get_db_version(conn) != 26:
+            raise SchemaError("Citation provenance migration requires schema version 26")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v26_to_v27_citation_provenance.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                pending = ""
+                for line in migration_path.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
+                    pending += line
+                    if sqlite3.complete_statement(pending):
+                        self._execute_citation_migration_statement(cursor, pending)
+                        pending = ""
+                if pending.strip():
+                    raise SchemaError(
+                        "Citation provenance migration contains incomplete SQL"
+                    )
+                cursor.execute(
+                    """
+                    INSERT INTO rag_identity_context(
+                        context_name,
+                        profile_id,
+                        local_authority_id,
+                        fingerprint_key_id,
+                        created_at
+                    ) VALUES (
+                        'default',
+                        'profile_' || lower(hex(randomblob(16))),
+                        'authority_' || lower(hex(randomblob(16))),
+                        'fpkey_' || lower(hex(randomblob(16))),
+                        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                    )
+                    """
+                )
+                self._update_citation_schema_version(cursor)
+                cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (self._SCHEMA_NAME,),
+                )
+                row = cursor.fetchone()
+                if row is None or row["version"] != 27:
+                    raise SchemaError(
+                        "Citation provenance schema version verification failed"
+                    )
+        except (OSError, sqlite3.Error, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V26 to V27 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -4126,6 +4206,7 @@ UPDATE db_schema_version
                     23: self._migrate_from_v23_to_v24,
                     24: self._migrate_from_v24_to_v25,
                     25: self._migrate_from_v25_to_v26,
+                    26: self._migrate_from_v26_to_v27,
                 }
 
                 if current_db_version == 0:
@@ -4139,6 +4220,14 @@ UPDATE db_schema_version
                             f"Migration path undefined for '{self._SCHEMA_NAME}' from version {current_initial_version} to {target_version}. "
                             f"Manual migration or a new database may be required."
                         )
+                    # ``Connection.executescript`` commits any active
+                    # transaction before running a script. Several historical
+                    # migrations use it, while the transaction context's
+                    # logical nesting depth remains active. Restore the real
+                    # SQLite transaction before every step so the next
+                    # cursor-driven migration remains rollback-safe.
+                    if not conn.in_transaction:
+                        conn.execute("BEGIN")
                     migration(conn)
                     current_db_version = self._get_db_version(conn)
 

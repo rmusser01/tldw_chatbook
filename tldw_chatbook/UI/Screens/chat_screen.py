@@ -188,6 +188,7 @@ from ...Chat.console_message_actions import (
 from ...Chat.console_save_targets import (
     console_chatbook_artifact_payload,
     derive_console_save_title,
+    resolve_console_artifact_owner_request,
 )
 from ...Chat.console_live_work import (
     PENDING_LAUNCH_CARD_ID,
@@ -13656,10 +13657,30 @@ class ChatScreen(BaseAppScreen):
             provider=provider,
             model=model,
         )
+        coordinator = getattr(
+            self.app_instance,
+            "citation_artifact_ownership_coordinator",
+            None,
+        )
+        owner_request = resolve_console_artifact_owner_request(
+            coordinator=coordinator,
+            persisted_message_id=message.persisted_message_id,
+            message_text=content,
+        )
+        if owner_request is not None:
+            payload["provenance_owner_request"] = owner_request
         try:
             result = create_chatbook(**payload)
             if inspect.isawaitable(result):
                 await result
+            if owner_request is not None and coordinator is not None:
+                try:
+                    await asyncio.to_thread(coordinator.reconcile_pending, limit=1)
+                except Exception:
+                    logger.warning(
+                        "Citation artifact reconciliation deferred: "
+                        "artifact_reconciliation_failed"
+                    )
         except Exception as exc:
             logger.opt(exception=True).warning("Console save-as Chatbook failed.")
             self.app_instance.notify(

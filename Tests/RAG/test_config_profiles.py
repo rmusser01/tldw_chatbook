@@ -863,13 +863,10 @@ def _isolated_default_profile_manager(tmp_path, monkeypatch):
     """Isolate every no-arg get_profile_manager() call in this file to a temp
     dir instead of the real ~/.local/share/tldw_cli/.../rag_profiles/.
 
-    get_user_data_dir() falls back to BASE_DATA_DIR_CLI, a module-level
-    Path.home() constant baked in at import time -- it is NOT covered by
-    HOME/XDG_* env monkeypatches (see ingestion_indexing's
-    _maybe_run_first_run_import docstring for the same hazard). So instead
-    of an env var, patch config_profiles.get_user_data_dir directly, and
-    reset the cache around the test so no manager (real-dir or temp-dir)
-    leaks across tests.
+    The shared root fixture patches config.BASE_DATA_DIR_CLI because that
+    fallback is computed from Path.home() at import time. This narrower patch
+    keeps the profile-manager cache and its directory explicit within this
+    file, so no manager or profile file leaks across tests.
     """
     import tldw_chatbook.RAG_Search.config_profiles as cp
     reset_profile_manager_cache()

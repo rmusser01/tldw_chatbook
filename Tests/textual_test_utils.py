@@ -87,6 +87,25 @@ class AwaitableAsyncContextManager:
         return await self._context_manager.__aexit__(exc_type, exc_value, traceback)
 
 
+def _close_app_database_instances(app: App) -> None:
+    """Close every database handle owned by a full test application."""
+    close_errors = []
+    for db_name in ("chachanotes_db", "prompts_db", "media_db"):
+        close_db = getattr(getattr(app, db_name, None), "close", None)
+        if not callable(close_db):
+            continue
+        try:
+            close_db()
+        except Exception as exc:
+            close_errors.append((db_name, exc))
+
+    if close_errors:
+        failed_names = ", ".join(db_name for db_name, _ in close_errors)
+        raise RuntimeError(
+            f"Failed to close test application databases: {failed_names}"
+        ) from close_errors[0][1]
+
+
 # Pytest fixtures for common testing patterns
 
 
@@ -153,6 +172,7 @@ async def app_pilot():
                     await app.exit()
             except Exception:
                 pass  # Ignore cleanup errors
+        _close_app_database_instances(app)
 
 
 # Helper functions for common test operations

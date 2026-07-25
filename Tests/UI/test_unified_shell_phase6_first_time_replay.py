@@ -13,7 +13,11 @@ import pytest
 from textual.widgets import Button, Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    MainNavigationBar,
+    nav_button_label,
+)
+from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -30,18 +34,11 @@ PHASE_6_FIRST_TIME_TASK = Path(
 )
 
 EXPECTED_NAV = [
-    ("nav-home", "1 Home"),
-    ("nav-console", "2 Console"),
-    ("nav-library", "3 Library"),
-    ("nav-artifacts", "4 Artifacts"),
-    ("nav-personas", "5 RP&CD"),
-    ("nav-watchlists_collections", "6 Watchlists"),
-    ("nav-schedules", "7 Schedules"),
-    ("nav-workflows", "8 Workflows"),
-    ("nav-mcp", "9 MCP"),
-    ("nav-acp", "0 ACP"),
-    ("nav-lab", "Lab"),
-    ("nav-settings", "Settings"),
+    (
+        f"nav-{destination.destination_id}",
+        nav_button_label(index, destination.label),
+    )
+    for index, destination in enumerate(SHELL_DESTINATION_ORDER)
 ]
 
 

@@ -90,12 +90,18 @@ def test_malformed_payloads_log_warning():
 def test_intersection_and_causes():
     conv = RagScope(items=(ScopeItem("media", "1"), ScopeItem("media", "2")), updated_at="t1")
     ws = RagScope(items=(ScopeItem("media", "2"), ScopeItem("media", "3")), updated_at="t2")
-    keep_all = lambda st, ids: ids
+
+    def keep_all(_source_type, ids):
+        return ids
+
     eff = resolve_effective_scope(conv, ws, keep_all)
     assert eff.state == "scoped" and eff.allowlist["media"] == frozenset({"2"})
     disjoint = RagScope(items=(ScopeItem("media", "9"),), updated_at="t3")
     assert resolve_effective_scope(disjoint, ws, keep_all).cause == "no-workspace-overlap"
-    gone = lambda st, ids: frozenset()
+
+    def gone(_source_type, _ids):
+        return frozenset()
+
     assert resolve_effective_scope(conv, None, gone).cause == "deleted-items"
 
 def test_cache_key_includes_ids_not_just_stamps():
@@ -131,7 +137,10 @@ def test_single_level_resolution_workspace_only():
 def test_partial_dangling_drops_only_missing_ids():
     """existing_ids removing some (not all) ids leaves the survivors, still 'scoped' with no cause."""
     conv = RagScope(items=(ScopeItem(SOURCE_TYPE_MEDIA, "1"), ScopeItem(SOURCE_TYPE_MEDIA, "2")), updated_at="t1")
-    drop_only_1 = lambda st, ids: ids - {"1"}
+
+    def drop_only_1(_source_type, ids):
+        return ids - {"1"}
+
     eff = resolve_effective_scope(conv, None, drop_only_1)
     assert eff.state == "scoped"
     assert eff.allowlist == {SOURCE_TYPE_MEDIA: frozenset({"2"})}
@@ -140,7 +149,10 @@ def test_partial_dangling_drops_only_missing_ids():
 def test_allowlist_omits_source_types_with_no_survivors():
     """The allowlist contains only non-empty entries; a source_type fully dropped is absent, not {}."""
     conv = RagScope(items=(ScopeItem(SOURCE_TYPE_MEDIA, "1"), ScopeItem(SOURCE_TYPE_NOTE, "n1")), updated_at="t1")
-    drop_notes = lambda st, ids: frozenset() if st == SOURCE_TYPE_NOTE else ids
+
+    def drop_notes(source_type, ids):
+        return frozenset() if source_type == SOURCE_TYPE_NOTE else ids
+
     eff = resolve_effective_scope(conv, None, drop_notes)
     assert eff.state == "scoped"
     assert eff.allowlist == {SOURCE_TYPE_MEDIA: frozenset({"1"})}

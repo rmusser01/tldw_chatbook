@@ -20,12 +20,12 @@ def _row(pos, seed=1):
             "backend": "swarmui", "model": None, "seed": seed, "style": None,
             "params_json": "{}"}
 
-def test_migration_reaches_v25(db):
+def test_fresh_database_reaches_current_schema(db):
     with db.transaction() as cur:
         v = cur.execute(
             "SELECT version FROM db_schema_version WHERE schema_name=?",
             ("rag_char_chat_schema",)).fetchone()[0]
-    assert v == 25
+    assert v == 27
 
 def test_set_and_batch_get_roundtrip(db):
     _, mid = _mk_message(db)

@@ -4,9 +4,16 @@
  * Scheduling workbench specific styles
  * ======================================== */
 
+SchedulesWorkbench TabbedContent,
+SchedulesWorkbench TabbedContent ContentSwitcher,
+SchedulesWorkbench TabbedContent TabPane {
+    height: 1fr;
+    min-height: 0;
+}
+
 #scheduling-workbench {
     layout: horizontal;
-    height: 1fr;
+    height: 100%;
     min-height: 10;
     padding: 1;
     margin: 0;
@@ -21,6 +28,25 @@
 #scheduling-list-pane { width: 3fr; min-width: 30; border: solid $ds-grid-line; padding: 1; }
 #scheduling-detail-pane { width: 4fr; min-width: 52; border: solid $ds-grid-line; padding: 1; }
 #scheduling-inspector-pane { width: 2fr; min-width: 34; border: solid $ds-grid-line; padding: 1; }
+
+SchedulesWorkbench.schedules-workbench-compact #scheduling-workbench {
+    padding: 0;
+}
+
+SchedulesWorkbench.schedules-workbench-compact #scheduling-list-pane {
+    width: 24;
+    min-width: 20;
+}
+
+SchedulesWorkbench.schedules-workbench-compact #scheduling-detail-pane {
+    width: 1fr;
+    min-width: 32;
+}
+
+SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
+    width: 20;
+    min-width: 16;
+}
 
 /* Pane headers */
 #scheduling-list-title,

@@ -20,6 +20,26 @@ from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 class TestChatbookImporter:
     """Test ChatbookImporter functionality."""
 
+    @pytest.fixture(autouse=True)
+    def stub_citation_composition(self, monkeypatch):
+        """Keep importer unit tests on their existing mocked database seam."""
+
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+
+        def build_local(db, *, sidecar_path):
+            return (
+                ChatConversationService(db, rag_context_store_path=sidecar_path),
+                None,
+                None,
+            )
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chatbooks.chatbook_importer.build_local_citation_conversation_service",
+            build_local,
+        )
+
     @pytest.fixture
     def temp_db_paths(self, tmp_path):
         """Create temporary database paths with schema."""

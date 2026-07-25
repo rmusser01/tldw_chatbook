@@ -17,14 +17,24 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import Button, Rule, Select, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Constants import (
+    WATCHLISTS_NAV_CONTEXT_BACKEND,
+    WATCHLISTS_NAV_CONTEXT_RUN_ID,
+    WATCHLISTS_NAV_CONTEXT_SECTION,
+    WATCHLISTS_SECTION_RUNS,
+)
 from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Subscription_Modules.notifications_inbox_controller import (
+    NotificationsInboxController,
+)
 from ..Watchlists_Modules.inspector_pane import (
     CheckNowRequested,
     DeleteRequested,
@@ -37,6 +47,13 @@ from ..Watchlists_Modules.inspector_pane import (
     StageInConsoleRequested,
 )
 from ..Watchlists_Modules.items_pane import ItemSelected, ItemsPane, RefreshItemsRequested
+from ..Watchlists_Modules.notifications_pane import (
+    DismissNotificationRequested,
+    MarkNotificationReadRequested,
+    NotificationSelected,
+    NotificationsPane,
+    RefreshNotificationsRequested,
+)
 from ..Watchlists_Modules.opml_dialogs import (
     ConfirmDeleteDialog,
     OpmlExportDialog,
@@ -79,6 +96,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ("3", "switch_section('items')", "Items"),
         ("4", "switch_section('runs')", "Runs"),
         ("5", "switch_section('rules')", "Rules"),
+        ("6", "switch_section('notifications')", "Notifications"),
         ("question", "show_help", "Help"),
         ("n", "new_source", "New source"),
         ("d", "delete_selected", "Delete"),
@@ -90,6 +108,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     runtime_backend = reactive("local")
     selected_source = reactive(None)
     selected_run = reactive(None)
+    selected_notification = reactive(None)
     selected_entity = reactive(None)
     recovery_state = reactive(None)
     overview_data = reactive({}, recompose=True)
@@ -100,6 +119,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         "items": "Items",
         "runs": "Runs",
         "rules": "Rules",
+        "notifications": "Notifications",
     }
 
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
@@ -117,19 +137,60 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._pending_open_create_form = False
         self._pending_open_import_opml = False
         self._pending_delete_entity: dict[str, Any] | None = None
+        self._pending_navigation_run_id: str | None = None
+        self._pending_navigation_run_backend: str | None = None
+        self._loaded_runs: list[dict[str, Any]] = []
+        self._loaded_notifications: list[dict[str, Any]] = []
+        self._applying_navigation_context = False
         self._controller = WatchlistsBackendController(
             app_instance=app_instance,
             scope_service=getattr(app_instance, "watchlist_scope_service", None),
             server_service=getattr(app_instance, "server_watchlists_service", None),
+        )
+        self._notifications_controller = NotificationsInboxController(
+            app_instance=app_instance,
+            store=getattr(app_instance, "client_notifications_db", None),
         )
 
     def on_mount(self) -> None:
         super().on_mount()
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
+        self._load_active_section_data()
         self.set_timer(
             WC_SNAPSHOT_TIMEOUT_SECONDS, self._apply_snapshot_timeout_if_still_loading
         )
+
+    def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
+        """Apply a validated section/run deep link from shell navigation."""
+        section = str(context.get(WATCHLISTS_NAV_CONTEXT_SECTION) or "").strip()
+        if section not in self._SECTION_DETAIL_TITLE:
+            return
+
+        requested_backend = str(
+            context.get(WATCHLISTS_NAV_CONTEXT_BACKEND) or self.runtime_backend
+        ).strip()
+        if requested_backend not in {"local", "server"}:
+            requested_backend = self.runtime_backend
+
+        self._applying_navigation_context = True
+        try:
+            self.runtime_backend = requested_backend
+            self.active_section = section
+        finally:
+            self._applying_navigation_context = False
+
+        run_id = context.get(WATCHLISTS_NAV_CONTEXT_RUN_ID)
+        self._pending_navigation_run_id = (
+            str(run_id).strip()
+            if section == WATCHLISTS_SECTION_RUNS and run_id not in (None, "")
+            else None
+        )
+        self._pending_navigation_run_backend = (
+            requested_backend if self._pending_navigation_run_id else None
+        )
+        if self.is_mounted:
+            self._load_active_section_data()
 
     def _apply_snapshot_timeout_if_still_loading(self) -> None:
         if self._wc_loaded:
@@ -386,12 +447,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             with Horizontal(id="watchlists-header-bar", classes="destination-filter-strip"):
                 yield Select(
                     [("Local", "local"), ("Server", "server")],
-                    value="local",
+                    value=self.runtime_backend,
                     id="watchlists-backend-select",
                     allow_blank=False,
+                    disabled=self.active_section == "notifications",
+                    tooltip=(
+                        "The notifications inbox is local to this device."
+                        if self.active_section == "notifications"
+                        else "Choose the Watchlists data backend."
+                    ),
                 )
                 yield Static(
-                    f"Backend: {self.runtime_backend}",
+                    (
+                        "Inbox: local"
+                        if self.active_section == "notifications"
+                        else f"Backend: {self.runtime_backend}"
+                    ),
                     id="watchlists-backend-label",
                 )
             with Horizontal(id="watchlists-workbench", classes="ds-panel destination-workbench"):
@@ -481,11 +552,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     elif self.active_section == "sources":
                         yield SourcesPane(id="watchlists-sources-pane")
                     elif self.active_section == "runs":
-                        yield RunsPane(id="watchlists-runs-pane")
+                        runs_pane = RunsPane(id="watchlists-runs-pane")
+                        runs_pane.runs = self._loaded_runs
+                        runs_pane.selected_run = self.selected_run
+                        yield runs_pane
                     elif self.active_section == "items":
                         yield ItemsPane(id="watchlists-items-pane")
                     elif self.active_section == "rules":
                         yield RulesPane(id="watchlists-rules-pane")
+                    elif self.active_section == "notifications":
+                        notifications_pane = NotificationsPane(
+                            id="watchlists-notifications-pane"
+                        )
+                        notifications_pane.notifications = self._loaded_notifications
+                        notifications_pane.selected_notification = (
+                            self.selected_notification
+                        )
+                        yield notifications_pane
                 yield self._column_divider("watchlists-detail-inspector-divider")
                 with Vertical(
                     id="watchlists-inspector-pane",
@@ -558,8 +641,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def watch_active_section(self) -> None:
         if self.active_section == "overview":
             self.selected_entity = None
+        if self.active_section != WATCHLISTS_SECTION_RUNS:
+            self._pending_navigation_run_id = None
+            self._pending_navigation_run_backend = None
         if self.is_mounted:
             self.refresh(recompose=True)
+            if not self._applying_navigation_context:
+                self._load_active_section_data()
+
+        if self._pending_open_create_form:
+            self._pending_open_create_form = False
+            self.set_timer(0.05, self._open_sources_create_form)
+        if self._pending_open_import_opml:
+            self._pending_open_import_opml = False
+            self.set_timer(0.05, self._open_sources_import_opml)
+
+    def _load_active_section_data(self) -> None:
+        """Start the loader owned by the currently visible section."""
         if self.active_section == "items":
             self.run_worker(self._load_items(), exclusive=True)
         elif self.active_section == "rules":
@@ -568,13 +666,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.run_worker(self._load_runs(), exclusive=True)
         elif self.active_section == "sources":
             self.run_worker(self._load_sources(), exclusive=True)
-
-        if self._pending_open_create_form:
-            self._pending_open_create_form = False
-            self.set_timer(0.05, self._open_sources_create_form)
-        if self._pending_open_import_opml:
-            self._pending_open_import_opml = False
-            self.set_timer(0.05, self._open_sources_import_opml)
+        elif self.active_section == "notifications":
+            self.run_worker(self._load_notifications(), exclusive=True)
 
     def _open_sources_create_form(self) -> None:
         if not self.is_mounted:
@@ -591,16 +684,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.app.push_screen(OpmlImportDialog(), callback=self._on_opml_import_complete)
 
     def watch_runtime_backend(self) -> None:
+        if (
+            self._pending_navigation_run_backend is not None
+            and self._pending_navigation_run_backend != self.runtime_backend
+        ):
+            self._pending_navigation_run_id = None
+            self._pending_navigation_run_backend = None
         if not self.is_mounted:
             return
         try:
             label = self.query_one("#watchlists-backend-label", Static)
-            label.update(f"Backend: {self.runtime_backend}")
+            label.update(
+                "Inbox: local"
+                if self.active_section == "notifications"
+                else f"Backend: {self.runtime_backend}"
+            )
         except Exception:
             pass
         self.selected_source = None
         self.selected_run = None
+        self.selected_notification = None
         self.selected_entity = None
+        self._loaded_runs = []
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
 
@@ -904,16 +1009,167 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 runtime_backend=self.runtime_backend,
                 limit=100,
             )
+            self._loaded_runs = [dict(run) for run in runs]
+            requested_run = self._matching_requested_run(self._loaded_runs)
+            had_pending_target = self._pending_navigation_run_id is not None
+            self._pending_navigation_run_id = None
+            self._pending_navigation_run_backend = None
+            if had_pending_target:
+                self.selected_run = requested_run
+                self.selected_entity = requested_run
             if self.is_mounted:
                 try:
                     runs_pane = self.query_one("#watchlists-runs-pane", RunsPane)
-                    runs_pane.runs = runs
+                    runs_pane.runs = self._loaded_runs
+                    if had_pending_target:
+                        runs_pane.selected_run = requested_run
                 except Exception:
                     pass
         except Exception:
             logger.opt(exception=True).debug("Failed to load watchlist runs.")
             if callable(notify):
                 notify("Failed to load watchlist runs.", severity="error")
+
+    def _matching_requested_run(
+        self, runs: Sequence[Mapping[str, Any]]
+    ) -> dict[str, Any] | None:
+        """Return the loaded record matching the one-shot run deep link."""
+        requested = self._pending_navigation_run_id
+        if not requested:
+            return None
+        marker = ":watchlist_run:"
+        requested_raw = requested.rsplit(marker, 1)[1] if marker in requested else requested
+        requested_backend = self._pending_navigation_run_backend
+
+        for run in runs:
+            record_backend = str(run.get("backend") or "").strip()
+            if record_backend not in {"local", "server"}:
+                record_backend = ""
+            candidate_id = run.get("id")
+            if candidate_id not in (None, ""):
+                candidate_text = str(candidate_id)
+                if marker in candidate_text:
+                    candidate_backend, candidate_raw = candidate_text.split(marker, 1)
+                    if (
+                        requested_backend == self.runtime_backend
+                        and candidate_backend == requested_backend
+                        and candidate_raw == requested_raw
+                    ):
+                        return run if isinstance(run, dict) else dict(run)
+                    continue
+                if (
+                    requested_backend == self.runtime_backend
+                    and record_backend in {"", requested_backend}
+                    and candidate_text == requested_raw
+                ):
+                    return run if isinstance(run, dict) else dict(run)
+
+            candidate_raw = run.get("run_id")
+            if (
+                candidate_raw not in (None, "")
+                and requested_backend == self.runtime_backend
+                and record_backend in {"", requested_backend}
+                and str(candidate_raw) == requested_raw
+            ):
+                return run if isinstance(run, dict) else dict(run)
+        return None
+
+    async def _load_notifications(self) -> None:
+        """Load the client-owned local notification inbox."""
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            rows = await self._notifications_controller.load_rows()
+        except Exception:
+            logger.opt(exception=True).debug("Failed to load local notifications.")
+            if callable(notify):
+                notify("Failed to load local notifications.", severity="error")
+            return
+
+        self._loaded_notifications = [dict(row) for row in rows]
+        selected_id = (
+            self.selected_notification.get("id")
+            if self.selected_notification
+            else None
+        )
+        self.selected_notification = next(
+            (
+                notification
+                for notification in self._loaded_notifications
+                if notification.get("id") == selected_id
+            ),
+            None,
+        )
+        self.selected_entity = (
+            {
+                **self.selected_notification,
+                "entity_kind": "client_notification",
+            }
+            if self.selected_notification
+            else None
+        )
+        if not self.is_mounted:
+            return
+        try:
+            pane = self.query_one("#watchlists-notifications-pane", NotificationsPane)
+        except NoMatches:
+            return
+
+        try:
+            pane.notifications = self._loaded_notifications
+            pane.selected_notification = self.selected_notification
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Failed to update the local notifications pane."
+            )
+
+    @on(NotificationSelected)
+    def handle_notification_selected(self, event: NotificationSelected) -> None:
+        event.stop()
+        self.selected_notification = event.notification
+        self.selected_entity = (
+            {**event.notification, "entity_kind": "client_notification"}
+            if event.notification
+            else None
+        )
+
+    @on(RefreshNotificationsRequested)
+    def handle_refresh_notifications_requested(
+        self, event: RefreshNotificationsRequested
+    ) -> None:
+        event.stop()
+        self.run_worker(self._load_notifications(), exclusive=True)
+
+    @on(MarkNotificationReadRequested)
+    def handle_mark_notification_read_requested(
+        self, event: MarkNotificationReadRequested
+    ) -> None:
+        event.stop()
+        self.run_worker(
+            self._mark_notification_read(event.notification_id), exclusive=True
+        )
+
+    async def _mark_notification_read(self, notification_id: int) -> None:
+        updated = await self._notifications_controller.mark_read(
+            notification_id, is_read=True
+        )
+        if updated:
+            await self._load_notifications()
+
+    @on(DismissNotificationRequested)
+    def handle_dismiss_notification_requested(
+        self, event: DismissNotificationRequested
+    ) -> None:
+        event.stop()
+        self.run_worker(
+            self._dismiss_notification(event.notification_id), exclusive=True
+        )
+
+    async def _dismiss_notification(self, notification_id: int) -> None:
+        dismissed = await self._notifications_controller.dismiss(
+            notification_id, is_dismissed=True
+        )
+        if dismissed:
+            await self._load_notifications()
 
     async def _load_items(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
@@ -1059,6 +1315,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         entity = event.entity
         if entity is None:
             return
+        if InspectorPane._entity_type(entity) == "notification":
+            self.app_instance.notify(
+                "Use Dismiss to remove a notification from the inbox.",
+                severity="information",
+            )
+            return
         self._pending_delete_entity = dict(entity)
         title = entity.get("name") or entity.get("source_title") or entity.get("title") or "this item"
         self.app.push_screen(
@@ -1167,7 +1429,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def action_show_help(self) -> None:
         """Show a notification with available keyboard shortcuts."""
         self.app_instance.notify(
-            "1=Overview 2=Sources 3=Items 4=Runs 5=Rules | n=new d=delete c=check p=preview ?=help",
+            "1=Overview 2=Sources 3=Items 4=Runs 5=Rules 6=Notifications | "
+            "n=new d=delete c=check p=preview ?=help",
             severity="information",
             timeout=8,
         )

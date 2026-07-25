@@ -7,7 +7,7 @@ Reference: `rmusser01/tldw_server` — `apps/packages/ui/src/components/Option/W
 
 ## Summary
 
-Replace the placeholder `watchlists_collections` destination shell with a full Watchlists management screen. The new screen uses a three-pane destination workbench, supports both local and server backends, and provides Overview, Sources, Items, Runs, and Alert Rules sections. Jobs, Outputs, and Templates are deferred to later slices.
+Replace the placeholder `watchlists_collections` destination shell with a full Watchlists management screen. The new screen uses a three-pane destination workbench, supports both local and server Watchlists backends, and provides Overview, Sources, Items, Runs, Alert Rules, and a retained local Notifications inbox. Jobs, Outputs, and Templates are deferred to later slices.
 
 ## Goals
 
@@ -15,6 +15,7 @@ Replace the placeholder `watchlists_collections` destination shell with a full W
 - View and consume scraped items with smart counts, batch review, and "queue for briefing".
 - Inspect runs: status, stats, filter tallies, fetched items, logs, and cancel/retry actions.
 - Create and manage both run-health and content alert rules, with alert notifications surfacing in the app inbox and Home dashboard.
+- Retain the client-owned local notifications inbox and make Home's unread-notification action land on it after `SubscriptionWindow.py` is retired.
 - Support source preview / dry-run and "Check now" actions.
 - Support OPML import/export for sources.
 - Work offline against local `SubscriptionsDB` and online against a connected `tldw_server` API.
@@ -43,8 +44,8 @@ The `tldw_server` web UI uses a top tab bar with primary views. The TUI maps tho
 │ │ Items  │ │  • Source list / form          │ │ Actions      │ │
 │ │ Runs   │ │  • Item reader                 │ │              │ │
 │ │ Rules  │ │  • Run inspector               │ │ Context-aware│ │
-│ │        │ │  • Alert editor / inbox        │ │ buttons:     │ │
-│ │        │ │                                │ │ Preview,     │ │
+│ │Notific.│ │  • Alert editor                 │ │ buttons:     │ │
+│ │        │ │  • Local notification inbox     │ │ Preview,     │ │
 │ └────────┘ └────────────────────────────────┘ │ Check now,   │ │
 │                                               │ Stage,       │ │
 │                                               │ Mark read,   │ │
@@ -58,7 +59,8 @@ The `tldw_server` web UI uses a top tab bar with primary views. The TUI maps tho
 | Feeds | **Sources** | Source CRUD, groups/tags read-only, OPML import/export, simple source-level filters, preview, Check now |
 | Updates | **Items** | Global item reader with smart counts, batch review, queue for briefing |
 | Activity | **Runs** | Run history, full run inspector (stats, items, tallies, logs), cancel/retry |
-| Alerts | **Rules** | Health + content alert rule editor; alert inbox |
+| Alerts | **Rules** | Health + content alert rule editor |
+| Client inbox | **Notifications** | Local client notifications; inspect, mark read, and dismiss |
 | Monitors | *deferred* | Jobs / scheduling |
 | Reports | *deferred* | Outputs and templates |
 
@@ -73,7 +75,8 @@ The `tldw_server` web UI uses a top tab bar with primary views. The TUI maps tho
 | `tldw_chatbook/UI/Watchlists_Modules/sources_pane.py` | Source list, create/edit form, filter editor, preview, OPML import/export |
 | `tldw_chatbook/UI/Watchlists_Modules/items_pane.py` | Item reader, smart counts, batch actions |
 | `tldw_chatbook/UI/Watchlists_Modules/runs_pane.py` | Run list, full run inspector |
-| `tldw_chatbook/UI/Watchlists_Modules/alert_rules_pane.py` | Rule editor + alert inbox |
+| `tldw_chatbook/UI/Watchlists_Modules/rules_pane.py` | Alert rule editor |
+| `tldw_chatbook/UI/Watchlists_Modules/notifications_pane.py` | Retained client-owned local notifications inbox |
 | `tldw_chatbook/Subscriptions/watchlist_filter_service.py` | Local source-level filter evaluation |
 | `tldw_chatbook/Subscriptions/watchlist_content_alert_service.py` | Local content-alert evaluation |
 | `tldw_chatbook/Subscriptions/local_watchlists_service.py` | Extended for content alerts, filters, scraped-item persistence, OPML import |
@@ -102,6 +105,7 @@ WatchlistsBackendController
 4. Mutations (create/update/delete/preview/check now) → pane calls controller method → controller routes to local/server service → worker executes → reactive state updates → UI refreshes.
 5. Run inspector opens a running run → starts a polling worker that refreshes run detail every 3–5 s until terminal.
 6. Alert rules trigger notifications via the existing `NotificationDispatchService`; payloads use `source_domain="watchlists"` so Home and the notifications inbox can route them.
+7. Home notification review emits `section=notifications`; the shell loads the local inbox through `NotificationsInboxController` regardless of the active Watchlists backend.
 
 ### Controller routing for backend-specific operations
 
@@ -258,7 +262,8 @@ Recent Failed Runs
 | `Tests/Watchlists/test_watchlists_sources_pane.py` | List filtering, form validation, preview/check-now wiring, OPML parsing |
 | `Tests/Watchlists/test_watchlists_runs_pane.py` | Run list refresh, inspector binding, cancel/retry guards |
 | `Tests/Watchlists/test_watchlists_items_pane.py` | Smart-count filtering, batch review, item row actions |
-| `Tests/Watchlists/test_watchlists_alert_rules_pane.py` | Health/content rule forms, rule toggle, inbox filters |
+| `Tests/Watchlists/test_watchlists_rules_pane.py` | Health/content rule forms and rule toggle |
+| `Tests/UI/test_watchlists_destination_shell.py` | Notification inbox navigation, rendering, and update actions |
 
 ### Service/DB tests
 

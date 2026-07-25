@@ -228,6 +228,24 @@ class TestDBInitialization:
         conn.execute("DROP TRIGGER IF EXISTS conversations_sync_update")
         conn.execute("DROP TRIGGER IF EXISTS conversations_sync_delete")
         conn.execute("DROP TRIGGER IF EXISTS conversations_sync_undelete")
+        # A version-only rollback is not a valid pre-v25 fixture because the
+        # citation migration deliberately rejects pre-existing/partial tables.
+        # Remove the current provenance schema before replaying from v17.
+        for table in (
+            "rag_artifact_owner_operations",
+            "rag_artifact_owner_leases",
+            "rag_source_observations",
+            "rag_message_trace_owners",
+            "rag_trace_evidence_refs",
+            "rag_answer_attempt_payloads",
+            "rag_evidence_runs",
+            "rag_citation_traces",
+            "rag_evidence_snapshots",
+            "rag_payload_tombstones",
+            "rag_legacy_migration_journal",
+            "rag_identity_context",
+        ):
+            conn.execute(f"DROP TABLE {table}")
         conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
         conn.execute(
             "UPDATE db_schema_version SET version = 17 WHERE schema_name = ?",

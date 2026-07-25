@@ -22,6 +22,7 @@ class WatchlistsNavigator(Vertical):
         ("items", "Items"),
         ("runs", "Runs"),
         ("rules", "Rules"),
+        ("notifications", "Notifications"),
     ]
 
     def compose(self):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.text import Text
 from textual.containers import Vertical
 from textual.message import Message
 from textual.reactive import reactive
@@ -84,15 +85,15 @@ class InspectorPane(Vertical):
         entity = self.selected_entity
         if entity is None:
             yield Static(
-                "Select a source, run, item, or rule to see actions.",
+                "Select a source, run, item, rule, or notification to see actions.",
                 id="inspector-empty-state",
             )
             return
 
         entity_type = self._entity_type(entity)
         title = entity.get("name") or entity.get("source_title") or entity.get("title") or "Untitled"
-        yield Static(f"Selected: {title}", id="inspector-entity-title")
-        yield Static(f"Type: {entity_type}", id="inspector-entity-type")
+        yield Static(Text(f"Selected: {title}"), id="inspector-entity-title")
+        yield Static(Text(f"Type: {entity_type}"), id="inspector-entity-type")
 
         with Vertical(id="inspector-actions"):
             if entity_type == "source":
@@ -110,6 +111,8 @@ class InspectorPane(Vertical):
             elif entity_type == "rule":
                 yield Button("Edit", id="inspector-edit-rule-button", variant="primary")
                 yield Button("Delete", id="inspector-delete-button", variant="error")
+            elif entity_type == "notification":
+                yield Static("Use the inbox controls to mark read or dismiss.")
             else:
                 yield Button("Delete", id="inspector-delete-button", variant="error")
 
@@ -119,6 +122,8 @@ class InspectorPane(Vertical):
         # rule id; check them first so they are never mistaken for items.
         if entity.get("entity_kind") == "watchlist_alert_rule" or "rule_id" in entity:
             return "rule"
+        if entity.get("entity_kind") == "client_notification":
+            return "notification"
         if "source_type" in entity or "url" in entity:
             return "source"
         if "status" in entity and ("found_count" in entity or "processed_count" in entity):

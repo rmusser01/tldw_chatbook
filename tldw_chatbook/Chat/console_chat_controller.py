@@ -1867,7 +1867,7 @@ class ConsoleChatController:
 
         # Every transform succeeded: now (and only now) fork the edited USER
         # sibling and append the empty ASSISTANT node to stream into.
-        new_user = self.store.create_sibling(
+        self.store.create_sibling(
             message_id,
             role=ConsoleMessageRole.USER,
             content=clean_content,

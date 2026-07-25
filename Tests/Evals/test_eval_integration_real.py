@@ -441,7 +441,7 @@ class TestEndToEndWorkflow:
 
         # Mock only the LLM calls to avoid costs
         with patch(
-            "tldw_chatbook.Evals.specialized_runners.QuestionAnswerRunner._call_llm"
+            "tldw_chatbook.Evals.eval_runner.QuestionAnswerRunner._call_llm"
         ) as mock_call:
             mock_call.return_value = "4"  # Correct answer for first question
 
