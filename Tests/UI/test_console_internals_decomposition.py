@@ -3894,9 +3894,13 @@ async def test_console_rag_action_without_service_stages_recoverable_blocker():
         console.query_one(
             "#console-library-rag-query-input", Input
         ).value = "What changed?"
-        await pilot.pause(0.1)
+        await _wait_for_console_library_rag_button_state(
+            console,
+            pilot,
+            disabled=False,
+        )
         console.query_one("#console-run-library-rag", Button).press()
-        await _wait_for_selector(console, pilot, "#console-live-work-status")
+        await _wait_for_visible_text(console, pilot, "Status: blocked")
 
         text = _visible_text(console)
         assert "Status: blocked" in text
