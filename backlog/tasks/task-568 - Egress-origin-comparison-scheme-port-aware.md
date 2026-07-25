@@ -2,10 +2,10 @@
 id: TASK-568
 title: >-
   Make egress same-origin comparison scheme/port-aware app-wide
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-25 06:00'
-updated_date: '2026-07-25 06:00'
+updated_date: '2026-07-25 08:30'
 labels:
   - security
   - egress
