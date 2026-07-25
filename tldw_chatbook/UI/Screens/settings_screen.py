@@ -2040,7 +2040,11 @@ class SettingsScreen(BaseAppScreen):
                             "image_generation.context_llm_timeout_seconds",
                         ),
                         reads_runtime_state_from=contract.source_of_truth,
-                        writes_allowed=True,
+                        # Task 5 flips this to True when Save/Revert go live;
+                        # until then the panel is read-only and the Impact pane
+                        # must say so.
+                        writes_allowed=False,
+                        read_only_reason="Editing arrives with the draft/save wiring (in progress).",
                         runtime_owner="Settings persisted defaults; Console /generate-image",
                         boundary_copy=(
                             "Settings owns persisted backend and generation-default config; "
