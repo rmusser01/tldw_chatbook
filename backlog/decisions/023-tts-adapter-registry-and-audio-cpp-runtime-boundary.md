@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Task: TASK-402
+Related Tasks: TASK-402, TASK-551
 Supersedes: N/A
 
 ## Decision
@@ -47,6 +47,35 @@ an omnibus task.
 This ADR supersedes the registration direction in the non-canonical historical
 Higgs backend-registration document. That material remains historical context
 but no longer governs new TTS provider integration.
+
+## Implementation status
+
+Slices 1 and 2 are implemented. The sealed registry registers the exact native
+provider `audio_cpp` first, with no provider alias and exclusive lazy
+reconfiguration, followed by the six unchanged legacy bridge entries.
+
+TASK-551 implements external connection mode only. It reads
+`[app_tts.audio_cpp]` with `mode = "external"`, a canonical HTTP(S) origin,
+five-second connect and 600-second overall synthesis timeouts, and positive
+bounds for input characters, response bytes, metadata bytes, catalog models,
+voices per model, and identifier characters. It has no environment override,
+authentication, path, binary, `server.json`, or process-management field.
+
+The external native adapter has five operations: `ensure_ready()`,
+`get_catalog(refresh=False)`, `get_voices(model_id, refresh=False)`,
+`synthesize(...)`, and `close()`. Catalog and voice discovery own their
+readiness; `ensure_ready()` remains the service synthesis prerequisite.
+Callers use only service/registry APIs and never retrieve the concrete adapter.
+
+The `audio_cpp_http_v1` fixtures and parsers are pinned to upstream commit
+[`d3d748179e5ace353386fbf17bcaedfacf482d75`](https://github.com/0xShug0/audio.cpp/tree/d3d748179e5ace353386fbf17bcaedfacf482d75).
+They require `GET /health`, `GET /v1/models`, and complete-WAV
+`POST /v1/audio/speech`; per-model
+`GET /v1/audio/voices?model=<id>` remains optional.
+
+Slice 3 remains the catalog-driven external STTS Playground vertical. Slices
+4–5 remain user-provided prebuilt binary plus user-provided `server.json`
+launch/supervision and managed UI. No process or UI work is part of TASK-551.
 
 ## Context
 
@@ -112,8 +141,9 @@ policy, and a cross-module interface.
   Definitive service shutdown leaves no admission waiter blocked and does not
   wait indefinitely for a provider finalizer that ignores cancellation.
 - audio.cpp reconfiguration is an exclusive handoff: new operations are blocked
-  while active leases drain, the old adapter and owned child close before the
-  new configuration becomes active, and the replacement remains lazy.
+  while active leases drain, the old adapter closes before the new
+  configuration becomes active, and the replacement remains lazy. Future
+  managed mode applies the same rule to an owned child.
 - Provider-scoped legacy hosts preserve current implementations while isolating
   configuration replacement and backend caches. The quarantined class registry
   is their only shared legacy state.
@@ -122,18 +152,22 @@ policy, and a cross-module interface.
 - Existing callers retain their generation signature through the bridge.
   Provider-neutral, operation-scoped progress prevents UI access to concrete
   backends; progress-sink failures never fail synthesis.
-- The Playground becomes catalog-driven, while legacy catalogs remain marked as
-  approximate until migrated.
-- audio.cpp managed mode launches only a user-provided executable and
+- Slice 3 makes the Playground catalog-driven, while legacy catalogs remain
+  marked as approximate until migrated.
+- Future managed mode (Slices 4–5) launches only a user-provided executable and
   configuration using the pinned server's default or explicit `127.0.0.1`
   bind; `localhost` and `::1` are not accepted by that server version.
-- Managed process ownership is explicit: Chatbook stops only children it
+- Future managed process ownership is explicit: Chatbook stops only children it
   started and never silently adopts an existing listener.
-- A managed failure before first readiness rolls back the owned child and joins
-  its monitor and log drains. A live child that becomes unhealthy after reaching
-  Ready remains available for explicit restart.
+- A future managed failure before first readiness rolls back the owned child
+  and joins its monitor and log drains. A live child that becomes unhealthy
+  after reaching Ready remains available for explicit restart.
 - The first audio.cpp contract supports complete WAV output and default speed
   only. Upstream streaming metadata does not imply client streaming support.
+- The complete response is fully buffered, bounded, and structurally validated
+  as uncompressed PCM16 WAV before it is exposed as one asynchronous response
+  chunk. This preserves the async-stream interface without claiming
+  incremental streaming.
 - Complete-response synthesis uses a connection deadline and an overall
   synthesis deadline, but no read-inactivity deadline that could abort quiet
   native inference before the WAV response begins.
@@ -141,26 +175,39 @@ policy, and a cross-module interface.
   data; both remain configurable.
 - Server default is the initial voice selection because audio.cpp's configured
   default is not identified by the voices endpoint. Discovered voices remain
-  explicit alternatives.
+  explicit alternatives; omitting `voice` is the only server-default request
+  representation.
 - Readiness probes health and model discovery without generating hidden audio;
   speech-endpoint compatibility is established by the first user-requested
-  generation or the opt-in live smoke test.
-- External mode sends synthesis text to the configured server and communicates
-  that privacy boundary in the UI. HTTP redirects are disabled.
+  generation or the future opt-in live smoke test.
+- External mode sends synthesis text to the configured server. Slice 2
+  documentation states that privacy boundary, and Slice 3 communicates it in
+  the UI. HTTP redirects are disabled.
 - Metadata bodies, model and voice counts, and identifiers are bounded.
   Requests require identity content encoding so decompression cannot bypass
   response limits.
+- Redirects are disabled, TLS verification remains enabled for HTTPS, safe GET
+  operations may receive one bounded retry, and speech POST is never retried.
 - Bounded responses receive structural uncompressed 16-bit PCM WAV validation;
   a RIFF/WAVE signature alone is insufficient.
 - The adapter trusts the pinned structured `server_busy` response but does not
   parse free-form `server_error` text. After a speech `500`, it refreshes model
   discovery once to distinguish a vanished model from a generation failure and
   never retries the POST.
+- External failures use stable safe operation codes. Connectivity and required
+  contract failures mark cached health stale; invalid requests, optional voice
+  failures, busy responses, generation failures, invalid audio, and
+  cancellation do not. Cancellation propagates normally, and an audio.cpp
+  request never falls back to another model or provider.
 - Successful authoritative catalog refreshes invalidate voice caches through a
   new catalog revision, even when the model list is unchanged.
 - Chatbook logs setting names and outcomes, never values or API keys. Managed
   child output is treated as potentially sensitive, retained only in a bounded
   in-memory diagnostic ring, and never copied into general logs or persisted.
+- External synthesis sends submitted text to the configured origin. Logs and
+  operation errors do not expose that text, configured origins or values, raw
+  response bodies, or rejected identifiers. Response metadata is limited to
+  safe immutable scalar provenance, sample, and bounded timing values.
 - Normal CI uses fakes and contract fixtures. audio.cpp and model downloads are
   not test dependencies.
 - Fixture provenance is pinned to audio.cpp commit
@@ -178,15 +225,17 @@ policy, and a cross-module interface.
   select another provider after a reported failure.
 - During implementation rollout, retain the provider-scoped legacy hosts and
   accessor until the bridge deletion criteria are met.
-- If the new Playground routing must be reverted, restore its legacy provider
-  selection path while leaving the native registry code unselected; no data or
-  schema migration is involved.
+- If the future Playground routing must be reverted, restore its legacy
+  provider selection path while leaving the native registry code unselected;
+  no data or schema migration is involved.
 
 ## Links
 
 - [Design spec](../../Docs/superpowers/specs/2026-07-23-audio-cpp-tts-adapter-registry-design.md)
-- [audio.cpp server guide](https://github.com/0xShug0/audio.cpp/blob/main/app/server/README.md)
-- [audio.cpp server runtime](https://github.com/0xShug0/audio.cpp/blob/main/app/server/runtime.cpp)
-- [audio.cpp license](https://github.com/0xShug0/audio.cpp/blob/main/LICENSE)
+- [TASK-551](<../tasks/task-551 - Add-external-audio.cpp-native-TTS-adapter.md>)
+- [Pinned audio.cpp server guide](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/README.md)
+- [Pinned audio.cpp server runtime](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/runtime.cpp)
+- [Pinned audio.cpp busy guard](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/busy_guard.h)
+- [Pinned audio.cpp license](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/LICENSE)
 - [Historical Higgs backend architecture](../../Docs/Development/TTS/Higgs-ADR-001-Backend-Architecture.md)
 - [Historical Higgs backend registration](../../Docs/Development/TTS/Higgs-ADR-002-Backend-Registration.md)
