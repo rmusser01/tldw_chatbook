@@ -20,6 +20,8 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSModelInfo,
     TTSProviderCatalog,
     TTSProviderDescriptor,
+    TTSProviderReconfiguringError,
+    TTSRegistryClosedError,
 )
 from tldw_chatbook.TTS.playground_types import STTSGeneratedAudio
 from tldw_chatbook.TTS.legacy_catalogs import legacy_catalog
@@ -562,6 +564,58 @@ async def test_voice_discovery_failure_overrides_configured_explicit_default(
         assert len(app.generation_events) == 1
         assert app.generation_events[0].request.voice_id is None
         assert "untrusted upstream detail" not in str(app.notices)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("lifecycle_error", "expected_status"),
+    (
+        (
+            TTSProviderReconfiguringError("PRIVATE_RECONFIGURING"),
+            "settings are being applied",
+        ),
+        (
+            TTSRegistryClosedError("PRIVATE_REGISTRY_CLOSED"),
+            "tts service is unavailable",
+        ),
+    ),
+)
+async def test_voice_discovery_lifecycle_failure_preserves_pending_selection(
+    audio_cpp_playground: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+    lifecycle_error: Exception,
+    expected_status: str,
+) -> None:
+    service = audio_cpp_playground
+
+    def get_setting(section: str, key: str, default: Any = None) -> Any:
+        configured = {
+            ("app_tts", "default_provider"): "audio_cpp",
+            ("app_tts", "default_voice"): "[voice]",
+        }
+        return configured.get((section, key), default)
+
+    monkeypatch.setattr(STTS_Window, "get_cli_setting", get_setting)
+    service.voice_error = lifecycle_error
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        app.query_one("#tts-text-input", TextArea).text = "lifecycle pending"
+        await pilot.pause()
+
+        widget = app.query_one(TTSPlaygroundWidget)
+        status = str(app.query_one("#tts-provider-status", Static).render()).lower()
+        assert widget._pending_voice_selections == {"audio_cpp": "[voice]"}
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        assert expected_status in status
+
+        widget.action_generate_tts()
+        await pilot.pause()
+
+        assert app.generation_events == []
+        assert "PRIVATE_" not in str(app.notices)
+        assert "PRIVATE_" not in status
 
 
 @pytest.mark.asyncio

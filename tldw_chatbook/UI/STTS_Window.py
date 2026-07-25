@@ -810,6 +810,18 @@ class TTSPlaygroundWidget(Widget):
         except asyncio.CancelledError:
             raise
         except Exception as error:
+            if isinstance(
+                error,
+                (TTSProviderReconfiguringError, TTSRegistryClosedError),
+            ):
+                if provider_id == self._selected_provider_id:
+                    self._stale_providers.add(provider_id)
+                    self._catalog_generation_allowed = False
+                    self._set_provider_status(
+                        self._catalog_error_copy(error, provider_id)
+                    )
+                    self._sync_generate_enabled()
+                return
             if not self._voice_token_is_current(token):
                 return
             logger.warning(
@@ -1278,20 +1290,28 @@ class TTSPlaygroundWidget(Widget):
             return "Please select a valid TTS provider"
         if not isinstance(model_id, str) or model_id.startswith("__"):
             return "Please select a valid TTS model"
-        if provider_id in self._pending_voice_selections:
-            return "Voices are still loading; wait before generating"
 
         service = self._tts_service
         catalog = self._catalogs.get(provider_id)
         if service is None or catalog is None:
             return "The selected provider catalog is not ready; refresh models"
+        revision_matches = self._catalog_configuration_revisions.get(
+            provider_id
+        ) == service.configuration_revision(provider_id)
+        if (
+            provider_id in self._pending_voice_selections
+            and provider_id not in self._stale_providers
+            and catalog.health.state == "available"
+            and catalog.health.fresh
+            and revision_matches
+        ):
+            return "Voices are still loading; wait before generating"
         if (
             provider_id in self._stale_providers
             or not self._catalog_generation_allowed
             or catalog.health.state != "available"
             or not catalog.health.fresh
-            or self._catalog_configuration_revisions.get(provider_id)
-            != service.configuration_revision(provider_id)
+            or not revision_matches
         ):
             return "The selected provider catalog is stale; refresh models"
         if not any(model.model_id == model_id for model in catalog.models):
