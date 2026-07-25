@@ -162,7 +162,7 @@ def _usage_total_tokens(resp) -> int | None:
 
 
 def _call_with_timeout(
-    fn: "Callable[[], ToolResult]", seconds: float, tool_name: str
+    fn: Callable[[], ToolResult], seconds: float, tool_name: str
 ) -> ToolResult:
     """Run ``fn`` on a daemon thread, bounded by ``seconds`` wall-clock.
 
@@ -173,14 +173,19 @@ def _call_with_timeout(
     worker and defeat the timeout; NOT a shared pool, which a single hung
     tool would saturate) is used; on timeout the worker is abandoned to die
     with the process — Python cannot forcibly kill a thread, but ``daemon``
-    means it never blocks interpreter shutdown.
+    means it never blocks interpreter shutdown, and for a side-effecting
+    tool (notably an MCP call already past its own approval/execution
+    bounds -- see ``RunBudget.max_tool_call_seconds``'s docstring) that
+    abandoned worker may still complete and act for real after this
+    function has already reported a timeout, so a caller retrying a
+    "failed" call risks running it twice.
     """
     box: dict = {}
 
     def _runner() -> None:
         try:
             box["result"] = fn()
-        except Exception as exc:  # noqa: BLE001 — surfaced as a failed ToolResult
+        except BaseException as exc:  # noqa: BLE001 — surfaced as a failed ToolResult, never propagated to the worker's exit
             box["error"] = str(exc)
 
     worker = threading.Thread(target=_runner, name=f"tool-{tool_name}", daemon=True)
@@ -192,7 +197,12 @@ def _call_with_timeout(
         )
     if "error" in box:
         return ToolResult(ok=False, error=box["error"])
-    return box["result"]
+    result = box.get("result")
+    if result is None:
+        return ToolResult(
+            ok=False, error=f"tool call produced no result: {tool_name}"
+        )
+    return result
 
 
 class AgentService:

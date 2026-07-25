@@ -20,6 +20,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
 )
+from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_service import (
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
@@ -1161,7 +1162,12 @@ def test_call_with_timeout_trips_on_slow_call():
     def slow():
         time.sleep(2.0)
         return ToolResult(ok=True, content="late")
+    t0 = time.monotonic()
     out = _call_with_timeout(slow, 0.2, "slow_tool")
+    # Bounds the wrapper's own wall-clock: a future "cleanup" that added a
+    # blocking worker.join() before returning (defeating the timeout) would
+    # fail this assertion instead of just making the test slow.
+    assert time.monotonic() - t0 < 1.0
     assert out.ok is False
     assert "timed out" in out.error and "slow_tool" in out.error
 
@@ -1173,13 +1179,33 @@ def test_call_with_timeout_wraps_exception():
     assert out.ok is False and "kaboom" in out.error
 
 
-def test_make_invoke_tool_bypasses_wrapper_when_unlimited(db):
+def test_call_with_timeout_wraps_base_exception():
+    """_runner only caught Exception; a BaseException (asyncio.CancelledError,
+    SystemExit -- both reachable in-repo, see BuiltinToolProvider.invoke's
+    asyncio.run() and any tool wrapping argparse) left neither box key set,
+    so `return box["result"]` raised KeyError out of invoke_tool into the
+    pure loop instead of returning a failed ToolResult. Must not regress."""
+    def boom():
+        raise SystemExit("bye")
+    out = _call_with_timeout(boom, 5.0, "exiting_tool")
+    assert out.ok is False and "bye" in out.error
+
+
+def test_make_invoke_tool_bypasses_wrapper_when_unlimited(db, monkeypatch):
     """max_tool_call_seconds=0 must skip _call_with_timeout entirely and
     call straight through to the registry -- a real closure-level test, not
-    just a check of the branch condition."""
+    just a check of the branch condition. Without the monkeypatch below this
+    test would pass identically whether or not the wrapper is used, since a
+    fast call looks the same either way -- the monkeypatch makes it actually
+    prove the bypass by failing loudly if the wrapper is invoked at all."""
     def chat(**kwargs):  # pragma: no cover - unused by this test
         return {"choices": [{"message": {"content": "unused"}}]}
 
+    monkeypatch.setattr(
+        agent_service,
+        "_call_with_timeout",
+        lambda *a, **k: pytest.fail("wrapper used on the 0 path"),
+    )
     service = _service_with_chat(db, chat)
     cfg = AgentConfig(
         model="test-model",

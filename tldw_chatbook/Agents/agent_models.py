@@ -144,9 +144,21 @@ class RunBudget:
     # task-327: per-tool-call wall-clock ceiling. A single custom/blocking
     # tool provider must not be able to wedge a cooperative-cancel run
     # forever. 0 = unlimited (opt-out). Enforced in agent_service's impure
-    # seam (the pure runtime stays timeout-free); MCP tools self-time-out
-    # via run_coroutine_threadsafe and are unaffected.
-    max_tool_call_seconds: float = 120.0
+    # seam (the pure runtime stays timeout-free). MCP tools DO flow through
+    # this same wrapper (MCPToolProvider is registered into the same
+    # per-run ToolCatalogRegistry as builtins), so the default is set
+    # deliberately above MCP's own worst case rather than independent of
+    # it: an "ask"-gated call can wait up to ~121s for human approval
+    # (`_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS = 120.0` in
+    # `Chat/console_chat_controller.py`, polled every
+    # `_MCP_APPROVAL_POLL_SECONDS = 1.0`) and then up to 65s to execute
+    # (`_tool_call_timeout() = 60.0` in
+    # `MCP/unified_control_plane_service.py` plus
+    # `_RESULT_WAIT_SLACK_SECONDS = 5.0` in `Agents/mcp_tool_provider.py`)
+    # -- ~186s end to end. Lowering this below that risks the wrapper
+    # reporting "timed out" for a call that later really executes on its
+    # abandoned thread (see `_call_with_timeout`'s docstring).
+    max_tool_call_seconds: float = 300.0
 
 
 @dataclass
