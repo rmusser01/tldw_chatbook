@@ -332,9 +332,6 @@ async def handle_ingest_characters_import_now_button_pressed(
 
     # Import these for worker-related functionality
     import tldw_chatbook.Event_Handlers.conv_char_events as ccp_handlers
-    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
-        populate_chat_conversation_character_filter_select,
-    )
 
     async def import_worker_char():
         results = []
@@ -448,7 +445,6 @@ async def handle_ingest_characters_import_now_button_pressed(
 
         # Set the flag to True since we're populating the filter after character import
         app._chat_character_filter_populated = True
-        app.call_later(populate_chat_conversation_character_filter_select, app)
         app.call_later(ccp_handlers.populate_ccp_character_select, app)
 
     def on_import_failure_char(error: Exception):

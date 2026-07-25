@@ -315,7 +315,6 @@ async def handle_ingest_prompts_import_now_button_pressed(
 
     # Import these for worker-related functionality
     import tldw_chatbook.Event_Handlers.conv_char_events as ccp_handlers
-    from .Chat_Events import chat_events as chat_handlers
 
     # The worker function itself remains the same
     async def import_worker_target():  # Renamed to avoid confusion with Worker class
@@ -410,7 +409,6 @@ async def handle_ingest_prompts_import_now_button_pressed(
         logger.info(f"Prompt import summary: {summary.strip()}")
 
         app.call_later(ccp_handlers.populate_ccp_prompts_list_view, app)
-        app.call_later(chat_handlers.handle_chat_sidebar_prompt_search_changed, app, "")
         logger.info("--- process_prompt_import_success FINISHED ---")
 
     def process_prompt_import_failure(error: Exception, worker_name: str):

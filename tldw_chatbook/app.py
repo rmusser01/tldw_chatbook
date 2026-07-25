@@ -81,19 +81,6 @@ from tldw_chatbook.Metrics.Otel_Metrics import init_metrics as init_otel_metrics
 
 #
 # --- Local API library Imports ---
-from .Event_Handlers.LLM_Management_Events import (
-    llm_management_events,
-    llm_management_events_mlx_lm,
-    llm_management_events_ollama,
-    llm_management_events_onnx,
-    llm_management_events_transformers,
-    llm_management_events_vllm,
-)
-from tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events import (
-    handle_streaming_chunk,
-    handle_stream_done,
-)
-from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
 from .config import (
     get_cli_setting,
     get_library_collections_db_path,
@@ -227,7 +214,6 @@ from tldw_chatbook.TTS.TTS_Generation import (
 )
 from tldw_chatbook.Event_Handlers.worker_handlers import (
     WorkerHandlerRegistry,
-    ChatWorkerHandler,
     ServerWorkerHandler,
     AIGenerationHandler,
     MiscWorkerHandler,
@@ -246,12 +232,8 @@ from .Event_Handlers import (
     conv_char_events as ccp_handlers,
     worker_events,
     ingest_events,
-    llm_nav_events,
     media_events,
-    app_lifecycle,
 )
-from .Event_Handlers.Chat_Events import chat_events as chat_handlers
-from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSRequestEvent,
     TTSCompleteEvent,
@@ -2794,10 +2776,10 @@ class TldwCli(
     splash_screen_active: reactive[bool] = reactive(False)
     _splash_screen_widget: Optional[SplashScreen] = None
 
-    # Add state to hold the currently streaming AI message widget
-    # Use a lock to prevent race conditions when modifying shared state
+    # Use a lock to prevent race conditions when modifying shared chat state
+    # (task-577 PR2 T2: current_ai_message_widget, the state this lock was
+    # originally added for, retired along with its set_/get_ accessors).
     _chat_state_lock = threading.Lock()
-    current_ai_message_widget: Optional[Union[ChatMessage, ChatMessageEnhanced]] = None
     current_chat_worker: Optional[Worker] = None
     current_chat_is_streaming: bool = False
 
@@ -2891,25 +2873,14 @@ class TldwCli(
     chat_sidebar_selected_prompt_system: reactive[Optional[str]] = reactive(None)
     chat_sidebar_selected_prompt_user: reactive[Optional[str]] = reactive(None)
 
-    # Chats
-    current_chat_is_ephemeral: reactive[bool] = reactive(
-        True
-    )  # Start new chats as ephemeral
-    # Reactive variable for current chat conversation ID
-    current_chat_conversation_id: reactive[Optional[str]] = reactive(None)
     # Reactive variable for current conversation loaded in the Conversations, Characters & Prompts tab
     current_conv_char_tab_conversation_id: reactive[Optional[str]] = reactive(None)
-    current_chat_active_character_data: reactive[Optional[Dict[str, Any]]] = reactive(
-        None
-    )
     current_ccp_character_details: reactive[Optional[Dict[str, Any]]] = reactive(None)
     current_ccp_character_image: Optional[Image.Image] = None
-
-    # Chat Tabs Management (when enable_tabs is True)
-    active_chat_tab_id: reactive[Optional[str]] = reactive(None)
-    chat_sessions: reactive[Dict[str, Dict[str, Any]]] = reactive(
-        {}
-    )  # tab_id -> session_data dict
+    # task-577 PR2 T2: current_chat_is_ephemeral/current_chat_conversation_id/
+    # current_chat_active_character_data/active_chat_tab_id/chat_sessions
+    # retired -- zero live readers (only writers were the retired legacy
+    # chat sidebar and its tab-management subsystem, both dead since PR1).
 
     # For Chat Sidebar Prompts section
     chat_sidebar_loaded_prompt_id: reactive[Optional[Union[int, str]]] = reactive(None)
@@ -3356,10 +3327,6 @@ class TldwCli(
         self._wire_research_services()
         self._wire_character_persona_services()
         self._wire_chat_conversation_services()
-
-        # --- Create the master handler map ---
-        # This one-time setup makes the dispatcher clean and fast.
-        self.button_handler_map = self._build_handler_map()
 
         # --- Initialize worker handler registry ---
         self._init_worker_handlers()
@@ -5191,186 +5158,23 @@ class TldwCli(
         self.worker_handler_registry = WorkerHandlerRegistry(self)
 
         # Register all worker handlers
-        self.worker_handler_registry.register(ChatWorkerHandler(self))
+        # task-577 PR2 T3: ChatWorkerHandler retired -- its can_handle()
+        # claimed "API_Call_chat*"/"API_Call_ccp*"/"respond_for_me_worker",
+        # but every producer of those names lived in chat_events.py (deleted
+        # this task); "API_Call_ccp*" had zero producers anywhere in the
+        # repo (conv_char_events.py's ai_generate_* workers use different
+        # names, handled by AIGenerationHandler below).
         self.worker_handler_registry.register(ServerWorkerHandler(self))
         self.worker_handler_registry.register(AIGenerationHandler(self))
         self.worker_handler_registry.register(MiscWorkerHandler(self))
 
         self.loguru_logger.info("Worker handler registry initialized with all handlers")
 
-    def _build_handler_map(self) -> dict:
-        """Constructs the master button handler map from all event modules."""
-
-        # --- Generic, Awaitable Helper Handlers ---
-        async def _handle_nav(
-            app: "TldwCli", event: Button.Pressed, *, prefix: str, reactive_attr: str
-        ) -> None:
-            """Generic handler for switching views within a tab."""
-            view_to_activate = event.button.id.replace(
-                f"{prefix}-nav-", f"{prefix}-view-"
-            )
-            app.loguru_logger.info(
-                f"_handle_nav called: Nav button '{event.button.id}' pressed. Prefix: '{prefix}', Reactive attr: '{reactive_attr}', Activating view '{view_to_activate}'."
-            )
-            old_value = getattr(app, reactive_attr, None)
-            setattr(app, reactive_attr, view_to_activate)
-            new_value = getattr(app, reactive_attr, None)
-            app.loguru_logger.info(
-                f"_handle_nav: Set {reactive_attr} from '{old_value}' to '{new_value}'"
-            )
-
-        async def _handle_sidebar_toggle(
-            app: "TldwCli", event: Button.Pressed, *, reactive_attr: str
-        ) -> None:
-            """Generic handler for toggling a sidebar's collapsed state."""
-            setattr(app, reactive_attr, not getattr(app, reactive_attr))
-
-        # --- LLM Management Handlers ---
-        llm_handlers_map = {
-            **llm_management_events.LLM_MANAGEMENT_BUTTON_HANDLERS,
-            **llm_nav_events.LLM_NAV_BUTTON_HANDLERS,
-            **llm_management_events_mlx_lm.MLX_LM_BUTTON_HANDLERS,
-            **llm_management_events_ollama.OLLAMA_BUTTON_HANDLERS,
-            **llm_management_events_onnx.ONNX_BUTTON_HANDLERS,
-            **llm_management_events_transformers.TRANSFORMERS_BUTTON_HANDLERS,
-            **llm_management_events_vllm.VLLM_BUTTON_HANDLERS,
-        }
-
-        # --- Chat Handlers ---
-
-        chat_handlers_map = {
-            **chat_events.CHAT_BUTTON_HANDLERS,
-            "toggle-chat-left-sidebar": functools.partial(
-                _handle_sidebar_toggle, reactive_attr="chat_sidebar_collapsed"
-            ),
-            # task-577 T4: dead "toggle-chat-right-sidebar" entry removed --
-            # button_handler_map (built here) has zero readers (write-only,
-            # scout finding #3) and the id is composed nowhere live.
-            # chat_events.py keeps its own CHAT_BUTTON_HANDLERS entry for this
-            # id -- that file is out of scope for this PR (Phase 2).
-        }
-
-        # --- Media Tab Handlers (NEW DYNAMIC WAY) ---
-        media_handlers_map = {}
-        for media_type_name in self._media_types_for_ui:
-            slug = slugify(media_type_name)
-            media_handlers_map[f"media-nav-{slug}"] = (
-                media_events.handle_media_nav_button_pressed
-            )
-            media_handlers_map[f"media-load-selected-button-{slug}"] = (
-                media_events.handle_media_load_selected_button_pressed
-            )
-            media_handlers_map[f"media-prev-page-button-{slug}"] = (
-                media_events.handle_media_page_change_button_pressed
-            )
-            media_handlers_map[f"media-next-page-button-{slug}"] = (
-                media_events.handle_media_page_change_button_pressed
-            )
-
-        # Add handlers for special media sub-tabs
-        media_handlers_map["media-nav-analysis-review"] = (
-            media_events.handle_media_nav_button_pressed
-        )
-        media_handlers_map["media-nav-collections-tags"] = (
-            media_events.handle_media_nav_button_pressed
-        )
-        media_handlers_map["media-nav-multi-item-review"] = (
-            media_events.handle_media_nav_button_pressed
-        )
-
-        # --- Search Handlers ---
-        search_handlers = {
-            SEARCH_NAV_RAG_QA: functools.partial(
-                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
-            ),
-            SEARCH_NAV_RAG_CHAT: functools.partial(
-                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
-            ),
-            SEARCH_NAV_RAG_MANAGEMENT: functools.partial(
-                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
-            ),
-            SEARCH_NAV_WEB_SEARCH: functools.partial(
-                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
-            ),
-            SEARCH_NAV_EMBEDDINGS_CREATE: functools.partial(
-                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
-            ),
-            SEARCH_NAV_EMBEDDINGS_MANAGE: functools.partial(
-                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
-            ),
-        }
-
-        # --- Ingest Handlers ---
-        ingest_handlers_map = {
-            **ingest_events.INGEST_BUTTON_HANDLERS,
-            # Add nav handlers using the helper
-            **{
-                button_id: functools.partial(
-                    _handle_nav, prefix="ingest", reactive_attr="ingest_active_view"
-                )
-                for button_id in INGEST_NAV_BUTTON_IDS
-            },
-        }
-
-        # --- Tools & Settings Handlers ---
-        tools_settings_handlers = {
-            "ts-nav-general-settings": functools.partial(
-                _handle_nav, prefix="ts", reactive_attr="tools_settings_active_view"
-            ),
-            "ts-nav-config-file-settings": functools.partial(
-                _handle_nav, prefix="ts", reactive_attr="tools_settings_active_view"
-            ),
-            "ts-nav-db-tools": functools.partial(
-                _handle_nav, prefix="ts", reactive_attr="tools_settings_active_view"
-            ),
-            "ts-nav-appearance": functools.partial(
-                _handle_nav, prefix="ts", reactive_attr="tools_settings_active_view"
-            ),
-        }
-
-        # --- Evals Handler ---
-        evals_handlers = {
-            "toggle-evals-sidebar": functools.partial(
-                _handle_sidebar_toggle, reactive_attr="evals_sidebar_collapsed"
-            ),
-        }
-
-        # Master map organized by tab
-        return {
-            TAB_CHAT: chat_handlers_map,
-            TAB_CCP: {
-                **ccp_handlers.CCP_BUTTON_HANDLERS,
-                "toggle-conv-char-left-sidebar": functools.partial(
-                    _handle_sidebar_toggle,
-                    reactive_attr="conv_char_sidebar_left_collapsed",
-                ),
-                "toggle-conv-char-right-sidebar": functools.partial(
-                    _handle_sidebar_toggle,
-                    reactive_attr="conv_char_sidebar_right_collapsed",
-                ),
-            },
-            TAB_MEDIA: {
-                **media_events.MEDIA_BUTTON_HANDLERS,
-                **{
-                    f"media-nav-{slugify(media_type)}": functools.partial(
-                        _handle_nav, prefix="media", reactive_attr="media_active_view"
-                    )
-                    for media_type in self._media_types_for_ui
-                },
-                "media-nav-all-media": functools.partial(
-                    _handle_nav, prefix="media", reactive_attr="media_active_view"
-                ),
-            },
-            TAB_INGEST: ingest_handlers_map,
-            TAB_LLM: llm_handlers_map,
-            TAB_LOGS: app_lifecycle.APP_LIFECYCLE_BUTTON_HANDLERS,
-            TAB_TOOLS_SETTINGS: tools_settings_handlers,
-            TAB_SEARCH: search_handlers,
-            TAB_EVALS: evals_handlers,
-            TAB_STTS: {},  # STTS handles its own events
-            TAB_STUDY: {},  # Study handles its own events
-            TAB_WATCHLISTS_COLLECTIONS: {},  # Watchlists handles its own events
-        }
+    # task-577 PR2 T2: `_build_handler_map`/`button_handler_map` retired --
+    # scout finding #3 (write-only, zero readers; `on_button_pressed` is a
+    # screen-nav no-op that never consulted the map). The folded
+    # *_BUTTON_HANDLERS source dicts remain defined in their own modules,
+    # unreferenced here but out of this task's scope.
 
     def _setup_buffered_logging(self):
         """Set up a persistent buffered logging handler for screen navigation mode."""
@@ -5829,37 +5633,13 @@ class TldwCli(
         else:
             logger.error(f"Unknown screen requested: {requested_screen}")
 
-    @on(ChatMessage.Action)
-    async def handle_chat_message_action(self, event: ChatMessage.Action) -> None:
-        """Handles actions (edit, copy, etc.) from within a ChatMessage widget."""
-        button_classes = " ".join(event.button.classes)  # Get class string for logging
-        self.loguru_logger.debug(
-            f"ChatMessage.Action received for button "
-            f"(Classes: {button_classes}, Label: '{event.button.label}') "
-            f"on message role: {event.message_widget.role}"
-        )
-        # The event directly gives us the context we need.
-        # Now we call the existing handler function with the correct arguments.
-        await chat_events.handle_chat_action_button_pressed(
-            self, event.button, event.message_widget
-        )
-
-    @on(ChatMessageEnhanced.Action)
-    async def handle_chat_message_enhanced_action(
-        self, event: ChatMessageEnhanced.Action
-    ) -> None:
-        """Handles actions (edit, copy, etc.) from within a ChatMessageEnhanced widget."""
-        button_classes = " ".join(event.button.classes)  # Get class string for logging
-        self.loguru_logger.debug(
-            f"ChatMessageEnhanced.Action received for button "
-            f"(Classes: {button_classes}, Label: '{event.button.label}') "
-            f"on message role: {event.message_widget.role}"
-        )
-        # The event directly gives us the context we need.
-        # Now we call the existing handler function with the correct arguments.
-        await chat_events.handle_chat_action_button_pressed(
-            self, event.button, event.message_widget
-        )
+    # task-577 PR2 T2: the ChatMessage.Action/ChatMessageEnhanced.Action arms
+    # that used to live here were dead -- both widget classes are mounted
+    # only by the retired legacy chat send/regenerate flow (chat_events.py)
+    # and the write-only CCP_BUTTON_HANDLERS map (conv_char_events.py);
+    # nothing on a live path ever mounts an instance that could post
+    # ``.Action``. The imports stay -- the live TTS complete/progress
+    # handlers below still query the DOM for these widget types.
 
     @on(TTSRequestEvent)
     async def handle_tts_request_event(self, event: TTSRequestEvent) -> None:
@@ -6453,20 +6233,11 @@ class TldwCli(
         UIHelpers.clear_prompt_editor_fields(self)
 
     # --- Thread-safe chat state helpers ---
-
-    def set_current_ai_message_widget(
-        self, widget: Optional[Union[ChatMessage, ChatMessageEnhanced]]
-    ) -> None:
-        """Thread-safely set the current AI message widget."""
-        with self._chat_state_lock:
-            self.current_ai_message_widget = widget
-
-    def get_current_ai_message_widget(
-        self,
-    ) -> Optional[Union[ChatMessage, ChatMessageEnhanced]]:
-        """Thread-safely get the current AI message widget."""
-        with self._chat_state_lock:
-            return self.current_ai_message_widget
+    # task-577 PR2 T2: set_current_ai_message_widget/get_current_ai_message_widget
+    # retired -- their only callers were chat_streaming_events.py's
+    # on_streaming_chunk/on_stream_done, reachable solely via this app's
+    # (now-removed) @on(StreamingChunk)/@on(StreamDone) arms, which nothing
+    # on a live path ever triggered.
 
     def set_current_chat_worker(self, worker: Optional[Worker]) -> None:
         """Thread-safely set the current chat worker."""
@@ -8182,307 +7953,14 @@ class TldwCli(
     #
     # ######################################################################
     def watch_current_tab(self, old_tab: Optional[str], new_tab: str) -> None:
-        """Shows/hides the relevant content window when the tab changes."""
-        # Skip entirely when using screen navigation
-        if hasattr(self, "_use_screen_navigation") and self._use_screen_navigation:
-            return
-        if not new_tab:  # Skip if empty
-            return
-        if not self._ui_ready:
-            return
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
+        """Legacy tab-content watcher; retained as a permanent no-op.
 
-        # Execute tab switch immediately - no debouncing needed
-        self._execute_tab_switch(old_tab, new_tab)
-
-    def _execute_tab_switch(self, old_tab: Optional[str], new_tab: str) -> None:
-        """Execute the actual tab switch immediately."""
-        loguru_logger.debug(
-            f"\n>>> DEBUG: Executing tab switch! Old: '{old_tab}', New: '{new_tab}'"
-        )
-        if not isinstance(new_tab, str) or not new_tab:
-            print(
-                f">>> DEBUG: watch_current_tab: Invalid new_tab '{new_tab!r}', aborting."
-            )
-            logging.error(
-                f"Watcher received invalid new_tab value: {new_tab!r}. Aborting tab switch."
-            )
-            return
-        if old_tab and not isinstance(old_tab, str):
-            print(
-                f">>> DEBUG: watch_current_tab: Invalid old_tab '{old_tab!r}', setting to None."
-            )
-            logging.warning(f"Watcher received invalid old_tab value: {old_tab!r}.")
-            old_tab = None
-
-        logging.debug(f"Watcher: Switching tab from '{old_tab}' to '{new_tab}'")
-
-        # --- Hide Old Tab ---
-        if old_tab and old_tab != new_tab:
-            # Update navigation UI to remove active state from old tab
-            use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
-            use_links = get_cli_setting("general", "use_link_navigation", True)
-
-            if not use_dropdown:  # Only for non-dropdown navigation
-                if use_links:
-                    # Update TabLinks active state
-                    try:
-                        from .UI.Tab_Links import TabLinks
-
-                        tab_links = self.query_one(TabLinks)
-                        tab_links.set_active_tab(new_tab)
-                    except QueryError:
-                        pass
-                else:
-                    # Remove active class from old tab button
-                    try:
-                        self.query_one(f"#tab-{old_tab}", Button).remove_class(
-                            "-active"
-                        )
-                    except QueryError:
-                        pass
-            # Notes auto-save is owned by the Library notes editor; no tab-switch save here.
-            try:
-                self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
-            except QueryError:
-                logging.warning(f"Watcher: Could not find old button #tab-{old_tab}")
-            try:
-                self.query_one(f"#{old_tab}-window").display = False
-            except QueryError:
-                logging.warning(f"Watcher: Could not find old window #{old_tab}-window")
-
-        # Show New Tab UI
-        try:
-            # Update navigation UI based on type
-            use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
-            use_links = get_cli_setting("general", "use_link_navigation", True)
-
-            if use_dropdown:
-                # Update dropdown selection if it exists and differs
-                try:
-                    dropdown = self.query_one(TabDropdown)
-                    dropdown.update_active_tab(new_tab)
-                except QueryError:
-                    pass
-            elif use_links:
-                # Update link navigation
-                # TabLinks active state is now handled by TabLinks.set_active_tab() above
-                pass
-            else:
-                # Update traditional tab bar button
-                self.query_one(f"#tab-{new_tab}", Button).add_class("-active")
-
-            new_window = self.query_one(f"#{new_tab}-window")
-
-            # Initialize placeholder window if needed (with caching)
-            if (
-                isinstance(new_window, PlaceholderWindow)
-                and not new_window.is_initialized
-            ):
-                # Check if we've already started initializing this tab
-                if new_tab not in self._initialized_tabs:
-                    loguru_logger.info(
-                        f"Initializing lazy-loaded window for tab: {new_tab}"
-                    )
-                    self._initialized_tabs.add(new_tab)
-                    new_window.initialize()
-                else:
-                    # Tab is already being initialized, skip
-                    loguru_logger.debug(
-                        f"Tab {new_tab} already initialized or initializing"
-                    )
-
-            # Always set display to True for the new window
-            new_window.display = True
-            loguru_logger.debug(
-                f"Set display=True for window: {new_window.__class__.__name__} (id={new_tab}-window)"
-            )
-
-            # Update word count and token count in footer based on tab
-            # (resolve the active screen's own footer -- see
-            # `_active_footer_status`, task-264).
-            footer = self._active_footer_status()
-            if footer is not None:
-                if new_tab == TAB_CHAT:
-                    # Clear word count when on chat tab
-                    footer.update_word_count(0)
-                    # Update token count immediately
-                    self.call_after_refresh(self.update_token_count_display)
-                else:
-                    # Clear both when on other tabs
-                    footer.update_word_count(0)
-                    footer.update_token_count("")
-
-            # Focus input logic (as in original, adjust if needed)
-            if new_tab not in [TAB_LOGS, TAB_STATS]:  # Don't focus input on these tabs
-                input_to_focus: Optional[Union[TextArea, Input]] = None
-                try:
-                    input_to_focus = new_window.query_one(TextArea)
-                except QueryError:
-                    try:
-                        input_to_focus = new_window.query_one(
-                            Input
-                        )  # Check for Input if TextArea not found
-                    except QueryError:
-                        pass  # No primary input found
-
-                if input_to_focus:
-                    input_to_focus.focus()  # Focus immediately, no delay needed
-                    logging.debug(f"Watcher: Focused input in '{new_tab}'")
-                else:
-                    logging.debug(
-                        f"Watcher: No primary input (TextArea or Input) found to focus in '{new_tab}'"
-                    )
-        except QueryError:
-            logging.error(
-                f"Watcher: Could not find new button or window for #tab-{new_tab} / #{new_tab}-window"
-            )
-        except Exception as e_show_new:
-            logging.error(
-                f"Watcher: Error showing new tab '{new_tab}': {e_show_new}",
-                exc_info=True,
-            )
-
-        loguru_logger.debug(">>> DEBUG: watch_current_tab finished.")
-
-        # Tab-specific actions on switch
-        if new_tab == TAB_CHAT:
-            # If chat tab becomes active, maybe re-focus chat input
-            try:
-                self.query_one("#chat-input", TextArea).focus()
-            except QueryError:
-                pass
-            # Add this line to populate prompts when chat tab is opened:
-            # Use call_after_refresh for async functions to ensure proper execution
-            self.call_after_refresh(
-                chat_handlers.handle_chat_sidebar_prompt_search_changed, self, ""
-            )  # Call with empty search term
-            self.call_after_refresh(
-                chat_handlers._populate_chat_character_search_list, self
-            )  # Populate character list
-        elif new_tab == TAB_CCP:
-            # Initial population for CCP tab when switched to
-            # Add a short delay to ensure the window is fully mounted and ready
-            def populate_ccp_widgets():
-                try:
-                    # Check if the window is actually initialized
-                    ccp_window = self.query_one(
-                        "#conversations_characters_prompts-window"
-                    )
-                    if isinstance(ccp_window, PlaceholderWindow):
-                        # Window isn't initialized yet, skip population
-                        loguru_logger.warning(
-                            "CCP window is still a placeholder, skipping widget population"
-                        )
-                        return
-
-                    # Now it's safe to populate widgets
-                    self.call_after_refresh(
-                        ccp_handlers.populate_ccp_character_select, self
-                    )
-                    self.call_after_refresh(
-                        ccp_handlers.populate_ccp_prompts_list_view, self
-                    )
-                    self.call_after_refresh(
-                        ccp_handlers.populate_ccp_dictionary_select, self
-                    )
-                    self.call_after_refresh(
-                        ccp_handlers.populate_ccp_worldbook_list, self
-                    )
-                    self.call_after_refresh(
-                        ccp_handlers.perform_ccp_conversation_search, self
-                    )
-                except QueryError:
-                    loguru_logger.error("CCP window not found during widget population")
-
-            # Call immediately after refresh
-            self.call_after_refresh(populate_ccp_widgets)
-        elif new_tab == TAB_MEDIA:
-
-            def activate_media_initial_view():
-                try:
-                    from .UI.MediaWindow_v2 import MediaWindow as MediaWindow_v2
-
-                    media_window = self.query_one(MediaWindow_v2)
-                    media_window.activate_initial_view()
-                except QueryError:
-                    loguru_logger.error(
-                        "Could not find MediaWindow to activate its initial view."
-                    )
-
-            # Call immediately after refresh
-            self.call_after_refresh(activate_media_initial_view)
-        elif new_tab == TAB_SEARCH:
-            # Handle search tab initialization with a delay to ensure window is ready
-            def initialize_search_tab():
-                try:
-                    # Check if the window is actually initialized
-                    search_window = self.query_one("#search-window")
-                    if isinstance(search_window, PlaceholderWindow):
-                        # Window isn't initialized yet, skip setting sub-tab
-                        loguru_logger.warning(
-                            "Search window is still a placeholder, skipping sub-tab initialization"
-                        )
-                        return
-
-                    # Now it's safe to set the active sub-tab
-                    if not self.search_active_sub_tab:
-                        self.search_active_sub_tab = self._initial_search_sub_tab_view
-                except QueryError:
-                    loguru_logger.error("Search window not found during initialization")
-
-            # Call immediately after refresh
-            self.call_after_refresh(initialize_search_tab)
-        elif new_tab == TAB_INGEST:
-            if not self.ingest_active_view:
-                self.loguru_logger.debug(
-                    f"Switched to Ingest tab, activating initial view: {self._initial_ingest_view}"
-                )  # Reverted to original debug log
-                # Use call_later to ensure the UI has settled after tab switch before changing sub-view
-                self.call_later(self._activate_initial_ingest_view)
-        elif new_tab == TAB_TOOLS_SETTINGS:
-            # Handle tools settings tab initialization
-            def initialize_tools_settings():
-                try:
-                    # Check if the window is actually initialized
-                    tools_window = self.query_one("#tools_settings-window")
-                    if isinstance(tools_window, PlaceholderWindow):
-                        # Window isn't initialized yet, skip for now
-                        return
-
-                    # Now it's safe to activate the initial view
-                    from .UI.Tools_Settings_Window import ToolsSettingsWindow
-
-                    if isinstance(tools_window, ToolsSettingsWindow):
-                        tools_window.activate_initial_view()
-                        if not self.tools_settings_active_view:
-                            self.tools_settings_active_view = (
-                                self._initial_tools_settings_view
-                            )
-                            self.loguru_logger.debug(
-                                f"Tools & Settings tab initialized with view: {self._initial_tools_settings_view}"
-                            )
-                except QueryError:
-                    self.loguru_logger.error(
-                        "Tools settings window not found during initialization"
-                    )
-
-            # Call immediately after refresh
-            self.call_after_refresh(initialize_tools_settings)
-        elif new_tab == TAB_LLM:  # New elif block for LLM tab
-            if not self.llm_active_view:  # If no view is active yet
-                self.loguru_logger.debug(
-                    f"Switched to LLM Management tab, activating initial view: {self._initial_llm_view}"
-                )
-                self.call_later(
-                    setattr, self, "llm_active_view", self._initial_llm_view
-                )
-            # Populate LLM help texts when the tab is shown
-            self.call_after_refresh(llm_management_events.populate_llm_help_texts, self)
-        elif new_tab == TAB_EVALS:  # Added for Evals tab
-            # EvalsLab is a unified dashboard - no need for view activation
-            self.loguru_logger.debug("Switched to Evals tab")
+        Screen-based navigation (``self._use_screen_navigation``, set
+        unconditionally in ``__init__``) now owns every tab switch, so
+        this watcher's original show/hide dispatch (``_execute_tab_switch``,
+        task-577 PR2 T2) has been retired along with it.
+        """
+        return
 
     def _log_view_dimensions(self, view, parent):
         """Helper to log view dimensions after refresh."""
@@ -9058,80 +8536,12 @@ class TldwCli(
             )
             self.notify(f"Error copying note: {type(e).__name__}", severity="error")
 
-    @on(Collapsible.Toggled, "#chat-notes-collapsible")
-    async def on_chat_notes_collapsible_toggle(
-        self, event: Collapsible.Toggled
-    ) -> None:
-        """Handles the expansion/collapse of the Notes collapsible section in the chat sidebar."""
-        if not event.collapsible.collapsed:  # If the collapsible was just expanded
-            self.loguru_logger.info(
-                f"Notes collapsible opened in chat sidebar. User ID: {self.notes_user_id}. Refreshing list."
-            )
-
-            if not self.notes_service:
-                self.notify("Notes service is not available.", severity="error")
-                self.loguru_logger.error(
-                    "Notes service not available in on_chat_notes_collapsible_toggle."
-                )
-                return
-
-    @on(Collapsible.Toggled, "#chat-active-character-info-collapsible")
-    async def on_chat_active_character_info_collapsible_toggle(
-        self, event: Collapsible.Toggled
-    ) -> None:
-        """Handles the expansion/collapse of the Active Character Info collapsible section in the chat sidebar."""
-        if not event.collapsible.collapsed:  # If the collapsible was just expanded
-            self.loguru_logger.info(
-                "Active Character Info collapsible opened in chat sidebar. Refreshing character list."
-            )
-
-            # Call the function to populate the character list
-            from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
-
-            await chat_events._populate_chat_character_search_list(self)
-        else:
-            self.loguru_logger.info(
-                "Active Character Info collapsible closed in chat sidebar."
-            )
-
-    @on(Collapsible.Toggled, "#chat-conversations")
-    async def on_chat_conversations_collapsible_toggle(
-        self, event: Collapsible.Toggled
-    ) -> None:
-        """Handles the expansion/collapse of the Conversations collapsible section in the chat sidebar."""
-        # Check if this is specifically the chat conversations collapsible
-        if event.collapsible.id != "chat-conversations":
-            return
-
-        if not event.collapsible.collapsed:  # If the collapsible was just expanded
-            self.loguru_logger.info("Conversations collapsible opened in chat sidebar.")
-
-            # Populate the character filter dropdown only once when the collapsible is first opened
-            # This avoids the database connection conflicts that occur during startup
-            if not self._chat_character_filter_populated:
-                self.loguru_logger.info(
-                    "Populating character filter for the first time."
-                )
-                try:
-                    from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
-
-                    await (
-                        chat_events.populate_chat_conversation_character_filter_select(
-                            self
-                        )
-                    )
-                    self._chat_character_filter_populated = True
-                    self.loguru_logger.info("Character filter populated successfully.")
-                except Exception as e:
-                    self.loguru_logger.opt(exception=True).error(
-                        f"Failed to populate character filter: {e}"
-                    )
-            else:
-                self.loguru_logger.debug(
-                    "Character filter already populated, skipping."
-                )
-        else:
-            self.loguru_logger.info("Conversations collapsible closed in chat sidebar.")
+    # task-577 PR2 T2: the #chat-notes-collapsible /
+    # #chat-active-character-info-collapsible / #chat-conversations
+    # Collapsible.Toggled arms that used to live here were dead -- all three
+    # ids belonged to the retired legacy chat sidebar (ChatWindowEnhanced
+    # family, task-577 PR1) and are composed nowhere live. The CCP tab's
+    # own conversations collapsible below is unrelated and stays.
 
     @on(Collapsible.Toggled, "#conv-char-conversations-collapsible")
     async def on_ccp_conversations_collapsible_toggle(
@@ -9198,24 +8608,10 @@ class TldwCli(
             await ccp_handlers.handle_ccp_prompt_search_input_changed(self, event)
         elif input_id == "ccp-worldbook-search-input" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_worldbook_search_input_changed(self, event)
-        elif (
-            input_id == "chat-prompt-search-input" and current_active_tab == TAB_CHAT
-        ):  # New condition
-            if self._chat_sidebar_prompt_search_timer:  # Use the new timer variable
-                self._chat_sidebar_prompt_search_timer.stop()
-            self._chat_sidebar_prompt_search_timer = self.set_timer(
-                0.5,
-                lambda: chat_handlers.handle_chat_sidebar_prompt_search_changed(
-                    self, event.value.strip()
-                ),
-            )
-        elif (
-            input_id == "chat-template-search-input" and current_active_tab == TAB_CHAT
-        ):
-            # No debouncer here, direct call for template search
-            await chat_handlers.handle_chat_template_search_input_changed(
-                self, event.value
-            )
+        # task-577 PR2 T2: the #chat-prompt-search-input /
+        # #chat-template-search-input arms that used to live here were dead
+        # -- both ids belonged to the retired legacy chat sidebar and are
+        # composed nowhere live.
         elif input_id == "chat-llm-max-tokens" and current_active_tab == TAB_CHAT:
             # Update token counter when max tokens value changes
             self.call_after_refresh(self.update_token_count_display)
@@ -9277,16 +8673,9 @@ class TldwCli(
                 self, list_view_id, event.item
             )
 
-        elif (
-            list_view_id == "chat-sidebar-prompts-listview"
-            and current_active_tab == TAB_CHAT
-        ):
-            self.loguru_logger.debug(
-                "Dispatching to chat_handlers.handle_chat_sidebar_prompts_list_view_selected"
-            )
-            await ccp_handlers.handle_ccp_prompts_list_view_selected(
-                self, list_view_id, event.item
-            )
+        # task-577 PR2 T2: the #chat-sidebar-prompts-listview arm that used
+        # to live here was dead -- the id belonged to the retired legacy
+        # chat sidebar and is composed nowhere live.
 
         # Note: conv-char-search-results-list selections are handled by their respective "Load Selected" buttons.
         else:
@@ -9425,13 +8814,13 @@ class TldwCli(
     ##################################################################
     # --- Event Handlers for Streaming and Worker State Changes ---
     ##################################################################
-    @on(StreamingChunk)
-    async def on_streaming_chunk(self, event: StreamingChunk) -> None:
-        await handle_streaming_chunk(self, event)
-
-    @on(StreamDone)
-    async def on_stream_done(self, event: StreamDone) -> None:
-        await handle_stream_done(self, event)
+    # task-577 PR2 T2: the StreamingChunk/StreamDone arms that used to live
+    # here were dead -- their only posters (worker_events.chat_wrapper_function
+    # and the chat-only claims in handle_api_call_worker_state_changed) are
+    # only reachable via a worker name ("API_Call_chat*"/"respond_for_me_worker")
+    # that nothing on a live path ever starts (the sole spawn site was inside
+    # the retired chat_events.py send flow). Removed along with the now-dead
+    # `handle_streaming_chunk`/`handle_stream_done` import.
 
     @on(media_events.MediaMetadataUpdateEvent)
     async def on_media_metadata_update(

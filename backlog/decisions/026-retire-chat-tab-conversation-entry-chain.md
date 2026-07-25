@@ -62,3 +62,15 @@ enhanced_settings_sidebar (unmounted since 8ea71071f)".
 - Post-implementation addendum (2026-07-25): final campaign total ~5,150 lines
   removed once Unit 5+7 whole-file/CSS/reference reductions landed (the ~3,200
   figure above was the pre-implementation Units 1-4/6 estimate).
+- Post-implementation addendum (2026-07-25, task-577 PR2): task-577 completed
+  the retirement this decision deferred — PR1 (#888) retired the
+  `ChatWindowEnhanced` window family itself plus the chat-tabs subsystem; PR2
+  retired the dead legacy send/streaming/worker pipeline behind it
+  (`chat_events.py`, `chat_events_sidebar.py`, `chat_streaming_events.py`,
+  `worker_handlers/chat_worker_handler.py`, and ~1,000 dead LOC out of
+  `worker_events.py`). The sole legacy-pipeline survivor is
+  `worker_events.chat_wrapper_function`, kept reduced because it still serves
+  `MediaWindow_v2`'s media-analysis flow (and CCP's generation handlers) —
+  confirming this decision's premise end to end: the Console never used the
+  legacy send stack, so nothing downstream of it needed to survive for the
+  Console's sake.

@@ -4,7 +4,6 @@ This module provides a comprehensive mock architecture that correctly handles
 async/sync methods, query_one behavior, and all necessary mock attributes.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 from textual.widgets import (
     Button,
@@ -306,40 +305,5 @@ def create_widget_mock(widget_class, **kwargs):
         # Static.update is sync
         if widget_class == Static:
             mock.update = MagicMock()
-
-    return mock
-
-
-@pytest.fixture
-def mock_app():
-    """Fixture that provides a comprehensive mock app."""
-    return create_comprehensive_app_mock()
-
-
-@pytest.fixture
-def mock_chat_message():
-    """Fixture for ChatMessage widget mock."""
-    from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
-
-    mock = MagicMock(spec=ChatMessage)
-    mock.role = "User"
-    mock.message_text = ""
-    mock.message_id_internal = None
-    mock.message_version_internal = 0
-    mock.generation_complete = False
-    mock.image_data = None
-    mock.image_mime_type = None
-    mock.is_mounted = True
-    mock._editing = False
-
-    # Async methods
-    mock.mount = AsyncMock()
-    mock.remove = AsyncMock()
-    mock.mark_generation_complete = MagicMock()  # This is sync
-
-    # query_one returns a Static widget
-    mock_static = MagicMock(spec=Static)
-    mock_static.update = MagicMock()
-    mock.query_one = MagicMock(return_value=mock_static)
 
     return mock
