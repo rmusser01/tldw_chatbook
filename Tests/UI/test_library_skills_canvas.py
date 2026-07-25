@@ -989,6 +989,217 @@ async def test_opening_skill_editor_does_not_break_tab_bar_click_activation(tmp_
 
 
 # ---------------------------------------------------------------------------
+# Task 8 (skills-script-execution): the interactive "Revoke script access"
+# path. Task 7 shipped the grant line + Revoke button but left the
+# interactive wiring (button press -> real screen handler -> trust service
+# -> panel patch), the disabled-state toggle, and the async staleness guard
+# entirely untested -- ``Tests/Library`` has no Pilot/``App.run_test()``
+# harness, but this file does. Revoke is the user's ONLY way to withdraw a
+# skill's standing script-execution permission, so a silently-broken wire-up
+# here would break a real security control while every other test kept
+# passing.
+#
+# The skill itself, its detail fetch, and the button/handler wiring are all
+# REAL -- mirrors ``test_opening_skill_editor_does_not_break_tab_bar_click_
+# activation`` above (same ``LocalSkillsService``/``SkillsScopeService``
+# construction). Only ``app_instance.local_skill_trust_service`` is a small
+# controllable fake exposing exactly the two methods the trust panel calls
+# (``script_execution_granted``/``revoke_script_execution``), matching this
+# file's own established convention for trust-service stand-ins (see
+# ``_MismatchService`` above) -- the persistence semantics of a REAL grant
+# (digest-pinned, invalidated by content changes) are already covered by
+# ``Tests/Skills/test_skill_script_grants.py``; what is untested until now
+# is purely the UI wiring.
+# ---------------------------------------------------------------------------
+
+
+class _FakeScriptGrantTrustService:
+    """Controllable stand-in for the two ``SkillTrustService`` methods the
+    trust panel's script-grant line/button actually call.
+
+    Mirrors the real service's signatures exactly (``script_execution_
+    granted(name) -> bool`` / ``revoke_script_execution(name) -> None``),
+    so a signature drift in production would break this fake's call sites
+    too, rather than silently keep passing.
+    """
+
+    def __init__(self, *, granted: bool) -> None:
+        self._granted = granted
+        self.granted_calls: list[str] = []
+        self.revoke_calls: list[str] = []
+
+    def script_execution_granted(self, skill_name: str) -> bool:
+        self.granted_calls.append(skill_name)
+        return self._granted
+
+    def revoke_script_execution(self, skill_name: str) -> None:
+        self.revoke_calls.append(skill_name)
+        self._granted = False
+
+
+async def _open_real_skill_editor(host, pilot, skill_name: str) -> LibraryScreen:
+    """Drive the real "browse skills -> open row" path and wait for the
+    detail fetch to land.
+
+    Args:
+        host: The running ``LibraryHarness``.
+        pilot: The active ``Pilot``.
+        skill_name: The skill row to open (its DOM id suffix).
+
+    Returns:
+        The active ``LibraryScreen``, with the editor already open.
+    """
+    screen = _active_library_screen(host)
+    await _wait_for_library_shell(screen, pilot)
+    screen.query_one("#library-row-browse-skills").press()
+    await pilot.pause()
+    await pilot.pause()
+    screen.query_one(f"#library-skill-row-{skill_name}", Button).press()
+    for _ in range(150):
+        if screen._library_skill_detail is not None:
+            break
+        await pilot.pause(0.02)
+    await pilot.pause()
+    assert screen._library_skills_view == "editor"
+    return screen
+
+
+async def _wait_for_revoke_button_disabled(screen, pilot, *, expected: bool) -> Button:
+    """Poll the Revoke button until its disabled state matches ``expected``.
+
+    The script grant is fetched off-thread (``_refresh_library_skill_script_
+    grant``) after the skill editor first renders, so the button's real
+    (post-fetch) disabled state can lag the compose-time default (always
+    disabled) by one or more event-loop turns.
+
+    Args:
+        screen: The active ``LibraryScreen``.
+        pilot: The active ``Pilot``.
+        expected: The disabled state to wait for.
+
+    Returns:
+        The Revoke button widget, once its disabled state matches.
+
+    Raises:
+        AssertionError: The expected state never arrived within the budget.
+    """
+    button = screen.query_one("#library-skill-script-grant-revoke", Button)
+    for _ in range(150):
+        if button.disabled is expected:
+            return button
+        await pilot.pause(0.02)
+    raise AssertionError(
+        f"Revoke button disabled={button.disabled!r} never became {expected!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_revoke_button_enabled_for_a_granted_skill_and_pressing_it_revokes(
+    tmp_path,
+):
+    """With a granted skill: the Revoke button enables once the async grant
+    fetch lands, and pressing it calls the real handler -> the real (fake)
+    trust service -> patches the panel back to "not granted" + disabled, in
+    place (no recompose -- the same widget instance survives the press)."""
+    local_service = LocalSkillsService(
+        store_dir=tmp_path,
+        trust_service=None,
+        allow_untrusted_without_trust_service=True,
+        policy_enforcer=None,
+    )
+    await local_service.create_skill(
+        name="demo-skill", content=_TAB_BAR_CLICK_BUG_SKILL_CONTENT
+    )
+    service = SkillsScopeService(
+        local_service=local_service, server_service=None, policy_enforcer=None
+    )
+    trust_service = _FakeScriptGrantTrustService(granted=True)
+
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = service
+    app.local_skill_trust_service = trust_service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _open_real_skill_editor(host, pilot, "demo-skill")
+        revoke_button = await _wait_for_revoke_button_disabled(
+            screen, pilot, expected=False
+        )
+        assert trust_service.granted_calls == ["demo-skill"]
+        grant_line = screen.query_one("#library-skill-script-grant", Static)
+        assert "may run its bundled scripts without asking" in str(
+            grant_line.renderable
+        )
+
+        revoke_button.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert trust_service.revoke_calls == ["demo-skill"]
+        assert revoke_button.disabled is True
+        assert (
+            str(screen.query_one("#library-skill-script-grant", Static).renderable)
+            == "Scripts: you are asked to confirm each time this skill runs a script."
+        )
+        # No recompose happened: the exact same Button instance is still
+        # mounted (a recompose tears down and remounts every child, which
+        # would make this identity check fail).
+        assert (
+            screen.query_one("#library-skill-script-grant-revoke", Button)
+            is revoke_button
+        )
+
+
+@pytest.mark.asyncio
+async def test_revoke_button_disabled_when_the_skill_has_no_grant(tmp_path):
+    """With no standing grant, the Revoke button stays disabled once the
+    async fetch settles. A bare "still disabled" assertion would pass
+    vacuously if the fetch never ran at all (the compose-time default IS
+    disabled) -- ``granted_calls`` proves the fetch actually reached the
+    trust service and got back a real (negative) answer."""
+    local_service = LocalSkillsService(
+        store_dir=tmp_path,
+        trust_service=None,
+        allow_untrusted_without_trust_service=True,
+        policy_enforcer=None,
+    )
+    await local_service.create_skill(
+        name="demo-skill", content=_TAB_BAR_CLICK_BUG_SKILL_CONTENT
+    )
+    service = SkillsScopeService(
+        local_service=local_service, server_service=None, policy_enforcer=None
+    )
+    trust_service = _FakeScriptGrantTrustService(granted=False)
+
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = service
+    app.local_skill_trust_service = trust_service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _open_real_skill_editor(host, pilot, "demo-skill")
+        for _ in range(150):
+            if trust_service.granted_calls:
+                break
+            await pilot.pause(0.02)
+        await pilot.pause()
+        assert trust_service.granted_calls == ["demo-skill"]
+        revoke_button = screen.query_one("#library-skill-script-grant-revoke", Button)
+        assert revoke_button.disabled is True
+        assert trust_service.revoke_calls == []
+        assert (
+            str(screen.query_one("#library-skill-script-grant", Static).renderable)
+            == "Scripts: you are asked to confirm each time this skill runs a script."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Stylesheet parity pin (dual-target: source + regenerated bundle) --
 # mirrors test_library_prompts_canvas.py's own pin tests for its sibling
 # canvas.

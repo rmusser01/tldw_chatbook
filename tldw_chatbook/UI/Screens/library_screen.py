@@ -8807,7 +8807,23 @@ class LibraryScreen(BaseAppScreen):
         if name != self._selected_skill_name or self._library_skills_view != "editor":
             return
         self._library_skill_script_grant = bool(granted)
-        self._render_library_skill_trust_panel()
+        # task-8 (skills-script-execution) fix: NOT a direct call. This
+        # coroutine's own ``asyncio.to_thread`` round trip can resolve
+        # before ``_apply_library_skill_detail``'s own ``refresh(recompose=
+        # True)`` (posted moments earlier, on this same screen's message
+        # queue) has actually remounted the editor -- a real trust service
+        # doing real disk I/O usually loses that race, but there is no
+        # guarantee, and a fast trust service (or a slow recompose under
+        # load) can win it. A direct call here would then query widgets
+        # that do not exist YET, silently no-op through this method's own
+        # ``except (NoMatches, QueryError): pass`` guards, and never retry
+        # -- leaving the panel stuck showing "not granted"/disabled forever
+        # even though ``_library_skill_script_grant`` is correctly True in
+        # memory. ``call_after_refresh`` (the same deferral this method's
+        # caller already uses for ``_arm_library_skill_editor``) posts an
+        # ``InvokeLater`` behind whatever recompose is already queued, so
+        # it always fires after the editor's widgets are actually mounted.
+        self.call_after_refresh(self._render_library_skill_trust_panel)
 
     async def _request_library_skill_trust_bootstrap_passphrase(self) -> str | None:
         """Push the confirm-passphrase bootstrap modal and await a passphrase.
