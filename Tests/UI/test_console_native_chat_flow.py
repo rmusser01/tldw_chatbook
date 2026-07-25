@@ -3774,17 +3774,40 @@ async def test_console_sibling_swipe_buttons_navigate_between_regenerated_siblin
             console.query_one(f"#console-message-{a1.id}", Static)
         )
         assert "(1/2)" in row_text
-        # a2 drops off the active path, so its id is no longer in the
-        # transcript's message set and selection clears (same rule an
-        # existing test already pins for "continue": selection tracks a
-        # message ID, and that ID vanishing from view resets it -- swiping
-        # again requires re-selecting the now-active row, exactly like any
-        # other action that swaps which message is active).
-        assert transcript.selected_message_id is None
-        assert not list(console.query(f"#console-message-actions-{a1.id}"))
+        # task-501: the selection FOLLOWS the swipe onto the landed sibling
+        # (a2 dropped off the active path, which would have cleared the old
+        # selection), so the action row stays available and repeated `<`/`>`
+        # presses work without re-clicking the row. Other selection-clearing
+        # actions ("continue" etc.) keep their existing clear-on-swap rule.
+        # Re-query the transcript: a recompose may have remounted it since
+        # the pre-click capture (the handoff is remount-proof; a stale widget
+        # reference in the test would not be).
+        await pilot.pause()
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        assert transcript.selected_message_id == a1.id
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-variant-next-{a1.id}"
+        )
 
-        transcript.select_message(a1.id)
-        await console._sync_native_console_chat_ui()
+        # Repeated swipe with NO re-click: `>` from the still-selected a1 row
+        # returns to a2 and the selection follows again.
+        await pilot.click(f"#console-message-action-variant-next-{a1.id}")
+        await _wait_for_text(console, pilot, "updated answer")
+        await pilot.pause()
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        assert transcript.selected_message_id == a2.id
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-variant-previous-{a2.id}"
+        )
+
+        # Swipe back to the FIRST sibling (again without a re-click -- the
+        # selection is sitting on a2 from the swipe above) and pin the
+        # boundary disabled states on a1's action row.
+        await pilot.click(f"#console-message-action-variant-previous-{a2.id}")
+        await _wait_for_text(console, pilot, "seed")
+        await pilot.pause()
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        assert transcript.selected_message_id == a1.id
         await _wait_for_selector(
             console, pilot, f"#console-message-action-variant-next-{a1.id}"
         )
@@ -3803,7 +3826,11 @@ async def test_console_sibling_swipe_buttons_navigate_between_regenerated_siblin
             console.query_one(f"#console-message-{a2.id}", Static)
         )
         assert "(2/2)" in row_text
-        assert transcript.selected_message_id is None
+        # task-501: the swipe keeps the selection on the landed sibling (the
+        # pre-task-501 rule cleared it, forcing a re-click between swipes).
+        await pilot.pause()
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        assert transcript.selected_message_id == a2.id
 
 
 @pytest.mark.asyncio

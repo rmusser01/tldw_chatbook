@@ -536,6 +536,14 @@ class ConsoleTranscript(VerticalScroll):
         super().__init__(**kwargs)
         self._messages: list[ConsoleChatMessage] = []
         self.selected_message_id: str | None = None
+        #: task-501: a selection to apply on the NEXT message ingest that
+        #: contains this id. Set by the screen's sibling-swipe handler, which
+        #: runs BEFORE the (possibly coalesced) post-swipe view reaches this
+        #: widget -- selecting eagerly would either miss the membership guard
+        #: or be cleared by reconciliation against the stale set. Applying it
+        #: at ingest time keeps the swiped-to sibling selected so repeated
+        #: `<`/`>` presses need no re-click.
+        self.pending_selection_id: str | None = None
         #: SP2 /rewind: native id of the "summarize up to here" boundary message.
         #: Render-derived only -- a banner row is emitted above this message when
         #: it is among the rendered messages; ``None`` (or a dangling id) shows
@@ -730,6 +738,16 @@ class ConsoleTranscript(VerticalScroll):
             # scrolled back.
             self.anchor()
         self._seen_message_ids = message_ids
+        # task-501: apply a swipe-handoff selection once its id is actually in
+        # the ingested set (see ``pending_selection_id``); checked BEFORE the
+        # clear below so a swipe that removed the old selection lands directly
+        # on the swiped-to sibling instead of clearing to None.
+        if (
+            self.pending_selection_id is not None
+            and self.pending_selection_id in message_ids
+        ):
+            self.selected_message_id = self.pending_selection_id
+            self.pending_selection_id = None
         if self.selected_message_id not in message_ids:
             self.selected_message_id = None
         for stale_id in [
