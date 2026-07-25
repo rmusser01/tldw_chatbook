@@ -83,6 +83,22 @@ def protect_file_descriptors():
 
     This fixes the "bad value(s) in fds_to_keep" error on macOS when the
     transformers library spawns subprocesses for model downloads.
+
+    task-634 round 3: when ``sys.stdout``/``sys.stderr`` are non-fd-backed
+    (e.g. Textual redirects BOTH to non-fd capture objects for the ENTIRE
+    ``App.run()`` lifetime, on every thread), the except-branch below used
+    to do ``sys.stdout = os.fdopen(1, "w")`` / ``sys.stderr = os.fdopen(2,
+    "w")`` with ``os.fdopen``'s default ``closefd=True`` -- those temporary
+    wrapper objects OWNED the real, process-shared fd 1/2, and the
+    ``finally`` below's own reassignment dropped their only reference,
+    triggering CPython's refcounting GC to close fd 1/2 for the WHOLE
+    PROCESS. See ``Embeddings.Embeddings_Lib.protect_file_descriptors``
+    (the sibling copy of this function; identical bug, identical fix, full
+    root-cause writeup there) -- that copy is reachable from a RAG worker
+    thread and was the one confirmed live to silently kill Textual's output
+    ``WriterThread`` and permanently deadlock the app. ``closefd=False`` is
+    the fix: a throwaway text wrapper around a fd it does not own must
+    never be allowed to close that fd.
     """
     # Save original file descriptors
     original_stdout = sys.stdout
@@ -106,11 +122,15 @@ def protect_file_descriptors():
             os.fstat(stdout_fd)
             os.fstat(stderr_fd)
         except (AttributeError, ValueError, OSError):
-            # stdout/stderr are wrapped/captured or invalid, create new ones
-            # Use the original file descriptors 1 and 2 directly
+            # stdout/stderr are wrapped/captured or invalid, create new ones.
+            # Use the original file descriptors 1 and 2 directly --
+            # closefd=False: these text wrappers do NOT own fd 1/2 (the
+            # process's shared stdout/stderr), so they must never close
+            # them, whether explicitly or via GC finalization. See this
+            # function's docstring (task-634 round 3).
             try:
-                sys.stdout = os.fdopen(1, "w")
-                sys.stderr = os.fdopen(2, "w")
+                sys.stdout = os.fdopen(1, "w", closefd=False)
+                sys.stderr = os.fdopen(2, "w", closefd=False)
             except OSError:
                 # If that fails, use devnull as a fallback
                 devnull = open(os.devnull, "w")
@@ -132,20 +152,28 @@ def protect_file_descriptors():
         yield
 
     finally:
-        # Restore original file descriptors
+        # Close any temporary stream we created BEFORE restoring sys.stdout/
+        # sys.stderr -- doing the comparison AFTER already reassigning them
+        # back (the previous ordering) compared the just-restored value
+        # against itself, always False, so this cleanup silently never ran
+        # (task-634 round 3). closefd=False above already makes that
+        # harmless for fd 1/2 specifically, but this ordering is still
+        # correct hygiene for the devnull fallback (which this process DOES
+        # fully own and should close).
+        temp_stdout = sys.stdout
+        temp_stderr = sys.stderr
         sys.stdout = original_stdout
         sys.stderr = original_stderr
         sys.stdin = original_stdin
 
-        # Close any temporary files we created
-        if sys.stdout != original_stdout and hasattr(sys.stdout, "close"):
+        if temp_stdout is not original_stdout and hasattr(temp_stdout, "close"):
             try:
-                sys.stdout.close()
+                temp_stdout.close()
             except Exception:
                 pass
-        if sys.stderr != original_stderr and hasattr(sys.stderr, "close"):
+        if temp_stderr is not original_stderr and hasattr(temp_stderr, "close"):
             try:
-                sys.stderr.close()
+                temp_stderr.close()
             except Exception:
                 pass
 
