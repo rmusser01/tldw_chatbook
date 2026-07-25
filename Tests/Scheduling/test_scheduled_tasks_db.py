@@ -20,7 +20,7 @@ def _utc(*args, **kwargs) -> datetime:
 def db():
     """Yield a ScheduledTasksDB backed by a temporary SQLite file."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "scheduled_tasks.db"
+        db_path = Path(tmpdir).resolve() / "scheduled_tasks.db"
         database = ScheduledTasksDB(str(db_path))
         try:
             yield database

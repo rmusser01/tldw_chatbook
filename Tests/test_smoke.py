@@ -6,7 +6,7 @@ Run with: pytest Tests/test_smoke.py -v
 
 import pytest
 import tempfile
-import os
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 # Test markers for organization
@@ -21,12 +21,12 @@ class TestDatabaseSmoke:
         from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB as ChaChaNotes_DB
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "test.db")
-            db = ChaChaNotes_DB(db_path, "test_client")
+            db_path = Path(tmpdir).resolve() / "test.db"
+            db = ChaChaNotes_DB(str(db_path), "test_client")
 
             # Basic checks
             assert db is not None
-            assert os.path.exists(db_path)
+            assert db_path.exists()
 
             # Check schema version
             with db.transaction() as cursor:
@@ -41,12 +41,12 @@ class TestDatabaseSmoke:
         from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as ClientMediaDB
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "media.db")
+            db_path = Path(tmpdir).resolve() / "media.db"
             # MediaDatabase requires client_id parameter
-            db = ClientMediaDB(db_path, "test_client")
+            db = ClientMediaDB(str(db_path), "test_client")
 
             assert db is not None
-            assert os.path.exists(db_path)
+            assert db_path.exists()
             db.close()
 
 
@@ -58,7 +58,7 @@ class TestCoreFeatures:
         from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB as ChaChaNotes_DB
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            db = ChaChaNotes_DB(os.path.join(tmpdir, "test.db"), "test_client")
+            db = ChaChaNotes_DB(str(Path(tmpdir).resolve() / "test.db"), "test_client")
 
             # Create a conversation
             conv_data = {
@@ -80,7 +80,7 @@ class TestCoreFeatures:
         from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB as ChaChaNotes_DB
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            db = ChaChaNotes_DB(os.path.join(tmpdir, "test.db"), "test_client")
+            db = ChaChaNotes_DB(str(Path(tmpdir).resolve() / "test.db"), "test_client")
 
             # Create a character
             char_data = {
@@ -104,7 +104,7 @@ class TestCoreFeatures:
         from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB as ChaChaNotes_DB
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            db = ChaChaNotes_DB(os.path.join(tmpdir, "test.db"), "test_client")
+            db = ChaChaNotes_DB(str(Path(tmpdir).resolve() / "test.db"), "test_client")
 
             # Create a note
             note_id = db.add_note(title="Test Note", content="This is a test note")

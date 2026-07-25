@@ -24,12 +24,13 @@ def test_notes_functionality_without_optional_deps():
 
     # This should be able to initialize without embeddings
     with tempfile.TemporaryDirectory() as tmpdir:
+        trusted_tmpdir = Path(tmpdir).resolve()
         # Create a global database instance for testing
-        db_path = Path(tmpdir) / "test_notes.db"
+        db_path = trusted_tmpdir / "test_notes.db"
         global_db = CharactersRAGDB(str(db_path), "test_client")
 
         notes_service = NotesInteropService(
-            base_db_directory=tmpdir,
+            base_db_directory=str(trusted_tmpdir),
             api_client_id="test_client",
             global_db_to_use=global_db,
         )
