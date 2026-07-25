@@ -128,6 +128,14 @@ def _pre_resolution(url: str, trusted_origins: frozenset):
         return _blocked(url, "scheme", "", "unparseable URL")
     if parsed.scheme not in ("http", "https") or not host:
         return _blocked(url, "scheme", host or "", "only http/https with a host")
+    try:
+        # urlparse defers port parsing until accessed; a malformed/out-of-range
+        # port must fail HERE, at the policy boundary, not as a downstream
+        # client InvalidURL — and it keeps this validator consistent with
+        # origin_of(), which treats the same ValueError as unparseable.
+        _ = parsed.port
+    except ValueError:
+        return _blocked(url, "scheme", host or "", "invalid port")
     h = host.lower()
     allowed_hosts = _config_allowed_hosts()
     if h in allowed_hosts:

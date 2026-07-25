@@ -126,8 +126,7 @@ def test_fetch_image_bytes_keeps_credentials_on_same_origin_redirect(monkeypatch
 
 
 def test_fetch_image_bytes_strips_credentials_on_same_host_scheme_downgrade(monkeypatch, ifu):
-    # A same-host HTTPS->HTTP downgrade redirect is NOT the same origin
-    # (task-568) -- credentials must not follow a local backend's downgrade.
+    """fetch_image_bytes drops credentials on a same-host HTTPS->HTTP downgrade hop (task-568)."""
     from tldw_chatbook.Image_Generation import http_client as hc
 
     seen = []
@@ -162,7 +161,7 @@ def test_fetch_image_bytes_strips_credentials_on_same_host_scheme_downgrade(monk
 
 
 def test_fetch_image_bytes_strips_credentials_on_same_host_different_port(monkeypatch, ifu):
-    # A same-host different-port redirect is NOT the same origin (task-568).
+    """A same-host different-port hop crosses an origin boundary; credentials strip (task-568)."""
     from tldw_chatbook.Image_Generation import http_client as hc
 
     seen = []

@@ -1,4 +1,5 @@
 import io
+
 import pytest
 from PIL import Image
 
@@ -80,8 +81,7 @@ def test_swarmui_image_fetch_threads_trusted_origins(monkeypatch):
 
 
 def test_resolve_image_url_accepts_absolute_same_origin_ref():
-    # An absolute image ref that matches base_url's scheme+host+port exactly
-    # (including the explicit port) is accepted unchanged.
+    """SwarmUI accepts an absolute image URL on the exact configured origin."""
     from tldw_chatbook.Image_Generation.adapters.swarmui_adapter import SwarmUIAdapter
 
     url = SwarmUIAdapter._resolve_image_url(
@@ -91,9 +91,7 @@ def test_resolve_image_url_accepts_absolute_same_origin_ref():
 
 
 def test_resolve_image_url_rejects_scheme_mismatch():
-    # task-568: this now delegates to egress.same_origin (scheme+host+port),
-    # not a hostname-only comparison -- a scheme-mismatched "same host"
-    # image ref must still be rejected as off-origin.
+    """A scheme mismatch against the configured base_url is rejected (task-568)."""
     from tldw_chatbook.Image_Generation.adapters.swarmui_adapter import SwarmUIAdapter
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
 
@@ -104,6 +102,7 @@ def test_resolve_image_url_rejects_scheme_mismatch():
 
 
 def test_resolve_image_url_rejects_port_mismatch():
+    """A port mismatch against the configured base_url is rejected (task-568)."""
     from tldw_chatbook.Image_Generation.adapters.swarmui_adapter import SwarmUIAdapter
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
 

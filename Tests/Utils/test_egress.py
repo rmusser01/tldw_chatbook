@@ -257,6 +257,19 @@ def test_origin_of_unparseable_or_no_host_returns_none():
     assert origin_of("not-a-url") is None
 
 
+def test_invalid_port_blocked_at_policy_boundary():
+    """A malformed/out-of-range port is rejected by the egress validator itself.
+
+    Keeps `check_url_or_raise` consistent with `origin_of()` (which treats the
+    same ValueError as unparseable) instead of passing the URL through to fail
+    later as a client-level InvalidURL (Qodo PR #870).
+    """
+    with pytest.raises(EgressBlockedError):
+        check_url_or_raise("https://example.com:99999/x")
+    with pytest.raises(EgressBlockedError):
+        check_url_or_raise("https://example.com:notaport/x")
+
+
 def test_origin_of_unknown_scheme_no_explicit_port_returns_none():
     # No default port to fall back to for a non-http(s) scheme.
     assert origin_of("ftp://example.com/x") is None

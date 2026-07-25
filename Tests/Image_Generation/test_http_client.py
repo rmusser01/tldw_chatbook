@@ -308,9 +308,9 @@ def test_fetch_json_keeps_authorization_on_same_origin_redirect(monkeypatch, hc)
 
 
 def test_fetch_json_strips_authorization_on_same_host_scheme_downgrade(monkeypatch, hc):
-    # A same-host HTTPS->HTTP downgrade redirect is NOT the same origin
-    # (task-568): a compromised/malicious local backend could otherwise use a
-    # downgrade redirect to have the token sent over plaintext.
+    """A same-host HTTPS->HTTP downgrade redirect is NOT same origin (task-568):
+    a malicious backend could otherwise use a downgrade redirect to receive the
+    token over plaintext."""
     seen = []
 
     class RedirResp:
@@ -347,7 +347,7 @@ def test_fetch_json_strips_authorization_on_same_host_scheme_downgrade(monkeypat
 
 
 def test_fetch_json_strips_authorization_on_same_host_different_port(monkeypatch, hc):
-    # A same-host different-port redirect is NOT the same origin (task-568).
+    """A same-host different-port redirect crosses an origin boundary (task-568)."""
     seen = []
 
     class RedirResp:
