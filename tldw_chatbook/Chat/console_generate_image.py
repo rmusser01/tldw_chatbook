@@ -439,11 +439,29 @@ _CONTEXT_LLM_SYSTEM_PROMPT = (
     "plain-text paragraph -- no lists, no headings, no preamble, no "
     "surrounding quotes -- describing the subject, setting, mood, and any "
     "style hints suggested by the conversation, suitable to hand directly "
-    "to an image generation model. Respond with the prompt text only."
+    "to an image generation model."
 )
 """System instruction for the LLM-composed conversation-context path
 (Task-559 AC1). Kept as a module constant so tests can assert on it without
-duplicating the literal string."""
+duplicating the literal string. The "respond with the prompt text only"
+directive lives in `_CONTEXT_LLM_COMPOSE_INSTRUCTION` instead (Task-622) so
+the two don't say the same thing twice."""
+
+_CONTEXT_LLM_COMPOSE_INSTRUCTION = (
+    "Compose the image-generation prompt for the scene above now. Reply "
+    "with the prompt text only."
+)
+"""Task-622: trailing USER-role message appended as the final entry of every
+non-empty LLM-context payload, AFTER the turns-window truncation in
+`_shape_llm_context_payload`. Conversation transcripts routinely end on an
+assistant turn (the normal shape: user asks, assistant answers, user runs
+`/generate-image`); some providers -- llama.cpp with `enable_thinking` in
+particular -- treat a payload whose last message is `assistant`-role as a
+response PREFILL and reject it outright (400: "Assistant response prefill
+is incompatible with enable_thinking."). Appending this instruction as a
+final user turn guarantees the payload never ends on `assistant`,
+regardless of the underlying conversation's shape -- provider-agnostic,
+since no handler needs to special-case prefill detection."""
 
 _CONTEXT_LLM_MAX_RESPONSE_CHARS = 500
 """Length cap applied to a raw LLM-composed response before use -- a
@@ -682,6 +700,12 @@ def compose_llm_context_prompt(
     turn count at most) -- this is user conversation text, not diagnostic
     metadata.
 
+    Task-622: the truncated conversation window is always followed by a
+    final USER-role `_CONTEXT_LLM_COMPOSE_INSTRUCTION` message before the
+    call -- the payload handed to `chat_call` never ends on `assistant`,
+    which some providers (llama.cpp with `enable_thinking`) otherwise
+    reject as an invalid response prefill.
+
     Args:
         messages: Chronological ``(role, content)`` pairs (already filtered
             to non-empty content by the caller).
@@ -692,9 +716,18 @@ def compose_llm_context_prompt(
     """
     if not options.enabled or not options.provider_ready or not options.api_endpoint:
         return None
-    payload = _shape_llm_context_payload(messages, options.turns)
-    if not payload:
+    context_turns = _shape_llm_context_payload(messages, options.turns)
+    if not context_turns:
         return None
+    # Task-622: the truncated conversation window routinely ends on an
+    # assistant turn (user asks, assistant answers, user runs
+    # `/generate-image`); appending this AFTER truncation guarantees the
+    # instruction itself is never truncated away, and that the payload
+    # handed to `chat_call` never ends on `assistant` regardless of the
+    # conversation's shape.
+    payload = context_turns + [
+        {"role": "user", "content": _CONTEXT_LLM_COMPOSE_INSTRUCTION}
+    ]
 
     try:
         chat_call = options.chat_call
@@ -718,7 +751,7 @@ def compose_llm_context_prompt(
     except Exception as exc:  # noqa: BLE001 - graceful fallback is load-bearing here
         logger.debug(
             f"generate-image: LLM context composition failed "
-            f"({len(payload)} turns, provider={options.api_endpoint!r}): {exc!r}"
+            f"({len(context_turns)} turns, provider={options.api_endpoint!r}): {exc!r}"
         )
         return None
 

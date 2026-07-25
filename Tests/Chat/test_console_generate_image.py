@@ -26,6 +26,7 @@ from tldw_chatbook.Chat.console_generate_image import (
 )
 from tldw_chatbook.Chat.console_generate_image import (
     LLMContextExecutorSaturatedError,
+    _CONTEXT_LLM_COMPOSE_INSTRUCTION,
     _clean_llm_context_response,
     _shape_llm_context_payload,
     reset_llm_context_executor,
@@ -767,16 +768,129 @@ def test_compose_llm_context_prompt_success_returns_cleaned_text():
     ]
     result = compose_llm_context_prompt(pairs, options)
     assert result == "A knight in a glowing cave, dramatic torchlight."
-    # Only the last `turns` (2) pairs were sent, non-streaming, to the resolved provider.
+    # Only the last `turns` (2) pairs were sent, non-streaming, to the
+    # resolved provider, followed by the task-622 compose instruction as a
+    # final user-role message (see the trailing-role invariant tests below).
     assert captured["messages_payload"] == [
         {"role": "assistant", "content": "Crystals glow on the walls."},
         {"role": "user", "content": "He raises his torch."},
+        {"role": "user", "content": _CONTEXT_LLM_COMPOSE_INSTRUCTION},
     ]
     assert captured["api_endpoint"] == "openai"
     assert captured["model"] == "gpt-4o-mini"
     assert captured["api_key"] == "fake-test-api-key"
     assert captured["streaming"] is False
     assert "system_message" in captured and captured["system_message"]
+
+
+# --- Task-622: composition payload never ends on an assistant turn --------
+
+
+def test_compose_llm_context_prompt_trailing_assistant_appends_user_instruction():
+    """The normal shape: user asks, assistant answers, user runs
+    `/generate-image` -- llama.cpp with `enable_thinking` rejects a payload
+    that ends on `assistant` as an invalid response prefill. The payload
+    handed to `chat_call` must end with a user-role message carrying the
+    compose instruction."""
+    captured = {}
+
+    def _fake_call(**kwargs):
+        captured.update(kwargs)
+        return _chat_response("a knight in a cave")
+
+    options = _llm_options(chat_call=_fake_call, turns=10)
+    pairs = [
+        ("user", "A knight enters a cave."),
+        ("assistant", "Crystals glow on the walls."),
+    ]
+    result = compose_llm_context_prompt(pairs, options)
+    assert result == "a knight in a cave"
+    assert captured["messages_payload"] == [
+        {"role": "user", "content": "A knight enters a cave."},
+        {"role": "assistant", "content": "Crystals glow on the walls."},
+        {"role": "user", "content": _CONTEXT_LLM_COMPOSE_INSTRUCTION},
+    ]
+    assert captured["messages_payload"][-1]["role"] == "user"
+
+
+def test_compose_llm_context_prompt_trailing_user_still_appends_separate_instruction():
+    """A conversation that already ends on a user turn (e.g. the user
+    typed `/generate-image` right after their own message, no assistant
+    reply yet) still gets the instruction appended as its OWN final
+    message -- it is never merged into the prior user turn's content."""
+    captured = {}
+
+    def _fake_call(**kwargs):
+        captured.update(kwargs)
+        return _chat_response("a dragon over a village")
+
+    options = _llm_options(chat_call=_fake_call, turns=10)
+    pairs = [
+        ("assistant", "Crystals glow on the walls."),
+        ("user", "He raises his torch."),
+    ]
+    result = compose_llm_context_prompt(pairs, options)
+    assert result == "a dragon over a village"
+    assert captured["messages_payload"] == [
+        {"role": "assistant", "content": "Crystals glow on the walls."},
+        {"role": "user", "content": "He raises his torch."},
+        {"role": "user", "content": _CONTEXT_LLM_COMPOSE_INSTRUCTION},
+    ]
+    assert captured["messages_payload"][-1]["role"] == "user"
+    # The instruction is a distinct message, not merged into the prior turn.
+    assert captured["messages_payload"][-2]["content"] == "He raises his torch."
+
+
+def test_compose_llm_context_prompt_single_turn_appends_instruction():
+    captured = {}
+
+    def _fake_call(**kwargs):
+        captured.update(kwargs)
+        return _chat_response("a lone dragon")
+
+    options = _llm_options(chat_call=_fake_call, turns=10)
+    result = compose_llm_context_prompt([("assistant", "A dragon appears.")], options)
+    assert result == "a lone dragon"
+    assert captured["messages_payload"] == [
+        {"role": "assistant", "content": "A dragon appears."},
+        {"role": "user", "content": _CONTEXT_LLM_COMPOSE_INSTRUCTION},
+    ]
+
+
+def test_compose_llm_context_prompt_instruction_survives_turns_truncation():
+    """The turns-window truncation happens BEFORE appending the
+    instruction, so a small `turns` value never truncates the instruction
+    itself away."""
+    captured = {}
+
+    def _fake_call(**kwargs):
+        captured.update(kwargs)
+        return _chat_response("a single scene")
+
+    options = _llm_options(chat_call=_fake_call, turns=1)
+    pairs = [
+        ("user", "turn 1"),
+        ("assistant", "turn 2"),
+        ("assistant", "turn 3 (last raw turn)"),
+    ]
+    result = compose_llm_context_prompt(pairs, options)
+    assert result == "a single scene"
+    # turns=1 keeps only the last raw pair, then the instruction is appended
+    # -- two messages total, not one, and the instruction was not dropped.
+    assert captured["messages_payload"] == [
+        {"role": "assistant", "content": "turn 3 (last raw turn)"},
+        {"role": "user", "content": _CONTEXT_LLM_COMPOSE_INSTRUCTION},
+    ]
+
+
+def test_compose_llm_context_prompt_empty_after_truncation_still_returns_none():
+    """turns<=0 (or an empty conversation) yields an empty truncated window
+    -- no LLM call is made at all (nothing changed here by task-622), so
+    there's no trailing-role invariant to violate in the first place."""
+    options = _llm_options(
+        chat_call=lambda **_: _chat_response("should not be called"), turns=0
+    )
+    assert compose_llm_context_prompt([("user", "hi")], options) is None
 
 
 def test_compose_llm_context_prompt_never_raises_on_unexpected_executor_error(
