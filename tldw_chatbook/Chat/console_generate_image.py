@@ -24,8 +24,12 @@ which the caller refuses.
 
 from __future__ import annotations
 
+import concurrent.futures
+import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
+
+from loguru import logger
 
 from tldw_chatbook.Chat.console_chat_models import GenerationVariantMeta
 from tldw_chatbook.Chat.console_command_grammar import (
@@ -33,9 +37,9 @@ from tldw_chatbook.Chat.console_command_grammar import (
     GENERATE_IMAGE_COMMAND_NAME,
 )
 from tldw_chatbook.Media_Creation.generation_templates import (
-    BUILTIN_TEMPLATES,
     GenerationTemplate,
     apply_template_to_prompt,
+    get_all_templates,
     get_template,
 )
 from tldw_chatbook.Media_Creation.image_generation_service import (
@@ -259,9 +263,12 @@ class StyleResolution:
 
 
 def resolve_style_token(token: str) -> StyleResolution:
-    """Resolve a raw ``@style`` token to a builtin generation template.
+    """Resolve a raw ``@style`` token to a generation template.
 
-    Matching is case-insensitive and tried in order, first hit wins:
+    Matches against every builtin AND user-defined style template (see
+    `generation_templates.get_all_templates` -- a user template with the
+    same id as a builtin overrides it). Case-insensitive, tried in order,
+    first hit wins:
 
     1. Exact template id (e.g. ``style_anime``).
     2. Exact template name, with spaces and underscores interchangeable in
@@ -284,17 +291,18 @@ def resolve_style_token(token: str) -> StyleResolution:
         return StyleResolution(template=None)
     cleaned_cf = cleaned.casefold()
     normalized_token = _normalize_style_text(cleaned)
+    templates = get_all_templates()
 
-    for template in BUILTIN_TEMPLATES.values():
+    for template in templates.values():
         if template.id.casefold() == cleaned_cf:
             return StyleResolution(template=template)
 
-    for template in BUILTIN_TEMPLATES.values():
+    for template in templates.values():
         if _normalize_style_text(template.name) == normalized_token:
             return StyleResolution(template=template)
 
     matched: dict[str, GenerationTemplate] = {}
-    for template in BUILTIN_TEMPLATES.values():
+    for template in templates.values():
         if template.id.casefold().startswith(cleaned_cf) or _normalize_style_text(
             template.name
         ).startswith(normalized_token):
@@ -343,6 +351,38 @@ def compose_styled_request(
     return combined, negative, params
 
 
+def _apply_template_with_anchor(
+    context: dict[str, Any], template: GenerationTemplate
+) -> tuple[str, str, dict[str, Any]]:
+    """Render ``template`` against ``context`` via `apply_template_to_prompt`,
+    then apply the shared "never silently drop the anchor" invariant.
+
+    Shared by `build_context_prompt` (keyword-extracted context) and
+    `build_context_prompt_with_llm`'s LLM-composed path -- both shape a
+    ``context`` dict with the same keys
+    (``last_message``/``mentioned_characters``/``mentioned_settings``/
+    ``mood``/``style_hints``) and need the identical anchor-append guard:
+    when ``context["last_message"]`` is non-empty and doesn't appear
+    verbatim in the rendered prompt (e.g. the template has no context
+    mapping consuming it), it is comma-appended so conversation content is
+    never silently dropped.
+
+    Args:
+        context: Context dict shaped for `apply_template_to_prompt`; must
+            carry a ``last_message`` key (may be empty).
+        template: The style template to render.
+
+    Returns:
+        A ``(prompt, negative_prompt, params)`` tuple.
+    """
+    composed, negative, params = apply_template_to_prompt(template.id, context)
+    anchor = context.get("last_message", "")
+    if anchor and anchor not in composed:
+        base = composed.strip(" ,")
+        composed = f"{base}, {anchor}" if base else anchor
+    return composed, negative, params
+
+
 def build_context_prompt(
     messages: Sequence[tuple[str, str]], template: GenerationTemplate
 ) -> tuple[str, str, dict[str, Any]] | None:
@@ -354,7 +394,7 @@ def build_context_prompt(
     ``ImageGenerationService.extract_context_from_messages`` expects,
     extracts context (most recent user message, mood, visual-hint
     fragments), then renders ``template`` against it via
-    ``apply_template_to_prompt`` — the same engine `compose_styled_request`
+    `_apply_template_with_anchor` — the same engine `compose_styled_request`
     uses for an explicit ``@style`` token.
 
     ``extract_context_from_messages`` is called as
@@ -365,11 +405,12 @@ def build_context_prompt(
     generated-images output directory tree, logging). Calling it unbound is
     the honest cheap invocation.
 
-    Invariant (mirroring `compose_styled_request`): when the extracted
-    ``last_message`` anchor is non-empty and doesn't appear verbatim in the
-    composed prompt (e.g. the template has no context mapping consuming
-    it), it is comma-appended so conversation content is never silently
-    dropped.
+    This is the keyword-shallow extractor (Task-559 AC1's baseline): mood
+    via keyword match, ``mentioned_characters``/``mentioned_settings`` never
+    populated. `build_context_prompt_with_llm` layers a richer, optional
+    LLM-composed alternative on top of this function, which now serves as
+    both the direct entry point (unchanged, for callers/tests that want it)
+    and the guaranteed fallback when the LLM path is disabled or fails.
 
     Args:
         messages: Chronological ``(role, content)`` pairs from the session.
@@ -389,12 +430,359 @@ def build_context_prompt(
     if not shaped:
         return None
     context = ImageGenerationService.extract_context_from_messages(None, shaped)
-    composed, negative, params = apply_template_to_prompt(template.id, context)
-    anchor = context.get("last_message", "")
-    if anchor and anchor not in composed:
-        base = composed.strip(" ,")
-        composed = f"{base}, {anchor}" if base else anchor
-    return composed, negative, params
+    return _apply_template_with_anchor(context, template)
+
+
+_CONTEXT_LLM_SYSTEM_PROMPT = (
+    "You compose a single concise prompt for a text-to-image generator "
+    "from a conversation transcript. Read the conversation and write ONE "
+    "plain-text paragraph -- no lists, no headings, no preamble, no "
+    "surrounding quotes -- describing the subject, setting, mood, and any "
+    "style hints suggested by the conversation, suitable to hand directly "
+    "to an image generation model. Respond with the prompt text only."
+)
+"""System instruction for the LLM-composed conversation-context path
+(Task-559 AC1). Kept as a module constant so tests can assert on it without
+duplicating the literal string."""
+
+_CONTEXT_LLM_MAX_RESPONSE_CHARS = 500
+"""Length cap applied to a raw LLM-composed response before use -- a
+"concise" prompt per the system instruction; independent of
+``[image_generation].max_prompt_length`` (a separate, later-stage cap on
+the FINAL composed/templated prompt)."""
+
+
+@dataclass(frozen=True)
+class LLMContextOptions:
+    """Resolved inputs for the optional LLM-composed conversation-context path.
+
+    Bundles the ``[image_generation]`` config kill-switch/turns/timeout
+    with the session's ALREADY-RESOLVED active provider identity. This
+    module has no Textual/app dependency, so it never resolves the active
+    provider itself -- the caller (the Console screen) is responsible for
+    resolving it through the exact same seam a normal Console chat send
+    uses (``ConsoleProviderGateway.resolve_for_send``) and handing the
+    result in here.
+
+    Args:
+        enabled: Config kill-switch
+            (``[image_generation].context_llm_enabled``). ``False`` skips
+            the LLM path entirely, unconditionally.
+        turns: Max number of trailing ``(role, content)`` pairs sent to the
+            LLM as conversation context.
+        timeout_seconds: Hard wall-clock cap on the LLM call; a slower
+            response is abandoned in place (never joined) and treated as a
+            failure.
+        provider_ready: Whether the session has a usable, configured
+            provider right now (mirrors ``ConsoleProviderResolution.ready``
+            -- resolved the same way a normal Console send resolves it:
+            config/env for most providers, plus llama.cpp's own bounded
+            ``/health`` reachability probe for that one provider).
+        api_endpoint: Resolved provider execution key for `chat_api_call`
+            (``ConsoleProviderResolution.execution_key``). ``None`` when
+            not ready.
+        model: Resolved model string, or ``None``.
+        api_key: Resolved API key, or ``None`` when the provider needs
+            none (e.g. a local backend).
+        chat_call: A ``chat_api_call``-shaped callable. ``None`` (the
+            default) lazily imports and uses the real
+            ``Chat.Chat_Functions.chat_api_call`` -- importing this module
+            for its pure helpers never eagerly pulls in every LLM provider
+            integration. Overridable for tests.
+    """
+
+    enabled: bool
+    turns: int
+    timeout_seconds: float
+    provider_ready: bool
+    api_endpoint: str | None = None
+    model: str | None = None
+    api_key: str | None = None
+    chat_call: Callable[..., Any] | None = None
+
+
+def _shape_llm_context_payload(
+    messages: Sequence[tuple[str, str]], turns: int
+) -> list[dict[str, str]]:
+    """Return the last ``turns`` ``(role, content)`` pairs as an OpenAI-style
+    messages payload for `chat_api_call`.
+
+    Any role other than ``user``/``assistant``/``system`` (e.g. Console's
+    ``tool`` role) maps to ``user`` -- a safe default most providers accept
+    without additional tool-call-id plumbing this context-only call has no
+    use for.
+    """
+    if turns <= 0:
+        return []
+    recent = list(messages)[-turns:]
+    payload: list[dict[str, str]] = []
+    for role, content in recent:
+        mapped_role = role if role in ("user", "assistant", "system") else "user"
+        payload.append({"role": mapped_role, "content": content})
+    return payload
+
+
+def _clean_llm_context_response(text: str) -> str | None:
+    """Strip/validate a raw LLM response into a usable composed prompt.
+
+    Collapses all whitespace (including newlines) into single spaces --
+    enforcing "plain text, single paragraph" -- strips a single layer of
+    wrapping quote characters some providers add despite instructions, then
+    caps length at `_CONTEXT_LLM_MAX_RESPONSE_CHARS`. Returns ``None`` for
+    an empty/whitespace-only input (refuse-empty).
+    """
+    collapsed = " ".join(text.split())
+    if len(collapsed) >= 2 and collapsed[0] == collapsed[-1] and collapsed[0] in "\"'":
+        collapsed = collapsed[1:-1].strip()
+    if not collapsed:
+        return None
+    if len(collapsed) > _CONTEXT_LLM_MAX_RESPONSE_CHARS:
+        collapsed = collapsed[:_CONTEXT_LLM_MAX_RESPONSE_CHARS].rstrip()
+    return collapsed or None
+
+
+_LLM_CONTEXT_STATE_LOCK = threading.Lock()
+"""Guards the two globals below -- creation of the shared executor and the
+saturation check-and-submit must be atomic, or two near-simultaneous calls
+could both see "not saturated" and both submit."""
+
+_LLM_CONTEXT_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
+"""Process-wide, lazily-created, NEVER-shut-down single-worker executor for
+LLM-context calls (Qodo PR #867 fix: a fresh-per-call executor that
+`shutdown(wait=False)` on timeout accumulates one abandoned thread per
+timed-out `/generate-image` attempt, unbounded over a session. A single
+shared 1-worker pool bounds the abandoned-thread count at exactly one,
+ever, regardless of how many attempts time out -- each new abandoned call
+just occupies the SAME one worker slot the previous abandoned call was
+already occupying."""
+
+_LLM_CONTEXT_INFLIGHT_FUTURE: concurrent.futures.Future | None = None
+"""The most recently submitted (possibly still-running-past-its-own-
+timeout) LLM-context call's Future, or ``None``. Checked before every new
+submission -- see `_submit_llm_context_call`."""
+
+
+class LLMContextExecutorSaturatedError(RuntimeError):
+    """Raised when a previous LLM-context call is still occupying the
+    shared single-worker executor (it timed out from its caller's
+    perspective but the underlying call -- which cannot be cancelled -- is
+    still running). The new call fails fast instead of queueing behind an
+    indefinitely-stuck predecessor; `compose_llm_context_prompt`'s blanket
+    exception handling treats this exactly like any other failure and
+    degrades to the keyword extractor."""
+
+
+def _submit_llm_context_call(
+    chat_call: Callable[..., Any], **kwargs: Any
+) -> concurrent.futures.Future:
+    """Submit ``chat_call(**kwargs)`` to the shared single-worker executor.
+
+    Lazily creates the module-level shared executor on first use (never
+    recreated or shut down afterward -- see `_LLM_CONTEXT_EXECUTOR`).
+    Before submitting, checks whether the previously submitted call is
+    still outstanding (`Future.done()` is ``False``): if so, the sole
+    worker is occupied by a call that has already outlived its own caller's
+    timeout window, and queueing a second task behind it would mean the new
+    call could wait indefinitely (bounded by nothing) rather than by its
+    own `timeout_seconds`. In that case this raises
+    `LLMContextExecutorSaturatedError` immediately -- no submission, no
+    wait, ``chat_call`` is never invoked for the new attempt.
+
+    Args:
+        chat_call: The blocking callable to run.
+        **kwargs: Forwarded to ``chat_call``.
+
+    Returns:
+        The submitted `concurrent.futures.Future`.
+
+    Raises:
+        LLMContextExecutorSaturatedError: The shared executor's one worker
+            is still occupied by a prior call past its timeout.
+    """
+    global _LLM_CONTEXT_EXECUTOR, _LLM_CONTEXT_INFLIGHT_FUTURE
+    with _LLM_CONTEXT_STATE_LOCK:
+        previous = _LLM_CONTEXT_INFLIGHT_FUTURE
+        if previous is not None and not previous.done():
+            raise LLMContextExecutorSaturatedError(
+                "a previous LLM-context call has not returned within its "
+                "own timeout yet; refusing to queue behind it"
+            )
+        if _LLM_CONTEXT_EXECUTOR is None:
+            _LLM_CONTEXT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="imagegen-llm-context"
+            )
+        future = _LLM_CONTEXT_EXECUTOR.submit(chat_call, **kwargs)
+        _LLM_CONTEXT_INFLIGHT_FUTURE = future
+        return future
+
+
+def reset_llm_context_executor() -> None:
+    """Test-only reset of the shared LLM-context executor + saturation
+    tracking. Never called from any production code path -- exists purely
+    so tests get a fresh executor per test rather than bleeding
+    still-running fake-slow-call state across unrelated tests."""
+    global _LLM_CONTEXT_EXECUTOR, _LLM_CONTEXT_INFLIGHT_FUTURE
+    with _LLM_CONTEXT_STATE_LOCK:
+        if _LLM_CONTEXT_EXECUTOR is not None:
+            _LLM_CONTEXT_EXECUTOR.shutdown(wait=False)
+        _LLM_CONTEXT_EXECUTOR = None
+        _LLM_CONTEXT_INFLIGHT_FUTURE = None
+
+
+def _call_chat_api_with_timeout(
+    chat_call: Callable[..., Any], timeout_seconds: float, **kwargs: Any
+) -> Any:
+    """Bound a blocking ``chat_call(**kwargs)`` to ``timeout_seconds`` wall-clock.
+
+    Submits to the process-wide shared single-worker executor
+    (`_submit_llm_context_call`) and waits up to ``timeout_seconds`` for a
+    result. On timeout, raises ``concurrent.futures.TimeoutError`` -- the
+    orphaned call keeps running in the background (never cancelled; that
+    needs provider-level network timeouts, out of scope here) rather than
+    blocking the caller further. Unlike a fresh-per-call executor, this
+    does NOT accumulate one abandoned thread per timed-out attempt: the
+    shared executor has exactly one worker, so at most ONE call can ever be
+    "abandoned but still running" at a time -- a second call attempted
+    while that's true fails fast via `LLMContextExecutorSaturatedError`
+    (raised by `_submit_llm_context_call`) instead of queueing behind it.
+
+    Args:
+        chat_call: The blocking callable to run (typically
+            ``chat_api_call``).
+        timeout_seconds: Maximum seconds to wait for a result.
+        **kwargs: Forwarded to ``chat_call``.
+
+    Returns:
+        Whatever ``chat_call`` returns.
+
+    Raises:
+        LLMContextExecutorSaturatedError: The shared executor's one worker
+            is still occupied by a prior call past its own timeout.
+        concurrent.futures.TimeoutError: ``chat_call`` did not finish
+            within ``timeout_seconds``.
+        Exception: Whatever ``chat_call`` itself raised.
+    """
+    future = _submit_llm_context_call(chat_call, **kwargs)
+    return future.result(timeout=timeout_seconds)
+
+
+def compose_llm_context_prompt(
+    messages: Sequence[tuple[str, str]], options: LLMContextOptions
+) -> str | None:
+    """Attempt an LLM-composed conversation-context prompt; ``None`` on ANY failure.
+
+    Never raises: kill-switch off, no ready provider, a `chat_call`
+    exception, a timeout, or an empty/unusable response all fall through to
+    ``None`` so the caller (`build_context_prompt_with_llm`) falls back to
+    the existing keyword-shallow `build_context_prompt`. This is the
+    load-bearing graceful-degradation seam for Task-559 AC1 — generation
+    must never be blocked by this path.
+
+    Only debug-logs failures, and never logs raw conversation content (a
+    turn count at most) -- this is user conversation text, not diagnostic
+    metadata.
+
+    Args:
+        messages: Chronological ``(role, content)`` pairs (already filtered
+            to non-empty content by the caller).
+        options: Resolved config + provider identity. See `LLMContextOptions`.
+
+    Returns:
+        The cleaned, single-paragraph composed prompt text, or ``None``.
+    """
+    if not options.enabled or not options.provider_ready or not options.api_endpoint:
+        return None
+    payload = _shape_llm_context_payload(messages, options.turns)
+    if not payload:
+        return None
+
+    try:
+        chat_call = options.chat_call
+        if chat_call is None:
+            from tldw_chatbook.Chat.Chat_Functions import (
+                chat_api_call as _chat_api_call,
+            )
+
+            chat_call = _chat_api_call
+
+        response = _call_chat_api_with_timeout(
+            chat_call,
+            options.timeout_seconds,
+            api_endpoint=options.api_endpoint,
+            messages_payload=payload,
+            api_key=options.api_key,
+            model=options.model,
+            system_message=_CONTEXT_LLM_SYSTEM_PROMPT,
+            streaming=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - graceful fallback is load-bearing here
+        logger.debug(
+            f"generate-image: LLM context composition failed "
+            f"({len(payload)} turns, provider={options.api_endpoint!r}): {exc!r}"
+        )
+        return None
+
+    from tldw_chatbook.Chat.Chat_Functions import extract_response_content
+
+    cleaned = _clean_llm_context_response(extract_response_content(response))
+    if cleaned is None:
+        logger.debug(
+            "generate-image: LLM context composition returned an empty/unusable response"
+        )
+    return cleaned
+
+
+def build_context_prompt_with_llm(
+    messages: Sequence[tuple[str, str]],
+    template: GenerationTemplate,
+    llm_context: LLMContextOptions | None = None,
+) -> tuple[str, str, dict[str, Any]] | None:
+    """Compose from conversation context, preferring an LLM-composed prompt.
+
+    Task-559 AC1's richer context builder. When ``llm_context`` is given,
+    attempts `compose_llm_context_prompt` first; ANY failure there (kill
+    switch off, no ready provider, call error, timeout, empty/garbage
+    response) falls back to the pre-existing keyword-shallow
+    `build_context_prompt` -- this function never raises and never
+    dispatches worse than the original behavior. ``llm_context=None`` (the
+    default) skips the LLM attempt entirely and behaves exactly like
+    calling `build_context_prompt` directly, so every existing caller/test
+    of the keyword path is unaffected.
+
+    On an LLM success, the composed text is threaded through the SAME
+    template-rendering + anchor-append pipeline (`_apply_template_with_
+    anchor`) that the keyword path uses, standing in for the keyword
+    extractor's ``last_message`` — so the "composed prompt visible in card"
+    behavior and every template's ``context_mappings`` keep working
+    unchanged; only the source of that anchor text gets richer.
+
+    Args:
+        messages: Chronological ``(role, content)`` pairs from the session.
+        template: The style template to render.
+        llm_context: Resolved LLM-path config/provider identity, or
+            ``None`` to use the keyword extractor unconditionally.
+
+    Returns:
+        A ``(prompt, negative_prompt, params)`` tuple, or ``None`` when
+        every message's content is empty/whitespace-only.
+    """
+    shaped_pairs = [
+        (role, content) for role, content in messages if content and content.strip()
+    ]
+    if not shaped_pairs:
+        return None
+    if llm_context is not None:
+        composed_text = compose_llm_context_prompt(shaped_pairs, llm_context)
+        if composed_text is not None:
+            context = {
+                "last_message": composed_text,
+                "mentioned_characters": [],
+                "mentioned_settings": [],
+                "mood": "",
+                "style_hints": [],
+            }
+            return _apply_template_with_anchor(context, template)
+    return build_context_prompt(shaped_pairs, template)
 
 
 @dataclass(frozen=True)
@@ -443,6 +831,7 @@ class GenerationRefusal:
 def prepare_generation_request(
     args: GenerateImageArgs,
     conversation_pairs: Sequence[tuple[str, str]],
+    llm_context: LLMContextOptions | None = None,
 ) -> PreparedGeneration | GenerationRefusal:
     """Decide what one ``/generate-image`` invocation should generate.
 
@@ -458,15 +847,27 @@ def prepare_generation_request(
        `compose_styled_request` (styled) or passed through unchanged
        (unstyled).
     3. An empty prompt falls back to the conversation: pairs with
-       non-whitespace content are handed to `build_context_prompt` using
-       the resolved style template, or ``chat_scene_visual`` when no
-       ``@style`` was given. No usable conversation content — or no
-       messages at all — refuses with the command's usage text.
+       non-whitespace content are handed to `build_context_prompt_with_llm`
+       (Task-559 AC1 — LLM-composed when ``llm_context`` is given and
+       ready, else the keyword-shallow extractor) using the resolved style
+       template, or ``chat_scene_visual`` when no ``@style`` was given. No
+       usable conversation content — or no messages at all — refuses with
+       the command's usage text.
+
+    This function itself may block on network I/O when ``llm_context`` is
+    given and its LLM path is attempted (`compose_llm_context_prompt`) —
+    callers MUST run it off the UI loop (e.g.
+    ``await asyncio.to_thread(prepare_generation_request, ...)``), exactly
+    like `run_generation_batch`.
 
     Args:
         args: The parsed ``/generate-image`` invocation.
         conversation_pairs: The session's ``(role, content)`` pairs in
             chronological order. Only consulted on the no-prompt path.
+        llm_context: Resolved LLM-composed-context config/provider
+            identity (Task-559 AC1), or ``None`` to use the keyword
+            extractor unconditionally. Only consulted on the no-prompt
+            path.
 
     Returns:
         A `PreparedGeneration` ready to hand to `run_generation_batch`, or a
@@ -486,7 +887,7 @@ def prepare_generation_request(
                 )
             )
         if resolution.template is None:
-            valid_ids = ", ".join(sorted(BUILTIN_TEMPLATES))
+            valid_ids = ", ".join(sorted(get_all_templates()))
             return GenerationRefusal(
                 reason=f"Unknown style '@{args.style}'. Valid styles: {valid_ids}"
             )
@@ -526,7 +927,7 @@ def prepare_generation_request(
         return GenerationRefusal(reason=GENERATE_IMAGE_USAGE_TEXT)
 
     template = style_template or get_template("chat_scene_visual")
-    built = build_context_prompt(usable_pairs, template)
+    built = build_context_prompt_with_llm(usable_pairs, template, llm_context)
     if built is None:
         return GenerationRefusal(reason=GENERATE_IMAGE_USAGE_TEXT)
     composed, negative, params = built

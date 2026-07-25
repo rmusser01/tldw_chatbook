@@ -2778,6 +2778,16 @@ inline_max_bytes = 4000000
 default_batch = 1
 max_variants_per_message = 8
 
+# `/generate-image` with no prompt text composes from conversation context.
+# When context_llm_enabled, an LLM call (the session's active provider+
+# model, same as a normal Console send) composes a richer prompt from the
+# last context_llm_turns messages; ANY failure (kill-switch off, no ready
+# provider, error, timeout, empty response) falls back to the built-in
+# keyword extractor -- generation is never blocked by this.
+context_llm_enabled = true
+context_llm_turns = 10
+context_llm_timeout_seconds = 15
+
 [image_generation.stable_diffusion_cpp]
 binary_path = ""                      # local `sd` CLI; empty = backend unusable
 diffusion_model_path = ""             # OR model_path
@@ -2830,6 +2840,29 @@ poll_interval_seconds = 2
 timeout_seconds = 180
 allowed_extra_params = []
 api_key = "<API_KEY_HERE>"
+
+# User-defined `/generate-image` @style templates, layered over the 13
+# built-ins (Media_Creation/generation_templates.py). A user template with
+# the same id as a builtin overrides it; new ids extend the set. Fields
+# mirror a builtin's shape: name/category/base_prompt are required,
+# everything else optional. Uncomment and edit to add your own, or drop
+# one *.toml file per template (same fields, no [image_generation.styles.*]
+# wrapper) under <user data dir>/image_generation_styles/ instead -- see
+# that module's docstring for the full precedence rule.
+# [image_generation.styles.my_glow]
+# name = "My Glow"
+# category = "Custom"
+# description = "Soft dreamy glow"
+# base_prompt = "{{subject}}, soft glow lighting, dreamy atmosphere"
+# negative_prompt = "harsh lighting, low quality"
+# tags = ["custom", "glow"]
+# [image_generation.styles.my_glow.default_params]
+# width = 768
+# height = 768
+# steps = 28
+# cfg_scale = 7.5
+# [image_generation.styles.my_glow.context_mappings]
+# subject = "last_message"
 
 [character_defaults]
 # Default settings specifically for the 'Character' tab

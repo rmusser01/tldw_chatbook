@@ -1,8 +1,9 @@
 """Console image-generation style picker modal.
 
-Lets the user search the built-in `/generate-image` style templates
-(`Media_Creation.generation_templates.BUILTIN_TEMPLATES`, 13 presets) and
-pick one to insert as an `@<style-id>` token into the Console composer
+Lets the user search the `/generate-image` style templates -- the 13 builtin
+presets plus any user-defined templates loaded from config/the templates dir
+(`Media_Creation.generation_templates.get_all_templates`, Task-559 AC4) --
+and pick one to insert as an `@<style-id>` token into the Console composer
 draft. Reached via the command-palette "Console: Insert image style…" action
 (`ChatScreen.action_open_console_style_insert`, mirroring
 `action_open_console_prompt_insert`'s guard + launch shape -- see that
@@ -20,13 +21,22 @@ this Textual version); Enter activates the highlighted row via the bubbled
 widgets and the results ``VerticalScroll`` are both ``can_focus = False`` so
 real DOM focus can never land on a row.
 
-Unlike the skill picker, the searched set is a small (13-entry) static,
-in-memory list baked into this process -- there is no injected async search
-callable, no debounce timer, and no search-token race to guard against
-(nothing here ever awaits I/O). Filtering runs synchronously against
-``BUILTIN_TEMPLATES`` on every keystroke; only the row mount/unmount itself
-is awaited (Textual's ``VerticalScroll.remove_children``/``mount_all`` are
+The searched set is a small, static, in-memory list -- `get_all_templates`
+is cached for the process lifetime (see that function's docstring) -- so
+there is no injected async search callable, no debounce timer, and no
+search-token race to guard against (nothing here ever awaits I/O). Filtering
+runs synchronously on every keystroke; only the row mount/unmount itself is
+awaited (Textual's ``VerticalScroll.remove_children``/``mount_all`` are
 coroutines regardless of where the data came from).
+
+Task-559 AC3 adds a template preview: a detail line below the results list
+that shows the highlighted template's base-prompt/negative-prompt snippet
+(truncated), updating on every highlight change (arrow keys, click, filter
+re-narrow). It uses a plain (``markup=False``) ``Static`` -- template text
+is untrusted (user-defined templates), and disabling markup interpretation
+entirely is both simpler and strictly safer here than escaping every field,
+since it makes bracket-looking content (e.g. a base prompt containing
+``[red]``) render literally with no escaping step to forget.
 
 Note: this screen only dismisses; the CALLER is responsible for returning
 focus to the Console composer afterwards (mirrors every sibling Console
@@ -47,28 +57,35 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Media_Creation.generation_templates import (
-    BUILTIN_TEMPLATES,
     GenerationTemplate,
+    get_all_templates,
 )
 
 FILTER_INPUT_ID = "console-style-picker-filter"
 MODAL_ID = "console-style-picker-modal"
 RESULTS_CONTAINER_ID = "console-style-picker-results"
 EMPTY_STATIC_ID = "console-style-picker-empty"
+DETAIL_STATIC_ID = "console-style-picker-detail"
 ROW_ID_PREFIX = "console-style-picker-row-"
 ROW_CLASS = "console-style-picker-row"
 ROW_HIGHLIGHTED_CLASS = "console-style-picker-row-highlighted"
 
 EMPTY_STORE_COPY = "No matching styles."
+DETAIL_EMPTY_COPY = "Highlight a style to preview its prompt."
 
 MODAL_TITLE = "Insert image style"
+
+_PREVIEW_SNIPPET_MAX_CHARS = 90
+"""Max rendered length of each of the base-prompt/negative-prompt snippets
+in the detail line (each truncated independently, so a long base prompt
+never crowds out the negative-prompt snippet)."""
 
 
 def _template_matches(template: GenerationTemplate, needle: str) -> bool:
     """Return whether ``template`` matches an already-casefolded ``needle``.
 
     Args:
-        template: Candidate built-in style template.
+        template: Candidate style template (builtin or user-defined).
         needle: Casefolded filter text (empty matches everything).
     """
     if not needle:
@@ -78,23 +95,64 @@ def _template_matches(template: GenerationTemplate, needle: str) -> bool:
 
 
 def search_style_templates(query: str) -> list[GenerationTemplate]:
-    """Filter ``BUILTIN_TEMPLATES`` by id/name/category, casefold substring match.
+    """Filter every available template (builtin + user-defined) by id/name/category.
 
     Args:
         query: Raw filter text as typed into the picker's search box.
 
     Returns:
-        Matching templates in ``BUILTIN_TEMPLATES``' declared (insertion)
-        order -- deterministic and stable across calls.
+        Matching templates in `get_all_templates`' declared order --
+        builtins first (their `BUILTIN_TEMPLATES` insertion order, or a
+        user template's position if it overrode a builtin id), then any
+        additional user-only templates.
     """
     needle = query.strip().casefold()
     return [
-        template for template in BUILTIN_TEMPLATES.values() if _template_matches(template, needle)
+        template
+        for template in get_all_templates().values()
+        if _template_matches(template, needle)
     ]
 
 
+def _truncate_snippet(text: str, limit: int = _PREVIEW_SNIPPET_MAX_CHARS) -> str:
+    """Collapse whitespace and cut ``text`` to ``limit`` chars with a trailing ``…``.
+
+    Mirrors ``console_generate_image.generation_content_marker``'s
+    truncation shape. Returns ``""`` unchanged (callers render an
+    "(none)"-style placeholder for an empty snippet).
+    """
+    flattened = " ".join(text.split())
+    if len(flattened) > limit:
+        return flattened[: limit - 1] + "…"
+    return flattened
+
+
+def format_style_preview(template: GenerationTemplate) -> str:
+    """Render the detail-line preview text for ``template``.
+
+    Two truncated lines: the base prompt, then the negative prompt (when
+    non-empty). Plain text -- the caller MUST render it through a
+    ``markup=False`` ``Static`` (or otherwise escape it) since template text
+    is untrusted; this function does not escape anything itself.
+
+    Args:
+        template: The highlighted style template.
+
+    Returns:
+        Multi-line preview text, never empty (falls back to placeholder
+        copy for a template with a blank base prompt, which validation
+        should never actually allow through, but this stays defensive).
+    """
+    base = _truncate_snippet(template.base_prompt or "")
+    negative = _truncate_snippet(template.negative_prompt or "")
+    lines = [f"Prompt: {base}" if base else "Prompt: (none)"]
+    if negative:
+        lines.append(f"Negative: {negative}")
+    return "\n".join(lines)
+
+
 class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
-    """Search and pick a built-in `/generate-image` style template."""
+    """Search and pick a `/generate-image` style template (built-in or user-defined)."""
 
     BINDINGS = [("escape", "dismiss_picker", "Cancel")]
 
@@ -127,6 +185,10 @@ class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
             )
             with VerticalScroll(id=RESULTS_CONTAINER_ID, can_focus=False):
                 yield Static(EMPTY_STORE_COPY, id=EMPTY_STATIC_ID, markup=False)
+            # Task-559 AC3: template preview, updates on every highlight
+            # change (see `_sync_highlight`). `markup=False` -- template
+            # text is untrusted; see module docstring.
+            yield Static(DETAIL_EMPTY_COPY, id=DETAIL_STATIC_ID, markup=False)
 
     async def on_mount(self) -> None:
         self._focus_filter_input()
@@ -201,6 +263,7 @@ class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
         self._row_ids = []
         if not self._results:
             await container.mount(Static(EMPTY_STORE_COPY, id=EMPTY_STATIC_ID, markup=False))
+            self._sync_detail()  # clears a stale preview from before the filter narrowed to zero
             return
         buttons = []
         for template in self._results:
@@ -239,6 +302,19 @@ class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
             return
         for index, button in enumerate(container.query(Button)):
             button.set_class(index == self._highlighted_index, ROW_HIGHLIGHTED_CLASS)
+        self._sync_detail()
+
+    def _sync_detail(self) -> None:
+        """Refresh the preview detail line for the current highlight (AC3)."""
+        try:
+            detail = self.query_one(f"#{DETAIL_STATIC_ID}", Static)
+        except (NoMatches, QueryError):
+            return
+        if 0 <= self._highlighted_index < len(self._results):
+            template = self._results[self._highlighted_index]
+            detail.update(format_style_preview(template))
+        else:
+            detail.update(DETAIL_EMPTY_COPY)
 
     def _select_highlighted(self) -> None:
         if not (0 <= self._highlighted_index < len(self._results)):

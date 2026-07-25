@@ -73,3 +73,43 @@ def test_batch_and_variant_cap_from_toml_clamped(monkeypatch):
     monkeypatch.setattr(c, "_keyring_get", lambda b: None, raising=False)
     cfg = c.get_image_generation_config(reload=True)
     assert cfg.default_batch == 3 and cfg.max_variants_per_message == 1  # clamped >=1
+
+def test_context_llm_defaults_when_unconfigured(monkeypatch):
+    from tldw_chatbook.Image_Generation import config as c
+    monkeypatch.setattr(c, "_read_image_generation_toml", lambda: {}, raising=False)
+    monkeypatch.setattr(c, "_keyring_get", lambda b: None, raising=False)
+    cfg = c.get_image_generation_config(reload=True)
+    assert cfg.context_llm_enabled is c.DEFAULT_CONTEXT_LLM_ENABLED
+    assert cfg.context_llm_turns == c.DEFAULT_CONTEXT_LLM_TURNS
+    assert cfg.context_llm_timeout_seconds == c.DEFAULT_CONTEXT_LLM_TIMEOUT_SECONDS
+
+def test_context_llm_custom_values_from_toml(monkeypatch):
+    from tldw_chatbook.Image_Generation import config as c
+    fake = {
+        "context_llm_enabled": False,
+        "context_llm_turns": 4,
+        "context_llm_timeout_seconds": 7.5,
+    }
+    monkeypatch.setattr(c, "_read_image_generation_toml", lambda: fake, raising=False)
+    monkeypatch.setattr(c, "_keyring_get", lambda b: None, raising=False)
+    cfg = c.get_image_generation_config(reload=True)
+    assert cfg.context_llm_enabled is False
+    assert cfg.context_llm_turns == 4
+    assert cfg.context_llm_timeout_seconds == 7.5
+
+def test_context_llm_enabled_accepts_string_bool_forms(monkeypatch):
+    from tldw_chatbook.Image_Generation import config as c
+    monkeypatch.setattr(c, "_read_image_generation_toml",
+                        lambda: {"context_llm_enabled": "false"}, raising=False)
+    monkeypatch.setattr(c, "_keyring_get", lambda b: None, raising=False)
+    cfg = c.get_image_generation_config(reload=True)
+    assert cfg.context_llm_enabled is False
+
+def test_context_llm_turns_and_timeout_clamped_to_minimums(monkeypatch):
+    from tldw_chatbook.Image_Generation import config as c
+    fake = {"context_llm_turns": 0, "context_llm_timeout_seconds": 0}
+    monkeypatch.setattr(c, "_read_image_generation_toml", lambda: fake, raising=False)
+    monkeypatch.setattr(c, "_keyring_get", lambda b: None, raising=False)
+    cfg = c.get_image_generation_config(reload=True)
+    assert cfg.context_llm_turns == 1
+    assert cfg.context_llm_timeout_seconds == 0.1

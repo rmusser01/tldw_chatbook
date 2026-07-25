@@ -30,11 +30,33 @@ from tldw_chatbook.Chat.console_chat_models import (
     GenerationVariantMeta,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_generate_image import BatchResult
+from tldw_chatbook.Chat.console_command_grammar import CommandParse
+from tldw_chatbook.Chat.console_generate_image import (
+    BatchResult,
+    LLMContextOptions,
+    reset_llm_context_executor,
+)
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
-from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSRequestEvent
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+    TTSPlaybackEvent,
+    TTSRequestEvent,
+)
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+
+@pytest.fixture(autouse=True)
+def _reset_llm_context_executor_state():
+    """Same rationale as `test_console_generate_image.py`'s fixture of the
+    same name: the shared single-worker LLM-context executor (Qodo PR #867
+    fix) is process-wide module state -- reset around every test so this
+    file's own slow/timeout fake calls can never bleed a spurious
+    saturation failure into an unrelated later test (in this file, another
+    test file in the same session, or vice versa)."""
+    reset_llm_context_executor()
+    yield
+    reset_llm_context_executor()
 
 
 def _meta(
@@ -553,6 +575,138 @@ async def test_handle_console_message_action_routes_speak_for_generation_message
     assert posted[0].message_id == message.id
 
 
+# --- task-559 unit 2: Console TTS stop toggle dispatch ------------------------
+
+
+@pytest.mark.asyncio
+async def test_handle_console_message_action_speak_marks_message_as_speaking():
+    """Dispatching speak records the message id as the screen's ephemeral
+    "currently speaking" state and re-syncs the transcript so the action row
+    picks up the 🔊 -> ⏹ swap (task-559 unit 2)."""
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="The sky is blue today.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    screen.app_instance.post_message = lambda *a, **k: None
+    button = Button("speak", id=f"console-message-action-speak-{message.id}")
+
+    handled = await screen.handle_console_message_action(Button.Pressed(button))
+
+    assert handled is True
+    assert screen._console_speaking_message_id == message.id
+    screen._sync_native_console_chat_ui.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_console_message_action_routes_speak_stop_to_tts_playback_event():
+    """speak-stop posts the app's existing TTSPlaybackEvent(action="stop")
+    -- reuses the legacy stop-button plumbing, no new audio machinery --
+    clears the screen's speaking-message tracking so the row swaps back,
+    AND (since the screen genuinely believed this message was speaking)
+    gives honest "Stopped speaking." feedback."""
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="The sky is blue today.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    screen._console_speaking_message_id = message.id
+    posted: list = []
+    screen.app_instance.post_message = posted.append
+    notified: list = []
+    screen.app_instance.notify = lambda *a, **k: notified.append((a, k))
+    button = Button(
+        "stop", id=f"console-message-action-speak-stop-{message.id}"
+    )
+
+    handled = await screen.handle_console_message_action(Button.Pressed(button))
+
+    assert handled is True
+    assert len(posted) == 1
+    event = posted[0]
+    assert isinstance(event, TTSPlaybackEvent)
+    assert event.action == "stop"
+    assert event.message_id == message.id
+    assert screen._console_speaking_message_id is None
+    screen._sync_native_console_chat_ui.assert_awaited()
+    assert len(notified) == 1
+    assert notified[0][0][0] == "Stopped speaking."
+
+
+@pytest.mark.asyncio
+async def test_handle_console_message_action_speak_stop_safe_when_nothing_speaking():
+    """speak-stop is a genuinely-idle no-op (fix round 1) when the screen
+    never marked any message as speaking -- e.g. a stale/late button press
+    after the screen's own state already cleared, or a directly-crafted
+    button id bypassing the UI gate that would normally hide this button.
+    Still safe to post the stop event (the app-level handler already
+    no-ops harmlessly for real) -- but must NOT claim "Stopped speaking."
+    for nothing, and must not force an unnecessary transcript re-sync."""
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="The sky is blue today.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    posted: list = []
+    screen.app_instance.post_message = posted.append
+    notified: list = []
+    screen.app_instance.notify = lambda *a, **k: notified.append((a, k))
+    button = Button(
+        "stop", id=f"console-message-action-speak-stop-{message.id}"
+    )
+
+    handled = await screen.handle_console_message_action(Button.Pressed(button))
+
+    assert handled is True
+    assert len(posted) == 1
+    assert posted[0].action == "stop"
+    assert getattr(screen, "_console_speaking_message_id", None) is None
+    assert notified == []
+    screen._sync_native_console_chat_ui.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_console_message_action_speak_stop_does_not_clear_other_message():
+    """Stopping message A must not clear message B's tracked speaking
+    state -- only an exact id match clears it -- and, since the screen
+    never believed message A itself was speaking, no "Stopped speaking."
+    feedback is given for A either."""
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message_a = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="A", persist=False
+    )
+    message_b = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="B", persist=False
+    )
+    screen = _bare_generation_screen(store)
+    screen._console_speaking_message_id = message_b.id
+    screen.app_instance.post_message = lambda *a, **k: None
+    notified: list = []
+    screen.app_instance.notify = lambda *a, **k: notified.append((a, k))
+    button = Button(
+        "stop", id=f"console-message-action-speak-stop-{message_a.id}"
+    )
+
+    handled = await screen.handle_console_message_action(Button.Pressed(button))
+
+    assert handled is True
+    assert screen._console_speaking_message_id == message_b.id
+    assert notified == []
+
+
 # --- Task 3: handler-level wiring test for /generate-image style threading ----
 
 
@@ -689,6 +843,400 @@ async def test_generate_image_handler_threads_prepared_fields_into_batch(monkeyp
     append_kwargs = appended_messages[0]
     assert append_kwargs["content"].startswith("[image] ")
     assert "a dragon" in append_kwargs["content"]
+
+
+# ---------------------------------------------------------------------------
+# Task-559 AC1: LLM-composed conversation-context prompt
+# ---------------------------------------------------------------------------
+
+
+def _imagegen_cfg(**overrides) -> SimpleNamespace:
+    """A `get_image_generation_config()` stand-in carrying every field the
+    handler + `_console_generate_image_llm_context_options` read."""
+    defaults = dict(
+        default_backend="swarmui",
+        default_batch=1,
+        max_variants_per_message=8,
+        context_llm_enabled=True,
+        context_llm_turns=10,
+        context_llm_timeout_seconds=15.0,
+    )
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def _chat_response(text: str) -> dict:
+    return {"choices": [{"message": {"content": text}}]}
+
+
+# --- _console_generate_image_llm_context_options (isolated) ----------------
+
+
+@pytest.mark.asyncio
+async def test_llm_context_options_disabled_by_kill_switch():
+    screen = ChatScreen.__new__(ChatScreen)
+    cfg = _imagegen_cfg(context_llm_enabled=False)
+    options = await screen._console_generate_image_llm_context_options(cfg)
+    assert options.enabled is False
+    assert options.provider_ready is False
+
+
+@pytest.mark.asyncio
+async def test_llm_context_options_resolves_ready_provider():
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._build_console_provider_selection = lambda: "selection-sentinel"
+
+    class _FakeGateway:
+        async def resolve_for_send(self, selection):
+            assert selection == "selection-sentinel"
+            return SimpleNamespace(
+                ready=True,
+                execution_key="openai",
+                model="gpt-4o-mini",
+                api_key="fake-test-api-key",
+            )
+
+    screen._ensure_console_provider_gateway = lambda: _FakeGateway()
+    cfg = _imagegen_cfg(context_llm_turns=7, context_llm_timeout_seconds=9.5)
+    options = await screen._console_generate_image_llm_context_options(cfg)
+    assert options.enabled is True
+    assert options.provider_ready is True
+    assert options.api_endpoint == "openai"
+    assert options.model == "gpt-4o-mini"
+    assert options.api_key == "fake-test-api-key"
+    assert options.turns == 7
+    assert options.timeout_seconds == 9.5
+
+
+@pytest.mark.asyncio
+async def test_llm_context_options_provider_not_ready():
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._build_console_provider_selection = lambda: "selection-sentinel"
+
+    class _FakeGateway:
+        async def resolve_for_send(self, selection):
+            return SimpleNamespace(
+                ready=False, execution_key="", model=None, api_key=None
+            )
+
+    screen._ensure_console_provider_gateway = lambda: _FakeGateway()
+    options = await screen._console_generate_image_llm_context_options(
+        _imagegen_cfg()
+    )
+    assert options.enabled is True
+    assert options.provider_ready is False
+
+
+@pytest.mark.asyncio
+async def test_llm_context_options_resolution_exception_degrades_gracefully():
+    screen = ChatScreen.__new__(ChatScreen)
+
+    def _raise():
+        raise RuntimeError("selection blew up")
+
+    screen._build_console_provider_selection = _raise
+    options = await screen._console_generate_image_llm_context_options(
+        _imagegen_cfg()
+    )
+    assert options.enabled is True
+    assert options.provider_ready is False
+
+
+# --- _console_command_generate_image: handler-level wiring ------------------
+
+
+def _wired_generate_image_screen(store, *, batch_calls, batch_data=b"generated_img"):
+    """A `_bare_generation_screen` plus every stub the no-prompt dispatch
+    path needs, matching `test_generate_image_handler_threads_prepared_
+    fields_into_batch`'s established stubbing style."""
+    screen = _bare_generation_screen(store)
+    screen._default_console_session_settings = lambda: ConsoleSessionSettings(
+        provider="openai"
+    )
+    screen._console_composer_or_none = lambda: None
+    screen._clear_console_composer_draft = lambda: None
+    screen._console_imagegen_inflight_sessions = lambda: set()
+
+    def _mock_batch(**kwargs):
+        batch_calls.append(kwargs)
+        meta = GenerationVariantMeta(
+            prompt=kwargs["prompt"],
+            negative_prompt=kwargs.get("negative_prompt") or "",
+            backend=kwargs["backend"],
+            model=None,
+            seed=None,
+            style=kwargs.get("style_name"),
+            params={},
+        )
+        return BatchResult(successes=[(batch_data, "image/png", meta)], errors=[])
+
+    return screen, _mock_batch
+
+
+@pytest.mark.asyncio
+async def test_generate_image_handler_no_prompt_uses_llm_composed_context_end_to_end(
+    monkeypatch,
+):
+    """Happy path: a mocked chat_api_call composition reaches BOTH the
+    generation request (run_generation_batch's prompt kwarg) and the
+    card-visible content marker."""
+    store = ConsoleChatStore()
+    batch_calls: list = []
+    screen, mock_batch = _wired_generate_image_screen(store, batch_calls=batch_calls)
+    screen._console_generate_image_conversation_pairs = lambda store, session_id: [
+        ("user", "A knight enters a glowing cave."),
+        ("assistant", "Crystals shimmer along the walls."),
+    ]
+
+    llm_text = "A knight in a glowing crystal cave, dramatic torchlight."
+
+    async def _fake_llm_context_options(cfg):
+        assert cfg.context_llm_enabled is True
+        return LLMContextOptions(
+            enabled=True,
+            turns=cfg.context_llm_turns,
+            timeout_seconds=cfg.context_llm_timeout_seconds,
+            provider_ready=True,
+            api_endpoint="openai",
+            model="gpt-4o-mini",
+            api_key="fake-test-api-key",
+            chat_call=lambda **_kwargs: _chat_response(llm_text),
+        )
+
+    screen._console_generate_image_llm_context_options = _fake_llm_context_options
+
+    monkeypatch.setattr(chat_screen_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(
+        chat_screen_module, "get_image_generation_config", lambda: _imagegen_cfg()
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "list_image_models_for_catalog",
+        lambda: [{"name": "swarmui", "is_configured": True}],
+    )
+
+    parse = CommandParse(kind="command", name="generate-image", args="")
+    await screen._console_command_generate_image(parse)
+
+    assert len(batch_calls) == 1
+    prompt = batch_calls[0]["prompt"]
+    assert llm_text in prompt
+
+    messages = store.messages_for_session(
+        store.ensure_session(
+            workspace_id=store.workspace_context.active_workspace_id,
+            settings=screen._default_console_session_settings(),
+        ).id
+    )
+    generation_messages = [m for m in messages if m.content.startswith("[image] ")]
+    assert len(generation_messages) == 1
+    assert llm_text in generation_messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_generate_image_handler_no_prompt_llm_call_raises_falls_back(
+    monkeypatch,
+):
+    """chat_api_call raising -> keyword-extractor result used, generation
+    still dispatches, no exception escapes the handler."""
+    store = ConsoleChatStore()
+    batch_calls: list = []
+    screen, mock_batch = _wired_generate_image_screen(store, batch_calls=batch_calls)
+    conversation = [("user", "a quiet lakeside cabin at dawn")]
+    screen._console_generate_image_conversation_pairs = lambda store, session_id: conversation
+
+    async def _fake_llm_context_options(cfg):
+        return LLMContextOptions(
+            enabled=True,
+            turns=cfg.context_llm_turns,
+            timeout_seconds=cfg.context_llm_timeout_seconds,
+            provider_ready=True,
+            api_endpoint="openai",
+            model="gpt-4o-mini",
+            api_key="fake-test-api-key",
+            chat_call=lambda **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("provider unreachable")
+            ),
+        )
+
+    screen._console_generate_image_llm_context_options = _fake_llm_context_options
+
+    monkeypatch.setattr(chat_screen_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(
+        chat_screen_module, "get_image_generation_config", lambda: _imagegen_cfg()
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "list_image_models_for_catalog",
+        lambda: [{"name": "swarmui", "is_configured": True}],
+    )
+
+    parse = CommandParse(kind="command", name="generate-image", args="")
+    await screen._console_command_generate_image(parse)  # must not raise
+
+    assert len(batch_calls) == 1
+    assert "a quiet lakeside cabin at dawn" in batch_calls[0]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_generate_image_handler_no_prompt_llm_timeout_falls_back(monkeypatch):
+    """A slow chat_api_call past the configured timeout -> keyword result
+    used, generation still dispatches."""
+    import time as time_module
+
+    store = ConsoleChatStore()
+    batch_calls: list = []
+    screen, mock_batch = _wired_generate_image_screen(store, batch_calls=batch_calls)
+    conversation = [("user", "a quiet lakeside cabin at dawn")]
+    screen._console_generate_image_conversation_pairs = lambda store, session_id: conversation
+
+    def _slow_call(**_kwargs):
+        time_module.sleep(0.3)
+        return _chat_response("too late")
+
+    async def _fake_llm_context_options(cfg):
+        return LLMContextOptions(
+            enabled=True,
+            turns=cfg.context_llm_turns,
+            timeout_seconds=0.02,
+            provider_ready=True,
+            api_endpoint="openai",
+            model="gpt-4o-mini",
+            api_key="fake-test-api-key",
+            chat_call=_slow_call,
+        )
+
+    screen._console_generate_image_llm_context_options = _fake_llm_context_options
+
+    monkeypatch.setattr(chat_screen_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(
+        chat_screen_module, "get_image_generation_config", lambda: _imagegen_cfg()
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "list_image_models_for_catalog",
+        lambda: [{"name": "swarmui", "is_configured": True}],
+    )
+
+    parse = CommandParse(kind="command", name="generate-image", args="")
+    await screen._console_command_generate_image(parse)  # must not raise/hang
+
+    assert len(batch_calls) == 1
+    assert "a quiet lakeside cabin at dawn" in batch_calls[0]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_generate_image_handler_no_prompt_llm_empty_response_falls_back(
+    monkeypatch,
+):
+    """An empty/unusable LLM response -> keyword result used, no crash."""
+    store = ConsoleChatStore()
+    batch_calls: list = []
+    screen, mock_batch = _wired_generate_image_screen(store, batch_calls=batch_calls)
+    conversation = [("user", "a quiet lakeside cabin at dawn")]
+    screen._console_generate_image_conversation_pairs = lambda store, session_id: conversation
+
+    async def _fake_llm_context_options(cfg):
+        return LLMContextOptions(
+            enabled=True,
+            turns=cfg.context_llm_turns,
+            timeout_seconds=cfg.context_llm_timeout_seconds,
+            provider_ready=True,
+            api_endpoint="openai",
+            model="gpt-4o-mini",
+            api_key="fake-test-api-key",
+            chat_call=lambda **_kwargs: _chat_response("   "),
+        )
+
+    screen._console_generate_image_llm_context_options = _fake_llm_context_options
+
+    monkeypatch.setattr(chat_screen_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(
+        chat_screen_module, "get_image_generation_config", lambda: _imagegen_cfg()
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "list_image_models_for_catalog",
+        lambda: [{"name": "swarmui", "is_configured": True}],
+    )
+
+    parse = CommandParse(kind="command", name="generate-image", args="")
+    await screen._console_command_generate_image(parse)
+
+    assert len(batch_calls) == 1
+    assert "a quiet lakeside cabin at dawn" in batch_calls[0]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_generate_image_handler_no_prompt_kill_switch_off_skips_llm_path(
+    monkeypatch,
+):
+    """context_llm_enabled=False end-to-end through the REAL
+    `_console_generate_image_llm_context_options` (not stubbed) -- the
+    keyword extractor's result is used and generation still dispatches."""
+    store = ConsoleChatStore()
+    batch_calls: list = []
+    screen, mock_batch = _wired_generate_image_screen(store, batch_calls=batch_calls)
+    conversation = [("user", "a quiet lakeside cabin at dawn")]
+    screen._console_generate_image_conversation_pairs = lambda store, session_id: conversation
+    # Intentionally NOT stubbing _console_generate_image_llm_context_options --
+    # the kill switch must short-circuit before any provider resolution is
+    # attempted, so the real method (which would otherwise need
+    # _build_console_provider_selection/_ensure_console_provider_gateway) is
+    # safe to call as-is here.
+
+    monkeypatch.setattr(chat_screen_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_image_generation_config",
+        lambda: _imagegen_cfg(context_llm_enabled=False),
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "list_image_models_for_catalog",
+        lambda: [{"name": "swarmui", "is_configured": True}],
+    )
+
+    parse = CommandParse(kind="command", name="generate-image", args="")
+    await screen._console_command_generate_image(parse)
+
+    assert len(batch_calls) == 1
+    assert "a quiet lakeside cabin at dawn" in batch_calls[0]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_generate_image_handler_prompt_present_never_resolves_llm_context(
+    monkeypatch,
+):
+    """When a prompt IS given, the LLM-context resolution seam is never
+    consulted at all -- it's a no-prompt-only path."""
+    store = ConsoleChatStore()
+    batch_calls: list = []
+    screen, mock_batch = _wired_generate_image_screen(store, batch_calls=batch_calls)
+    screen._console_generate_image_conversation_pairs = lambda store, session_id: []
+
+    async def _must_not_be_called(cfg):
+        raise AssertionError(
+            "LLM context resolution must not run when a prompt was given"
+        )
+
+    screen._console_generate_image_llm_context_options = _must_not_be_called
+
+    monkeypatch.setattr(chat_screen_module, "run_generation_batch", mock_batch)
+    monkeypatch.setattr(
+        chat_screen_module, "get_image_generation_config", lambda: _imagegen_cfg()
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "list_image_models_for_catalog",
+        lambda: [{"name": "swarmui", "is_configured": True}],
+    )
+
+    parse = CommandParse(kind="command", name="generate-image", args="a red dragon")
+    await screen._console_command_generate_image(parse)
+
+    assert len(batch_calls) == 1
+    assert batch_calls[0]["prompt"] == "a red dragon"
 
 
 class _FakeComposer:

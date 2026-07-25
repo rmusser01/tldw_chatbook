@@ -98,6 +98,7 @@ from ...Chat.console_prefill import (
 )
 from ...Chat.console_generate_image import (
     GenerationRefusal,
+    LLMContextOptions,
     PreparedGeneration,
     clamp_initial_batch,
     generation_content_marker,
@@ -2023,6 +2024,17 @@ class ChatScreen(BaseAppScreen):
         self._console_model_option_warnings: dict[tuple[str, str], str] = {}
         self._last_console_action: ConsoleActionResult | None = None
         self._pending_console_delete_message_id: str | None = None
+        #: task-559 unit 2: id of the Console message currently driving TTS
+        #: (from speak dispatch until an explicit speak-stop, or until a
+        #: DIFFERENT message's speak overwrites it -- see
+        #: ``ConsoleTranscript._console_tts_speaking_message_id`` for the
+        #: read side and ``handle_console_message_action``'s speak/
+        #: speak-stop branches for the write side). No event bridges actual
+        #: audio-playback completion back into the app, so this does NOT
+        #: clear itself when playback ends naturally -- a documented
+        #: limitation shared with the legacy chat widgets' own "playing"
+        #: state, not a new gap introduced here.
+        self._console_speaking_message_id: str | None = None
         #: task-501: sibling-swipe selection handoff. Held on the SCREEN (not
         #: the transcript widget) because the transcript can be remounted by a
         #: recompose between the swipe and the next message push — the sync
@@ -11907,6 +11919,75 @@ class ChatScreen(BaseAppScreen):
             if message.status == "complete" and message.content and message.content.strip()
         ]
 
+    async def _console_generate_image_llm_context_options(
+        self, cfg: Any
+    ) -> LLMContextOptions:
+        """Resolve the LLM-composed conversation-context path's config +
+        active provider identity (Task-559 AC1).
+
+        Mirrors how a normal Console chat send resolves provider/model --
+        `_build_console_provider_selection` + `ConsoleProviderGateway.
+        resolve_for_send` -- rather than inventing new resolution logic, so
+        `/generate-image` with no prompt always composes against whatever
+        provider+model the session is actually configured to chat with,
+        including llama.cpp's bounded ``/health`` reachability probe
+        (`ConsoleProviderGateway._is_reachable`, capped at
+        ``PROBE_TIMEOUT_SECONDS`` -- NOT config/env-only for that provider;
+        every other provider's resolution IS config/env-only). Calling it
+        directly on the UI loop here matches exactly what a normal Console
+        send already does at this same point; the resulting
+        `LLMContextOptions` is what later runs the ACTUAL (potentially
+        slow/blocking) LLM call off the UI loop, inside
+        `asyncio.to_thread(prepare_generation_request, ...)`.
+
+        Never raises -- any failure resolving the provider (an unexpected
+        exception from the gateway) degrades to a not-ready
+        `LLMContextOptions`, which `compose_llm_context_prompt` treats
+        exactly like "no provider configured": skip straight to the
+        keyword extractor. The config kill-switch
+        (`cfg.context_llm_enabled`) is checked first so a disabled session
+        never even attempts the (cheap but still not free) provider
+        resolution.
+
+        Args:
+            cfg: The current `ImageGenerationConfig`
+                (`Image_Generation.config.get_image_generation_config`).
+
+        Returns:
+            An `LLMContextOptions` ready to hand to
+            `prepare_generation_request`.
+        """
+        if not cfg.context_llm_enabled:
+            return LLMContextOptions(
+                enabled=False,
+                turns=cfg.context_llm_turns,
+                timeout_seconds=cfg.context_llm_timeout_seconds,
+                provider_ready=False,
+            )
+        try:
+            selection = self._build_console_provider_selection()
+            gateway = self._ensure_console_provider_gateway()
+            resolution = await gateway.resolve_for_send(selection)
+        except Exception as exc:  # noqa: BLE001 - graceful fallback is load-bearing here
+            logger.debug(
+                f"generate-image: provider resolution for LLM context failed: {exc!r}"
+            )
+            return LLMContextOptions(
+                enabled=True,
+                turns=cfg.context_llm_turns,
+                timeout_seconds=cfg.context_llm_timeout_seconds,
+                provider_ready=False,
+            )
+        return LLMContextOptions(
+            enabled=True,
+            turns=cfg.context_llm_turns,
+            timeout_seconds=cfg.context_llm_timeout_seconds,
+            provider_ready=resolution.ready,
+            api_endpoint=resolution.execution_key or None,
+            model=resolution.model,
+            api_key=resolution.api_key,
+        )
+
     async def _console_command_generate_image(self, parse: CommandParse) -> None:
         """Resolve and run one `/generate-image` batch.
 
@@ -11915,8 +11996,8 @@ class ChatScreen(BaseAppScreen):
         context. `prepare_generation_request` (`Chat/console_generate_image.py`)
         owns all of that decision logic -- style-token resolution, prompt
         composition against a template, and the conversation-context
-        fallback -- so it stays independently unit-testable; this handler
-        just executes its result.
+        fallback (optionally LLM-composed, Task-559 AC1) -- so it stays
+        independently unit-testable; this handler just executes its result.
 
         Refusals (a `GenerationRefusal` from `prepare_generation_request`,
         no resolvable/configured backend, or a batch already running for
@@ -11938,6 +12019,19 @@ class ChatScreen(BaseAppScreen):
         is always cleared in a `finally`, so a crashed/cancelled batch
         never wedges the session against further `/generate-image`
         commands.
+
+        `prepare_generation_request` itself now also runs via
+        `asyncio.to_thread` (not called directly on the UI loop, unlike
+        before this AC): on the no-prompt path it may attempt an LLM call
+        (`compose_llm_context_prompt`) to compose a richer prompt from
+        conversation context, which is blocking network I/O and must never
+        run on the event loop -- exactly the same offloading rule
+        `run_generation_batch` already follows below. The provider identity
+        for that call is resolved first, on the loop, via
+        `_console_generate_image_llm_context_options` -- the same cheap
+        resolution a normal Console send does at this point (config/env
+        for most providers; llama.cpp additionally does its own bounded
+        ``/health`` reachability probe there, same as a normal send).
         """
         args = parse_generate_image_args(parse.args)
         store = self._ensure_console_chat_store()
@@ -11948,13 +12042,16 @@ class ChatScreen(BaseAppScreen):
         conversation_pairs = self._console_generate_image_conversation_pairs(
             store, session.id
         )
-        prepared: PreparedGeneration | GenerationRefusal = prepare_generation_request(
-            args, conversation_pairs
+        cfg = get_image_generation_config()
+        llm_context: LLMContextOptions | None = None
+        if not args.prompt.strip():
+            llm_context = await self._console_generate_image_llm_context_options(cfg)
+        prepared: PreparedGeneration | GenerationRefusal = await asyncio.to_thread(
+            prepare_generation_request, args, conversation_pairs, llm_context
         )
         if isinstance(prepared, GenerationRefusal):
             await self._append_native_console_system_message(prepared.reason)
             return
-        cfg = get_image_generation_config()
         backend = args.backend or cfg.default_backend
         if not backend:
             await self._append_native_console_system_message(
@@ -13200,6 +13297,42 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.post_message(
                 TTSRequestEvent(text=message.content, message_id=message.id)
             )
+            # task-559 unit 2: track this message as "speaking" so the
+            # action row swaps 🔊 -> ⏹ (a fresh speak always supersedes
+            # whatever was previously tracked -- the underlying player is a
+            # single-slot global singleton that stops any prior clip before
+            # starting a new one, so the tracked id and reality agree).
+            self._console_speaking_message_id = message.id
+            await self._sync_native_console_chat_ui()
+        if action_id == "speak-stop" and result.status == "completed":
+            # Reuses the legacy stop-button's exact plumbing (spec: "do not
+            # invent a parallel audio-control path") -- safe to post
+            # unconditionally, the app-level handler no-ops when nothing is
+            # cached/playing for this message id.
+            from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+                TTSPlaybackEvent,
+            )
+
+            was_speaking = (
+                getattr(self, "_console_speaking_message_id", None) == message.id
+            )
+            self.app_instance.post_message(
+                TTSPlaybackEvent(action="stop", message_id=message.id)
+            )
+            if was_speaking:
+                # Only when the screen itself believed this message was
+                # driving TTS do we clear state / re-sync / give feedback
+                # (fix round 1). A speak-stop dispatched for a message the
+                # screen never tracked as speaking -- e.g. a directly
+                # crafted button id, or a stale press racing an already-
+                # cleared state -- is a genuinely idle no-op: the stop
+                # event above is still posted for safety, but claiming
+                # "Stopped speaking." or forcing a re-sync for nothing
+                # would be misleading UI feedback.
+                self._console_speaking_message_id = None
+                await self._sync_native_console_chat_ui()
+                self.app_instance.notify(result.visible_copy, severity="information")
+            return True
         if action_id == "edit" and result.status == "edit_requested":
             await self._open_console_message_edit_modal(
                 message_id=message_id,
@@ -13893,6 +14026,12 @@ class ChatScreen(BaseAppScreen):
             ("console-message-action-continue-", "continue"),
             ("console-message-action-delete-", "delete"),
             ("console-message-action-retry-", "retry"),
+            # speak-stop MUST be checked before speak -- "speak-" is itself
+            # a prefix of "speak-stop-", so the more specific entry has to
+            # win the ordered startswith() scan below (else a speak-stop
+            # button id would mis-parse as action "speak" with message id
+            # "stop-<real id>").
+            ("console-message-action-speak-stop-", "speak-stop"),
             ("console-message-action-speak-", "speak"),
             ("console-message-action-copy-", "copy"),
             ("console-message-action-edit-", "edit"),

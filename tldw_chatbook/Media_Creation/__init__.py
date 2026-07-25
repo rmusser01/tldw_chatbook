@@ -11,6 +11,9 @@ from .generation_templates import (
     get_all_categories,
     get_templates_by_tag,
     apply_template_to_prompt,
+    get_all_templates,
+    load_user_templates,
+    reset_templates_cache,
 )
 
 __all__ = [
@@ -23,4 +26,7 @@ __all__ = [
     "get_all_categories",
     "get_templates_by_tag",
     "apply_template_to_prompt",
+    "get_all_templates",
+    "load_user_templates",
+    "reset_templates_cache",
 ]

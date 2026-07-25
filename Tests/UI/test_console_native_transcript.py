@@ -111,6 +111,35 @@ class GenerationActionRowHarness(App):
         transcript.select_message(self._message.id)
 
 
+class SpeakActionRowHarness(App):
+    """Mount one selected message, optionally marked as the Console TTS
+    "speaking" message (task-559 unit 2).
+
+    ``on_mount`` stamps ``_console_speaking_message_id`` directly onto
+    ``self.screen`` (mirrors ``GenerationActionRowHarness``'s
+    ``_generation_browse`` stamping above -- ``ConsoleTranscript`` only ever
+    reads the attribute via ``getattr``, so any screen-like object works)
+    BEFORE selecting the message, so the very first action-row build already
+    reflects it.
+    """
+
+    def __init__(
+        self, message: ConsoleChatMessage, *, speaking_message_id: str | None = None
+    ) -> None:
+        super().__init__()
+        self._message = message
+        self._speaking_message_id = speaking_message_id
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleTranscript(id="console-native-transcript")
+
+    def on_mount(self) -> None:
+        transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages([self._message])
+        self.screen._console_speaking_message_id = self._speaking_message_id
+        transcript.select_message(self._message.id)
+
+
 class SaveAsModalHarness(App):
     def __init__(
         self, destinations: list[ConsoleSaveDestination] | None = None
@@ -750,6 +779,54 @@ async def test_console_transcript_single_variant_generation_message_hides_nav_an
 
     assert len(nav_buttons) == 0
     assert len(keep_buttons) == 0
+
+
+# --- task-559 unit 2: Console TTS stop toggle in the mounted action row ---
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_action_row_shows_speak_when_not_speaking():
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1"
+    )
+    app = SpeakActionRowHarness(message, speaking_message_id=None)
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await _wait_for_selector(app, pilot, "#console-message-action-speak-m1")
+        stop_buttons = app.query("#console-message-action-speak-stop-m1")
+
+    assert len(stop_buttons) == 0
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_action_row_swaps_to_stop_for_speaking_message():
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1"
+    )
+    app = SpeakActionRowHarness(message, speaking_message_id="m1")
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await _wait_for_selector(app, pilot, "#console-message-action-speak-stop-m1")
+        speak_buttons = app.query("#console-message-action-speak-m1")
+        stop_button = app.query_one("#console-message-action-speak-stop-m1")
+
+    assert len(speak_buttons) == 0
+    assert str(stop_button.label) == "⏹"
+    assert stop_button.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_action_row_unaffected_by_other_message_speaking():
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1"
+    )
+    app = SpeakActionRowHarness(message, speaking_message_id="some-other-message")
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await _wait_for_selector(app, pilot, "#console-message-action-speak-m1")
+        stop_buttons = app.query("#console-message-action-speak-stop-m1")
+
+    assert len(stop_buttons) == 0
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,15 @@ DEFAULT_INLINE_MAX_BYTES = 4_000_000
 DEFAULT_IMAGE_BATCH = 1
 DEFAULT_MAX_VARIANTS_PER_MESSAGE = 8
 
+# Task-559 AC1: LLM-composed `/generate-image` conversation-context prompt.
+# `context_llm_enabled` is a kill-switch (default on, safe to flip off);
+# any failure at call time (no ready provider, exception, timeout, empty
+# response) ALSO falls back to the keyword extractor regardless of this
+# flag -- see `Chat/console_generate_image.py`.
+DEFAULT_CONTEXT_LLM_ENABLED = True
+DEFAULT_CONTEXT_LLM_TURNS = 10
+DEFAULT_CONTEXT_LLM_TIMEOUT_SECONDS = 15.0
+
 DEFAULT_SD_CPP_STEPS = 25
 DEFAULT_SD_CPP_CFG_SCALE = 7.5
 DEFAULT_SD_CPP_SAMPLER = "euler_a"
@@ -99,6 +108,7 @@ _GLOBAL_KEYS = [
     "default_backend", "enabled_backends", "max_width", "max_height",
     "max_pixels", "max_steps", "max_prompt_length", "inline_max_bytes",
     "default_batch", "max_variants_per_message",
+    "context_llm_enabled", "context_llm_turns", "context_llm_timeout_seconds",
 ]
 
 
@@ -162,6 +172,9 @@ class ImageGenerationConfig:
     inline_max_bytes: int | None
     default_batch: int
     max_variants_per_message: int
+    context_llm_enabled: bool
+    context_llm_turns: int
+    context_llm_timeout_seconds: float
     sd_cpp_diffusion_model_path: str | None
     sd_cpp_llm_path: str | None
     sd_cpp_binary_path: str | None
@@ -221,6 +234,18 @@ def _coerce_float(value: Any, default: float) -> float:
         return float(str(value).strip())
     except (TypeError, ValueError):
         return default
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "off"}:
+            return False
+    return default
 
 
 def _coerce_choice(
@@ -323,6 +348,12 @@ def get_image_generation_config(*, reload: bool = False) -> ImageGenerationConfi
     default_batch = max(1, _coerce_int(section.get("default_batch"), DEFAULT_IMAGE_BATCH))
     max_variants_per_message = max(1, _coerce_int(section.get("max_variants_per_message"), DEFAULT_MAX_VARIANTS_PER_MESSAGE))
 
+    context_llm_enabled = _coerce_bool(section.get("context_llm_enabled"), DEFAULT_CONTEXT_LLM_ENABLED)
+    context_llm_turns = max(1, _coerce_int(section.get("context_llm_turns"), DEFAULT_CONTEXT_LLM_TURNS))
+    context_llm_timeout_seconds = max(
+        0.1, _coerce_float(section.get("context_llm_timeout_seconds"), DEFAULT_CONTEXT_LLM_TIMEOUT_SECONDS)
+    )
+
     config = ImageGenerationConfig(
         default_backend=default_backend,
         enabled_backends=enabled_backends,
@@ -415,6 +446,9 @@ def get_image_generation_config(*, reload: bool = False) -> ImageGenerationConfi
         reference_image_supported_models=_parse_mapping_of_lists(section.get("reference_image_supported_models")),
         default_batch=default_batch,
         max_variants_per_message=max_variants_per_message,
+        context_llm_enabled=context_llm_enabled,
+        context_llm_turns=context_llm_turns,
+        context_llm_timeout_seconds=context_llm_timeout_seconds,
     )
 
     _config_cache = config
