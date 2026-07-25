@@ -848,6 +848,58 @@ async def test_display_conversation_keeps_users_name_without_active_profile(
     )
 
 
+class _T4ServerScopeService:
+    """Async ``list_user_profiles`` double matching the T2 scope-service contract."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    async def list_user_profiles(self, **kwargs):
+        return self._payload
+
+
+async def test_display_conversation_substitutes_server_backend_profile(
+    mock_app, monkeypatch
+):
+    """task-551: with the server backend authoritative, the display path's
+    {{user}} resolves against the scope service's server profiles ("Sam"),
+    not the (unset) local persona service."""
+    import tldw_chatbook.Event_Handlers.Chat_Events.chat_events as chat_events_module
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
+        display_conversation_in_chat_tab_ui,
+    )
+
+    _t4_route_pointer(
+        monkeypatch, {("character_defaults", "active_user_profile"): "Sam"}
+    )
+    mock_app.local_character_persona_service = None
+    mock_app.character_persona_scope_service = _T4ServerScopeService(
+        [{"name": "Sam"}]
+    )
+    mock_app.get_authoritative_runtime_source = lambda: "server"
+    monkeypatch.setattr(
+        chat_events_module.ccl,
+        "get_conversation_details_and_messages",
+        lambda db, conversation_id: _t4_conversation_fixture(
+            "Hello {{user}}, I am {{char}}."
+        ),
+    )
+    monkeypatch.setattr(
+        chat_events_module, "get_cli_setting", lambda *a, **k: False
+    )
+
+    with patch(
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage"
+    ) as mock_chat_msg_class:
+        mock_chat_msg_class.return_value = MagicMock(spec=ChatMessage)
+        await display_conversation_in_chat_tab_ui(mock_app, "conv-t4")
+
+    assert (
+        mock_chat_msg_class.call_args.kwargs["message"]
+        == "Hello Sam, I am Sherlock."
+    )
+
+
 # ===== task-504: display_conversation_in_chat_tab_ui repointed to the live
 # sidebar ids (#chat-chat-title / #chat-chat-id); the dead #chat-right-sidebar
 # / #chat-conversation-* / #chat-character-*-edit families must never be

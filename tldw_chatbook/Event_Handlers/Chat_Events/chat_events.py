@@ -69,7 +69,8 @@ from tldw_chatbook.Utils.Emoji_Handling import (
 )
 from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
 from tldw_chatbook.Character_Chat.active_user_profile import (
-    resolve_active_user_profile_name,
+    resolve_active_user_profile_name_async,
+    resolve_runtime_backend_mode,
 )
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import load_character_and_image
 from tldw_chatbook.DB.ChaChaNotes_DB import (
@@ -4207,13 +4208,17 @@ async def display_conversation_in_chat_tab_ui(app: "TldwCli", conversation_id: s
     try:
         character_id_from_conv = conv_metadata.get("character_id")
         loaded_char_data_for_ui_fields: Optional[Dict[str, Any]] = None
-        # task-442: {{user}} renders the active user profile's name; with no
+        # task-442/task-551: {{user}} renders the active user profile's name,
+        # resolved against the app-authoritative runtime backend (local
+        # persona service, or the scope service's server profiles); with no
         # active profile the pre-existing USERS_NAME fallback is preserved
         # byte-exact. The same resolved name threads into
         # load_character_and_image below, so card fields and message display
         # substitute consistently.
-        current_user_name = resolve_active_user_profile_name(
-            getattr(app, "local_character_persona_service", None)
+        current_user_name = await resolve_active_user_profile_name_async(
+            getattr(app, "character_persona_scope_service", None),
+            mode=resolve_runtime_backend_mode(app),
+            local_service=getattr(app, "local_character_persona_service", None),
         ) or app.app_config.get("USERS_NAME", "User")
 
         if (

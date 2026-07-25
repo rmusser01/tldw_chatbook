@@ -10411,7 +10411,8 @@ class ChatScreen(BaseAppScreen):
         # deferring Character_Chat submodule imports (they pull in Pillow
         # and CharactersRAGDB) rather than importing them at module scope.
         from ...Character_Chat.active_user_profile import (
-            resolve_active_user_profile_name,
+            resolve_active_user_profile_name_async,
+            resolve_runtime_backend_mode,
         )
         from ...Character_Chat.Character_Chat_Lib import replace_placeholders
 
@@ -10421,12 +10422,15 @@ class ChatScreen(BaseAppScreen):
             for key in ("system_prompt", "personality", "description", "scenario")
         ]
         system_prompt = "\n".join(p for p in parts if p) or "Stay in character."
-        # task-442: {{user}} renders the active user profile's name; the local
-        # persona service carries the sync list_user_profiles the resolver
-        # expects. No active profile keeps the historical "User" literal
-        # byte-exact and leaves the session's "General" label untouched.
-        active_user_name = resolve_active_user_profile_name(
-            getattr(self.app_instance, "local_character_persona_service", None)
+        # task-442/task-551: {{user}} renders the active user profile's name,
+        # resolved against the app-authoritative runtime backend (local
+        # persona service, or the scope service's server profiles). No
+        # active profile keeps the historical "User" literal byte-exact and
+        # leaves the session's "General" label untouched.
+        active_user_name = await resolve_active_user_profile_name_async(
+            getattr(self.app_instance, "character_persona_scope_service", None),
+            mode=resolve_runtime_backend_mode(self.app_instance),
+            local_service=getattr(self.app_instance, "local_character_persona_service", None),
         )
         greeting = replace_placeholders(
             str(card.get("first_message") or ""), name, active_user_name or "User"
