@@ -36,6 +36,23 @@ task-562's Implementation Notes). Same method as task-562: per-unit grep-gates
 (ids composed nowhere live + zero direct callers), retirement-guard pins in
 `test_legacy_entrypoints_retired.py`, defer on gate failure.
 
+Additional audit items surfaced during task-562's execution (all verified inert,
+left in place for scope discipline):
+- `UI/Chat_Modules/chat_sidebar_handler.py` `handle_character_buttons` — dict
+  referencing task-562-deleted handler names inside a method with zero callers.
+- `app.py` `_build_handler_map()`/`self.button_handler_map` — built once at
+  init, never read (write-only dead).
+- Dead `toggle-chat-right-sidebar` map entries: `app.py` ~:5256
+  (`chat_handlers_map`), `chat_events.py` CHAT_BUTTON_HANDLERS (~:331/:4808) —
+  keys that can never match (id composed nowhere); handler
+  `handle_chat_tab_sidebar_toggle` stays for the live left toggle.
+- `Event_Handlers/sidebar_events.py` — whole module dead
+  (`SIDEBAR_BUTTON_HANDLERS` never imported).
+- Orphaned CSS *class* selectors (`.save-chat-button`, `.sidebar-resize-button`)
+  in source tcss (id rules were swept in task-562; class rules kept).
+- `chat_right_sidebar_width` reactive (`app.py` ~:2856) — zero readers/writers
+  since `chat_events_sidebar_resize.py` was retired.
+
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Every unit above is either deleted behind a passing grep-gate or explicitly recorded as live/deferred with the gate evidence
