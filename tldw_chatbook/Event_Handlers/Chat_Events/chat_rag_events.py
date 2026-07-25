@@ -630,6 +630,38 @@ def _scope_cache_for(app: "TldwCli") -> ScopeCache:
     return cache
 
 
+def _read_fresh_workspace_scope_sync(
+    registry_service: Any, workspace_id: str
+) -> Optional[RagScope]:
+    """Read a workspace scope without collapsing malformed rows into unset."""
+
+    if not isinstance(workspace_id, str) or not workspace_id:
+        raise ValueError("workspace authority identifier is invalid")
+    registry_db = getattr(registry_service, "db", None)
+    if registry_db is None:
+        raise RuntimeError("workspace authority database is unavailable")
+    with registry_db.connection() as conn:
+        row = conn.execute(
+            """
+            SELECT payload
+            FROM workspace_rag_scopes
+            WHERE workspace_id = ?
+            """,
+            (workspace_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    try:
+        payload = row["payload"]
+    except (IndexError, KeyError, TypeError):
+        payload = row[0]
+    raw_scope = json.loads(payload)
+    scope = parse_scope(raw_scope)
+    if scope is None:
+        raise ValueError("workspace scope authority is malformed")
+    return scope
+
+
 async def resolve_scope_for_session(
     app: "TldwCli", session: Optional[Any], *, use_cache: bool = True
 ) -> ScopeResolution:
@@ -653,14 +685,15 @@ async def resolve_scope_for_session(
     ``getattr`` so callers/tests that pass a session double without this
     attribute degrade to "no workspace scope" rather than raising -- task-13
     Phase 3 of the rag-scope-narrowing program). The workspace's stored
-    scope is read via ``app.workspace_registry_service.get_workspace_scope``.
-    A missing service or a missing/empty ``workspace_id`` degrades to
-    ``ws_scope=None`` (no workspace scope to bound with -- the conversation
-    scope alone still applies normally). A storage READ FAILURE is handled
-    differently (PR#757 review, comment 5): it does NOT degrade to
-    ``ws_scope=None``, because that would silently drop the workspace bound
-    and widen a hard-filter feature on error. Instead this function returns
-    early with an EMPTY ``EffectiveScope`` (``cause="workspace-scope-
+    scope is normally read through ``workspace_registry_service``'s
+    ``get_workspace_scope`` method. Fresh prompt authorization instead reads
+    the registry row directly so a genuinely missing row remains unscoped
+    while a malformed stored row is distinguishable and fails closed. A
+    missing service or a missing/empty ``workspace_id`` degrades to
+    ``ws_scope=None`` only outside fresh authorization. A storage READ FAILURE
+    does NOT degrade to ``ws_scope=None``, because that would silently drop the
+    workspace bound and widen a hard-filter feature on error. Instead this
+    function returns early with an EMPTY ``EffectiveScope`` (``cause="workspace-scope-
     unavailable"``), regardless of whether the conversation itself has a
     scope, since conv-scope-alone is always wider than the (conv ∩
     workspace) intersection that can no longer be computed.
@@ -743,8 +776,9 @@ async def resolve_scope_for_session(
                 if conv_scope is not None and not conv_scope.items:
                     conv_scope = None
             except Exception:
-                logger.opt(exception=True).warning(
-                    "Fresh prompt-boundary conversation scope read failed"
+                logger.warning(
+                    "Prompt-boundary authority unavailable; status=unavailable; "
+                    "reason=conversation_scope_read_failure"
                 )
                 return ScopeResolution(
                     None,
@@ -789,37 +823,29 @@ async def resolve_scope_for_session(
         registry_db = getattr(registry_service, "db", None)
         registry_is_memory = bool(getattr(registry_db, "is_memory_db", False))
         try:
-            if registry_is_memory:
+            if not use_cache and registry_is_memory:
+                ws_scope = _read_fresh_workspace_scope_sync(
+                    registry_service, workspace_id
+                )
+            elif not use_cache:
+                ws_scope = await asyncio.to_thread(
+                    _read_fresh_workspace_scope_sync,
+                    registry_service,
+                    workspace_id,
+                )
+            elif registry_is_memory:
                 ws_scope = registry_service.get_workspace_scope(workspace_id)
             else:
                 ws_scope = await asyncio.to_thread(
                     registry_service.get_workspace_scope, workspace_id
                 )
         except Exception:
-            # PR#757 review (comment 5): a workspace-scope READ FAILURE is
-            # NOT the same thing as "no workspace scope set". Forcing
-            # ws_scope=None here (the old behavior) silently drops the
-            # workspace bound and lets resolution fall through to
-            # conv-scope-alone -- or fully UNSCOPED when the conversation
-            # also has no scope of its own -- widening a hard-filter
-            # feature precisely when its own read fails. Fail CLOSED
-            # instead: the (conv ∩ workspace) intersection can't be
-            # computed without the workspace scope, and conv-scope-alone
-            # is always WIDER than that intersection, so an EMPTY
-            # effective scope is returned unconditionally here (in both
-            # the conversation-scoped and conversation-unscoped
-            # sub-cases) -- this short-circuits retrieval via the same
-            # EMPTY pathway ``get_rag_context_for_chat`` already uses for
-            # a configured-but-nothing-left scope, with an honest,
-            # distinct cause instead of a generic one.
-            #
-            # This deliberately does NOT touch the conversation-scope
-            # read a few lines above, which keeps its pre-existing
-            # fail-open-to-None pattern -- see the backlog follow-up task
-            # filed against this comment for reconsidering that
-            # separately.
-            logger.opt(exception=True).warning(
-                f"workspace rag_scope read failed for {workspace_id}"
+            # A malformed or unreadable stored scope is not equivalent to no
+            # stored row. Dropping that workspace bound would widen retrieval,
+            # so authority failures always resolve EMPTY.
+            logger.warning(
+                "Prompt-boundary authority unavailable; status=unavailable; "
+                "reason=workspace_scope_read_failure"
             )
             return ScopeResolution(
                 conv_scope,
@@ -911,8 +937,9 @@ def _current_media_evidence_ids_sync(
             (json.dumps(sorted(media_ids)),),
         ).fetchall()
     except Exception:
-        logger.opt(exception=True).warning(
-            "Prompt-boundary media existence read failed"
+        logger.warning(
+            "Prompt-boundary authority unavailable; status=unavailable; "
+            "reason=media_existence_read_failure"
         )
         return None
     return frozenset((CanonicalSourceKind.MEDIA_DB, str(row[0])) for row in rows)
@@ -938,8 +965,9 @@ def _current_chacha_evidence_ids_sync(
             ),
         ).fetchall()
     except Exception:
-        logger.opt(exception=True).warning(
-            "Prompt-boundary notes/conversations existence read failed"
+        logger.warning(
+            "Prompt-boundary authority unavailable; status=unavailable; "
+            "reason=chacha_existence_read_failure"
         )
         return None
     source_kinds = {
@@ -1015,8 +1043,9 @@ async def authorize_local_results_for_prompt(
     try:
         effective_scope = await resolve_effective_scope_for_chat(app, use_cache=False)
     except Exception:
-        logger.opt(exception=True).warning(
-            "Prompt-boundary scope authority read failed"
+        logger.warning(
+            "Prompt-boundary authority unavailable; status=unavailable; "
+            "reason=scope_resolution_failure"
         )
         return ()
     if effective_scope.state == "empty":

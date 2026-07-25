@@ -14,7 +14,12 @@ from ..Chat.citation_trace_builder import (
     LocalPromptEvidenceCapture,
     LocalRetrievalCandidateCapture,
 )
-from ..Chat.citation_trace_models import RetrievalScoreKind, RetrievalScoreScale
+from ..Chat.citation_trace_models import (
+    EVIDENCE_ENTRIES_PER_PROMPT_MAX,
+    RetrievalScoreKind,
+    RetrievalScoreScale,
+    SNAPSHOT_TEXT_UTF8_BYTES_MAX,
+)
 
 FINAL_SCORE_KIND_KEY = "_final_score_kind"
 FINAL_SCORE_KIND_RERANKER = "reranker"
@@ -34,7 +39,11 @@ _SOURCE_ALIASES = {
     "chat-history": CanonicalSourceKind.CHAT_HISTORY,
 }
 _METADATA_SOURCE_KEYS = ("source_type", "source_kind")
-_LINEAGE_KEYS = ("chunk_id", "chunk_index", "start_char", "end_char")
+_DIRECT_LINEAGE_KEYS = ("chunk_id", "chunk_index")
+_OFFSET_ALIASES = {
+    "start_char": "chunk_start",
+    "end_char": "chunk_end",
+}
 _TITLE_UTF8_BYTES_MAX = 4 * 1024
 _SEPARATOR = "\n---\n"
 _SOURCE_LABELS = {
@@ -132,19 +141,46 @@ def _result_value(result: Any, field: str) -> Any:
 
 def _resolve_source(result: Any, metadata: Mapping[str, Any]) -> CanonicalSourceKind:
     source = _result_value(result, "source")
+    if not isinstance(source, str):
+        _reject()
+    resolved: list[CanonicalSourceKind] = []
     canonical = _canonical_source(source)
     if canonical is not None:
-        return canonical
-    if not isinstance(source, str) or source.strip().lower() not in {"", "unknown"}:
+        resolved.append(canonical)
+    elif source.strip().lower() not in {"", "unknown"}:
         _reject()
     for key in _METADATA_SOURCE_KEYS:
         if key not in metadata:
             continue
         canonical = _canonical_source(metadata[key])
-        if canonical is not None:
-            return canonical
+        if canonical is None:
+            _reject()
+        resolved.append(canonical)
+    if not resolved or any(value is not resolved[0] for value in resolved[1:]):
         _reject()
-    _reject()
+    return resolved[0]
+
+
+def _resolve_lineage(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Resolve allowlisted lineage and strict semantic offset aliases."""
+
+    lineage = {key: metadata.get(key) for key in _DIRECT_LINEAGE_KEYS}
+    for canonical_key, producer_key in _OFFSET_ALIASES.items():
+        canonical_present = canonical_key in metadata
+        producer_present = producer_key in metadata
+        if (
+            canonical_present
+            and producer_present
+            and metadata[canonical_key] != metadata[producer_key]
+        ):
+            _reject()
+        if canonical_present:
+            lineage[canonical_key] = metadata[canonical_key]
+        elif producer_present:
+            lineage[canonical_key] = metadata[producer_key]
+        else:
+            lineage[canonical_key] = None
+    return lineage
 
 
 def _reliable_rrf(metadata: Mapping[str, Any], score: float) -> bool:
@@ -264,7 +300,7 @@ def normalize_local_result(
     ):
         _reject()
 
-    lineage = {key: metadata.get(key) for key in _LINEAGE_KEYS}
+    lineage = _resolve_lineage(metadata)
     if (
         "source_id" in metadata
         and lineage["chunk_id"] is None
@@ -302,6 +338,24 @@ def normalize_local_result(
     )
 
 
+def _content_prefix_within_budgets(
+    content: str, *, character_budget: int, utf8_byte_budget: int
+) -> str:
+    """Return the longest whole-codepoint prefix within both budgets."""
+
+    prefix: list[str] = []
+    byte_count = 0
+    for character in content:
+        if len(prefix) >= character_budget:
+            break
+        character_bytes = len(character.encode("utf-8"))
+        if byte_count + character_bytes > utf8_byte_budget:
+            break
+        prefix.append(character)
+        byte_count += character_bytes
+    return "".join(prefix)
+
+
 def format_local_evidence_context(
     normalized_results: Sequence[NormalizedLocalResult], max_length: int = 90
 ) -> LocalEvidenceContext:
@@ -327,22 +381,41 @@ def format_local_evidence_context(
         if not isinstance(result, NormalizedLocalResult):
             raise TypeError("normalized_results must contain NormalizedLocalResult")
         candidate_rank = result.candidate_rank or position
+        if len(entries) >= EVIDENCE_ENTRIES_PER_PROMPT_MAX:
+            omitted.append(candidate_rank)
+            continue
         ordinal = len(entries) + 1
         label = _SOURCE_LABELS[result.source_kind]
         header = f"[S{ordinal}] {label} — {result.title}\n"
         separator_size = len(_SEPARATOR) if blocks else 0
-        available = max_length - context_length - separator_size
+        available_characters = max_length - context_length - separator_size
         full_block = f"{header}{result.content}"
         transformations: tuple[str, ...] = ()
-        if len(full_block) <= available:
+        if (
+            len(full_block) <= available_characters
+            and len(full_block.encode("utf-8")) <= SNAPSHOT_TEXT_UTF8_BYTES_MAX
+        ):
             block = full_block
-        elif available >= len(header) + 1:
-            content_budget = available - len(header) - 1
-            block = f"{header}{result.content[:content_budget]}…"
-            transformations = ("content_truncated",)
         else:
-            omitted.append(candidate_rank)
-            continue
+            ellipsis = "…"
+            content_character_budget = (
+                available_characters - len(header) - len(ellipsis)
+            )
+            content_byte_budget = (
+                SNAPSHOT_TEXT_UTF8_BYTES_MAX
+                - len(header.encode("utf-8"))
+                - len(ellipsis.encode("utf-8"))
+            )
+            if content_character_budget < 0 or content_byte_budget < 0:
+                omitted.append(candidate_rank)
+                continue
+            content = _content_prefix_within_budgets(
+                result.content,
+                character_budget=content_character_budget,
+                utf8_byte_budget=content_byte_budget,
+            )
+            block = f"{header}{content}{ellipsis}"
+            transformations = ("content_truncated",)
         blocks.append(block)
         context_length += separator_size + len(block)
         entries.append(

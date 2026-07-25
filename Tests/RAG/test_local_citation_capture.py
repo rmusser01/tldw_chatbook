@@ -11,8 +11,10 @@ from loguru import logger as loguru_logger
 
 from tldw_chatbook.Chat.citation_source_locators import CanonicalSourceKind
 from tldw_chatbook.Chat.citation_trace_models import (
+    EVIDENCE_ENTRIES_PER_PROMPT_MAX,
     RetrievalScoreKind,
     RetrievalScoreScale,
+    SNAPSHOT_TEXT_UTF8_BYTES_MAX,
 )
 from tldw_chatbook.RAG_Search.local_citation_capture import (
     FINAL_SCORE_KIND_KEY,
@@ -85,6 +87,61 @@ def test_unknown_semantic_top_level_source_uses_allowlisted_metadata_source():
 
 
 @pytest.mark.parametrize(
+    ("source", "metadata"),
+    [
+        ("media", {"source_type": "note"}),
+        ("media", {"source_kind": "conversation"}),
+        ("unknown", {"source_type": "media", "source_kind": "note"}),
+    ],
+    ids=[
+        "top-level-vs-source-type",
+        "top-level-vs-source-kind",
+        "source-type-vs-source-kind",
+    ],
+)
+def test_conflicting_source_identity_indicators_are_rejected(source, metadata):
+    with pytest.raises(LocalResultNormalizationError) as exc_info:
+        normalize_local_result(_result(source=source, metadata=metadata))
+
+    assert exc_info.value.reason_code is LocalResultRejectionCode.INVALID_RESULT
+
+
+@pytest.mark.parametrize(
+    ("source", "metadata"),
+    [
+        ("media", {"source_type": "web"}),
+        ("unknown", {"source_type": "media", "source_kind": 123}),
+    ],
+)
+def test_invalid_present_source_identity_indicator_is_rejected(source, metadata):
+    with pytest.raises(LocalResultNormalizationError) as exc_info:
+        normalize_local_result(_result(source=source, metadata=metadata))
+
+    assert exc_info.value.reason_code is LocalResultRejectionCode.INVALID_RESULT
+
+
+@pytest.mark.parametrize(
+    ("source", "metadata", "expected"),
+    [
+        (
+            "media",
+            {"source_type": "media_db", "source_kind": "media-db"},
+            CanonicalSourceKind.MEDIA_DB,
+        ),
+        (
+            "unknown",
+            {"source_type": "note", "source_kind": "notes"},
+            CanonicalSourceKind.NOTES,
+        ),
+    ],
+)
+def test_equivalent_source_aliases_resolve_consistently(source, metadata, expected):
+    normalized = normalize_local_result(_result(source=source, metadata=metadata))
+
+    assert normalized.source_kind is expected
+
+
+@pytest.mark.parametrize(
     "result",
     [
         _result(result_id=""),
@@ -148,6 +205,52 @@ def test_normalizer_retains_only_allowlisted_non_executable_lineage():
         "start_char": 4,
         "end_char": 12,
     }
+
+
+def test_normalizer_maps_real_semantic_chunk_offsets():
+    normalized = normalize_local_result(
+        _result(
+            metadata={
+                "chunk_id": "chunk-7",
+                "chunk_start": 4,
+                "chunk_end": 12,
+            }
+        )
+    )
+
+    assert normalized.start_char == 4
+    assert normalized.end_char == 12
+    assert (
+        normalized.to_candidate_capture(candidate_rank=1).model_dump()["start_char"]
+        == 4
+    )
+    assert (
+        normalized.to_candidate_capture(candidate_rank=1).model_dump()["end_char"] == 12
+    )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {
+            "start_char": 4,
+            "end_char": 12,
+            "chunk_start": 5,
+            "chunk_end": 12,
+        },
+        {
+            "start_char": 4,
+            "end_char": 12,
+            "chunk_start": 4,
+            "chunk_end": 13,
+        },
+    ],
+)
+def test_conflicting_canonical_and_semantic_offsets_are_rejected(metadata):
+    with pytest.raises(LocalResultNormalizationError) as exc_info:
+        normalize_local_result(_result(metadata=metadata))
+
+    assert exc_info.value.reason_code is LocalResultRejectionCode.INVALID_RESULT
 
 
 def test_reliable_rrf_metadata_classifies_score_without_using_float_range():
@@ -336,6 +439,81 @@ def test_formatter_never_exceeds_budget_when_no_candidate_header_fits():
     assert formatted.omitted_candidate_ranks == (11,)
 
 
+def _multibyte_content_for_snapshot_bytes(header: str, total_bytes: int) -> str:
+    remaining = total_bytes - len(header.encode("utf-8"))
+    assert remaining >= 0
+    return ("é" * (remaining // 2)) + ("x" if remaining % 2 else "")
+
+
+def test_formatter_accepts_snapshot_at_exact_utf8_byte_cap():
+    header = "[S1] MEDIA — Title\n"
+    content = _multibyte_content_for_snapshot_bytes(
+        header, SNAPSHOT_TEXT_UTF8_BYTES_MAX
+    )
+    normalized = normalize_local_result(_result(content=content), candidate_rank=1)
+
+    formatted = format_local_evidence_context(
+        [normalized], max_length=len(header) + len(content)
+    )
+
+    assert len(formatted.entries) == 1
+    assert (
+        len(formatted.entries[0].snapshot_text.encode("utf-8"))
+        == SNAPSHOT_TEXT_UTF8_BYTES_MAX
+    )
+    assert formatted.entries[0].transformations == ()
+    assert formatted.omitted_candidate_ranks == ()
+
+
+def test_formatter_truncates_multibyte_snapshot_inside_utf8_and_character_budgets():
+    header = "[S1] MEDIA — Title\n"
+    at_cap = _multibyte_content_for_snapshot_bytes(header, SNAPSHOT_TEXT_UTF8_BYTES_MAX)
+    content = at_cap + "é"
+    max_length = len(header) + len(content)
+    normalized = normalize_local_result(_result(content=content), candidate_rank=7)
+
+    formatted = format_local_evidence_context([normalized], max_length=max_length)
+
+    snapshot = formatted.entries[0].snapshot_text
+    assert snapshot.endswith("…")
+    assert len(snapshot) <= max_length
+    assert len(snapshot.encode("utf-8")) <= SNAPSHOT_TEXT_UTF8_BYTES_MAX
+    assert formatted.entries[0].transformations == ("content_truncated",)
+    assert formatted.omitted_candidate_ranks == ()
+
+
+@pytest.mark.parametrize(
+    ("result_count", "expected_entries", "expected_omitted"),
+    [
+        (EVIDENCE_ENTRIES_PER_PROMPT_MAX, EVIDENCE_ENTRIES_PER_PROMPT_MAX, ()),
+        (
+            EVIDENCE_ENTRIES_PER_PROMPT_MAX + 1,
+            EVIDENCE_ENTRIES_PER_PROMPT_MAX,
+            (EVIDENCE_ENTRIES_PER_PROMPT_MAX + 1,),
+        ),
+    ],
+)
+def test_formatter_enforces_canonical_entry_limit(
+    result_count, expected_entries, expected_omitted
+):
+    normalized = [
+        normalize_local_result(
+            _result(result_id=f"m{rank}", title=f"T{rank}", content="x"),
+            candidate_rank=rank,
+        )
+        for rank in range(1, result_count + 1)
+    ]
+
+    formatted = format_local_evidence_context(normalized, max_length=100_000)
+
+    assert len(formatted.entries) == expected_entries
+    assert formatted.omitted_candidate_ranks == expected_omitted
+    assert all(
+        len(entry.snapshot_text.encode("utf-8")) <= SNAPSHOT_TEXT_UTF8_BYTES_MAX
+        for entry in formatted.entries
+    )
+
+
 class _SemanticResult:
     def __init__(self, *, source: str = "unknown", metadata=None):
         self.source = source
@@ -508,6 +686,49 @@ def test_invalid_flashrank_score_falls_back_without_marker(monkeypatch):
         normalize_local_result(fallback[0]).score_kind
         is RetrievalScoreKind.VECTOR_SIMILARITY
     )
+
+
+def test_flashrank_metadata_validation_is_atomic_across_all_results(monkeypatch):
+    _install_flashrank(
+        monkeypatch,
+        ranked=[
+            SimpleNamespace(index=0, score=0.9),
+            SimpleNamespace(index=1, score=0.8),
+        ],
+    )
+    first = _result(result_id="m1", score=0.5, metadata={"producer": "first"})
+    invalid_metadata = ["PRIVATE-RERANK-METADATA-SENTINEL"]
+    second = _result(result_id="m2", score=0.4, metadata=invalid_metadata)
+
+    fallback = pfs.rerank_results([first, second], "query", top_k=2)
+
+    assert fallback == [first, second]
+    assert first.score == 0.5
+    assert first.metadata == {"producer": "first"}
+    assert second.score == 0.4
+    assert second.metadata is invalid_metadata
+    assert FINAL_SCORE_KIND_KEY not in first.metadata
+
+
+def test_flashrank_duplicate_indexes_fallback_without_mutation(monkeypatch):
+    _install_flashrank(
+        monkeypatch,
+        ranked=[
+            SimpleNamespace(index=0, score=0.9),
+            SimpleNamespace(index=0, score=0.8),
+        ],
+    )
+    first = _result(result_id="m1", score=0.5, metadata={"producer": "first"})
+    second = _result(result_id="m2", score=0.4, metadata={"producer": "second"})
+
+    fallback = pfs.rerank_results([first, second], "query", top_k=2)
+
+    assert fallback == [first, second]
+    assert first.score == 0.5
+    assert first.metadata == {"producer": "first"}
+    assert second.score == 0.4
+    assert second.metadata == {"producer": "second"}
+    assert all(FINAL_SCORE_KIND_KEY not in result.metadata for result in fallback)
 
 
 def _prior_score_result(prior_kind):

@@ -28,6 +28,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import pytest
+from loguru import logger as loguru_logger
 
 from tldw_chatbook.Chat.rag_scope import (
     EffectiveScope,
@@ -1884,7 +1885,7 @@ class TestFreshPromptBoundaryAuthority:
 
     @pytest.mark.asyncio
     async def test_same_stamp_scope_narrowing_ignores_pre_retrieval_cache(
-        self, media_db, monkeypatch
+        self, media_db, tmp_path, monkeypatch
     ):
         media_ids = _seed_media(media_db, n=2)
         session = SimpleNamespace(
@@ -1893,27 +1894,28 @@ class TestFreshPromptBoundaryAuthority:
             workspace_id="ws-1",
         )
         monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
-
-        class _Registry:
-            db = SimpleNamespace(is_memory_db=True)
-
-            def __init__(self):
-                self.scope = RagScope(
-                    items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),),
-                    updated_at="unchanged-stamp",
-                )
-
-            def get_workspace_scope(self, _workspace_id):
-                return self.scope
-
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task2-fresh")
+        )
+        registry.create_workspace(workspace_id="ws-1", name="Fresh authority")
+        registry.set_workspace_scope(
+            "ws-1",
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),),
+                updated_at="unchanged-stamp",
+            ),
+        )
         app = _App(media_db=media_db)
-        app.workspace_registry_service = _Registry()
+        app.workspace_registry_service = registry
         cached = await cre.resolve_effective_scope_for_chat(app)
         assert cached.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
 
-        app.workspace_registry_service.scope = RagScope(
-            items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),),
-            updated_at="unchanged-stamp",
+        registry.set_workspace_scope(
+            "ws-1",
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),),
+                updated_at="unchanged-stamp",
+            ),
         )
         candidates = (
             self._normalized("media", media_ids[0], "Old", rank=1),
@@ -1925,6 +1927,105 @@ class TestFreshPromptBoundaryAuthority:
         assert [(item.source_id, item.candidate_rank) for item in authorized] == [
             (media_ids[1], 2)
         ]
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "{PRIVATE-WORKSPACE-SCOPE-SENTINEL",
+            '{"version": 1, "items": "PRIVATE-WORKSPACE-SCOPE-SENTINEL", '
+            '"updated_at": "t1"}',
+        ],
+        ids=["malformed-json", "decoded-invalid-scope"],
+    )
+    @pytest.mark.asyncio
+    async def test_fresh_malformed_workspace_scope_fails_closed(
+        self, media_db, tmp_path, monkeypatch, payload
+    ):
+        media_id = _seed_media(media_db, n=1)[0]
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task2-strict")
+        )
+        registry.create_workspace(workspace_id="ws-malformed", name="Malformed")
+        with registry.db.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO workspace_rag_scopes (workspace_id, payload, updated_at)
+                VALUES (?, ?, ?)
+                """,
+                ("ws-malformed", payload, "t1"),
+            )
+        session = SimpleNamespace(
+            persisted_conversation_id=None,
+            workspace_id="ws-malformed",
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+        candidate = self._normalized("media", media_id, "Media", rank=1)
+
+        effective = await cre.resolve_effective_scope_for_chat(app, use_cache=False)
+        authorized = await cre.authorize_local_results_for_prompt(app, (candidate,))
+
+        assert effective.state == "empty"
+        assert effective.cause == "workspace-scope-unavailable"
+        assert authorized == ()
+
+    @pytest.mark.asyncio
+    async def test_fresh_workspace_with_no_scope_row_remains_unscoped(
+        self, media_db, tmp_path, monkeypatch
+    ):
+        media_id = _seed_media(media_db, n=1)[0]
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task2-unset")
+        )
+        registry.create_workspace(workspace_id="ws-unset", name="Unset")
+        session = SimpleNamespace(
+            persisted_conversation_id=None,
+            workspace_id="ws-unset",
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+        candidate = self._normalized("media", media_id, "Media", rank=1)
+
+        effective = await cre.resolve_effective_scope_for_chat(app, use_cache=False)
+        authorized = await cre.authorize_local_results_for_prompt(app, (candidate,))
+
+        assert effective.state == "unscoped"
+        assert authorized == (candidate,)
+
+    @pytest.mark.asyncio
+    async def test_prompt_authority_failure_log_omits_sensitive_values(
+        self, monkeypatch
+    ):
+        sentinel = "PRIVATE-PROMPT-AUTHORITY-SENTINEL"
+
+        class _SensitiveFailureMediaDB:
+            is_memory_db = True
+
+            def execute_query(self, *_args, **_kwargs):
+                raise RuntimeError(sentinel)
+
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: None)
+        candidate = self._normalized("media", sentinel, sentinel, rank=1)
+        captured = []
+        sink_id = loguru_logger.add(
+            captured.append,
+            level="WARNING",
+            format="{message}",
+        )
+        try:
+            authorized = await cre.authorize_local_results_for_prompt(
+                _App(media_db=_SensitiveFailureMediaDB()), (candidate,)
+            )
+        finally:
+            loguru_logger.remove(sink_id)
+
+        rendered = "".join(str(message) for message in captured)
+        assert authorized == ()
+        assert sentinel not in rendered
+        assert "status=unavailable" in rendered
+        assert "reason=media_existence_read_failure" in rendered
 
     @pytest.mark.asyncio
     async def test_failed_authority_or_existence_read_rejects_every_candidate(

@@ -6,6 +6,7 @@ No complex error handling - just let exceptions propagate.
 """
 
 import asyncio
+from collections.abc import Mapping
 import math
 from typing import Any, Dict, List, Optional
 
@@ -645,25 +646,36 @@ def rerank_results(
             # producer score or provenance marker. A partial/raising fallback
             # must leave prior RRF/semantic score semantics honest.
             planned_updates = []
+            seen_indexes: set[int] = set()
             for ranked in ranked_results[:top_k]:
                 idx = ranked.index
-                score = float(ranked.score)
                 if (
                     isinstance(idx, bool)
                     or not isinstance(idx, int)
                     or not 0 <= idx < len(results)
-                    or not math.isfinite(score)
+                    or idx in seen_indexes
                 ):
                     raise ValueError("invalid FlashRank result")
-                planned_updates.append((results[idx], score))
-
-            reranked = []
-            for result, score in planned_updates:
-                result.score = score
-                result.metadata = {
-                    **(result.metadata or {}),
+                raw_score = ranked.score
+                if isinstance(raw_score, bool):
+                    raise ValueError("invalid FlashRank result")
+                score = float(raw_score)
+                if not math.isfinite(score):
+                    raise ValueError("invalid FlashRank result")
+                result = results[idx]
+                if not isinstance(result.metadata, Mapping):
+                    raise ValueError("invalid FlashRank result metadata")
+                replacement_metadata = {
+                    **dict(result.metadata),
                     FINAL_SCORE_KIND_KEY: FINAL_SCORE_KIND_RERANKER,
                 }
+                seen_indexes.add(idx)
+                planned_updates.append((result, score, replacement_metadata))
+
+            reranked = []
+            for result, score, replacement_metadata in planned_updates:
+                result.score = score
+                result.metadata = replacement_metadata
                 reranked.append(result)
             return reranked
 
