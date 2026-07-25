@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Tasks: TASK-561, TASK-560
+Related Tasks: TASK-561, TASK-560, TASK-569
 Supersedes: N/A
 
 ## Decision
@@ -50,7 +50,7 @@ but no longer governs new TTS provider integration.
 
 ## Implementation status
 
-Slices 1 and 2 are implemented. The sealed registry registers the exact native
+Slices 1–3 are implemented. The sealed registry registers the exact native
 provider `audio_cpp` first, with no provider alias and exclusive lazy
 reconfiguration, followed by the six unchanged legacy bridge entries.
 
@@ -76,9 +76,26 @@ They require `GET /health`, `GET /v1/models`, and complete-WAV
 `POST /v1/audio/speech`; per-model
 `GET /v1/audio/voices?model=<id>` remains optional.
 
-Slice 3 remains the catalog-driven external STTS Playground vertical. Slices
-4–5 remain user-provided prebuilt binary plus user-provided `server.json`
-launch/supervision and managed UI. No process or UI work is part of TASK-560.
+TASK-569 implements the catalog-driven external STTS Playground vertical.
+Descriptor discovery does not materialize adapters; only a selected provider is
+resolved. Independent catalog and voice workers carry configuration, catalog,
+provider, and model revisions so stale results are discarded. audio.cpp
+generation captures an immutable provider-neutral request and uses native
+`TTSService.synthesize()`, while the six existing providers retain the
+temporary compatibility generation path.
+
+The Playground maps Server default to an omitted voice, locks audio.cpp to WAV
+and speed `1.0`, and restores each legacy provider's prior controls when
+switching away. A successful complete-WAV artifact retains immutable provider,
+model, optional voice, source-text, operation, actual-format, content-type, and
+safe response provenance for playback and export. Safe failures expose bounded
+recovery actions; stale discovery disables new generation without invalidating
+an existing artifact; audio.cpp never automatically falls back.
+
+Slices 4–5 remain user-provided prebuilt binary plus user-provided
+`server.json` launch/supervision and managed UI. Slices 1–3 do not launch,
+monitor, restart, or stop audio.cpp and expose no managed process settings or
+actions.
 
 ## Context
 
@@ -156,7 +173,9 @@ policy, and a cross-module interface.
   Provider-neutral, operation-scoped progress prevents UI access to concrete
   backends; progress-sink failures never fail synthesis.
 - Slice 3 makes the Playground catalog-driven, while legacy catalogs remain
-  marked as approximate until migrated.
+  marked as approximate until migrated. Descriptor reads remain non-
+  materializing; independent catalog, voice, generation, and playback
+  ownership prevents one operation from cancelling another.
 - Future managed mode (Slices 4–5) launches only a user-provided executable and
   configuration using the pinned server's default or explicit `127.0.0.1`
   bind; `localhost` and `::1` are not accepted by that server version.
@@ -184,6 +203,9 @@ policy, and a cross-module interface.
   default is not identified by the voices endpoint. Discovered voices remain
   explicit alternatives; omitting `voice` is the only server-default request
   representation.
+- Slice 3 retains complete-WAV results as immutable artifacts with the request
+  and actual response provenance required for playback and export, independent
+  of later selector changes.
 - Readiness probes health and model discovery without generating hidden audio;
   speech-endpoint compatibility is established by the first user-requested
   generation or the future opt-in live smoke test.
@@ -240,6 +262,7 @@ policy, and a cross-module interface.
 
 - [Design spec](../../Docs/superpowers/specs/2026-07-23-audio-cpp-tts-adapter-registry-design.md)
 - [TASK-560](<../tasks/task-560 - Add-external-audio.cpp-native-TTS-adapter.md>)
+- [TASK-569](<../tasks/task-569 - Complete-external-audio.cpp-STTS-Playground-vertical.md>)
 - [Pinned audio.cpp server guide](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/README.md)
 - [Pinned audio.cpp server runtime](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/runtime.cpp)
 - [Pinned audio.cpp busy guard](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/busy_guard.h)

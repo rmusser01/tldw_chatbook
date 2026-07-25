@@ -37,6 +37,7 @@ tldw_chatbook/TTS/
 ├── legacy_bridge.py         # Temporary provider-scoped compatibility adapters
 ├── audio_cpp_config.py      # Immutable external-server configuration
 ├── audio_cpp_contract.py    # Pinned JSON and PCM16 WAV validation
+├── playground_types.py      # Immutable Playground request/artifact contracts
 ├── adapters/
 │   └── audio_cpp.py         # Native external audio.cpp adapter
 ├── audio_schemas.py         # Pydantic schemas for requests/responses
@@ -160,9 +161,49 @@ overlap.
 
 Normal tests use fake HTTP transport and fixtures pinned to the reviewed
 upstream commit. They require neither an audio.cpp binary nor model downloads.
-The next ordered slice makes the STTS Playground catalog-driven for the
-external server. User-provided binary and user-provided `server.json`
-launch/supervision and its managed UI remain Slices 4–5.
+
+### Catalog-driven STTS Playground (Slice 3)
+
+TASK-569 implements the external audio.cpp Playground vertical. Opening the
+Playground reads sealed registry descriptors through `TTSService`; descriptor
+discovery does not resolve provider factories or materialize adapters. Only the
+selected provider is resolved. Selecting `audio_cpp` for the first time performs
+bounded readiness and model discovery against the saved external server.
+
+Catalog and voice discovery use independent Textual worker groups. Their result
+tokens include the canonical provider ID and configuration revision, plus the
+catalog revision and model ID where applicable. Results from an old selection,
+configuration, catalog, or model are discarded. Catalog refresh, generation,
+and playback cannot cancel one another, and a second generation cannot replace
+the active generation operation.
+
+One catalog-control projection drives provider, model, voice, format, and speed
+controls. For audio.cpp, the local **Server default** voice sentinel is initially
+selected and becomes `voice=None`; it is never sent as an identifier. Format is
+locked to WAV and speed to `1.0`. Switching to one of the six legacy providers
+restores that provider's prior model, voice, format, speed, and provider-specific
+control state. If refreshed metadata removes a selection, the Playground
+announces and selects a valid fallback. A stale catalog remains visible but
+disables new generation until readiness recovers.
+
+Generation captures an immutable provider-neutral request. `audio_cpp` is the
+native path and calls `TTSService.synthesize(TTSRequest)`; the six existing
+providers remain on the temporary `generate_audio_stream()` compatibility path.
+The validated complete WAV is stored as an immutable artifact containing its
+provider, model, optional voice, source-text snapshot, operation ID, actual
+format/content type, and safe response metadata. Playback and export use that
+artifact, so later selector changes cannot relabel the result or its filename.
+
+Stable adapter failures map to safe, actionable Playground messages and
+recovery actions. Cancellation remains cancellation, existing artifacts remain
+playable and exportable after discovery failures, and an audio.cpp generation
+never automatically falls back to another model or provider. The UI and logs
+do not expose submitted text, configured origins or values, credentials, raw
+remote bodies, or unsafe remote identifiers.
+
+Slice 3 connects only to an existing externally managed `audiocpp_server`.
+User-provided binary and user-provided `server.json` launch, supervision, and
+managed Playground controls remain deferred to Slices 4–5.
 
 #### 3. Audio Service (`audio_service.py`)
 Handles audio format conversion with:
@@ -408,9 +449,12 @@ Local TTS installs:
 The S/TT/S tab provides a comprehensive TTS testing environment:
 
 1. **Text Input**: Enter any text to synthesize
-2. **Provider Selection**: Choose from OpenAI, ElevenLabs, Kokoro, or Chatterbox
-3. **Voice Selection**: Provider-specific voices including custom uploads
+2. **Provider Selection**: Choose `audio_cpp` or one of the six legacy
+   providers from registry descriptors
+3. **Voice Selection**: Discovered audio.cpp voices with Server default, or
+   legacy provider-specific voices including custom uploads
 4. **Advanced Settings**:
+   - **audio.cpp**: Catalog-selected model, complete WAV, and speed `1.0`
    - **Chatterbox**: Exaggeration, CFG weight, temperature, candidates, validation
    - **ElevenLabs**: Stability, similarity boost, style, speaker boost
    - **Kokoro**: Language selection
@@ -765,7 +809,8 @@ pytest Tests/TTS/
 2. **Input Validation**: All text inputs are sanitized
 3. **File Paths**: Temporary files use secure generation
 4. **Network**: External audio.cpp accepts an explicit HTTP or HTTPS origin;
-   HTTPS certificate verification remains enabled and redirects are disabled
+   synthesis text is sent to that configured origin, HTTPS certificate
+   verification remains enabled, and redirects are disabled
 5. **Local Models**: Verify model file integrity
 6. **Voice Cloning**: Be aware of ethical implications
    - Only clone voices with permission

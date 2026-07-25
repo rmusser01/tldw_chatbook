@@ -44,7 +44,8 @@ The Speech Services feature in tldw_chatbook provides comprehensive Text-to-Spee
 The TTS Playground allows you to experiment with different voices and settings:
 
 - **Text Input**: Enter or paste the text you want to convert
-- **Provider Selection**: Choose from OpenAI, ElevenLabs, Kokoro (local), etc.
+- **Provider Selection**: Choose audio.cpp, OpenAI, ElevenLabs, Kokoro (local),
+  or another configured provider
 - **Voice Selection**: Pick from available voices for the selected provider
 - **Format**: Choose output format (MP3, WAV, etc.)
 - **Provider Settings**: Adjust provider-specific parameters
@@ -57,6 +58,48 @@ Configure default TTS options:
 - Audio format preferences
 - API key management
 - Voice blend creation (Kokoro only)
+
+### Using an Existing audio.cpp Server
+
+Chatbook can connect the Playground to one compatible `audiocpp_server` that
+you start and manage yourself:
+
+1. Start your compatible `audiocpp_server` and note its HTTP or HTTPS origin.
+2. Open **Speech Services → TTS Settings → audio.cpp External Server**.
+3. Enter the server's **Base URL**. Review the timeout and safety bounds, then
+   click **Save Settings**. Saving validates and persists the values but does
+   not connect to or launch a server.
+4. Click **Test Connection** or **Refresh Models**. These actions use the saved
+   settings and discover the server's TTS models.
+5. Return to **Playground**, select **audio.cpp**, then choose a discovered
+   model. Voice discovery happens when the model is selected.
+6. Leave **Server default** selected to omit the voice from the request, or
+   select an announced voice.
+7. Enter text and click **Generate Speech**. After the complete WAV is
+   validated, use **Play** or **Export**.
+
+audio.cpp currently returns one complete WAV per request and supports speed
+`1.0`; the Playground locks both controls while it is selected. This still uses
+the asynchronous adapter interface, but it is not incremental audio streaming.
+Switching to another provider restores that provider's previous model, voice,
+format, speed, and provider-specific controls.
+
+If discovery becomes stale or fails, the prior choices may remain visible but
+new generation stays disabled until a successful retry or model refresh.
+Already generated audio remains playable and exportable. If a selected model or
+voice disappears after refresh, the Playground announces and selects a valid
+fallback. A failed audio.cpp request never silently uses another model or
+provider.
+
+**Privacy:** the text submitted for synthesis is sent to the configured
+audio.cpp server. Chatbook avoids putting that text, the configured origin or
+settings values, credentials, raw remote responses, and unsafe remote
+identifiers in normal UI diagnostics or application logs.
+
+This release does not download, launch, monitor, restart, or stop audio.cpp and
+does not accept a binary path or `server.json` path. User-provided binary plus
+user-provided `server.json` launch and supervision are deferred to later
+managed-mode slices.
 
 ### AudioBook Generator
 
@@ -199,7 +242,8 @@ Example custom commands:
 ### Privacy-First Design
 
 - **Default Settings**: Privacy mode enabled by default
-- **No Cloud Storage**: Audio never uploaded without permission
+- **Explicit Service Boundary**: Cloud providers and an externally configured
+  audio.cpp server receive the content submitted to them
 - **Local Processing**: Prefer on-device transcription
 - **Encrypted History**: Optional history uses encryption
 
@@ -405,10 +449,22 @@ auto_clear_buffer = true
 
 ### TTS Settings
 ```toml
-[tts]
+[app_tts]
 default_provider = "openai"
 default_voice = "alloy"
 default_format = "mp3"
+
+[app_tts.audio_cpp]
+mode = "external"
+base_url = "http://127.0.0.1:8080"
+connect_timeout_seconds = 5
+synthesis_timeout_seconds = 600
+max_input_characters = 10000
+max_response_bytes = 134217728
+max_metadata_bytes = 1048576
+max_catalog_models = 1000
+max_voices_per_model = 1000
+max_identifier_characters = 256
 ```
 
 ## Support & Feedback
@@ -420,5 +476,5 @@ default_format = "mp3"
 
 ---
 
-**Last Updated**: 2025-07-30
-**Version**: 2.0 (Improved Speech Services)
+**Last Updated**: 2026-07-25
+**Version**: 2.1 (External audio.cpp Playground)
