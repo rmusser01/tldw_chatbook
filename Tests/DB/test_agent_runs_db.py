@@ -413,7 +413,7 @@ def test_file_db_uses_wal_and_busy_timeout(tmp_path):
         assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
 
 
-def test_memory_db_skips_wal(tmp_path):
+def test_memory_db_skips_wal():
     # :memory: cannot use WAL; must not raise and must stay 'memory'
     db = AgentRunsDB(":memory:")
     with db.connection() as conn:

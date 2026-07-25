@@ -46,14 +46,18 @@ class AgentRunsDB(BaseDB):
     def _get_connection(self) -> sqlite3.Connection:
         conn = super()._get_connection()
         conn.execute("PRAGMA foreign_keys = ON")
-        # WAL lets a reader and the single writer proceed concurrently; a
-        # busy_timeout makes a contended write wait up to 5s instead of
-        # raising 'database is locked' immediately. WAL is unavailable for
-        # in-memory DBs, so guard on is_memory_db (busy_timeout is harmless
-        # there and kept for uniformity).
+        # busy_timeout FIRST: the journal_mode=WAL conversion below is the
+        # one PRAGMA here that can itself contend (switching a rollback-
+        # journal file to WAL briefly needs an exclusive lock), so it must
+        # not run while busy_timeout is still 0 -- a contended cross-process
+        # first conversion would otherwise raise 'database is locked'
+        # immediately instead of waiting. busy_timeout is harmless to set
+        # for in-memory DBs too, so it's unconditional (kept for
+        # uniformity); WAL itself is unavailable for in-memory DBs, so that
+        # one stays guarded on is_memory_db.
+        conn.execute("PRAGMA busy_timeout = 5000")
         if not self.is_memory_db:
             conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA busy_timeout = 5000")
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -274,6 +278,18 @@ class AgentRunsDB(BaseDB):
         crash-recovery guarantee for the rest of the process. A clean sweep
         that finds zero orphaned rows still registers the path (it commits
         successfully; it just has nothing to update).
+
+        Timing note: despite this being framed as an "on app start" sweep
+        (see the backlog AC), it actually fires lazily -- the first time
+        something constructs an ``AgentRunsDB`` on this path, which today is
+        ``ChatScreen._ensure_console_agent_bridge()``'s first call, not app
+        boot. No surface can currently observe a stale ``running`` row
+        before that: the only readers of ``agent_runs.db`` are that bridge
+        itself and the chat-screen rail's sub-agent-count summary, which
+        also routes through ``_ensure_console_agent_bridge()`` first. A
+        future entry point that opens this DB file WITHOUT going through
+        that bridge construction path would not inherit this guarantee and
+        could observe a not-yet-reconciled orphaned row.
 
         Returns:
             The number of rows reconciled (``0`` if skipped by a guard).
