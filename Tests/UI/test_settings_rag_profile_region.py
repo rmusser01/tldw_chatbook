@@ -2031,3 +2031,302 @@ async def test_focusing_reranker_model_input_updates_inspector_end_to_end(
             == "settings-library-rag-reranker-model"
         )
         await _wait_for_settings_text(screen, pilot, "Focused group: Reranking")
+
+
+# --- Task 4 (541 v2 UX AC1): manage-vs-edit split + read-only preview-on-
+# select. Browsing the profile picker to a NON-active profile previews that
+# profile's values read-only, WITHOUT staging a draft -- drafts belong to
+# the active profile only. Selecting the active profile's own id again
+# restores the ordinary, draft-aware editor (including any still-staged
+# draft: the draft is never touched by preview). ---
+
+
+def _wire_library_rag_with_other_profile(monkeypatch, tmp_path):
+    """Wire an isolated adapter with a distinctive NON-active "Other RAG"
+    profile and a fresh test app/harness, ready for a test to open the
+    Library/RAG category and drive the Select with."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    other.rag_config.search.default_top_k = 77
+    mgr.save_profile(other)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    return mgr, profile, other, host
+
+
+@pytest.mark.asyncio
+async def test_browsing_to_a_non_active_profile_previews_it_read_only_without_staging(
+    monkeypatch, tmp_path
+):
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
+        assert top_k.value == str(profile.rag_config.search.default_top_k)
+        assert screen._rag_preview_profile_id is None
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+
+        assert screen._rag_preview_profile_id == other.id
+        assert top_k.value == "77"
+        assert top_k.disabled is True
+        # Every other editor field is ALSO forced disabled during preview,
+        # not just the one field under test.
+        assert (
+            screen.query_one("#settings-library-rag-search-mode", Select).disabled
+            is True
+        )
+        assert (
+            screen.query_one("#settings-library-rag-enable-reranking", Checkbox).disabled
+            is True
+        )
+        # No draft was created by merely browsing.
+        assert SettingsCategoryId.LIBRARY_RAG not in screen._settings_drafts
+        banner_text = _visible_text(screen)
+        assert (
+            "Previewing 'Other RAG' (read-only) — press Set active to edit it"
+            in banner_text
+        )
+
+
+@pytest.mark.asyncio
+async def test_field_changed_events_during_preview_never_stage_a_draft(
+    monkeypatch, tmp_path
+):
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+        assert screen._rag_preview_profile_id == other.id
+
+        top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
+        # Simulate a (disabled, but the handler must be robust regardless
+        # of widget-level enforcement) edit attempt while previewing.
+        screen.handle_library_rag_default_top_k_changed(
+            Input.Changed(top_k, "999")
+        )
+
+        assert SettingsCategoryId.LIBRARY_RAG not in screen._settings_drafts
+        assert screen._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG) is False
+
+
+@pytest.mark.asyncio
+async def test_returning_to_active_profile_restores_a_staged_draft_after_preview(
+    monkeypatch, tmp_path
+):
+    """The hard round-trip: stage a draft on the ACTIVE profile, browse away
+    (preview), browse back -- the staged value must still be showing AND
+    still dirty. The draft is never touched by the preview round-trip."""
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
+        top_k.value = "12"
+        screen.handle_library_rag_default_top_k_changed(
+            Input.Changed(top_k, top_k.value)
+        )
+        assert screen._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG) is True
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+        assert screen._rag_preview_profile_id == other.id
+        assert top_k.value == "77"
+
+        select.value = profile.id
+        await pilot.pause()
+
+        assert screen._rag_preview_profile_id is None
+        assert top_k.value == "12"
+        assert top_k.disabled is False
+        assert screen._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG) is True
+
+
+@pytest.mark.asyncio
+async def test_set_active_from_preview_exits_preview_on_success(monkeypatch, tmp_path):
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+        assert screen._rag_preview_profile_id == other.id
+
+        # Not dirty (no draft staged) -- handle_library_rag_profile_set_active
+        # dispatches straight through, same as the pre-existing flow.
+        screen.handle_library_rag_profile_set_active(
+            Button.Pressed(Button(id="settings-library-rag-profile-set-active"))
+        )
+        await pilot.pause()
+        # Simulate the worker's completion callback (existing test
+        # convention -- see test_after_set_active_success_clears_draft_and_notifies).
+        screen._rag_after_set_active(True, "")
+        await pilot.pause()
+
+        assert screen._rag_preview_profile_id is None
+        top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
+        assert top_k.disabled is False
+
+
+def test_set_active_from_preview_with_dirty_draft_still_pushes_confirm_modal(
+    monkeypatch, tmp_path, fake_app
+):
+    """Set active from a preview must honor the EXISTING dirty-prompt flow
+    exactly like a non-preview Set active does -- previewing a DIFFERENT
+    profile never bypasses the "you have unsaved changes" gate for the
+    ACTIVE profile's own draft."""
+    mgr, _profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    mgr.save_profile(other)
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)
+    screen._rag_preview_profile_id = other.id
+    monkeypatch.setattr(screen, "_library_rag_selected_profile_id", lambda: other.id)
+
+    button = Button(id="settings-library-rag-profile-set-active")
+    screen.handle_library_rag_profile_set_active(Button.Pressed(button))
+
+    assert len(fake_app.pushed_screens) == 1
+    modal, _callback = fake_app.pushed_screens[0]
+    assert isinstance(modal, RagProfileSwitchConfirmModal)
+    # The preview flag itself is untouched by merely OPENING the prompt --
+    # only a completed switch (_rag_after_set_active) clears it.
+    assert screen._rag_preview_profile_id == other.id
+
+
+def test_save_is_blocked_with_a_notification_while_previewing(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    screen._rag_preview_profile_id = "some-other-profile-id"
+    dispatched: list[object] = []
+    screen._confirm_reindex_then_save = lambda *a, **k: dispatched.append(True)
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+
+    assert dispatched == []
+    message, severity = fake_app.notifications[-1]
+    assert message == "Return to the active profile to save."
+    assert severity == "warning"
+
+
+def test_library_rag_save_enabled_is_false_while_previewing_even_with_a_dirty_draft(
+    monkeypatch, tmp_path
+):
+    mgr, _profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)  # valid dirty value (12)
+    assert screen._library_rag_save_enabled() is True
+
+    screen._rag_preview_profile_id = "some-other-profile-id"
+
+    assert screen._library_rag_save_enabled() is False
+
+
+@pytest.mark.asyncio
+async def test_profiles_and_editor_render_inside_their_own_titled_containers(
+    monkeypatch, tmp_path
+):
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        profiles_card = screen.query_one("#settings-library-rag-profiles-card")
+        editor_card = screen.query_one("#settings-library-rag-editor-card")
+        assert profiles_card.border_title == "Profiles"
+        assert editor_card.border_title == f"Editing: {profile.name}"
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+
+        assert editor_card.border_title == f"Previewing: {other.name}"
+
+        select.value = profile.id
+        await pilot.pause()
+
+        assert editor_card.border_title == f"Editing: {profile.name}"
+
+
+@pytest.mark.asyncio
+async def test_preview_banner_and_title_escape_markup_significant_profile_names(
+    monkeypatch, tmp_path
+):
+    """Repo lesson: profile names can contain markup-significant characters
+    (e.g. `[bold]`) -- both the preview banner and the editor title must
+    escape them rather than let Rich interpret them as markup tags."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    other = mgr.clone_profile("hybrid_basic", "[bold]Other[/bold]")
+    mgr.save_profile(other)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+
+        editor_card = screen.query_one("#settings-library-rag-editor-card")
+        assert editor_card.border_title == r"Previewing: \[bold]Other\[/bold]"
+        banner = screen.query_one("#settings-library-rag-preview-banner", Static)
+        assert r"\[bold]Other\[/bold]" in str(banner.renderable)
+
+
+def test_cloning_leaves_the_select_on_the_clone_without_auto_entering_preview(
+    monkeypatch, tmp_path, fake_app
+):
+    """The profile-picker's own imperative resync
+    (`_sync_library_rag_profile_widgets`, e.g. the clone flow's
+    `select_override`) must never itself trigger a preview -- only a
+    genuine user browse (a real Select.Changed from interacting with the
+    dropdown) does. Sync-constructed (unmounted): the real Select never
+    exists, so this exercises the state directly rather than the message
+    cascade -- see the full-mount clone regression test above for the
+    Select-widget-value side of this flow."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    assert screen._rag_preview_profile_id is None
+
+    screen._rag_after_profile_action("clone", True, "some-clone-id")
+
+    assert screen._rag_preview_profile_id is None
+
+
+def test_leaving_the_library_rag_category_clears_a_stale_preview(monkeypatch, tmp_path):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    screen._rag_preview_profile_id = "some-other-profile-id"
+
+    screen._select_category(SettingsCategoryId.STORAGE.value)
+
+    assert screen._rag_preview_profile_id is None

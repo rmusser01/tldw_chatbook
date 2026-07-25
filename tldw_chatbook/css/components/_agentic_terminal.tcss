@@ -3972,6 +3972,15 @@ Button.settings-category-button.settings-secondary-search-match {
     text-style: bold;
 }
 
+/* Task 4 (541 v2 UX AC1): profile-picker PREVIEW banner -- shown only while
+   the editor is displaying a browsed, non-active profile read-only. Same
+   attention-worthy treatment as the readonly banner above (hidden by
+   default via Static.display, toggled by _set_library_rag_preview_banner). */
+.settings-library-rag-preview-banner {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
 RagProfileNameModal,
 RagProfileSwitchConfirmModal {
     align: center middle;

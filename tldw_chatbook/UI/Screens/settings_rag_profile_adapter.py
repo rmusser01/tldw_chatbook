@@ -59,6 +59,38 @@ def load_rag_defaults_from_active_profile() -> SettingsLibraryRagDefaults:
     profile = _active_profile()
     if profile is None:
         return SettingsLibraryRagDefaults()
+    return _defaults_from_profile(profile)
+
+
+def get_profile_defaults(profile_id: str) -> Optional[SettingsLibraryRagDefaults]:
+    """Pure read of ANY registered profile's search settings (Task 4, 541 v2
+    UX AC1: profile-picker PREVIEW-on-select).
+
+    Unlike ``load_rag_defaults_from_active_profile``, this never touches the
+    active-profile pointer -- it reads whatever profile ``profile_id`` names
+    (builtin or user, active or not) straight from the manager's cache.
+    Read-only: never mutates the manager-cached ``ProfileConfig`` (mirrors
+    ``_active_profile()``'s own read-only contract -- neither function
+    deep-copies because neither ever writes back).
+
+    Args:
+        profile_id: The profile id to read.
+
+    Returns:
+        The mapped ``SettingsLibraryRagDefaults``, or ``None`` when
+        ``profile_id`` doesn't resolve to a registered profile.
+    """
+    profile = _manager().get_profile(profile_id)
+    if profile is None:
+        return None
+    return _defaults_from_profile(profile)
+
+
+def _defaults_from_profile(profile: ProfileConfig) -> SettingsLibraryRagDefaults:
+    """Map any ``ProfileConfig``'s search settings onto the category
+    dataclass (shared by ``load_rag_defaults_from_active_profile`` and
+    ``get_profile_defaults`` -- the mapping itself doesn't care whether the
+    profile handed in happens to be the active one)."""
     s = profile.rag_config.search
     e = profile.rag_config.embedding
     c = profile.rag_config.chunking

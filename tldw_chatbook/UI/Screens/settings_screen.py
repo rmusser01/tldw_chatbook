@@ -11,6 +11,7 @@ import re
 import tomllib
 
 from rich.cells import cell_len
+from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
@@ -137,6 +138,7 @@ from .settings_rag_profile_adapter import (
     clone_profile_as,
     delete_user_profile,
     fetch_index_status,
+    get_profile_defaults,
     index_change_pending,
     list_profiles_grouped,
     load_rag_defaults_from_active_profile,
@@ -670,6 +672,40 @@ _RAG_FIELD_GROUP_BY_ID: dict[str, str] = {
     "settings-library-rag-profile-delete": "profile",
     "settings-library-rag-index-backfill": "index",
 }
+
+# Task 4 (541 v2 UX AC1): the Library/RAG editor field keys whose disabled
+# state is driven PURELY by a read-only lock (builtin/active read_only, or a
+# profile-picker PREVIEW) -- reranker_model/reranker_top_k are deliberately
+# excluded here (their disabled state ALSO depends on whether reranking is
+# enabled; see `_apply_library_rag_rerank_field_state`). Shared by
+# `_sync_library_rag_profile_widgets` and `_sync_library_rag_widgets`'s
+# `field_disabled` override so the two never drift out of sync with each
+# other.
+_LIBRARY_RAG_READ_LOCK_FIELD_KEYS: tuple[str, ...] = (
+    "default_search_mode",
+    "default_top_k",
+    "fts_top_k",
+    "vector_top_k",
+    "hybrid_alpha",
+    "score_threshold",
+    "citation_style",
+    "snippet_max_chars",
+    "max_context_size",
+    "embedding_model",
+    "embedding_device",
+    "embedding_batch_size",
+    "embedding_max_length",
+    "chunk_size",
+    "chunk_overlap",
+    "chunking_method",
+    "distance_metric",
+)
+# The two Checkbox fields (Task 1) alongside the read-lock field keys above --
+# also read-only-lock driven only, never rerank-enabled driven.
+_LIBRARY_RAG_READ_LOCK_CHECKBOX_SELECTORS: tuple[str, ...] = (
+    "#settings-library-rag-include-citations",
+    "#settings-library-rag-enable-reranking",
+)
 
 # Collapsible id -> the same group keys. `@on(Collapsible.Toggled)` uses this
 # so expanding a group (e.g. "Chunking") already switches the inspector's
@@ -1335,6 +1371,25 @@ class SettingsScreen(BaseAppScreen):
         #: handle_settings_library_rag_collapsible_toggled; reset to None on
         #: any category switch away from LIBRARY_RAG (see _select_category).
         self._active_rag_scope_group: str | None = None
+        #: Task 4 (541 v2 UX AC1): non-None while the profile Select is
+        #: showing a DIFFERENT profile than the active one (browsed via the
+        #: picker, never "Set active"'d) -- the editor renders THAT
+        #: profile's values read-only and every
+        #: handle_library_rag_*_changed handler early-returns before any
+        #: draft staging (see _library_rag_edits_suppressed). None means
+        #: "showing the active profile" (ordinary, draft-aware editing).
+        #: Reset on any category switch away from LIBRARY_RAG (see
+        #: _select_category) and cleared by _rag_after_set_active /
+        #: _rag_after_profile_action.
+        self._rag_preview_profile_id: str | None = None
+        #: Guards the profile Select's OWN `.value =` writes
+        #: (_sync_library_rag_profile_widgets) against re-entering
+        #: handle_library_rag_profile_select_changed via the Select.Changed
+        #: message that assignment posts (Textual's `Select.value` is a
+        #: `var(..., init=False)`, so only POST-mount assignments post
+        #: Changed -- but a programmatic resync is exactly such an
+        #: assignment).
+        self._syncing_library_rag_profile_select = False
         self._navigation_provider: str | None = None
         self._navigation_model: str | None = None
         self._navigation_field: str | None = None
@@ -2425,6 +2480,12 @@ class SettingsScreen(BaseAppScreen):
         return soft_config_warnings(self._library_rag_current_defaults())
 
     def _library_rag_save_enabled(self) -> bool:
+        # Task 4 (541 v2 UX AC1): Save/Revert must be unavailable while the
+        # editor is merely PREVIEWING a browsed (non-active) profile -- the
+        # active profile's own draft (if any) is untouched and unaffected,
+        # but nothing on screen right now is even editable.
+        if self._rag_preview_profile_id is not None:
+            return False
         if not self._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG):
             return False
         return self._library_rag_validation_result().valid
@@ -3002,6 +3063,22 @@ class SettingsScreen(BaseAppScreen):
         except ValueError:
             return text_value
 
+    def _library_rag_edits_suppressed(self) -> bool:
+        """Whether every `handle_library_rag_*_changed` handler must
+        early-return WITHOUT staging a draft.
+
+        Two independent reasons: (1) `_syncing_library_rag_defaults` -- a
+        programmatic widget resync is currently writing values, not the
+        user; (2) Task 4 (541 v2 UX AC1) -- the editor is showing a
+        profile-picker PREVIEW (`_rag_preview_profile_id` is not None),
+        which is READ-ONLY by design: drafts belong to the active profile
+        only, and preview must never create or mutate one.
+        """
+        return (
+            self._syncing_library_rag_defaults
+            or self._rag_preview_profile_id is not None
+        )
+
     def _stage_library_rag_value(self, key: str, value: object) -> None:
         category = SettingsCategoryId.LIBRARY_RAG
         draft = self._settings_drafts.setdefault(
@@ -3033,8 +3110,36 @@ class SettingsScreen(BaseAppScreen):
         self._update_library_rag_soft_warning()
         self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
 
-    def _sync_library_rag_widgets(self) -> None:
-        values = self._library_rag_loaded_values()
+    def _sync_library_rag_widgets(
+        self,
+        values: Mapping[str, object] | None = None,
+        *,
+        field_disabled: bool | None = None,
+    ) -> None:
+        """Refresh the editor fields (Search/Embedding/Chunking/Vector
+        store/Reranking) imperatively (no recompose).
+
+        Args:
+            values: Explicit field values to render. Defaults to the ACTIVE
+                profile's raw loaded values (pre-task-4 behaviour, still
+                what every set-active/clone/rename/delete/save resync below
+                relies on) -- pass `self._library_rag_setting_values()` for
+                a DRAFT-AWARE render (Task 4: restoring the active
+                profile's editor after a profile-picker preview, where a
+                staged draft must survive the round-trip).
+            field_disabled: When given, forces EVERY editor field's
+                disabled state, not just the reranker Inputs (which always
+                follow `_library_rag_rerank_field_state`). Task 4 uses
+                `True` for a profile PREVIEW (always read-only regardless
+                of the previewed profile's own read_only flag) and the
+                ACTIVE profile's `read_only` flag when restoring the
+                ordinary editor after a preview. `None` (default) leaves
+                those fields' disabled state untouched -- every pre-task-4
+                caller already relies on that (driven separately by
+                `_sync_library_rag_profile_widgets`).
+        """
+        if values is None:
+            values = self._library_rag_loaded_values()
         self._syncing_library_rag_defaults = True
         try:
             try:
@@ -3089,10 +3194,23 @@ class SettingsScreen(BaseAppScreen):
                     ("#settings-library-rag-reranker-top-k", "reranker_top_k"),
                 ):
                     self.query_one(selector, Input).value = str(values[key])
+                resolved_field_disabled = (
+                    field_disabled
+                    if field_disabled is not None
+                    else bool(active_profile_info()["read_only"])
+                )
                 self._apply_library_rag_rerank_field_state(
                     rerank_enabled=bool(values["enable_reranking"]),
-                    field_disabled=bool(active_profile_info()["read_only"]),
+                    field_disabled=resolved_field_disabled,
                 )
+                if field_disabled is not None:
+                    for key in _LIBRARY_RAG_READ_LOCK_FIELD_KEYS:
+                        selector = self._library_rag_field_selector(key)
+                        if selector is None:
+                            continue
+                        self.query_one(selector).disabled = field_disabled
+                    for selector in _LIBRARY_RAG_READ_LOCK_CHECKBOX_SELECTORS:
+                        self.query_one(selector, Checkbox).disabled = field_disabled
             except QueryError:
                 pass
         finally:
@@ -3187,7 +3305,17 @@ class SettingsScreen(BaseAppScreen):
         }.get(key)
 
     def _update_library_rag_validation_classes(self) -> None:
-        invalid_key = self._library_rag_invalid_field_key()
+        # Task 4 (541 v2 UX AC1): the fields currently on screen may be
+        # showing a PREVIEWED (different) profile's values while this
+        # method's own validation is always computed from the ACTIVE
+        # profile's draft -- highlighting a previewed field red over an
+        # unrelated active-profile draft error would be misleading, so
+        # nothing is ever highlighted while merely browsing a preview.
+        invalid_key = (
+            None
+            if self._rag_preview_profile_id is not None
+            else self._library_rag_invalid_field_key()
+        )
         for key in (
             "default_search_mode",
             "default_top_k",
@@ -8068,7 +8196,9 @@ class SettingsScreen(BaseAppScreen):
         select_value = active_id if active_id in valid_ids else Select.BLANK
         active_label = f"{info['name']} (built-in)" if info["read_only"] else info["name"]
 
-        yield Static("Profiles", classes="destination-section")
+        # Task 4 (541 v2 UX AC1): the "Profiles" heading is now the
+        # enclosing container's border title (see `_render_library_rag_detail`)
+        # instead of an inline Static -- avoids a doubled label.
         yield Static(
             f"Active: {active_label}",
             id="settings-library-rag-active-profile",
@@ -8206,12 +8336,21 @@ class SettingsScreen(BaseAppScreen):
             if select_override is not None and select_override in valid_ids
             else active_id
         )
+        # Task 4 (541 v2 UX AC1): `set_options` alone resets the selection
+        # (posting a transient BLANK Changed), then the explicit assignment
+        # below posts a second one -- both must be suppressed here so this
+        # imperative resync can never itself flip
+        # `_rag_preview_profile_id` via handle_library_rag_profile_select_changed
+        # (that handler exists solely to react to a genuine user browse).
+        self._syncing_library_rag_profile_select = True
         try:
             select = self.query_one("#settings-library-rag-profile-select", Select)
             select.set_options(options)
             select.value = target_id if target_id in valid_ids else Select.BLANK
         except QueryError:
             pass
+        finally:
+            self._syncing_library_rag_profile_select = False
 
         try:
             self.query_one(
@@ -8220,33 +8359,15 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
 
-        for key in (
-            "default_search_mode",
-            "default_top_k",
-            "fts_top_k",
-            "vector_top_k",
-            "hybrid_alpha",
-            "score_threshold",
-            "citation_style",
-            "snippet_max_chars",
-            "max_context_size",
-            "embedding_model",
-            "embedding_device",
-            "embedding_batch_size",
-            "embedding_max_length",
-            "chunk_size",
-            "chunk_overlap",
-            "chunking_method",
-            "distance_metric",
-            # reranker_model/reranker_top_k are handled below via
-            # _apply_library_rag_rerank_field_state instead of this blanket
-            # read-only-only treatment: their disabled state also depends on
-            # whether reranking itself is enabled, and this method runs AFTER
-            # _sync_library_rag_widgets on every set-active/clone/rename/
-            # delete resync, so a naive `disabled = read_only` here would
-            # silently re-enable them whenever the active (non-builtin)
-            # profile just switched to has reranking off.
-        ):
+        # reranker_model/reranker_top_k are handled below via
+        # _apply_library_rag_rerank_field_state instead of the blanket
+        # read-only-only treatment `_LIBRARY_RAG_READ_LOCK_FIELD_KEYS` covers:
+        # their disabled state also depends on whether reranking itself is
+        # enabled, and this method runs AFTER _sync_library_rag_widgets on
+        # every set-active/clone/rename/delete resync, so a naive
+        # `disabled = read_only` here would silently re-enable them whenever
+        # the active (non-builtin) profile just switched to has reranking off.
+        for key in _LIBRARY_RAG_READ_LOCK_FIELD_KEYS:
             selector = self._library_rag_field_selector(key)
             if selector is None:
                 continue
@@ -8258,10 +8379,7 @@ class SettingsScreen(BaseAppScreen):
             rerank_enabled=bool(self._library_rag_loaded_values()["enable_reranking"]),
             field_disabled=bool(info["read_only"]),
         )
-        for selector in (
-            "#settings-library-rag-include-citations",
-            "#settings-library-rag-enable-reranking",
-        ):
+        for selector in _LIBRARY_RAG_READ_LOCK_CHECKBOX_SELECTORS:
             try:
                 self.query_one(selector, Checkbox).disabled = bool(info["read_only"])
             except QueryError:
@@ -8282,7 +8400,8 @@ class SettingsScreen(BaseAppScreen):
         # set-active/clone/rename/delete action re-syncs them) -- this is the
         # state a brand-new install starts in (active = the "hybrid_basic"
         # builtin).
-        field_disabled = active_profile_info()["read_only"]
+        info = active_profile_info()
+        field_disabled = info["read_only"]
         rerank_enabled = bool(values["enable_reranking"])
         rerank_field_disabled, rerank_suffix = self._library_rag_rerank_field_state(
             rerank_enabled=rerank_enabled, field_disabled=field_disabled
@@ -8293,343 +8412,397 @@ class SettingsScreen(BaseAppScreen):
         )
         with Vertical(id="settings-library-rag-card", classes="settings-focus-card"):
             yield self._render_category_state_banner(SettingsCategoryId.LIBRARY_RAG)
-            yield from self._render_library_rag_profile_block()
-            # UX review item 5 (⚠ legend): the ⚠ markers on individual field
-            # labels below (Embedding model, Max length, Chunk size/overlap/
-            # method, Distance metric) are otherwise unexplained the first
-            # time a user sees one.
-            yield Static(
-                "⚠ = changing this field rebuilds the index — run Backfill "
-                "after saving.",
-                id="settings-library-rag-warning-legend",
-                classes="settings-status-row",
+            # Task 4 (541 v2 UX AC1): manage-vs-edit split -- the picker
+            # (browse/Set active/Clone/Rename/Delete) and the editor
+            # (Search/Embedding/Chunking/Vector store/Reranking fields) each
+            # get their OWN titled container, rather than one undifferentiated
+            # card. The editor's title flips to "Previewing: <name>" while
+            # browsing a non-active profile (see `_update_library_rag_editor_title`).
+            profiles_card = Vertical(
+                id="settings-library-rag-profiles-card",
+                classes="settings-secondary-card",
             )
-            with Collapsible(
-                title="Search", collapsed=False, id="settings-library-rag-search-group"
-            ):
-                yield Static(
-                    "Used by future Library-native Search/RAG and Console evidence handoff defaults.",
-                    classes="settings-detail-row",
+            profiles_card.border_title = "Profiles"
+            with profiles_card:
+                yield from self._render_library_rag_profile_block()
+            editor_card = Vertical(
+                id="settings-library-rag-editor-card",
+                classes="settings-secondary-card",
+            )
+            editor_card.border_title = f"Editing: {escape_markup(info['name'])}"
+            with editor_card:
+                yield from self._render_library_rag_editor_fields(
+                    values=values,
+                    search_mode=search_mode,
+                    citation_style=citation_style,
+                    chunking_method=chunking_method,
+                    distance_metric=distance_metric,
+                    field_disabled=field_disabled,
+                    rerank_enabled=rerank_enabled,
+                    rerank_field_disabled=rerank_field_disabled,
+                    rerank_suffix=rerank_suffix,
                 )
-                with Horizontal(classes="settings-input-row settings-select-row"):
-                    yield Static("Search mode", classes="settings-input-label")
-                    yield Select(
-                        [
-                            ("Plain keyword", "plain"),
-                            ("Semantic", "semantic"),
-                            ("Hybrid", "hybrid"),
-                        ],
-                        value=search_mode,
-                        id="settings-library-rag-search-mode",
-                        classes="settings-compact-select",
-                        allow_blank=False,
-                        compact=True,
-                        disabled=field_disabled,
-                    )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static("Default results", classes="settings-input-label")
-                    yield Input(
-                        value=str(values["default_top_k"]),
-                        id="settings-library-rag-default-top-k",
-                        classes="settings-compact-input",
-                        placeholder="1 - 100",
-                        restrict=r"^[0-9]*$",
-                        disabled=field_disabled,
-                    )
-                yield Static("Retriever balance", classes="destination-section")
-                with Horizontal(classes="settings-input-row"):
-                    yield Static("Keyword results", classes="settings-input-label")
-                    yield Input(
-                        value=str(values["fts_top_k"]),
-                        id="settings-library-rag-fts-top-k",
-                        classes="settings-compact-input",
-                        placeholder="1 - 100",
-                        restrict=r"^[0-9]*$",
-                        disabled=field_disabled,
-                    )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static("Vector results", classes="settings-input-label")
-                    yield Input(
-                        value=str(values["vector_top_k"]),
-                        id="settings-library-rag-vector-top-k",
-                        classes="settings-compact-input",
-                        placeholder="1 - 100",
-                        restrict=r"^[0-9]*$",
-                        disabled=field_disabled,
-                    )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static("Hybrid balance", classes="settings-input-label")
-                    yield Input(
-                        value=str(values["hybrid_alpha"]),
-                        id="settings-library-rag-hybrid-alpha",
-                        classes="settings-compact-input",
-                        placeholder="0.0 - 1.0",
-                        disabled=field_disabled,
-                    )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static("Min score", classes="settings-input-label")
-                    yield Input(
-                        value=str(values["score_threshold"]),
-                        id="settings-library-rag-score-threshold",
-                        classes="settings-compact-input",
-                        placeholder="0.0 - 1.0",
-                        disabled=field_disabled,
-                    )
-                yield Static("Citation and snippets", classes="destination-section")
-                yield Checkbox(
-                    "Include citations",
-                    value=bool(values["include_citations"]),
-                    id="settings-library-rag-include-citations",
-                    tooltip="Toggle citation metadata in future RAG answers where supported.",
+
+    def _render_library_rag_editor_fields(
+        self,
+        *,
+        values: dict[str, object],
+        search_mode: str,
+        citation_style: str,
+        chunking_method: str,
+        distance_metric: str,
+        field_disabled: bool,
+        rerank_enabled: bool,
+        rerank_field_disabled: bool,
+        rerank_suffix: str,
+    ) -> ComposeResult:
+        # Task 4 (541 v2 UX AC1): read-only preview banner -- hidden at
+        # first paint (the Select always starts pinned to the active
+        # profile, see `_render_library_rag_profile_block`); shown by
+        # `_set_library_rag_preview_banner` while browsing another profile.
+        preview_banner = Static(
+            "",
+            id="settings-library-rag-preview-banner",
+            classes="settings-status-row settings-library-rag-preview-banner",
+        )
+        preview_banner.display = False
+        yield preview_banner
+        # UX review item 5 (⚠ legend): the ⚠ markers on individual field
+        # labels below (Embedding model, Max length, Chunk size/overlap/
+        # method, Distance metric) are otherwise unexplained the first
+        # time a user sees one.
+        yield Static(
+            "⚠ = changing this field rebuilds the index — run Backfill "
+            "after saving.",
+            id="settings-library-rag-warning-legend",
+            classes="settings-status-row",
+        )
+        with Collapsible(
+            title="Search", collapsed=False, id="settings-library-rag-search-group"
+        ):
+            yield Static(
+                "Used by future Library-native Search/RAG and Console evidence handoff defaults.",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Search mode", classes="settings-input-label")
+                yield Select(
+                    [
+                        ("Plain keyword", "plain"),
+                        ("Semantic", "semantic"),
+                        ("Hybrid", "hybrid"),
+                    ],
+                    value=search_mode,
+                    id="settings-library-rag-search-mode",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
                     disabled=field_disabled,
                 )
-                with Horizontal(classes="settings-input-row settings-select-row"):
-                    yield Static("Citation style", classes="settings-input-label")
-                    yield Select(
-                        [
-                            ("Inline", "inline"),
-                            ("Footnote", "footnote"),
-                            ("None", "none"),
-                        ],
-                        value=citation_style,
-                        id="settings-library-rag-citation-style",
-                        classes="settings-compact-select",
-                        allow_blank=False,
-                        compact=True,
-                        disabled=field_disabled,
-                    )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static("Snippet chars", classes="settings-input-label")
-                    yield Input(
-                        value=str(values["snippet_max_chars"]),
-                        id="settings-library-rag-snippet-max-chars",
-                        classes="settings-compact-input",
-                        placeholder="50 - 10000",
-                        restrict=r"^[0-9]*$",
-                        disabled=field_disabled,
-                    )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static("Context budget", classes="settings-input-label")
-                    yield Input(
-                        value=str(values["max_context_size"]),
-                        id="settings-library-rag-max-context-size",
-                        classes="settings-compact-input",
-                        placeholder="1000 - 1000000",
-                        restrict=r"^[0-9]*$",
-                        disabled=field_disabled,
-                    )
-            with Collapsible(
-                title="Embedding",
-                collapsed=True,
-                id="settings-library-rag-embedding-group",
-            ):
-                yield Static(
-                    "Changing this changes what the index is built from -- the "
-                    "index must be rebuilt (run Backfill).",
-                    classes="settings-detail-row",
-                )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static(
-                        "Embedding model ⚠", classes="settings-input-label"
-                    )
-                    yield Input(
-                        value=str(values["embedding_model"]),
-                        id="settings-library-rag-embedding-model",
-                        classes="settings-compact-input",
-                        placeholder="e.g. mxbai-embed-large-v1",
-                        disabled=field_disabled,
-                    )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static("Device", classes="settings-input-label")
-                    yield Input(
-                        value=str(values["embedding_device"]),
-                        id="settings-library-rag-embedding-device",
-                        classes="settings-compact-input",
-                        placeholder="auto, cpu, cuda, mps",
-                        disabled=field_disabled,
-                    )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static("Batch size", classes="settings-input-label")
-                    yield Input(
-                        value=str(values["embedding_batch_size"]),
-                        id="settings-library-rag-embedding-batch-size",
-                        classes="settings-compact-input",
-                        placeholder="> 0",
-                        restrict=r"^[0-9]*$",
-                        disabled=field_disabled,
-                    )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static(
-                        "Max length ⚠", classes="settings-input-label"
-                    )
-                    yield Input(
-                        value=str(values["embedding_max_length"]),
-                        id="settings-library-rag-embedding-max-length",
-                        classes="settings-compact-input",
-                        placeholder="> 0",
-                        restrict=r"^[0-9]*$",
-                        disabled=field_disabled,
-                    )
-            with Collapsible(
-                title="Chunking",
-                collapsed=True,
-                id="settings-library-rag-chunking-group",
-            ):
-                yield Static(
-                    "Changing this changes what the index is built from -- the "
-                    "index must be rebuilt (run Backfill).",
-                    classes="settings-detail-row",
-                )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static(
-                        "Chunk size ⚠", classes="settings-input-label"
-                    )
-                    yield Input(
-                        value=str(values["chunk_size"]),
-                        id="settings-library-rag-chunk-size",
-                        classes="settings-compact-input",
-                        placeholder="> 0 words",
-                        restrict=r"^[0-9]*$",
-                        disabled=field_disabled,
-                    )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static(
-                        "Chunk overlap ⚠", classes="settings-input-label"
-                    )
-                    yield Input(
-                        value=str(values["chunk_overlap"]),
-                        id="settings-library-rag-chunk-overlap",
-                        classes="settings-compact-input",
-                        placeholder="0 - chunk size",
-                        restrict=r"^[0-9]*$",
-                        disabled=field_disabled,
-                    )
-                with Horizontal(classes="settings-input-row settings-select-row"):
-                    yield Static(
-                        "Method ⚠", classes="settings-input-label"
-                    )
-                    yield Select(
-                        [
-                            ("Words", "words"),
-                            ("Sentences", "sentences"),
-                            ("Paragraphs", "paragraphs"),
-                        ],
-                        value=chunking_method,
-                        id="settings-library-rag-chunking-method",
-                        classes="settings-compact-select",
-                        allow_blank=False,
-                        compact=True,
-                        disabled=field_disabled,
-                    )
-            with Collapsible(
-                title="Vector store",
-                collapsed=True,
-                id="settings-library-rag-vector-store-group",
-            ):
-                yield Static(
-                    "Changing this changes what the index is built from -- the "
-                    "index must be rebuilt (run Backfill).",
-                    classes="settings-detail-row",
-                )
-                with Horizontal(classes="settings-input-row settings-select-row"):
-                    yield Static(
-                        "Distance metric ⚠",
-                        classes="settings-input-label",
-                    )
-                    yield Select(
-                        [
-                            ("Cosine", "cosine"),
-                            ("Euclidean (L2)", "l2"),
-                            ("Inner product", "ip"),
-                        ],
-                        value=distance_metric,
-                        id="settings-library-rag-distance-metric",
-                        classes="settings-compact-select",
-                        allow_blank=False,
-                        compact=True,
-                        disabled=field_disabled,
-                    )
-            with Collapsible(
-                title="Reranking",
-                collapsed=True,
-                id="settings-library-rag-reranking-group",
-            ):
-                yield Static(
-                    "Enabling reranking creates the profile's reranker config; "
-                    "disabling it removes that config entirely.",
-                    classes="settings-detail-row",
-                )
-                yield Checkbox(
-                    "Enable reranking",
-                    value=rerank_enabled,
-                    id="settings-library-rag-enable-reranking",
-                    tooltip="Toggle LLM-based reranking of retrieved results for this profile.",
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Default results", classes="settings-input-label")
+                yield Input(
+                    value=str(values["default_top_k"]),
+                    id="settings-library-rag-default-top-k",
+                    classes="settings-compact-input",
+                    placeholder="1 - 100",
+                    restrict=r"^[0-9]*$",
                     disabled=field_disabled,
                 )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static(
-                        f"Reranker model{rerank_suffix}",
-                        id="settings-library-rag-reranker-model-label",
-                        classes="settings-input-label",
-                    )
-                    yield Input(
-                        value=str(values["reranker_model"]),
-                        id="settings-library-rag-reranker-model",
-                        classes="settings-compact-input",
-                        placeholder="blank = reranker default",
-                        disabled=rerank_field_disabled,
-                    )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static(
-                        f"Rerank results{rerank_suffix}",
-                        id="settings-library-rag-reranker-top-k-label",
-                        classes="settings-input-label",
-                    )
-                    yield Input(
-                        value=str(values["reranker_top_k"]),
-                        id="settings-library-rag-reranker-top-k",
-                        classes="settings-compact-input",
-                        placeholder=">= 1",
-                        restrict=r"^[0-9]*$",
-                        disabled=rerank_field_disabled,
-                    )
-                soft_warnings = self._library_rag_soft_warnings()
-                reranker_warning = Static(
-                    " / ".join(soft_warnings),
-                    id="settings-library-rag-reranker-warning",
-                    classes="settings-status-row settings-library-rag-soft-warning",
+            yield Static("Retriever balance", classes="destination-section")
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Keyword results", classes="settings-input-label")
+                yield Input(
+                    value=str(values["fts_top_k"]),
+                    id="settings-library-rag-fts-top-k",
+                    classes="settings-compact-input",
+                    placeholder="1 - 100",
+                    restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
                 )
-                reranker_warning.display = bool(soft_warnings)
-                yield reranker_warning
-            yield Static("Preview defaults", classes="destination-section")
-            preview_summary, preview_retrieval, preview_context = (
-                self._library_rag_preview_rows()
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Vector results", classes="settings-input-label")
+                yield Input(
+                    value=str(values["vector_top_k"]),
+                    id="settings-library-rag-vector-top-k",
+                    classes="settings-compact-input",
+                    placeholder="1 - 100",
+                    restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Hybrid balance", classes="settings-input-label")
+                yield Input(
+                    value=str(values["hybrid_alpha"]),
+                    id="settings-library-rag-hybrid-alpha",
+                    classes="settings-compact-input",
+                    placeholder="0.0 - 1.0",
+                    disabled=field_disabled,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Min score", classes="settings-input-label")
+                yield Input(
+                    value=str(values["score_threshold"]),
+                    id="settings-library-rag-score-threshold",
+                    classes="settings-compact-input",
+                    placeholder="0.0 - 1.0",
+                    disabled=field_disabled,
+                )
+            yield Static("Citation and snippets", classes="destination-section")
+            yield Checkbox(
+                "Include citations",
+                value=bool(values["include_citations"]),
+                id="settings-library-rag-include-citations",
+                tooltip="Toggle citation metadata in future RAG answers where supported.",
+                disabled=field_disabled,
             )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Citation style", classes="settings-input-label")
+                yield Select(
+                    [
+                        ("Inline", "inline"),
+                        ("Footnote", "footnote"),
+                        ("None", "none"),
+                    ],
+                    value=citation_style,
+                    id="settings-library-rag-citation-style",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                    disabled=field_disabled,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Snippet chars", classes="settings-input-label")
+                yield Input(
+                    value=str(values["snippet_max_chars"]),
+                    id="settings-library-rag-snippet-max-chars",
+                    classes="settings-compact-input",
+                    placeholder="50 - 10000",
+                    restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Context budget", classes="settings-input-label")
+                yield Input(
+                    value=str(values["max_context_size"]),
+                    id="settings-library-rag-max-context-size",
+                    classes="settings-compact-input",
+                    placeholder="1000 - 1000000",
+                    restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
+                )
+        with Collapsible(
+            title="Embedding",
+            collapsed=True,
+            id="settings-library-rag-embedding-group",
+        ):
             yield Static(
-                preview_summary,
-                id="settings-library-rag-preview-summary",
+                "Changing this changes what the index is built from -- the "
+                "index must be rebuilt (run Backfill).",
                 classes="settings-detail-row",
             )
+            with Horizontal(classes="settings-input-row"):
+                yield Static(
+                    "Embedding model ⚠", classes="settings-input-label"
+                )
+                yield Input(
+                    value=str(values["embedding_model"]),
+                    id="settings-library-rag-embedding-model",
+                    classes="settings-compact-input",
+                    placeholder="e.g. mxbai-embed-large-v1",
+                    disabled=field_disabled,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Device", classes="settings-input-label")
+                yield Input(
+                    value=str(values["embedding_device"]),
+                    id="settings-library-rag-embedding-device",
+                    classes="settings-compact-input",
+                    placeholder="auto, cpu, cuda, mps",
+                    disabled=field_disabled,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Batch size", classes="settings-input-label")
+                yield Input(
+                    value=str(values["embedding_batch_size"]),
+                    id="settings-library-rag-embedding-batch-size",
+                    classes="settings-compact-input",
+                    placeholder="> 0",
+                    restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static(
+                    "Max length ⚠", classes="settings-input-label"
+                )
+                yield Input(
+                    value=str(values["embedding_max_length"]),
+                    id="settings-library-rag-embedding-max-length",
+                    classes="settings-compact-input",
+                    placeholder="> 0",
+                    restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
+                )
+        with Collapsible(
+            title="Chunking",
+            collapsed=True,
+            id="settings-library-rag-chunking-group",
+        ):
             yield Static(
-                preview_retrieval,
-                id="settings-library-rag-preview-retrieval",
+                "Changing this changes what the index is built from -- the "
+                "index must be rebuilt (run Backfill).",
                 classes="settings-detail-row",
             )
+            with Horizontal(classes="settings-input-row"):
+                yield Static(
+                    "Chunk size ⚠", classes="settings-input-label"
+                )
+                yield Input(
+                    value=str(values["chunk_size"]),
+                    id="settings-library-rag-chunk-size",
+                    classes="settings-compact-input",
+                    placeholder="> 0 words",
+                    restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static(
+                    "Chunk overlap ⚠", classes="settings-input-label"
+                )
+                yield Input(
+                    value=str(values["chunk_overlap"]),
+                    id="settings-library-rag-chunk-overlap",
+                    classes="settings-compact-input",
+                    placeholder="0 - chunk size",
+                    restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
+                )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static(
+                    "Method ⚠", classes="settings-input-label"
+                )
+                yield Select(
+                    [
+                        ("Words", "words"),
+                        ("Sentences", "sentences"),
+                        ("Paragraphs", "paragraphs"),
+                    ],
+                    value=chunking_method,
+                    id="settings-library-rag-chunking-method",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                    disabled=field_disabled,
+                )
+        with Collapsible(
+            title="Vector store",
+            collapsed=True,
+            id="settings-library-rag-vector-store-group",
+        ):
             yield Static(
-                preview_context,
-                id="settings-library-rag-preview-context",
+                "Changing this changes what the index is built from -- the "
+                "index must be rebuilt (run Backfill).",
                 classes="settings-detail-row",
             )
-            yield Static("Save targets", classes="destination-section")
-            yield self._detail_row(
-                "Profile", "the active RAG profile (rag_profiles/<id>.json)"
-            )
-            yield self._detail_row("Pointer", "the [rag.service].profile pointer")
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static(
+                    "Distance metric ⚠",
+                    classes="settings-input-label",
+                )
+                yield Select(
+                    [
+                        ("Cosine", "cosine"),
+                        ("Euclidean (L2)", "l2"),
+                        ("Inner product", "ip"),
+                    ],
+                    value=distance_metric,
+                    id="settings-library-rag-distance-metric",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                    disabled=field_disabled,
+                )
+        with Collapsible(
+            title="Reranking",
+            collapsed=True,
+            id="settings-library-rag-reranking-group",
+        ):
             yield Static(
-                self._library_rag_result,
-                id="settings-library-rag-save-result",
-                classes="settings-status-row",
+                "Enabling reranking creates the profile's reranker config; "
+                "disabling it removes that config entirely.",
+                classes="settings-detail-row",
             )
+            yield Checkbox(
+                "Enable reranking",
+                value=rerank_enabled,
+                id="settings-library-rag-enable-reranking",
+                tooltip="Toggle LLM-based reranking of retrieved results for this profile.",
+                disabled=field_disabled,
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static(
+                    f"Reranker model{rerank_suffix}",
+                    id="settings-library-rag-reranker-model-label",
+                    classes="settings-input-label",
+                )
+                yield Input(
+                    value=str(values["reranker_model"]),
+                    id="settings-library-rag-reranker-model",
+                    classes="settings-compact-input",
+                    placeholder="blank = reranker default",
+                    disabled=rerank_field_disabled,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static(
+                    f"Rerank results{rerank_suffix}",
+                    id="settings-library-rag-reranker-top-k-label",
+                    classes="settings-input-label",
+                )
+                yield Input(
+                    value=str(values["reranker_top_k"]),
+                    id="settings-library-rag-reranker-top-k",
+                    classes="settings-compact-input",
+                    placeholder=">= 1",
+                    restrict=r"^[0-9]*$",
+                    disabled=rerank_field_disabled,
+                )
+            soft_warnings = self._library_rag_soft_warnings()
+            reranker_warning = Static(
+                " / ".join(soft_warnings),
+                id="settings-library-rag-reranker-warning",
+                classes="settings-status-row settings-library-rag-soft-warning",
+            )
+            reranker_warning.display = bool(soft_warnings)
+            yield reranker_warning
+        yield Static("Preview defaults", classes="destination-section")
+        preview_summary, preview_retrieval, preview_context = (
+            self._library_rag_preview_rows()
+        )
+        yield Static(
+            preview_summary,
+            id="settings-library-rag-preview-summary",
+            classes="settings-detail-row",
+        )
+        yield Static(
+            preview_retrieval,
+            id="settings-library-rag-preview-retrieval",
+            classes="settings-detail-row",
+        )
+        yield Static(
+            preview_context,
+            id="settings-library-rag-preview-context",
+            classes="settings-detail-row",
+        )
+        yield Static("Save targets", classes="destination-section")
+        yield self._detail_row(
+            "Profile", "the active RAG profile (rag_profiles/<id>.json)"
+        )
+        yield self._detail_row("Pointer", "the [rag.service].profile pointer")
+        yield Static(
+            self._library_rag_result,
+            id="settings-library-rag-save-result",
+            classes="settings-status-row",
+        )
 
     def _render_domain_category_detail(
         self, category: SettingsCategoryId
@@ -9610,6 +9783,14 @@ class SettingsScreen(BaseAppScreen):
         # fallback guidance a first-ever visit shows.
         if category_value != SettingsCategoryId.LIBRARY_RAG.value:
             self._active_rag_scope_group = None
+            # Task 4 (541 v2 UX AC1): a profile-picker PREVIEW is a purely
+            # visual browse of the mounted editor widgets -- leaving the
+            # category recomposes the detail pane from scratch (the Select
+            # rebuilds pinned to the ACTIVE profile, see
+            # `_render_library_rag_profile_block`), so the in-memory
+            # "previewing X" flag must not survive to a later visit and
+            # silently mismatch what's actually on screen.
+            self._rag_preview_profile_id = None
         # Task 2 review (Important): a stale re-index-confirm in-flight
         # guard must never survive navigating away from (or back into) the
         # category -- e.g. the user backs out mid-fetch. Unconditional
@@ -10261,7 +10442,7 @@ class SettingsScreen(BaseAppScreen):
     @on(Select.Changed, "#settings-library-rag-search-mode")
     def handle_library_rag_search_mode_changed(self, event: Select.Changed) -> None:
         event.stop()
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "default_search_mode", str(event.value or "semantic")
@@ -10270,7 +10451,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-default-top-k")
     def handle_library_rag_default_top_k_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "default_top_k",
@@ -10280,7 +10461,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-fts-top-k")
     def handle_library_rag_fts_top_k_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "fts_top_k",
@@ -10290,7 +10471,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-vector-top-k")
     def handle_library_rag_vector_top_k_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "vector_top_k",
@@ -10300,7 +10481,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-hybrid-alpha")
     def handle_library_rag_hybrid_alpha_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "hybrid_alpha",
@@ -10310,7 +10491,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-score-threshold")
     def handle_library_rag_score_threshold_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "score_threshold",
@@ -10323,7 +10504,7 @@ class SettingsScreen(BaseAppScreen):
         self, event: Checkbox.Changed
     ) -> None:
         event.stop()
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value("include_citations", bool(event.value))
         self._mark_library_rag_settings_staged()
@@ -10331,7 +10512,7 @@ class SettingsScreen(BaseAppScreen):
     @on(Select.Changed, "#settings-library-rag-citation-style")
     def handle_library_rag_citation_style_changed(self, event: Select.Changed) -> None:
         event.stop()
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value("citation_style", str(event.value or "inline"))
         self._mark_library_rag_settings_staged()
@@ -10340,7 +10521,7 @@ class SettingsScreen(BaseAppScreen):
     def handle_library_rag_snippet_max_chars_changed(
         self, event: Input.Changed
     ) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "snippet_max_chars",
@@ -10350,7 +10531,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-max-context-size")
     def handle_library_rag_max_context_size_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "max_context_size",
@@ -10360,14 +10541,14 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-embedding-model")
     def handle_library_rag_embedding_model_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value("embedding_model", str(event.value))
         self._mark_library_rag_settings_staged()
 
     @on(Input.Changed, "#settings-library-rag-embedding-device")
     def handle_library_rag_embedding_device_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value("embedding_device", str(event.value))
         self._mark_library_rag_settings_staged()
@@ -10376,7 +10557,7 @@ class SettingsScreen(BaseAppScreen):
     def handle_library_rag_embedding_batch_size_changed(
         self, event: Input.Changed
     ) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "embedding_batch_size",
@@ -10388,7 +10569,7 @@ class SettingsScreen(BaseAppScreen):
     def handle_library_rag_embedding_max_length_changed(
         self, event: Input.Changed
     ) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "embedding_max_length",
@@ -10398,7 +10579,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-chunk-size")
     def handle_library_rag_chunk_size_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "chunk_size",
@@ -10408,7 +10589,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-chunk-overlap")
     def handle_library_rag_chunk_overlap_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "chunk_overlap",
@@ -10419,7 +10600,7 @@ class SettingsScreen(BaseAppScreen):
     @on(Select.Changed, "#settings-library-rag-chunking-method")
     def handle_library_rag_chunking_method_changed(self, event: Select.Changed) -> None:
         event.stop()
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value("chunking_method", str(event.value or "words"))
         self._mark_library_rag_settings_staged()
@@ -10427,7 +10608,7 @@ class SettingsScreen(BaseAppScreen):
     @on(Select.Changed, "#settings-library-rag-distance-metric")
     def handle_library_rag_distance_metric_changed(self, event: Select.Changed) -> None:
         event.stop()
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value("distance_metric", str(event.value or "cosine"))
         self._mark_library_rag_settings_staged()
@@ -10437,7 +10618,7 @@ class SettingsScreen(BaseAppScreen):
         self, event: Checkbox.Changed
     ) -> None:
         event.stop()
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         next_value = bool(event.value)
         self._stage_library_rag_value("enable_reranking", next_value)
@@ -10449,20 +10630,106 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-reranker-model")
     def handle_library_rag_reranker_model_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value("reranker_model", str(event.value))
         self._mark_library_rag_settings_staged()
 
     @on(Input.Changed, "#settings-library-rag-reranker-top-k")
     def handle_library_rag_reranker_top_k_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "reranker_top_k",
             self._normalise_library_rag_int(event.value),
         )
         self._mark_library_rag_settings_staged()
+
+    @on(Select.Changed, "#settings-library-rag-profile-select")
+    def handle_library_rag_profile_select_changed(self, event: Select.Changed) -> None:
+        """Task 4 (541 v2 UX AC1): browsing the profile picker PREVIEWS that
+        profile's values read-only -- it never stages a draft (only "Set
+        active" does that, via the existing dirty-prompt flow below).
+        Selecting the ACTIVE profile's own id exits preview and restores
+        the ordinary, draft-aware editor.
+
+        Suppressed while `_sync_library_rag_profile_widgets` is itself
+        rewriting the Select's options/value (`_syncing_library_rag_profile_select`)
+        -- that's an imperative resync, not a user browsing the dropdown.
+        """
+        event.stop()
+        if self._syncing_library_rag_profile_select:
+            return
+        selected = event.value
+        active_id = active_profile_info()["id"]
+        if selected is None or selected is Select.BLANK or str(selected) == active_id:
+            self._rag_preview_profile_id = None
+        else:
+            self._rag_preview_profile_id = str(selected)
+        self._sync_rag_editor_display()
+
+    def _sync_rag_editor_display(self) -> None:
+        """The ONE place that decides whether the Library/RAG editor
+        renders the active profile (draft-aware, editable) or a PREVIEW of
+        a different, browsed profile (read-only, draft-untouched) -- Task 4
+        (541 v2 UX AC1). Called after every profile-Select change and
+        after any completed action that could change which profile is
+        active or must clear a stale preview
+        (`_rag_after_set_active`, `_rag_after_profile_action`).
+        """
+        if self._rag_preview_profile_id is not None:
+            self._render_rag_profile_preview(self._rag_preview_profile_id)
+            return
+        self._sync_library_rag_widgets(
+            self._library_rag_setting_values(),
+            field_disabled=bool(active_profile_info()["read_only"]),
+        )
+        self._update_library_rag_editor_title()
+        self._set_library_rag_preview_banner(None)
+
+    def _render_rag_profile_preview(self, profile_id: str) -> None:
+        """Render `profile_id`'s OWN values into the editor, all disabled,
+        with a banner naming it -- never touches `_settings_drafts` (the
+        hard invariant: drafts belong to the active profile only)."""
+        defaults = get_profile_defaults(profile_id)
+        if defaults is None:
+            # The previewed profile vanished mid-browse (e.g. deleted by
+            # another action) -- fall back to exiting preview rather than
+            # rendering a preview of nothing.
+            self._rag_preview_profile_id = None
+            self._sync_rag_editor_display()
+            return
+        self._sync_library_rag_widgets(asdict(defaults), field_disabled=True)
+        name = self._library_rag_profile_name(profile_id)
+        self._update_library_rag_editor_title(preview_name=name)
+        self._set_library_rag_preview_banner(name)
+
+    def _update_library_rag_editor_title(self, *, preview_name: str | None = None) -> None:
+        """Task 4 (541 v2 UX AC1): the editor container's border title --
+        "Editing: <active name>" ordinarily, "Previewing: <selected name>"
+        while browsing a different profile. Names are escaped: profile
+        names can contain markup-significant characters (repo lesson)."""
+        if preview_name is not None:
+            title = f"Previewing: {escape_markup(preview_name)}"
+        else:
+            title = f"Editing: {escape_markup(active_profile_info()['name'])}"
+        try:
+            self.query_one("#settings-library-rag-editor-card").border_title = title
+        except QueryError:
+            pass
+
+    def _set_library_rag_preview_banner(self, name: str | None) -> None:
+        try:
+            banner = self.query_one("#settings-library-rag-preview-banner", Static)
+        except QueryError:
+            return
+        if name is None:
+            banner.display = False
+            return
+        banner.update(
+            f"Previewing '{escape_markup(name)}' (read-only) — press Set active to edit it"
+        )
+        banner.display = True
 
     @on(Button.Pressed, "#settings-library-rag-profile-set-active")
     def handle_library_rag_profile_set_active(self, event: Button.Pressed) -> None:
@@ -10524,6 +10791,18 @@ class SettingsScreen(BaseAppScreen):
     def _rag_after_set_active(
         self, ok: bool, reason: str, new_index_status: Mapping[str, object] | None = None
     ) -> None:
+        # Task 4 (541 v2 UX AC1): either outcome ends any in-progress
+        # profile-picker PREVIEW -- on success the active profile itself
+        # changed (a stale preview reference is meaningless); on failure
+        # the Select snaps back to the real active id below, so a lingering
+        # "previewing <failed target>" flag would mismatch what's on
+        # screen. Explicit rather than relying on the Select.Changed
+        # cascade: `_sync_library_rag_profile_widgets` deliberately
+        # suppresses that cascade (see `_syncing_library_rag_profile_select`),
+        # and even without suppression a same-value reassignment (Set
+        # active on the profile already being previewed) posts no Changed
+        # message at all.
+        self._rag_preview_profile_id = None
         if ok:
             self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
             info = active_profile_info()
@@ -10551,6 +10830,8 @@ class SettingsScreen(BaseAppScreen):
             self._set_static_text("#settings-library-rag-profile-result", message)
             self._sync_library_rag_widgets()
             self._sync_library_rag_profile_widgets()
+            self._update_library_rag_editor_title()
+            self._set_library_rag_preview_banner(None)
             self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
             if new_index_status is not None:
                 self._apply_library_rag_index_status(new_index_status)
@@ -10566,6 +10847,14 @@ class SettingsScreen(BaseAppScreen):
         # the user's (failed) target selection -- snap it back to the real
         # active profile rather than leaving a stale value on screen.
         self._sync_library_rag_profile_widgets()
+        # Task 4: nothing actually changed about which profile is active,
+        # but the editor was possibly showing a forced-disabled PREVIEW of
+        # the failed target -- restore the real (still-active) values, not
+        # just the disabled-state fix `_sync_library_rag_profile_widgets`
+        # already applies above.
+        self._sync_library_rag_widgets()
+        self._update_library_rag_editor_title()
+        self._set_library_rag_preview_banner(None)
         self.app.notify(message, severity="error")
 
     @on(Button.Pressed, "#settings-library-rag-index-backfill")
@@ -10674,6 +10963,14 @@ class SettingsScreen(BaseAppScreen):
 
     def _rag_after_profile_action(self, action: str, ok: bool, result: str) -> None:
         if ok:
+            # Task 4 (541 v2 UX AC1): a successful clone/rename/delete can
+            # change the active profile's own name (rename) or identity
+            # (delete-the-active-profile's hybrid_basic fallback), or move
+            # the Select onto a brand-new id (clone) -- any lingering
+            # PREVIEW reference is stale either way. A FAILED action
+            # changes nothing, so an unrelated in-progress preview is left
+            # alone (not cleared) below.
+            self._rag_preview_profile_id = None
             # UX review item 1 (P0, clone flow): clone_profile_as returns
             # (True, new_profile_id) on success -- `result` IS that id here.
             # Land the user ON the new clone (picker selection) with an
@@ -10707,6 +11004,8 @@ class SettingsScreen(BaseAppScreen):
                 self._sync_library_rag_profile_widgets(select_override=new_clone_id)
             else:
                 self._sync_library_rag_profile_widgets()
+            self._update_library_rag_editor_title()
+            self._set_library_rag_preview_banner(None)
             self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
             self.app.notify(message, severity="information")
             return
@@ -11493,6 +11792,21 @@ class SettingsScreen(BaseAppScreen):
             return
 
         if category is SettingsCategoryId.LIBRARY_RAG:
+            # Task 4 (541 v2 UX AC1): Save is blocked (no-op + notify)
+            # while the editor is showing a profile-picker PREVIEW -- the
+            # Save/Revert buttons already disable via
+            # `_library_rag_save_enabled`, but this action can be reached
+            # directly (keybinding, a test calling it, a stale enabled
+            # button from a race), so it must be safe standing alone too.
+            # Nothing in this branch below may run: staging is never
+            # possible while previewing (see `_library_rag_edits_suppressed`),
+            # so `_library_rag_current_defaults()` here would only ever
+            # reflect the ACTIVE profile's own (unrelated) state anyway.
+            if self._rag_preview_profile_id is not None:
+                self.app.notify(
+                    "Return to the active profile to save.", severity="warning"
+                )
+                return
             # TASK-2 review (Finding 2): a "Save" choice from
             # RagProfileSwitchConfirmModal arms `_rag_profile_pending_activate`
             # then calls back in here -- but `_apply_library_rag_save_result`
