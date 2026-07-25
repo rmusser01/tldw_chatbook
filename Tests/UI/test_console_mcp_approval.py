@@ -238,6 +238,83 @@ async def test_set_batch_row_with_options_key_narrows_the_select_and_stays_valid
 
 
 @pytest.mark.asyncio
+async def test_bulk_approve_and_deny_all_are_row_aware_and_never_raise():
+    """Important-severity fix: a batch containing narrowed rows must survive
+    BOTH bulk buttons without Textual's ``InvalidSelectValueError``, and each
+    row must always land on a value it legally offers -- never an
+    out-of-list value silently assigned to its own ``Select``.
+
+    Before this fix, ``_set_all_batch_decisions`` unconditionally assigned
+    the bulk target to every row's ``Select.value``, which is safe only when
+    every row carries all four options (true before task-5). Three rows
+    here exercise every relevant shape:
+
+      - row A: narrowed to exclude ``approve_once`` (but keeps ``deny``) --
+        "Approve all" must fall back to ``approve_session`` for this row.
+      - row B: narrowed to exclude ``deny`` (but keeps ``approve_once``) --
+        "Deny all" must leave this row on its current legal value instead
+        of crashing or assigning an illegal one.
+      - row C: unnarrowed -- gets the bulk target directly, exactly as
+        before task-5 (regression guard for the common MCP case).
+    """
+    calls = [
+        {
+            "llm_name": "mcp__srv_a__search",
+            "server_key": "local:srv_a",
+            "tool_name": "search",
+            "server_label": "Srv A",
+            "arguments": {},
+            "reason": "ask",
+            "options": ["approve_session", "deny"],  # no approve_once
+        },
+        {
+            "llm_name": "mcp__srv_b__write",
+            "server_key": "local:srv_b",
+            "tool_name": "write",
+            "server_label": "Srv B",
+            "arguments": {},
+            "reason": "ask",
+            "options": ["approve_once", "approve_session", "always_allow"],  # no deny
+        },
+        {
+            "llm_name": "mcp__srv_c__read",
+            "server_key": "local:srv_c",
+            "tool_name": "read",
+            "server_label": "Srv C",
+            "arguments": {},
+            "reason": "ask",
+            # no `options` key at all -- unnarrowed, all four legal.
+        },
+    ]
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        row_a, row_b, row_c = card._batch_selects
+        assert row_a.value == "approve_session"  # default-guard fallback (task-5)
+        assert row_b.value == "approve_once"
+        assert row_c.value == "approve_once"
+
+        # "Deny all" must not raise even though row B cannot legally hold "deny".
+        app.query_one("#approval-deny-all", Button).press()
+        await pilot.pause()
+        assert row_a.value == "deny"
+        assert row_b.value == "approve_once"  # untouched: no legal deny candidate
+        assert row_c.value == "deny"
+
+        # "Approve all" must not raise even though row A cannot legally hold
+        # "approve_once" -- it must fall back to "approve_session" instead.
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+        assert row_a.value == "approve_session"
+        assert row_b.value == "approve_once"
+        assert row_c.value == "approve_once"
+
+
+@pytest.mark.asyncio
 async def test_approve_all_and_deny_all_bulk_set_every_row():
     app = _CardHarnessApp()
     async with app.run_test() as pilot:
