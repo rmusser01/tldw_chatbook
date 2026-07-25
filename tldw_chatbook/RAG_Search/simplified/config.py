@@ -195,6 +195,20 @@ def validate_chroma_persist_directory(persist_directory: Union[str, Path]) -> Pa
     dangerous patterns without requiring a base directory or rejecting
     hidden/dotted path segments.
 
+    This function is also the single point both persist_directory PRODUCERS
+    route through -- ``active_config._apply_env_overrides`` (the
+    ``RAG_PERSIST_DIR`` env-override layer) and ``RAGConfig.from_dict`` (a
+    saved/legacy profile's stored JSON) -- not just the two client-
+    construction CONSUMERS above. A producer that left a persist_directory
+    unexpanded (e.g. a literal ``"~/x"`` string, never ``~``-expanded) would
+    hand the consumers a raw value that diverges from what re-running this
+    same function on it would produce, reopening the exact collision this
+    function exists to close -- just one hop upstream, at config-resolution
+    time instead of client-construction time. Idempotent by construction (an
+    already-validated ``Path`` re-validates to itself), so calling it again
+    downstream on an already-normalized value from a compliant producer is a
+    safe no-op, not a second, possibly-divergent transformation.
+
     Args:
         persist_directory: The configured Chroma persist directory. May use
             ``~`` for the user's home directory.
@@ -436,12 +450,18 @@ class RAGConfig:
         query_expansion_data = data.get("query_expansion", {})
         pipeline_data = data.get("pipeline", {})
 
-        # Handle path conversion for persist_directory
+        # Handle path conversion for persist_directory. Routed through the
+        # SAME validate_chroma_persist_directory() the two Chroma client-
+        # construction sites use (not a bare Path(...)) -- a saved/legacy
+        # profile JSON is a persist_directory PRODUCER, and a stored "~/x"
+        # left unexpanded here would reach the consumers as a literal,
+        # un-expanded path string that diverges from what they'd compute
+        # themselves. See validate_chroma_persist_directory's docstring.
         if (
             "persist_directory" in vector_store_data
             and vector_store_data["persist_directory"]
         ):
-            vector_store_data["persist_directory"] = Path(
+            vector_store_data["persist_directory"] = validate_chroma_persist_directory(
                 vector_store_data["persist_directory"]
             )
 

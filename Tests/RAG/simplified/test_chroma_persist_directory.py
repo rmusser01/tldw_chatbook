@@ -69,3 +69,48 @@ def test_expanduser_and_absolute_paths_normalize_stably(monkeypatch, tmp_path):
     assert from_tilde == from_absolute == tmp_path / "chromadb"
     # Idempotent: re-validating an already-validated path is a no-op.
     assert validate_chroma_persist_directory(from_tilde) == from_tilde
+
+
+# === Producer/consumer agreement (task-482 review follow-up) ===
+#
+# validate_chroma_persist_directory closes the divergence gap between the two
+# *consumer* sites (ChromaVectorStore, collection_indexes._client), but a
+# persist_directory that reaches either consumer with a literal, unexpanded
+# ``~`` would silently normalize to a DIFFERENT string than one that was
+# already expanded upstream -- reintroducing the exact SharedSystemClient
+# collision this task exists to prevent, just one hop earlier. The two
+# *producer* sites below must therefore expand (and validate) a
+# ``~``-containing persist_directory the SAME way the consumer sites do.
+
+
+def test_env_var_persist_directory_expands_tilde_like_client_sites(monkeypatch, tmp_path):
+    """RAG_PERSIST_DIR=~/x must resolve to the same path validate_chroma_persist_directory
+    computes -- the active-profile env-override layer (active_config.py) is a
+    persist_directory PRODUCER and must agree with the consumer sites.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("RAG_PERSIST_DIR", "~/x")
+
+    from tldw_chatbook.RAG_Search.simplified.active_config import _apply_env_overrides
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+
+    config = _apply_env_overrides(RAGConfig())
+
+    assert config.vector_store.persist_directory == validate_chroma_persist_directory("~/x")
+
+
+def test_from_dict_persist_directory_expands_tilde_like_client_sites(monkeypatch, tmp_path):
+    """A saved/legacy profile JSON's persist_directory ('~/x') must resolve to
+    the same path validate_chroma_persist_directory computes --
+    RAGConfig.from_dict() is a persist_directory PRODUCER (profile load path)
+    and must agree with the consumer sites.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+
+    config = RAGConfig.from_dict(
+        {"vector_store": {"type": "chroma", "persist_directory": "~/x"}}
+    )
+
+    assert config.vector_store.persist_directory == validate_chroma_persist_directory("~/x")
