@@ -177,6 +177,9 @@ class CompactModelBar(Horizontal):
         widget always passes ``on_sidebar_toggle_requested`` (the Console
         control bar routes it to ``ChatScreen._toggle_console_chat_sidebar``);
         the callback is the sole toggle path now.
+
+        Args:
+            event: The compact-bar sidebar-toggle button press.
         """
         event.stop()
         if self.on_sidebar_toggle_requested:

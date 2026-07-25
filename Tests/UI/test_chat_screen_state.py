@@ -1,4 +1,5 @@
 from datetime import datetime
+from unittest.mock import Mock
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_models import ChatSessionData
@@ -238,3 +239,33 @@ class TestConsoleSessionSettingsPersonaLabelCompat:
         assert asdict(restored).get("persona_label") is None
 
 
+class TestLegacyTabbedStateRestoreIgnored:
+    """task-577 PR1 Qodo fix: legacy tabbed ``chat_state`` must not schedule
+    the (now-deleted) infinite ``_perform_state_restoration`` retry loop.
+
+    ``ChatWindowEnhanced``/``ChatTabContainer`` are retired, so tabbed state
+    saved by a pre-retirement build can never be restored onto anything --
+    ``restore_state`` must simply log and move on instead of scheduling a
+    timer that would fire forever.
+    """
+
+    def test_perform_state_restoration_no_longer_exists(self):
+        assert not hasattr(ChatScreen, "_perform_state_restoration")
+
+    def test_restore_state_with_legacy_tabs_does_not_schedule_a_timer(self):
+        screen = ChatScreen(Mock())
+        screen.set_timer = Mock()
+
+        state = ChatScreenState(
+            tabs=[TabState(tab_id="tab-1", title="Legacy Tab")],
+            active_tab_id="tab-1",
+            tab_order=["tab-1"],
+        )
+
+        screen.restore_state({"chat_state": state.to_dict()})
+
+        screen.set_timer.assert_not_called()
+        # The tab data is still parsed into `chat_state` (non-tab
+        # restoration paths downstream may still want to know it existed);
+        # only the retry-loop scheduling is dropped.
+        assert len(screen.chat_state.tabs) == 1

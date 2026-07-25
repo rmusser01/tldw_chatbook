@@ -77,7 +77,9 @@ def test_open_chat_with_handoff_stores_payload_and_navigates():
 
 
 def test_open_chat_with_handoff_proceeds_when_tabs_disabled():
-    """The retired chat-tabs subsystem's flag no longer gates handoffs
+    """Handoffs proceed even when the retired chat-tabs flag is disabled.
+
+    The retired chat-tabs subsystem's flag no longer gates handoffs
     (task-577 U5): ``open_chat_with_handoff`` must stage the payload and
     navigate to Chat unconditionally, even when ``enable_tabs`` is
     absent/False in config, with no "requires chat tabs to be enabled"

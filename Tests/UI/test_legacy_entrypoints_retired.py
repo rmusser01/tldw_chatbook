@@ -268,6 +268,11 @@ def test_task_577_pr1_window_family_retired():
     assert not hasattr(ChatScreen, "_ensure_chat_window")
     assert not hasattr(ChatScreen, "chat_window")
 
+    # Qodo fix (task-577 PR1): the infinite legacy-tabs restore retry loop
+    # (`_perform_state_restoration`) is deleted outright -- `restore_state`
+    # now just logs and moves on when it finds tabbed state.
+    assert not hasattr(ChatScreen, "_perform_state_restoration")
+
     # The three retired config keys (use_enhanced_window, enable_tabs,
     # max_tabs -- T3) must not reappear in the packaged default config text.
     for key in ("use_enhanced_window", "enable_tabs", "max_tabs"):

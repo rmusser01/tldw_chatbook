@@ -843,6 +843,9 @@ class ChatScreen(BaseAppScreen):
         ``ModelCatalogRefreshed`` handler duck-types onto this method name via
         ``forward_model_catalog_refreshed`` for whichever screen is on the
         stack, so the method must keep existing and keep accepting the event.
+
+        Args:
+            event: The ``ModelCatalogRefreshed`` event forwarded by ``app.py``.
         """
         return
 
@@ -10087,9 +10090,18 @@ class ChatScreen(BaseAppScreen):
                 if self.chat_state.validate():
                     logger.info(f"Restoring {len(self.chat_state.tabs)} tabs")
 
-                    # Native Console does not mount legacy ChatTabContainer widgets.
+                    # Native Console does not mount legacy ChatTabContainer
+                    # widgets, so tabbed state saved by a pre-retirement
+                    # (task-577) build can never be restored onto anything --
+                    # log and move on instead of scheduling the old
+                    # `_perform_state_restoration` retry, which would have
+                    # retried forever.
                     if self.chat_state.tabs:
-                        self.set_timer(0.1, self._perform_state_restoration)
+                        logger.info(
+                            "Legacy tabbed chat state found in saved state; "
+                            "the tabbed chat surface is retired (task-577) -- "
+                            "state ignored."
+                        )
                 else:
                     logger.warning("Chat state validation failed, starting fresh")
                     self.chat_state = ChatScreenState()
@@ -10097,25 +10109,6 @@ class ChatScreen(BaseAppScreen):
         except Exception as e:
             logger.opt(exception=True).error(f"Error restoring chat state: {e}")
             self.chat_state = ChatScreenState()
-
-    async def _perform_state_restoration(self) -> None:
-        """Perform actual state restoration after UI is ready.
-
-        ``ChatWindowEnhanced``/``ChatTabContainer`` are retired -- the
-        readiness check below (formerly ``not self.chat_window and not
-        self._get_tab_container()``) is therefore always true, so this is
-        now an unconditional not-ready retry. The tab and non-tab
-        restoration this used to gate on that check
-        (``_restore_tab_sessions``, ``_restore_input_text``,
-        ``_restore_sidebar_settings``, ``_restore_scroll_positions``,
-        ``_restore_attachments``, ``_restore_messages``,
-        ``sync_task_resume_state``, ``_consume_pending_chat_handoff``) was
-        consequently already unreachable dead code and has been removed
-        along with those now-orphaned helpers.
-        """
-        logger.warning("Console chat surface not ready for restoration")
-        # Try again in a moment
-        self.set_timer(0.2, self._perform_state_restoration)
 
     def _chat_query_scope(self):
         """Return the widget scope to query for legacy chat-flavored selectors.
