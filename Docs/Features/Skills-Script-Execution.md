@@ -154,37 +154,52 @@ by absolute path are not.
 
 ### Current limits
 
-These are fixed defaults in `Skills_Interop/skill_script_runner.py`
-(`ScriptRunLimits`) and are **not** currently exposed as configuration:
+Defaults, all overridable from the `[skills]` config section (see below):
 
-| Limit | Default |
-|---|---|
-| CPU time | 10 s |
-| Address space | 512 MiB |
-| Open files | 128 |
-| Max single file size | 8 MiB |
-| Wall clock | 60 s |
-| Retained output (per stream) | 64 KiB |
+| Limit | Default | Config key |
+|---|---|---|
+| CPU time | 10 s | `script_cpu_seconds` |
+| Address space | 512 MiB | `script_address_space_bytes` |
+| Open files | 128 | `script_open_files` |
+| Max single file size | 8 MiB | `script_file_size_bytes` |
+| Wall clock | 60 s | `script_wall_clock_seconds` |
+| Retained output (per stream) | 64 KiB | `script_output_cap_bytes` |
 
 ## Configuration
 
-One knob exists today, under a `[skills]` section in `~/.config/tldw_cli/config.toml`:
+Under a `[skills]` section in `~/.config/tldw_cli/config.toml`:
 
 ```toml
 [skills]
 # Optional. Parent directory for the per-run scratch working directory.
 # Defaults to the OS temp directory when unset.
 script_scratch_root = "/path/to/scratch"
+
+# Optional sandbox budget. Any key you omit keeps its default.
+script_cpu_seconds = 10
+script_address_space_bytes = 536870912   # 512 MiB
+script_open_files = 128
+script_file_size_bytes = 8388608         # 8 MiB
+script_wall_clock_seconds = 60
+script_output_cap_bytes = 65536          # 64 KiB
 ```
 
-A configured root that resolves inside the skills store or the trust store is **rejected**
-and the OS temp directory is used instead — otherwise a script could be handed a working
-directory inside its own bundle.
+A configured `script_scratch_root` that resolves inside the skills store or the trust
+store is **rejected** and the OS temp directory is used instead — otherwise a script
+could be handed a working directory inside its own bundle.
 
-> **Implementation note:** read this setting with the three-argument form,
-> `get_cli_setting("skills", "script_scratch_root", default)`. The section-dict form
+A limit value that is non-numeric, non-positive, or non-finite is **rejected in favour of
+its default**, never applied. A misconfigured limit must not end up more permissive than
+the default: `script_cpu_seconds = 0` gives you the 10 s default, not an unlimited run.
+
+`script_wall_clock_seconds` is additionally clamped to 600 s. A run holds a worker thread
+and sits inside the agent's own run budget, so an unbounded value would strand the turn
+rather than merely permit a slow script.
+
+> **Implementation note:** read these with the three-argument form,
+> `get_cli_setting("skills", "<key>", default)`. The section-dict form
 > (`get_cli_setting("skills", {})`) silently returns `{}` for any section name without a
-> dot, which would make the setting permanently unreachable.
+> dot, which would make every key here permanently unreachable.
 
 ## Residual risks
 

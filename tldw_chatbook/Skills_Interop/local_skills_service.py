@@ -9,7 +9,7 @@ import re
 import shutil
 import zipfile
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -64,6 +64,71 @@ _TEXT_FIELD_LIMITS = {
 _TRUST_STATUS_SERVICE_UNAVAILABLE = "trust_locked"
 _TRUST_REASON_SERVICE_UNAVAILABLE = "trust_service_unavailable"
 SKILL_FILE_READ_CAP_CHARS = 100_000
+
+#: task-582: ceiling for a configured script wall clock. A run holds a worker
+#: thread and sits inside the agent's own run budget, so an unbounded override
+#: would strand the turn rather than merely allow a slow script.
+MAX_SCRIPT_WALL_CLOCK_SECONDS = 600.0
+
+#: [skills] config key -> (ScriptRunLimits field, coercion) for the sandbox
+#: budget. Read with the THREE-argument get_cli_setting form: the section-dict
+#: form (`get_cli_setting("skills", {})`) silently returns {} for any section
+#: name without a dot (config.py), which would make every knob here
+#: permanently unreachable.
+_SCRIPT_LIMIT_KEYS = (
+    ("script_cpu_seconds", "cpu_seconds", int),
+    ("script_address_space_bytes", "address_space_bytes", int),
+    ("script_open_files", "open_files", int),
+    ("script_file_size_bytes", "file_size_bytes", int),
+    ("script_wall_clock_seconds", "wall_clock_seconds", float),
+    ("script_output_cap_bytes", "output_cap_bytes", int),
+)
+
+
+def resolve_script_run_limits() -> "ScriptRunLimits":
+    """Build the sandbox budget, applying any [skills] config overrides.
+
+    Every field falls back to its ScriptRunLimits default. A value that is
+    non-numeric, non-positive, or non-finite is REJECTED in favour of that
+    default rather than allowed to produce a zero or unbounded budget -- a
+    misconfigured limit must never be more permissive than the default.
+
+    Returns:
+        A ScriptRunLimits with configured overrides applied and the wall
+        clock clamped to MAX_SCRIPT_WALL_CLOCK_SECONDS.
+    """
+    import math
+
+    from .skill_script_runner import ScriptRunLimits
+
+    defaults = ScriptRunLimits()
+    overrides: dict[str, Any] = {}
+    try:
+        from ..config import get_cli_setting
+    except Exception:  # noqa: BLE001 — no config is just "use the defaults"
+        return defaults
+
+    for config_key, field, coerce in _SCRIPT_LIMIT_KEYS:
+        try:
+            raw = get_cli_setting("skills", config_key, None)
+        except Exception:  # noqa: BLE001
+            continue
+        if raw is None or isinstance(raw, bool):
+            # bool is an int subclass; a `true` here is a config mistake, not
+            # a budget of 1.
+            continue
+        try:
+            value = coerce(raw)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not math.isfinite(value) or value <= 0:
+            continue
+        overrides[field] = value
+
+    wall = overrides.get("wall_clock_seconds", defaults.wall_clock_seconds)
+    overrides["wall_clock_seconds"] = min(wall, MAX_SCRIPT_WALL_CLOCK_SECONDS)
+    return replace(defaults, **overrides)
+
 
 #: Pruned directories a bundle may still READ its own data out of (task-578).
 #: The trust scanner prunes vendored dependency trees so a real bundle's
@@ -1843,7 +1908,7 @@ class LocalSkillsService:
         import shutil as _shutil
         import tempfile
 
-        from .skill_script_runner import ScriptRunLimits, run_script_subprocess
+        from .skill_script_runner import run_script_subprocess
 
         self._enforce("skills.run_script.launch.local")
         self._require_trusted_skill(skill_name)
@@ -1859,7 +1924,7 @@ class LocalSkillsService:
         plan = self._plan_for_script(
             self._canonical_skill_name(skill_name), script_path, path
         )
-        effective_limits = limits or ScriptRunLimits()
+        effective_limits = limits or resolve_script_run_limits()
         target_argv = (
             [str(path), *args]
             if plan.mechanism == "direct-exec"
