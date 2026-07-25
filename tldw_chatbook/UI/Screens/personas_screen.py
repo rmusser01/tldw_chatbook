@@ -4694,12 +4694,24 @@ class PersonasScreen(BaseAppScreen):
 
     async def _apply_expression_upload(
         self, character_id: int, state: str, image: bytes, mime: str | None = None
-    ) -> None:
-        """Write an uploaded expression-state image and re-render its slot."""
+    ) -> bool:
+        """Write an uploaded expression-state image and re-render its slot.
+
+        Returns:
+            ``True`` when the DB write actually persisted, ``False`` on a
+            missing-database or write failure (already notified here).
+            Task-563 AC4: a caller that aggregates multiple slots (the
+            Generate-all sweep) must count only genuinely persisted slots
+            rather than treating "this call didn't raise" as success -
+            without this return value, a swallowed DB-write failure here
+            was invisible to the caller and the sweep's summary silently
+            overstated its count even though the user already saw this
+            method's own error notify.
+        """
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
             self._notify("Database is not available.", "error")
-            return
+            return False
         try:
             await asyncio.to_thread(
                 db.set_character_expression_image, character_id, state, image, mime
@@ -4710,10 +4722,11 @@ class PersonasScreen(BaseAppScreen):
                 f"{character_id}: {exc}"
             )
             self._notify(f"Expression upload failed: {exc}", "error")
-            return
+            return False
         self._character_editor_generation += 1
         self._notify(f"{state.capitalize()} expression image saved.", "information")
         await self._render_character_expression_slot(character_id, state)
+        return True
 
     async def _clear_expression_slot(self, character_id: int, state: str) -> None:
         """Soft-delete an expression-state image and clear its slot's thumbnail."""
@@ -4831,7 +4844,24 @@ class PersonasScreen(BaseAppScreen):
                 "warning",
             )
             return
+        # task-563 AC5: the "all" key is held for the sweep's ENTIRE
+        # duration (added at dispatch, discarded in the sweep worker's own
+        # finally after the loop) - unlike a per-slot key, which is freed
+        # the instant THAT slot's own generation finishes while the sweep
+        # keeps going. Without this check, a click here for a state the
+        # sweep just finished (or hasn't reached yet) would race an
+        # independent, redundant regeneration against the still-running
+        # sweep instead of being refused outright.
+        if (character_id, "all") in self._expression_generate_inflight:
+            self._notify(
+                "Generate all is already running for this character.", "warning"
+            )
+            return
         self._expression_generate_inflight.add(key)
+        # task-563 AC2: the in-slot busy affordance (spec §1) - set here,
+        # at the same moment the in-flight key is claimed; cleared from
+        # _generate_one_slot's own finally (success AND failure alike).
+        editor.set_expression_generating(message.state, True)
         self.run_worker(
             self._generate_expression_image_worker(character_id, message.state),
             group="personas-io",
@@ -4873,7 +4903,16 @@ class PersonasScreen(BaseAppScreen):
         if key in self._expression_generate_inflight:
             self._notify("Already generating the avatar image.", "warning")
             return
+        # task-563 AC5: same narrow-race guard as the expression-slot
+        # handler above - the avatar is itself one of the sweep's four
+        # states, so it must also be refused while a sweep is running.
+        if (character_id, "all") in self._expression_generate_inflight:
+            self._notify(
+                "Generate all is already running for this character.", "warning"
+            )
+            return
         self._expression_generate_inflight.add(key)
+        editor.set_avatar_generating(True)  # task-563 AC2
         self.run_worker(
             self._generate_expression_image_worker(character_id, "avatar"),
             group="personas-io",
@@ -5151,10 +5190,13 @@ class PersonasScreen(BaseAppScreen):
                     "Avatar image generated — Save to keep it.", "information"
                 )
                 return True
-            await self._apply_expression_upload(
+            # Propagate the write's real outcome (task-563 AC4) - a DB-write
+            # failure here already notified via _apply_expression_upload's
+            # own error path and must not be double-counted as a success by
+            # an aggregating caller (the Generate-all sweep's k/N summary).
+            return await self._apply_expression_upload(
                 character_id, state, result.content, result.content_type
             )
-            return True
         except Exception as exc:
             logger.opt(exception=True).error(
                 f"Image generation failed for character {character_id!r} "
@@ -5164,6 +5206,53 @@ class PersonasScreen(BaseAppScreen):
             return False
         finally:
             self._expression_generate_inflight.discard(key)
+            # task-563 AC2: clear the busy affordance on BOTH the success
+            # and failure paths above (this finally runs either way).
+            self._clear_slot_generating_indicator(character_id, state)
+
+    def _set_slot_generating(
+        self, editor: "PersonasCharacterEditorWidget", state: str, busy: bool
+    ) -> None:
+        """Route to the avatar or per-state expression busy-indicator
+        setter (task-563 AC2) - ``"avatar"`` is one of
+        ``EXPRESSION_PROMPT_STATES`` but has its own Static
+        (``avatar-status``), not a per-state ``-hint``.
+        """
+        if state == "avatar":
+            editor.set_avatar_generating(busy)
+        else:
+            editor.set_expression_generating(state, busy)
+
+    def _clear_slot_generating_indicator(
+        self, character_id: int | None, state: str
+    ) -> None:
+        """Clear the in-slot "Generating…" affordance set at dispatch
+        (task-563 AC2), but only into the still-open editor session for the
+        SAME character.
+
+        Mirrors ``_generate_all_expression_images_worker``'s own per-
+        iteration identity re-check (character id, not the session token -
+        the token's generation counter is bumped by ``_apply_expression_
+        upload`` on every successful write, which would make a token
+        captured before this call already look stale for this call's own
+        success). Without this guard, a character switch mid-generation
+        (the same race ``_generate_all_expression_images_worker`` already
+        defends the DB writes against) could paint this slot's stale busy
+        state onto whatever a DIFFERENT character now has loaded in the
+        same-named slot; the switch's own ``_sync_expression_slots_enabled``/
+        ``_set_avatar_status_from_record`` call already reset the widget for
+        real, and a currently-generating slot on that OTHER character must
+        not be clobbered either.
+        """
+        if not self._character_editor_is_active():
+            return
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        if editor.expression_character_id() != character_id:
+            return
+        self._set_slot_generating(editor, state, False)
 
     async def _generate_expression_image_worker(
         self, character_id: int | None, state: str
@@ -5207,10 +5296,29 @@ class PersonasScreen(BaseAppScreen):
         mismatch after this sweep's own first successful slot. Comparing
         the freshly-resolved editor's loaded character id is immune to
         that self-inflicted bump.
+
+        Task-563 AC3: before the loop, checks whether the sweep would
+        overwrite anything already present (a staged avatar or any of the
+        3 DB-backed expression states) and, only then, confirms via
+        ``_confirm_generate_all_overwrite`` - the sweep's blast radius (up
+        to 4 slots) exceeds the per-slot regenerate-by-click contract, so a
+        single click here should not silently clobber existing images. A
+        decline aborts with no writes and no "k/N generated" summary
+        (which would misleadingly read as an attempt that under-performed
+        rather than a request the user actively withdrew).
         """
         style_template = getattr(self, "_expression_generate_style", None)
         succeeded = 0
+        cancelled = False
         try:
+            try:
+                editor = self.query_one(PersonasCharacterEditorWidget)
+            except QueryError:
+                return
+            if await self._generate_all_would_overwrite(character_id, editor):
+                if not await self._confirm_generate_all_overwrite():
+                    cancelled = True
+                    return
             for state in EXPRESSION_PROMPT_STATES:
                 if not self._character_editor_is_active():
                     break
@@ -5224,13 +5332,77 @@ class PersonasScreen(BaseAppScreen):
                 if slot_key in self._expression_generate_inflight:
                     continue
                 self._expression_generate_inflight.add(slot_key)
+                self._set_slot_generating(editor, state, True)  # task-563 AC2
                 if await self._generate_one_slot(character_id, state, style_template):
                     succeeded += 1
         finally:
             self._expression_generate_inflight.discard((character_id, "all"))
-        self._notify(
-            f"{succeeded}/{len(EXPRESSION_PROMPT_STATES)} generated.", "information"
+        if not cancelled:
+            self._notify(
+                f"{succeeded}/{len(EXPRESSION_PROMPT_STATES)} generated.",
+                "information",
+            )
+
+    async def _generate_all_would_overwrite(
+        self, character_id: int, editor: "PersonasCharacterEditorWidget"
+    ) -> bool:
+        """True when a Generate-all sweep would overwrite an existing
+        avatar or expression image (task-563 AC3).
+
+        Checks the editor's staged/persisted avatar first (cheap, no DB
+        round trip), then each of the 3 DB-backed expression states
+        (mirrors ``_render_character_expression_slot``'s own read) -
+        stopping at the first hit.
+        """
+        if editor.has_avatar_image():
+            return True
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return False
+        for state in EXPRESSION_IMAGE_STATES:
+            try:
+                data = await asyncio.to_thread(
+                    db.get_character_expression_image, character_id, state
+                )
+            except Exception:
+                # Fail CLOSED: unknown overwrite status must force the
+                # confirmation, never silently skip a consent gate.
+                logger.opt(exception=True).debug(
+                    f"Could not check the existing {state} expression image "
+                    f"for character {character_id}; forcing the Generate-all "
+                    "overwrite confirmation."
+                )
+                return True
+            if data:
+                return True
+        return False
+
+    async def _confirm_generate_all_overwrite(self) -> bool:
+        """True when the user confirmed overwriting existing images
+        (task-563 AC3; requires a worker context, same as ``_confirm_
+        delete``/``_confirm_dictionary_revert``)."""
+        dialog = ConfirmationDialog(
+            title="Generate all",
+            message=(
+                "This will overwrite the existing avatar and/or expression "
+                "images. Continue?"
+            ),
+            confirm_label="Generate all",
+            cancel_label="Cancel",
         )
+        try:
+            return bool(await self.app.push_screen_wait(dialog))
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Could not show the Generate-all overwrite confirmation "
+                "dialog; skipping the sweep."
+            )
+            self._notify(
+                "Could not show the overwrite confirmation; "
+                "Generate-all cancelled.",
+                "warning",
+            )
+            return False
 
     async def _expression_style_pick_dialog_worker(self) -> None:
         """Show the style picker; store the choice and refresh the readout.
@@ -6496,6 +6668,14 @@ class PersonasScreen(BaseAppScreen):
         if saved_record is None:
             # Could not re-read -> fall back to today's flip-to-card so we
             # never leave the editor holding a stale version.
+            # (task-563 AC5: this path does NOT call
+            # _reset_expression_generate_style(), unlike _begin_create_
+            # character/_handle_edit_requested/_finish_cancel_edit - but the
+            # invariant those calls protect ("a picked style never bleeds
+            # into a DIFFERENT editor session") still holds here: the editor
+            # is now closed to view mode, so no Generate button is reachable
+            # against the stale style, and the next genuine session-open
+            # resets it before any button in that new session is reachable.)
             self._edit_mode = "view"
             self._show_center("#ccp-character-card-view")
             self.call_after_refresh(self._focus_library_list)

@@ -104,10 +104,36 @@ async def test_upload_writes_expression_row(personas_editor_with_saved_character
     app, screen, db, char_id = personas_editor_with_saved_character
     buf = BytesIO()
     Image.new("RGB", (16, 16)).save(buf, format="PNG")
-    await screen._apply_expression_upload(
+    result = await screen._apply_expression_upload(
         char_id, "speaking", buf.getvalue(), "image/png"
     )
     assert db.get_character_expression_image(char_id, "speaking") is not None
+    # task-563 AC4: callers that aggregate multiple slots (Generate-all)
+    # need an honest success signal, not just "this call didn't raise".
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_apply_expression_upload_returns_false_on_db_write_failure(
+    personas_editor_with_saved_character, monkeypatch
+):
+    """task-563 AC4: a DB-write failure inside _apply_expression_upload must
+    be reported to the caller (not just swallowed behind an error notify) so
+    an aggregating caller (the Generate-all sweep) doesn't count this slot as
+    a success."""
+    app, screen, db, char_id = personas_editor_with_saved_character
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(db, "set_character_expression_image", _boom)
+
+    result = await screen._apply_expression_upload(
+        char_id, "speaking", b"not-really-png", "image/png"
+    )
+
+    assert result is False
+    assert db.get_character_expression_image(char_id, "speaking") is None
 
 
 @pytest.mark.asyncio
