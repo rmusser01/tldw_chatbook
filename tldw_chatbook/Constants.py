@@ -213,30 +213,6 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 .sidebar-textarea { width: 100%; border: round $surface; margin-bottom: 1; }
 .sidebar Select { width: 100%; margin-bottom: 1; }
 
-/* Sidebar resize buttons */
-.sidebar-resize-button {
-    min-width: 8;  /* Increased minimum width to 8 cells */
-    width: 8;      /* Fixed width for better visibility */
-    height: 2;     /* Standard button height */
-    margin: 0 1;   /* Small margin on sides */
-    padding: 0 1;  /* Padding for text */
-    border: none;
-    background: $primary;
-    color: white;
-    text-align: center;
-    text-style: bold;
-}
-.sidebar-resize-button:hover {
-    background: $primary-lighten-1;
-    color: white;
-    text-style: bold;
-}
-.sidebar-resize-button:focus {
-    background: $primary-lighten-2;
-    color: white;
-    text-style: bold;
-}
-
 /* Header container for sidebar with resize controls */
 .sidebar-header-with-resize {
     layout: horizontal;
@@ -274,32 +250,6 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
     height: 100%;
     width: 1fr; /* This is KEY - it takes up the remaining horizontal space */
 }
-/* VerticalScroll for chat messages */
-#chat-log {
-    height: 1fr; /* Takes remaining space */
-    width: 100%;
-    /* border: round $surface; Optional: Add border to scroll area */
-    padding: 0 1; /* Padding around messages */
-}
-
-/* Input area styling (shared by chat and character) */
-#chat-input-area, #conv-char-input-area { /* Updated from #character-input-area */
-    height: auto;    /* Allow height to adjust */
-    max-height: 12;  /* Limit growth */
-    width: 100%;
-    align: left top; /* Align children to top-left */
-    padding: 1; /* Consistent padding */
-    border-top: round $surface;
-}
-/* Input widget styling (shared) */
-.chat-input { /* Targets TextArea */
-    width: 1fr;
-    height: auto;      /* Allow height to adjust */
-    max-height: 100%;  /* Don't overflow parent */
-    margin-right: 1; /* Space before button */
-    border: round $surface;
-}
-
 /* Send button styling (shared) */
 .send-button { /* Targets Button */
     width: 2;
@@ -313,12 +263,6 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
     width: 2;
     height: 3;
     margin-top: 0;
-}
-
-/* Save Chat Button in chat-right-sidebar in Chat Tab */
-.save-chat-button { /* Class used in character_sidebar.py */
-    margin-top: 2;   /* Add 1 cell/unit of space above the button */
-    /*width: 100%;      Optional: make it full width like other sidebar buttons */
 }
 
 /* Chat Sidebar - Prompts Section */
@@ -666,19 +610,6 @@ ChatMessage.-user > Vertical {
 ChatMessage.-ai .message-actions.-generating {
     display: none;
 }
-/* microphone button – same box as Send but subdued colour */
-.mic-button {
-    width: 1;
-    height: 3;
-    margin-right: 1;           /* gap before Send */
-    border: none;
-    background: $surface-darken-1;
-    color: $text-muted;
-}
-.mic-button:hover {
-    background: $surface;
-    color: $text;
-}
 .sidebar-toggle {
     width: 2;                /* tiny square */
     height: 3;
@@ -688,11 +619,6 @@ ChatMessage.-ai .message-actions.-generating {
     color: $text;
 }
 .sidebar-toggle:hover { background: $surface; }
-
-/* Specific margins for sidebar toggles based on position */
-#toggle-chat-left-sidebar {
-    margin-right: 1; /* Original toggle on the left of input area */
-}
 
 #app-titlebar {
     dock: top;
@@ -1527,23 +1453,6 @@ MetricsScreen Label.-info-message {
 
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Conversations, Characters & Prompts Window specific layouts --- */
-#send-chat {
-    width: 12;
-    min-width: 12 !important;
-    max-width: 12vh !important; /* Using ch unit and important */
-    /* height: 3; /* Already set by .send-button class, but can be reiterated if needed */
-    /* margin-top: 0; /* Already set by .send-button class */
-}
-
-#stop-chat-generation {
-    width: 6;
-    min-width: 6 !important;
-    max-width: 6vh !important; /* Using ch unit and important */
-    margin: 0 1;
-    /* height: 3; /* Already set by .stop-button class, but can be reiterated if needed */
-    /* margin-top: 0; /* Already set by .stop-button class */
-}
-
 .suggest-button {
     width: 8;
     min-width: 8 !important;

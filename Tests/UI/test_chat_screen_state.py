@@ -1,5 +1,4 @@
 from datetime import datetime
-from unittest.mock import Mock
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_models import ChatSessionData
@@ -9,13 +8,6 @@ from tldw_chatbook.UI.Screens.chat_screen_state import (
     MessageData,
     TabState,
 )
-
-
-class EmptyChatLog:
-    children = []
-
-    def query(self, _selector):
-        return []
 
 
 class TestChatSessionDataSerialization:
@@ -244,24 +236,5 @@ class TestConsoleSessionSettingsPersonaLabelCompat:
         assert restored is not None
         assert restored.user_profile_label == "Explorer"
         assert asdict(restored).get("persona_label") is None
-
-
-def test_extract_messages_clears_messages_when_direct_chat_log_lookup_succeeds():
-    app = Mock()
-    app.query_one = Mock(return_value=EmptyChatLog())
-    screen = ChatScreen(app)
-    screen.chat_window = Mock()
-    tab_state = TabState(
-        tab_id="tab-1",
-        title="Chat",
-        messages=[
-            MessageData(message_id="old", role="user", content="stale", timestamp=None)
-        ],
-    )
-
-    screen._extract_and_save_messages(tab_state)
-
-    assert tab_state.messages == []
-    screen.chat_window.query.assert_not_called()
 
 

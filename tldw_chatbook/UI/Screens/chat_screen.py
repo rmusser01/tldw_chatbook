@@ -31,7 +31,7 @@ from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
-from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResumeState
+from .chat_screen_state import ChatScreenState, TabState, TaskResumeState
 from .provider_model_resolution import (
     ResolvedProviderModelOption,
     resolve_effective_provider_model,
@@ -14590,44 +14590,8 @@ class ChatScreen(BaseAppScreen):
                 f"Failed to sync shell bar from state: {e}"
             )
 
-    async def _restore_input_text(self) -> None:
-        """Restore input text for active tab."""
-        try:
-            active_tab = self.chat_state.get_active_tab()
-            if active_tab and active_tab.input_text:
-                logger.info(f"Restoring input text: '{active_tab.input_text[:50]}...'")
-                input_widget = self._get_active_chat_input()
-
-                if input_widget and hasattr(input_widget, "load_text"):
-                    input_widget.load_text(active_tab.input_text)
-                    logger.info("Successfully restored input text to widget")
-
-                    # Try to restore cursor position
-                    if hasattr(input_widget, "cursor_position"):
-                        try:
-                            input_widget.cursor_position = active_tab.cursor_position
-                        except Exception:
-                            pass
-                elif input_widget and hasattr(input_widget, "value"):
-                    # Try setting value directly
-                    input_widget.value = active_tab.input_text
-                    logger.info("Restored input text via value property")
-                else:
-                    logger.warning(
-                        f"Could not find suitable method to restore text to widget: {type(input_widget)}"
-                    )
-            else:
-                logger.debug("No input text to restore")
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error restoring input text: {e}")
-
     def _save_scroll_positions(self) -> None:
         """Save scroll positions for all tabs."""
-        # Implementation depends on tab structure
-        pass
-
-    async def _restore_scroll_positions(self) -> None:
-        """Restore scroll positions for visible tabs."""
         # Implementation depends on tab structure
         pass
 
@@ -14708,97 +14672,6 @@ class ChatScreen(BaseAppScreen):
 
         except Exception as e:
             logger.debug(f"Error in _save_direct_input_text: {e}")
-
-    def _extract_and_save_messages(self, tab_state: TabState) -> None:
-        """Extract messages from the chat log and save them to the tab state.
-
-        Args:
-            tab_state: The tab state to save messages to
-        """
-        try:
-            # Import message widget classes
-            from ...Widgets.Chat_Widgets.chat_message_enhanced import (
-                ChatMessageEnhanced,
-            )
-
-            log_selectors = [
-                "#chat-log",
-                ".chat-log",
-                "#chat-messages-container",
-                ".chat-messages",
-            ]
-            chat_log = self._find_chat_log_container(log_selectors)
-
-            if not chat_log:
-                logger.warning("Could not find chat log container to save messages")
-                return
-
-            # Extract messages from the chat log
-            messages_found = 0
-            tab_state.messages = []  # Clear existing messages
-
-            # Find all message widgets - try different selectors
-            try:
-                # Try to find ChatMessageEnhanced widgets
-                enhanced_messages = list(chat_log.query(ChatMessageEnhanced))
-
-                # If no enhanced messages, try generic approach
-                if not enhanced_messages:
-                    # Look for any widgets with message-like attributes
-                    all_widgets = list(chat_log.children)
-                    enhanced_messages = [
-                        w
-                        for w in all_widgets
-                        if hasattr(w, "role") and hasattr(w, "message_text")
-                    ]
-
-                logger.info(
-                    f"Found {len(enhanced_messages)} message widgets in chat log"
-                )
-
-                for msg_widget in enhanced_messages:
-                    try:
-                        # Extract message data from widget
-                        message_data = MessageData(
-                            message_id=getattr(
-                                msg_widget,
-                                "message_id_internal",
-                                f"msg_{messages_found}",
-                            ),
-                            role=getattr(msg_widget, "role", "unknown"),
-                            content=getattr(msg_widget, "message_text", ""),
-                            timestamp=getattr(msg_widget, "timestamp", None),
-                        )
-
-                        # Save image data if present
-                        if hasattr(msg_widget, "image_data") and msg_widget.image_data:
-                            message_data.metadata = {
-                                "image_data": msg_widget.image_data
-                            }
-
-                        tab_state.messages.append(message_data)
-                        messages_found += 1
-
-                        # Log first few messages for debugging
-                        if messages_found <= 3:
-                            logger.debug(
-                                f"Saved message {messages_found}: role={message_data.role}, content={message_data.content[:50]}..."
-                            )
-
-                    except Exception as e:
-                        logger.warning(
-                            f"Error extracting message data from widget: {e}"
-                        )
-
-                logger.info(
-                    f"Successfully saved {messages_found} messages to tab state"
-                )
-
-            except Exception as e:
-                logger.error(f"Error querying for message widgets: {e}")
-
-        except Exception as e:
-            logger.error(f"Error in _extract_and_save_messages: {e}")
 
     # NOTE (task-247, perf): there used to be an on_screen_suspend() override
     # here that called self.save_state() again and discarded the result.

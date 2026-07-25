@@ -46,7 +46,13 @@ CSS_MODULES = [
     "components/_shared_components.tcss",
     # 4. Features - Application Specific (depends on all above)
     "features/_chat.tcss",
-    "features/_chat_tabs.tcss",
+    # task-577 T4: "features/_chat_tabs.tcss" removed -- every selector in it
+    # (chat-tab-bar, .chat-tab, .chat-session, .close-tab-button,
+    # .new-tab-button, .chat-sessions-container, .no-sessions-placeholder,
+    # and the .chat-session-scoped chat-empty-state/chat-log/chat-input-area/
+    # image-attachment-indicator variants) styled the retired
+    # ChatTabContainer/ChatSession tabs subsystem (task-577 T2), composed
+    # nowhere live (grep -rn confirmed zero id=/classes= compose sites).
     "features/_conversations.tcss",
     "features/_notes.tcss",
     "features/_media.tcss",

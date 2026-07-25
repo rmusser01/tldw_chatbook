@@ -2769,7 +2769,8 @@ class TldwCli(
     # by the Library workbench's Notes canvas), confirmed via
     # `grep -rn 'id="notes-window"' tldw_chatbook/`.
     ALL_MAIN_WINDOW_IDS = [  # Assuming these are your main content window IDs
-        "chat-window",
+        # task-577 T4: "chat-window" removed -- id composed nowhere (the
+        # ChatWindowEnhanced surface that owned it was retired in T1/T2).
         "conversations_characters_prompts-window",
         "ingest-window",
         "tools_settings-window",
@@ -2846,14 +2847,12 @@ class TldwCli(
 
     # Reactives for sidebar
     chat_sidebar_collapsed: reactive[bool] = reactive(True)
+    # chat_right_sidebar_collapsed: read live by ChatScreen.save_state()
+    # (chat_screen.py) to persist the character-sidebar collapsed flag across
+    # screen switches -- task-577 Ambiguous Gate 3, KEPT.
     chat_right_sidebar_collapsed: reactive[bool] = reactive(
         False
     )  # For character sidebar
-    # Load saved width from config, default to 25% if not set
-    _saved_width = settings.get("chat_defaults", {}).get("right_sidebar_width", 25)
-    chat_right_sidebar_width: reactive[int] = reactive(
-        _saved_width
-    )  # Width percentage for right sidebar
     conv_char_sidebar_left_collapsed: reactive[bool] = reactive(False)
     conv_char_sidebar_right_collapsed: reactive[bool] = reactive(False)
     evals_sidebar_collapsed: reactive[bool] = reactive(False)  # Added for Evals tab
@@ -5244,9 +5243,11 @@ class TldwCli(
             "toggle-chat-left-sidebar": functools.partial(
                 _handle_sidebar_toggle, reactive_attr="chat_sidebar_collapsed"
             ),
-            "toggle-chat-right-sidebar": functools.partial(
-                _handle_sidebar_toggle, reactive_attr="chat_right_sidebar_collapsed"
-            ),
+            # task-577 T4: dead "toggle-chat-right-sidebar" entry removed --
+            # button_handler_map (built here) has zero readers (write-only,
+            # scout finding #3) and the id is composed nowhere live.
+            # chat_events.py keeps its own CHAT_BUTTON_HANDLERS entry for this
+            # id -- that file is out of scope for this PR (Phase 2).
         }
 
         # --- Media Tab Handlers (NEW DYNAMIC WAY) ---
@@ -6481,20 +6482,6 @@ class TldwCli(
         """Thread-safely set the streaming state and update UI."""
         with self._chat_state_lock:
             self.current_chat_is_streaming = is_streaming
-
-        # Update the chat window button state when streaming changes
-        # This replaces the polling approach with event-driven updates
-        try:
-            # For screen navigation, find the active chat screen
-            from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
-            if self.screen and isinstance(self.screen, ChatScreen):
-                if hasattr(self.screen, "chat_window") and self.screen.chat_window:
-                    self.screen.chat_window._update_button_state()
-
-        except Exception:
-            # Silently ignore if chat window isn't available
-            pass
 
     def get_current_chat_is_streaming(self) -> bool:
         """Thread-safely get the streaming state."""
