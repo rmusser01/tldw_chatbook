@@ -9,6 +9,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Collapsible, Label, Select, Static
 
 from tldw_chatbook.Event_Handlers.media_events import (
+    MediaAnalysisRequestEvent,
     MediaAnalysisSaveEvent,
     MediaReadingHighlightCreateEvent,
     MediaReadingHighlightDeleteEvent,
@@ -1363,3 +1364,65 @@ async def test_media_viewer_analysis_actions_explain_disabled_and_available_stat
         assert "Select a saved analysis version before deleting it" in str(
             delete_button.tooltip
         )
+
+
+@pytest.mark.asyncio
+async def test_media_analysis_llm_failure_surfaces_error_not_sentinel():
+    """task-634: a failing LLM call during media analysis must notify an error
+    and reset the analysis display -- it must never render the internal
+    "STREAMING_HANDLED_BY_EVENTS" sentinel or claim success."""
+    window, app = _build_media_window()
+    app.chat_wrapper = Mock(side_effect=RuntimeError("LLM exploded"))
+    app.app_config = {"api_settings": {}}
+    window._record_for_event = Mock(
+        return_value={
+            "title": "Doc",
+            "content": "some content",
+            "author": "Someone",
+            "type": "article",
+        }
+    )
+
+    analysis_display = AsyncMock()
+
+    def _query_one(selector, expect_type=None):
+        if selector == "#analysis-display":
+            return analysis_display
+        raise AssertionError(f"Unexpected selector: {selector}")
+
+    window.viewer_panel = Mock()
+    window.viewer_panel.query_one = Mock(side_effect=_query_one)
+    window.viewer_panel.all_analyses = []
+
+    captured = {}
+
+    def _run_worker(coro, exclusive=True):
+        captured["coro"] = coro
+
+    window.run_worker = _run_worker
+
+    event = MediaAnalysisRequestEvent(
+        media_id="local:media:1",
+        provider="Local",
+        model="test-model",
+        system_prompt="",
+        user_prompt="Summarize this",
+        type_slug="article",
+    )
+
+    window.handle_analysis_request(event)
+    await captured["coro"]
+
+    notified_messages = [call.args[0] for call in app.notify.call_args_list]
+    assert any("Error" in message for message in notified_messages)
+    assert not any(
+        "Analysis generated successfully" in message for message in notified_messages
+    )
+    assert not any(
+        "STREAMING_HANDLED_BY_EVENTS" in message for message in notified_messages
+    )
+
+    analysis_display.update.assert_awaited()
+    updated_text = analysis_display.update.await_args.args[0]
+    assert "STREAMING_HANDLED_BY_EVENTS" not in updated_text
+    assert "failed" in updated_text.lower()

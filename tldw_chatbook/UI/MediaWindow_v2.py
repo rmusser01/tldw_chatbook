@@ -1705,6 +1705,16 @@ class MediaWindow(Container):
             except Exception as e:
                 logger.opt(exception=True).error(f"Error performing analysis: {e}")
                 self.app_instance.notify(f"Error: {str(e)[:100]}", severity="error")
+                # Reset analysis display on failure
+                try:
+                    analysis_display = self.viewer_panel.query_one(
+                        "#analysis-display", Markdown
+                    )
+                    await analysis_display.update(
+                        "*Analysis generation failed - no valid response text*"
+                    )
+                except Exception as e:
+                    logger.error(f"Error resetting analysis display: {e}")
 
         # Run the analysis in a worker
         self.run_worker(perform_analysis(), exclusive=True)
