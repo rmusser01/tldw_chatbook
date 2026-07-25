@@ -114,6 +114,18 @@ class CharacterExpressionGenerateAllRequested(Message):
     slots (thinking/speaking/error) at once."""
 
 
+class CharacterExpressionStylePickRequested(Message):
+    """Image-gen P3: user requested to pick a style template used by
+    subsequent avatar/expression AI generations in the active character
+    editor.
+
+    Mirrors the Console's own style picker (``ConsoleStylePickerModal``)
+    but stores the resolved template on the screen instead of inserting a
+    token into a composer draft - the character editor has no draft text
+    for a token to live in.
+    """
+
+
 class EditUserProfileRequested(Message):
     """Edit was requested for the displayed user profile."""
 

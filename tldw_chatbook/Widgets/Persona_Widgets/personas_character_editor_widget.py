@@ -29,6 +29,7 @@ from .personas_pane_messages import (
     CharacterExpressionGenerateRequested,
     CharacterExpressionSetExportRequested,
     CharacterExpressionSetImportRequested,
+    CharacterExpressionStylePickRequested,
     CharacterExpressionUploadRequested,
     CharacterImageRemoveRequested,
     CharacterImageUploadRequested,
@@ -142,7 +143,8 @@ class PersonasCharacterEditorWidget(Container):
 
     PersonasCharacterEditorWidget #personas-char-editor-expr-import,
     PersonasCharacterEditorWidget #personas-char-editor-expr-export,
-    PersonasCharacterEditorWidget #personas-char-editor-expr-generate-all {
+    PersonasCharacterEditorWidget #personas-char-editor-expr-generate-all,
+    PersonasCharacterEditorWidget #personas-char-editor-style-pick {
         width: auto;
         min-width: 0;
         height: 1;
@@ -150,6 +152,14 @@ class PersonasCharacterEditorWidget(Container):
         padding: 0 1;
         margin-left: 1;
         border: none;
+    }
+
+    /* Image-gen P3 Task 4: the current style-template readout, between the
+       "Expressions" header and its action buttons. */
+    PersonasCharacterEditorWidget #personas-char-editor-style-readout {
+        width: auto;
+        min-width: 0;
+        margin-left: 2;
     }
 
     /* Expression authoring slots (Roleplay P3d-1 Task 4) - one row per
@@ -368,6 +378,15 @@ class PersonasCharacterEditorWidget(Container):
             yield Container(id="personas-char-editor-avatar-thumb")
             with Horizontal(classes="personas-char-editor-expr-set-row"):
                 yield Static("Expressions", classes="destination-section")
+                yield Static(
+                    "Style: Custom",
+                    id="personas-char-editor-style-readout",
+                )
+                yield Button(
+                    "Style…",
+                    id="personas-char-editor-style-pick",
+                    classes="console-action-subdued",
+                )
                 yield Button(
                     "✨ Generate all",
                     id="personas-char-editor-expr-generate-all",
@@ -645,6 +664,17 @@ class PersonasCharacterEditorWidget(Container):
         from textual.widgets import Static as _S
 
         holder.mount(renderable if isinstance(renderable, _W) else _S(renderable))
+
+    def set_style_readout(self, text: str) -> None:
+        """Update the "Style: {name}" / "Style: Custom" readout Static.
+
+        Image-gen P3 Task 4: the screen owns resolving the picked style
+        template (or falling back to "Custom" on cancel/none-picked); this
+        method only mounts the finished text, mirroring
+        ``set_avatar_thumbnail``/``set_expression_thumbnail``'s
+        screen-decides/widget-mounts split.
+        """
+        self.query_one("#personas-char-editor-style-readout", Static).update(text)
 
     def validate(self) -> list[tuple[str, str, str]]:
         """Live per-field checks: name required, oversized avatar, blank greetings.
@@ -1120,6 +1150,11 @@ class PersonasCharacterEditorWidget(Container):
     def _expression_generate_all_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(CharacterExpressionGenerateAllRequested())
+
+    @on(Button.Pressed, "#personas-char-editor-style-pick")
+    def _style_pick_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(CharacterExpressionStylePickRequested())
 
     @on(Button.Pressed, "#personas-char-editor-expr-import")
     def _expression_set_import_pressed(self, event: Button.Pressed) -> None:
