@@ -256,3 +256,78 @@ def test_unknown_key_warning_fires_once_per_load_not_per_field_access(monkeypatc
 
     matches = [m for m in messages if "openrouter_image_default_model" in m]
     assert len(matches) == 1
+
+
+# --- Final-review CRITICAL fix: swarmui's real config key is swarm_token ----
+#
+# FIELD_SCHEMA (Settings > Image Gen, matching the design spec) writes/
+# clears swarmui's secret under its OWN nested key, `swarm_token` -- but
+# _resolve_secret's config branch used to read a hardcoded "api_key" for
+# EVERY backend, so a pasted-and-saved swarm token landed in config.toml
+# yet was never read back (key_sources stayed "missing", the value stayed
+# None). Fixed by making the nested config key per-backend DATA in
+# _SECRETS, with "api_key" kept as a back-compat fallback ONLY when a
+# backend's own key is unset (so it never masks a real swarm_token, and
+# every OTHER backend -- whose nested key was already "api_key" -- is
+# unaffected).
+
+
+def test_key_sources_swarmui_config_via_swarm_token(monkeypatch):
+    """The round-trip the bug broke: write the secret via FIELD_SCHEMA's
+    actual toml_key (swarm_token) and the loader must resolve it."""
+    cfg = _load_config_with_section(
+        monkeypatch, {"swarmui": {"swarm_token": "fake-swarm-token"}}
+    )
+    assert cfg.key_sources["swarmui"] == "config"
+    assert cfg.swarmui_swarm_token == "fake-swarm-token"
+
+
+def test_key_sources_swarmui_legacy_api_key_fallback(monkeypatch):
+    """Back-compat: a config hand-written (or saved before this fix) with
+    the wrong/legacy `api_key` key for swarmui must still resolve."""
+    cfg = _load_config_with_section(
+        monkeypatch, {"swarmui": {"api_key": "fake-legacy-key"}}
+    )
+    assert cfg.key_sources["swarmui"] == "config"
+    assert cfg.swarmui_swarm_token == "fake-legacy-key"
+
+
+def test_key_sources_swarmui_swarm_token_wins_over_legacy_api_key(monkeypatch):
+    """When both are somehow set, the real key wins -- the fallback never
+    overrides an explicit swarm_token value."""
+    cfg = _load_config_with_section(
+        monkeypatch,
+        {"swarmui": {"swarm_token": "real-token", "api_key": "stale-legacy-key"}},
+    )
+    assert cfg.key_sources["swarmui"] == "config"
+    assert cfg.swarmui_swarm_token == "real-token"
+
+
+def test_key_sources_swarmui_missing_when_neither_key_set(monkeypatch):
+    monkeypatch.delenv("SWARMUI_TOKEN", raising=False)
+    cfg = _load_config_with_section(monkeypatch, {"swarmui": {}})
+    assert cfg.key_sources["swarmui"] == "missing"
+    assert cfg.swarmui_swarm_token in (None, "")
+
+
+def test_key_sources_swarmui_env_wins_over_config_key(monkeypatch):
+    """Precedence (env > config > keyring) is unaffected by the config-key
+    fix -- swarm_token in config is still beaten by SWARMUI_TOKEN in env."""
+    monkeypatch.setenv("SWARMUI_TOKEN", "fake-env-token")
+    cfg = _load_config_with_section(
+        monkeypatch, {"swarmui": {"swarm_token": "fake-swarm-token"}}
+    )
+    assert cfg.key_sources["swarmui"] == "env:SWARMUI_TOKEN"
+    assert cfg.swarmui_swarm_token == "fake-env-token"
+
+
+def test_other_backends_config_key_unaffected_by_swarmui_fix(monkeypatch):
+    """Every non-swarmui backend's config_key was already "api_key" --
+    the fix must be a no-op for them (no fallback ever engages, since
+    config_key == "api_key" already)."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    cfg = _load_config_with_section(
+        monkeypatch, {"openrouter": {"api_key": "fake-openrouter-key"}}
+    )
+    assert cfg.key_sources["openrouter"] == "config"
+    assert cfg.openrouter_image_api_key == "fake-openrouter-key"

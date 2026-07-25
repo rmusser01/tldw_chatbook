@@ -60,13 +60,24 @@ DEFAULT_MODELSTUDIO_IMAGE_MODE = "auto"
 DEFAULT_MODELSTUDIO_IMAGE_POLL_INTERVAL_SECONDS = 2
 DEFAULT_MODELSTUDIO_IMAGE_TIMEOUT_SECONDS = 180
 
-# Secret fields: backend -> (flat_field_name, [env vars in precedence order], keyring_backend_id)
+# Secret fields: backend -> (flat_field_name, [env vars in precedence
+# order], keyring_backend_id, nested [image_generation.<backend>] TOML
+# key the secret is read from/written to). The nested key is DATA, not a
+# hardcoded "api_key" literal (final review CRITICAL fix): swarmui's real
+# field is `swarm_token` (matches its flat name AND the Settings > Image
+# Gen FIELD_SCHEMA/spec) -- hardcoding "api_key" for every backend meant a
+# pasted+saved swarm token landed in config.toml but was never actually
+# read back (_resolve_secret always looked for "api_key", which swarmui
+# never writes), so it resolved to "missing" forever. `_resolve_secret`
+# falls back to "api_key" ONLY when a backend's own config_key is unset,
+# for backward compatibility with any config hand-written against the
+# pre-fix (undocumented, but functional for every OTHER backend) behavior.
 _SECRETS = {
-    "swarmui":     ("swarmui_swarm_token",        ["SWARMUI_TOKEN"],                       "swarmui"),
-    "openrouter":  ("openrouter_image_api_key",   ["OPENROUTER_API_KEY"],                  "openrouter"),
-    "novita":      ("novita_image_api_key",       ["NOVITA_API_KEY"],                      "novita"),
-    "together":    ("together_image_api_key",     ["TOGETHER_API_KEY"],                    "together"),
-    "modelstudio": ("modelstudio_image_api_key",  ["DASHSCOPE_API_KEY", "QWEN_API_KEY"],   "modelstudio"),
+    "swarmui":     ("swarmui_swarm_token",        ["SWARMUI_TOKEN"],                       "swarmui",     "swarm_token"),
+    "openrouter":  ("openrouter_image_api_key",   ["OPENROUTER_API_KEY"],                  "openrouter",  "api_key"),
+    "novita":      ("novita_image_api_key",       ["NOVITA_API_KEY"],                      "novita",      "api_key"),
+    "together":    ("together_image_api_key",     ["TOGETHER_API_KEY"],                    "together",    "api_key"),
+    "modelstudio": ("modelstudio_image_api_key",  ["DASHSCOPE_API_KEY", "QWEN_API_KEY"],   "modelstudio", "api_key"),
 }
 # Non-secret nested keys: (backend, toml_key) -> flat_field_name
 # NOTE: `reference_image_supported_models` is intentionally NOT mapped here —
@@ -118,16 +129,17 @@ _GLOBAL_KEYS = [
 ]
 
 # task-621: flat_field_name -> (backend, toml_key), derived by reversing
-# _NON_SECRET and _SECRETS (whose secret TOML key is always "api_key"). Used
-# only to build a helpful unknown-key warning below -- never to accept the
-# flat spelling itself (decision: warn-on-unknown-key, not flat aliases, to
-# avoid two spellings of the same setting needing a collision-precedence
-# rule).
+# _NON_SECRET and _SECRETS (whose secret TOML key is per-backend data, not
+# always "api_key" -- see _SECRETS' own comment). Used only to build a
+# helpful unknown-key warning below -- never to accept the flat spelling
+# itself (decision: warn-on-unknown-key, not flat aliases, to avoid two
+# spellings of the same setting needing a collision-precedence rule).
 _FLAT_MAP: dict[str, tuple[str, str]] = {
     flat_field: (backend, toml_key) for (backend, toml_key), flat_field in _NON_SECRET.items()
 }
 _FLAT_MAP.update({
-    flat_field: (backend, "api_key") for backend, (flat_field, _env_vars, _kr_id) in _SECRETS.items()
+    flat_field: (backend, config_key)
+    for backend, (flat_field, _env_vars, _kr_id, config_key) in _SECRETS.items()
 })
 
 # Known [image_generation.<backend>] subsection names.
@@ -189,12 +201,19 @@ def _resolve_secret(backend: str, sub: dict):
     keyring) and the value returned are unchanged from before ``source`` was
     added.
     """
-    field, env_vars, kr_id = _SECRETS[backend]
+    field, env_vars, kr_id, config_key = _SECRETS[backend]
     for ev in env_vars:                       # 1. env
         v = os.getenv(ev)
         if v:
             return field, v, f"env:{ev}"
-    cfg_val = (sub or {}).get("api_key")       # 2. config
+    sub = sub or {}
+    cfg_val = sub.get(config_key)              # 2. config (per-backend key)
+    if not cfg_val and config_key != "api_key":
+        # Back-compat fallback (see _SECRETS' comment) -- e.g. a swarmui
+        # section hand-written (or saved before this fix) with `api_key`
+        # instead of its real `swarm_token` key. Never overrides an
+        # explicit config_key value that's already set.
+        cfg_val = sub.get("api_key")
     if cfg_val and cfg_val != "<API_KEY_HERE>":
         return field, cfg_val, "config"
     kr = _keyring_get(kr_id)                    # 3. keyring
