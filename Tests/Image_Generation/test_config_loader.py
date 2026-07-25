@@ -149,6 +149,53 @@ def test_flat_backend_key_under_image_generation_warns_with_nested_replacement(m
     assert "[image_generation.openrouter] default_model" in matches[0]
 
 
+def _load_config_with_section(monkeypatch, section: dict, *, keyring: dict | None = None):
+    """Shared helper for the key_sources tests below: monkeypatch the raw
+    [image_generation] TOML section (+ optional keyring hits) the same way
+    every other test in this file does inline, then load. `keyring` maps
+    backend id -> fake keyring secret (default: keyring never hits)."""
+    from tldw_chatbook.Image_Generation import config as c
+    monkeypatch.setattr(c, "_read_image_generation_toml", lambda: section, raising=False)
+    kr = keyring or {}
+    monkeypatch.setattr(c, "_keyring_get", lambda backend: kr.get(backend), raising=False)
+    return c.get_image_generation_config(reload=True)
+
+
+def test_key_sources_env_wins(monkeypatch, tmp_path):
+    """key_sources records env origin with the winning variable name."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-env-key")
+    cfg = _load_config_with_section(monkeypatch, {"openrouter": {}})
+    assert cfg.key_sources["openrouter"] == "env:OPENROUTER_API_KEY"
+
+
+def test_key_sources_config(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    cfg = _load_config_with_section(monkeypatch, {"openrouter": {"api_key": "fake-config-key"}})
+    assert cfg.key_sources["openrouter"] == "config"
+
+
+def test_key_sources_missing(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    cfg = _load_config_with_section(monkeypatch, {})
+    assert cfg.key_sources["openrouter"] == "missing"
+    assert set(cfg.key_sources) == {"stable_diffusion_cpp", "swarmui", "openrouter", "novita", "together", "modelstudio"}
+
+
+def test_key_sources_modelstudio_names_winning_env(monkeypatch):
+    monkeypatch.setenv("QWEN_API_KEY", "fake-2")
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    cfg = _load_config_with_section(monkeypatch, {})
+    assert cfg.key_sources["modelstudio"] == "env:QWEN_API_KEY"
+
+
+def test_key_sources_keyring(monkeypatch):
+    """keyring-origin secret is recorded as "keyring" (not the raw value)."""
+    monkeypatch.delenv("NOVITA_API_KEY", raising=False)
+    cfg = _load_config_with_section(monkeypatch, {}, keyring={"novita": "kr-secret"})
+    assert cfg.key_sources["novita"] == "keyring"
+    assert cfg.novita_image_api_key == "kr-secret"  # existing secret-field behavior unchanged
+
+
 def test_unrecognized_key_under_image_generation_warns_generically(monkeypatch):
     from loguru import logger as loguru_logger
     from tldw_chatbook.Image_Generation import config as c

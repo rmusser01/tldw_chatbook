@@ -181,22 +181,37 @@ def _keyring_get(backend: str):
 
 
 def _resolve_secret(backend: str, sub: dict):
+    """Resolve one backend's secret and where it came from.
+
+    Returns ``(flat_field_name, value, source)`` where ``source`` is one of
+    ``"env:<VAR>"`` (naming the winning variable), ``"config"``,
+    ``"keyring"``, or ``"missing"``. The precedence order (env > config >
+    keyring) and the value returned are unchanged from before ``source`` was
+    added.
+    """
     field, env_vars, kr_id = _SECRETS[backend]
     for ev in env_vars:                       # 1. env
         v = os.getenv(ev)
         if v:
-            return field, v
+            return field, v, f"env:{ev}"
     cfg_val = (sub or {}).get("api_key")       # 2. config
     if cfg_val and cfg_val != "<API_KEY_HERE>":
-        return field, cfg_val
+        return field, cfg_val, "config"
     kr = _keyring_get(kr_id)                    # 3. keyring
     if kr:
-        return field, kr
-    return field, None                         # 4. optional shared handled by adapter/get_api_key opt-in
+        return field, kr, "keyring"
+    return field, None, "missing"              # 4. optional shared handled by adapter/get_api_key opt-in
 
 
-def _load_image_generation_section() -> dict:
-    """Assemble the FLAT mapping the config builder expects, from nested TOML + env + keyring."""
+def _load_image_generation_section() -> tuple[dict, dict[str, str]]:
+    """Assemble the FLAT mapping the config builder expects, from nested TOML + env + keyring.
+
+    Returns ``(flat, key_sources)``. ``key_sources`` maps every known
+    backend id (``_BACKEND_NAMES``) to where its secret was resolved from --
+    ``"env:<VAR>"``, ``"config"``, ``"keyring"``, or ``"missing"``. Backends
+    with no ``_SECRETS`` entry (currently only ``stable_diffusion_cpp``,
+    which takes no API key) are always ``"missing"``.
+    """
     raw = _read_image_generation_toml()
     _warn_unknown_top_level_keys(raw)
     flat: dict = {}
@@ -207,11 +222,13 @@ def _load_image_generation_section() -> dict:
         sub = raw.get(backend) or {}
         if toml_key in sub:
             flat[flat_field] = sub[toml_key]
+    key_sources: dict[str, str] = {backend: "missing" for backend in _BACKEND_NAMES}
     for backend in _SECRETS:
-        field, value = _resolve_secret(backend, raw.get(backend) or {})
+        field, value, source = _resolve_secret(backend, raw.get(backend) or {})
+        key_sources[backend] = source
         if value:
             flat[field] = value
-    return flat
+    return flat, key_sources
 
 
 @dataclass(frozen=True)
@@ -271,6 +288,11 @@ class ImageGenerationConfig:
     modelstudio_image_timeout_seconds: int
     modelstudio_image_allowed_extra_params: list[str]
     reference_image_supported_models: dict[str, list[str]] = field(default_factory=dict)
+    # backend id -> "env:<VAR>" | "config" | "keyring" | "missing" (task-1,
+    # Settings ▸ Image Gen plan). Purely additive/read-only metadata about
+    # where each backend's secret was resolved from -- never affects what's
+    # written into the secret fields above.
+    key_sources: dict[str, str] = field(default_factory=dict)
 
 
 _config_cache: ImageGenerationConfig | None = None
@@ -387,7 +409,7 @@ def get_image_generation_config(*, reload: bool = False) -> ImageGenerationConfi
     if _config_cache is not None and not reload:
         return _config_cache
 
-    section = _load_image_generation_section()
+    section, key_sources = _load_image_generation_section()
 
     default_backend = _get_config_value(section, "default_backend") or DEFAULT_BACKEND
     enabled_backends = _parse_list(section.get("enabled_backends"))
@@ -498,6 +520,7 @@ def get_image_generation_config(*, reload: bool = False) -> ImageGenerationConfi
         ),
         modelstudio_image_allowed_extra_params=_parse_list(section.get("modelstudio_image_allowed_extra_params")),
         reference_image_supported_models=_parse_mapping_of_lists(section.get("reference_image_supported_models")),
+        key_sources=key_sources,
         default_batch=default_batch,
         max_variants_per_message=max_variants_per_message,
         context_llm_enabled=context_llm_enabled,
