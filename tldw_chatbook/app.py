@@ -214,7 +214,6 @@ from tldw_chatbook.TTS.TTS_Generation import (
 )
 from tldw_chatbook.Event_Handlers.worker_handlers import (
     WorkerHandlerRegistry,
-    ChatWorkerHandler,
     ServerWorkerHandler,
     AIGenerationHandler,
     MiscWorkerHandler,
@@ -5159,7 +5158,12 @@ class TldwCli(
         self.worker_handler_registry = WorkerHandlerRegistry(self)
 
         # Register all worker handlers
-        self.worker_handler_registry.register(ChatWorkerHandler(self))
+        # task-577 PR2 T3: ChatWorkerHandler retired -- its can_handle()
+        # claimed "API_Call_chat*"/"API_Call_ccp*"/"respond_for_me_worker",
+        # but every producer of those names lived in chat_events.py (deleted
+        # this task); "API_Call_ccp*" had zero producers anywhere in the
+        # repo (conv_char_events.py's ai_generate_* workers use different
+        # names, handled by AIGenerationHandler below).
         self.worker_handler_registry.register(ServerWorkerHandler(self))
         self.worker_handler_registry.register(AIGenerationHandler(self))
         self.worker_handler_registry.register(MiscWorkerHandler(self))
