@@ -76,6 +76,24 @@ def test_pseudo_tool_schemas():
     assert LOAD_TOOLS_SCHEMA.name == LOAD_TOOLS_NAME
 
 
+def test_tool_for_returns_the_real_tool_invoke_would_dispatch():
+    # Minor 7 (final review): every hook test substitutes a fake provider,
+    # so `tool_for` itself -- the only thing standing between "the review
+    # hook reviews built-ins" and "the hook silently reviews nothing" --
+    # had no direct coverage. Assert it returns the SAME object `invoke()`
+    # looks up internally (both read `self._tools`), not merely an
+    # equivalent one.
+    provider = BuiltinToolProvider()
+    tool = provider.tool_for("calculator")
+    assert tool is provider._tools["calculator"]
+    assert tool.name == "calculator"
+
+
+def test_tool_for_returns_none_for_unknown_name():
+    provider = BuiltinToolProvider()
+    assert provider.tool_for("not_a_real_tool") is None
+
+
 class FakeBigProvider:
     """A provider with more tools than the threshold."""
 

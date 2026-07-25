@@ -159,7 +159,12 @@ class BuiltinToolGate:
 
         Returns:
             ``None`` when the call may proceed, else a human-readable
-            refusal reason for a failed ``ToolResult``. Never raises.
+            refusal reason for a failed ``ToolResult``. Never raises for
+            a well-formed ``Tool`` (a subclass whose ``name``/
+            ``description``/``parameters``/``risk_tags`` property itself
+            raises would still propagate here); callers still wrap this
+            in a try/except and fail closed (see
+            ``BuiltinToolProvider.invoke``).
         """
         if self._kill_switch():
             return "tool execution is disabled by the kill switch"

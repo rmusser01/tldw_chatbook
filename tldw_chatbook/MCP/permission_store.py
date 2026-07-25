@@ -511,8 +511,10 @@ class EffectiveToolState:
     Attributes:
         state: One of ``STORE_STATES``.
         origin: Which precedence level produced ``state`` before any
-            downgrade -- ``tool_override``, ``server_default``, or
-            ``global_default``.
+            downgrade -- ``tool_override``, ``server_default``,
+            ``global_default``, or (built-in tools only, via
+            ``resolve_builtin_state``) ``builtin_default``, the allow
+            floor applied when nothing more specific overrides it.
         config_changed: True when an explicit tool-level ``allow`` was
             downgraded to ``ask`` by the rug-pull guard (hash mismatch
             and/or a persisted ``config_changed`` marker).

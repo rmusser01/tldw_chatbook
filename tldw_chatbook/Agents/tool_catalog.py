@@ -205,6 +205,18 @@ class BuiltinToolProvider:
         return self._tools.get(name)
 
     def _resolve_gate(self) -> Any:
+        """Return the provider's gate, building one lazily on first use.
+
+        Note: nothing here calls `begin_turn()` on a lazily-built gate,
+        so its permission-store payload is loaded once and never
+        invalidated for the life of this provider. Harmless today --
+        `build_builtin_gate()`'s default, service-less gate always has
+        an empty `{}` payload -- but any gate handed to (or built by)
+        this provider must be driven by a caller that calls
+        `begin_turn()` once per turn, as `console_chat_controller`'s
+        review-hook path already does, or its permission state will
+        freeze at first use.
+        """
         if self._gate is None:
             # Module-global lookup (not a local import) so a test's
             # monkeypatch of `tool_catalog.build_builtin_gate` is honored.

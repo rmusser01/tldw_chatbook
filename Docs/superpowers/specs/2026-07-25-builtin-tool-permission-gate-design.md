@@ -98,7 +98,7 @@ Always built (built-ins always exist); MCP's per-call gate is folded in when a p
 
 **Classifying a call.** The hook routes each `ToolCall` by owner: a name the MCP provider claims (its existing `pending_gate_for` path) goes to the MCP gate; otherwise, if the run's `ToolCatalogRegistry` resolves the name to the built-in provider, it goes to `builtin_gate`. Names owned by neither (skills, native spawn) are returned unreviewed, exactly as today. Skill tools already route around `invoke_tool` entirely into their own budget-clamped nested loop and are not gated here.
 
-**Card rows.** Built-in rows reuse the existing dict shape (`llm_name`, `server_key`, `tool_name`, `server_label`, `arguments`, `reason`) with `server_key="builtin:tldw_chatbook"` and `server_label="Built-in"`. `ChatApprovalCard` never interprets these — it groups by `llm_name` and renders the label as row-header text — so no card changes are needed for grouping or display. Its `_REASON_SUFFIXES` already knows `"risk_floored"`, which is the only reason built-ins can produce in P1.
+**Card rows.** Built-in rows reuse the existing dict shape (`llm_name`, `server_key`, `tool_name`, `server_label`, `arguments`, `reason`) with `server_key="agent:builtin"` and `server_label="Built-in"`. `ChatApprovalCard` never interprets these — it groups by `llm_name` and renders the label as row-header text — so no card changes are needed for grouping or display. Its `_REASON_SUFFIXES` already knows `"risk_floored"`, which is the only reason built-ins can produce in P1.
 
 ### 5. Two enforcement points
 
@@ -182,6 +182,6 @@ In P1 this is unreachable (nothing resolves to `ask`). P1's required behavior: a
 
 ## Follow-ups to file
 
-1. Built-in tool permissions UI — surface `builtin:tldw_chatbook` in the workbench (or a Tools settings pane) so persistent allow/deny becomes safe to offer.
+1. Built-in tool permissions UI — surface `agent:builtin` in the workbench (or a Tools settings pane) so persistent allow/deny becomes safe to offer.
 2. Child-run approval routing — prerequisite for P2 shipping gated mutating tools.
 3. `local_file_ingestion.py:1148` `get_cli_setting("database", {})` — the second instance of TASK-547's bug, found during investigation.

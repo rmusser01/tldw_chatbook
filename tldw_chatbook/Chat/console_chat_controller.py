@@ -287,12 +287,15 @@ def build_tool_review_hook(
     Routing per call, MCP first: `mcp_provider.pending_gate_for` (when a
     provider was composed this run) is asked before the built-in provider,
     so a name that provider actually owns is never mistakenly re-resolved
-    against the built-in side too -- this matters because a collision
-    between an MCP tool name and a built-in name is exactly what
-    `console_agent_bridge._non_colliding_mcp_names` already filters out of
-    the run's registry, and asking MCP first here keeps this hook's own
-    routing consistent with that precedent. A name neither provider claims
-    (a skill, `spawn_subagent`, `find_tools`, ...) passes through
+    against the built-in side too. Note this hook's own precedent is the
+    OPPOSITE of `console_agent_bridge._non_colliding_mcp_names`, which
+    resolves a name collision the other way -- it drops the colliding MCP
+    name from the run's registry so the built-in wins composition. That
+    inconsistency is moot in practice: `MCP/tool_naming.py:106` always
+    mints MCP tool names as `mcp__<server>__<tool>`, which can never equal
+    a bare built-in name like `calculator`/`get_current_datetime`, so no
+    call is ever ambiguous between the two orders. A name neither provider
+    claims (a skill, `spawn_subagent`, `find_tools`, ...) passes through
     unreviewed, exactly as it does for `build_mcp_review_hook` today.
 
     Built-in rows use `server_key=BUILTIN_TOOL_SERVER_KEY`
