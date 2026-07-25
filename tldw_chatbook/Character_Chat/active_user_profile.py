@@ -7,7 +7,7 @@ refers to the user in this app; the user-side concept is "user profile".
 """
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Optional, Protocol
 
 from loguru import logger
 
@@ -94,4 +94,63 @@ def resolve_active_user_profile_name(service: _UserProfileLister | None) -> str 
     except Exception:
         logger.opt(exception=True).debug("Active user profile resolution failed.")
         return None
+    return None
+
+
+def resolve_runtime_backend_mode(app_like: Any) -> str:
+    """Return the app's authoritative runtime backend mode, never raising.
+
+    Args:
+        app_like: Object expected to expose ``get_authoritative_runtime_source()``.
+
+    Returns:
+        ``"local"`` or ``"server"``; ``"local"`` on any failure or unknown value.
+    """
+    getter = getattr(app_like, "get_authoritative_runtime_source", None)
+    if callable(getter):
+        try:
+            candidate = str(getter() or "").strip().lower()
+            if candidate in {"local", "server"}:
+                return candidate
+        except Exception as exc:  # Never raise into a send path.
+            logger.debug(f"Runtime backend mode read failed: {exc}")
+    return "local"
+
+
+async def resolve_active_user_profile_name_async(
+    scope_service: Any,
+    *,
+    mode: Optional[str],
+    local_service: Optional[_UserProfileLister] = None,
+) -> Optional[str]:
+    """Resolve the active user profile's name against the current backend.
+
+    Local (and unknown) modes delegate to the sync resolver unchanged; server
+    mode validates the config pointer against the scope service's server
+    backend. A dangling pointer and every backend failure resolve to ``None``
+    (no active profile) — this function never raises.
+
+    Args:
+        scope_service: ``CharacterPersonaScopeService``-like object with an
+            async ``list_user_profiles(mode=...)``; may be ``None``.
+        mode: Backend mode; anything other than ``"server"`` uses the local path.
+        local_service: Sync local profile service for the local path.
+
+    Returns:
+        The active profile's name, or ``None`` when unset/dangling/unavailable.
+    """
+    normalized = str(mode or "").strip().lower()
+    if normalized != "server":
+        return resolve_active_user_profile_name(local_service)
+    pointer = get_active_user_profile_pointer()
+    if not pointer or scope_service is None:
+        return None
+    try:
+        payload = await scope_service.list_user_profiles(mode="server")
+        records = payload.get("items", []) if isinstance(payload, dict) else (payload or [])
+        for record in records:
+            if isinstance(record, dict) and str(record.get("name") or "") == pointer:
+                return pointer
+    except Exception as exc:  # Fail closed: {{user}} falls back to its site default.
+        logger.debug(f"Server-side active user profile resolution failed: {exc}")
     return None
