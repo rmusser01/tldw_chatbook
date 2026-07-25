@@ -3515,6 +3515,17 @@ class ConsoleChatController:
                     )
                 except KeyError:
                     return self._session_closed_result()
+                # task-543: this is the dominant user-Stop path --
+                # ``task.cancel()`` raised before ``(run_id, outcome)`` ever
+                # bound, so recover the active run's id via the bridge's
+                # latest-unanchored-primary lookup and record the stopped
+                # reply's persisted id, same as every finalizer terminal
+                # path. A never-persisted stop (or an anchored/missing row)
+                # no-ops and leaves the row NULL -> ordinal fallback.
+                self._record_run_assistant_message(
+                    self._latest_unanchored_primary_run_id(conversation_id),
+                    stopped,
+                )
                 return ConsoleSubmitResult(True, True, stopped.content)
             raise
         except Exception as exc:
@@ -3820,6 +3831,34 @@ class ConsoleChatController:
                 run_id=run_id,
                 persisted_message_id=persisted,
             )
+
+    def _latest_unanchored_primary_run_id(self, conversation_id: str) -> str | None:
+        """Return the active run's id for the stopped-via-cancel path.
+
+        task-543: thin defensive wrapper over the bridge's
+        ``latest_unanchored_primary_run_id`` (see its docstring for the
+        NULL-anchor guard) -- a bookkeeping lookup on the Stop path must
+        never fail the stop itself.
+
+        Args:
+            conversation_id: Durable conversation id whose runs to inspect.
+
+        Returns:
+            The recoverable run id, or ``None`` when there is no bridge, no
+            matching unanchored primary run, or the lookup fails.
+        """
+        if self._agent_bridge is None:
+            return None
+        try:
+            return self._agent_bridge.latest_unanchored_primary_run_id(
+                conversation_id
+            )
+        except Exception:  # noqa: BLE001 -- bookkeeping must never fail the stop
+            logger.opt(exception=True).warning(
+                "failed to look up unanchored primary run for stop recording",
+                conversation_id=conversation_id,
+            )
+            return None
 
     def _append_failed_assistant(
         self, session_id: str, visible_copy: str,
