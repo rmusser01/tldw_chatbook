@@ -28,6 +28,7 @@ from tldw_chatbook.Image_Generation.config import (
 )
 from tldw_chatbook.Image_Generation.exceptions import ImageBackendUnavailableError, ImageGenerationError
 from tldw_chatbook.Image_Generation.request_validation import effective_inline_max_bytes
+from tldw_chatbook.Utils.egress import origin_set
 
 # Import the fetch_json and evaluate_url_policy from http_client
 fetch_json = http_client.fetch_json
@@ -103,6 +104,9 @@ class ModelStudioImageAdapter:
                 headers=self._headers(api_key),
                 json=payload,
                 timeout=self._config.modelstudio_image_timeout_seconds or DEFAULT_MODELSTUDIO_IMAGE_TIMEOUT_SECONDS,
+                # url is built from the configured base_url, not API-returned
+                # data, so its host is trusted.
+                trusted_origins=origin_set(url),
             )
         except Exception as exc:
             logger.warning("Model Studio sync request failed: {}", exc)
@@ -122,6 +126,7 @@ class ModelStudioImageAdapter:
                 headers=self._headers(api_key),
                 json=payload,
                 timeout=self._config.modelstudio_image_timeout_seconds or DEFAULT_MODELSTUDIO_IMAGE_TIMEOUT_SECONDS,
+                trusted_origins=origin_set(submit_url),
             )
         except Exception as exc:
             logger.warning("Model Studio async submit failed: {}", exc)
@@ -146,6 +151,7 @@ class ModelStudioImageAdapter:
                     url=poll_url,
                     headers=self._headers(api_key),
                     timeout=self._config.modelstudio_image_timeout_seconds or DEFAULT_MODELSTUDIO_IMAGE_TIMEOUT_SECONDS,
+                    trusted_origins=origin_set(poll_url),
                 )
             except Exception as exc:
                 logger.warning("Model Studio async polling failed: {}", exc)
@@ -376,25 +382,38 @@ class ModelStudioImageAdapter:
         if raw.startswith("data:"):
             return decode_data_url(raw, max_bytes=self._max_output_bytes())
         if raw.startswith("http://") or raw.startswith("https://"):
-            if not self._is_allowed_remote_image_url(raw):
+            # The base_url host is trusted (user-configured, e.g. a local
+            # dashscope-compatible proxy); `raw` itself is API-returned data,
+            # so trust extends only as far as the base_url host -- the same
+            # trusted_origins is used for both the allowlist gate below and
+            # the fetch itself so the two checks can never disagree.
+            trusted_origins = self._image_trusted_origins()
+            if not self._is_allowed_remote_image_url(raw, trusted_origins=trusted_origins):
                 raise ImageGenerationError("Model Studio returned unsupported image URL host")
             return fetch_image_bytes(
                 raw,
                 timeout=self._config.modelstudio_image_timeout_seconds or DEFAULT_MODELSTUDIO_IMAGE_TIMEOUT_SECONDS,
                 max_bytes=self._max_output_bytes(),
+                trusted_origins=trusted_origins,
             )
         decoded = maybe_decode_base64_image(raw, max_bytes=self._max_output_bytes())
         if decoded is not None:
             return decoded, "image/png"
         return None
 
-    def _is_allowed_remote_image_url(self, raw_url: str) -> bool:
+    def _image_trusted_origins(self) -> frozenset:
+        base_host = (urlparse(self._resolve_base_url()).hostname or "").strip().lower()
+        return frozenset({base_host}) if base_host else frozenset()
+
+    def _is_allowed_remote_image_url(self, raw_url: str, *, trusted_origins: frozenset = frozenset()) -> bool:
         base_host = (urlparse(self._resolve_base_url()).hostname or "").strip().lower()
         allowlist = list(self._ALLOWED_IMAGE_HOST_ALLOWLIST)
         if base_host:
             allowlist.append(base_host)
         policy_result = evaluate_url_policy(
-            raw_url, allowed_hosts={host.lower() for host in allowlist}
+            raw_url,
+            allowed_hosts={host.lower() for host in allowlist},
+            trusted_origins=trusted_origins,
         )
         if policy_result.allowed:
             return True

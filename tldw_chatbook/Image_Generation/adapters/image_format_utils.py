@@ -198,12 +198,13 @@ def fetch_image_bytes(
     headers: dict[str, Any] | None = None,
     cookies: dict[str, Any] | None = None,
     max_bytes: int | None = None,
+    trusted_origins: frozenset = frozenset(),
 ) -> tuple[bytes, str]:
     current_url = url
     try:
         with create_client(timeout=timeout) as client:
             for _redirect_count in range(DEFAULT_MAX_REDIRECTS + 1):
-                _validate_egress_or_raise(current_url)
+                _validate_egress_or_raise(current_url, trusted_origins=trusted_origins)
                 with client.stream(
                     "GET",
                     current_url,

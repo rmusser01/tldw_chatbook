@@ -1,5 +1,6 @@
 import io
 import base64
+import pytest
 from PIL import Image
 
 
@@ -24,3 +25,21 @@ def test_openrouter_extracts_image(monkeypatch):
                           format="png", extra_params={})
     res = m.OpenRouterImageAdapter().generate(req)
     assert res.bytes_len > 0
+
+
+def test_openrouter_blocks_api_returned_private_ip_image_url(monkeypatch):
+    from tldw_chatbook.Image_Generation import config as _c
+    _c.reset_image_generation_config_cache()
+
+    from tldw_chatbook.Image_Generation.adapters import openrouter_image_adapter as m
+    from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest
+    from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(m, "fetch_json", lambda method, url, **kw: {
+        "choices": [{"message": {"images": [{"image_url": {"url": "http://192.168.1.50/steal.png"}}]}}]
+    })
+    req = ImageGenRequest(backend="openrouter", prompt="fox", negative_prompt=None, width=None, height=None,
+                          steps=None, cfg_scale=None, seed=None, sampler=None, model="openai/gpt-image-1",
+                          format="png", extra_params={})
+    with pytest.raises(ImageGenerationError):
+        m.OpenRouterImageAdapter().generate(req)
