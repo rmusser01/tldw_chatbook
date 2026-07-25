@@ -55,6 +55,9 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # The install_skill runtime tool (same drift-guard rationale as
         # skill_file above).
         "install_skill",
+        # The run_skill_script runtime tool (same drift-guard rationale as
+        # skill_file/install_skill above).
+        "run_skill_script",
     )
 )
 

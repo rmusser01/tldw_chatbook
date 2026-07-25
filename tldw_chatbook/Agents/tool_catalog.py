@@ -19,6 +19,7 @@ from .agent_models import (
     FIND_TOOLS_NAME,
     INSTALL_SKILL_TOOL_NAME,
     LOAD_TOOLS_NAME,
+    RUN_SKILL_SCRIPT_TOOL_NAME,
     RunBudget,
     SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
@@ -110,6 +111,43 @@ INSTALL_SKILL_TOOL_SCHEMA = ToolSchema(
             }
         },
         "required": ["url"],
+    },
+)
+
+RUN_SKILL_SCRIPT_TOOL_SCHEMA = ToolSchema(
+    id="runtime:run_skill_script",
+    name=RUN_SKILL_SCRIPT_TOOL_NAME,
+    description=(
+        "Run a script bundled with a trusted skill. The user is asked to "
+        "confirm each run unless they have granted this skill standing "
+        "permission. The script runs with a scrubbed environment in a "
+        "temporary working directory (not the skill's own folder), under CPU "
+        "and time limits; only its stdout/stderr and exit code come back, and "
+        "any files it writes are discarded. Args: skill_name (the skill that "
+        "owns the script), script_path (relative POSIX path, e.g. "
+        "scripts/extract.py), args (optional list of string arguments)."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "skill_name": {
+                "type": "string",
+                "description": "The skill whose bundled script to run.",
+            },
+            "script_path": {
+                "type": "string",
+                "description": (
+                    "Relative POSIX path of the script inside the skill's "
+                    "bundle, e.g. scripts/extract.py."
+                ),
+            },
+            "args": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional string arguments passed to the script.",
+            },
+        },
+        "required": ["skill_name", "script_path"],
     },
 )
 

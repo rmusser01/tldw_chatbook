@@ -18,6 +18,7 @@ from .agent_models import (
     LOOP_DETECTION_N,
     RUN_CANCELLED,
     RUN_DONE,
+    RUN_SKILL_SCRIPT_TOOL_NAME,
     RUN_STUCK,
     SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
@@ -244,6 +245,13 @@ class LoopDeps:
     # means the run is not wired for install_skill and a call by that name
     # falls through to the generic deps.invoke_tool path.
     install_skill: Callable[[str], ToolResult] | None = None
+    # run_skill_script: the sixth runtime tool (trust-gated script execution).
+    # Unlike install_skill this is NOT agent_kind-gated -- the user chose an
+    # all-agents caller scope, because the per-run confirm card and the
+    # per-skill grant (not the caller's identity) are what gate each run.
+    # `None` (the default) means the run is not wired for it and a call by
+    # that name falls through to the generic deps.invoke_tool path.
+    run_skill_script: Callable[[str, str, list[str]], ToolResult] | None = None
 
 
 def _catalog_lines(entries: list) -> str:
@@ -547,6 +555,19 @@ def run_agent_loop(
                 ):
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.install_skill(str(call.args.get("url", "")))
+                elif (
+                    call.name == RUN_SKILL_SCRIPT_TOOL_NAME
+                    and deps.run_skill_script is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    raw_args = call.args.get("args") or []
+                    if not isinstance(raw_args, (list, tuple)):
+                        raw_args = [raw_args]
+                    result = deps.run_skill_script(
+                        str(call.args.get("skill_name", "")),
+                        str(call.args.get("script_path", "")),
+                        [str(item) for item in raw_args],
+                    )
                 else:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.invoke_tool(call)
