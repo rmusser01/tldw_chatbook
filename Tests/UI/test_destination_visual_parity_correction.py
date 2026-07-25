@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -14,7 +15,7 @@ from textual.widgets import Collapsible
 from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import (
-    DestinationHarness,
+    DestinationHarness as DestinationHarnessBase,
     StaticWatchlistsScopeService,
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
@@ -37,7 +38,6 @@ from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Screens import (
     artifacts_screen as artifacts_screen_module,
     library_screen as library_screen_module,
-    schedules_screen as schedules_screen_module,
     skills_screen as skills_screen_module,
     watchlists_collections_screen as wc_screen_module,
     workflows_screen as workflows_screen_module,
@@ -46,6 +46,17 @@ from tldw_chatbook.Widgets.destination_workbench import (
     DestinationWorkbench,
     WorkbenchPane,
 )
+
+
+class DestinationHarness(DestinationHarnessBase):
+    """Destination harness with the same committed stylesheet as the real app."""
+
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
 
 
 def _region(widget):
@@ -190,10 +201,15 @@ def _visible_static_text(screen) -> str:
 def _visible_workbench_pane_titles(screen, workbench: str) -> list[str]:
     workbench_widget = screen.query_one(workbench)
     titles = []
+    scheduling_title_ids = {
+        "scheduling-list-title",
+        "scheduling-task-detail-header",
+        "scheduling-task-inspector-header",
+    }
     for widget in workbench_widget.query(Static):
         if not widget.display or not hasattr(widget, "renderable"):
             continue
-        if not any(
+        if widget.id not in scheduling_title_ids and not any(
             str(class_name).endswith("-column-title") for class_name in widget.classes
         ):
             continue
@@ -784,7 +800,8 @@ SOURCE_PREP_WORKBENCHES = {
     },
     "watchlists_collections": {
         "workbench": "#watchlists-workbench",
-        "strip": "#watchlists-filter-strip",
+        "strip": "#watchlists-header-bar",
+        "strip_max_height": 3,
         "panes": (
             "#watchlists-list-pane",
             "#watchlists-detail-pane",
@@ -796,7 +813,7 @@ SOURCE_PREP_WORKBENCHES = {
             "#watchlists-follow-in-console",
         ),
         "markers": ("#wc-empty-state", "#wc-service-error", "#wc-loading-state"),
-        "marker_container": "#watchlists-detail-pane",
+        "marker_container": "#watchlists-list-pane",
     },
     "skills": {
         "workbench": "#skills-workbench",
@@ -827,6 +844,7 @@ async def test_source_prep_destinations_use_list_detail_inspector_workbench(
             screen,
             workbench=contract["workbench"],
             strip=contract["strip"],
+            strip_max_height=contract.get("strip_max_height", 2),
             panes=contract["panes"],
             actions=contract["actions"],
             height=42,
@@ -853,6 +871,7 @@ async def test_source_prep_default_empty_or_unavailable_states_preserve_workbenc
             screen,
             workbench=contract["workbench"],
             strip=contract["strip"],
+            strip_max_height=contract.get("strip_max_height", 2),
             panes=contract["panes"],
             actions=contract["actions"],
             height=42,
@@ -876,15 +895,36 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
             >= 0
         )
         visible_text = _visible_static_text(screen)
-        assert "Filters: Running Failed Recent Alerts Sources Feeds" in visible_text
-        assert "Column 1: Watchlist List" in visible_text
-        assert "Column 2: Detail / Items / Runs" in visible_text
-        assert "Column 3: Status Inspector" in visible_text
-        assert "State:" in visible_text
-        assert "Retry/backoff:" in visible_text
+        for expected in (
+            "Backend: local",
+            "Sources",
+            "Overview",
+            "Inspector",
+            "State: ready",
+            "Alert rules active: 0",
+            "Latest run status: unavailable",
+        ):
+            assert expected in visible_text
+        assert {"Overview", "Sources", "Items", "Runs", "Rules"}.issubset(
+            _visible_button_labels(screen)
+        )
+        _assert_horizontal_panes(
+            screen,
+            (
+                "#watchlists-navigator",
+                "#watchlists-list-pane",
+                "#watchlists-detail-pane",
+                "#watchlists-inspector-pane",
+            ),
+        )
+        assert "Filters: Running Failed Recent Alerts Sources Feeds" not in visible_text
+        assert "Column 1:" not in visible_text
+        assert "Column 2:" not in visible_text
+        assert "Column 3:" not in visible_text
         assert "Collections" not in visible_text
 
         for selector in (
+            "#watchlists-nav-list-divider",
             "#watchlists-list-detail-divider",
             "#watchlists-detail-inspector-divider",
         ):
@@ -908,8 +948,8 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         ("personas", "#personas-workbench", ("Library", "Inspector")),
         (
             "schedules",
-            "#schedules-workbench",
-            ("Schedule Queue", "Run Detail", "Status Inspector"),
+            "#scheduling-workbench",
+            ("Schedule Queue", "Task Detail", "Inspector"),
         ),
         (
             "workflows",
@@ -965,32 +1005,35 @@ async def test_schedules_screen_matches_approved_control_plane_columns():
 
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#schedules-empty-state")
+        await _wait_for_selector(screen, pilot, "#scheduling-task-detail-empty-state")
 
         visible_text = _visible_static_text(screen)
         for expected in (
-            "Schedules | Jobs, digests, timers, retries | Local | Console handoff",
-            "Filters: Next run Paused Failed Retry History",
+            "Schedules | Automations, digests, timers, retries | Local+Server",
+            "Last pull: —",
+            "Last push: —",
+            "Queue",
+            "Conflicts",
             "Schedule Queue",
-            "Run Detail",
-            "Status Inspector",
-            "State:",
-            "Retry/backoff:",
-            "Next action:",
-            "Console: blocked",
+            "Task Detail",
+            "No scheduled tasks yet. Press Ctrl+C to create your first reminder.",
+            "Inspector",
+            "No conflict",
         ):
             assert expected in visible_text
+        assert "Follow in Console" in _visible_button_labels(screen)
         assert "Column 1:" not in visible_text
         assert "Column 2:" not in visible_text
         assert "Column 3:" not in visible_text
 
-        for selector in (
-            "#schedules-list-detail-divider",
-            "#schedules-detail-inspector-divider",
-        ):
-            divider = screen.query_one(selector)
-            assert divider.has_class("destination-pane-divider")
-            assert divider.region.width == 1
+        _assert_horizontal_panes(
+            screen,
+            (
+                "#scheduling-list-pane",
+                "#scheduling-detail-pane",
+                "#scheduling-inspector-pane",
+            ),
+        )
 
 
 @pytest.mark.asyncio
@@ -1189,7 +1232,7 @@ SOURCE_PREP_LOADING_CONTRACTS = [
         "_refresh_local_wc_snapshot",
         "#wc-loading-state",
         SOURCE_PREP_WORKBENCHES["watchlists_collections"],
-        "#watchlists-detail-pane",
+        "#watchlists-list-pane",
     ),
     (
         "skills",
@@ -1226,6 +1269,7 @@ async def test_source_prep_loading_states_preserve_workbench_geometry(
             screen,
             workbench=contract["workbench"],
             strip=contract["strip"],
+            strip_max_height=contract.get("strip_max_height", 2),
             panes=contract["panes"],
             actions=contract["actions"],
             height=42,
@@ -1243,12 +1287,12 @@ async def test_source_prep_loading_states_preserve_workbench_geometry(
     [
         (
             "schedules",
-            "#schedules-filter-strip",
-            "#schedules-workbench",
+            "#scheduling-sync-status",
+            "#scheduling-workbench",
             (
-                "#schedules-list-pane",
-                "#schedules-detail-pane",
-                "#schedules-inspector-pane",
+                "#scheduling-list-pane",
+                "#scheduling-detail-pane",
+                "#scheduling-inspector-pane",
             ),
             ("#schedules-follow-in-console",),
         ),
@@ -1278,6 +1322,7 @@ async def test_operational_destinations_use_timing_or_procedure_workbench(
             screen,
             workbench=workbench,
             strip=strip,
+            strip_max_height=5 if route == "schedules" else 2,
             panes=panes,
             actions=actions,
             height=42,
@@ -1289,16 +1334,16 @@ async def test_operational_destinations_use_timing_or_procedure_workbench(
     [
         (
             "schedules",
-            "#schedules-filter-strip",
-            "#schedules-workbench",
+            "#scheduling-sync-status",
+            "#scheduling-workbench",
             (
-                "#schedules-list-pane",
-                "#schedules-detail-pane",
-                "#schedules-inspector-pane",
+                "#scheduling-list-pane",
+                "#scheduling-detail-pane",
+                "#scheduling-inspector-pane",
             ),
             ("#schedules-follow-in-console",),
-            ("#schedules-empty-state", "#schedules-console-unavailable"),
-            "#schedules-detail-pane",
+            ("#scheduling-task-detail-empty-state",),
+            "#scheduling-detail-pane",
         ),
         (
             "workflows",
@@ -1328,6 +1373,7 @@ async def test_operational_empty_or_blocked_states_preserve_workbench_geometry(
             screen,
             workbench=workbench,
             strip=strip,
+            strip_max_height=5 if route == "schedules" else 2,
             panes=panes,
             actions=actions,
             height=42,
@@ -1341,17 +1387,10 @@ async def test_operational_empty_or_blocked_states_preserve_workbench_geometry(
 
 
 OPERATIONAL_LOADING_CONTRACTS = [
-    (
-        "schedules",
-        schedules_screen_module.SchedulesScreen,
-        "_refresh_latest_console_context",
-        "#schedules-loading-state",
-        "#schedules-detail-pane",
-        "#schedules-filter-strip",
-        "#schedules-workbench",
-        ("#schedules-list-pane", "#schedules-detail-pane", "#schedules-inspector-pane"),
-        ("#schedules-follow-in-console",),
-    ),
+    # SchedulesWorkbench keeps its queue/detail/inspector mounted while its
+    # async task and Console context loads run; it has no separate loading
+    # marker or recomposed legacy shell. That behavior is covered by the
+    # operational geometry cases above and Tests/UI/test_schedules_workbench.py.
     (
         "workflows",
         workflows_screen_module.WorkflowsScreen,
@@ -1786,13 +1825,18 @@ COMPACT_DESTINATION_CONTRACTS = {
         "workbench": "#watchlists-workbench",
         "object": "#watchlists-list-pane",
         "detail": "#watchlists-detail-pane",
-        "actions": ("#wc-open-watchlists", "#watchlists-follow-in-console"),
+        "actions": (
+            "#wc-empty-create-source",
+            "#wc-empty-import-opml",
+            "#wc-open-watchlists",
+            "#watchlists-follow-in-console",
+        ),
     },
     "schedules": {
         "identity": "#schedules-title",
-        "workbench": "#schedules-workbench",
-        "object": "#schedules-list-pane",
-        "detail": "#schedules-detail-pane",
+        "workbench": "#scheduling-workbench",
+        "object": "#scheduling-list-pane",
+        "detail": "#scheduling-detail-pane",
         "actions": ("#schedules-follow-in-console",),
     },
     "workflows": {
