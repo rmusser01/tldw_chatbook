@@ -128,9 +128,13 @@ The service can still be *absent* — callers read it as `getattr(self.app, "uni
 
 P1 offers **approve-once** and **approve-for-session** (`UnifiedMCPControlPlaneService.approve_for_session` / `is_session_approved`). It does **not** write persistent allow/deny for built-ins.
 
-Rationale: the approval card's persistent options call `set_tool_state`, but the MCP workbench renders servers from the live MCP catalog, so a synthetic `builtin:` key will not appear there. A persistent "Deny" would brick a built-in tool with no in-app way to undo it short of hand-editing JSON. Restricting P1 to session scope also means nothing is persisted, which independently keeps the omitted hash check (§3) inert.
+Rationale: the MCP workbench renders servers from the live MCP catalog, so a synthetic `agent:builtin` key will not appear there — a *persistent* decision for a built-in tool could not be undone in-app, short of hand-editing JSON. Restricting P1 to session scope also means nothing is persisted, which independently keeps the omitted hash check (§3) inert.
 
-**The card must not offer choices it will not honor.** `ChatApprovalCard`'s four options are module-level (`_DECISION_OPTIONS`) and applied to every row. P1 adds an optional per-row `options` key to `set_batch`'s call dicts: rows that omit it keep the full four (MCP behavior byte-identical), while built-in rows pass only `approve_once` and `approve_session`. Silently remapping a user's "Always allow" to a session approval would be a dishonest UI and is explicitly rejected.
+**The card must not offer choices it will not honor.** `ChatApprovalCard`'s four options are module-level (`_DECISION_OPTIONS`) and applied to every row. P1 adds an optional per-row `options` key to `set_batch`'s call dicts: rows that omit it keep the full four (MCP behavior byte-identical), while built-in rows narrow the set. Silently remapping a user's "Always allow" to a session approval would be a dishonest UI and is explicitly rejected.
+
+> **CORRECTION (implementation review, 2026-07-25).** An earlier draft of this section had built-in rows offer only `approve_once` and `approve_session`, on the stated grounds that a persistent "Deny" would brick the tool. **That rationale was factually wrong.** Verified at `Agents/mcp_tool_provider.py:556-564`: `approve_session` writes only an in-memory session cache, **`always_allow` is the sole persistent write** (`set_tool_state`), and `deny`/`timeout`/anything else is a **turn-scoped refusal that persists nothing**. Excluding `deny` therefore protected against nothing — and was actively unsafe: with no `deny` option, a built-in row could not be refused from the card at all, so the "Deny all" bulk button would leave it sitting on "approve once" and clicking *Deny All would approve a built-in tool*.
+>
+> **Corrected narrowing:** built-in rows exclude **only `always_allow`**, keeping `approve_once`, `approve_session`, and `deny`. The session-scope guarantee is unchanged — it was only ever about the persistent write.
 
 Persistent decisions ship with the built-in permissions UI — filed as a follow-up, and a prerequisite for P2 offering them.
 
@@ -165,7 +169,7 @@ In P1 this is unreachable (nothing resolves to `ask`). P1's required behavior: a
 - [ ] `BuiltinToolProvider(gate=None)` is gated by default — a test asserts a bare instance refuses a `deny`-resolved tool, proving `None` does not mean "ungated".
 - [ ] The review hook routes calls by owner: MCP-claimed names to the MCP gate, registry-resolved built-ins to the built-in gate, and everything else (skills, native spawn) unreviewed.
 - [ ] Built-in approvals are session-scoped only; no persistent allow/deny is written for `builtin:` keys in P1.
-- [ ] The approval card offers built-in rows only the session-scoped options; MCP rows keep all four, verified byte-identical.
+- [ ] The approval card offers built-in rows `approve_once`/`approve_session`/`deny` and NOT `always_allow` (the sole persistent write); MCP rows keep all four, verified byte-identical.
 - [ ] The kill switch blocks built-in tools, and its MCP workbench label/echo no longer describe it as MCP-only.
 - [ ] Tests inject a temporary permission-store path; no test touches the real user store.
 

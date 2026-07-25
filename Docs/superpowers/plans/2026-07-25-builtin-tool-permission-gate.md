@@ -1037,7 +1037,9 @@ The hook must:
 1. Call `builtin_gate.begin_turn()` **first**, unconditionally, mirroring `build_mcp_review_hook`'s clear-at-entry discipline (a raising approval path must not leave stale stamps live).
 2. Clear MCP stamps as today (`provider.apply_batch_decisions({})`) when a provider exists.
 3. For each call, route by owner: MCP-claimed names → the existing `provider.pending_gate_for` path; otherwise, names the run's registry resolves to the built-in provider → `builtin_gate.resolve(tool)`, collecting a pending row when the state is not `allow`; anything else (skills, native spawn) → unreviewed.
-4. Built-in pending rows use `server_key="agent:builtin"`, `server_label="Built-in"`, `reason="risk_floored"` when `state.risk_floored`, and `options=["approve_once", "approve_session"]` (Task 5).
+4. Built-in pending rows use `server_key="agent:builtin"`, `server_label="Built-in"`, `reason="risk_floored"` when `state.risk_floored`, and `options=("approve_once", "approve_session", "deny")` (Task 5).
+
+   **Exclude ONLY `always_allow`.** Verified at `Agents/mcp_tool_provider.py:556-564`: `approve_session` writes an in-memory session cache, `always_allow` is the **sole** persistent write (`set_tool_state`), and `deny`/`timeout` are turn-scoped refusals that persist nothing. An earlier draft of the spec dropped `deny` too, on the mistaken belief it persisted — that would have left a built-in row unable to be refused from the card at all, so the "Deny all" bulk button would leave it on "approve once" and clicking *Deny All would approve a built-in tool*. Keep `deny`.
 5. Make **one** `request_approvals` call with the merged MCP + built-in rows.
 6. Apply decisions to both sides: `provider.apply_batch_decisions(...)` for MCP rows, `builtin_gate.stamp(name, decision)` for built-in rows.
 7. Return the `{llm_name: "proceed"}` map exactly as today.
