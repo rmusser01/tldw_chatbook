@@ -2491,18 +2491,25 @@ class ConsoleChatStore:
         the older as a fake parent-child link, corrupting the tree so a
         swipe/resume shows the wrong content).
 
-        KNOWN LIMITATION (not airtight): legacy flat data with at least one
-        assistant reply mixes roles and is chained correctly, but a DEGENERATE
-        legacy conversation whose 2+ user turns each got NO assistant reply
-        loads as all-USER roots and is (wrongly) left un-chained -- it resumes
-        showing only the last user message with a phantom sibling counter. This
-        is a narrow, non-data-loss regression (every message stays navigable via
-        ``siblings_at``/``set_active_leaf``): the all-USER-legacy and all-USER
-        genuine-fork shapes are provably indistinguishable from the persisted
-        tree alone, so no local heuristic can be perfect, and always-chaining
-        (the alternative) corrupts the common first-message-edit feature -- the
-        worse trade. A stronger legacy fingerprint (e.g. "conversation contains
-        a NULL-parent ASSISTANT row") is a filed follow-up.
+        task-572 strengthens the fingerprint for the all-USER root set: a
+        DEGENERATE legacy conversation whose 2+ user turns each got NO
+        assistant reply (reachable in the flat era via repeated
+        failed/blocked sends) also loads as all-USER roots -- but its roots
+        are ALL CHILDLESS, whereas a genuine first-message edit-&-resend
+        fork always hangs at least one reply subtree under a root (the
+        anchor's old tail, and/or the resent branch's own reply). So an
+        all-USER root set is chained when every root is childless, and left
+        alone when any root has a subtree.
+
+        RESIDUAL EDGE (not airtight, narrower than the pre-task-572 gap): a
+        genuine first-message fork whose BOTH branches ended up childless --
+        the anchor never got a reply AND the resent branch's reply never
+        persisted (killed mid-stream before the first flushed chunk) -- is
+        indistinguishable from degenerate legacy and now chains. Non-data-
+        loss (both user rows stay visible, linearly), and strictly rarer
+        than the all-USER-legacy shape this fixes; the two shapes are
+        provably indistinguishable from the persisted tree alone, so no
+        local heuristic can be perfect.
 
         Roots are chained in their existing insertion order, which is the DB's
         timestamp-ASC order (``get_root_messages_for_conversation`` orders roots
@@ -2527,12 +2534,18 @@ class ConsoleChatStore:
         if len(roots) <= 1:
             return
         nodes = self._nodes_by_session.get(session_id, {})
-        root_roles = {nodes[root_id].role for root_id in roots if root_id in nodes}
-        if len(root_roles) <= 1:
-            # Every root-level node shares one role: a genuine Phase-B
-            # root-level branch (all USER), not legacy flat data (which
-            # always mixes USER and ASSISTANT rows at the root). Leave each
-            # root independently navigable via `siblings_at`/`set_active_leaf`.
+        root_has_assistant = any(
+            nodes[root_id].role is ConsoleMessageRole.ASSISTANT
+            for root_id in roots
+            if root_id in nodes
+        )
+        all_roots_childless = all(not children.get(root_id) for root_id in roots)
+        if not root_has_assistant and not all_roots_childless:
+            # All-USER roots with at least one reply subtree: a genuine
+            # Phase-B root-level fork (an ASSISTANT node's parent is never
+            # None, so any root assistant row is the legacy signature; and a
+            # real fork always carries a subtree). Leave each root
+            # independently navigable via `siblings_at`/`set_active_leaf`.
             return
         # Keep only the first root under None; chain the rest onto their
         # predecessor, preserving each root's own existing subtree.
