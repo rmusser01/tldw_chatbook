@@ -22,7 +22,6 @@
 #########################################
 
 import json
-import sqlite3
 import threading
 import time
 from contextlib import closing, contextmanager
@@ -75,9 +74,24 @@ class SubscriptionsDB(BaseDB):
         self._local = threading.local()
         super().__init__(db_path, client_id)
 
+    @contextmanager
+    def _schema_initialization_connection(self):
+        """Close file-backed schema handles while retaining in-memory state."""
+        conn = self._get_connection()
+        try:
+            yield conn
+        except BaseException:
+            conn.close()
+            raise
+        else:
+            if self.is_memory_db:
+                self._local.conn = conn
+            else:
+                conn.close()
+
     def _initialize_schema(self):
         """Initialize the database schema."""
-        with closing(self._get_connection()) as conn:
+        with self._schema_initialization_connection() as conn:
             conn.executescript("""
             PRAGMA foreign_keys = ON;
             

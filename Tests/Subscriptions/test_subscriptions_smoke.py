@@ -56,6 +56,49 @@ def test_subscriptions_db_closes_schema_initialization_connection(
 
 
 @pytest.mark.unit
+def test_subscriptions_db_retains_in_memory_schema_until_close():
+    db = SubscriptionsDB(":memory:")
+    try:
+        assert db.get_all_subscriptions() == []
+        assert db.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'subscriptions'"
+        ).fetchone()
+    finally:
+        db.close()
+
+    assert db._local.conn is None
+
+
+@pytest.mark.unit
+def test_subscriptions_db_closes_in_memory_connection_when_schema_init_fails(
+    monkeypatch,
+):
+    connections = []
+    original_connect = base_db_module.sqlite3.connect
+
+    def tracked_connect(*args, **kwargs):
+        conn = _TrackedConnection(original_connect(*args, **kwargs))
+        connections.append(conn)
+        return conn
+
+    def fail_watchlists_schema(_self, _conn=None):
+        raise RuntimeError("schema extension failed")
+
+    monkeypatch.setattr(base_db_module.sqlite3, "connect", tracked_connect)
+    monkeypatch.setattr(
+        SubscriptionsDB,
+        "_ensure_watchlists_schema",
+        fail_watchlists_schema,
+    )
+
+    with pytest.raises(RuntimeError, match="schema extension failed"):
+        SubscriptionsDB(":memory:")
+
+    assert connections
+    assert all(connection.closed for connection in connections)
+
+
+@pytest.mark.unit
 def test_subscriptions_db_basic_add_and_list():
     # Use a temporary sqlite file to avoid thread issues with ':memory:'
     with tempfile.TemporaryDirectory() as tmpdir:
