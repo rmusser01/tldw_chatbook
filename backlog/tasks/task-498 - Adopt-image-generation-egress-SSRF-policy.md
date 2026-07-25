@@ -1,11 +1,11 @@
 ---
 id: TASK-498
 title: >-
-  Port image-generation egress/SSRF protections from tldw_server
+  Adopt image-generation egress/SSRF policy (Utils/egress.py)
 status: To Do
 assignee: []
 created_date: '2026-07-22 11:32'
-updated_date: '2026-07-24 13:30'
+updated_date: '2026-07-24 16:45'
 labels:
   - image-generation
   - security
