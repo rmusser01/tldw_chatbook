@@ -2049,9 +2049,16 @@ class ConsoleChatController:
             )
             # Preserve whatever was assembled before the failure so the viewer
             # still sees the transcript-derived payload and effective system
-            # prompt rather than an empty placeholder.
+            # prompt rather than an empty placeholder. A failure inside the
+            # annotate->strip window leaves the private id-threading key on the
+            # assembled rows, so strip it here too (Qodo, PR #860).
             degraded_messages = self._replace_image_data_with_placeholders(
-                self._redact_secrets(provider_messages)
+                self._redact_secrets(
+                    [
+                        {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
+                        for row in provider_messages
+                    ]
+                )
             )
             degraded_system = self._redact_secrets(self._leading_system_message())
             return ConsoleContextSnapshot(

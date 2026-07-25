@@ -2418,6 +2418,13 @@ async def test_build_context_snapshot_isolates_assembly_errors():
     assert payload["messages"][0]["content"] == "Hello"
     assert payload["messages"][1]["content"].startswith("Follow up")
     assert payload["system"] == []
+    # Qodo (PR #860): the failure here fires inside the annotate->strip
+    # window, so the degraded payload must strip the private id-threading
+    # key too -- it must never surface in the inspector snapshot.
+    assert all(
+        controller_module.NATIVE_MESSAGE_ID_KEY not in row
+        for row in payload["messages"]
+    )
 
 
 def test_annotate_skill_commands_multimodal_text_part():
