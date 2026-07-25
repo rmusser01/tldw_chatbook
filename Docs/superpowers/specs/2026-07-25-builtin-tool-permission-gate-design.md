@@ -44,23 +44,32 @@ def risk_tags(self) -> tuple[str, ...]:
 
 P1 tags nothing: calculator and datetime are read-only and stay untagged. The mutating tools that get `("mutates",)` arrive in P2.
 
-### 2. Built-in → HubTool adapter
+### 2. Built-in tool reference — a distinct namespace, not `HubTool`
 
-A pure function mapping a built-in `Tool` onto the frozen `HubTool` dataclass:
+**`builtin:tldw_chatbook` is already taken and must NOT be reused.** It is a live server key with a defined constant (`MCP/readiness.py:263` `BUILTIN_SERVER_KEY`), produced by `hub_tool_catalog.builtin_tools_from_inventory` (`:144`) from the built-in MCP server's own inventory, and routed for execution by `unified_control_plane_service.py:2199` (`normalized_key.startswith("builtin:")`). Filing agent-runtime built-ins under it would put **two different execution paths under one permission identity**: a user's decision about the built-in *MCP server's* `write_file` would silently govern the agent-runtime `write_file` (and vice versa) once P2 lands overlapping names. That is a security-relevant conflation, not a cosmetic clash.
 
+P1 uses the distinct key **`agent:builtin`** — a prefix none of MCP's three routing labels (`local:`, `builtin:`, `server:`) claims, so it can never be picked up by the hub's execution router.
+
+**And it does not reuse `HubTool`.** Since `resolve_builtin_state` (§3) is a new function, it defines its own minimal parameter type rather than borrowing MCP's hub model:
+
+```python
+@dataclass(frozen=True)
+class GatedToolRef:
+    server_key: str          # "agent:builtin"
+    name: str
+    description: str
+    input_schema: dict | None
+    tags: tuple[str, ...]
 ```
-server_key="builtin:tldw_chatbook", server_label="Built-in", source="builtin",
-name=tool.name, description=tool.description,
-input_schema=tool.parameters, tags=tool.risk_tags,
-stale=False, executable=True
-```
+
+This avoids three problems with the `HubTool` route: abusing its documented `source` enum (`local|builtin|server`) for a fourth kind, importing MCP's hub model into the tools/agent layer, and inheriting constraints (`_MAX_TAGS`, `stale`/`executable` fields) that mean nothing for in-process tools. The adapter maps `name`/`description`/`parameters`/`risk_tags` off the built-in `Tool` — `Tool.parameters` is already an abstract property returning a JSON-schema `dict`, so it drops straight into `input_schema`.
 
 ### 3. Resolution: allow-floor + risk flooring, no hash
 
 **A new resolver, not a parameter on the existing one.** `resolve_effective_state` walks tool override → server default → **MCP global default** and compares a stored `definition_hash`. Built-ins need a different floor and no hash, so P1 adds a sibling to `MCP/permission_store.py`:
 
 ```python
-def resolve_builtin_state(payload: dict[str, Any], tool: HubTool) -> EffectiveToolState
+def resolve_builtin_state(payload: dict[str, Any], tool: GatedToolRef) -> EffectiveToolState
 ```
 
 It mirrors `resolve_effective_state`'s precedence walk and reuses its risk-flooring logic verbatim, substituting the built-in floor and omitting the hash step. A separate function rather than an optional argument keeps the MCP path byte-identical and avoids adding a conditional branch inside a security-critical resolver.
@@ -109,6 +118,12 @@ BuiltinToolProvider(gate: BuiltinGate | None = None)
 
 `gate=None` means "build the real gate lazily on first use" (importing `MCP/` inside the function, not at module scope, to avoid a startup-cost and circular-import hazard) — **not** "ungated". A bare `BuiltinToolProvider()`, which is how it is constructed today at `console_agent_bridge.py:756-757` and `:865`, must therefore be gated by default; tests inject an explicit permissive or scripted gate. Taking the whole `Tool` (not just its name) lets the adapter read `description`/`parameters`/`risk_tags` without a second lookup.
 
+**Permission state is available without MCP configured** — verified: `app.py:4720` constructs `self.unified_mcp_service = UnifiedMCPControlPlaneService(...)` unconditionally at app init, not behind any MCP-config check, so the store, kill switch, and session approvals all work for a user with zero MCP servers. (This is the trap that §4 describes for the review hook; the gate deliberately does not repeat it.)
+
+The service can still be *absent* — callers read it as `getattr(self.app, "unified_mcp_service", None)` (`console_chat_controller.py:918`, `:1032`), which is `None` in headless and some test contexts. Required behavior when there is no service: resolve against an **empty payload**, i.e. fall to the built-in floor with risk flooring intact. Untagged tools run (preserving today's behavior in tests and headless runs); `"mutates"` tools land on `ask`, which with no approval route fails closed per §5. A missing service must never be read as "allow everything".
+
+**Resolution happens once per turn, not once per call.** `MCPPermissionStore.load()` does a `path.read_text()` + `json.loads()` with no caching (`permission_store.py:162-183`), so gating inside `invoke` alone would add a JSON file read to every tool call, on the worker thread, inside the task-327 timeout wrapper. The review hook resolves the turn's calls in one pass and stamps the verdicts — mirroring how MCP already batches via `effective_tool_states` and `apply_batch_decisions`. `invoke`'s own resolution is the defense-in-depth fallback for calls that arrive unstamped, not the primary path.
+
 ### 6. Session-scoped decisions only
 
 P1 offers **approve-once** and **approve-for-session** (`UnifiedMCPControlPlaneService.approve_for_session` / `is_session_approved`). It does **not** write persistent allow/deny for built-ins.
@@ -138,7 +153,10 @@ In P1 this is unreachable (nothing resolves to `ask`). P1's required behavior: a
 ## Acceptance criteria
 
 - [ ] `Tool` ABC exposes a concrete `risk_tags` property defaulting to `()`; no existing subclass breaks.
-- [ ] A built-in tool resolves through `resolve_effective_state` via a `HubTool` adapter using `server_key="builtin:tldw_chatbook"`, with precedence tool override → server default → built-in `allow` floor, and **no** definition-hash comparison.
+- [ ] A built-in tool resolves through `resolve_builtin_state` via a `GatedToolRef` using `server_key="agent:builtin"`, with precedence tool override → server default → built-in `allow` floor, and **no** definition-hash comparison.
+- [ ] No built-in permission entry is ever written or read under `builtin:tldw_chatbook`; a test asserts the two namespaces stay disjoint (a decision recorded for the built-in MCP server's tool of the same name does not affect the agent-runtime tool, and vice versa).
+- [ ] With no `unified_mcp_service` available, untagged tools still execute and `"mutates"` tools fail closed — a missing service is never treated as allow-everything.
+- [ ] Turn-level resolution: a run executing N built-in calls in one turn performs at most one permission-store load, verified by counting loads.
 - [ ] An untagged built-in (calculator, datetime) resolves to `allow` and executes with no prompt — verified as a no-behavior-change test.
 - [ ] A tool tagged `"mutates"` has its inherited allow floored to `ask` (`risk_floored=True`).
 - [ ] `BuiltinToolProvider.invoke` blocks execution when the kill switch is on, when the resolved state is `deny`, and when the state is `ask` with no approval route — each returning `ToolResult(ok=False, ...)`, never raising.
