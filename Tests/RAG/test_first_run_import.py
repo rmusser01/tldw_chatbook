@@ -222,3 +222,156 @@ def test_first_run_import_runs_before_shared_service_lock_is_held(
     ii.get_shared_rag_service()  # no service pre-injected: exercises the real fast-path+lock flow up to construction
 
     assert acquired == [True]  # lock was free (not self-deadlocked) when the wiring call ran
+
+
+# --- Task-495: merge legacy query-time keys into the first-run snapshot --
+
+
+def _wire_legacy_rag_config(monkeypatch, rag_section):
+    """Monkeypatch active_config.get_cli_setting so
+    get_cli_setting("AppRAGSearchConfig", "rag", {}) resolves to `rag_section`
+    (shaped like the raw [AppRAGSearchConfig.rag.<subsection>].<key> TOML
+    tree), independent of whatever the test-bootstrap config on disk has."""
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
+    def _fake_get_cli_setting(section, key=None, default=None):
+        if section == "AppRAGSearchConfig" and key == "rag":
+            return rag_section
+        return default
+
+    monkeypatch.setattr(ac, "get_cli_setting", _fake_get_cli_setting, raising=False)
+
+
+def test_imported_profile_preserves_hand_set_legacy_query_time_keys(monkeypatch, tmp_path):
+    """AC #1: hand-set legacy query-time keys (top_k, score_threshold,
+    citations, reranking) from [AppRAGSearchConfig.rag.search] /
+    [AppRAGSearchConfig.rag.processor] survive into the imported profile
+    instead of being silently discarded."""
+    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    _wire_legacy_rag_config(monkeypatch, {
+        "search": {"default_top_k": 25, "score_threshold": 0.42, "include_citations": False},
+        "processor": {"enable_reranking": True, "reranker_model": "cross-encoder/legacy", "reranker_top_k": 7},
+    })
+
+    new_id = ensure_imported_profile()
+
+    imported_profile = mgr.get_profile(new_id)
+    imported = imported_profile.rag_config
+    assert imported.search.default_top_k == 25
+    assert imported.search.score_threshold == 0.42
+    assert imported.search.include_citations is False
+    assert imported.search.enable_reranking is True
+    assert imported.search.reranker_model == "cross-encoder/legacy"
+    assert imported.search.reranker_top_k == 7
+    # PR #874 Qodo finding 2: rag_factory.create_rag_service() decides
+    # reranking enablement from `profile.reranking_config is not None`
+    # (rag_factory.py:65), NOT `rag_config.search.enable_reranking` -- that
+    # field only mirrors for UI display (see settings_rag_profile_adapter.py
+    # apply_defaults_to_profile). A legacy user with reranking enabled must
+    # therefore also get a populated `reranking_config`, or reranking stays
+    # silently OFF for them after import despite `search.enable_reranking`
+    # being True above.
+    assert imported_profile.reranking_config is not None
+    assert imported_profile.reranking_config.model_name == "cross-encoder/legacy"
+    assert imported_profile.reranking_config.top_k_to_rerank == 7
+
+
+def test_imported_profile_reranking_config_absent_when_legacy_reranking_unset(monkeypatch, tmp_path):
+    """No legacy `enable_reranking` key set -> no `reranking_config` is
+    fabricated (mirrors today's "nothing to merge" behavior for the other
+    legacy keys)."""
+    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    _wire_legacy_rag_config(monkeypatch, {
+        "search": {"default_top_k": 25},
+    })
+
+    new_id = ensure_imported_profile()
+
+    assert mgr.get_profile(new_id).reranking_config is None
+
+
+def test_imported_profile_reranking_config_keeps_model_default_when_legacy_model_blank(monkeypatch, tmp_path):
+    """Legacy reranking enabled but no `reranker_model` hand-set -> the
+    fabricated `RerankingConfig`'s `model_name` keeps its own default rather
+    than being stomped with an empty/missing value (same "blank means leave
+    alone" convention as `apply_defaults_to_profile`)."""
+    from tldw_chatbook.RAG_Search.reranker import RerankingConfig
+    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    _wire_legacy_rag_config(monkeypatch, {
+        "processor": {"enable_reranking": True, "reranker_top_k": 12},
+    })
+
+    new_id = ensure_imported_profile()
+
+    imported_profile = mgr.get_profile(new_id)
+    assert imported_profile.reranking_config is not None
+    assert imported_profile.reranking_config.model_name == RerankingConfig().model_name
+    assert imported_profile.reranking_config.top_k_to_rerank == 12
+
+
+def test_imported_profile_fingerprint_invariant_with_legacy_query_keys_set(monkeypatch, tmp_path):
+    """AC #2 (verbatim): with those same legacy query-time keys set, the
+    imported profile's fingerprint still equals the fingerprint of the
+    unmodified built-in base (SP1's adopted legacy-collection fingerprint) --
+    merging query-time-only fields must never move the fingerprint."""
+    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, resolve_active_rag_config
+    from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import fingerprint_collection
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    _wire_legacy_rag_config(monkeypatch, {
+        "search": {"default_top_k": 25, "score_threshold": 0.42, "include_citations": False},
+        "processor": {"enable_reranking": True, "reranker_model": "cross-encoder/legacy", "reranker_top_k": 7},
+    })
+    # Captured BEFORE ensure_imported_profile() repoints the active pointer --
+    # same ordering rationale as test_imported_fingerprint_matches_sp1_adoption.
+    pre_fp = fingerprint_collection(resolve_active_rag_config())
+
+    new_id = ensure_imported_profile()
+
+    imported_fp = fingerprint_collection(mgr.get_profile(new_id).rag_config)
+    assert imported_fp == pre_fp
+
+
+def test_imported_profile_unchanged_when_no_legacy_keys_set(monkeypatch, tmp_path):
+    """No hand-set legacy keys -> the imported snapshot is byte-equal to
+    today's plain resolve_active_rag_config() capture (no regression when
+    there's nothing to merge)."""
+    from dataclasses import asdict
+    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, resolve_active_rag_config
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    _wire_legacy_rag_config(monkeypatch, {})
+    expected = resolve_active_rag_config()
+
+    new_id = ensure_imported_profile()
+
+    imported = mgr.get_profile(new_id).rag_config
+    assert asdict(imported) == asdict(expected)
+
+
+def test_imported_profile_does_not_merge_legacy_index_determining_keys(monkeypatch, tmp_path):
+    """Legacy embedding/chunking/distance_metric keys must NEVER be merged
+    (that would move the fingerprint and orphan the legacy collection) --
+    only the allow-listed query-time keys are eligible, and the fingerprint
+    stays equal to the unmodified built-in base's even when those
+    index-determining legacy keys are hand-set."""
+    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, resolve_active_rag_config
+    from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import fingerprint_collection
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    _wire_legacy_rag_config(monkeypatch, {
+        "embedding": {"model": "legacy-embedding-model", "max_length": 9999},
+        "chunking": {"chunk_size": 1, "chunk_overlap": 0},
+        "vector_store": {"distance_metric": "l2"},
+        "search": {"default_top_k": 25},
+    })
+    pre_fp = fingerprint_collection(resolve_active_rag_config())
+
+    new_id = ensure_imported_profile()
+
+    imported = mgr.get_profile(new_id).rag_config
+    assert imported.embedding.model != "legacy-embedding-model"
+    assert imported.chunking.chunk_size != 1
+    assert imported.vector_store.distance_metric != "l2"
+    assert imported.search.default_top_k == 25  # query-time key still merged
+    assert fingerprint_collection(imported) == pre_fp

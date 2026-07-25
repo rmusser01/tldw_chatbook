@@ -19,9 +19,22 @@ from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from .config import RAGConfig, _normalized_type_setting
 from ..config_profiles import get_profile_manager, ProfileConfig, _slugify
 from ..ingestion_indexing import reset_shared_rag_service
+from ..reranker import RerankingConfig
 
 DEFAULT_PROFILE = "hybrid_basic"
 _IMPORTED_ID = "imported_settings"
+
+# Legacy TOML keys (task-495): non-index-determining query-time settings a
+# user may have hand-set under the deprecated [AppRAGSearchConfig.rag.search]
+# / [AppRAGSearchConfig.rag.processor] sections. These are the ONLY legacy
+# keys ever merged into the first-run "Imported settings" snapshot -- NONE of
+# embedding.model/max_length, any chunking.* field, or vector_store.
+# distance_metric (collection_fingerprint._index_fields' exhaustive input
+# set) are read here, so merging can never move
+# collection_fingerprint.fingerprint_collection()'s output away from what
+# SP1 adopts the legacy collection under.
+_LEGACY_SEARCH_KEYS = ("default_top_k", "score_threshold", "include_citations")
+_LEGACY_PROCESSOR_KEYS = ("enable_reranking", "reranker_model", "reranker_top_k")
 
 
 def _manager():
@@ -185,11 +198,92 @@ def set_active_profile(profile_id: str) -> None:
     reset_shared_rag_service()
 
 
+def _hand_set_legacy_query_time_keys() -> dict:
+    """Allow-listed query-time keys the user literally set in the deprecated
+    [AppRAGSearchConfig.rag.search] / [AppRAGSearchConfig.rag.processor]
+    TOML sections.
+
+    "Hand-set" means present as a key in the raw loaded config dict -- NOT
+    "differs from the dataclass default". An explicit value that happens to
+    equal the default is still honored; an absent key is never synthesized
+    from a default. Only keys in `_LEGACY_SEARCH_KEYS` / `_LEGACY_PROCESSOR_
+    KEYS` are ever considered (see their docstring for why: they're exactly
+    the non-index-determining fields).
+
+    Returns:
+        Dict of `{SearchConfig field name: value}` for every allow-listed
+        key present in the user's config; empty when none are set or the
+        legacy section can't be read (never raises).
+    """
+    try:
+        rag_section = get_cli_setting("AppRAGSearchConfig", "rag", {}) or {}
+        if not isinstance(rag_section, dict):
+            return {}
+    except Exception as e:
+        logger.debug(f"Could not read legacy AppRAGSearchConfig.rag section: {e}")
+        return {}
+
+    found: dict = {}
+    search = rag_section.get("search")
+    if isinstance(search, dict):
+        for key in _LEGACY_SEARCH_KEYS:
+            if key in search:
+                found[key] = search[key]
+    processor = rag_section.get("processor")
+    if isinstance(processor, dict):
+        for key in _LEGACY_PROCESSOR_KEYS:
+            if key in processor:
+                found[key] = processor[key]
+    return found
+
+
+def _merge_legacy_query_time_keys(config: RAGConfig) -> dict:
+    """Merge hand-set legacy query-time keys onto `config.search`, in place.
+
+    Only ever called from ensure_imported_profile()'s one-time first-run
+    snapshot -- this is a migration convenience, not part of the ongoing
+    resolve_active_rag_config() resolution path (legacy AppRAGSearchConfig.
+    rag.* value keys are otherwise dead per the module docstring above).
+
+    Args:
+        config: The RAGConfig to mutate (the first-run snapshot).
+
+    Returns:
+        The dict of hand-set legacy keys that were found (possibly empty),
+        so callers that need to act on a key `SearchConfig` alone can't
+        represent (e.g. reranking presence -- see `ensure_imported_profile`)
+        don't have to re-read the legacy TOML section a second time.
+    """
+    legacy = _hand_set_legacy_query_time_keys()
+    for key, value in legacy.items():
+        try:
+            setattr(config.search, key, value)
+        except Exception as e:
+            logger.debug(f"Could not apply legacy query-time key {key}={value!r}: {e}")
+    return legacy
+
+
 def ensure_imported_profile() -> Optional[str]:
     """On first run, capture the currently-resolved RAG config into a writable
     'Imported settings' profile and set it active. Idempotent (returns None if it
     already exists). The captured config's SP1 fingerprint matches what SP1 adopts
     the legacy collection under, so the user keeps their index on upgrade.
+
+    Also merges (task-495) any hand-set, non-index-determining legacy
+    query-time keys from the deprecated [AppRAGSearchConfig.rag.search] /
+    [AppRAGSearchConfig.rag.processor] TOML sections (top_k, score_threshold,
+    citations, reranking) onto the snapshot, so a user's query-time tuning
+    survives the import instead of being silently discarded. See
+    `_merge_legacy_query_time_keys` / `_LEGACY_SEARCH_KEYS`.
+
+    Legacy reranking enablement additionally populates the new profile's
+    `reranking_config` (not just `rag_config.search.enable_reranking`):
+    `rag_factory.create_rag_service()` decides reranking enablement from
+    `profile.reranking_config is not None` -- `search.enable_reranking` is
+    UI-display-only and ignored by the live service (see
+    `settings_rag_profile_adapter.py`'s `apply_defaults_to_profile`, the
+    established convention this mirrors). Without this, a legacy user with
+    reranking enabled would silently end up with it OFF after import.
 
     Self-healing: existence of the profile is not enough to consider first-run
     import "done" -- if a previous run persisted the profile but failed before
@@ -216,10 +310,26 @@ def ensure_imported_profile() -> Optional[str]:
             return None
         # Snapshot the resolved config (active pointer may name a builtin default today).
         snapshot = resolve_active_rag_config()
+        # task-495: preserve a user's hand-tuned, non-index-determining
+        # query-time legacy keys instead of silently discarding them --
+        # never affects the fingerprint (see _LEGACY_SEARCH_KEYS docstring).
+        legacy = _merge_legacy_query_time_keys(snapshot)
         profile = ProfileConfig(id=_IMPORTED_ID, name="Imported settings",
                                 description="Snapshot of your active RAG profile (plus any RAG_* env "
                                             "overrides) captured on first run; edit freely.",
                                 profile_type="custom", rag_config=snapshot)
+        if legacy.get("enable_reranking"):
+            # Presence, not the mirrored search.enable_reranking flag, is
+            # what actually turns reranking on for the live service (see the
+            # docstring above) -- fabricate reranking_config here so a
+            # legacy user's setting actually takes effect post-import.
+            profile.reranking_config = RerankingConfig()
+            reranker_model = legacy.get("reranker_model")
+            if reranker_model:
+                profile.reranking_config.model_name = reranker_model
+            reranker_top_k = legacy.get("reranker_top_k")
+            if reranker_top_k is not None:
+                profile.reranking_config.top_k_to_rerank = int(reranker_top_k)
         mgr.save_profile(profile)
         set_active_profile(_IMPORTED_ID)
         return _IMPORTED_ID
