@@ -1342,6 +1342,16 @@ class ConsoleChatStore:
         A visited-set guards against a malformed cyclic parent chain (real
         DBs can't produce one -- unique PKs -- so this is defensive-only,
         mirroring ``_nearest_persisted_ancestor_id``).
+
+        Args:
+            session_id: Native Console session ID.
+
+        Returns:
+            Native message ids on the active path, ordered root first and
+            active leaf last; empty when the session has no active leaf.
+
+        Raises:
+            KeyError: If the session is unknown.
         """
         self._session_or_raise(session_id)
         ids: list[str] = []
