@@ -60,6 +60,9 @@ five-second connect and 600-second overall synthesis timeouts, and positive
 bounds for input characters, response bytes, metadata bytes, catalog models,
 voices per model, and identifier characters. It has no environment override,
 authentication, path, binary, `server.json`, or process-management field.
+Invalid configuration fails locally with a safe, value-independent
+`ValueError` before a provider operation; the external adapter does not emit
+the reserved provider-neutral `configuration_invalid` code.
 
 The external native adapter has five operations: `ensure_ready()`,
 `get_catalog(refresh=False)`, `get_voices(model_id, refresh=False)`,
@@ -168,9 +171,13 @@ policy, and a cross-module interface.
   as uncompressed PCM16 WAV before it is exposed as one asynchronous response
   chunk. This preserves the async-stream interface without claiming
   incremental streaming.
-- Complete-response synthesis uses a connection deadline and an overall
-  synthesis deadline, but no read-inactivity deadline that could abort quiet
-  native inference before the WAV response begins.
+- `connect_timeout_seconds` configures HTTP connection establishment and also
+  provides one overall deadline around required health-plus-models discovery,
+  including an eligible safe-GET retry, plus one independent overall deadline
+  for each optional voice-discovery operation.
+- Complete-response synthesis uses that HTTP connection timeout and its own
+  overall synthesis deadline, but no read-inactivity deadline that could abort
+  quiet native inference before the WAV response begins.
 - Default safety bounds are 10,000 input characters and 128 MiB of response
   data; both remain configurable.
 - Server default is the initial voice selection because audio.cpp's configured

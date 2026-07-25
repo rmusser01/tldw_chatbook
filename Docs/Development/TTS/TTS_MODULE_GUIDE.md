@@ -101,7 +101,17 @@ max_identifier_characters = 256
 non-root paths, query strings, fragments, and invalid ports are rejected. The
 configuration has no environment override, authentication or custom-header
 field, binary path, `server.json` path, or other process field. HTTPS keeps
-certificate verification enabled.
+certificate verification enabled. Invalid configuration is rejected during
+local projection or adapter materialization with a safe, value-independent
+`ValueError`, before any provider operation; the external adapter does not emit
+`configuration_invalid`.
+
+`connect_timeout_seconds` configures HTTP connection establishment and also
+bounds the complete required health-plus-models discovery sequence, including
+an eligible safe-GET retry. The same value independently bounds each optional
+voice-discovery operation. `synthesis_timeout_seconds` bounds the speech request
+through complete response consumption; the HTTP connect timeout still applies
+inside it. There is no read-inactivity timer.
 
 The adapter implements the pinned `audio_cpp_http_v1` structure from
 audio.cpp commit
@@ -132,11 +142,12 @@ Validated bytes are then yielded as one asynchronous chunk. The asynchronous
 stream contract is preserved, but Slice 2 does not provide incremental audio
 streaming.
 
-Errors expose only a stable code, safe message, retryability, local operation
-ID, and optional recovery action. Connectivity and required-contract failures
-make cached health stale; invalid requests, optional voice failures, busy
-responses, generation failures, invalid audio, and cancellation do not.
-There is no automatic fallback to another model or a legacy provider.
+Provider operation errors expose only a stable code, safe message,
+retryability, local operation ID, and optional recovery action. Connectivity
+and required-contract failures make cached health stale; invalid requests,
+optional voice failures, busy responses, generation failures, invalid audio,
+and cancellation do not. There is no automatic fallback to another model or a
+legacy provider.
 Successful response metadata contains only safe scalar provenance, sample, and
 bounded timing values. Logs exclude submitted text, configured origins and
 values, response bodies, and rejected identifiers.

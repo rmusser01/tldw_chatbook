@@ -311,11 +311,16 @@ lengths are bounded separately so discovery cannot allocate unbounded memory.
 Longer content remains outside the external Playground slice and belongs in a
 chunked audiobook workflow after that flow adopts the adapter service.
 
-Because ordinary audio.cpp synthesis returns no response bytes until the WAV is
-complete, there is no read-inactivity timer. The five-second connect deadline
-covers connection establishment, while the 600-second overall synthesis
-deadline covers the request through complete bounded response consumption. An
-inactivity timer may be added only with true incremental streaming.
+`connect_timeout_seconds` has two bounded roles. It configures the HTTP
+client's connection-establishment timeout, and the adapter also uses it as one
+overall deadline around the required health-plus-models discovery sequence,
+including an eligible safe-GET retry, and as one independent overall deadline
+for each optional voice-discovery operation. Because ordinary audio.cpp
+synthesis returns no response bytes until the WAV is complete, there is no
+read-inactivity timer. `synthesis_timeout_seconds` bounds the speech request
+through complete response consumption; connection establishment within that
+operation remains subject to the HTTP client's connect timeout. An inactivity
+timer may be added only with true incremental streaming.
 
 ### Future managed configuration (Slices 4–5)
 
@@ -408,13 +413,17 @@ classified as incompatible.
 Voice discovery is lazy per selected model and cached by provider configuration
 revision, catalog revision, and model ID. Every successful authoritative model
 refresh increments the catalog revision and invalidates prior voice results,
-even when the model list is unchanged. Returned identifiers are used as opaque
-values and bounded, stripped of controls, and markup-escaped for display.
+even when the model list is unchanged. Identifiers that violate the length,
+surrounding-whitespace, or control/unsafe Unicode-category rules are rejected.
+Accepted opaque identifiers are preserved unchanged: Slice 2 neither strips
+nor escapes them. Future UI/display code must escape them at its rendering
+boundary.
 
-The server does not fully describe model controls or whether an unnamed default
-voice exists. audio.cpp models therefore use an `unknown` voice-omission policy.
-The UI offers a local "Server default" sentinel, translated to `voice=None`,
-plus discovered IDs. The sentinel is never sent as a literal voice value.
+The server does not identify which voice is its default, but omission semantics
+are explicit: audio.cpp model metadata sets
+`omit_voice_uses_server_default=True`. The future UI offers a local "Server
+default" sentinel, translated to `voice=None`, plus discovered IDs. The
+sentinel is never sent as a literal voice value.
 
 The provider catalog records upstream `mode`, but first-milestone client
 capabilities remain:
@@ -561,9 +570,8 @@ Core failures contain a stable code, safe message, retryability, a local
 non-sensitive operation ID, and an optional UI-neutral recovery action such as
 `open_settings`, `retry`, or `restart_managed`.
 
-The landed external adapter uses these stable operation codes:
+The landed external adapter emits these stable operation codes:
 
-- `configuration_invalid`
 - `connection_unavailable`
 - `contract_incompatible`
 - `not_configured`
@@ -573,6 +581,11 @@ The landed external adapter uses these stable operation codes:
 - `generation_failed`
 - `audio_response_invalid`
 - `generation_timeout`
+
+`configuration_invalid` remains reserved in the provider-neutral operation-code
+type, but Slice 2 does not emit it from an audio.cpp provider operation.
+Configuration projection and adapter materialization reject invalid local
+configuration first with a safe, value-independent `ValueError`.
 
 Cancellation propagates as cancellation, closes the HTTP operation, and is not
 rewritten or logged as a provider failure. Exclusive handoff reports the
