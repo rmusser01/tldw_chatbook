@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,7 @@ from .skill_trust_store import SkillTrustMarkerUnavailable, SkillTrustStore
 
 
 _SKILL_FILENAME = "SKILL.md"
+_SCRIPT_GRANTS_FILENAME = "skill_script_grants.json"
 
 
 def _now_iso() -> str:
@@ -537,6 +539,118 @@ class SkillTrustService:
             }
         )
         self.trust_store.save_manifest(manifest, keys, salt=self._require_salt())
+
+    def _script_grants_path(self) -> Path:
+        """Return the local-only script-grant sidecar path.
+
+        Deliberately a sibling of the trust manifest rather than a field
+        inside it: granting a run must never perturb the MAC'd fingerprint
+        material that trust review depends on.
+
+        Returns:
+            Path to the grant sidecar (may not exist yet).
+        """
+        return self.trust_store.store_dir / _SCRIPT_GRANTS_FILENAME
+
+    def _load_script_grants(self) -> dict[str, str]:
+        """Load the script-grant sidecar, tolerating absence or corruption.
+
+        Returns:
+            A mapping of normalized skill name to the fingerprint digest the
+            grant was pinned to. Empty when the sidecar is missing or unusable.
+        """
+        path = self._script_grants_path()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {
+            str(key): str(value)
+            for key, value in data.items()
+            if isinstance(key, str) and isinstance(value, str)
+        }
+
+    def _save_script_grants(self, grants: dict[str, str]) -> None:
+        """Atomically persist the script-grant sidecar.
+
+        Args:
+            grants: Mapping of normalized skill name to pinned fingerprint digest.
+        """
+        path = self._script_grants_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(grants, sort_keys=True), encoding="utf-8")
+        tmp_path.replace(path)
+
+    def current_fingerprint_digest(self, skill_name: str) -> str:
+        """Return the digest of a skill's live on-disk fingerprints.
+
+        Args:
+            skill_name: Skill name (normalized internally).
+
+        Returns:
+            The same digest value that invalidates a captured trust review,
+            so any content change also invalidates a script grant.
+        """
+        normalized = self._normalize_skill_name(skill_name)
+        return self._fingerprints_digest(self._scan_skill(normalized))
+
+    def script_grant_digest(self, skill_name: str) -> str | None:
+        """Return the fingerprint digest a script grant was pinned to.
+
+        Args:
+            skill_name: Skill name (normalized internally).
+
+        Returns:
+            The pinned digest, or None when no grant is recorded.
+        """
+        normalized = self._normalize_skill_name(skill_name)
+        return self._load_script_grants().get(normalized)
+
+    def grant_script_execution(self, skill_name: str) -> None:
+        """Record an 'always allow scripts' grant pinned to current content.
+
+        Args:
+            skill_name: Skill name (normalized internally).
+        """
+        normalized = self._normalize_skill_name(skill_name)
+        grants = self._load_script_grants()
+        grants[normalized] = self.current_fingerprint_digest(normalized)
+        self._save_script_grants(grants)
+
+    def revoke_script_execution(self, skill_name: str) -> None:
+        """Drop any standing script grant for a skill.
+
+        Args:
+            skill_name: Skill name (normalized internally).
+        """
+        normalized = self._normalize_skill_name(skill_name)
+        grants = self._load_script_grants()
+        if grants.pop(normalized, None) is not None:
+            self._save_script_grants(grants)
+
+    def script_execution_granted(self, skill_name: str) -> bool:
+        """Return whether scripts may run for this skill without a prompt.
+
+        The grant is honoured only while the skill's content still matches the
+        digest it was pinned to; any change (which already forces a trust
+        re-review) drops it back to per-run confirmation.
+
+        Args:
+            skill_name: Skill name (normalized internally).
+
+        Returns:
+            True only when a grant exists AND still matches live content.
+        """
+        granted = self.script_grant_digest(skill_name)
+        if not granted:
+            return False
+        try:
+            return granted == self.current_fingerprint_digest(skill_name)
+        except Exception:  # noqa: BLE001 — unreadable content ⇒ no grant
+            return False
 
     def _iter_skill_dirs(self) -> list[tuple[str, Path]]:
         if not self.skills_dir.exists():
