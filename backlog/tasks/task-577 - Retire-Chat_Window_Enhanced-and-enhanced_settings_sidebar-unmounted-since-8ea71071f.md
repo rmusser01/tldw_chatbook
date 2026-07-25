@@ -52,6 +52,18 @@ left in place for scope discipline):
   in source tcss (id rules were swept in task-562; class rules kept).
 - `chat_right_sidebar_width` reactive (`app.py` ~:2856) — zero readers/writers
   since `chat_events_sidebar_resize.py` was retired.
+- `_populate_chat_character_search_list` (chat_events.py ~:3376) — targets the
+  deleted sidebar's `#chat-character-search-results-list`; invoked on LIVE hot
+  paths (app.py watch_current_tab ~:8373; tab_initializers/chat_tab_initializer.py:52)
+  and fails its first query_one and logs an ERROR on every Chat-tab
+  switch/init — the retirement should remove the calls AND the helper
+  (live-path edit, deferred from task-562 for scope discipline).
+- `populate_chat_conversation_character_filter_select` (chat_events.py ~:4614)
+  — same family; one live caller (character_ingest_events.py:451) + one dead
+  caller (app.py ~:9130).
+- Two dead `@on(Collapsible.Toggled)` decorators: app.py ~:9089
+  (`#chat-active-character-info-collapsible`) and ~:9108 (`#chat-conversations`)
+  — ids composed only in the deleted settings_sidebar.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->

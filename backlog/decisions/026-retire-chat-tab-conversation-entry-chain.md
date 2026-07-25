@@ -59,3 +59,6 @@ enhanced_settings_sidebar (unmounted since 8ea71071f)".
 - Chat-tab conversation loading is officially a Console capability; any future
   "load a conversation in the Chat tab" feature request routes to the Console
   browser, not to a revived enhanced-window sidebar.
+- Post-implementation addendum (2026-07-25): final campaign total ~5,150 lines
+  removed once Unit 5+7 whole-file/CSS/reference reductions landed (the ~3,200
+  figure above was the pre-implementation Units 1-4/6 estimate).

@@ -42,7 +42,7 @@ dead button/input routers (`app.py` ~:6925/:9299/:9445 referencing
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 A product decision is recorded (task notes or decision doc): live Chat-tab conversation load/save/clone is either restored or explicitly retired in favor of the Console workspace — retired; see `backlog/decisions/026-retire-chat-tab-conversation-entry-chain.md`
-- [ ] #2 N/A — the "restored" branch was not chosen (AC #1 recorded the retire decision), so this criterion does not apply
+- [x] #2 N/A — the "restored" branch was not chosen (AC #1 recorded the retire decision), so this criterion does not apply
 - [x] #3 If retired: the dead handler chain (three handlers + tabs wrapper) and the residual dead right-sidebar surfaces listed in the description are removed, with tests updated and no live behavior regressed — zero deferrals across all four implementation commits (see Implementation Notes)
 <!-- AC:END -->
 

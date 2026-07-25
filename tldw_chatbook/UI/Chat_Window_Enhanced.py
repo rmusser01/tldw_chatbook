@@ -642,7 +642,6 @@ class ChatWindowEnhanced(Container):
         # Fallback to individual handlers for backwards compatibility
         core_handlers = {
             # "send-stop-chat" is handled by @on decorator, removed to avoid duplicate handling
-            "chat-new-temp-chat-button": chat_events.handle_chat_new_temp_chat_button_pressed,
             "chat-apply-template-button": chat_events.handle_chat_apply_template_button_pressed,
         }
 

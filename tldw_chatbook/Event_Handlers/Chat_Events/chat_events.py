@@ -2985,81 +2985,6 @@ async def handle_chat_action_button_pressed(
         await handle_respond_for_me_button_pressed(app, button_event)
 
 
-async def handle_chat_new_temp_chat_button_pressed(
-    app: "TldwCli", event: Button.Pressed
-) -> None:
-    """Handle New Temp Chat button - creates an ephemeral chat."""
-    loguru_logger.info("New Temp Chat button pressed.")
-    try:
-        # Try to find chat-log in the current screen/chat window context
-        try:
-            chat_log_widget = app.screen.query_one("#chat-log", VerticalScroll)
-        except QueryError:
-            try:
-                chat_window = app.screen.query_one("#chat-window")
-                chat_log_widget = chat_window.query_one("#chat-log", VerticalScroll)
-            except QueryError:
-                chat_log_widget = app.query_one("#chat-log", VerticalScroll)
-
-        # Properly clear existing widgets to prevent memory leak
-        existing_widgets = list(chat_log_widget.children)
-        for widget in existing_widgets:
-            # Clear image data references if they exist
-            if hasattr(widget, "image_data"):
-                widget.image_data = None
-            if hasattr(widget, "image_mime_type"):
-                widget.image_mime_type = None
-
-        await chat_log_widget.remove_children()
-
-        # Force garbage collection
-        import gc
-
-        gc.collect()
-    except QueryError:
-        loguru_logger.error("Failed to find #chat-log to clear.")
-
-    app.current_chat_conversation_id = None
-    app.current_chat_is_ephemeral = True
-    app.current_chat_active_character_data = None
-
-    try:
-        default_system_prompt = app.app_config.get("chat_defaults", {}).get(
-            "system_prompt", "You are a helpful AI assistant."
-        )
-        app.query_one("#chat-system-prompt", TextArea).text = default_system_prompt
-    except QueryError:
-        pass
-
-    try:
-        app.query_one("#chat-character-name-edit", Input).value = ""
-        app.query_one("#chat-character-description-edit", TextArea).text = ""
-        app.query_one("#chat-character-personality-edit", TextArea).text = ""
-        app.query_one("#chat-character-scenario-edit", TextArea).text = ""
-        app.query_one("#chat-character-system-prompt-edit", TextArea).text = ""
-        app.query_one("#chat-character-first-message-edit", TextArea).text = ""
-    except QueryError:
-        pass
-
-    try:
-        from .chat_token_events import update_chat_token_counter
-
-        await update_chat_token_counter(app)
-    except Exception:
-        pass
-
-    try:
-        app.query_one("#chat-conversation-title-input", Input).value = ""
-        app.query_one("#chat-conversation-keywords-input", TextArea).text = ""
-        app.query_one("#chat-conversation-uuid-display", Input).value = "Ephemeral Chat"
-        _update_console_session_title(app, None)
-        app.query_one("#chat-input", TextArea).focus()
-    except QueryError:
-        pass
-
-    app.notify("Created new temporary chat", severity="information")
-
-
 async def load_branched_conversation_history_ui(
     app: "TldwCli", target_conversation_id: str, chat_log_widget: VerticalScroll
 ) -> None:
@@ -4799,7 +4724,6 @@ CHAT_BUTTON_HANDLERS = {
     "send-chat": handle_chat_send_button_pressed,
     "respond-for-me-button": handle_respond_for_me_button_pressed,
     "stop-chat-generation": handle_stop_chat_generation_pressed,
-    "chat-new-temp-chat-button": handle_chat_new_temp_chat_button_pressed,
     "chat-prompt-load-selected-button": handle_chat_view_selected_prompt_button_pressed,
     "chat-prompt-copy-system-button": handle_chat_copy_system_prompt_button_pressed,
     "chat-prompt-copy-user-button": handle_chat_copy_user_prompt_button_pressed,

@@ -134,6 +134,8 @@ def test_task_562_conversation_entry_chain_retired():
         "handle_chat_load_character_button_pressed",
         "handle_chat_character_attribute_changed",
         "handle_chat_clear_active_character_button_pressed",
+        # Final-review fix — missed Unit-2-family handler
+        "handle_chat_new_temp_chat_button_pressed",
     ):
         assert not hasattr(chat_events, name), f"{name} was retired in task-562"
 
@@ -153,5 +155,7 @@ def test_task_562_conversation_entry_chain_retired():
         "chat-convert-to-note-button",
         "chat-load-character-button",
         "chat-clear-active-character-button",
+        # Final-review fix — missed Unit-2-family handler
+        "chat-new-temp-chat-button",
     ):
         assert button_id not in chat_events.CHAT_BUTTON_HANDLERS
