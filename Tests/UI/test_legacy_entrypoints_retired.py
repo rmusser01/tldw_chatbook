@@ -71,10 +71,27 @@ RETIRED_MODULES = (
     # anywhere in tldw_chatbook/ or Tests/ -- a standalone diagnostic tool
     # that was never wired into any live caller.
     "tldw_chatbook.Utils.chat_diagnostics",
-    # NOTE: chat_events.py, chat_events_sidebar.py, chat_streaming_events.py,
-    # and worker_handlers/chat_worker_handler.py retired in task-577 PR2 T3.
-    # Not folded into this tuple yet -- T4 owns the comprehensive guard-pin
-    # extension for the Phase 2 pipeline retirement.
+    # task-577 PR2 T3: the dead legacy chat pipeline. chat_events.py's
+    # keep-set was empty -- every external caller was dead (Phase 1) or died
+    # alongside it; chat_events_sidebar.py was an eager, module-level import
+    # of chat_events.py (CHAT_BUTTON_HANDLERS built from
+    # CHAT_SIDEBAR_BUTTON_HANDLERS at module scope) so it retires in lockstep;
+    # chat_streaming_events.py targeted #chat-log/#ccp-conversation-log,
+    # composed nowhere live; worker_handlers/chat_worker_handler.py's
+    # can_handle() claimed "API_Call_chat*"/"API_Call_ccp*"/
+    # "respond_for_me_worker" but every producer of those worker names lived
+    # in the deleted chat_events.py send flow. worker_events.py itself
+    # SURVIVES in reduced form -- it still defines chat_wrapper_function
+    # (the sole live path is app.chat_wrapper, reached by MediaWindow_v2's
+    # media-analysis flow and by conv_char_events.py's CCP generators) and
+    # the StreamingChunk/StreamingChunkWithLogits/StreamDone message classes,
+    # which are load-bearing internals of that kept function's stream-loop
+    # and exception branches -- see test_task_577_pr2_pipeline_retired below
+    # for the module-level pins on what worker_events keeps vs. drops.
+    "tldw_chatbook.Event_Handlers.Chat_Events.chat_events",
+    "tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar",
+    "tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events",
+    "tldw_chatbook.Event_Handlers.worker_handlers.chat_worker_handler",
 )
 
 RETIRED_FILES = (
@@ -123,6 +140,12 @@ RETIRED_FILES = (
     "tldw_chatbook/Utils/chat_diagnostics.py",
     "tldw_chatbook/Docs/CHAT_TABS_GUIDE.md",
     "tldw_chatbook/css/features/_chat_tabs.tcss",
+    # task-577 PR2 T3: the dead legacy chat pipeline (see the matching
+    # RETIRED_MODULES comment above for the per-file gate evidence).
+    "tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py",
+    "tldw_chatbook/Event_Handlers/Chat_Events/chat_events_sidebar.py",
+    "tldw_chatbook/Event_Handlers/Chat_Events/chat_streaming_events.py",
+    "tldw_chatbook/Event_Handlers/worker_handlers/chat_worker_handler.py",
 )
 
 CCP_HANDLER_FILES = (
@@ -234,3 +257,51 @@ def test_task_577_pr1_window_family_retired():
     # max_tabs -- T3) must not reappear in the packaged default config text.
     for key in ("use_enhanced_window", "enable_tabs", "max_tabs"):
         assert key not in config_module.CONFIG_TOML_CONTENT, key
+
+
+def test_task_577_pr2_pipeline_retired():
+    """task-577 PR2: the dead legacy chat pipeline must not return.
+
+    T3 deleted ``chat_events.py`` (empty keep-set), ``chat_events_sidebar.py``
+    (its sole importer, eagerly coupled at module scope), ``chat_streaming_events.py``
+    (targeted ``#chat-log``/``#ccp-conversation-log``, composed nowhere live),
+    and ``worker_handlers/chat_worker_handler.py`` (its ``can_handle()`` claims
+    -- ``API_Call_chat*``/``API_Call_ccp*``/``respond_for_me_worker`` -- had
+    every producer die with ``chat_events.py``).
+
+    ``worker_events.py`` is NOT in that list -- it SURVIVES in reduced form.
+    Its ``chat_wrapper_function`` is still the live target reached via
+    ``app.chat_wrapper``, whose remaining callers are ``MediaWindow_v2.py``'s
+    media-analysis flow and ``conv_char_events.py``'s CCP generators (out of
+    577 scope). The ``StreamingChunk``/``StreamingChunkWithLogits``/
+    ``StreamDone`` message classes are deliberately NOT pinned absent here --
+    they are load-bearing internals of the kept function's streaming-loop and
+    exception branches (adjudicated correct), not dead code. What IS
+    confirmed dead on the module is ``handle_api_call_worker_state_changed``,
+    whose chat-only claims died with the same worker names as
+    ``chat_worker_handler.py``.
+    """
+    from tldw_chatbook.Event_Handlers import worker_events
+
+    for module_name in (
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events",
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar",
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events",
+        "tldw_chatbook.Event_Handlers.worker_handlers.chat_worker_handler",
+    ):
+        assert _find_spec(module_name) is None, module_name
+
+    # worker_events.py stays importable and keeps its live media-analysis
+    # core (chat_wrapper_function); the chat-only worker-state-changed
+    # handler it used to carry is gone.
+    assert hasattr(worker_events, "chat_wrapper_function") is True
+    assert hasattr(worker_events, "handle_api_call_worker_state_changed") is False
+
+    # app.py no longer defines the write-only handler-map fabric (scout
+    # finding #3: zero readers, on_button_pressed no-ops in screen-nav mode).
+    # Source-grep style pin (mirrors CCP_HANDLER_FILES above) rather than
+    # hasattr(TldwCli, ...) -- instantiating the app is out of scope for this
+    # guard file.
+    app_source = (PROJECT_ROOT / "tldw_chatbook" / "app.py").read_text()
+    assert "def _build_handler_map" not in app_source
+    assert "self.button_handler_map" not in app_source

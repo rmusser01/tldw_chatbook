@@ -1,6 +1,8 @@
 # App.py Refactoring Plan v2.0
 ## Following Textual Best Practices - Corrected Version
 
+> (Describes surfaces retired in task-577, 2026-07; kept as historical record.)
+
 **Current State:** 5,857 lines, 176 methods, 65 reactive attributes  
 **Target State:** < 500 lines, < 20 methods, properly managed reactive state
 
