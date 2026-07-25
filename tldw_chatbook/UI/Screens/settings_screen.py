@@ -8216,6 +8216,19 @@ class SettingsScreen(BaseAppScreen):
         # panel's predicate could have flipped -- funnel through here rather
         # than duplicating a second fetch-and-toggle path.
         self._refresh_rag_first_run_panel_state()
+        # task-629: these SAME moments are also exactly when the active
+        # profile identity itself could have silently changed underneath
+        # this screen -- Backfill's get_shared_rag_service() call, on its
+        # first-ever invocation in the process, imports-and-activates the
+        # "Imported settings" profile as a side effect
+        # (ensure_imported_profile). Without this, the "Active: .../
+        # Editing: ..." rows and the editor card's border_title kept
+        # showing whatever was active at mount (e.g. "Hybrid Basic") until
+        # some UNRELATED direct profile action (Clone/Set active) next
+        # happened to resync them -- surfacing a profile name ("Imported
+        # settings") the user had never seen introduced, apparently out of
+        # nowhere.
+        self._refresh_library_rag_active_profile_identity_text()
 
     def _library_rag_cached_index_state(self) -> str:
         """The index-status row's OWN cached state string, or "unknown" when
@@ -8579,6 +8592,66 @@ class SettingsScreen(BaseAppScreen):
             return
         caption.display = visible
 
+    def _refresh_library_rag_active_profile_identity_text(self) -> None:
+        """Refresh ONLY the active-profile-NAME-bearing text (the "Active:
+        .../Editing: ..." rows and the editor card's border_title), without
+        touching the profile Select's value/options or the editor's field
+        values -- task-629.
+
+        Extracted out of ``_sync_library_rag_profile_widgets`` (which still
+        calls this first, preserving identical behaviour for its own
+        callers) so it can ALSO be called from completion paths that never
+        touch the Select but can still leave this text stale: specifically
+        ``_apply_library_rag_index_status`` (category-show / 't' test /
+        Backfill completion / set-active's index-status hop). Backfill in
+        particular calls ``get_shared_rag_service()``, whose first-ever call
+        in the process silently imports-and-activates the "Imported
+        settings" profile (``ensure_imported_profile``, see
+        ``RAG_Search/simplified/active_config.py``) as a side effect -- an
+        active-profile-pointer flip this screen previously had NO resync
+        path for until the user's NEXT direct profile action (e.g. Clone)
+        incidentally called ``_sync_library_rag_profile_widgets`` and
+        exposed the new name for the first time, out of nowhere.
+
+        Guarded by ``_rag_preview_profile_id`` for the caption/border_title
+        half only (never fights an in-progress PREVIEW's own "Previewing:
+        ..." title/banner) -- the "Active: ..." summary row and its
+        description are not preview-dependent and always reflect the true
+        active profile.
+        """
+        info = active_profile_info()
+        active_label = f"{info['name']} (built-in)" if info["read_only"] else info["name"]
+        self._set_static_text(
+            "#settings-library-rag-active-profile", f"Active: {active_label}"
+        )
+        try:
+            description_row = self.query_one(
+                "#settings-library-rag-active-profile-description", Static
+            )
+            description_row.update(info["description"])
+            description_row.display = bool(info["description"])
+        except QueryError:
+            pass
+        if self._rag_preview_profile_id is not None:
+            return
+        # UX review item 2 (decoupling caption): always names the ACTIVE
+        # profile, independent of select_override / whatever the Select is
+        # currently showing.
+        self._set_static_text(
+            "#settings-library-rag-editing-caption",
+            f"Editing: {info['name']}. Pick a profile and press 'Set active' "
+            "to edit a different one.",
+        )
+        # 541-v2 final review item 2: this resync always runs OUTSIDE a
+        # preview (see class docstring on `_rag_select_suppress_queue`), so
+        # unconditionally un-hide the caption here too -- covers the
+        # set-active/clone/rename/delete exit-preview paths, which clear
+        # `_rag_preview_profile_id` and call this method directly rather
+        # than routing back through `_sync_rag_editor_display` (which
+        # handles the "browsed back to the active profile" exit path).
+        self._set_library_rag_editing_caption_visible(True)
+        self._update_library_rag_editor_title()
+
     def _sync_library_rag_profile_widgets(
         self, *, select_override: str | None = None
     ) -> None:
@@ -8598,36 +8671,9 @@ class SettingsScreen(BaseAppScreen):
                 keep the pre-existing "always show the active profile"
                 behaviour (set-active/rename/delete/revert).
         """
+        self._refresh_library_rag_active_profile_identity_text()
         info = active_profile_info()
         grouped = list_profiles_grouped()
-        active_label = f"{info['name']} (built-in)" if info["read_only"] else info["name"]
-        self._set_static_text(
-            "#settings-library-rag-active-profile", f"Active: {active_label}"
-        )
-        try:
-            description_row = self.query_one(
-                "#settings-library-rag-active-profile-description", Static
-            )
-            description_row.update(info["description"])
-            description_row.display = bool(info["description"])
-        except QueryError:
-            pass
-        # UX review item 2 (decoupling caption): always names the ACTIVE
-        # profile, independent of select_override / whatever the Select is
-        # currently showing.
-        self._set_static_text(
-            "#settings-library-rag-editing-caption",
-            f"Editing: {info['name']}. Pick a profile and press 'Set active' "
-            "to edit a different one.",
-        )
-        # 541-v2 final review item 2: this resync always runs OUTSIDE a
-        # preview (see class docstring on `_rag_select_suppress_queue`), so
-        # unconditionally un-hide the caption here too -- covers the
-        # set-active/clone/rename/delete exit-preview paths, which clear
-        # `_rag_preview_profile_id` and call this method directly rather
-        # than routing back through `_sync_rag_editor_display` (which
-        # handles the "browsed back to the active profile" exit path).
-        self._set_library_rag_editing_caption_visible(True)
 
         options = self._library_rag_profile_select_options(grouped)
         valid_ids = {value for _, value in options}

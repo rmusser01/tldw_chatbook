@@ -3028,6 +3028,66 @@ async def test_normal_state_status_refresh_never_reopens_a_deliberately_collapse
 
 
 @pytest.mark.asyncio
+async def test_index_status_refresh_resyncs_stale_active_profile_identity_text(
+    monkeypatch, tmp_path
+):
+    """task-629 (live UAT Bug 3): Backfill's ``get_shared_rag_service()``
+    call, on its first-ever invocation in the process, silently imports and
+    ACTIVATES a new "Imported settings" profile as a side effect
+    (``ensure_imported_profile``, ``RAG_Search/simplified/active_config.py``)
+    -- an active-profile-pointer flip this screen has NO dedicated resync
+    path for. Before the fix, the "Active: .../Editing: ..." rows and the
+    editor card's border_title kept showing whatever was active at mount
+    ("Hybrid Basic") until an UNRELATED direct profile action (Clone/Set
+    active) next happened to call ``_sync_library_rag_profile_widgets`` and
+    exposed the new name for the first time -- exactly the "a third profile
+    name never shown anywhere in the UI up to that point" symptom from the
+    live UAT report. This simulates the flip landing via the SAME
+    ``_apply_library_rag_index_status`` completion path Backfill's own
+    worker calls, without needing the real (heavy) embeddings machinery."""
+    mgr, state = _wire_rag_profile_adapter_no_user_profiles(
+        monkeypatch, tmp_path, active_id="hybrid_basic"
+    )
+    _stub_index_status(monkeypatch, "absent")
+    # The exact real-world shape of ensure_imported_profile()'s side effect:
+    # a NEW writable profile appears, unrelated to anything the user did.
+    imported = mgr.clone_profile("hybrid_basic", "Imported settings")
+    mgr.save_profile(imported)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "Editing: Hybrid Basic." in _visible_text(screen)
+        assert "Active: Hybrid Basic (built-in)" in _visible_text(screen)
+
+        # Simulate the silent active-pointer flip a Backfill's first
+        # get_shared_rag_service() call performs mid-session, entirely
+        # independent of anything the profile Select or the user did.
+        state["active"] = imported.id
+
+        # Simulate the Backfill worker's completion landing (exactly what
+        # `_rag_backfill_worker`'s finally-block triggers today via
+        # `_refresh_library_rag_index_status` -> `_rag_index_status_worker`
+        # -> this same method).
+        screen._apply_library_rag_index_status(
+            {"state": "built", "count": 3, "provenance": {}}
+        )
+        await pilot.pause()
+
+        assert "Editing: Imported settings." in _visible_text(screen)
+        assert "Active: Imported settings" in _visible_text(screen)
+        assert (
+            screen.query_one("#settings-library-rag-editor-card").border_title
+            == "Editing: Imported settings"
+        )
+
+
+@pytest.mark.asyncio
 async def test_preview_started_while_starter_panel_visible_leaves_panel_state_coherent(
     monkeypatch, tmp_path
 ):
