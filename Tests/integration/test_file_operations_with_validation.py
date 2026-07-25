@@ -24,7 +24,7 @@ class TestCharacterChatFileOperations:
     def temp_base_dir(self):
         """Create a temporary base directory for testing."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            yield tmpdir
+            yield str(Path(tmpdir).resolve())
 
     @pytest.fixture
     def mock_db(self, temp_base_dir):
@@ -52,7 +52,10 @@ class TestCharacterChatFileOperations:
         }
         db.add_character_card(character_data)
 
-        return db
+        try:
+            yield db
+        finally:
+            db.close_connection()
 
     @pytest.fixture
     def sample_chat_history(self):
