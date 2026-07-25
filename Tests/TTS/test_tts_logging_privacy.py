@@ -185,9 +185,14 @@ def test_tts_guide_documents_exact_legacy_routes_and_working_example() -> None:
         "`TTSService.synthesize()`." in normalized_architecture
     )
     assert (
-        "Until `audio_cpp` lands, all currently registered providers are "
-        "compatibility adapters and callers use `generate_audio_stream()` "
-        "with an enumerated legacy internal model ID." in normalized_architecture
+        "`audio_cpp` is the first native adapter. It is registered first, by the "
+        "exact canonical ID `audio_cpp`, with display label `audio.cpp` and no alias."
+        in normalized_architecture
+    )
+    assert (
+        "The following six entries remain unchanged behind the temporary "
+        "compatibility bridge: `openai`, `elevenlabs`, `kokoro`, `chatterbox`, "
+        "`higgs`, and `alltalk`." in normalized_architecture
     )
     assert documented_routes == LEGACY_ROUTES
     assert 'internal_model_id = "openai_official_tts-1"' in usage
