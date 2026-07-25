@@ -1,6 +1,6 @@
 import pytest
 
-from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate, build_builtin_gate
 from tldw_chatbook.Tools.tool_executor import CalculatorTool, Tool
 
 
@@ -65,6 +65,29 @@ class _FakeService:
     def approve_for_session(self, server_key, tool_name):
         self.session_approved.append(tool_name)
         self._session.add(tool_name)
+
+
+class _ServiceWithoutStore:
+    """A present, live service whose ``permission_store`` is ``None``.
+
+    Mirrors ``UnifiedMCPControlPlaneService.permission_store``
+    (``unified_control_plane_service.py:2423-2428``), which returns
+    ``None`` whenever ``local_service.store`` is unset -- a real runtime
+    state distinct from "no service at all" (every other method still
+    answers; only the store accessor is absent).
+    """
+
+    def __init__(self):
+        self.permission_store = None
+
+    def get_kill_switch(self):
+        return False
+
+    def is_session_approved(self, server_key, tool_name):
+        return False
+
+    def approve_for_session(self, server_key, tool_name):
+        pass
 
 
 def test_untagged_tool_is_permitted():
@@ -152,3 +175,32 @@ def test_deny_state_blocks():
     }
     gate = BuiltinToolGate(_FakeService(payload=payload))
     assert gate.check(CalculatorTool()) is not None
+
+
+def test_service_present_but_permission_store_is_none_still_gates():
+    """Finding 1: a service can be present yet have no store to load
+
+    (``permission_store`` returns ``None``) -- this must degrade to the
+    same allow-floor behavior as no service at all, never crash and never
+    become allow-everything for tagged tools."""
+    gate = BuiltinToolGate(_ServiceWithoutStore())
+    assert gate.check(CalculatorTool()) is None
+    assert gate.check(_Mutating()) is not None
+
+
+def test_build_builtin_gate_with_no_service_still_gates():
+    """Finding 2: ``build_builtin_gate()`` with no argument must return a
+    gate that still gates -- ``None`` is never "ungated" (Constraint 7)."""
+    gate = build_builtin_gate()
+    assert isinstance(gate, BuiltinToolGate)
+    assert gate.check(CalculatorTool()) is None
+    assert gate.check(_Mutating()) is not None
+
+
+def test_build_builtin_gate_uses_the_passed_service():
+    """Finding 2: ``build_builtin_gate(service)`` must actually wire the
+    given service in -- proven by its kill switch taking effect."""
+    svc = _FakeService(kill=True)
+    gate = build_builtin_gate(svc)
+    reason = gate.check(CalculatorTool())
+    assert reason is not None and "kill switch" in reason.lower()
