@@ -217,13 +217,15 @@ def validate_chroma_persist_directory(persist_directory: Union[str, Path]) -> Pa
         The validated, ``~``-expanded ``Path``.
 
     Raises:
-        ValueError: If the path contains null bytes or another dangerous
+        ValueError: If ``persist_directory`` isn't a str/Path-like value (so
+            ``Path(...)``/``.expanduser()`` construction itself fails), or if
+            the resulting path contains null bytes or another dangerous
             pattern (see ``validate_path_simple``).
     """
-    expanded = Path(persist_directory).expanduser()
     try:
+        expanded = Path(persist_directory).expanduser()
         validate_path_simple(str(expanded))
-    except ValueError as e:
+    except (TypeError, ValueError, OSError) as e:
         raise ValueError(
             f"Invalid Chroma persist_directory {str(persist_directory)!r}: {e}"
         ) from e

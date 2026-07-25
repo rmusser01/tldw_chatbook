@@ -59,6 +59,31 @@ def test_both_sites_reject_dangerous_path_identically(tmp_path):
         collection_indexes._client(dangerous)
 
 
+@pytest.mark.parametrize("bad_value", [123, ["a", "b"], {"x": 1}])
+def test_non_path_like_value_raises_contextual_value_error_not_type_error(bad_value):
+    """PR #876 Qodo finding 1: `Path(persist_directory).expanduser()` used to
+    run OUTSIDE the try/except, so a non-str/Path value (e.g. a corrupted or
+    hand-edited saved-profile JSON's `persist_directory` -- `from_dict`
+    passes whatever the JSON decoded to straight through, with only a
+    truthiness check) raised a bare, non-contextual `TypeError` instead of
+    this function's documented `ValueError` contract. `RAGConfig.from_dict`
+    is a real producer of this value (`config_profiles.py` loads it from
+    `json.load(f)`), so this is reachable from a corrupted profile file, not
+    just a theoretical caller.
+    """
+    with pytest.raises(ValueError, match="Invalid Chroma persist_directory"):
+        validate_chroma_persist_directory(bad_value)
+
+
+def test_from_dict_rejects_non_path_like_persist_directory_with_contextual_error():
+    """Same bug, exercised through the actual producer (`RAGConfig.from_dict`,
+    fed by a saved/legacy profile JSON) rather than the helper directly."""
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+
+    with pytest.raises(ValueError, match="Invalid Chroma persist_directory"):
+        RAGConfig.from_dict({"vector_store": {"type": "chroma", "persist_directory": 123}})
+
+
 def test_expanduser_and_absolute_paths_normalize_stably(monkeypatch, tmp_path):
     """Legit absolute and ``~``-containing paths still work and are stable."""
     monkeypatch.setenv("HOME", str(tmp_path))
