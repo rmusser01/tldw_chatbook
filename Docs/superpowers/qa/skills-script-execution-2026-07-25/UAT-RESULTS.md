@@ -40,14 +40,46 @@ denied run never executed. Evidence: `uat-ac2-deny.txt`.
   primary agent — the model's first attempt delegated via `spawn_subagent`. That is
   the all-agents caller scope working as designed.
 
+### AC#3 — "Always allow this skill" suppresses the next prompt ✅
+
+Clicking **Always allow this skill** ran the script AND persisted the grant, pinned
+to the skill's fingerprint digest:
+
+```json
+{"demo-runner": "866a623398fac6f26c63b8ee1ab5b42fac0a60b1850d4a75ca8e9f2f9965489d"}
+```
+
+The next invocation then ran with **zero** cards shown — two script outputs in the
+transcript, the second at `exit_code: 0`, no prompt. Evidence: `uat-ac3-always-allow.txt`.
+
+### AC#4 — a content change invalidates the grant and re-prompts ✅
+
+The strongest result of the pass, because it exercises the whole point of pinning the
+grant to a digest:
+
+| Step | trust status | grant |
+|---|---|---|
+| after "Always allow" | `trusted` | **True** |
+| after editing `scripts/hello.py` | `quarantined_modified` | **False** |
+| after the user re-reviews and re-approves | `trusted` | **still False** |
+
+Re-approving trust does **not** silently restore the standing permission. The next run
+then raised a fresh card, and allowing it executed the **new** content
+(`QA579 MUTATED SCRIPT v2`), confirming the run is not serving a stale copy.
+Evidence: `uat-ac4-mutation-reprompt.txt`.
+
 ## Not verified
 
 | AC | Status |
 |---|---|
-| #3 "Always allow" suppresses the second prompt | **Not run** |
-| #4 content change re-prompts | **Not run** |
-| #5 Library grant line + Revoke | **Partial** — list and trust header verified; the per-skill grant line and Revoke button not reached |
+| #5 Library grant line + Revoke | **Partial** — the Skills list, trust header and on-disk grant are verified, but the per-skill grant line and the **Revoke script access** button inside the skill editor panel were not reached; driving into that panel by injected mouse click did not land within the session's budget |
 | #6 context switch does not leave the run blocked | **Not run** |
+
+The Revoke button remains the single most valuable thing left to verify: it is the
+user's only way to withdraw a standing permission, and task-579 exists partly because
+nothing tests its wire-up. Its *service* half is covered by unit tests and was
+exercised here indirectly (grants written and cleared on disk), but the button →
+handler → panel-refresh path is still unproven in a running app.
 
 ## Findings
 
