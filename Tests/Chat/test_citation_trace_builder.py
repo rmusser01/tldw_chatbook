@@ -167,6 +167,17 @@ def test_local_builder_rejects_invalid_request_identity_or_timestamp(
         )
 
 
+def test_local_builder_rejects_falsy_non_datetime_created_at() -> None:
+    with pytest.raises(ValidationError):
+        CitationTraceBuilder.local(
+            request_id="request-1",
+            generation_id="generation-1",
+            identity_context=_identity(),
+            fingerprint_codec=CitationFingerprintCodec(SECRET),
+            created_at=0,  # type: ignore[arg-type]
+        )
+
+
 def test_local_capture_types_reject_non_local_source_families() -> None:
     with pytest.raises(ValidationError, match="local source"):
         LocalRetrievalCandidateCapture(

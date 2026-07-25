@@ -256,7 +256,7 @@ class CitationTraceBuilder:
             generation_id=generation_id,
             identity_context=identity_context,
             fingerprint_codec=fingerprint_codec,
-            created_at=created_at or datetime.now(UTC),
+            created_at=created_at if created_at is not None else datetime.now(UTC),
         )
 
     @property
