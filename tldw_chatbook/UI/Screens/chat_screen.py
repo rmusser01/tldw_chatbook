@@ -2023,6 +2023,17 @@ class ChatScreen(BaseAppScreen):
         self._console_model_option_warnings: dict[tuple[str, str], str] = {}
         self._last_console_action: ConsoleActionResult | None = None
         self._pending_console_delete_message_id: str | None = None
+        #: task-559 unit 2: id of the Console message currently driving TTS
+        #: (from speak dispatch until an explicit speak-stop, or until a
+        #: DIFFERENT message's speak overwrites it -- see
+        #: ``ConsoleTranscript._console_tts_speaking_message_id`` for the
+        #: read side and ``handle_console_message_action``'s speak/
+        #: speak-stop branches for the write side). No event bridges actual
+        #: audio-playback completion back into the app, so this does NOT
+        #: clear itself when playback ends naturally -- a documented
+        #: limitation shared with the legacy chat widgets' own "playing"
+        #: state, not a new gap introduced here.
+        self._console_speaking_message_id: str | None = None
         #: task-501: sibling-swipe selection handoff. Held on the SCREEN (not
         #: the transcript widget) because the transcript can be remounted by a
         #: recompose between the swipe and the next message push — the sync
@@ -13200,6 +13211,28 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.post_message(
                 TTSRequestEvent(text=message.content, message_id=message.id)
             )
+            # task-559 unit 2: track this message as "speaking" so the
+            # action row swaps 🔊 -> ⏹ (a fresh speak always supersedes
+            # whatever was previously tracked -- the underlying player is a
+            # single-slot global singleton that stops any prior clip before
+            # starting a new one, so the tracked id and reality agree).
+            self._console_speaking_message_id = message.id
+            await self._sync_native_console_chat_ui()
+        if action_id == "speak-stop" and result.status == "completed":
+            # Reuses the legacy stop-button's exact plumbing (spec: "do not
+            # invent a parallel audio-control path") -- safe to post
+            # unconditionally, the app-level handler no-ops when nothing is
+            # cached/playing for this message id.
+            from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+                TTSPlaybackEvent,
+            )
+
+            self.app_instance.post_message(
+                TTSPlaybackEvent(action="stop", message_id=message.id)
+            )
+            if getattr(self, "_console_speaking_message_id", None) == message.id:
+                self._console_speaking_message_id = None
+            await self._sync_native_console_chat_ui()
         if action_id == "edit" and result.status == "edit_requested":
             await self._open_console_message_edit_modal(
                 message_id=message_id,
@@ -13893,6 +13926,12 @@ class ChatScreen(BaseAppScreen):
             ("console-message-action-continue-", "continue"),
             ("console-message-action-delete-", "delete"),
             ("console-message-action-retry-", "retry"),
+            # speak-stop MUST be checked before speak -- "speak-" is itself
+            # a prefix of "speak-stop-", so the more specific entry has to
+            # win the ordered startswith() scan below (else a speak-stop
+            # button id would mis-parse as action "speak" with message id
+            # "stop-<real id>").
+            ("console-message-action-speak-stop-", "speak-stop"),
             ("console-message-action-speak-", "speak"),
             ("console-message-action-copy-", "copy"),
             ("console-message-action-edit-", "edit"),

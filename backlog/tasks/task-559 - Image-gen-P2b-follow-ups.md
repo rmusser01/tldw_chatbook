@@ -4,7 +4,7 @@ title: Image-gen P2b follow-ups
 status: In Progress
 assignee: []
 created_date: '2026-07-24 13:30'
-updated_date: '2026-07-25 10:18'
+updated_date: '2026-07-25 10:47'
 labels:
   - image-generation
   - console
@@ -22,7 +22,7 @@ Deferred/polish items from the image-gen P2b slice (PR #850: speak 🔊, @style 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Richer conversation-context extraction for `/generate-image` with no prompt: the current `extract_context_from_messages` is keyword-shallow (mood via keyword match; `mentioned_characters`/`mentioned_settings` never populated). Design and implement a better context builder (e.g. LLM-composed prompt from the last N turns), keeping the composed-prompt-visible-in-card behavior.
-- [ ] #2 Console TTS playback controls: speak is fire-and-forget today; add stop (and optionally pause/save) for Console-originated speech, reusing the legacy widgets' `TTSPlaybackEvent` actions.
+- [x] #2 Console TTS playback controls: speak is fire-and-forget today; add stop (and optionally pause/save) for Console-originated speech, reusing the legacy widgets' `TTSPlaybackEvent` actions.
 - [x] #3 Style picker offers template previews (base-prompt/negative snippet) in the row or a detail pane, not just name — category — id.
 - [x] #4 Per-style user-defined templates (beyond the 13 built-ins) loadable from config or a templates dir.
 <!-- AC:END -->
@@ -100,4 +100,108 @@ clean; CSS bundle re-synced (`check_bundle_sync` passes).
 
 Deferred to units 2/3 (untouched here): AC2 (Console TTS playback
 controls), AC1 (richer context extraction).
+
+### Unit 2 (AC2) -- 2026-07-25
+
+Console TTS stop control, reusing `TTSPlaybackEvent` exactly as legacy chat
+does -- no new audio machinery, no new slash command.
+
+**UI surface.** Per-message action-row toggle: while a message is the one
+driving Console TTS, its 🔊 speak action swaps to a ⏹ speak-stop action in
+the same slot, mirroring the generation card's browsed-index-driven "Keep"
+swap (`ConsoleMessageActionService.available_actions(speaking_message_id=)`,
+threaded through `ConsoleTranscript._action_row`/`_action_row_signature`
+via a `_console_tts_speaking_message_id()` reader that mirrors
+`_generation_browsed_index()`'s `getattr(self.screen, ...)` pattern).
+Screen-side ephemeral state (`ChatScreen._console_speaking_message_id`,
+never persisted) is set when speak dispatches and cleared when speak-stop
+dispatches for the same id; the existing 0.2s Console sync tick (plus an
+explicit `_sync_native_console_chat_ui()` call in both branches, matching
+the keep/variant-nav/delete precedent) picks up the swap immediately. A
+`/speak stop` slash command was considered (explicitly allowed as the
+"minimal core" per the brief) but skipped: no `/speak` command exists today
+(speak is button-only), so it would have been new grammar/dispatch surface,
+not a re-use of anything -- the message-row toggle is both cheaper and
+better UX (no command to learn), at the cost of one known limitation (see
+below). Button-id parsing trap closed: `"console-message-action-speak-"` is
+a literal prefix of the new `"console-message-action-speak-stop-"`, so the
+more specific entry had to be added *before* the existing one in
+`_parse_console_message_action_button_id`'s ordered prefix table, else a
+speak-stop click would mis-route as speak with a mangled message id.
+
+**Actions wired.** Only `stop` (`TTSPlaybackEvent(action="stop", ...)`).
+Wiring it exposed a real pre-existing bug shared with legacy chat:
+`TTSEventHandler.handle_tts_playback`'s "stop" branch only ever deleted the
+cached audio file (`_cleanup_audio_file`) -- it never told the actual
+system audio player (`TTS/audio_player.SimpleAudioPlayer`, a subprocess
+wrapper) to stop, so a stop click did not silence audio already playing
+(afplay/mpv etc. keep streaming a deleted-but-open file on Unix). Fixed
+minimally, reusing only pre-existing player methods: added
+`SimpleAudioPlayer.get_current_file()` (mirrors the existing
+`get_state()`/`get_position()` accessors) and a small
+`stop_audio_playback_if_current(file_path)` helper in `tts_events.py` that
+calls the player's real `stop()` *only* when the message being stopped is
+the one currently loaded. The "only if current" guard matters: the player
+is a single global "now playing" slot, and legacy chat can have several
+messages simultaneously cached-in-"ready"-state (never played) while a
+different message is actively playing -- stopping a never-played message
+must not silence an unrelated one that is.
+
+**Skipped: pause, save.** Pause: the handler's existing "pause" branch is a
+no-op stub (a log line and a comment, no call into the player at all); real
+pause+resume would need new action semantics (the current player only
+supports fresh `play()`, not "resume from where a stopped clip left off"
+without new state) -- that is new plumbing, out of scope per the brief.
+Save: `TTSExportEvent`/`handle_tts_export` is fully generic and would work
+mechanically, but Console's "play" branch always schedules
+`_cleanup_audio_file(..., delay=5.0)` right after playback starts (fire-and
+-auto-play, unlike legacy's manual-play "ready" state) -- a save action
+would race that fixed 5s auto-delete regardless of actual clip length,
+making it unreliable to wire "cleanly" without also changing that timing,
+which is itself new plumbing.
+
+**Natural end of playback -- no event exists.** `SimpleAudioPlayer.
+_monitor_playback()` runs on a background thread and only mutates its own
+internal `_current.state` when the subprocess exits; nothing bridges that
+back into Textual's event system (would need a thread-safe callback into
+`asyncio.run_coroutine_threadsafe`+a new event -- new plumbing, skipped).
+Consequence, stated honestly rather than faked with a timer: the ⏹ persists
+until the user clicks it, or until a NEW speak request (on any message)
+overwrites the tracked id -- which also organically self-heals the display
+over time, since the underlying player is single-slot and a fresh `play()`
+always stops whatever was previously loaded. This exact limitation already
+exists in legacy chat's own `tts_state == "playing"` widget state (also
+never auto-reverts on natural completion), so it is not a new gap.
+
+Files: `tldw_chatbook/Chat/console_message_actions.py` (`speaking_message_id`
+kwarg, `speak`/`speak-stop` swap, `speak-stop` dispatch branch),
+`tldw_chatbook/Widgets/Console/console_transcript.py`
+(`_console_tts_speaking_message_id`, threaded into both action-row builders,
+tooltip entry), `tldw_chatbook/UI/Screens/chat_screen.py`
+(`_console_speaking_message_id` state, speak/speak-stop dispatch branches,
+button-id prefix-table ordering fix), `tldw_chatbook/Event_Handlers/
+TTS_Events/tts_events.py` (`stop_audio_playback_if_current`, wired into the
+"stop" branch), `tldw_chatbook/TTS/audio_player.py` (`get_current_file()`).
+Tests: `Tests/Chat/test_console_message_actions.py` (+5: swap/no-swap/
+failed-message-never-swaps/dispatch), `Tests/Chat/
+test_console_generation_actions.py` (+4: screen-level speak marks state +
+syncs, speak-stop posts the event + clears + syncs, safe-when-nothing-
+tracked, does-not-clear-a-different-message's state), `Tests/UI/
+test_console_native_transcript.py` (+3, new `SpeakActionRowHarness`: mounted
+row shows 🔊 by default, swaps to ⏹ when tracked, unaffected by a different
+message's id), `Tests/TTS/test_tts_improvements.py` (+4: stop actually
+calls the player when current, does NOT call it for an unrelated playing
+message, safe no-op when nothing cached, `get_current_file()` state
+tracking). All TDD red-then-green. Full suite green: `Tests/TTS/` (747
+passed, 14 skipped, pre-existing/unrelated), `Tests/Chat/test_console_
+message_actions.py` + `test_console_generation_actions.py` +
+`Tests/UI/test_console_native_transcript.py` (134 passed), broader
+`Tests/Chat -k "generate_image or style_picker or console"` regression
+sweep (1079 passed) and `Tests/UI/test_console_native_chat_flow.py`
+(foundational Console flow suite) both green. `ruff check` clean on all
+touched files; `python -c "import tldw_chatbook.app"` clean. No CSS bundle
+change needed (the ⏹ button reuses the existing generic
+`console-transcript-action-button` styling).
+
+Deferred to unit 3 (untouched here): AC1 (richer context extraction).
 <!-- SECTION:NOTES:END -->

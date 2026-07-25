@@ -5,13 +5,14 @@ Test cases for TTS improvements
 import asyncio
 import pytest
 from pathlib import Path
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 
 try:
     from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
         TTSEventHandler,
         TTSRequestEvent,
         TTSCompleteEvent,
+        TTSPlaybackEvent,
         TTSProgressEvent,
         TTSExportEvent,
         play_audio_file,
@@ -22,6 +23,7 @@ except ImportError:
     TTSEventHandler = None
     TTSRequestEvent = None
     TTSCompleteEvent = None
+    TTSPlaybackEvent = None
     TTSProgressEvent = None
     TTSExportEvent = None
     play_audio_file = None
@@ -153,6 +155,77 @@ class TestTTSEventHandler:
         metadata_path = export_path.with_suffix(".mp3.json")
         assert metadata_path.exists()
 
+    # --- task-559 unit 2: stop must actually interrupt playback ----------
+    #
+    # Previously `handle_tts_playback`'s "stop" branch only deleted the
+    # cached audio file (`_cleanup_audio_file`) -- it never touched the
+    # actual system audio player, so a "Stop" click did not silence audio
+    # already playing (afplay/mpv/etc. keep streaming a deleted-but-open
+    # file on Unix). These tests pin the fix: stop now also asks the
+    # shared `SimpleAudioPlayer` singleton to stop, but ONLY when the
+    # message being stopped is the one currently loaded -- the singleton
+    # holds a single global "now playing" slot, and an unrelated message's
+    # cached-but-never-played file must not be able to silence a different,
+    # actively-playing message (a real scenario for legacy chat, where
+    # audio is not auto-played and multiple messages can sit in "ready"
+    # state simultaneously).
+
+    @pytest.mark.asyncio
+    async def test_stop_action_stops_playback_when_message_is_current(
+        self, handler, tmp_path, monkeypatch
+    ):
+        test_audio = tmp_path / "clip.mp3"
+        test_audio.write_bytes(b"fake audio data")
+        handler._audio_files["msg-1"] = test_audio
+
+        fake_player = MagicMock()
+        fake_player.get_current_file.return_value = test_audio
+        monkeypatch.setattr(
+            "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
+        )
+
+        event = TTSPlaybackEvent(action="stop", message_id="msg-1")
+        await handler.handle_tts_playback(event)
+
+        fake_player.stop.assert_called_once()
+        assert "msg-1" not in handler._audio_files
+
+    @pytest.mark.asyncio
+    async def test_stop_action_does_not_stop_unrelated_playing_message(
+        self, handler, tmp_path, monkeypatch
+    ):
+        file_a = tmp_path / "a.mp3"
+        file_a.write_bytes(b"a")
+        file_b = tmp_path / "b.mp3"
+        file_b.write_bytes(b"b")
+        handler._audio_files["msg-a"] = file_a
+        handler._audio_files["msg-b"] = file_b
+
+        fake_player = MagicMock()
+        fake_player.get_current_file.return_value = file_b  # b is playing
+        monkeypatch.setattr(
+            "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
+        )
+
+        event = TTSPlaybackEvent(action="stop", message_id="msg-a")
+        await handler.handle_tts_playback(event)
+
+        fake_player.stop.assert_not_called()
+        assert "msg-a" not in handler._audio_files  # cached file still cleared
+        assert "msg-b" in handler._audio_files  # untouched, still playing
+
+    @pytest.mark.asyncio
+    async def test_stop_action_safe_when_nothing_cached(self, handler, monkeypatch):
+        fake_player = MagicMock()
+        monkeypatch.setattr(
+            "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
+        )
+
+        event = TTSPlaybackEvent(action="stop", message_id="nonexistent")
+        await handler.handle_tts_playback(event)  # must not raise
+
+        fake_player.stop.assert_not_called()
+
 
 class TestAudioPlayer:
     """Test audio player improvements"""
@@ -184,6 +257,21 @@ class TestAudioPlayer:
         """Test state tracking"""
         assert player.get_state() == PlaybackState.IDLE
         assert not player.is_playing()
+
+    def test_get_current_file_tracks_loaded_clip(self, player, tmp_path):
+        """task-559 unit 2: exposes which file is currently loaded so a
+        caller can decide whether a stop request actually applies to it."""
+        test_file = tmp_path / "test.wav"
+        test_file.write_bytes(b"RIFF" + b"\x00" * 40)  # Minimal WAV header
+
+        assert player.get_current_file() is None
+
+        if player._player_cmd:  # Only test if a player is available
+            assert player.play(test_file)
+            assert player.get_current_file() == test_file
+
+            assert player.stop()
+            assert player.get_current_file() is None
 
 
 class TestCostTracker:

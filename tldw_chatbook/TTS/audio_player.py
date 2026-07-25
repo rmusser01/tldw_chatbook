@@ -479,6 +479,18 @@ class SimpleAudioPlayer:
         with self._lock:
             return self._current.duration
 
+    def get_current_file(self) -> Optional[Path]:
+        """Get the file path of the currently loaded/playing clip, if any.
+
+        Returns ``None`` once the player is idle (after `stop()` or before
+        any `play()`). Lets a caller check whether a specific file is the
+        one this single-slot global player currently owns before deciding
+        to stop it -- e.g. so a stop request scoped to one message doesn't
+        silence an unrelated message's still-playing clip.
+        """
+        with self._lock:
+            return self._current.file_path
+
     def _monitor_playback(self) -> None:
         """Monitor playback process"""
         if self._current.process:

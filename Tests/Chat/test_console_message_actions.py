@@ -635,3 +635,92 @@ def test_speak_action_dispatch_returns_completed_result_with_message_content_and
     assert result.status == "completed"
     assert result.target_message_id == "m1"
     assert result.target_content == "answer"
+
+
+# --- task-559 unit 2: speak -> stop toggle --------------------------------
+
+
+def test_speak_action_swaps_to_stop_when_message_is_speaking():
+    """While THIS message is the one driving Console TTS, the row's 🔊
+    speak action swaps to a ⏹ stop action in the same slot -- mirrors the
+    generation card's browsed-index-driven action swap (Keep)."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1"
+    )
+
+    actions = service.available_actions(message, speaking_message_id="m1")
+
+    action_ids = [action.action_id for action in actions]
+    assert "speak" not in action_ids
+    assert "speak-stop" in action_ids
+    stop_action = next(a for a in actions if a.action_id == "speak-stop")
+    assert stop_action.label == "⏹"
+    assert stop_action.enabled is True
+    # Row order is otherwise unchanged -- stop lands exactly where speak was.
+    assert [a.action_id for a in actions] == [
+        "copy",
+        "speak-stop",
+        "edit",
+        "save-as",
+        "regenerate",
+        "continue",
+        "feedback",
+        "delete",
+    ]
+
+
+def test_speak_action_unaffected_when_a_different_message_is_speaking():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1"
+    )
+
+    actions = service.available_actions(message, speaking_message_id="other-message")
+
+    action_ids = [action.action_id for action in actions]
+    assert "speak" in action_ids
+    assert "speak-stop" not in action_ids
+
+
+def test_speak_action_unaffected_when_nothing_is_speaking():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1"
+    )
+
+    actions = service.available_actions(message, speaking_message_id=None)
+
+    action_ids = [action.action_id for action in actions]
+    assert "speak" in action_ids
+    assert "speak-stop" not in action_ids
+
+
+def test_speak_stop_absent_when_speak_itself_would_be_absent():
+    """A failed message never shows speak -- so it must never show speak-stop
+    either, even if (implausibly) it's the tracked speaking id."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial answer",
+        status="failed",
+        id="m1",
+    )
+
+    actions = service.available_actions(message, speaking_message_id="m1")
+
+    action_ids = [action.action_id for action in actions]
+    assert "speak" not in action_ids
+    assert "speak-stop" not in action_ids
+
+
+def test_speak_stop_action_dispatch_returns_completed_result():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1"
+    )
+
+    result = service.dispatch("speak-stop", message)
+
+    assert result.status == "completed"
+    assert result.target_message_id == "m1"

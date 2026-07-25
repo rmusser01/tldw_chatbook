@@ -32,7 +32,10 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_generate_image import BatchResult
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
-from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSRequestEvent
+from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+    TTSPlaybackEvent,
+    TTSRequestEvent,
+)
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -551,6 +554,119 @@ async def test_handle_console_message_action_routes_speak_for_generation_message
     assert len(posted) == 1
     assert posted[0].text == "[image] a red dragon"
     assert posted[0].message_id == message.id
+
+
+# --- task-559 unit 2: Console TTS stop toggle dispatch ------------------------
+
+
+@pytest.mark.asyncio
+async def test_handle_console_message_action_speak_marks_message_as_speaking():
+    """Dispatching speak records the message id as the screen's ephemeral
+    "currently speaking" state and re-syncs the transcript so the action row
+    picks up the 🔊 -> ⏹ swap (task-559 unit 2)."""
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="The sky is blue today.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    screen.app_instance.post_message = lambda *a, **k: None
+    button = Button("speak", id=f"console-message-action-speak-{message.id}")
+
+    handled = await screen.handle_console_message_action(Button.Pressed(button))
+
+    assert handled is True
+    assert screen._console_speaking_message_id == message.id
+    screen._sync_native_console_chat_ui.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_console_message_action_routes_speak_stop_to_tts_playback_event():
+    """speak-stop posts the app's existing TTSPlaybackEvent(action="stop")
+    -- reuses the legacy stop-button plumbing, no new audio machinery -- and
+    clears the screen's speaking-message tracking so the row swaps back."""
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="The sky is blue today.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    screen._console_speaking_message_id = message.id
+    posted: list = []
+    screen.app_instance.post_message = posted.append
+    button = Button(
+        "stop", id=f"console-message-action-speak-stop-{message.id}"
+    )
+
+    handled = await screen.handle_console_message_action(Button.Pressed(button))
+
+    assert handled is True
+    assert len(posted) == 1
+    event = posted[0]
+    assert isinstance(event, TTSPlaybackEvent)
+    assert event.action == "stop"
+    assert event.message_id == message.id
+    assert screen._console_speaking_message_id is None
+    screen._sync_native_console_chat_ui.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_console_message_action_speak_stop_safe_when_nothing_speaking():
+    """speak-stop is safe (no crash, no unrelated state mutation) even when
+    the screen never marked any message as speaking -- e.g. a stale/late
+    button press after the screen's own state already cleared."""
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="The sky is blue today.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    posted: list = []
+    screen.app_instance.post_message = posted.append
+    button = Button(
+        "stop", id=f"console-message-action-speak-stop-{message.id}"
+    )
+
+    handled = await screen.handle_console_message_action(Button.Pressed(button))
+
+    assert handled is True
+    assert len(posted) == 1
+    assert posted[0].action == "stop"
+    assert getattr(screen, "_console_speaking_message_id", None) is None
+
+
+@pytest.mark.asyncio
+async def test_handle_console_message_action_speak_stop_does_not_clear_other_message():
+    """Stopping message A must not clear message B's tracked speaking state
+    -- only an exact id match clears it."""
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message_a = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="A", persist=False
+    )
+    message_b = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="B", persist=False
+    )
+    screen = _bare_generation_screen(store)
+    screen._console_speaking_message_id = message_b.id
+    screen.app_instance.post_message = lambda *a, **k: None
+    button = Button(
+        "stop", id=f"console-message-action-speak-stop-{message_a.id}"
+    )
+
+    handled = await screen.handle_console_message_action(Button.Pressed(button))
+
+    assert handled is True
+    assert screen._console_speaking_message_id == message_b.id
 
 
 # --- Task 3: handler-level wiring test for /generate-image style threading ----

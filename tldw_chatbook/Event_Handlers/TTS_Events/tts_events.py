@@ -632,6 +632,14 @@ class TTSEventHandler:
             # This will stop any playing audio but won't delete the file
 
         elif event.action == "stop" and event.message_id:
+            # Interrupt in-flight playback (task-559 unit 2) -- only when
+            # this message's audio is the one currently loaded in the
+            # shared single-slot player, so stopping message A can never
+            # silence a different, actively-playing message B.
+            async with self._audio_files_lock:
+                audio_file = self._audio_files.get(event.message_id)
+            if audio_file is not None:
+                stop_audio_playback_if_current(audio_file)
             # Clean up immediately if stopped
             await self._cleanup_audio_file(event.message_id)
 
@@ -769,6 +777,25 @@ def play_audio_file(file_path: Path) -> None:
     success = play_audio(file_path)
     if not success:
         logger.error(f"Failed to play audio file: {file_path}")
+
+
+def stop_audio_playback_if_current(file_path: Path) -> None:
+    """Stop the shared system audio player, but only if it currently owns ``file_path``.
+
+    `SimpleAudioPlayer` (`TTS/audio_player.py`) is a single-slot global
+    singleton -- only one clip can be "current" system-wide at any time,
+    since every `play()` call stops whatever was previously loaded first.
+    Comparing before stopping keeps a stop request scoped to one message
+    from silencing a different, unrelated message's still-playing audio
+    (task-559 unit 2; a real scenario for legacy chat, where audio is not
+    auto-played and several messages can sit cached-but-never-played
+    simultaneously while a different one is actively playing).
+    """
+    from tldw_chatbook.TTS.audio_player import get_audio_player
+
+    player = get_audio_player()
+    if player.get_current_file() == file_path:
+        player.stop()
 
 
 #

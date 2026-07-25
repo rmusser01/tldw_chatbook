@@ -71,6 +71,7 @@ class ConsoleMessageActionService:
         ("variant-next", ">"),
     )
     _KEEP_ACTION: tuple[tuple[str, str], ...] = (("keep", "keep"),)
+    _SPEAK_STOP_ACTION: tuple[str, str] = ("speak-stop", "⏹")
     _FAILED_RETRY_ACTIONS: tuple[tuple[str, str], ...] = (("retry", "Try"),)
     _IMAGE_VIEW_ACTIONS: tuple[tuple[str, str], ...] = (("toggle-image-view", "View"),)
     _SAVE_IMAGE_ACTIONS: tuple[tuple[str, str], ...] = (("save-image", "Save Image"),)
@@ -114,6 +115,7 @@ class ConsoleMessageActionService:
         *,
         generation_variant_count: int = 0,
         generation_browsed_index: int = 0,
+        speaking_message_id: str | None = None,
     ) -> list[ConsoleMessageAction]:
         """Return canonical selected-message actions for a transcript message.
 
@@ -130,6 +132,12 @@ class ConsoleMessageActionService:
             generation_browsed_index: Currently browsed variant index for a
                 generation message (ignored when ``generation_variant_count``
                 is 0).
+            speaking_message_id: id of the Console message currently driving
+                TTS playback, if any (task-559 unit 2). When it matches
+                ``message.id`` the row's 🔊 speak action swaps to a ⏹
+                speak-stop action in the same slot -- mirrors how the
+                generation card's browsed index swaps in "Keep". Defaults to
+                ``None`` so existing callers see byte-identical behavior.
         """
         disabled_reason = self._disabled_reason(message)
         is_generation_message = generation_variant_count > 0
@@ -155,6 +163,13 @@ class ConsoleMessageActionService:
                 (action_id, label)
                 for action_id, label in completed_actions
                 if action_id != "speak"
+            ]
+        elif speaking_message_id == message.id:
+            completed_actions = [
+                (self._SPEAK_STOP_ACTION[0], self._SPEAK_STOP_ACTION[1])
+                if action_id == "speak"
+                else (action_id, label)
+                for action_id, label in completed_actions
             ]
         if message.status == "failed" and self._is_assistant_message(message):
             # Retry regenerates a failed ASSISTANT response. A failed USER row —
@@ -257,6 +272,16 @@ class ConsoleMessageActionService:
                 visible_copy="Speaking message.",
                 target_message_id=message.id,
                 target_content=message.content,
+            )
+        if action_id == "speak-stop":
+            # task-559 unit 2: stop is safe to request unconditionally --
+            # the app-level TTSPlaybackEvent(action="stop") handler already
+            # no-ops when nothing is playing/cached for this message id.
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Stopped speaking.",
+                target_message_id=message.id,
             )
         if action_id == "retry" and message.status == "failed":
             return ConsoleActionResult(

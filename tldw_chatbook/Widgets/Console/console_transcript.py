@@ -66,6 +66,7 @@ SELECTED_MESSAGE_ACTION_GUIDE = (
 _ACTION_TOOLTIPS = {
     "copy": "Copy this message to the clipboard.",
     "speak": "Speak this message aloud using text-to-speech.",
+    "speak-stop": "Stop the current speech playback.",
     "edit": "Edit this message before continuing the thread.",
     "save-as": "Choose a destination for this message, such as Chatbook or Note.",
     "toggle-image-view": "Cycle image view: pixels, graphics, hidden.",
@@ -1436,6 +1437,22 @@ class ConsoleTranscript(VerticalScroll):
             return 0
         return browsed_index
 
+    def _console_tts_speaking_message_id(self) -> str | None:
+        """Return the owning screen's ephemeral "currently speaking" id.
+
+        Mirrors ``_generation_browsed_index`` above (task-559 unit 2): reads
+        the screen's ``_console_speaking_message_id`` -- purely screen-side,
+        never-persisted state set/cleared by ``ChatScreen.handle_console_
+        message_action`` around the speak/speak-stop actions -- so the ⏹
+        stop swap survives whatever transcript instance a recompose mounts.
+        Falls back to ``None`` when unmounted (bare unit-construction in
+        tests) or the screen hasn't set the attribute yet.
+        """
+        try:
+            return getattr(self.screen, "_console_speaking_message_id", None)
+        except NoScreen:
+            return None
+
     def _generation_action_kwargs(self, message: ConsoleChatMessage) -> dict[str, int]:
         """Return the ``available_actions()`` generation kwargs for ``message``.
 
@@ -1455,7 +1472,9 @@ class ConsoleTranscript(VerticalScroll):
     def _action_row_signature(self, message: ConsoleChatMessage) -> tuple:
         actions = []
         for action in ConsoleMessageActionService().available_actions(
-            message, **self._generation_action_kwargs(message)
+            message,
+            speaking_message_id=self._console_tts_speaking_message_id(),
+            **self._generation_action_kwargs(message),
         ):
             if action.action_id == "feedback":
                 actions.append(("feedback-up", "👍", True, ""))
@@ -1474,7 +1493,9 @@ class ConsoleTranscript(VerticalScroll):
     def _action_row(self, message: ConsoleChatMessage) -> Horizontal:
         buttons: list[Button] = []
         for action in ConsoleMessageActionService().available_actions(
-            message, **self._generation_action_kwargs(message)
+            message,
+            speaking_message_id=self._console_tts_speaking_message_id(),
+            **self._generation_action_kwargs(message),
         ):
             if action.action_id == "feedback":
                 buttons.append(
