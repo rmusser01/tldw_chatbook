@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 import yaml
+from loguru import logger
 
 from ..runtime_policy.types import PolicyDeniedError
 from ..Utils.input_validation import sanitize_string, validate_text_input
@@ -70,11 +71,17 @@ _INTERPRETER_MAP = {
     ".js": "node",
 }
 
-#: Sentinel error surfaced for every "this script can't be resolved" reason
-#: inside ``_resolve_script`` -- unknown skill aside, deliberately identical
-#: text for an unsafe path, a missing file, a symlink, and the canonical
-#: body, so an escape can never be distinguished from a genuinely missing
-#: file (or from any other rejection reason) by its error text alone.
+#: Sentinel error KIND surfaced for every "this script can't be resolved"
+#: reason inside ``_resolve_script`` -- unknown skill aside, deliberately the
+#: same PREFIX for an unsafe path, a missing file, a symlink, and the
+#: canonical body, so an escape can never be distinguished from a genuinely
+#: missing file (or from any other rejection reason) by its error KIND
+#: alone. The caller's own ``script_path`` IS interpolated after the colon
+#: (mirroring ``read_skill_file``'s ``local_skill_file_not_found:{path}``
+#: sibling): that string is a pure function of the caller's own input, so
+#: echoing it back leaks nothing about the filesystem -- it is the KIND that
+#: must stay constant across "resolves to a real file outside the bundle"
+#: vs. "genuinely missing", not the whole message.
 _SCRIPT_NOT_FOUND_ERROR = "local_skill_script_not_found"
 
 
@@ -1366,16 +1373,17 @@ class LocalSkillsService:
 
         Raises:
             ValueError: Unknown skill, or a path that is unsafe, missing, a
-                symlink, or the canonical body -- all surfaced as the exact
-                SAME ``local_skill_script_not_found`` error text (no
-                interpolated detail) so an escape can never be distinguished
-                from a genuinely missing file, a rejected symlink, or the
-                reserved body path by its error text alone.
+                symlink, or the canonical body -- all surfaced as the same
+                ``local_skill_script_not_found:<script_path>`` error KIND
+                (the caller's own ``script_path`` is echoed back, but the
+                PREFIX never varies with the reason) so an escape can never
+                be distinguished from a genuinely missing file, a rejected
+                symlink, or the reserved body path by its error text alone.
         """
         from ..tldw_api.skills_schemas import validate_supporting_file_path
 
         if script_path == _SKILL_FILENAME:
-            raise ValueError(_SCRIPT_NOT_FOUND_ERROR)
+            raise ValueError(f"{_SCRIPT_NOT_FOUND_ERROR}:{script_path}")
         validate_supporting_file_path(script_path)
         skill_dir = self._skill_dir(skill_name)
         if not skill_dir.is_dir():
@@ -1387,9 +1395,9 @@ class LocalSkillsService:
         # otherwise let is_file()/is_symlink() act as an existence oracle
         # for paths outside skill_dir.
         if get_safe_relative_path(path, skill_dir) is None:
-            raise ValueError(_SCRIPT_NOT_FOUND_ERROR)
+            raise ValueError(f"{_SCRIPT_NOT_FOUND_ERROR}:{script_path}")
         if path.is_symlink() or not path.is_file():
-            raise ValueError(_SCRIPT_NOT_FOUND_ERROR)
+            raise ValueError(f"{_SCRIPT_NOT_FOUND_ERROR}:{script_path}")
         return skill_dir, path
 
     def _plan_for_script(self, skill_name: str, script_path: str, path: Path) -> ScriptPlan:
@@ -1412,7 +1420,12 @@ class LocalSkillsService:
 
         from .skill_script_runner import resolve_interpreter
 
-        raw = path.read_bytes()[:8192]
+        # Sniff only the first 8KB -- reading the WHOLE file first (the
+        # previous `path.read_bytes()[:8192]`) drove peak RSS to the file's
+        # full size before the slice ever ran, so a large vendored binary or
+        # model inside a trusted bundle would OOM the app on a mere describe.
+        with path.open("rb") as fh:
+            raw = fh.read(8192)
         is_binary = b"\x00" in raw
         if path.stat().st_mode & _stat.S_IXUSR:
             return ScriptPlan(
@@ -1441,8 +1454,46 @@ class LocalSkillsService:
             is_binary=False,
         )
 
-    @staticmethod
-    def _script_scratch_root() -> str | None:
+    def _unsafe_scratch_root_containers(self) -> list[Path]:
+        """Directories a configured scratch root must never resolve inside.
+
+        Returns:
+            The skills store, plus the trust store's own directory when a
+            trust service is wired (best-effort: absent/duck-typed trust
+            services simply contribute nothing extra).
+        """
+        containers = [self.skills_dir]
+        trust_store = getattr(self.trust_service, "trust_store", None)
+        trust_store_dir = getattr(trust_store, "store_dir", None)
+        if trust_store_dir is not None:
+            containers.append(Path(trust_store_dir))
+        return containers
+
+    def _is_unsafe_scratch_root(self, root: Path) -> bool:
+        """Return True if ``root`` resolves inside the skills or trust store.
+
+        A scratch root under either store would let a script's cwd land
+        inside its own (or a sibling's) trusted bundle -- exactly the
+        "a script must never tamper with its own bundle" property this
+        service exists to guarantee, since any file the script leaves
+        behind re-fingerprints the bundle and permanently quarantines it.
+        Uses ``get_safe_relative_path`` (which resolves both sides, so
+        symlinks and ``..`` segments cannot hide the containment) rather
+        than a string prefix check.
+
+        Args:
+            root: The (not-yet-created) candidate scratch root.
+
+        Returns:
+            True when ``root`` resolves inside any store directory that
+            must stay off limits.
+        """
+        return any(
+            get_safe_relative_path(root, container) is not None
+            for container in self._unsafe_scratch_root_containers()
+        )
+
+    def _script_scratch_root(self) -> str | None:
         """Resolve the optional ``[skills] script_scratch_root`` config root.
 
         Uses the THREE-argument ``get_cli_setting`` form on purpose: the
@@ -1450,8 +1501,16 @@ class LocalSkillsService:
         ``{}`` for any section without a dot in its name (config.py:3965), so
         it would make this knob permanently unreachable.
 
+        A configured root that resolves inside the skills store or the trust
+        store is REJECTED (see ``_is_unsafe_scratch_root``) and treated the
+        same as unconfigured -- checked BEFORE the directory is created, so a
+        rejected root is never actually made on disk. The safety check is
+        best-effort containment, consistent with the rest of this module.
+
         Returns:
-            The configured scratch root, or None to use the OS temp dir.
+            The configured scratch root, or None to use the OS temp dir
+            (also the fallback when the configured root is rejected as
+            unsafe or cannot be created).
         """
         try:
             from ..config import get_cli_setting
@@ -1462,6 +1521,14 @@ class LocalSkillsService:
         if not configured or not isinstance(configured, str):
             return None
         root = Path(configured).expanduser()
+        if self._is_unsafe_scratch_root(root):
+            logger.warning(
+                "Ignoring [skills] script_scratch_root={!r}: it resolves "
+                "inside a skills or trust store; falling back to the OS "
+                "temp dir",
+                configured,
+            )
+            return None
         try:
             root.mkdir(parents=True, exist_ok=True)
         except OSError:
@@ -1513,7 +1580,13 @@ class LocalSkillsService:
         Args:
             skill_name: Canonical skill name.
             script_path: POSIX relative path within the bundle.
-            args: Arguments appended after the script path. Never shell-parsed.
+            args: Arguments appended after the script path. Never
+                shell-parsed. Must be a ``list``/``tuple`` of ``str`` -- a
+                bare ``str`` is rejected rather than silently accepted,
+                since Python would otherwise explode it into one argv
+                element PER CHARACTER (and a confirm card built from a
+                caller's intended args would then display something
+                different from what actually runs).
             limits: Optional containment budget; defaults to ScriptRunLimits().
 
         Returns:
@@ -1521,22 +1594,32 @@ class LocalSkillsService:
 
         Raises:
             SkillTrustBlockedError: Skill not currently trusted.
-            ValueError: Unsafe/missing path or unrunnable file type.
+            ValueError: Unsafe/missing path, unrunnable file type, or
+                ``args`` is not a list/tuple of str
+                (``invalid_skill_script_args``).
         """
         import shutil as _shutil
         import tempfile
 
         from .skill_script_runner import ScriptRunLimits, run_script_subprocess
 
+        if not isinstance(args, (list, tuple)) or not all(
+            isinstance(item, str) for item in args
+        ):
+            raise ValueError(
+                "invalid_skill_script_args: args must be a list or tuple "
+                "of str (e.g. a bare string would be exploded into one "
+                "argv element per character)"
+            )
         self._enforce("skills.run_script.launch.local")
         self._require_trusted_skill(skill_name)
         _skill_dir, path = self._resolve_script(skill_name, script_path)
         plan = self._plan_for_script(skill_name, script_path, path)
         effective_limits = limits or ScriptRunLimits()
         target_argv = (
-            [str(path), *[str(a) for a in args]]
+            [str(path), *args]
             if plan.mechanism == "direct-exec"
-            else [plan.interpreter_display, str(path), *[str(a) for a in args]]
+            else [plan.interpreter_display, str(path), *args]
         )
         scratch = Path(
             tempfile.mkdtemp(
@@ -1544,8 +1627,13 @@ class LocalSkillsService:
             )
         )
         try:
-            return run_script_subprocess(
-                target_argv, cwd=scratch, limits=effective_limits
+            # Offloaded to a thread: run_script_subprocess is a blocking call
+            # (up to limits.wall_clock_seconds + 6.0s worst case) and this
+            # method's own signature advertises `async def` -- calling it
+            # directly would occupy whatever event loop this coroutine runs
+            # on for the full duration.
+            return await asyncio.to_thread(
+                run_script_subprocess, target_argv, cwd=scratch, limits=effective_limits
             )
         finally:
             _shutil.rmtree(scratch, ignore_errors=True)

@@ -423,15 +423,17 @@ class SkillsScopeService:
         Args:
             skill_name: Canonical skill name.
             script_path: POSIX relative path within the bundle.
-            args: Arguments appended after the script path.
+            args: Arguments appended after the script path. Must be a
+                list/tuple of str (see the local service's
+                ``run_skill_script`` for why a bare str is rejected).
             mode: Backend selector; only local is accepted.
 
         Returns:
             The local service's ScriptRunResult.
 
         Raises:
-            ValueError: Server mode, unavailable local backend, bad path, or
-                an unrunnable file type.
+            ValueError: Server mode, unavailable local backend, bad path,
+                an unrunnable file type, or invalid ``args``.
             SkillTrustBlockedError: Skill not currently trusted.
         """
         normalized_mode = (
