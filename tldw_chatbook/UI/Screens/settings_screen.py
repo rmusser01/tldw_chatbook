@@ -3064,6 +3064,12 @@ class SettingsScreen(BaseAppScreen):
 
     def _handle_image_gen_clear(self, backend_id: str, toml_key: str) -> None:
         self._image_gen_stage(f"cleared::{backend_id}::{toml_key}", False, True)
+        if backend_id == "swarmui" and toml_key == "swarm_token":
+            # The loader also resolves the legacy `api_key` spelling as a
+            # back-compat fallback; Clear must delete BOTH or a stale
+            # hand-edited api_key resurrects the credential with no in-UI
+            # recovery (deleting an absent key is a no-op, so this is free).
+            self._image_gen_stage("cleared::swarmui::api_key", False, True)
         self._image_gen_unstage(f"field::{backend_id}::{toml_key}")
         new_source = image_gen_key_source_after_clear(backend_id)
         try:

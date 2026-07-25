@@ -466,6 +466,50 @@ api_key = "sk-saved-key"
 
 
 @pytest.mark.asyncio
+async def test_clear_swarmui_token_also_deletes_legacy_api_key(
+    scratch_config, tmp_path, monkeypatch
+):
+    """Clear on swarmui's token must delete BOTH spellings: the loader
+    resolves legacy ``api_key`` as a back-compat fallback, so leaving it
+    behind would silently resurrect the credential after Clear+Save with
+    no in-UI recovery (final-review residual ruling)."""
+    for var in _ALL_SECRET_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    scratch_config(
+        """
+[image_generation]
+default_backend = "swarmui"
+enabled_backends = ["swarmui"]
+
+[image_generation.swarmui]
+swarm_token = "fake-current-token"
+api_key = "fake-stale-legacy-token"
+"""
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        panel.query_one(
+            "#settings-imagegen-clear-swarmui-swarm_token", Button
+        ).press()
+        await pilot.pause()
+
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
+
+    config_path = tmp_path / "config.toml"
+    with open(config_path, "rb") as f:
+        saved = tomllib.load(f)
+    swarmui_section = saved["image_generation"].get("swarmui", {})
+    assert "swarm_token" not in swarmui_section
+    assert "api_key" not in swarmui_section
+
+
+@pytest.mark.asyncio
 async def test_pasted_key_saves_and_input_resets(scratch_config, tmp_path, monkeypatch):
     for var in _ALL_SECRET_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
