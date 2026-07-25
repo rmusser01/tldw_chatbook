@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 
+from collections.abc import Iterator
 from typing import Any
 
 from loguru import logger
@@ -73,7 +74,7 @@ class BuiltinToolGate:
         self._stamps.clear()
 
     @contextlib.contextmanager
-    def stamp_scope(self):
+    def stamp_scope(self) -> Iterator[None]:
         """Snapshot this turn's stamps on enter; RESTORE (not merge) on exit.
 
         task-628. Wired as part of ``AgentService``'s ``review_state_scope``
