@@ -35,6 +35,7 @@ The Chat tab has been the **native Console** since commit `8ea71071f` (2026-05-0
 
 ### Unit 4 — character-load-into-sidebar family (transitively in scope via the fixture item)
 - `handle_chat_load_character_button_pressed` + the character search/name-edit handlers behind dead ids, their `app.py` Input.Changed arms (~:9350/:9354), their tests (incl. `test_handle_chat_load_character_with_greeting`), and the fixture's `# DEAD-ID` character-edit mocks. This unit completes AC #3's fixture item honestly. If its gate fails (a live caller exists), the unit is deferred and the fixture mocks stay with an updated comment.
+- Gated candidate: `handle_chat_clear_active_character_button_pressed` (the task-504-cleaned twin) — same dead surface if its trigger button is composed only in retired modules; gate decides, defer if ambiguous (it touches `#chat-system-prompt`, which borders the send-path surfaces kept this cycle).
 
 ### Unit 5 — whole-file retirements
 - `Widgets/settings_sidebar.py` (1,314 LOC, zero importers), `Widgets/settings_sidebar_optimized.py` (367, zero importers), `Event_Handlers/Chat_Events/chat_events_sidebar_resize.py` (89, sole consumers in CWE — strip same-commit).
@@ -48,7 +49,9 @@ The Chat tab has been the **native Console** since commit `8ea71071f` (2026-05-0
 ## Retirement guards + tests
 
 - Extend `Tests/UI/test_legacy_entrypoints_retired.py` (task-412 pattern): add the three retired module paths to `RETIRED_MODULES`/`RETIRED_FILES`; add symbol-absence pins (deleted handler names absent from `chat_events`, ids absent from `CHAT_BUTTON_HANDLERS`).
+- **Test-casualty enumeration is done by grep, not by list**: the plan greps ALL of `Tests/` for every deleted symbol and id; the files named here are the known majority, not the closed set (known additional suspect: `test_chat_events_integration.py:278,528` queries `#chat-save-current-chat-button` on a real app).
 - Delete test regions guarding deleted code: `test_chat_events.py` ~:277-1028 affected regions (save-chat test, T4 site-(c) region, task-504 region), `test_chat_events_tabs.py` display-wrapper tests (~:535-700 affected, ~:836), Unit-4 tests.
+- **Deletion order rule:** callers before callees — a shared or internal helper is deleted only in or after the commit that removes its last caller, so no intermediate commit has dangling references.
 - Prune `Tests/fixtures/event_handler_mocks.py`: `#chat-chat-title`/`#chat-chat-id` (their consumers go), DEAD-ID character-edit mocks (Unit 4), any id whose last consumer is deleted.
 - Full affected suites after each unit's commit; `test_legacy_entrypoints_retired.py` green at the end; app boot smoke (`Tests/test_smoke.py`) unaffected.
 
