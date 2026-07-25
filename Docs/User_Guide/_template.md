@@ -95,7 +95,7 @@ theme colors rendered (not monochrome), no truncated right edge.
            # --- drive to the state being documented, e.g.: ---
            # await pilot.click("#some-nav-label")
            # await pilot.pause(0.5)
-           app.save_screenshot(os.environ["G0_CAPTURE_OUT"])
+           app.save_screenshot(os.environ["GUIDE_CAPTURE_OUT"])
 
    asyncio.run(main())
    EOF
@@ -107,7 +107,7 @@ theme colors rendered (not monochrome), no truncated right edge.
    cd "$(git rev-parse --show-toplevel)"   # your checkout of the branch being documented
    mkdir -p "Docs/User_Guide/images/<screen>"
    TLDW_CONFIG_PATH="$S/g0_profile/config.toml" \
-     G0_CAPTURE_OUT="Docs/User_Guide/images/<screen>/<name>.svg" \
+     GUIDE_CAPTURE_OUT="Docs/User_Guide/images/<screen>/<name>.svg" \
      .venv/bin/python "$S/capture_<screen>.py"
    ```
 
@@ -120,7 +120,11 @@ at 235×52; this recipe deliberately uses a smaller, fixed 200×50 so every
 page's captures are the same size. Verified during the Step 1 experiment
 that 200 columns does *not* clip the 13-item nav bar — every destination
 through "More: Ctrl+P" renders inside the frame. Always pass
-`size=(200, 50)` to `run_test()`.
+`size=(200, 50)` to `run_test()`. This margin is thin: at 200 columns the
+current 13-item nav bar has only about one column of slack before "More:
+Ctrl+P" gets clipped, so any future nav-label change (renamed/added/removed
+destination) needs a re-check against the fidelity bar for right-edge
+clipping.
 
 **Output path convention:** `Docs/User_Guide/images/<screen>/<name>.svg`,
 where `<screen>` is the same kebab-case slug used for that screen's guide

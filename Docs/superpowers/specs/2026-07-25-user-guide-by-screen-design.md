@@ -61,16 +61,20 @@ Docs/User_Guide/
   library/skills.md
   library/prompts.md
   library/collections.md
-  <roleplay>.md + <roleplay>/{characters,lorebooks,chat-dictionaries}.md
+  roleplay-chat-dictionaries.md + roleplay-chat-dictionaries/{characters,lorebooks,chat-dictionaries}.md
   settings.md                      # one page, one section per pane (split later only if
                                    # a pane outgrows it)
   artifacts.md  watchlists.md  schedules.md  workflows.md
   mcp.md  acp.md  lab.md  logs.md  # stubs with a visible "🚧 stub" banner
 ```
 
-Open naming item (resolve in G0): the nav label is "RP&CD" — confirm its
-on-screen expansion in the live app and name the page/directory to match what
-users actually see (candidate: `roleplay.md` + `roleplay/`). File names
+RESOLVED (G0): the nav label "RP&CD" expands on-screen to "Roleplay & Chat
+Dictionaries" — confirmed identically in both the screen's own banner header
+("Roleplay & Chat Dictionaries" / "Author the pieces that shape a chat") and
+the Ctrl+P command-palette entry ("Tab Navigation: Switch to Roleplay & Chat
+Dictionaries"). Per the file-naming rule (match what users see, lowercased/
+kebab-cased, "&" treated as a separator), the page and directory are named
+`roleplay-chat-dictionaries.md` + `roleplay-chat-dictionaries/`. File names
 otherwise follow visible nav labels, lowercased/kebab-cased.
 
 **Child-page lists above are PROVISIONAL.** They were drafted from program

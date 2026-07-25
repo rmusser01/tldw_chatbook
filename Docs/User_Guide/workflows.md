@@ -13,4 +13,5 @@ Steps, Dry Run, Approvals, and Outputs.
 ## Getting there
 
 - Click **Workflows** in the nav bar, or press **Ctrl+P** → "Switch to
-  Workflows". (From most screens, you can also press **8**.)
+  Workflows". (Pressing **8** can also work when no text field has focus —
+  see the [number-key note](index.md) in the index.)

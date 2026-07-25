@@ -3,30 +3,37 @@
 tldw_chatbook is a terminal (TUI) app for working with LLMs: chat with local
 or cloud providers, manage conversations/notes/media in a local library,
 run roleplay characters with lorebooks, schedule watchlists, and drive
-agent/tool workflows — all stored locally in SQLite.
+agent/tool workflows — stored locally in SQLite by default (some surfaces
+can sync with a tldw server you configure).
 
-> This guide tracks the **dev** branch. Each page carries a
-> "Verified against dev @ `<sha>`" stamp; if your build is older, screens
-> may differ slightly.
+> This guide tracks the **dev** branch. Each fully written page carries a
+> "Verified against dev @ `<sha>`" stamp (stub pages are marked 🚧 instead);
+> if your build is older, screens may differ slightly.
 
 ## Quick start — your first five minutes
 
-1. Install and launch — see the [README](../../README.md#installation).
-2. Open **Settings** (coming in G4) and set a provider + model (or point at
-   a local server).
-3. Open **Console** (coming in G1) by clicking "Console" in the nav bar, or use **Ctrl+P** → "Switch to Console"; then send your first message. (From most screens, you can also press **2**.)
-4. Press **F1** anywhere for contextual help; **Ctrl+P** opens the command
-   palette.
+1. Install and launch — see the [README](../../README.md#installation). On
+   first launch, a "Get started" onboarding card appears and the composer
+   stays locked; sending unlocks once you've set up a provider in step 2.
+2. Open **Settings** (not yet written) — click **Settings** in the nav bar
+   (or **Ctrl+P** → "Switch to Settings") — and set a provider + model (or
+   point at a local server).
+3. Open **Console** (not yet written) by clicking "Console" in the nav bar,
+   or use **Ctrl+P** → "Switch to Console"; then send your first message.
+   (Pressing **2** can also work when no text field has focus — see the
+   number-key note below.)
+4. Press **F1** anywhere to open the current screen's keyboard-shortcuts
+   list; **Ctrl+P** opens the command palette.
 
 ## The screens
 
 | Key | Screen | What it's for |
 |-----|--------|----------------|
-| 1 | Home (coming in G5) | Dashboard, notifications, status, and next actions. |
-| 2 | Console (coming in G1) | Live agent conversations, approvals, tools, RAG, and runs. |
-| 3 | Library (coming in G2) | Workspaces, source material, imports, notes, media, conversations, Study, flashcards, quizzes, and Search/RAG. |
+| 1 | Home (not yet written) | Dashboard, notifications, status, and next actions. |
+| 2 | Console (not yet written) | Live agent conversations, approvals, tools, RAG, and runs. |
+| 3 | Library (not yet written) | Workspaces, source material, imports, notes, media, conversations, Study, flashcards, quizzes, and Search/RAG. |
 | 4 | [Artifacts](artifacts.md) 🚧 | Generated outputs, bundles, reports, datasets, and Chatbooks. |
-| 5 | Roleplay & Chat Dictionaries (coming in G3) | Characters, user profiles, dictionaries, and behavior profiles. |
+| 5 | Roleplay & Chat Dictionaries (not yet written) | Characters, user profiles, dictionaries, and behavior profiles. |
 | 6 | [Watchlists](watchlists.md) 🚧 | Monitored sources, runs, alerts, and recovery. |
 | 7 | [Schedules](schedules.md) 🚧 | When jobs, watchlists, and workflows run. |
 | 8 | [Workflows](workflows.md) 🚧 | Reusable procedures, recipes, dry-runs, and outputs. |
@@ -34,22 +41,24 @@ agent/tool workflows — all stored locally in SQLite.
 | 0 | [ACP](acp.md) 🚧 | Agent Client Protocol agents, sessions, runtimes, diffs, and terminals. |
 | — | [Lab](lab.md) 🚧 | Models, speech, and evaluation runs. |
 | — | [Logs](logs.md) 🚧 | Application logs and diagnostics. |
-| — | Settings (coming in G4) | Global app preferences, appearance, accounts, and storage. |
+| — | Settings (not yet written) | Global app preferences, appearance, accounts, and storage. |
 
 Lab, Logs, and Settings have no dedicated number key — reach them by
 clicking the nav label or via the command palette (**Ctrl+P**).
 
-**Note:** Number keys switch tabs from most screens right after launch, but not
-once a text field (composer, search box) — or in at least one observed
-case, another auto-focused widget — has focus; that keystroke is consumed
-by the field instead of the app shell. Click the nav label or use
-**Ctrl+P** as the dependable way to switch screens.
+**Note:** Number keys can switch tabs, but only when no text field
+(composer, search box) — or, in at least one observed case, another
+auto-focused widget — has focus; once something else has focus, that
+keystroke is consumed by the field instead of the app shell. They're most
+likely to work right after launch, before anything has grabbed focus.
+Click the nav label or use **Ctrl+P** as the dependable way to switch
+screens.
 
 ## Global keyboard shortcuts
 
 | Key | Action |
 |-----|--------|
-| F1 | Open the current screen's shortcuts help (the list shown is screen-specific) |
+| F1 | Open the current screen's keyboard-shortcuts list (content is screen-specific) |
 | Ctrl+P | Open the command palette — search and jump to any screen or command from anywhere |
 | Ctrl+Q | Quit the app |
 
@@ -62,13 +71,15 @@ commands" table.
 
 | Old name | Now lives in |
 |----------|--------------|
-| Notes | Library (coming in G2) |
-| Prompts | Library (coming in G2) |
-| Skills | Library ▸ Skills (coming in G2) |
+| Notes | Library ▸ Notes (not yet written) |
+| Prompts | Library ▸ Prompts (not yet written) |
+| Skills | Library ▸ Skills (not yet written) |
 | Subscriptions | [Watchlists](watchlists.md) 🚧 |
-| Coding | Console (coming in G1) |
-| Conversations / CCP | Roleplay & Chat Dictionaries (coming in G3) |
+| Coding | Console (not yet written) |
+| Conversations / CCP | Roleplay & Chat Dictionaries (not yet written) |
 | LLM management | [Lab](lab.md) 🚧 |
+| Research | Library (not yet written) |
+| Customize | Settings (not yet written) |
 
 ## Conventions
 
@@ -76,3 +87,6 @@ commands" table.
 - 🚧 marks stub pages awaiting a full write-up.
 - Deep dives live in [Docs/Features](../Features/); pages link out rather
   than duplicate them.
+
+—
+*Verified against dev @ 9af99aba — 2026-07-25*
