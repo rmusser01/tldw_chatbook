@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 import re
 from typing import Literal
 import unicodedata
@@ -19,6 +20,7 @@ from .citation_trace_identity import (
 )
 from .citation_trace_models import (
     EVIDENCE_ENTRIES_PER_PROMPT_MAX,
+    GOVERNED_PAYLOAD_UTF8_BYTES_MAX,
     PROMPT_EVIDENCE_SETS_MAX,
     RETRIEVAL_CANDIDATES_PER_RUN_MAX,
     SNAPSHOT_TEXT_UTF8_BYTES_MAX,
@@ -221,8 +223,11 @@ class CitationTraceBuilder:
             raise TypeError("identity_context must be a LocalCitationIdentityContext")
         if not isinstance(fingerprint_codec, CitationFingerprintCodec):
             raise TypeError("fingerprint_codec must be a CitationFingerprintCodec")
-        validated_identity = LocalCitationIdentityContext.model_validate(
-            identity_context.model_dump(mode="python")
+        validated_identity = LocalCitationIdentityContext(
+            schema_version=identity_context.schema_version,
+            profile_id=identity_context.profile_id,
+            local_authority_id=identity_context.local_authority_id,
+            fingerprint_key_id=identity_context.fingerprint_key_id,
         )
         header = _LocalBuilderHeader(
             request_id=request_id,
@@ -287,7 +292,9 @@ class CitationTraceBuilder:
     def evidence_run_payloads(self) -> tuple[EvidenceRunPayload, ...]:
         """Return the governed retrieval payloads recorded so far."""
 
-        return tuple(self._evidence_run_payloads)
+        return tuple(
+            payload.model_copy(deep=True) for payload in self._evidence_run_payloads
+        )
 
     @property
     def prompt_evidence_sets(self) -> tuple[PromptEvidenceSet, ...]:
@@ -299,7 +306,10 @@ class CitationTraceBuilder:
     def evidence_snapshot_payloads(self) -> tuple[EvidenceSnapshotPayload, ...]:
         """Return governed exact prompt evidence payloads."""
 
-        return tuple(self._evidence_snapshot_payloads)
+        return tuple(
+            payload.model_copy(deep=True)
+            for payload in self._evidence_snapshot_payloads
+        )
 
     def record_retrieval_run(
         self,
@@ -334,9 +344,7 @@ class CitationTraceBuilder:
         if not isinstance(retrieval_metadata, LocalRetrievalRunMetadata):
             raise TypeError("retrieval_metadata must be LocalRetrievalRunMetadata")
 
-        metadata = LocalRetrievalRunMetadata.model_validate(
-            retrieval_metadata.model_dump(mode="python")
-        )
+        metadata = LocalRetrievalRunMetadata.model_validate(retrieval_metadata)
         validated_candidates: list[LocalRetrievalCandidateCapture] = []
         for candidate in candidates:
             if not isinstance(candidate, LocalRetrievalCandidateCapture):
@@ -344,9 +352,21 @@ class CitationTraceBuilder:
                     "candidates must contain LocalRetrievalCandidateCapture values"
                 )
             validated_candidates.append(
-                LocalRetrievalCandidateCapture.model_validate(
-                    candidate.model_dump(mode="python")
-                )
+                LocalRetrievalCandidateCapture.model_validate(candidate)
+            )
+        if metadata.scope_state == "empty" and validated_candidates:
+            raise ValueError("empty scope cannot retain retrieval candidates")
+        if any(
+            candidate.candidate_rank > metadata.requested_top_k
+            for candidate in validated_candidates
+        ):
+            raise ValueError("candidate rank cannot exceed requested_top_k")
+        if any(
+            candidate.source_kind not in metadata.source_kinds
+            for candidate in validated_candidates
+        ):
+            raise ValueError(
+                "candidate source_kind must appear in metadata source_kinds"
             )
 
         run_id = new_opaque_id("evidence-run")
@@ -375,6 +395,9 @@ class CitationTraceBuilder:
             started_at=started_at,
             ended_at=ended_at,
         )
+        if run.started_at < self._created_at:
+            raise ValueError("retrieval run cannot start before builder created_at")
+        self._ensure_governed_payload_capacity((run_payload,))
 
         self._evidence_runs.append(run)
         self._evidence_run_payloads.append(run_payload)
@@ -455,9 +478,7 @@ class CitationTraceBuilder:
                     "evidence must contain LocalPromptEvidenceCapture values"
                 )
             validated_evidence.append(
-                LocalPromptEvidenceCapture.model_validate(
-                    capture.model_dump(mode="python")
-                )
+                LocalPromptEvidenceCapture.model_validate(capture)
             )
         candidate_ranks = [capture.candidate_rank for capture in validated_evidence]
         if len(set(candidate_ranks)) != len(candidate_ranks):
@@ -517,6 +538,13 @@ class CitationTraceBuilder:
             entries=tuple(entries),
             created_at=created_at,
         )
+        run = matching_runs[0]
+        run_terminal_boundary = run.ended_at or run.started_at
+        if prompt_set.created_at < run_terminal_boundary:
+            raise ValueError(
+                "prompt evidence set cannot precede its run terminal boundary"
+            )
+        self._ensure_governed_payload_capacity(tuple(snapshots))
 
         self._evidence_snapshot_payloads.extend(snapshots)
         self._prompt_evidence_sets.append(prompt_set)
@@ -526,6 +554,35 @@ class CitationTraceBuilder:
     def _comparison_snapshot_bytes(snapshot_text: str) -> bytes:
         normalized_newlines = snapshot_text.replace("\r\n", "\n").replace("\r", "\n")
         return unicodedata.normalize("NFC", normalized_newlines).encode("utf-8")
+
+    def _ensure_governed_payload_capacity(
+        self,
+        proposed: tuple[EvidenceRunPayload | EvidenceSnapshotPayload, ...],
+    ) -> None:
+        payloads = (
+            *self._evidence_run_payloads,
+            *self._evidence_snapshot_payloads,
+            *proposed,
+        )
+        byte_count = sum(self._canonical_payload_bytes(payload) for payload in payloads)
+        if byte_count > GOVERNED_PAYLOAD_UTF8_BYTES_MAX:
+            raise ValueError(
+                "governed payload exceeds "
+                f"{GOVERNED_PAYLOAD_UTF8_BYTES_MAX} UTF-8 bytes"
+            )
+
+    @staticmethod
+    def _canonical_payload_bytes(
+        payload: EvidenceRunPayload | EvidenceSnapshotPayload,
+    ) -> int:
+        return len(
+            json.dumps(
+                payload.model_dump(mode="json"),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        )
 
     @property
     def is_sealed(self) -> bool:

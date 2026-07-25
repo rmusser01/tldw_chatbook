@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+import json
+import warnings
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
+import tldw_chatbook.Chat.citation_trace_builder as builder_module
 from tldw_chatbook.Chat.citation_source_locators import CanonicalSourceKind
 from tldw_chatbook.Chat.citation_trace_builder import (
     CitationTraceBuilder,
@@ -97,6 +100,17 @@ def _record_run(builder: CitationTraceBuilder) -> str:
     )
 
 
+def _compact_model_json_bytes(model: BaseModel) -> int:
+    return len(
+        json.dumps(
+            model.model_dump(mode="json"),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+
+
 def test_local_builder_starts_empty_unsealed_and_redacts_private_context() -> None:
     builder = _builder()
 
@@ -176,6 +190,88 @@ def test_local_builder_rejects_falsy_non_datetime_created_at() -> None:
             fingerprint_codec=CitationFingerprintCodec(SECRET),
             created_at=0,  # type: ignore[arg-type]
         )
+
+
+def test_strict_revalidation_never_leaks_sensitive_values_to_warnings_or_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    identity_sentinel = "identity-secret-warning-sentinel"
+    metadata_sentinel = "metadata-secret-warning-sentinel"
+    candidate_sentinel = "candidate-secret-warning-sentinel"
+    snapshot_sentinel = "snapshot-secret-warning-sentinel"
+    forged_identity = LocalCitationIdentityContext.model_construct(
+        profile_id=[identity_sentinel],
+        local_authority_id="local-authority-1",
+        fingerprint_key_id="fingerprint-key-1",
+    )
+    forged_metadata = LocalRetrievalRunMetadata.model_construct(
+        search_mode=[metadata_sentinel],
+        requested_top_k=5,
+        max_context_characters=10_000,
+        rerank_enabled=True,
+        source_kinds=(CanonicalSourceKind.MEDIA_DB,),
+        scope_state="unscoped",
+    )
+    forged_candidate = LocalRetrievalCandidateCapture.model_construct(
+        **{
+            **_candidate().model_dump(mode="python"),
+            "source_id": [candidate_sentinel],
+        }
+    )
+    forged_snapshot = LocalPromptEvidenceCapture.model_construct(
+        candidate_rank=1,
+        snapshot_text=[snapshot_sentinel],
+        transformations=(),
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(ValidationError):
+            CitationTraceBuilder.local(
+                request_id="request-1",
+                generation_id="generation-1",
+                identity_context=forged_identity,
+                fingerprint_codec=CitationFingerprintCodec(SECRET),
+                created_at=NOW,
+            )
+        with pytest.raises(ValidationError):
+            _builder().record_retrieval_run(
+                stage="hybrid",
+                raw_query="secret query",
+                candidates=(_candidate(),),
+                retrieval_metadata=forged_metadata,
+                started_at=NOW,
+                ended_at=NOW,
+            )
+        with pytest.raises(ValidationError):
+            _builder().record_retrieval_run(
+                stage="hybrid",
+                raw_query="secret query",
+                candidates=(forged_candidate,),
+                retrieval_metadata=_metadata(),
+                started_at=NOW,
+                ended_at=NOW,
+            )
+        prompt_builder = _builder()
+        run_id = _record_run(prompt_builder)
+        with pytest.raises(ValidationError):
+            prompt_builder.record_prompt_evidence_set(
+                run_id=run_id,
+                evidence=(forged_snapshot,),
+                created_at=NOW,
+            )
+
+    captured = capsys.readouterr()
+    leak_text = "\n".join(
+        [*(str(item.message) for item in caught), captured.out, captured.err]
+    )
+    for sentinel in (
+        identity_sentinel,
+        metadata_sentinel,
+        candidate_sentinel,
+        snapshot_sentinel,
+    ):
+        assert sentinel not in leak_text
 
 
 def test_local_capture_types_reject_non_local_source_families() -> None:
@@ -266,6 +362,41 @@ def test_record_retrieval_run_preserves_order_and_governs_sensitive_data(
     assert "secret query" not in caplog.text
     assert "Sensitive Alpha" not in caplog.text
     assert payload.query_fingerprint not in caplog.text
+
+
+def test_governed_payload_views_are_deep_detached_from_builder_state() -> None:
+    builder = _builder()
+    run_id = _record_run(builder)
+    returned_run_payload = builder.evidence_run_payloads[0]
+    returned_candidate = returned_run_payload.candidates[0]
+
+    returned_run_payload.retrieval_metadata["search_mode"] = "tampered"
+    returned_candidate.source_identity["source_id"] = "tampered-source"
+    returned_candidate.lineage["chunk_index"] = 999
+    builder.record_prompt_evidence_set(
+        run_id=run_id,
+        evidence=(
+            LocalPromptEvidenceCapture(
+                candidate_rank=1,
+                snapshot_text="[S1] MEDIA — Alpha\nExact",
+            ),
+        ),
+        created_at=NOW,
+    )
+
+    internal_run_payload = builder.evidence_run_payloads[0]
+    internal_snapshot = builder.evidence_snapshot_payloads[0]
+    assert internal_run_payload.retrieval_metadata["search_mode"] == "hybrid"
+    assert internal_run_payload.candidates[0].source_identity["source_id"] == "media-1"
+    assert internal_run_payload.candidates[0].lineage["chunk_index"] == 3
+    assert internal_snapshot.source_identity["source_id"] == "media-1"
+    assert internal_snapshot.lineage["chunk_index"] == 3
+
+    internal_snapshot.source_identity["source_id"] = "tampered-snapshot"
+    internal_snapshot.lineage["chunk_index"] = 777
+    fresh_snapshot = builder.evidence_snapshot_payloads[0]
+    assert fresh_snapshot.source_identity["source_id"] == "media-1"
+    assert fresh_snapshot.lineage["chunk_index"] == 3
 
 
 def test_retrieval_inputs_forbid_free_form_or_executable_metadata() -> None:
@@ -386,6 +517,23 @@ def test_invalid_retrieval_run_data_does_not_partially_mutate_state(
     assert builder.evidence_run_payloads == ()
 
 
+def test_retrieval_run_cannot_start_before_builder_creation_and_is_atomic() -> None:
+    builder = _builder()
+
+    with pytest.raises(ValueError, match="builder created_at"):
+        builder.record_retrieval_run(
+            stage="hybrid",
+            raw_query="secret query",
+            candidates=(_candidate(),),
+            retrieval_metadata=_metadata(),
+            started_at=NOW - timedelta(seconds=1),
+            ended_at=NOW,
+        )
+
+    assert builder.evidence_runs == ()
+    assert builder.evidence_run_payloads == ()
+
+
 def test_duplicate_candidate_ranks_fail_without_a_partial_run_or_payload() -> None:
     builder = _builder()
 
@@ -402,6 +550,87 @@ def test_duplicate_candidate_ranks_fail_without_a_partial_run_or_payload() -> No
             ended_at=NOW,
         )
 
+    assert builder.evidence_runs == ()
+    assert builder.evidence_run_payloads == ()
+
+
+def test_candidate_rank_cannot_exceed_requested_top_k_before_id_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    builder = _builder()
+    allocated_prefixes: list[str] = []
+    monkeypatch.setattr(
+        builder_module,
+        "new_opaque_id",
+        lambda prefix: allocated_prefixes.append(prefix) or f"{prefix}_unused",
+    )
+
+    with pytest.raises(ValueError, match="requested_top_k"):
+        builder.record_retrieval_run(
+            stage="hybrid",
+            raw_query="secret query",
+            candidates=(_candidate(rank=2),),
+            retrieval_metadata=_metadata().model_copy(update={"requested_top_k": 1}),
+            started_at=NOW,
+            ended_at=NOW,
+        )
+
+    assert allocated_prefixes == []
+    assert builder.evidence_runs == ()
+    assert builder.evidence_run_payloads == ()
+
+
+def test_candidate_source_kind_must_be_declared_before_id_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    builder = _builder()
+    allocated_prefixes: list[str] = []
+    monkeypatch.setattr(
+        builder_module,
+        "new_opaque_id",
+        lambda prefix: allocated_prefixes.append(prefix) or f"{prefix}_unused",
+    )
+    note_candidate = _candidate().model_copy(
+        update={"source_kind": CanonicalSourceKind.NOTES}
+    )
+
+    with pytest.raises(ValueError, match="metadata source_kinds"):
+        builder.record_retrieval_run(
+            stage="hybrid",
+            raw_query="secret query",
+            candidates=(note_candidate,),
+            retrieval_metadata=_metadata(),
+            started_at=NOW,
+            ended_at=NOW,
+        )
+
+    assert allocated_prefixes == []
+    assert builder.evidence_runs == ()
+    assert builder.evidence_run_payloads == ()
+
+
+def test_empty_scope_rejects_candidates_before_id_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    builder = _builder()
+    allocated_prefixes: list[str] = []
+    monkeypatch.setattr(
+        builder_module,
+        "new_opaque_id",
+        lambda prefix: allocated_prefixes.append(prefix) or f"{prefix}_unused",
+    )
+
+    with pytest.raises(ValueError, match="empty scope"):
+        builder.record_retrieval_run(
+            stage="hybrid",
+            raw_query="secret query",
+            candidates=(_candidate(),),
+            retrieval_metadata=_metadata().model_copy(update={"scope_state": "empty"}),
+            started_at=NOW,
+            ended_at=NOW,
+        )
+
+    assert allocated_prefixes == []
     assert builder.evidence_runs == ()
     assert builder.evidence_run_payloads == ()
 
@@ -525,6 +754,55 @@ def test_prompt_evidence_rejects_unknown_runs_zero_entries_and_duplicate_ranks()
 
 
 @pytest.mark.parametrize(
+    ("started_at", "ended_at", "prompt_created_at"),
+    [
+        (
+            NOW,
+            NOW + timedelta(seconds=2),
+            NOW + timedelta(seconds=1),
+        ),
+        (
+            NOW + timedelta(seconds=2),
+            None,
+            NOW + timedelta(seconds=1),
+        ),
+    ],
+    ids=("ended-at-boundary", "started-at-boundary"),
+)
+def test_prompt_set_cannot_precede_linked_run_terminal_boundary_and_is_atomic(
+    started_at: datetime,
+    ended_at: datetime | None,
+    prompt_created_at: datetime,
+) -> None:
+    builder = _builder()
+    run_id = builder.record_retrieval_run(
+        stage="hybrid",
+        raw_query="secret query",
+        candidates=(_candidate(),),
+        retrieval_metadata=_metadata(),
+        started_at=started_at,
+        ended_at=ended_at,
+    )
+
+    with pytest.raises(ValueError, match="run terminal boundary"):
+        builder.record_prompt_evidence_set(
+            run_id=run_id,
+            evidence=(
+                LocalPromptEvidenceCapture(
+                    candidate_rank=1,
+                    snapshot_text="[S1] MEDIA — Alpha\nExact",
+                ),
+            ),
+            created_at=prompt_created_at,
+        )
+
+    assert len(builder.evidence_runs) == 1
+    assert len(builder.evidence_run_payloads) == 1
+    assert builder.prompt_evidence_sets == ()
+    assert builder.evidence_snapshot_payloads == ()
+
+
+@pytest.mark.parametrize(
     ("evidence", "created_at", "message"),
     [
         (
@@ -621,3 +899,75 @@ def test_prompt_evidence_set_enforces_snapshot_entry_and_set_caps_atomically() -
 
     assert len(builder.prompt_evidence_sets) == PROMPT_EVIDENCE_SETS_MAX
     assert len(builder.evidence_snapshot_payloads) == snapshot_count
+
+
+def test_cumulative_run_payload_budget_accepts_exact_limit_then_rejects_overflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    builder = _builder()
+    _record_run(builder)
+    one_run_bytes = _compact_model_json_bytes(builder.evidence_run_payloads[0])
+    monkeypatch.setattr(
+        builder_module,
+        "GOVERNED_PAYLOAD_UTF8_BYTES_MAX",
+        one_run_bytes * 2,
+        raising=False,
+    )
+
+    _record_run(builder)
+    assert len(builder.evidence_runs) == 2
+    assert len(builder.evidence_run_payloads) == 2
+
+    with pytest.raises(ValueError, match="governed payload exceeds"):
+        _record_run(builder)
+
+    assert len(builder.evidence_runs) == 2
+    assert len(builder.evidence_run_payloads) == 2
+
+
+def test_cumulative_snapshot_batch_overflow_is_atomic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evidence = (
+        LocalPromptEvidenceCapture(
+            candidate_rank=1,
+            snapshot_text="[S1] MEDIA — Alpha\nExact first block",
+        ),
+        LocalPromptEvidenceCapture(
+            candidate_rank=2,
+            snapshot_text="[S2] MEDIA — Beta\nExact second block",
+        ),
+    )
+    measuring_builder = _builder()
+    measuring_run_id = _record_run(measuring_builder)
+    measuring_builder.record_prompt_evidence_set(
+        run_id=measuring_run_id,
+        evidence=evidence,
+        created_at=NOW,
+    )
+    snapshot_batch_bytes = sum(
+        _compact_model_json_bytes(payload)
+        for payload in measuring_builder.evidence_snapshot_payloads
+    )
+
+    builder = _builder()
+    run_id = _record_run(builder)
+    existing_run_bytes = sum(
+        _compact_model_json_bytes(payload) for payload in builder.evidence_run_payloads
+    )
+    monkeypatch.setattr(
+        builder_module,
+        "GOVERNED_PAYLOAD_UTF8_BYTES_MAX",
+        existing_run_bytes + snapshot_batch_bytes - 1,
+        raising=False,
+    )
+
+    with pytest.raises(ValueError, match="governed payload exceeds"):
+        builder.record_prompt_evidence_set(
+            run_id=run_id,
+            evidence=evidence,
+            created_at=NOW,
+        )
+
+    assert builder.prompt_evidence_sets == ()
+    assert builder.evidence_snapshot_payloads == ()
