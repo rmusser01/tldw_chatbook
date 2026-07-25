@@ -1162,3 +1162,49 @@ def test_get_profile_defaults_never_mutates_the_managers_cached_profile(wired):
     assert cached_after.rag_config.search.default_top_k == (
         cached_before.rag_config.search.default_top_k
     )
+
+
+# --- Task 5 (541 v2 UX AC5): is_first_run_state -- pure predicate driving the
+# Settings > Library/RAG first-run starter panel. Truth table: all three
+# conditions (builtin active, no user profiles, index absent) must hold; any
+# single one being false must make the whole thing false. ---
+
+
+def _info(*, read_only: bool) -> dict:
+    return {"id": "hybrid_basic", "name": "Hybrid Basic", "read_only": read_only, "description": ""}
+
+
+def _grouped(*, user: list) -> dict:
+    return {"builtin": [{"id": "hybrid_basic", "name": "Hybrid Basic"}], "user": user, "active_id": "hybrid_basic"}
+
+
+def test_is_first_run_state_true_when_builtin_no_users_and_index_absent():
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import is_first_run_state
+
+    assert is_first_run_state(_info(read_only=True), _grouped(user=[]), "absent") is True
+
+
+def test_is_first_run_state_false_when_active_is_not_read_only():
+    """A non-builtin (user-authored) active profile is never first-run, even
+    with no OTHER user profiles and an absent index -- the user already has
+    a writable profile to edit directly."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import is_first_run_state
+
+    assert is_first_run_state(_info(read_only=False), _grouped(user=[]), "absent") is False
+
+
+def test_is_first_run_state_false_when_a_user_profile_already_exists():
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import is_first_run_state
+
+    grouped = _grouped(user=[{"id": "my-rag", "name": "My RAG"}])
+    assert is_first_run_state(_info(read_only=True), grouped, "absent") is False
+
+
+def test_is_first_run_state_false_when_index_is_not_absent():
+    """built/empty/unknown must all read as NOT first-run -- only a
+    confirmed "absent" index counts. "unknown" in particular guards against
+    an unfetched/failed status read false-triggering the starter panel."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import is_first_run_state
+
+    for state in ("built", "empty", "unknown"):
+        assert is_first_run_state(_info(read_only=True), _grouped(user=[]), state) is False, state

@@ -46,6 +46,7 @@ from tldw_chatbook.UI.Screens.settings_config_models import (
     SettingsDraft,
 )
 from tldw_chatbook.UI.Screens.settings_screen import (
+    RagProfileNameModal,
     RagProfileSwitchConfirmModal,
     SettingsScreen,
 )
@@ -2449,3 +2450,253 @@ def test_leaving_the_library_rag_category_clears_a_stale_preview(monkeypatch, tm
     screen._select_category(SettingsCategoryId.STORAGE.value)
 
     assert screen._rag_preview_profile_id is None
+
+
+# --- Task 5 (541 v2 UX AC5): first-run starter panel -- replaces the "wall
+# of disabled fields" a brand-new install (builtin active, no user profiles,
+# no vector index yet) used to show with a direct next step. The panel keys
+# off the SAME cached index-status fetch the status row uses (never an extra
+# fetch of its own), so its visibility is toggled from the SAME
+# _apply_library_rag_index_status funnel every existing fetch trigger
+# (category show / 't' test / backfill completion / set-active) already goes
+# through -- see is_first_run_state in test_settings_rag_profile_adapter.py
+# for the pure predicate itself. ---
+
+
+def _stub_index_status(monkeypatch, state: str) -> None:
+    monkeypatch.setattr(
+        settings_screen_module,
+        "fetch_index_status",
+        lambda: {"state": state, "count": 0, "provenance": {}},
+    )
+
+
+def _wire_rag_profile_adapter_no_user_profiles(
+    monkeypatch, tmp_path, *, active_id: str = "hybrid_basic"
+):
+    """Like `_wire_rag_profile_adapter`, but WITHOUT its always-present "My
+    RAG" user-profile clone -- the first-run predicate specifically
+    requires a genuinely EMPTY user-profile list, which the shared helper
+    can never produce (it registers "My RAG" unconditionally, active or
+    not)."""
+    from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager
+    import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as rag_adapter_module
+
+    mgr = ConfigProfileManager(profiles_dir=tmp_path / "profiles")
+    state = {"active": active_id}
+    monkeypatch.setattr(rag_adapter_module, "_manager", lambda: mgr, raising=False)
+    monkeypatch.setattr(
+        rag_adapter_module, "_active_profile_id", lambda: state["active"], raising=False
+    )
+    return mgr, state
+
+
+@pytest.mark.asyncio
+async def test_starter_panel_shown_when_builtin_active_no_users_and_index_absent(
+    monkeypatch, tmp_path
+):
+    """The true first-run case: renders the exact copy naming the active
+    profile, and the Search group -- the only one that composes expanded by
+    default -- ends up collapsed alongside it (Embedding/Chunking/Vector
+    store/Reranking are already collapsed by default)."""
+    _wire_rag_profile_adapter_no_user_profiles(monkeypatch, tmp_path)
+    _stub_index_status(monkeypatch, "absent")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        panel = screen.query_one("#settings-library-rag-starter-panel")
+        assert panel.display is True
+        copy_text = str(
+            screen.query_one("#settings-library-rag-starter-copy", Static).renderable
+        )
+        assert (
+            "Search already works on Hybrid Basic. Clone it to tune retrieval, "
+            "or run Backfill to enable semantic results." == copy_text
+        )
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is True
+        )
+        clone_button = screen.query_one(
+            "#settings-library-rag-starter-clone", Button
+        )
+        backfill_button = screen.query_one(
+            "#settings-library-rag-starter-backfill", Button
+        )
+        assert str(clone_button.label) == "Clone to tune…"
+        assert str(backfill_button.label) == "Backfill now"
+
+
+@pytest.mark.asyncio
+async def test_starter_panel_hidden_when_active_profile_is_not_a_builtin(
+    monkeypatch, tmp_path
+):
+    """`_wire_rag_profile_adapter`'s default active profile is the writable
+    "My RAG" clone -- never first-run even with an absent index and no
+    OTHER user profiles."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    _stub_index_status(monkeypatch, "absent")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        panel = screen.query_one("#settings-library-rag-starter-panel")
+        assert panel.display is False
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_starter_panel_hidden_when_a_user_profile_already_exists(
+    monkeypatch, tmp_path
+):
+    mgr, _state = _wire_rag_profile_adapter_no_user_profiles(monkeypatch, tmp_path)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    mgr.save_profile(other)
+    _stub_index_status(monkeypatch, "absent")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        panel = screen.query_one("#settings-library-rag-starter-panel")
+        assert panel.display is False
+
+
+@pytest.mark.asyncio
+async def test_starter_panel_hidden_when_the_index_is_already_built(
+    monkeypatch, tmp_path
+):
+    _wire_rag_profile_adapter_no_user_profiles(monkeypatch, tmp_path)
+    _stub_index_status(monkeypatch, "built")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        panel = screen.query_one("#settings-library-rag-starter-panel")
+        assert panel.display is False
+
+
+@pytest.mark.asyncio
+async def test_starter_panel_disappears_after_a_clone_completes(monkeypatch, tmp_path):
+    """State-driven, no dismissal persistence: a successful clone gives the
+    active builtin its first user profile, which falsifies the predicate on
+    the very next sync -- no explicit "dismiss" affordance needed."""
+    mgr, _state = _wire_rag_profile_adapter_no_user_profiles(monkeypatch, tmp_path)
+    _stub_index_status(monkeypatch, "absent")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen.query_one("#settings-library-rag-starter-panel").display is True
+
+        clone = mgr.clone_profile("hybrid_basic", "My Clone")
+        mgr.save_profile(clone)
+        screen._rag_after_profile_action("clone", True, clone.id)
+        await pilot.pause()
+
+        assert screen.query_one("#settings-library-rag-starter-panel").display is False
+
+
+@pytest.mark.asyncio
+async def test_starter_panel_disappears_after_backfill_completes(monkeypatch, tmp_path):
+    """Backfill itself only fills the vector store; the fake status swap
+    below stands in for "the fetch that runs right after Backfill now sees a
+    non-absent index" -- exercised through the real
+    _refresh_library_rag_index_status -> _rag_index_status_worker funnel the
+    backfill worker's own completion already dispatches."""
+    _wire_rag_profile_adapter_no_user_profiles(monkeypatch, tmp_path)
+    _stub_index_status(monkeypatch, "absent")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen.query_one("#settings-library-rag-starter-panel").display is True
+
+        _stub_index_status(monkeypatch, "built")
+        screen._refresh_library_rag_index_status()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.query_one("#settings-library-rag-starter-panel").display is False
+
+
+def test_starter_panel_clone_button_opens_the_same_clone_modal(
+    monkeypatch, tmp_path, fake_app
+):
+    """The starter panel's "Clone to tune…" button reuses the EXACT same
+    modal + dispatch path as the Profiles block's own "Clone…" button --
+    never a bespoke implementation."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path, active_id="hybrid_basic")
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    button = Button(id="settings-library-rag-starter-clone")
+    screen.handle_library_rag_starter_clone(Button.Pressed(button))
+
+    assert len(fake_app.pushed_screens) == 1
+    modal, _callback = fake_app.pushed_screens[0]
+    assert isinstance(modal, RagProfileNameModal)
+    assert modal._modal_title == "Clone profile"
+
+
+def test_starter_panel_backfill_button_starts_the_same_backfill_worker(
+    monkeypatch, tmp_path, fake_app
+):
+    """The starter panel's "Backfill now" button reuses the EXACT same
+    in-flight guard + thread-worker dispatch as the Index row's own
+    "Backfill" button."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path, active_id="hybrid_basic")
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    worker_calls: list[bool] = []
+    screen._rag_backfill_worker = lambda: worker_calls.append(True)
+
+    button = Button(id="settings-library-rag-starter-backfill")
+    screen.handle_library_rag_starter_backfill(Button.Pressed(button))
+
+    assert screen._library_rag_backfill_in_flight is True
+    assert worker_calls == [True]
+    assert fake_app.notifications[-1][1] == "information"

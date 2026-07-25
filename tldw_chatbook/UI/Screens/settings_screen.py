@@ -140,6 +140,7 @@ from .settings_rag_profile_adapter import (
     fetch_index_status,
     get_profile_defaults,
     index_change_pending,
+    is_first_run_state,
     list_profiles_grouped,
     load_rag_defaults_from_active_profile,
     rename_user_profile,
@@ -8066,6 +8067,80 @@ class SettingsScreen(BaseAppScreen):
         self._set_static_text(
             "#settings-library-rag-index-status", self._library_rag_index_status_text
         )
+        # Task 5 (541 v2 UX AC5): every trigger that lands a fresh index
+        # status (category show / 't' test / backfill completion /
+        # set-active) is exactly the set of moments the first-run starter
+        # panel's predicate could have flipped -- funnel through here rather
+        # than duplicating a second fetch-and-toggle path.
+        self._refresh_rag_first_run_panel_state()
+
+    def _library_rag_cached_index_state(self) -> str:
+        """The index-status row's OWN cached state string, or "unknown" when
+        nothing has been fetched yet -- shared by the first-run predicate so
+        it never triggers a fetch of its own (Task 5, 541 v2 UX AC5)."""
+        cache = self._library_rag_index_status_cache
+        if cache is None:
+            return "unknown"
+        return str(cache.get("state") or "unknown")
+
+    def _library_rag_first_run_active(
+        self, *, info: Mapping[str, object] | None = None, grouped: Mapping[str, object] | None = None
+    ) -> bool:
+        """Whether the Library/RAG editor is currently in the first-run
+        state (Task 5, 541 v2 UX AC5) -- ``info``/``grouped`` may be passed
+        in by a caller that already fetched them this pass (compose) to
+        avoid a redundant adapter call; omitted, both are fetched fresh."""
+        return is_first_run_state(
+            info if info is not None else active_profile_info(),
+            grouped if grouped is not None else list_profiles_grouped(),
+            self._library_rag_cached_index_state(),
+        )
+
+    @staticmethod
+    def _library_rag_starter_panel_copy(info: Mapping[str, object]) -> str:
+        return (
+            f"Search already works on {escape_markup(str(info['name']))}. Clone it "
+            "to tune retrieval, or run Backfill to enable semantic results."
+        )
+
+    def _refresh_rag_first_run_panel_state(self) -> None:
+        """Re-evaluate the first-run starter panel's visibility against the
+        CURRENT active profile / profile list / cached index status, and
+        reflect it onto the mounted widgets imperatively (no recompose) --
+        Task 5 (541 v2 UX AC5). Called after anything that could flip the
+        predicate: an index-status fetch landing (see
+        ``_apply_library_rag_index_status``) and any completed profile
+        action (clone/rename/delete, see ``_rag_after_profile_action``) --
+        a clone is exactly how a first-run install gets its first user
+        profile, which is what ends the first-run state without ever
+        touching the index. Swallows ``QueryError``: this runs from
+        off-thread worker callbacks and a not-yet-mounted or already-
+        navigated-away-from screen must never crash it.
+        """
+        try:
+            panel = self.query_one("#settings-library-rag-starter-panel")
+        except QueryError:
+            return
+        info = active_profile_info()
+        first_run = self._library_rag_first_run_active(info=info)
+        if not first_run:
+            panel.display = False
+            return
+        self._set_static_text(
+            "#settings-library-rag-starter-copy",
+            self._library_rag_starter_panel_copy(info),
+        )
+        panel.display = True
+        # The starter panel, not the disabled wall, is the first impression
+        # while first-run -- collapse the Search group too (the only one
+        # that composes expanded by default; Embedding/Chunking/Vector
+        # store/Reranking already compose collapsed).
+        try:
+            self.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed = True
+        except QueryError:
+            pass
 
     @work(exclusive=True, thread=True, group="settings-rag-index-status")
     def _rag_index_status_worker(self) -> None:
@@ -8406,6 +8481,21 @@ class SettingsScreen(BaseAppScreen):
         rerank_field_disabled, rerank_suffix = self._library_rag_rerank_field_state(
             rerank_enabled=rerank_enabled, field_disabled=field_disabled
         )
+        # Task 5 (541 v2 UX AC5): whether to show the first-run starter
+        # panel INSTEAD of the "wall of disabled fields" as the first
+        # impression -- computed from whatever index status is already
+        # cached (never a fresh fetch of its own; see
+        # `_library_rag_first_run_active`). On the very first-ever compose
+        # (nothing fetched yet) this reads False -- compose optimistically
+        # WITHOUT the panel, exactly like the index-status row itself
+        # always composes its "checking…" placeholder; the real state
+        # lands imperatively once the off-thread fetch resolves (see
+        # `_apply_library_rag_index_status` -> `_refresh_rag_first_run_panel_state`,
+        # which flips this same panel + collapses Search below, without a
+        # recompose). A revisit within the same session, where the cache is
+        # already warm, composes the correct first-run appearance from the
+        # very first paint -- no flicker either way.
+        first_run = self._library_rag_first_run_active(info=info)
 
         yield Static(
             "RAG", classes="destination-section settings-column-title"
@@ -8425,6 +8515,28 @@ class SettingsScreen(BaseAppScreen):
             profiles_card.border_title = "Profiles"
             with profiles_card:
                 yield from self._render_library_rag_profile_block()
+            # Task 5 (541 v2 UX AC5): ALWAYS composed (never conditionally
+            # mounted) so the post-fetch toggle is a plain `.display` flip,
+            # never a dynamic mount/unmount -- see
+            # `_refresh_rag_first_run_panel_state`.
+            starter_panel = Vertical(
+                id="settings-library-rag-starter-panel",
+                classes="settings-secondary-card settings-library-rag-starter-panel",
+            )
+            starter_panel.display = first_run
+            with starter_panel:
+                yield Static(
+                    self._library_rag_starter_panel_copy(info),
+                    id="settings-library-rag-starter-copy",
+                    classes="settings-detail-row",
+                )
+                with Horizontal(classes="settings-action-row"):
+                    yield Button(
+                        "Clone to tune…", id="settings-library-rag-starter-clone"
+                    )
+                    yield Button(
+                        "Backfill now", id="settings-library-rag-starter-backfill"
+                    )
             editor_card = Vertical(
                 id="settings-library-rag-editor-card",
                 classes="settings-secondary-card",
@@ -8441,6 +8553,7 @@ class SettingsScreen(BaseAppScreen):
                     rerank_enabled=rerank_enabled,
                     rerank_field_disabled=rerank_field_disabled,
                     rerank_suffix=rerank_suffix,
+                    search_group_collapsed=first_run,
                 )
 
     def _render_library_rag_editor_fields(
@@ -8455,6 +8568,7 @@ class SettingsScreen(BaseAppScreen):
         rerank_enabled: bool,
         rerank_field_disabled: bool,
         rerank_suffix: str,
+        search_group_collapsed: bool = False,
     ) -> ComposeResult:
         # Task 4 (541 v2 UX AC1): read-only preview banner -- hidden at
         # first paint (the Select always starts pinned to the active
@@ -8478,7 +8592,14 @@ class SettingsScreen(BaseAppScreen):
             classes="settings-status-row",
         )
         with Collapsible(
-            title="Search", collapsed=False, id="settings-library-rag-search-group"
+            title="Search",
+            # Task 5 (541 v2 UX AC5): the ONLY group that composes expanded
+            # by default (Embedding/Chunking/Vector store/Reranking already
+            # compose collapsed) -- collapsed too while first-run, so the
+            # starter panel above, not this wall of disabled fields, is the
+            # first impression.
+            collapsed=search_group_collapsed,
+            id="settings-library-rag-search-group",
         ):
             yield Static(
                 "Used by future Library-native Search/RAG and Console evidence handoff defaults.",
@@ -10882,6 +11003,17 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-library-rag-index-backfill")
     def handle_library_rag_index_backfill(self, event: Button.Pressed) -> None:
         event.stop()
+        self._trigger_library_rag_index_backfill()
+
+    # Task 5 (541 v2 UX AC5): the first-run starter panel's "Backfill now"
+    # shares this SAME trigger -- never a bespoke reimplementation of the
+    # in-flight guard/notify/dispatch.
+    @on(Button.Pressed, "#settings-library-rag-starter-backfill")
+    def handle_library_rag_starter_backfill(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._trigger_library_rag_index_backfill()
+
+    def _trigger_library_rag_index_backfill(self) -> None:
         if self._library_rag_backfill_in_flight:
             self.app.notify("Backfill is already running.", severity="warning")
             return
@@ -10895,6 +11027,18 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-library-rag-profile-clone")
     def handle_library_rag_profile_clone(self, event: Button.Pressed) -> None:
         event.stop()
+        self._trigger_library_rag_profile_clone()
+
+    # Task 5 (541 v2 UX AC5): the first-run starter panel's "Clone to
+    # tune…" shares this SAME trigger -- opens the identical name-modal,
+    # seeded from whatever the profile Select currently shows (the active
+    # builtin, at first-run compose time).
+    @on(Button.Pressed, "#settings-library-rag-starter-clone")
+    def handle_library_rag_starter_clone(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._trigger_library_rag_profile_clone()
+
+    def _trigger_library_rag_profile_clone(self) -> None:
         source_id = (
             self._library_rag_selected_profile_id() or active_profile_info()["id"]
         )
@@ -11029,6 +11173,13 @@ class SettingsScreen(BaseAppScreen):
             self._update_library_rag_editor_title()
             self._set_library_rag_preview_banner(None)
             self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
+            # Task 5 (541 v2 UX AC5): a clone is exactly how a first-run
+            # install gets its first user profile -- this is the one
+            # first-run-ending trigger that never touches the index status,
+            # so it needs its own explicit re-evaluation (rename/delete
+            # never flip the predicate in practice, but recomputing is
+            # cheap and keeps every successful profile action consistent).
+            self._refresh_rag_first_run_panel_state()
             self.app.notify(message, severity="information")
             return
         reason = result or "failed"
