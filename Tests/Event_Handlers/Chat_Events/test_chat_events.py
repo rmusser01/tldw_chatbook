@@ -846,3 +846,131 @@ async def test_display_conversation_keeps_users_name_without_active_profile(
         mock_chat_msg_class.call_args.kwargs["message"]
         == "Hello Tester, I am Sherlock."
     )
+
+
+# ===== task-504: display_conversation_in_chat_tab_ui repointed to the live
+# sidebar ids (#chat-chat-title / #chat-chat-id); the dead #chat-right-sidebar
+# / #chat-conversation-* / #chat-character-*-edit families must never be
+# queried and a missing sidebar field must never abort the message-log mount
+# =====
+
+
+def _t504_conversation_fixture() -> dict:
+    """Two-message conversation, live-shaped (no dead-id dependent fields)."""
+    return {
+        "metadata": {"title": "My Chat", "keywords_display": "", "character_id": None},
+        "messages": [
+            {"content": "Hi there", "sender": "User", "id": "m1", "timestamp": "t1"},
+            {"content": "Hello!", "sender": "AI", "id": "m2", "timestamp": "t2"},
+        ],
+        "character_name": "AI",
+    }
+
+
+async def test_display_conversation_populates_live_sidebar_and_log(
+    mock_app, monkeypatch
+):
+    """task-504 AC1/AC3: title, id display, and message log populate against
+    the live-shaped tree."""
+    import tldw_chatbook.Event_Handlers.Chat_Events.chat_events as chat_events_module
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
+        display_conversation_in_chat_tab_ui,
+    )
+
+    conversation = _t504_conversation_fixture()
+    stubbed_messages = conversation["messages"]
+    monkeypatch.setattr(
+        chat_events_module.ccl,
+        "get_conversation_details_and_messages",
+        lambda db, conversation_id: conversation,
+    )
+    # Force the classic (non-enhanced) widget path deterministically.
+    monkeypatch.setattr(chat_events_module, "get_cli_setting", lambda *a, **k: False)
+
+    with patch(
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage"
+    ) as mock_chat_msg_class:
+        mock_chat_msg_class.return_value = MagicMock(spec=ChatMessage)
+        await display_conversation_in_chat_tab_ui(mock_app, "conv-1")
+
+    assert mock_app.query_one("#chat-chat-title", Input).value == "My Chat"
+    assert mock_app.query_one("#chat-chat-id", Input).value == "conv-1"
+    chat_log = mock_app.query_one("#chat-log", VerticalScroll)
+    assert chat_log.mount.await_count == len(stubbed_messages)
+
+
+async def test_display_conversation_never_queries_dead_right_sidebar(
+    mock_app, monkeypatch
+):
+    """task-504 AC1: the dead #chat-right-sidebar id (and the
+    #chat-character-*-edit / #chat-conversation-* dead-id families) are never
+    queried."""
+    import tldw_chatbook.Event_Handlers.Chat_Events.chat_events as chat_events_module
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
+        display_conversation_in_chat_tab_ui,
+    )
+
+    monkeypatch.setattr(
+        chat_events_module.ccl,
+        "get_conversation_details_and_messages",
+        lambda db, conversation_id: _t504_conversation_fixture(),
+    )
+    monkeypatch.setattr(chat_events_module, "get_cli_setting", lambda *a, **k: False)
+
+    with patch(
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage"
+    ) as mock_chat_msg_class:
+        mock_chat_msg_class.return_value = MagicMock(spec=ChatMessage)
+        await display_conversation_in_chat_tab_ui(mock_app, "conv-1")
+
+    queried = [
+        call.args[0] for call in mock_app.query_one.call_args_list if call.args
+    ]
+    assert "#chat-right-sidebar" not in queried
+    assert not any(
+        isinstance(sel, str) and sel.startswith("#chat-character-") for sel in queried
+    )
+    assert not any(
+        isinstance(sel, str) and sel.startswith("#chat-conversation-")
+        for sel in queried
+    )
+
+
+async def test_display_conversation_sidebar_failure_does_not_block_log(
+    mock_app, monkeypatch
+):
+    """task-504: a missing sidebar detail field must not abort the
+    message-log mount (the original bug pattern) -- simulate
+    #chat-chat-title being absent from the compose tree."""
+    import tldw_chatbook.Event_Handlers.Chat_Events.chat_events as chat_events_module
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
+        display_conversation_in_chat_tab_ui,
+    )
+
+    conversation = _t504_conversation_fixture()
+    stubbed_messages = conversation["messages"]
+    monkeypatch.setattr(
+        chat_events_module.ccl,
+        "get_conversation_details_and_messages",
+        lambda db, conversation_id: conversation,
+    )
+    monkeypatch.setattr(chat_events_module, "get_cli_setting", lambda *a, **k: False)
+
+    original_side_effect = mock_app.query_one.side_effect
+
+    def side_effect_missing_title(selector, widget_type=None):
+        if selector == "#chat-chat-title":
+            raise QueryError("#chat-chat-title")
+        return original_side_effect(selector, widget_type)
+
+    mock_app.query_one.side_effect = side_effect_missing_title
+
+    with patch(
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage"
+    ) as mock_chat_msg_class:
+        mock_chat_msg_class.return_value = MagicMock(spec=ChatMessage)
+        await display_conversation_in_chat_tab_ui(mock_app, "conv-1")
+
+    mock_app.query_one.side_effect = original_side_effect
+    chat_log = mock_app.query_one("#chat-log", VerticalScroll)
+    assert chat_log.mount.await_count == len(stubbed_messages)
