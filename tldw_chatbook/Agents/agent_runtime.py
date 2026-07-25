@@ -276,7 +276,7 @@ def _append_tool_result(messages: list[dict], call: ToolCall, content: str) -> N
         )
 
 
-def _detect_cycle(recent) -> "tuple[int, int] | None":
+def _detect_cycle(recent) -> tuple[int, int] | None:
     """Detect a repeating tool-call cycle in the tail of ``recent``.
 
     Returns ``(period, repeats)`` when the last ``repeats*period`` call-keys
@@ -435,9 +435,23 @@ def run_agent_loop(
             cycle = _detect_cycle(recent_calls)
             if cycle is not None:
                 period, repeats = cycle
+                # Name the offending tool(s) so the user-facing "Agent run
+                # stuck: ..." copy (console_chat_controller's
+                # _agent_failure_visible_copy, which surfaces this summary
+                # verbatim) stays actionable instead of reading as bare
+                # "N-cycle" jargon. dict.fromkeys de-dupes while preserving
+                # order (a period-1 trip names the tool once, not 3x).
+                names = ", ".join(
+                    dict.fromkeys(
+                        n for n, _ in list(recent_calls)[-period * repeats :]
+                    )
+                )
                 add(
                     STEP_ERROR,
-                    summary=f"loop detected: {period}-cycle repeated {repeats}x",
+                    summary=(
+                        f"loop detected: {names} repeated in a "
+                        f"{period}-cycle ({repeats}x)"
+                    ),
                 )
                 return _outcome(RUN_STUCK)
 

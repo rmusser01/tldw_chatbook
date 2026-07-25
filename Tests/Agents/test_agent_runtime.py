@@ -265,6 +265,10 @@ def test_identical_consecutive_calls_trip_loop_detection():
     )
     assert out.status == RUN_STUCK
     assert out.steps[-1].kind == "error"
+    # The stuck summary is surfaced verbatim to the user (see
+    # console_chat_controller._agent_failure_visible_copy) -- it must name
+    # the looping tool, not just "1-cycle" jargon.
+    assert "calculator" in out.steps[-1].summary
 
 
 def test_same_tool_different_args_is_not_stuck():
@@ -306,6 +310,20 @@ def test_detect_cycle_non_cyclic_is_none():
     assert _detect_cycle(_keys("A", "B", "C", "D", "E")) is None
 
 
+def test_detect_cycle_period4_trips_at_two_repeats():
+    # Boundary: MAX_LOOP_PERIOD (4) is the longest period detected.
+    assert _detect_cycle(_keys("A", "B", "C", "D", "A", "B", "C", "D")) == (4, 2)
+
+
+def test_detect_cycle_period5_is_none_too_long():
+    # A period-5 cycle exceeds MAX_LOOP_PERIOD -- never checked, so it must
+    # never be detected even with two full repeats present.
+    assert (
+        _detect_cycle(_keys("A", "B", "C", "D", "E", "A", "B", "C", "D", "E"))
+        is None
+    )
+
+
 def test_alternating_calls_trip_loop_detection():
     # A->B->A->B with IDENTICAL args must trip RUN_STUCK (was a gap: only
     # consecutive-identical calls tripped detection before this fix).
@@ -323,9 +341,14 @@ def test_alternating_calls_trip_loop_detection():
     assert out.status == RUN_STUCK
     assert out.steps[-1].kind == "error"
     assert "loop detected" in out.steps[-1].summary
+    # Both cycle members must be named -- a period>1 trip that only
+    # mentioned one tool would be just as unactionable as the old
+    # "N-cycle" jargon.
+    assert "calculator" in out.steps[-1].summary
+    assert "new_tool" in out.steps[-1].summary
 
 
-def test_alternating_different_args_not_stuck():
+def test_same_tool_distinct_args_not_stuck():
     # Four distinct calculator calls with different args: no repeating
     # cycle at any period, so this must not trip RUN_STUCK.
     turns = [
