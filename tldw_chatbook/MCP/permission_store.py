@@ -474,6 +474,36 @@ def definition_hash(description: str | None, input_schema: dict | None) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+#: Permission namespace for the agent runtime's in-process built-in tools.
+#: Deliberately NOT ``builtin:tldw_chatbook`` -- that key belongs to the
+#: built-in MCP *server* (see ``readiness.BUILTIN_SERVER_KEY``), and sharing
+#: it would let one decision govern two different execution paths. No MCP
+#: routing label (``local:``/``builtin:``/``server:``) claims ``agent:``.
+BUILTIN_TOOL_SERVER_KEY = "agent:builtin"
+
+#: Precedence floor for built-in tools: they inherit ``allow`` rather than
+#: the MCP ``global_default``, so changing MCP's posture never starts
+#: prompting for calculator/datetime. High-risk tags still floor it to ask.
+BUILTIN_DEFAULT_STATE = "allow"
+
+
+@dataclass(frozen=True)
+class GatedToolRef:
+    """The minimum a resolver needs to gate one in-process tool.
+
+    Deliberately not ``HubTool``: that type models a *hub* tool (its
+    ``source`` enum is ``local|builtin|server``, and its ``stale``/
+    ``executable``/tag-cap fields are meaningless here), and borrowing it
+    would import MCP's hub model into the tools layer.
+    """
+
+    server_key: str
+    name: str
+    description: str
+    input_schema: dict | None
+    tags: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class EffectiveToolState:
     """The resolved allow/ask/deny verdict for one tool, plus why.
@@ -481,8 +511,10 @@ class EffectiveToolState:
     Attributes:
         state: One of ``STORE_STATES``.
         origin: Which precedence level produced ``state`` before any
-            downgrade -- ``tool_override``, ``server_default``, or
-            ``global_default``.
+            downgrade -- ``tool_override``, ``server_default``,
+            ``global_default``, or (built-in tools only, via
+            ``resolve_builtin_state``) ``builtin_default``, the allow
+            floor applied when nothing more specific overrides it.
         config_changed: True when an explicit tool-level ``allow`` was
             downgraded to ``ask`` by the rug-pull guard (hash mismatch
             and/or a persisted ``config_changed`` marker).
@@ -611,6 +643,75 @@ def resolve_effective_state(
         state=state,
         origin=origin,
         config_changed=config_changed,
+        risk_floored=risk_floored,
+    )
+
+
+def resolve_builtin_state(
+    payload: dict[str, Any], tool: GatedToolRef
+) -> EffectiveToolState:
+    """Resolve a built-in tool's effective permission state.
+
+    Mirrors ``resolve_effective_state``'s precedence walk with two
+    deliberate differences:
+
+    * The final fallback is ``BUILTIN_DEFAULT_STATE`` (``allow``), not the
+      MCP ``global_default``. Built-ins are in-process code the user
+      already installed; inheriting MCP's ``ask`` would prompt on every
+      calculator call, and changing MCP's global posture must not silently
+      change built-in behavior.
+    * No ``definition_hash`` comparison. That guard exists for a REMOTE
+      server mutating a tool after you trusted it; for in-process code an
+      attacker who can change the tool already has code execution, so it
+      buys nothing -- while any release editing a description or schema
+      would flip ``config_changed`` and re-prompt every user at upgrade
+      time. ``config_changed`` is therefore always False here.
+
+    The high-risk floor is unchanged: an INHERITED ``allow`` (not an
+    explicit tool override) whose tags intersect ``HIGH_RISK_TAGS`` is
+    downgraded to ``ask`` with ``risk_floored=True``.
+
+    Args:
+        payload: A loaded permission-store payload (``{}`` is valid and
+            resolves everything to the floor).
+        tool: The built-in tool reference to resolve.
+
+    Returns:
+        The resolved ``EffectiveToolState``.
+    """
+    profile = _as_mapping(_as_mapping(payload.get("profiles")).get(_DEFAULT_PROFILE_ID))
+    servers = _as_mapping(profile.get("servers"))
+    server_entry = _as_mapping(servers.get(tool.server_key))
+    tools = _as_mapping(server_entry.get("tools"))
+    tool_entry = tools.get(tool.name)
+    if not isinstance(tool_entry, Mapping):
+        tool_entry = None
+
+    if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
+        origin = "tool_override"
+        state = tool_entry["state"]
+    else:
+        server_default = server_entry.get("default")
+        if server_default in STORE_STATES:
+            origin = "server_default"
+            state = server_default
+        else:
+            origin = "builtin_default"
+            state = BUILTIN_DEFAULT_STATE
+
+    risk_floored = False
+    if (
+        origin != "tool_override"
+        and state == "allow"
+        and set(tool.tags) & HIGH_RISK_TAGS
+    ):
+        state = "ask"
+        risk_floored = True
+
+    return EffectiveToolState(
+        state=state,
+        origin=origin,
+        config_changed=False,
         risk_floored=risk_floored,
     )
 

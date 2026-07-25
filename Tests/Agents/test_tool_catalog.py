@@ -76,6 +76,24 @@ def test_pseudo_tool_schemas():
     assert LOAD_TOOLS_SCHEMA.name == LOAD_TOOLS_NAME
 
 
+def test_tool_for_returns_the_real_tool_invoke_would_dispatch():
+    # Minor 7 (final review): every hook test substitutes a fake provider,
+    # so `tool_for` itself -- the only thing standing between "the review
+    # hook reviews built-ins" and "the hook silently reviews nothing" --
+    # had no direct coverage. Assert it returns the SAME object `invoke()`
+    # looks up internally (both read `self._tools`), not merely an
+    # equivalent one.
+    provider = BuiltinToolProvider()
+    tool = provider.tool_for("calculator")
+    assert tool is provider._tools["calculator"]
+    assert tool.name == "calculator"
+
+
+def test_tool_for_returns_none_for_unknown_name():
+    provider = BuiltinToolProvider()
+    assert provider.tool_for("not_a_real_tool") is None
+
+
 class FakeBigProvider:
     """A provider with more tools than the threshold."""
 
@@ -169,3 +187,57 @@ def test_invoke_by_name_returns_error_result_when_owner_vanishes():
     result = reg.invoke_by_name("x", {})
     assert result.ok is False
     assert "x" in result.error
+
+
+def test_builtin_provider_refuses_when_gate_denies():
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    class DenyGate:
+        def check(self, tool):
+            return "nope"
+
+    out = BuiltinToolProvider(gate=DenyGate()).invoke(
+        "builtin:calculator", {"expression": "1+1"}
+    )
+    assert out.ok is False
+    assert "nope" in out.error
+
+
+def test_builtin_provider_runs_when_gate_permits():
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    class AllowGate:
+        def check(self, tool):
+            return None
+
+    out = BuiltinToolProvider(gate=AllowGate()).invoke(
+        "builtin:calculator", {"expression": "6*7"}
+    )
+    assert out.ok is True
+
+
+def test_gate_none_is_not_ungated(monkeypatch):
+    # Constraint 6: a bare provider must be gated, not open.
+    import tldw_chatbook.Agents.tool_catalog as tc
+
+    class DenyGate:
+        def check(self, tool):
+            return "denied by default gate"
+
+    monkeypatch.setattr(tc, "build_builtin_gate", lambda: DenyGate())
+    out = tc.BuiltinToolProvider().invoke("builtin:calculator", {"expression": "1+1"})
+    assert out.ok is False
+    assert "denied by default gate" in out.error
+
+
+def test_gate_failure_does_not_raise_into_the_loop():
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    class BoomGate:
+        def check(self, tool):
+            raise RuntimeError("gate exploded")
+
+    out = BuiltinToolProvider(gate=BoomGate()).invoke(
+        "builtin:calculator", {"expression": "1+1"}
+    )
+    assert out.ok is False  # fail closed, never raise

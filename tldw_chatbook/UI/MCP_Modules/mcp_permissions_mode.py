@@ -287,13 +287,23 @@ def _kill_switch_label(value: bool) -> str:
     and the rationale docstring at `library_notes_canvas.py`'s sync-panel
     compose method -- neither control renders reliably in this app's
     canvases). Spelling the boolean out in the label itself also resolves
-    the checked-polarity trap a Checkbox would have here (checked == MCP
-    tools BLOCKED, an inverted "checked means on" reading) and the
+    the checked-polarity trap a Checkbox would have here (checked == tool
+    calls BLOCKED, an inverted "checked means on" reading) and the
     invisible-unchecked-glyph CSS problem the old Checkbox needed a
     defensive `min-height` bundle workaround for (T6/T9) -- both moot for a
     Button.
+
+    task-545/T6: worded as a global tool kill switch, not an MCP-only one
+    -- `BuiltinToolGate._kill_switch()` reads the exact same
+    `service.get_kill_switch()`/`set_kill_switch()` pair this Button
+    drives, so flipping it also disables every built-in tool
+    (calculator/datetime today), not just MCP-sourced ones. The label
+    said "block MCP tools in chat" before built-in gating existed; that
+    reading is now misleading (the switch already blocks both), so it
+    reads as "tool calls" here to cover both -- the tooltip already used
+    this same "chat tool calls" phrasing (see `compose()` below).
     """
-    return f"block MCP tools in chat: {'yes' if value else 'no'} ▸"
+    return f"block tool calls in chat: {'yes' if value else 'no'} ▸"
 
 
 def _tool_column_text(row: PermRow) -> str:

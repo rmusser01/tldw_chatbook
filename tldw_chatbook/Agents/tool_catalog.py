@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Iterable, Mapping, Protocol
+from typing import Any, Iterable, Mapping, Protocol
 
 from tldw_chatbook.Tools.tool_executor import CalculatorTool, DateTimeTool
 
@@ -162,16 +162,66 @@ class ToolProvider(Protocol):
     def invoke(self, tool_id: str, args: dict) -> ToolResult: ...
 
 
+def build_builtin_gate(*args: Any, **kwargs: Any) -> Any:
+    """Thin, monkeypatchable indirection to the real gate builder.
+
+    Defined here (rather than imported at module scope) so this module
+    stays dependency-light: `builtin_tool_gate` (which pulls in the MCP
+    permission store) is only imported the first time this is actually
+    *called*, not merely when `tool_catalog` itself is imported. Keeping
+    it as a real module-level name -- instead of a `from ... import` done
+    inline inside `_resolve_gate` -- is what lets tests monkeypatch
+    `tool_catalog.build_builtin_gate` directly to prove a bare
+    `BuiltinToolProvider()` is gated by default (Constraint 6): a
+    function-local import only ever binds a local name, never a module
+    attribute, so `monkeypatch.setattr(module, "build_builtin_gate", ...)`
+    would have nothing to patch without this indirection.
+    """
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        build_builtin_gate as _build_builtin_gate,
+    )
+
+    return _build_builtin_gate(*args, **kwargs)
+
+
 class BuiltinToolProvider:
     """Wraps tool_executor's built-in tools behind the provider interface."""
 
     SOURCE = "builtin"
 
-    def __init__(self) -> None:
+    def __init__(self, gate: Any | None = None) -> None:
         self._tools = {t.name: t for t in (CalculatorTool(), DateTimeTool())}
+        # `None` means "build the real gate on first use" -- NOT "ungated".
+        # Every construction site (console_agent_bridge's default registry
+        # and its per-run registry) passes nothing today, so an ungated
+        # default would silently leave the shipping path unprotected.
+        self._gate = gate
 
     def _tool_id(self, name: str) -> str:
         return f"{self.SOURCE}:{name}"
+
+    def tool_for(self, name: str) -> Any | None:
+        """Return the built-in ``Tool`` registered under ``name``, if any."""
+        return self._tools.get(name)
+
+    def _resolve_gate(self) -> Any:
+        """Return the provider's gate, building one lazily on first use.
+
+        Note: nothing here calls `begin_turn()` on a lazily-built gate,
+        so its permission-store payload is loaded once and never
+        invalidated for the life of this provider. Harmless today --
+        `build_builtin_gate()`'s default, service-less gate always has
+        an empty `{}` payload -- but any gate handed to (or built by)
+        this provider must be driven by a caller that calls
+        `begin_turn()` once per turn, as `console_chat_controller`'s
+        review-hook path already does, or its permission state will
+        freeze at first use.
+        """
+        if self._gate is None:
+            # Module-global lookup (not a local import) so a test's
+            # monkeypatch of `tool_catalog.build_builtin_gate` is honored.
+            self._gate = build_builtin_gate()
+        return self._gate
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         return [
@@ -199,6 +249,17 @@ class BuiltinToolProvider:
         tool = self._tools.get(name)
         if tool is None:
             return ToolResult(ok=False, error=f"Unknown builtin tool: {name}")
+        # Defense in depth: the run-level review hook is the primary gate
+        # (it batches approvals into one card per turn), but a caller that
+        # reaches invoke() without going through it must still not execute
+        # ungated. A gate that raises fails CLOSED -- never into the pure
+        # loop, which must not see exceptions from tool invocation.
+        try:
+            refusal = self._resolve_gate().check(tool)
+        except Exception as exc:  # noqa: BLE001 — fail closed
+            return ToolResult(ok=False, error=f"permission check failed: {exc}")
+        if refusal is not None:
+            return ToolResult(ok=False, error=refusal)
         try:
             # Providers bridge async tools; the loop's interface is sync.
             # Safe here: the service runs in a worker thread with no

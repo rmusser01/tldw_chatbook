@@ -41,6 +41,25 @@ _DECISION_OPTIONS: list[tuple[str, str]] = [
 ]
 _DEFAULT_DECISION = "approve_once"
 
+
+def _options_for_row(call: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """Decision options for one row, honoring an optional ``options`` key.
+
+    Rows that omit ``options`` (every MCP row) get the full set, so MCP
+    behavior is unchanged. A row may narrow it -- built-in tools offer
+    only the session-scoped choices in P1, because persistent decisions
+    for them cannot yet be undone in the UI. Unknown values are dropped,
+    and an empty result falls back to the full set rather than rendering
+    an unusable empty ``Select``.
+    """
+    requested = call.get("options") if isinstance(call, Mapping) else None
+    if not isinstance(requested, (list, tuple)) or not requested:
+        return _DECISION_OPTIONS
+    wanted = set(requested)
+    narrowed = [pair for pair in _DECISION_OPTIONS if pair[1] in wanted]
+    return narrowed or _DECISION_OPTIONS
+
+
 #: Reason-badge suffixes appended to a row's header line.
 _REASON_SUFFIXES: dict[str, str] = {
     "config_changed": " (definition changed)",
@@ -124,6 +143,7 @@ class ChatApprovalCard(Container):
         self._batch_generation = 0
         self._batch_names: list[str] = []
         self._batch_selects: list[Select] = []
+        self._batch_legal_values: list[list[str]] = []
 
     def compose(self) -> ComposeResult:
         yield Static("Approval required", id="approval-title")
@@ -202,6 +222,7 @@ class ChatApprovalCard(Container):
             self.query_one("#approval-batch-body").display = False
             self._batch_names = []
             self._batch_selects = []
+            self._batch_legal_values = []
             return
 
         self.display = True
@@ -213,16 +234,25 @@ class ChatApprovalCard(Container):
         generation = self._batch_generation
         names: list[str] = []
         selects: list[Select] = []
+        legal_values: list[list[str]] = []
         rows: list[Horizontal] = []
         for index, entry in enumerate(grouped):
             names.append(str(entry.get("llm_name", "")))
+            row_options = _options_for_row(entry)
+            row_values = [value for _label, value in row_options]
+            default_value = (
+                _DEFAULT_DECISION
+                if _DEFAULT_DECISION in row_values
+                else row_options[0][1]
+            )
             select = Select(
-                _DECISION_OPTIONS,
-                value=_DEFAULT_DECISION,
+                row_options,
+                value=default_value,
                 allow_blank=False,
                 classes="approval-row-decision",
             )
             selects.append(select)
+            legal_values.append(row_values)
             rows.append(
                 Horizontal(
                     Static(
@@ -242,6 +272,7 @@ class ChatApprovalCard(Container):
             )
         self._batch_names = names
         self._batch_selects = selects
+        self._batch_legal_values = legal_values
 
         rows_container = self.query_one("#approval-batch-rows", Vertical)
         rows_container.remove_children()
@@ -252,17 +283,31 @@ class ChatApprovalCard(Container):
         button_id = event.button.id
         if button_id == "approval-approve-all":
             event.stop()
-            self._set_all_batch_decisions("approve_once")
+            self._set_all_batch_decisions(("approve_once", "approve_session"))
         elif button_id == "approval-deny-all":
             event.stop()
-            self._set_all_batch_decisions("deny")
+            self._set_all_batch_decisions(("deny",))
         elif button_id == "approval-submit":
             event.stop()
             self._submit_batch_decisions()
 
-    def _set_all_batch_decisions(self, decision: str) -> None:
-        for select in self._batch_selects:
-            select.value = decision
+    def _set_all_batch_decisions(self, candidates: tuple[str, ...]) -> None:
+        """Bulk-set every row to the first of ``candidates`` that row legally offers.
+
+        A narrowed row (task-5's per-row ``options``) may not offer every
+        bulk target -- assigning a value outside a ``Select``'s own option
+        list raises Textual's ``InvalidSelectValueError``. ``candidates`` is
+        a preference order (e.g. "Approve all" prefers ``approve_once``,
+        falling back to ``approve_session`` -- both are approvals, so
+        falling back between them is honest); a row that legally offers
+        none of ``candidates`` is left on its current value rather than
+        crashing or silently doing nothing useful.
+        """
+        for select, legal_values in zip(self._batch_selects, self._batch_legal_values):
+            for candidate in candidates:
+                if candidate in legal_values:
+                    select.value = candidate
+                    break
 
     def _submit_batch_decisions(self) -> None:
         decisions = {
