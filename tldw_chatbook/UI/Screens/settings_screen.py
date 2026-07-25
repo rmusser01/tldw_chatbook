@@ -1242,6 +1242,20 @@ class SettingsScreen(BaseAppScreen):
         #: an extra off-thread status fetch on every Save click; None until
         #: the first fetch completes.
         self._library_rag_index_status_cache: Mapping[str, object] | None = None
+        #: Task 2 review (Important): debounces the cache-miss branch of
+        #: `_confirm_reindex_then_save` against a second Save click landing
+        #: before the first off-thread status fetch completes. Without this,
+        #: a second click while `_library_rag_index_status_cache` is still
+        #: None dispatches a SECOND `_rag_reindex_confirm_status_worker` in
+        #: the same `exclusive=True` `@work` group as the first -- which
+        #: CANCELS the first call, silently dropping ITS `pending_activate`
+        #: (held only as a function-local inside the now-cancelled call,
+        #: never handed back to anything). Set right before that dispatch,
+        #: cleared once the flow's decision is made (worker callback, both
+        #: the direct-dispatch and modal outcomes) or the modal resolves;
+        #: see `_rag_reindex_confirm_status_worker` and
+        #: `_handle_reindex_confirmation_result`.
+        self._rag_reindex_confirm_in_flight = False
         self._library_rag_backfill_in_flight = False
         self._appearance_result = (
             "Appearance defaults have not been saved this session."
@@ -9434,6 +9448,11 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._active_settings_field_id = None
+        # Task 2 review (Important): a stale re-index-confirm in-flight
+        # guard must never survive navigating away from (or back into) the
+        # category -- e.g. the user backs out mid-fetch. Unconditional
+        # reset; a no-op for every category but LIBRARY_RAG.
+        self._rag_reindex_confirm_in_flight = False
         self.active_category = category_value
         if category_value == SettingsCategoryId.OVERVIEW.value:
             self._queue_sync_rows_refresh()
@@ -11780,6 +11799,16 @@ class SettingsScreen(BaseAppScreen):
         if cached_status is not None:
             self._decide_reindex_confirmation(values, pending_activate, cached_status)
             return
+        if self._rag_reindex_confirm_in_flight:
+            # Debounce (Task 2 review, Important): a status fetch for an
+            # earlier Save click's cache-miss window is already running --
+            # dispatching a SECOND worker in the same exclusive @work group
+            # would CANCEL the first one, silently dropping ITS
+            # pending_activate. No-op instead; the in-flight fetch will
+            # still complete and dispatch save for the FIRST click once it
+            # lands.
+            return
+        self._rag_reindex_confirm_in_flight = True
         self._rag_reindex_confirm_status_worker(values, pending_activate)
 
     def _decide_reindex_confirmation(
@@ -11818,6 +11847,14 @@ class SettingsScreen(BaseAppScreen):
         values: SettingsLibraryRagDefaults,
         pending_activate: str | None,
     ) -> None:
+        # Task 2 review (Important): defensive clear -- by the time this
+        # modal resolves the in-flight guard is normally already cleared
+        # (the worker callback below clears it right after the decision
+        # that pushed this very modal), but clearing it again here too,
+        # unconditionally, on BOTH the Confirm and Cancel branches, means
+        # this handler can never be the reason a future Save stays
+        # debounced.
+        self._rag_reindex_confirm_in_flight = False
         if not confirmed:
             # Cancel: the draft stays staged (never popped on this path) and
             # `_rag_profile_pending_activate` stays cleared (never re-armed
@@ -11826,17 +11863,35 @@ class SettingsScreen(BaseAppScreen):
             return
         self._dispatch_library_rag_save(values, True, pending_activate)
 
+    def _clear_rag_reindex_confirm_in_flight(self) -> None:
+        """Main-thread flip of the in-flight guard -- see
+        ``_rag_reindex_confirm_status_worker``'s ``finally`` block."""
+        self._rag_reindex_confirm_in_flight = False
+
     @work(exclusive=True, thread=True, group="settings-rag-index-status")
     def _rag_reindex_confirm_status_worker(
         self,
         values: SettingsLibraryRagDefaults,
         pending_activate: str | None,
     ) -> None:
-        status = fetch_index_status()
-        self.app.call_from_thread(self._apply_library_rag_index_status, status)
-        self.app.call_from_thread(
-            self._decide_reindex_confirmation, values, pending_activate, status
-        )
+        try:
+            status = fetch_index_status()
+            self.app.call_from_thread(self._apply_library_rag_index_status, status)
+            self.app.call_from_thread(
+                self._decide_reindex_confirmation, values, pending_activate, status
+            )
+        finally:
+            # Task 2 review (Important): ALWAYS clears the in-flight guard,
+            # even if something above raises -- fetch_index_status() itself
+            # never raises (see its own except-fallback), but this is a
+            # belt-and-suspenders net: without it, a failure here would
+            # leave the flag stuck True forever, silently no-op-ing every
+            # future Save on this category ("Save bricks"). `call_from_thread`
+            # is synchronous from this (background) thread's point of view,
+            # so this runs only AFTER `_decide_reindex_confirmation` above
+            # has already returned -- covers both the direct-dispatch and
+            # the modal-pushed outcome in this one place.
+            self.app.call_from_thread(self._clear_rag_reindex_confirm_in_flight)
 
     def _dispatch_library_rag_save(
         self,

@@ -1642,3 +1642,98 @@ def test_save_with_no_cached_status_fetches_then_saves_directly_when_absent(
 
     assert fake_app.pushed_screens == []
     assert len(worker_calls) == 1
+
+
+# --- Task 2 review (Important): the cache-miss branch's off-thread status
+# fetch must be debounced against a second Save click landing before the
+# first fetch completes. Without a guard, a second click while
+# `_library_rag_index_status_cache` is still None dispatches a SECOND
+# `_rag_reindex_confirm_status_worker` in the same `exclusive=True` @work
+# group as the first -- which CANCELS the first call, silently dropping ITS
+# `pending_activate` (a function-local the cancelled call never hands back
+# to anything: no notification, no error, the deferred profile switch just
+# never happens). ---
+
+
+def test_double_save_click_during_no_cache_fetch_does_not_drop_pending_activate(
+    monkeypatch, tmp_path, fake_app
+):
+    screen, callback, other_id = _dirty_screen_with_switch_pushed(
+        monkeypatch, tmp_path, fake_app
+    )
+    monkeypatch.setattr(
+        settings_screen_module, "index_change_pending", lambda values: True
+    )
+    monkeypatch.setattr(
+        settings_screen_module,
+        "fetch_index_status",
+        lambda: {"state": "built", "count": 3, "provenance": {}},
+    )
+    assert screen._library_rag_index_status_cache is None
+    assert screen._rag_reindex_confirm_in_flight is False
+    worker_calls: list[tuple] = []
+    screen._settings_save_library_rag_worker = lambda *args: worker_calls.append(args)
+    fetch_dispatches: list[tuple] = []
+    screen._rag_reindex_confirm_status_worker = lambda *args: fetch_dispatches.append(
+        args
+    )
+
+    callback("save")  # 1st Save click: arms pending_activate=other_id, cache miss
+
+    assert len(fetch_dispatches) == 1
+    assert screen._rag_reindex_confirm_in_flight is True
+
+    # 2nd Save click while the 1st fetch is still "in flight" -- must be
+    # debounced (no 2nd dispatch), or the real exclusive @work group would
+    # cancel the 1st worker and drop its pending_activate.
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+    assert len(fetch_dispatches) == 1
+
+    # Complete the 1st (and only) fetch, simulating the off-thread worker
+    # landing.
+    values, pending_activate = fetch_dispatches[0]
+    assert pending_activate == other_id
+    worker = SettingsScreen.__dict__["_rag_reindex_confirm_status_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen, values, pending_activate)
+
+    # The guard clears once the flow's decision is made. pushed_screens[0]
+    # is the earlier RagProfileSwitchConfirmModal from `_dirty_screen_with_
+    # switch_pushed`'s own Set-active click -- this is the SECOND push.
+    assert screen._rag_reindex_confirm_in_flight is False
+    assert len(fake_app.pushed_screens) == 2
+    modal, modal_callback = fake_app.pushed_screens[-1]
+    assert isinstance(modal, ConfirmationDialog)
+
+    modal_callback(True)
+
+    # The 1st click's pending_activate survived the double-click race.
+    assert len(worker_calls) == 1
+    assert screen._rag_profile_pending_activate == other_id
+
+    # The guard is not stuck True: a LATER cache-miss window dispatches a
+    # fresh fetch normally -- a subsequent Save is not bricked.
+    screen._library_rag_index_status_cache = None
+    screen._confirm_reindex_then_save(values, None)
+    assert len(fetch_dispatches) == 2
+
+
+def test_reindex_confirm_in_flight_cleared_on_cancel(monkeypatch, tmp_path, fake_app):
+    """The in-flight guard must clear on the Cancel branch too (defensive
+    -- by the time the modal resolves it's normally already cleared by the
+    worker callback, but the handler clears it unconditionally as well)."""
+    screen, worker_calls = _dirty_screen_ready_for_reindex_gate(
+        monkeypatch,
+        tmp_path,
+        fake_app,
+        cached_status={"state": "built", "count": 5, "provenance": {}},
+    )
+    screen._rag_reindex_confirm_in_flight = True
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+    _modal, callback = fake_app.pushed_screens[0]
+
+    callback(False)
+
+    assert screen._rag_reindex_confirm_in_flight is False
+    assert worker_calls == []
