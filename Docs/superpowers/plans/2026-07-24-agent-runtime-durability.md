@@ -16,7 +16,8 @@
 2. **Loop-detection thresholds:** period-1 trips at `LOOP_DETECTION_N (=3)` identical consecutive calls (backward-compatible); periods `2..MAX_LOOP_PERIOD (=4)` trip at 2 full repeats. Smallest period first. Call-key = `(call.name, json.dumps(call.args, sort_keys=True))`.
 3. **Reconcile:** `running`→`error` with `result=COALESCE(result,'Interrupted by app restart')`, file-backed DBs only, once per file per process (`_swept_paths`), called right after `super().__init__()`.
 4. **PRAGMAs:** `journal_mode=WAL` (guarded by `is_memory_db`) + `busy_timeout=5000` on `AgentRunsDB._get_connection` only (no `base_db` change).
-5. **Tool timeout:** `RunBudget.max_tool_call_seconds: float = 120.0` (0 = unlimited); enforced via a module-level `_call_with_timeout` using a **per-call daemon thread + join(timeout)** (NOT a ThreadPoolExecutor `with`, NOT a shared pool); wraps ONLY the builtin/custom `registry.invoke_by_name` (skill calls route around it); MUST be added to `clamp_child_budget`.
+5. **Tool timeout:** `RunBudget.max_tool_call_seconds` (0 = unlimited); enforced via a module-level `_call_with_timeout` using a **per-call daemon thread + join(timeout)** (NOT a ThreadPoolExecutor `with`, NOT a shared pool); wraps ONLY the builtin/custom `registry.invoke_by_name` (skill calls route around it); MUST be added to `clamp_child_budget`.
+   **CORRECTED post-review (2026-07-25):** the default is **`300.0`**, not the `120.0` written in Task 4 below, and MCP tools are **NOT** exempt from the wrapper — `MCPToolProvider` shares the same per-run registry, so MCP calls go through it. 120.0 collided with MCP's own ~186s worst case (121s approval wait + 65s execution), which would report a timeout for a call that later really executes. Task 4's code blocks below retain the original `120.0`; the shipped value is `300.0`. See the spec's CORRECTION block for the full reasoning.
 6. **Line numbers below are as-of origin/dev `f32ac64fc` — re-verify with `grep -n` before editing (they've already drifted ~20 lines from the AC citations). The target TEXT is authoritative.**
 7. Worktree `/Users/macbook-dev/Documents/GitHub/tldw_chatbook-agent-durability` (branch `feat/agent-runtime-durability`); tests via `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest` FROM the worktree. Never touch the main checkout. `git add` only each task's listed files, never `-A`.
 
@@ -413,14 +414,9 @@ def test_call_with_timeout_wraps_exception():
         raise ValueError("kaboom")
     out = _call_with_timeout(boom, 5.0, "bad_tool")
     assert out.ok is False and "kaboom" in out.error
-
-
-def test_call_with_timeout_zero_is_caller_gated():
-    # The closure, not the helper, treats 0 as unlimited: helper is only
-    # called with seconds>0. Documented here so the contract is explicit.
-    out = _call_with_timeout(lambda: ToolResult(ok=True, content="ok"), 5.0, "t")
-    assert out.ok
 ```
+
+(c) In the agent_service test file, add ONE closure-level test proving `max_tool_call_seconds=0` bypasses the timeout wrapper entirely (build the `invoke_tool` via `service._make_invoke_tool(config, disclosed)` with a `config.budget` whose `max_tool_call_seconds=0`, register a fast tool, assert it returns normally). If wiring a full `AgentService` in a unit test is heavy, assert the branch directly instead: with a `RunBudget(max_tool_call_seconds=0)`, `timeout and timeout > 0` is falsy — a targeted test on that expression is acceptable. Keep it a real assertion, not a name-only stub.
 
 (Adapt `ToolResult(...)` construction to its real fields — check `agent_models.py` for whether it's `output=`/`content=`/`data=`. Load-bearing: fast → result passes through; slow → `ok=False` with "timed out" + tool name; raising → `ok=False` with the message.)
 
