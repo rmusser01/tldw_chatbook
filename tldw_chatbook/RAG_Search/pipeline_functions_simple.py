@@ -6,6 +6,7 @@ No complex error handling - just let exceptions propagate.
 """
 
 import asyncio
+import math
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -21,6 +22,12 @@ from ..Chat.rag_scope import (
     note_id_params,
 )
 from .pipeline_types import SearchResult
+from .local_citation_capture import (
+    FINAL_SCORE_KIND_KEY,
+    FINAL_SCORE_KIND_RERANKER,
+    SEMANTIC_SCORE_KIND_KEY,
+    SEMANTIC_SCORE_KIND_VECTOR_SIMILARITY,
+)
 from .semantic_availability import (
     SEMANTIC_REASON_SEARCH_ERROR,
     SEMANTIC_UNAVAILABLE_MESSAGES,
@@ -34,6 +41,18 @@ from .semantic_availability import (
 #: Key under which pipeline diagnostics record scope-enforcement state
 #: (mirrors semantic_availability.SEMANTIC_DIAGNOSTICS_KEY's pattern).
 SCOPE_DIAGNOSTICS_KEY = "scope"
+_SEMANTIC_SOURCE_ALIASES = {
+    "media": "media",
+    "media_db": "media",
+    "media-db": "media",
+    "note": "note",
+    "notes": "note",
+    "conversation": "conversation",
+    "conversations": "conversation",
+    "chat": "conversation",
+    "chat_history": "conversation",
+    "chat-history": "conversation",
+}
 
 
 def _record_scope_conversations_excluded(diagnostics: Optional[Dict[str, Any]]) -> None:
@@ -520,16 +539,35 @@ async def search_semantic(
     # Convert to our SearchResult format
     results = []
     for result in rag_results:
+        metadata = result.metadata.copy() if result.metadata else {}
+        metadata.pop(FINAL_SCORE_KIND_KEY, None)
+        metadata.pop(SEMANTIC_SCORE_KIND_KEY, None)
+        metadata.pop("hybrid_fusion", None)
+        metadata[SEMANTIC_SCORE_KIND_KEY] = SEMANTIC_SCORE_KIND_VECTOR_SIMILARITY
+        raw_source = getattr(result, "source", None)
+        source = (
+            raw_source
+            if isinstance(raw_source, str)
+            and raw_source.strip().lower() not in {"", "unknown"}
+            else next(
+                (
+                    _SEMANTIC_SOURCE_ALIASES[value.strip().lower()]
+                    for key in ("source_type", "source_kind")
+                    if isinstance((value := metadata.get(key)), str)
+                    and value.strip().lower() in _SEMANTIC_SOURCE_ALIASES
+                ),
+                "unknown",
+            )
+        )
         # Check if this result has citations
         if hasattr(result, "citations") and result.citations:
             # Include citations in metadata
-            metadata = result.metadata.copy() if result.metadata else {}
             metadata["_has_citations"] = True
             metadata["_citations"] = [c.to_dict() for c in result.citations]
 
             results.append(
                 SearchResult(
-                    source=getattr(result, "source", "unknown"),
+                    source=source,
                     id=result.id,
                     title=getattr(result, "title", result.document[:50]),
                     content=result.document,
@@ -541,12 +579,12 @@ async def search_semantic(
             # Basic result without citations
             results.append(
                 SearchResult(
-                    source=getattr(result, "source", "unknown"),
+                    source=source,
                     id=result.id,
                     title=getattr(result, "title", result.document[:50]),
                     content=getattr(result, "content", result.document),
                     score=result.score,
-                    metadata=result.metadata if hasattr(result, "metadata") else {},
+                    metadata=metadata,
                 )
             )
 
@@ -603,19 +641,39 @@ def rerank_results(
             rerank_req = RerankRequest(query=query, passages=passages)
             ranked_results = ranker.rerank(rerank_req)
 
-            # Reorder results
-            reranked = []
+            # Validate the complete reranker response before mutating any
+            # producer score or provenance marker. A partial/raising fallback
+            # must leave prior RRF/semantic score semantics honest.
+            planned_updates = []
             for ranked in ranked_results[:top_k]:
                 idx = ranked.index
-                if idx < len(results):
-                    result = results[idx]
-                    result.score = float(ranked.score)
-                    reranked.append(result)
+                score = float(ranked.score)
+                if (
+                    isinstance(idx, bool)
+                    or not isinstance(idx, int)
+                    or not 0 <= idx < len(results)
+                    or not math.isfinite(score)
+                ):
+                    raise ValueError("invalid FlashRank result")
+                planned_updates.append((results[idx], score))
 
+            reranked = []
+            for result, score in planned_updates:
+                result.score = score
+                result.metadata = {
+                    **(result.metadata or {}),
+                    FINAL_SCORE_KIND_KEY: FINAL_SCORE_KIND_RERANKER,
+                }
+                reranked.append(result)
             return reranked
 
         except ImportError:
             logger.warning("FlashRank not available, returning original order")
+            return results[:top_k]
+        except Exception:
+            logger.opt(exception=True).warning(
+                "FlashRank reranking failed; returning original order"
+            )
             return results[:top_k]
 
     # Default: just sort by score and limit
@@ -802,6 +860,10 @@ def weighted_merge(
                 # New result with weighted score
                 result.score = result.score * weight
                 merged[key] = result
+            result.metadata = dict(result.metadata or {})
+            result.metadata.pop(FINAL_SCORE_KIND_KEY, None)
+            result.metadata.pop(SEMANTIC_SCORE_KIND_KEY, None)
+            result.metadata.pop("hybrid_fusion", None)
 
     # Sort by final score
     final_results = list(merged.values())

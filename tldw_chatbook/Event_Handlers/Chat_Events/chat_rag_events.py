@@ -6,12 +6,14 @@ import asyncio
 import copy
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 from loguru import logger
 
 # Local Imports
+from ...Chat.citation_source_locators import CanonicalSourceKind
 from ...Chat.rag_scope import (
+    CONVERSATION_METADATA_SCOPE_KEY,
     EffectiveScope,
     RagScope,
     SCOPE_EMPTY_NOTICE_TEMPLATE,
@@ -21,10 +23,18 @@ from ...Chat.rag_scope import (
     SOURCE_TYPE_NOTE,
     ScopeCache,
     SessionScopeHolder,
+    parse_scope,
     read_conversation_scope,
     resolve_effective_scope,
 )
 from ...RAG_Search.fusion import resolve_hybrid_alpha
+from ...RAG_Search.local_citation_capture import (
+    LocalEvidenceContext,
+    LocalResultNormalizationError,
+    NormalizedLocalResult,
+    format_local_evidence_context,
+    normalize_local_result,
+)
 from ...RAG_Search.pipeline_builder_simple import BUILTIN_PIPELINES, execute_pipeline
 from ...RAG_Search.pipeline_functions_simple import SCOPE_DIAGNOSTICS_KEY
 from ...RAG_Search.semantic_availability import (
@@ -299,7 +309,13 @@ async def perform_search_with_pipeline(
 
     # Execute pipeline with merged parameters
     return await execute_pipeline(
-        config, app, query, sources, diagnostics=diagnostics, scope=scope, **merged_params
+        config,
+        app,
+        query,
+        sources,
+        diagnostics=diagnostics,
+        scope=scope,
+        **merged_params,
     )
 
 
@@ -556,9 +572,7 @@ def _existing_ids_sync(
         ).fetchall()
         return frozenset(str(row[0]) for row in rows)
     except Exception as e:
-        logger.warning(
-            f"rag_scope existing-ids check failed for {source_type}: {e}"
-        )
+        logger.warning(f"rag_scope existing-ids check failed for {source_type}: {e}")
         return frozenset()
 
 
@@ -617,7 +631,7 @@ def _scope_cache_for(app: "TldwCli") -> ScopeCache:
 
 
 async def resolve_scope_for_session(
-    app: "TldwCli", session: Optional[Any]
+    app: "TldwCli", session: Optional[Any], *, use_cache: bool = True
 ) -> ScopeResolution:
     """Resolve conversation + workspace RAG retrieval scope for ``session``.
 
@@ -676,6 +690,9 @@ async def resolve_scope_for_session(
         app: The running app instance.
         session: The Console session to resolve scope for, or ``None`` (no
             active session -- resolves fully unscoped with zero DB work).
+        use_cache: Whether to consult and populate the per-app scope cache.
+            Prompt-boundary evidence authorization passes ``False`` so
+            retrieval-time scope state cannot authorize stale evidence.
 
     Returns:
         A ``ScopeResolution`` carrying the raw conversation scope, the raw
@@ -695,12 +712,59 @@ async def resolve_scope_for_session(
 
     conv_scope: Optional[RagScope] = None
     if conversation_id and db is not None:
-        if is_memory_db:
-            conv_scope = read_conversation_scope(db, conversation_id)
+        if use_cache:
+            if is_memory_db:
+                conv_scope = read_conversation_scope(db, conversation_id)
+            else:
+                conv_scope = await asyncio.to_thread(
+                    read_conversation_scope, db, conversation_id
+                )
         else:
-            conv_scope = await asyncio.to_thread(
-                read_conversation_scope, db, conversation_id
-            )
+            try:
+                if is_memory_db:
+                    record = db.get_conversation_by_id(str(conversation_id))
+                else:
+                    record = await asyncio.to_thread(
+                        db.get_conversation_by_id, str(conversation_id)
+                    )
+                if record is None:
+                    raise LookupError("active conversation unavailable")
+                raw_metadata = record.get("metadata")
+                if raw_metadata in (None, ""):
+                    metadata = {}
+                else:
+                    metadata = json.loads(raw_metadata)
+                    if not isinstance(metadata, dict):
+                        raise ValueError("conversation metadata is not an object")
+                raw_scope = metadata.get(CONVERSATION_METADATA_SCOPE_KEY)
+                conv_scope = parse_scope(raw_scope)
+                if raw_scope is not None and conv_scope is None:
+                    raise ValueError("conversation scope is malformed")
+                if conv_scope is not None and not conv_scope.items:
+                    conv_scope = None
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Fresh prompt-boundary conversation scope read failed"
+                )
+                return ScopeResolution(
+                    None,
+                    None,
+                    EffectiveScope(
+                        state="empty",
+                        allowlist={},
+                        cause="conversation-scope-unavailable",
+                    ),
+                )
+    elif conversation_id and not use_cache:
+        return ScopeResolution(
+            None,
+            None,
+            EffectiveScope(
+                state="empty",
+                allowlist={},
+                cause="conversation-scope-unavailable",
+            ),
+        )
     elif session is not None:
         holder = getattr(session, "rag_scope_holder", None)
         if isinstance(holder, SessionScopeHolder):
@@ -711,6 +775,16 @@ async def resolve_scope_for_session(
     )
     ws_scope: Optional[RagScope] = None
     registry_service = getattr(app, "workspace_registry_service", None)
+    if workspace_id and registry_service is None and not use_cache:
+        return ScopeResolution(
+            conv_scope,
+            None,
+            EffectiveScope(
+                state="empty",
+                allowlist={},
+                cause="workspace-scope-unavailable",
+            ),
+        )
     if workspace_id and registry_service is not None:
         registry_db = getattr(registry_service, "db", None)
         registry_is_memory = bool(getattr(registry_db, "is_memory_db", False))
@@ -770,9 +844,10 @@ async def resolve_scope_for_session(
     conv_stamp = conv_scope.updated_at if conv_scope is not None else None
     ws_stamp = ws_scope.updated_at if ws_scope is not None else None
     cache = _scope_cache_for(app)
-    cached = cache.get(cache_key_id, workspace_id, conv_stamp, ws_stamp)
-    if cached is not None:
-        return ScopeResolution(conv_scope, ws_scope, cached)
+    if use_cache:
+        cached = cache.get(cache_key_id, workspace_id, conv_stamp, ws_stamp)
+        if cached is not None:
+            return ScopeResolution(conv_scope, ws_scope, cached)
 
     def _existing_ids(source_type: str, ids: "frozenset[str]") -> "frozenset[str]":
         return _existing_ids_sync(app, source_type, ids)
@@ -783,11 +858,14 @@ async def resolve_scope_for_session(
         effective = await asyncio.to_thread(
             resolve_effective_scope, conv_scope, ws_scope, _existing_ids
         )
-    cache.put(cache_key_id, workspace_id, conv_stamp, ws_stamp, effective)
+    if use_cache:
+        cache.put(cache_key_id, workspace_id, conv_stamp, ws_stamp, effective)
     return ScopeResolution(conv_scope, ws_scope, effective)
 
 
-async def resolve_effective_scope_for_chat(app: "TldwCli") -> EffectiveScope:
+async def resolve_effective_scope_for_chat(
+    app: "TldwCli", *, use_cache: bool = True
+) -> EffectiveScope:
     """Resolve the RAG retrieval scope for the message about to be sent.
 
     Conversation identity comes from the active native-Console session's
@@ -799,6 +877,8 @@ async def resolve_effective_scope_for_chat(app: "TldwCli") -> EffectiveScope:
 
     Args:
         app: The running app instance.
+        use_cache: Whether to use the retrieval/display scope cache. Pass
+            ``False`` at a provider prompt boundary.
 
     Returns:
         The resolved ``EffectiveScope`` -- ``state == "unscoped"`` (with no
@@ -807,7 +887,7 @@ async def resolve_effective_scope_for_chat(app: "TldwCli") -> EffectiveScope:
         ``resolve_effective_scope``'s own both-``None`` contract.
     """
     session = _active_console_session(app)
-    resolution = await resolve_scope_for_session(app, session)
+    resolution = await resolve_scope_for_session(app, session, use_cache=use_cache)
     return resolution.effective
 
 
@@ -816,6 +896,165 @@ async def resolve_effective_scope_for_chat(app: "TldwCli") -> EffectiveScope:
 # `chat_rag_events._resolve_effective_scope_for_chat`) keeps working. New
 # code should import `resolve_effective_scope_for_chat` directly.
 _resolve_effective_scope_for_chat = resolve_effective_scope_for_chat
+
+
+def _current_local_evidence_ids_sync(
+    app: "TldwCli",
+    ids_by_source: Dict[CanonicalSourceKind, frozenset[str]],
+) -> Optional[frozenset[tuple[CanonicalSourceKind, str]]]:
+    """Return current non-deleted local identities using batched DB reads."""
+
+    found: set[tuple[CanonicalSourceKind, str]] = set()
+    media_ids = ids_by_source.get(CanonicalSourceKind.MEDIA_DB, frozenset())
+    if media_ids:
+        media_db = getattr(app, "media_db", None)
+        if media_db is None:
+            return None
+        try:
+            rows = media_db.execute_query(
+                "SELECT id FROM Media "
+                "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
+                (json.dumps(sorted(media_ids)),),
+            ).fetchall()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Prompt-boundary media existence read failed"
+            )
+            return None
+        found.update((CanonicalSourceKind.MEDIA_DB, str(row[0])) for row in rows)
+
+    note_ids = ids_by_source.get(CanonicalSourceKind.NOTES, frozenset())
+    conversation_ids = ids_by_source.get(CanonicalSourceKind.CHAT_HISTORY, frozenset())
+    if note_ids or conversation_ids:
+        db = getattr(app, "chachanotes_db", None)
+        if db is None:
+            return None
+        try:
+            rows = db.execute_query(
+                "SELECT 'notes' AS source_kind, id FROM notes "
+                "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0 "
+                "UNION ALL "
+                "SELECT 'chat_history' AS source_kind, id FROM conversations "
+                "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
+                (
+                    json.dumps(sorted(note_ids)),
+                    json.dumps(sorted(conversation_ids)),
+                ),
+            ).fetchall()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Prompt-boundary notes/conversations existence read failed"
+            )
+            return None
+        source_kinds = {
+            "notes": CanonicalSourceKind.NOTES,
+            "chat_history": CanonicalSourceKind.CHAT_HISTORY,
+        }
+        found.update((source_kinds[str(row[0])], str(row[1])) for row in rows)
+
+    return frozenset(found)
+
+
+async def authorize_local_results_for_prompt(
+    app: "TldwCli",
+    normalized_results: Sequence[NormalizedLocalResult],
+) -> Tuple[NormalizedLocalResult, ...]:
+    """Re-read current authority and backing rows before assigning markers.
+
+    Args:
+        app: Running app with current session and local DB authorities.
+        normalized_results: Strict canonical candidates in retrieval order.
+
+    Returns:
+        Current, authorized candidates in their original order. Any authority
+        or existence read failure returns an empty tuple.
+    """
+
+    if not normalized_results:
+        return ()
+    try:
+        effective_scope = await resolve_effective_scope_for_chat(app, use_cache=False)
+    except Exception:
+        logger.opt(exception=True).warning(
+            "Prompt-boundary scope authority read failed"
+        )
+        return ()
+    if effective_scope.state == "empty":
+        return ()
+
+    ids_by_source: Dict[CanonicalSourceKind, set[str]] = {}
+    for result in normalized_results:
+        if not isinstance(result, NormalizedLocalResult):
+            return ()
+        ids_by_source.setdefault(result.source_kind, set()).add(result.source_id)
+    frozen_ids = {
+        source_kind: frozenset(source_ids)
+        for source_kind, source_ids in ids_by_source.items()
+    }
+    dbs = (
+        getattr(app, "media_db", None),
+        getattr(app, "chachanotes_db", None),
+    )
+    run_inline = any(
+        bool(getattr(db, "is_memory_db", False)) for db in dbs if db is not None
+    )
+    if run_inline:
+        existing = _current_local_evidence_ids_sync(app, frozen_ids)
+    else:
+        existing = await asyncio.to_thread(
+            _current_local_evidence_ids_sync, app, frozen_ids
+        )
+    if existing is None:
+        return ()
+
+    scope_source_types = {
+        CanonicalSourceKind.MEDIA_DB: SOURCE_TYPE_MEDIA,
+        CanonicalSourceKind.NOTES: SOURCE_TYPE_NOTE,
+    }
+    authorized: list[NormalizedLocalResult] = []
+    for result in normalized_results:
+        identity = (result.source_kind, result.source_id)
+        if identity not in existing:
+            continue
+        if effective_scope.state == "scoped":
+            source_type = scope_source_types.get(result.source_kind)
+            if source_type is None:
+                continue
+            if result.source_id not in effective_scope.allowlist.get(
+                source_type, frozenset()
+            ):
+                continue
+        authorized.append(result)
+    return tuple(authorized)
+
+
+async def assemble_local_evidence_for_prompt(
+    app: "TldwCli",
+    results: List[Any],
+    *,
+    max_length: int = 90,
+) -> LocalEvidenceContext:
+    """Opt in to strict normalization, fresh authorization, and formatting.
+
+    Args:
+        app: Running app with current session and local DB authorities.
+        results: Legacy pipeline result mappings or objects.
+        max_length: Maximum Unicode codepoints in the formatted context.
+
+    Returns:
+        Exact prompt context and canonical per-entry snapshot captures.
+    """
+
+    normalized: list[NormalizedLocalResult] = []
+    for candidate_rank, result in enumerate(results, start=1):
+        try:
+            normalized.append(
+                normalize_local_result(result, candidate_rank=candidate_rank)
+            )
+        except LocalResultNormalizationError:
+            continue
+    authorized = await authorize_local_results_for_prompt(app, tuple(normalized))
+    return format_local_evidence_context(authorized, max_length=max_length)
 
 
 async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optional[str]:
