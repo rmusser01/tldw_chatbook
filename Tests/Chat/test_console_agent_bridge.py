@@ -2236,3 +2236,75 @@ def test_install_skill_absent_without_confirm_callback(tmp_path):
                  if m.role == ConsoleMessageRole.TOOL]
     assert any("Tool not permitted: install_skill" in c for c in tool_msgs)
     assert not any("declined" in c.lower() for c in tool_msgs)
+
+
+# --- task-628: combined per-turn state scopes -------------------------------
+
+
+def test_combine_state_scopes_none_and_single_are_passthrough():
+    from tldw_chatbook.Chat.console_agent_bridge import _combine_state_scopes
+
+    assert _combine_state_scopes([]) is None
+    sentinel = object()
+    assert _combine_state_scopes([sentinel]) is sentinel  # byte-identical wiring
+
+
+def test_combine_state_scopes_enters_and_exits_both():
+    """Both owners' per-turn state must be guarded around a nested run."""
+    import contextlib
+
+    from tldw_chatbook.Chat.console_agent_bridge import _combine_state_scopes
+
+    events = []
+
+    def _make(name):
+        @contextlib.contextmanager
+        def _scope():
+            events.append(f"enter:{name}")
+            try:
+                yield
+            finally:
+                events.append(f"exit:{name}")
+
+        return _scope
+
+    combined = _combine_state_scopes([_make("mcp"), _make("builtin")])
+    with combined():
+        events.append("child-run")
+
+    # Both entered, both exited, unwinding in reverse order.
+    assert events == [
+        "enter:mcp",
+        "enter:builtin",
+        "child-run",
+        "exit:builtin",
+        "exit:mcp",
+    ]
+
+
+def test_combine_state_scopes_restores_both_when_the_nested_run_raises():
+    import contextlib
+
+    from tldw_chatbook.Chat.console_agent_bridge import _combine_state_scopes
+
+    exited = []
+
+    def _make(name):
+        @contextlib.contextmanager
+        def _scope():
+            try:
+                yield
+            finally:
+                exited.append(name)
+
+        return _scope
+
+    combined = _combine_state_scopes([_make("mcp"), _make("builtin")])
+    raised = False
+    try:
+        with combined():
+            raise RuntimeError("child blew up")
+    except RuntimeError:
+        raised = True
+    assert raised
+    assert exited == ["builtin", "mcp"]

@@ -241,3 +241,58 @@ def test_effective_deny_wins_over_live_session_approval():
     gate = BuiltinToolGate(_FakeService(payload=payload, session={"calculator"}))
     reason = gate.check(CalculatorTool())
     assert reason is not None and "off" in reason.lower()
+
+
+# --- task-628: nested sub-agent stamp scoping -------------------------------
+
+
+def test_stamp_scope_restores_stamps_after_a_nested_run():
+    """A child run's begin_turn() must not clobber the parent's stamps.
+
+    `spawn_subagent` runs the child's whole loop INLINE on the parent's
+    call stack, and the child invokes the SAME shared review hook, whose
+    first act is `begin_turn()`. Without a scope the parent's verdicts for
+    this turn are wiped before its own remaining same-batch tool calls are
+    dispatched. Mirrors `MCPToolProvider.stamp_scope`.
+    """
+    gate = BuiltinToolGate(_FakeService())
+    gate.begin_turn()
+    gate.stamp("write_thing", "approve_once")
+
+    with gate.stamp_scope():
+        # Stand in for the child's own turn against the shared gate.
+        gate.begin_turn()
+        gate.stamp("other_tool", "deny")
+        assert gate.check(_Mutating()) is not None  # child wiped it in-scope
+
+    # Parent's verdict is back, and the child's is gone (restore, not merge).
+    assert gate.check(_Mutating()) is None
+    assert gate._stamps == {"write_thing": "approve_once"}
+
+
+def test_stamp_scope_restores_even_when_the_nested_run_raises():
+    gate = BuiltinToolGate(_FakeService())
+    gate.begin_turn()
+    gate.stamp("write_thing", "approve_once")
+
+    try:
+        with gate.stamp_scope():
+            gate.begin_turn()
+            raise RuntimeError("child blew up")
+    except RuntimeError:
+        pass
+
+    assert gate.check(_Mutating()) is None
+
+
+def test_stamp_scope_is_reentrant_for_nested_scopes():
+    gate = BuiltinToolGate(_FakeService())
+    gate.begin_turn()
+    gate.stamp("write_thing", "approve_once")
+    with gate.stamp_scope():
+        gate.begin_turn()
+        gate.stamp("write_thing", "deny")
+        with gate.stamp_scope():
+            gate.begin_turn()
+        assert gate._stamps == {"write_thing": "deny"}
+    assert gate._stamps == {"write_thing": "approve_once"}
