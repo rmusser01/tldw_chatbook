@@ -45,6 +45,7 @@ from tldw_chatbook.UI.Screens.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
 )
+from tldw_chatbook.UI.Workbench import WorkbenchHelpPanel
 from tldw_chatbook.UI.Screens.settings_screen import (
     RagProfileNameModal,
     RagProfileSwitchConfirmModal,
@@ -2961,6 +2962,62 @@ def test_settings_rag_accelerators_no_op_while_text_entry_has_focus(
     screen.action_settings_rag_backfill()
 
     assert calls == []
+
+
+# --- Task 6 review (Important): the app-level F1 help panel
+# (`TldwCli.action_show_workbench_help` -> `_show_generic_screen_help`) flattens
+# `SettingsScreen.BINDINGS` unconditionally, so it advertised the a/c/b RAG
+# accelerators from EVERY Settings category even though they're guarded
+# no-ops outside LIBRARY_RAG (see the action_settings_rag_* guards above).
+# `SettingsScreen.action_show_workbench_help` is the delegation hook
+# `TldwCli.action_show_workbench_help` checks for first (see
+# `test_app_workbench_delegation_awaits_async_screen_actions` in
+# test_workbench_focus_help.py) -- this screen now defines it so the help
+# panel stays truthful, mirroring the footer's own LIBRARY_RAG gating. ---
+
+
+@pytest.mark.asyncio
+async def test_generic_help_omits_rag_accelerators_outside_library_rag_category(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.THEME.value
+
+    await screen.action_show_workbench_help()
+
+    assert len(fake_app.pushed_screens) == 1
+    panel, _callback = fake_app.pushed_screens[0]
+    assert isinstance(panel, WorkbenchHelpPanel)
+    descriptions = [description for _key, description in panel.state.shortcuts]
+    assert not any("Set active" in description for description in descriptions)
+    assert not any("Clone" in description for description in descriptions)
+    assert not any("Backfill" in description for description in descriptions)
+    # The always-on category shortcuts must still be present.
+    assert any("Save" in description for description in descriptions)
+    assert any("Revert" in description for description in descriptions)
+    assert any("Test" in description for description in descriptions)
+
+
+@pytest.mark.asyncio
+async def test_generic_help_includes_rag_accelerators_for_library_rag_category(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    await screen.action_show_workbench_help()
+
+    assert len(fake_app.pushed_screens) == 1
+    panel, _callback = fake_app.pushed_screens[0]
+    assert isinstance(panel, WorkbenchHelpPanel)
+    descriptions = [description for _key, description in panel.state.shortcuts]
+    assert any("Set active" in description for description in descriptions)
+    assert any("Clone" in description for description in descriptions)
+    assert any("Backfill" in description for description in descriptions)
 
 
 @pytest.mark.asyncio

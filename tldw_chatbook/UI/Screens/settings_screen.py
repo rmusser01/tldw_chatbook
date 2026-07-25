@@ -101,6 +101,7 @@ from ...Utils.console_background_effects import (
 )
 from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
+from ...UI.Workbench import WorkbenchHelpPanel, WorkbenchHelpState
 from .provider_model_resolution import (
     EffectiveProviderModel,
     resolve_effective_provider_model,
@@ -1344,6 +1345,20 @@ class SettingsScreen(BaseAppScreen):
         ("b", "backfill"),
     )
 
+    #: Task 6 review (Important): action names of the RAG profile-workflow
+    #: accelerators within BINDINGS -- action_show_workbench_help uses this
+    #: to keep the app-level F1 help panel honest, mirroring the footer's
+    #: LIBRARY_RAG gating above (the a/c/b bindings are guarded no-ops (see
+    #: action_settings_rag_*) in every other category, so advertising them
+    #: there would be a lie).
+    _RAG_ACCELERATOR_ACTION_NAMES = frozenset(
+        {
+            "settings_rag_set_active",
+            "settings_rag_clone",
+            "settings_rag_backfill",
+        }
+    )
+
     active_category = reactive(SettingsCategoryId.OVERVIEW.value, recompose=True)
     category_search_query = reactive("")
     server_sync_workspace_handoff_rows = reactive((), recompose=True)
@@ -1593,6 +1608,40 @@ class SettingsScreen(BaseAppScreen):
         if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
             shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
         self.register_footer_shortcuts(source="settings", shortcuts=shortcuts)
+
+    async def action_show_workbench_help(self) -> None:
+        """F1 help, scoped to bindings that actually do something right now.
+
+        `TldwCli.action_show_workbench_help` (app.py) delegates to this hook
+        when it's present instead of falling back to its own generic
+        BINDINGS flattener (`_show_generic_screen_help`), so this mirrors
+        that fallback's output shape (same title/route id/shortcuts) except
+        it drops the RAG profile-workflow accelerators (a/c/b) unless
+        LIBRARY_RAG is the active category -- those bindings are guarded
+        no-ops everywhere else (see action_settings_rag_*), same gating the
+        footer already applies via LIBRARY_RAG_SHORTCUTS (task 6, 541 AC6
+        review, Important).
+        """
+        show_rag_accelerators = (
+            self._active_category_id() is SettingsCategoryId.LIBRARY_RAG
+        )
+        shortcuts = tuple(
+            (str(entry[0]), str(entry[2]) if len(entry) > 2 else "")
+            for entry in self.BINDINGS
+            if isinstance(entry, (tuple, list))
+            and entry
+            and (
+                show_rag_accelerators
+                or str(entry[1]) not in self._RAG_ACCELERATOR_ACTION_NAMES
+            )
+        )
+        screen_name = type(self).__name__
+        state = WorkbenchHelpState(
+            route_id=str(getattr(self.app, "current_tab", "") or screen_name),
+            title=f"{screen_name} Shortcuts",
+            shortcuts=shortcuts,
+        )
+        self.app.push_screen(WorkbenchHelpPanel(state))
 
     def on_mount(self) -> None:
         super().on_mount()
