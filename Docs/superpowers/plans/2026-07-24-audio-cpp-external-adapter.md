@@ -437,7 +437,7 @@ git commit -m "docs(tts): document external audio cpp adapter"
 - Modify:
   `backlog/tasks/task-551 - Add-external-audio.cpp-native-TTS-adapter.md`
 
-- [ ] **Step 1: Run focused tests**
+- [x] **Step 1: Run focused tests**
 
 ```bash
 pytest \
@@ -451,7 +451,7 @@ pytest \
   Tests/TTS/test_tts_logging_privacy.py -q
 ```
 
-- [ ] **Step 2: Run broad regressions**
+- [x] **Step 2: Run broad regressions**
 
 ```bash
 pytest \
@@ -462,7 +462,7 @@ pytest \
   Tests/Media/test_local_media_reading_service.py -q
 ```
 
-- [ ] **Step 3: Run static and boundary checks**
+- [x] **Step 3: Run static and boundary checks**
 
 ```bash
 ruff check <all changed Python files>
@@ -486,19 +486,19 @@ git diff --check
 Expected: tests and static checks pass; the scope-boundary search prints no
 production matches.
 
-- [ ] **Step 4: Perform a security and scope self-review**
+- [x] **Step 4: Perform a security and scope self-review**
 
 Verify exact provider identity, lazy materialization, no redirects, identity
 encoding, bounded metadata/audio, strict PCM16 WAV, no POST retry, safe
 diagnostics, no text/value logging, no fallback, and no managed/UI code.
 
-- [ ] **Step 5: Finish Backlog evidence**
+- [x] **Step 5: Finish Backlog evidence**
 
 Check every acceptance and Definition-of-Done item, add concise implementation
 notes with exact verification counts, and move TASK-551 to Done only after all
 evidence is current.
 
-- [ ] **Step 6: Final commit**
+- [x] **Step 6: Final commit**
 
 ```bash
 git add "backlog/tasks/task-551 - Add-external-audio.cpp-native-TTS-adapter.md"
