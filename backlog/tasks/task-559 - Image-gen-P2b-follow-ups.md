@@ -2,10 +2,10 @@
 id: TASK-559
 title: >-
   Image-gen P2b follow-ups
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-24 13:30'
-updated_date: '2026-07-24 13:30'
+updated_date: '2026-07-25 03:30'
 labels:
   - image-generation
   - console
@@ -32,6 +32,10 @@ Deferred/polish items from the image-gen P2b slice (PR #850: speak 🔊, @style 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
+1. AC4+AC3 (one unit — shared files): user-defined style templates loaded from config/templates dir merged over the 13 built-ins, then picker previews (base/negative snippet) for all templates.
+2. AC2: Console TTS playback controls (stop; pause/save if the legacy TTSPlaybackEvent actions support them cleanly), reusing existing playback-event plumbing.
+3. AC1: richer context extraction — LLM-composed prompt from the last N turns via the session's active provider (chat_api_call), strict timeout, config kill-switch, graceful fallback to the existing keyword extractor on any failure; composed prompt stays visible in the card.
+Each unit: TDD, per-unit review before the next starts.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
