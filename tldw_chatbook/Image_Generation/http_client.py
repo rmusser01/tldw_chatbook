@@ -138,15 +138,22 @@ def fetch_json(
 
     Redirects are followed manually so ``_validate_egress_or_raise`` re-runs on
     each ``Location`` — a blindly-followed redirect could reach a disallowed
-    host/scheme and defeat the egress guard.
+    host/scheme and defeat the egress guard. ``headers``/``cookies`` are also
+    re-evaluated per hop: ``Authorization``/``Cookie``/``Proxy-Authorization``
+    are stripped on any hop whose host differs from the original request's
+    host, so a redirect cannot be used to exfiltrate credentials to a
+    different (still-public, so not SSRF-blocked) origin. ``params`` is only
+    applied to the first hop — the redirected URL already carries whatever
+    query the server encoded into ``Location``.
 
     Args:
         method: HTTP method.
         url: Absolute request URL (validated before each hop).
-        headers: Optional request headers.
+        headers: Optional request headers; credential headers are dropped on
+            cross-origin hops (see above).
         json: Optional JSON body.
-        params: Optional query params.
-        cookies: Optional cookies.
+        params: Optional query params (first hop only).
+        cookies: Optional cookies; dropped on cross-origin hops.
         timeout: Per-request timeout in seconds.
         trusted_origins: Hostnames trusted to resolve to a private/internal
             IP (e.g. a configured backend ``base_url``'s host). Leave empty
@@ -160,11 +167,24 @@ def fetch_json(
             a redirect without a ``Location``, or exceeding the redirect cap.
     """
     current = url
+    first_host = egress.host_of(url)
     with create_client(timeout=timeout) as client:
-        for _ in range(DEFAULT_MAX_REDIRECTS + 1):
+        for hop in range(DEFAULT_MAX_REDIRECTS + 1):
             _validate_egress_or_raise(current, trusted_origins=trusted_origins)
+            # A redirect to a DIFFERENT origin must not carry credentials --
+            # public hosts (unlike private ones) are not blocked by the SSRF
+            # policy, so this is the only guard against a compromised/malicious
+            # backend exfiltrating our Authorization/Cookie via a 30x. Mirrors
+            # Utils.egress._hop_headers, the same rule the app's other egress
+            # consumers already apply.
+            same_origin = egress.host_of(current) == first_host
             resp = client.request(
-                method, current, headers=headers, json=json, params=params, cookies=cookies
+                method,
+                current,
+                headers=egress._hop_headers(headers, same_origin),
+                json=json,
+                params=params if hop == 0 else None,
+                cookies=cookies if same_origin else None,
             )
             if resp.is_redirect:
                 location = resp.headers.get("location") or resp.headers.get("Location")

@@ -193,6 +193,120 @@ def test_fetch_json_revalidates_redirect_to_private_ip(monkeypatch, hc):
         )
 
 
+def test_fetch_json_strips_authorization_on_cross_origin_redirect(monkeypatch, hc):
+    # A provider redirecting to an attacker-controlled but PUBLIC host is not
+    # blocked by the SSRF policy (public is allowed) -- credentials must not
+    # follow across that origin change (mirrors Utils.egress._hop_headers).
+    seen = []
+
+    class RedirResp:
+        is_redirect = True
+        headers = {"location": "https://attacker.example/steal"}
+        url = "https://api.example.com/x"
+        def raise_for_status(self): pass
+        def json(self): return {}
+
+    class FinalResp:
+        is_redirect = False
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"ok": True}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def request(self, method, url, *, headers=None, **k):
+            seen.append((url, dict(headers or {})))
+            return RedirResp() if url == "https://api.example.com/x" else FinalResp()
+
+    monkeypatch.setattr(hc.httpx, "Client", FakeClient)
+    result = hc.fetch_json(
+        "GET", "https://api.example.com/x",
+        headers={"Authorization": "Bearer secret", "X-Other": "keep"},
+        trusted_origins=frozenset({"api.example.com"}),
+    )
+    assert result == {"ok": True}
+    assert len(seen) == 2
+    first_url, first_headers = seen[0]
+    assert first_headers.get("Authorization") == "Bearer secret"
+    second_url, second_headers = seen[1]
+    assert second_url == "https://attacker.example/steal"
+    assert "Authorization" not in second_headers
+    assert second_headers.get("X-Other") == "keep"
+
+
+def test_fetch_json_strips_cookies_on_cross_origin_redirect(monkeypatch, hc):
+    seen = []
+
+    class RedirResp:
+        is_redirect = True
+        headers = {"location": "https://attacker.example/steal"}
+        url = "https://api.example.com/x"
+        def raise_for_status(self): pass
+        def json(self): return {}
+
+    class FinalResp:
+        is_redirect = False
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"ok": True}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def request(self, method, url, *, cookies=None, **k):
+            seen.append((url, cookies))
+            return RedirResp() if url == "https://api.example.com/x" else FinalResp()
+
+    monkeypatch.setattr(hc.httpx, "Client", FakeClient)
+    hc.fetch_json(
+        "GET", "https://api.example.com/x",
+        cookies={"session": "abc"},
+        trusted_origins=frozenset({"api.example.com"}),
+    )
+    assert seen[0][1] == {"session": "abc"}
+    assert seen[1][1] is None
+
+
+def test_fetch_json_keeps_authorization_on_same_origin_redirect(monkeypatch, hc):
+    # Local backends (e.g. SwarmUI) may redirect within their own origin;
+    # credentials must still be sent, or local-backend generation regresses.
+    seen = []
+
+    class RedirResp:
+        is_redirect = True
+        headers = {"location": "http://127.0.0.1:7801/y"}
+        url = "http://127.0.0.1:7801/x"
+        def raise_for_status(self): pass
+        def json(self): return {}
+
+    class FinalResp:
+        is_redirect = False
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"ok": True}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def request(self, method, url, *, headers=None, **k):
+            seen.append((url, dict(headers or {})))
+            return RedirResp() if url.endswith("/x") else FinalResp()
+
+    monkeypatch.setattr(hc.httpx, "Client", FakeClient)
+    result = hc.fetch_json(
+        "GET", "http://127.0.0.1:7801/x",
+        headers={"Authorization": "Bearer local-token"},
+        trusted_origins=frozenset({"127.0.0.1"}),
+    )
+    assert result == {"ok": True}
+    assert len(seen) == 2
+    assert all(h.get("Authorization") == "Bearer local-token" for _u, h in seen)
+
+
 def test_fetch_json_defaults_no_autofollow(hc):
     # create_client must not auto-follow redirects by default (the manual
     # validated loop in fetch_json handles them instead).

@@ -53,10 +53,6 @@ Tests: rewrote Tests/Image_Generation/test_http_client.py -- the old "127.0.0.1 
 Files: tldw_chatbook/Image_Generation/http_client.py, tldw_chatbook/Image_Generation/adapters/{image_format_utils,swarmui_adapter,novita_image_adapter,openrouter_image_adapter,together_image_adapter,modelstudio_image_adapter}.py; Tests/Image_Generation/{test_http_client,test_swarmui_adapter,test_novita_adapter,test_openrouter_adapter,test_together_adapter,test_modelstudio_adapter}.py.
 
 Verification: Tests/Image_Generation full suite 71 passed / 6 skipped (skips are opt-in live-backend tests, unrelated); ruff check clean; `python -c "import tldw_chatbook.app"` clean; Tests/Utils/test_egress.py + Tests/Subscriptions/test_subscription_egress_wiring.py (unmodified, sanity re-run) both green, confirming Utils/egress.py itself was untouched.
-<!-- SECTION:NOTES:END -->
 
+Fix round 1 (post-review): `fetch_json`'s manual redirect loop and `fetch_image_bytes`'s redirect loop resent the caller's `headers`/`cookies` unchanged on every hop, including cross-origin ones -- since the SSRF policy allows public hosts, a provider redirecting to an attacker-controlled public host would forward the `Authorization: Bearer <api_key>` header. Fixed by tracking the original request's host and, on any hop whose host differs, stripping `Authorization`/`Cookie`/`Proxy-Authorization` via `Utils.egress._hop_headers` (reused, not reimplemented) and dropping `cookies` outright -- mirrors what `Utils.egress.guarded_fetch_httpx` already does for the app's other egress consumers. `fetch_json` also now only applies `params` on the first hop (the redirected URL already carries the server's own query), matching the equivalent `guarded_fetch_httpx` convention rather than inventing new redirect semantics; method/JSON-body downgrade on 301/302 was considered but left unchanged since egress's own helpers are GET-only and have no precedent for it, and no current adapter needs it. Added red/green tests pinning: cross-origin hop strips Authorization+cookies, same-origin hop (e.g. a local backend's own redirect) still carries them.
 <!-- SECTION:NOTES:END -->
-
-<!-- SECTION:NOTES:END -->
-
-<!-- SECTION:PLAN:END -->
