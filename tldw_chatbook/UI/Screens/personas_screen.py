@@ -32,12 +32,16 @@ from ...Character_Chat.Character_Chat_Lib import (
     list_character_tags,
     validate_character_book,
 )
+from ...Character_Chat.expression_generation import compose_expression_prompt
 from ...Character_Chat.persona_list_paging import page_user_profiles
 from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
 from ...DB.ChaChaNotes_DB import ConflictError
+from ...Image_Generation.config import get_image_generation_config
+from ...Image_Generation.listing import list_image_models_for_catalog
+from ...Image_Generation.worker import build_request, run_generation
 from ...tldw_api import UserProfileCreate, UserProfileUpdate
 from ...Utils.path_validation import validate_path_simple
 from ...Utils.paths import get_user_data_dir
@@ -88,6 +92,7 @@ from ...Widgets.Persona_Widgets.tag_filter_picker import TagFilterPicker
 from ...Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterEditorCancelled,
     CharacterExpressionClearRequested,
+    CharacterExpressionGenerateRequested,
     CharacterExpressionSetExportRequested,
     CharacterExpressionSetImportRequested,
     CharacterExpressionUploadRequested,
@@ -565,6 +570,10 @@ class PersonasScreen(BaseAppScreen):
         # Same refuse-reentry idiom for the delete confirmation dialog.
         self._delete_dialog_active: bool = False
         self._character_editor_generation: int = 0
+        # Image-gen P3 Task 3: (character_id, state) pairs with an expression
+        # generation worker currently in flight - refuses a re-entrant
+        # generate click for the same slot rather than racing two writes.
+        self._expression_generate_inflight: set[tuple[int, str]] = set()
         self._profile_save_inflight: bool = False
         # Mirrors _profile_save_inflight for the character editor: guards
         # against a re-entrant Save (double-click/Ctrl+S) while an earlier
@@ -4735,6 +4744,66 @@ class PersonasScreen(BaseAppScreen):
             group="personas-io",
         )
 
+    @on(CharacterExpressionGenerateRequested)
+    def _handle_character_expression_generate_requested(
+        self, message: CharacterExpressionGenerateRequested
+    ) -> None:
+        """Dispatch an AI-generation worker for one expression-state slot.
+
+        Image-gen P3 Task 3: mirrors ``_handle_character_expression_upload_
+        requested``'s gate sequence (editor active -> saved character ->
+        not-already-busy) with two extra gates specific to generation: the
+        live description must be non-empty (there's nothing to prompt from
+        otherwise), and the configured backend must actually be usable
+        (same check + copy as the Console's ``/generate-image`` command).
+        """
+        message.stop()
+        if not self._character_editor_is_active():
+            self._notify(
+                "Open a character editor before generating an expression image.",
+                "warning",
+            )
+            return
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        character_id = editor.expression_character_id()
+        if character_id is None:
+            self._notify("Save the character to add expressions.", "warning")
+            return
+        if not editor._area("description").text.strip():
+            self._notify("Add a description first.", "warning")
+            return
+        cfg = get_image_generation_config()
+        backend = cfg.default_backend
+        if not backend:
+            self._notify(
+                "No image generation backend configured. Set "
+                "[image_generation].default_backend.",
+                "warning",
+            )
+            return
+        catalog = list_image_models_for_catalog()
+        entry = next((item for item in catalog if item.get("name") == backend), None)
+        if entry is None or not entry.get("is_configured"):
+            self._notify(
+                f"Image backend '{backend}' is not enabled/configured. "
+                "Check [image_generation] settings.",
+                "warning",
+            )
+            return
+        key = (character_id, message.state)
+        if key in self._expression_generate_inflight:
+            self._notify(
+                f"Already generating the {message.state} expression image.",
+                "warning",
+            )
+            return
+        self._expression_generate_inflight.add(key)
+        self.run_worker(
+            self._generate_expression_image_worker(character_id, message.state),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
     @on(CharacterExpressionClearRequested)
     def _handle_character_expression_clear_requested(
         self, message: CharacterExpressionClearRequested
@@ -4822,6 +4891,74 @@ class PersonasScreen(BaseAppScreen):
 
         mime = mimetypes.guess_type(path)[0]
         await self._apply_expression_upload(character_id, state, image_data, mime)
+
+    async def _generate_expression_image_worker(
+        self, character_id: int, state: str
+    ) -> None:
+        """Generate one expression-state image and write it through the
+        upload seam.
+
+        Image-gen P3 Task 3: reads live (unsaved) form values straight from
+        the editor's widgets - never ``_character_data`` - since the user
+        may be generating from text they haven't saved yet. The blocking
+        adapter call runs off-thread via ``asyncio.to_thread``; the session
+        token is captured immediately before that await and re-checked
+        immediately after, mirroring ``_stage_character_expression_from_
+        path``'s stale-write guard so a Cancel/new-session/save-in-place
+        that happens mid-generation drops the result instead of writing it
+        into the wrong (or no-longer-open) character. The whole body is
+        wrapped so a failure at any step (prompt composition, request
+        validation, adapter call, DB write) reports a single error notify
+        instead of propagating into the worker's default panic-on-
+        exception behavior.
+        """
+        key = (character_id, state)
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+            name = editor._input("name").value
+            description = editor._area("description").text
+            personality = editor._area("personality").text
+            prompt, negative_prompt, params = compose_expression_prompt(
+                name=name,
+                description=description,
+                personality=personality,
+                state=state,
+                style_template=getattr(self, "_expression_generate_style", None),
+            )
+            cfg = get_image_generation_config()
+            request = build_request(
+                backend=cfg.default_backend,
+                prompt=prompt,
+                negative_prompt=negative_prompt or None,
+                seed=-1,
+                image_format="png",
+                width=params.get("width"),
+                height=params.get("height"),
+                steps=params.get("steps"),
+                cfg_scale=params.get("cfg_scale"),
+            )
+            session_token = self._character_editor_session_token()
+            result = await asyncio.to_thread(run_generation, request)
+            if self._character_editor_session_token() != session_token:
+                logger.debug(
+                    "Expression generation result ignored because the "
+                    f"character editor session changed. character_id="
+                    f"{character_id!r}, state={state!r}, "
+                    f"original_session={session_token!r}, "
+                    f"current_session={self._character_editor_session_token()!r}"
+                )
+                return
+            await self._apply_expression_upload(
+                character_id, state, result.content, result.content_type
+            )
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                f"Expression image generation failed for character "
+                f"{character_id} state={state!r}: {exc}"
+            )
+            self._notify(f"Expression generation failed: {exc}", "error")
+        finally:
+            self._expression_generate_inflight.discard(key)
 
     # ===== Expression SET import/export (Roleplay P3d-2 Task 4) =====
     #
