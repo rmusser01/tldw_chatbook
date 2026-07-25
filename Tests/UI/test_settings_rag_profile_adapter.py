@@ -656,8 +656,15 @@ def test_hard_config_errors_filters_out_unexposed_field_violations(wired):
     )
     mgr, state = wired
     p = _user_profile(mgr, state)
+    # Mutate the already-registered, in-memory active profile directly
+    # instead of round-tripping through mgr.save_profile(p): task-626 made
+    # save_profile itself reject a hard-invalid rag_config (this exact
+    # "Unknown vector store type" value included), and `p` is already the
+    # live object `_active_profile()` reads (see the `wired` fixture), so
+    # the mutation is visible without re-saving. This models a profile that
+    # already carries this violation on disk (e.g. hand-edited, or migrated
+    # from an older version) rather than one being saved right now.
     p.rag_config.vector_store.type = "not-a-real-store"
-    mgr.save_profile(p)
 
     d = load_rag_defaults_from_active_profile()
     # Sanity: RAGConfig.validate() itself DOES flag this on the scratch copy.
@@ -740,8 +747,12 @@ def test_validate_library_rag_defaults_does_not_gate_on_an_unexposed_field_viola
     )
     mgr, state = wired
     p = _user_profile(mgr, state)
+    # See the identical comment in
+    # test_hard_config_errors_filters_out_unexposed_field_violations above:
+    # mutate the live, already-registered profile in place rather than
+    # round-tripping through save_profile, which task-626 made reject this
+    # exact hard-invalid value.
     p.rag_config.vector_store.type = "not-a-real-store"
-    mgr.save_profile(p)
 
     d = load_rag_defaults_from_active_profile()
 
