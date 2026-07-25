@@ -1213,6 +1213,21 @@ class CountingMockTransport(httpx.MockTransport):
         await super().aclose()
 
 
+class BlockingCloseTransport(httpx.AsyncBaseTransport):
+    def __init__(self) -> None:
+        self.close_count = 0
+        self.close_started = asyncio.Event()
+        self.allow_close = asyncio.Event()
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Construction and close must not make a request")
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+        self.close_started.set()
+        await self.allow_close.wait()
+
+
 @pytest.mark.asyncio
 async def test_cancelled_close_during_refresh_retains_cleanup_to_completion() -> None:
     phase = "ready"
@@ -1286,6 +1301,28 @@ async def test_close_is_idempotent_closes_client_once_and_marks_health_closed() 
     assert transport.close_count == 1
     assert catalog.revision == 0
     assert catalog.health == CLOSED_HEALTH
+
+
+@pytest.mark.asyncio
+async def test_concurrent_close_calls_join_one_client_cleanup() -> None:
+    transport = BlockingCloseTransport()
+    adapter = AudioCppAdapter(_config(), transport=transport)
+
+    first = asyncio.create_task(adapter.close())
+    await transport.close_started.wait()
+    second = asyncio.create_task(adapter.close())
+    try:
+        await asyncio.sleep(0)
+
+        assert first.done() is False
+        assert second.done() is False
+        assert transport.close_count == 1
+    finally:
+        transport.allow_close.set()
+        await asyncio.gather(first, second)
+
+    assert transport.close_count == 1
+    assert adapter._client.is_closed is True
 
 
 @pytest.mark.asyncio

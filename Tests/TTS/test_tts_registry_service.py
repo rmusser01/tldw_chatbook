@@ -27,6 +27,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSOperationError,
     TTSProgress,
     TTSProviderDescriptor,
+    TTSProviderReconfiguringError,
     TTSProviderSpec,
     TTSRequest,
     TTSRegistryClosedError,
@@ -61,6 +62,17 @@ def speech_request() -> OpenAISpeechRequest:
         voice="alloy",
         response_format="mp3",
     )
+
+
+class _BytesStream(httpx.AsyncByteStream):
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    async def __aiter__(self) -> AsyncGenerator[bytes, None]:
+        yield self.body
+
+    async def aclose(self) -> None:
+        return
 
 
 def registry_for_adapter(
@@ -115,6 +127,88 @@ async def test_synthesize_holds_lease_until_response_close() -> None:
 
 
 @pytest.mark.asyncio
+async def test_real_audio_cpp_concurrent_cold_catalog_coalesces_factory_and_refresh() -> (
+    None
+):
+    health_started = asyncio.Event()
+    allow_health = asyncio.Event()
+    requests: list[str] = []
+    created: list[AudioCppAdapter] = []
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path == "/health":
+            health_started.set()
+            await allow_health.wait()
+            body = json.dumps(
+                {"status": "ok", "backend": "cpu", "models": 1},
+                separators=(",", ":"),
+            ).encode()
+        else:
+            body = json.dumps(
+                {
+                    "object": "list",
+                    "data": [
+                        {
+                            "id": "model",
+                            "object": "model",
+                            "owned_by": "engine",
+                            "family": "family",
+                            "task": "tts",
+                            "mode": "offline",
+                        }
+                    ],
+                },
+                separators=(",", ":"),
+            ).encode()
+        return httpx.Response(200, stream=_BytesStream(body))
+
+    def factory(config: Mapping[str, Any]) -> AudioCppAdapter:
+        adapter = AudioCppAdapter(
+            AudioCppConfig.from_mapping(config),
+            transport=httpx.MockTransport(respond),
+        )
+        created.append(adapter)
+        return adapter
+
+    initial_config = AudioCppConfig().to_mapping()
+    service = TTSService(
+        TTSAdapterRegistry(
+            specs=(
+                TTSProviderSpec(
+                    descriptor=TTSProviderDescriptor(
+                        provider_id="audio_cpp",
+                        display_name="audio.cpp",
+                        native=True,
+                    ),
+                    factory=factory,
+                    initial_config=initial_config,
+                    exclusive_reconfigure=True,
+                ),
+            ),
+            aliases={},
+        )
+    )
+    try:
+        first = asyncio.create_task(service.get_catalog("audio_cpp"))
+        await health_started.wait()
+        second = asyncio.create_task(service.get_catalog("audio_cpp"))
+        await asyncio.sleep(0)
+        allow_health.set()
+
+        first_catalog, second_catalog = await asyncio.gather(first, second)
+
+        assert len(created) == 1
+        assert requests == ["/health", "/v1/models"]
+        assert first_catalog is second_catalog
+        assert first_catalog.revision == 1
+    finally:
+        allow_health.set()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_real_audio_cpp_response_preserves_complete_wav_and_adapter_lease() -> (
     None
 ):
@@ -155,22 +249,12 @@ async def test_real_audio_cpp_response_preserves_complete_wav_and_adapter_lease(
     ).encode()
     posts = 0
 
-    class BytesStream(httpx.AsyncByteStream):
-        def __init__(self, body: bytes) -> None:
-            self.body = body
-
-        async def __aiter__(self) -> AsyncGenerator[bytes, None]:
-            yield self.body
-
-        async def aclose(self) -> None:
-            return
-
     def respond(request: httpx.Request) -> httpx.Response:
         nonlocal posts
         if request.url.path == "/health":
-            return httpx.Response(200, stream=BytesStream(health))
+            return httpx.Response(200, stream=_BytesStream(health))
         if request.url.path == "/v1/models":
-            return httpx.Response(200, stream=BytesStream(models))
+            return httpx.Response(200, stream=_BytesStream(models))
         posts += 1
         return httpx.Response(
             200,
@@ -178,19 +262,22 @@ async def test_real_audio_cpp_response_preserves_complete_wav_and_adapter_lease(
                 "Content-Type": "audio/wav",
                 "X-AudioCpp-Wall-Ms": "10",
             },
-            stream=BytesStream(wav),
+            stream=_BytesStream(wav),
         )
 
     created: list[AudioCppAdapter] = []
 
-    def factory(_config: Mapping[str, Any]) -> AudioCppAdapter:
+    def factory(config: Mapping[str, Any]) -> AudioCppAdapter:
+        assert all(adapter._client.is_closed for adapter in created)
         adapter = AudioCppAdapter(
-            AudioCppConfig(),
+            AudioCppConfig.from_mapping(config),
             transport=httpx.MockTransport(respond),
         )
         created.append(adapter)
         return adapter
 
+    audio_cpp_config = AudioCppConfig()
+    initial_config = audio_cpp_config.to_mapping()
     registry = TTSAdapterRegistry(
         specs=(
             TTSProviderSpec(
@@ -200,7 +287,7 @@ async def test_real_audio_cpp_response_preserves_complete_wav_and_adapter_lease(
                     native=True,
                 ),
                 factory=factory,
-                initial_config={"revision": 1},
+                initial_config=initial_config,
                 exclusive_reconfigure=True,
             ),
         ),
@@ -221,15 +308,23 @@ async def test_real_audio_cpp_response_preserves_complete_wav_and_adapter_lease(
         ),
         broken_progress_sink,
     )
+    replacement_config = {
+        **initial_config,
+        "max_input_characters": audio_cpp_config.max_input_characters + 1,
+    }
     reconfigure = asyncio.create_task(
-        registry.reconfigure_provider("audio_cpp", {"revision": 2})
+        service.reconfigure_provider("audio_cpp", replacement_config)
     )
-    await asyncio.sleep(0)
+    async with asyncio.timeout(1):
+        while not registry._slots["audio_cpp"].reconfiguring:
+            await asyncio.sleep(0)
 
     assert posts == 1
     assert registry._total_leases() == 1
     assert not reconfigure.done()
     assert not created[0]._client.is_closed
+    with pytest.raises(TTSProviderReconfiguringError, match="audio_cpp"):
+        await service.get_catalog("audio_cpp")
     assert response.sample_rate == 48_000
     assert response.metadata == {
         "adapter": "audio_cpp",
@@ -247,6 +342,20 @@ async def test_real_audio_cpp_response_preserves_complete_wav_and_adapter_lease(
     assert registry._total_leases() == 0
     assert created[0]._client.is_closed
     assert len(created) == 1
+    assert registry._slots["audio_cpp"].active is None
+
+    unchanged = await service.reconfigure_provider(
+        "audio_cpp",
+        dict(replacement_config),
+    )
+    assert unchanged is ReconfigureResult.UNCHANGED
+    assert len(created) == 1
+
+    replacement_catalog = await service.get_catalog("audio_cpp")
+    assert replacement_catalog.health.state == "available"
+    assert len(created) == 2
+    assert created[0]._client.is_closed
+    assert not created[1]._client.is_closed
 
     await service.close()
     await service.wait_closed()
