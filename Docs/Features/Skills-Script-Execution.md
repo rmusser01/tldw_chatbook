@@ -75,17 +75,37 @@ underscore-prefixed entry above. The reachable remainder was `node_modules/**`,
 `node_modules/**` text and `*.tmp`/`*.part` text are binary or editor artifacts that
 reads already refused.
 
-**Decision (task-578):** reads were tightened to match execution rather than left
-permissive. A skill that legitimately needs the agent to read a file should ship it on a
-fingerprinted path, so the file appears in trust review. The alternative — allowing reads
-of unreviewed content — would let a bundle carry agent-readable instructions you never
-saw. The compatibility cost is narrow by the analysis above, and it is a deliberate
-breaking change for any bundle that relied on reading its own vendored `node_modules/`
-text or a `*.tmp`/`*.part` file.
+**Decision (task-578):** reads were tightened to match execution, with **one deliberate
+exemption for vendored dependency data**. A skill that vendors a dependency legitimately
+needs to read it, and requiring `node_modules/` to be fingerprinted would defeat the very
+pruning that keeps such bundles trustable at all.
 
-In both seams, a file that exists but is not trust material is refused with the *same*
-error as a genuinely missing file, so the refusal cannot be used to probe what a bundle
-contains.
+So reads resolve as follows:
+
+| Path | Readable? | Runnable? |
+|---|---|---|
+| Fingerprinted (in the trust manifest) | Yes | Yes, subject to the three gates |
+| Vendored dependency tree (`node_modules/**`) | **Yes, exempted** | **Never** |
+| Other pruned paths (`*.tmp`, `*.part`, `*.swp`, `*.pyc`, …) | No | No |
+
+The exemption is **read-only and narrow by design**. Transient editor and build artifacts
+are not data any skill needs to read, so they stay refused; and vendored code never
+becomes runnable, since execution still demands manifest membership with no exemption.
+
+Because an exempted file is by definition one no human saw at trust review, the read is
+labelled: the result carries `trust_reviewed: false` and the returned content is prefixed
+with a banner telling the agent to treat it as untrusted input rather than instructions.
+That banner rides in the content because content is the only channel that reaches the
+model.
+
+The residual is worth stating plainly: **a bundle can place agent-readable text under
+`node_modules/` that never appears in your trust review.** The banner mitigates it, but a
+sufficiently credulous agent could still act on such text. If that matters for your
+threat model, do not install bundles that vendor dependencies you have not inspected.
+
+In both seams, a file that exists but is neither trust material nor exempt is refused with
+the *same* error as a genuinely missing file, so the refusal cannot be used to probe what
+a bundle contains.
 
 ## What can be run
 
@@ -180,10 +200,11 @@ The sandbox is best-effort, not a jail. Known and accepted:
   your user account can — including back into its own bundle or another skill's. A write
   that lands on a *fingerprinted* file is caught: it quarantines the skill and drops any
   standing grant at the next check. A write to a junk-pruned path (`node_modules/`,
-  `*.tmp`, ...) leaves the digest untouched and raises no alarm — but it is inert: such a
-  file can neither be executed nor read back, because both seams require trust-manifest
-  membership (see "Trust material" below). The write itself is not prevented; it simply
-  produces nothing the agent can use.
+  `*.tmp`, ...) leaves the digest untouched and raises no alarm. Such a file can never be
+  executed, since execution requires trust-manifest membership with no exemption. It is
+  also unreadable — *except* under a vendored dependency tree, which is read-exempt (see
+  "Trust material"); a write there produces agent-readable text that trust review never
+  showed you, flagged by the unreviewed-read banner but not prevented.
 - **Memory is not capped on macOS/BSD.** `RLIMIT_AS` cannot be lowered there, so peak
   memory is bounded only by the CPU and wall-clock limits. A warning is surfaced with the
   run when this applies.

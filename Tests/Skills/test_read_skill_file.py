@@ -28,7 +28,14 @@ async def test_read_happy_path_nested(tmp_path):
     svc = _svc(tmp_path)
     await _make_skill(svc)
     out = await svc.read_skill_file("demo", "references/api.md")
-    assert out == {"content": "# api docs\n", "truncated": False, "size": len("# api docs\n")}
+    # task-578 added "trust_reviewed" to the result shape; a fingerprinted read
+    # is True and its content is unbannered.
+    assert out == {
+        "content": "# api docs\n",
+        "truncated": False,
+        "size": len("# api docs\n"),
+        "trust_reviewed": True,
+    }
 
 
 @pytest.mark.asyncio

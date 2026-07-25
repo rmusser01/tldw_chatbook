@@ -55,16 +55,18 @@ async def test_reads_the_canonical_body(script_service):
 @pytest.mark.parametrize(
     "junk_path",
     [
-        "node_modules/pkg/readme.md",
         "vendored.tmp",
         "half-written.part",
+        "session.swp",
     ],
 )
-async def test_pruned_paths_are_not_readable(script_service, junk_path):
+async def test_pruned_non_vendor_paths_are_not_readable(script_service, junk_path):
     """AC#1: a present-but-unfingerprinted file is refused.
 
     These paths pass ``validate_supporting_file_path`` but the trust scanner
-    prunes them, so they are invisible to trust review.
+    prunes them, so they are invisible to trust review. They are transient
+    editor/build artifacts, NOT vendored dependency data, so the vendored-read
+    exemption deliberately does not cover them.
     """
     service, name = script_service
     target = service._skill_dir(name) / junk_path
@@ -81,13 +83,12 @@ async def test_pruned_paths_are_not_readable(script_service, junk_path):
 async def test_pruned_read_refusal_matches_a_missing_file(script_service):
     """AC#2: the refusal cannot be used to probe what a bundle contains."""
     service, name = script_service
-    present = service._skill_dir(name) / "node_modules" / "pkg" / "data.md"
-    present.parent.mkdir(parents=True, exist_ok=True)
+    present = service._skill_dir(name) / "leftover.tmp"
     present.write_text("present but untrusted", encoding="utf-8")
     _retrust(service, name)
 
     errors = []
-    for path in ("node_modules/pkg/data.md", "node_modules/pkg/absent.md"):
+    for path in ("leftover.tmp", "absent.tmp"):
         with pytest.raises(ValueError) as excinfo:
             await service.read_skill_file(name, path)
         errors.append(str(excinfo.value).split(":", 1)[0])
@@ -95,17 +96,63 @@ async def test_pruned_read_refusal_matches_a_missing_file(script_service):
 
 
 @pytest.mark.asyncio
-async def test_executable_pruned_file_is_not_readable_either(script_service):
-    """A pruned path stays unreadable regardless of its mode bits."""
+async def test_vendored_data_is_readable_under_the_exemption(script_service):
+    """A bundle may read its own vendored dependency data."""
+    service, name = script_service
+    target = service._skill_dir(name) / "node_modules" / "pkg" / "readme.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("vendored dependency docs", encoding="utf-8")
+    _retrust(service, name)
+
+    out = await service.read_skill_file(name, "node_modules/pkg/readme.md")
+    assert "vendored dependency docs" in out["content"]
+
+
+@pytest.mark.asyncio
+async def test_vendored_read_is_labelled_as_outside_trust_review(script_service):
+    """The exemption must not read as reviewed content.
+
+    Vendored files are pruned from fingerprinting, so no human ever saw them
+    in the trust review. The only channel that reaches the model is the
+    content itself, so the notice rides there.
+    """
+    service, name = script_service
+    target = service._skill_dir(name) / "node_modules" / "pkg" / "guide.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("do the thing", encoding="utf-8")
+    _retrust(service, name)
+
+    out = await service.read_skill_file(name, "node_modules/pkg/guide.md")
+    assert out["trust_reviewed"] is False
+    assert "not covered by trust review" in out["content"]
+
+
+@pytest.mark.asyncio
+async def test_ordinary_reads_are_marked_trust_reviewed(script_service):
+    """A fingerprinted read carries no exemption notice."""
+    service, name = script_service
+    (service._skill_dir(name) / "plain.md").write_text("plain", encoding="utf-8")
+    _retrust(service, name)
+
+    out = await service.read_skill_file(name, "plain.md")
+    assert out["trust_reviewed"] is True
+    assert "not covered by trust review" not in out["content"]
+
+
+@pytest.mark.asyncio
+async def test_vendored_exemption_does_not_extend_to_execution(script_service):
+    """READ-only: vendored code must never become runnable."""
     service, name = script_service
     target = service._skill_dir(name) / "node_modules" / "tool.sh"
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+    target.write_text("#!/bin/sh\necho pwned\n", encoding="utf-8")
     os.chmod(target, target.stat().st_mode | stat.S_IXUSR)
     _retrust(service, name)
 
     with pytest.raises(ValueError):
-        await service.read_skill_file(name, "node_modules/tool.sh")
+        await service.describe_skill_script(name, "node_modules/tool.sh")
+    with pytest.raises(ValueError):
+        await service.run_skill_script(name, "node_modules/tool.sh", [])
 
 
 @pytest.mark.asyncio

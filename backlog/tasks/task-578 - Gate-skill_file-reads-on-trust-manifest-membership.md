@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-25 14:35'
-updated_date: '2026-07-25 15:21'
+updated_date: '2026-07-25 16:33'
 labels:
   - skills
   - security
@@ -49,15 +49,17 @@ The open question this task must settle: some real bundles legitimately read the
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Made the read seam agree with the execution seam: skill_file now requires a file to appear in the skill's trusted manifest, not merely to pass the path validator.
+Made the read seam agree with the execution seam: skill_file requires a file to appear in the skill's trusted manifest, WITH a user-directed exemption for vendored dependency data.
 
-Scoped the change by evidence first. Probing validate_supporting_file_path showed most of the pruned set was ALREADY unreachable — the validator rejects any path segment not starting with an alphanumeric, which covers .git/, .github/, .hg/, .svn/, __pycache__/ and ~-suffixed names. The genuinely reachable-but-pruned surface was only node_modules/**, Thumbs.db, and *.tmp/*.part/*.swp/*.pyc/*.pyo — and of those, everything except node_modules text and *.tmp/*.part text is binary or an editor artifact that reads already refused with a binary-refusal string.
+Scoped by evidence first. Probing validate_supporting_file_path showed most of the pruned set was ALREADY unreachable — the validator rejects any path segment not starting with an alphanumeric, covering .git/, .github/, .hg/, .svn/, __pycache__/ and ~-suffixed names. The genuinely reachable-but-pruned surface was node_modules/**, Thumbs.db, and *.tmp/*.part/*.swp/*.pyc/*.pyo; of those, all but node_modules text and *.tmp/*.part text are binary or editor artifacts reads already refused.
 
-DECISION (AC#4): tightened rather than left permissive, and recorded in the feature doc's new 'Trust material' section. Allowing reads of unfingerprinted files lets a bundle carry agent-readable instructions the human reviewer never saw; a skill that needs a file read should ship it on a fingerprinted path so it appears in trust review. Deliberate breaking change, narrow by the analysis above.
+DECISION (AC#4), user-directed: grant an exemption for bundles reading their own vendored data. Reads under a vendored dependency tree (VENDORED_READ_EXEMPT_DIRS = {node_modules}) are allowed without manifest membership, because requiring node_modules to be fingerprinted would defeat the pruning that keeps such bundles trustable at all. Deliberately narrow: transient editor/build artifacts (*.tmp/*.part/*.swp/*.pyc) are NOT vendored data and stay refused, and the exemption is READ-ONLY — execution still demands manifest membership with no exemption, so vendored code never becomes runnable.
 
-Implementation: generalised the existing script-side helper (_script_path_is_trust_material -> _path_is_trust_material) so both seams share ONE gate instead of duplicating it, and wired it into read_skill_file after containment and before any stat — a pure manifest lookup, so an untrusted-but-present file is refused with the SAME local_skill_file_not_found error kind as a missing one and its existence never leaks (AC#2). Also removed a long-standing dead 'import stat' in export_skill that ruff had been flagging on every PR touching this file.
+Because an exempted file is by definition one no human saw at trust review, the read is labelled: the result carries trust_reviewed=False and the content is prefixed with a banner telling the agent to treat it as untrusted input rather than instructions. The banner rides in content because that is the only channel reaching the model. Residual documented plainly: a bundle can still place agent-readable text under node_modules/ that trust review never shows.
 
-Tests: new Tests/Skills/test_skill_file_trust_material.py (9 tests) — RED first, with the five refusal tests failing DID NOT RAISE against the old code, proving the tests pin real behaviour. Full run: Tests/Skills 346, Tests/Agents+Skills 607, Tests/Chat 2174/69 skipped, ruff clean.
+Implementation: generalised the script-side helper (_script_path_is_trust_material -> _path_is_trust_material) so both seams share ONE gate, wired into read_skill_file after containment and before any stat (a pure manifest lookup, so a refused file is indistinguishable from a missing one, AC#2), plus _is_vendored_read for the exemption. Result shape gained trust_reviewed (one existing exact-shape assertion updated accordingly). Also removed a dead 'import stat' in export_skill that ruff flagged on every PR touching this file.
 
-Files: tldw_chatbook/Skills_Interop/local_skills_service.py, Docs/Features/Skills-Script-Execution.md, Tests/Skills/test_skill_file_trust_material.py
+Tests: Tests/Skills/test_skill_file_trust_material.py (12 tests) — RED first, refusal tests failing DID NOT RAISE against the old code. Covers: fingerprinted/nested/body reads still work; non-vendor pruned paths refused; refusal indistinguishable from missing; vendored reads allowed; vendored reads labelled + bannered; ordinary reads unbannered; and the exemption explicitly NOT extending to describe/run. Full run: Skills+Agents 610, Chat 2174/69 skipped, ruff clean.
+
+Files: tldw_chatbook/Skills_Interop/local_skills_service.py, Docs/Features/Skills-Script-Execution.md, Tests/Skills/test_skill_file_trust_material.py, Tests/Skills/test_read_skill_file.py
 <!-- SECTION:NOTES:END -->
