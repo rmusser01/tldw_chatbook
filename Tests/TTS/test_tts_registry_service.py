@@ -355,10 +355,34 @@ async def test_real_audio_cpp_response_preserves_complete_wav_and_adapter_lease(
     assert replacement_catalog.health.state == "available"
     assert len(created) == 2
     assert created[0]._client.is_closed
-    assert not created[1]._client.is_closed
+    replacement_adapter = created[1]
+    replacement_client = replacement_adapter._client
+    replacement_catalog_revision = replacement_catalog.revision
+    replacement_config_revision = registry.configuration_revision("audio_cpp")
+    assert not replacement_client.is_closed
+
+    unchanged_active = await service.reconfigure_provider(
+        "audio_cpp",
+        dict(replacement_config),
+    )
+    assert unchanged_active is ReconfigureResult.UNCHANGED
+    assert len(created) == 2
+    assert replacement_adapter._client is replacement_client
+    assert not replacement_client.is_closed
+    assert registry.configuration_revision("audio_cpp") == replacement_config_revision
+
+    same_catalog = await service.get_catalog("audio_cpp")
+    assert same_catalog is replacement_catalog
+    assert same_catalog.revision == replacement_catalog_revision
+    lease = await registry.acquire("audio_cpp")
+    try:
+        assert lease.adapter is replacement_adapter
+    finally:
+        await lease.release()
 
     await service.close()
     await service.wait_closed()
+    assert replacement_client.is_closed
 
 
 @pytest.mark.asyncio
