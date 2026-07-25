@@ -38,6 +38,7 @@ from tldw_chatbook.Chat.rag_scope import (
     SCOPE_REASON_EMPTY,
     SCOPE_STATUS_EMPTY,
     SCOPE_STATUS_EXCLUDED,
+    SessionScopeHolder,
     ScopeItem,
     SOURCE_TYPE_MEDIA,
     SOURCE_TYPE_NOTE,
@@ -2559,6 +2560,86 @@ class TestCapturePromptBoundaryFreshAuthority:
                     items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),),
                     updated_at="unchanged-stamp",
                 ),
+            )
+            active["session"] = later_session
+            return [
+                {
+                    "source": "media",
+                    "id": source_id,
+                    "title": title,
+                    "content": f"{title} body",
+                    "score": 1.0,
+                    "metadata": {},
+                }
+                for source_id, title in zip(media_ids, ("Stale", "Current"))
+            ], "legacy context"
+
+        monkeypatch.setattr(
+            cre,
+            "perform_plain_rag_search",
+            _narrow_original_then_switch_session,
+        )
+
+        captured = await cre.get_rag_context_capture_for_chat(app, "query")
+
+        assert captured.context == "[S1] MEDIA — Current\nCurrent body"
+        assert captured.citation_builder is repository.builders[0]
+        candidates = captured.citation_builder.evidence_run_payloads[0].candidates
+        assert [candidate.rank for candidate in candidates] == [2]
+
+    @pytest.mark.asyncio
+    async def test_original_unpersisted_holder_uses_current_scope_after_retrieval(
+        self, media_db, cha_db, monkeypatch
+    ):
+        media_ids = _seed_media(media_db, n=2)
+        original_holder = SessionScopeHolder()
+        original_holder.set(
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),),
+                updated_at="before-retrieval",
+            )
+        )
+        original_session = SimpleNamespace(
+            id="session-original",
+            persisted_conversation_id=None,
+            workspace_id=None,
+            rag_scope_holder=original_holder,
+        )
+        later_holder = SessionScopeHolder()
+        later_holder.set(
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),),
+                updated_at="later-session",
+            )
+        )
+        later_session = SimpleNamespace(
+            id="session-later",
+            persisted_conversation_id=None,
+            workspace_id=None,
+            rag_scope_holder=later_holder,
+        )
+        active = {"session": original_session}
+        monkeypatch.setattr(
+            cre,
+            "_active_console_session",
+            lambda _app: active["session"],
+        )
+        repository = _BuilderRepository()
+        app = _ChatMockApp(
+            search_mode="plain",
+            media_db=media_db,
+            chachanotes_db=cha_db,
+            citation_trace_repository=repository,
+        )
+
+        async def _narrow_original_then_switch_session(*_args, scope=None, **_kwargs):
+            assert scope is not None
+            assert scope.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
+            original_holder.set(
+                RagScope(
+                    items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),),
+                    updated_at="after-retrieval",
+                )
             )
             active["session"] = later_session
             return [

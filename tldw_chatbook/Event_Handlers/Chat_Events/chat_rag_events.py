@@ -583,17 +583,13 @@ def _capture_request_scope_session(app: "TldwCli") -> _RequestScopeSession | Non
         return None
     try:
         holder = getattr(session, "rag_scope_holder", None)
-        captured_holder = None
-        if isinstance(holder, SessionScopeHolder):
-            captured_holder = SessionScopeHolder()
-            captured_holder.set(holder.scope)
         return _RequestScopeSession(
             id=getattr(session, "id", None),
             persisted_conversation_id=getattr(
                 session, "persisted_conversation_id", None
             ),
             workspace_id=getattr(session, "workspace_id", None),
-            rag_scope_holder=captured_holder,
+            rag_scope_holder=holder if isinstance(holder, SessionScopeHolder) else None,
         )
     except Exception:
         logger.warning(

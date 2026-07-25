@@ -13,6 +13,9 @@ import pytest
 from loguru import logger as loguru_logger
 from pydantic import ValidationError
 
+from tldw_chatbook.Chat.citation_provenance_runtime import (
+    CitationProvenanceRuntimePolicy,
+)
 from tldw_chatbook.Chat.citation_source_locators import CanonicalSourceKind
 from tldw_chatbook.Chat.citation_trace_builder import (
     CitationTraceBuilder,
@@ -28,6 +31,11 @@ from tldw_chatbook.Chat.citation_trace_models import (
     RetrievalScoreScale,
     SNAPSHOT_TEXT_UTF8_BYTES_MAX,
 )
+from tldw_chatbook.Chat.citation_trace_repository import (
+    CitationTraceRepository,
+    load_local_citation_identity_context,
+)
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.RAG_Search.local_citation_capture import (
     FINAL_SCORE_KIND_KEY,
     FINAL_SCORE_KIND_RERANKER,
@@ -877,12 +885,6 @@ class _CaptureRepository:
         return builder
 
 
-class _UnavailableCaptureRepository:
-    def create_local_trace_builder(self, *, request_id, generation_id):
-        del request_id, generation_id
-        return None
-
-
 class _CaptureApp:
     def __init__(self, *, search_mode="plain", repository=None, media_ids=("m1",)):
         self._widgets = {
@@ -949,6 +951,27 @@ def _patch_pipeline(monkeypatch, results, context):
     monkeypatch.setattr(cre, "resolve_semantic_rag_service", _semantic_service)
 
 
+def _real_capture_repository(tmp_path, availability):
+    db = CharactersRAGDB(
+        tmp_path / f"capture-{availability}.sqlite",
+        client_id=f"capture-{availability}",
+    )
+    identity = load_local_citation_identity_context(db)
+    assert identity is not None
+    enabled = availability != "writes-disabled"
+    repository = CitationTraceRepository(
+        db,
+        policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=enabled),
+        identity_context=None if availability == "identity-unavailable" else identity,
+        fingerprint_codec=(
+            None
+            if availability == "key-unavailable"
+            else CitationFingerprintCodec(b"k" * 32)
+        ),
+    )
+    return db, repository
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "search_mode",
@@ -1011,17 +1034,8 @@ def test_local_rag_context_result_is_frozen():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "availability",
-    ["repository-absent", "writes-disabled", "key-unavailable", "identity-unavailable"],
-)
-async def test_unavailable_canonical_capture_preserves_legacy_pipeline_bytes(
-    monkeypatch, availability
-):
-    repository = (
-        None if availability == "repository-absent" else _UnavailableCaptureRepository()
-    )
-    app = _CaptureApp(repository=repository)
+async def test_absent_repository_preserves_legacy_pipeline_bytes(monkeypatch):
+    app = _CaptureApp()
     raw_context = "LEGACY\x00PIPELINE\nBYTES"
     _patch_pipeline(monkeypatch, [_ranked_result()], raw_context)
 
@@ -1034,6 +1048,54 @@ async def test_unavailable_canonical_capture_preserves_legacy_pipeline_bytes(
     )
     assert isinstance(legacy, str)
     assert legacy == raw_context
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("availability", "writes_enabled", "has_identity", "has_codec"),
+    [
+        ("writes-disabled", False, True, True),
+        ("key-unavailable", True, True, False),
+        ("identity-unavailable", True, False, True),
+    ],
+)
+async def test_real_repository_prerequisite_states_preserve_legacy_pipeline_bytes(
+    monkeypatch,
+    tmp_path,
+    availability,
+    writes_enabled,
+    has_identity,
+    has_codec,
+):
+    db, repository = _real_capture_repository(tmp_path, availability)
+    try:
+        assert repository.canonical_writes_enabled is writes_enabled
+        assert (repository.identity_context is not None) is has_identity
+        assert repository.artifact_binding_verification_available is (
+            has_identity and has_codec
+        )
+        assert (
+            repository.create_local_trace_builder(
+                request_id=f"request-{availability}",
+                generation_id=f"generation-{availability}",
+            )
+            is None
+        )
+        app = _CaptureApp(repository=repository)
+        raw_context = f"LEGACY\x00{availability}\nBYTES"
+        _patch_pipeline(monkeypatch, [_ranked_result()], raw_context)
+
+        captured = await cre.get_rag_context_capture_for_chat(app, "query")
+        legacy = await cre.get_rag_context_for_chat(app, "query")
+
+        assert captured == cre.LocalRagContextResult(
+            context=raw_context,
+            citation_builder=None,
+        )
+        assert isinstance(legacy, str)
+        assert legacy == raw_context
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.asyncio
@@ -1124,46 +1186,54 @@ async def test_malformed_result_is_excluded_before_markers_and_logs_are_sanitize
 
 @pytest.mark.asyncio
 async def test_validation_failure_discards_context_and_partial_builder_without_logging(
-    monkeypatch,
+    monkeypatch, tmp_path
 ):
     sentinel = "PRIVATE-VALIDATION-FAILURE-SENTINEL"
-    repository = _CaptureRepository()
-    app = _CaptureApp(repository=repository)
-    _patch_pipeline(monkeypatch, [_ranked_result()], "legacy")
-    with pytest.raises(ValidationError) as exc_info:
-        LocalRetrievalRunMetadata(
-            search_mode=f"{sentinel}/invalid",
-            requested_top_k=1,
-            max_context_characters=100,
-            rerank_enabled=False,
-            source_kinds=(CanonicalSourceKind.MEDIA_DB,),
-            scope_state="unscoped",
-        )
-    validation_error = exc_info.value
-
-    def _reject_prompt(*_args, **_kwargs):
-        raise validation_error
-
-    monkeypatch.setattr(
-        CitationTraceBuilder,
-        "record_prompt_evidence_set",
-        _reject_prompt,
-    )
-    captured_logs = []
-    sink_id = loguru_logger.add(
-        captured_logs.append,
-        level="DEBUG",
-        format="{message}",
-    )
+    db, repository = _real_capture_repository(tmp_path, "enabled")
     try:
-        captured = await cre.get_rag_context_capture_for_chat(app, "query")
-    finally:
-        loguru_logger.remove(sink_id)
+        app = _CaptureApp(repository=repository)
+        _patch_pipeline(monkeypatch, [_ranked_result()], "legacy")
+        with pytest.raises(ValidationError) as exc_info:
+            LocalRetrievalRunMetadata(
+                search_mode=f"{sentinel}/invalid",
+                requested_top_k=1,
+                max_context_characters=100,
+                rerank_enabled=False,
+                source_kinds=(CanonicalSourceKind.MEDIA_DB,),
+                scope_state="unscoped",
+            )
+        validation_error = exc_info.value
 
-    assert captured == cre.LocalRagContextResult(
-        context=None,
-        citation_builder=None,
-    )
-    rendered_logs = "".join(str(message) for message in captured_logs)
-    assert sentinel not in rendered_logs
-    assert "reason=canonical_capture_failure" in rendered_logs
+        def _reject_prompt(*_args, **_kwargs):
+            raise validation_error
+
+        monkeypatch.setattr(
+            CitationTraceBuilder,
+            "record_prompt_evidence_set",
+            _reject_prompt,
+        )
+        captured_logs = []
+        sink_id = loguru_logger.add(
+            captured_logs.append,
+            level="DEBUG",
+            format="{message}",
+        )
+        try:
+            captured = await cre.get_rag_context_capture_for_chat(app, "query")
+        finally:
+            loguru_logger.remove(sink_id)
+
+        assert captured == cre.LocalRagContextResult(
+            context=None,
+            citation_builder=None,
+        )
+        connection = db.get_connection()
+        for table in ("rag_evidence_runs", "rag_evidence_snapshots"):
+            assert (
+                connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+            )
+        rendered_logs = "".join(str(message) for message in captured_logs)
+        assert sentinel not in rendered_logs
+        assert "reason=canonical_capture_failure" in rendered_logs
+    finally:
+        db.close_connection()
