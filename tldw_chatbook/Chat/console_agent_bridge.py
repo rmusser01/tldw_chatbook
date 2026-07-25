@@ -900,6 +900,7 @@ class ConsoleAgentBridge:
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
         request_skill_install_confirm: Callable[[str], bool] | None = None,
+        request_skill_script_confirm: Callable[[dict], dict] | None = None,
     ) -> tuple[str, RunOutcome]:
         """Run the agent loop as the Console reply engine.
 
@@ -1041,6 +1042,97 @@ class ConsoleAgentBridge:
                         "cannot run until you approve it in Library > Skills."
                     ),
                 )
+
+        # Trust-gated skill script execution (6th runtime tool). Built only
+        # when BOTH a skills service AND a confirm callback exist -- without a
+        # callback the tool is absent (never advertised) rather than
+        # auto-denying every call. Order (load-bearing): enforce policy (no
+        # prompt on denial) -> describe/resolve (no prompt on a bad path or an
+        # unrunnable type) -> grant check (no prompt when the user already
+        # granted this skill) -> confirm (plain blocking call, OUTSIDE any
+        # asyncio.run) -> run -> broad-catch wrap. run_skill_script re-verifies
+        # policy/trust/path authoritatively, so a stale plan can never widen
+        # what actually executes.
+        run_skill_script_tool = None
+        if self._skills_service is not None and request_skill_script_confirm is not None:
+            scope = self._skills_service
+            trust_service = getattr(
+                getattr(scope, "local_service", None), "trust_service", None
+            )
+
+            def run_skill_script_tool(
+                skill_name: str, script_path: str, args: list[str]
+            ) -> ToolResult:
+                from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+
+                try:
+                    scope.enforce_run_script()
+                except PolicyDeniedError as exc:
+                    return ToolResult(ok=False, error=exc.user_message)
+                except Exception as exc:  # noqa: BLE001
+                    return ToolResult(ok=False, error=str(exc))
+                try:
+                    plan = asyncio.run(
+                        scope.describe_skill_script(skill_name, script_path)
+                    )
+                except Exception as exc:  # noqa: BLE001 (trust/path/type)
+                    return ToolResult(ok=False, error=f"run_skill_script: {exc}")
+
+                granted = False
+                if trust_service is not None:
+                    try:
+                        granted = bool(
+                            trust_service.script_execution_granted(skill_name)
+                        )
+                    except Exception:  # noqa: BLE001 — doubt ⇒ prompt
+                        granted = False
+                if not granted:
+                    try:
+                        decision = request_skill_script_confirm(
+                            {
+                                "skill_name": skill_name,
+                                "script_path": script_path,
+                                "mechanism": plan.mechanism,
+                                "interpreter": plan.interpreter_display,
+                                "is_binary": plan.is_binary,
+                                "args": [str(a) for a in args],
+                            }
+                        )
+                    except Exception:  # noqa: BLE001 — a UI error fails closed
+                        decision = {"allow": False, "remember": False}
+                    if not isinstance(decision, Mapping):
+                        decision = {"allow": False, "remember": False}
+                    if not decision.get("allow", False):
+                        return ToolResult(
+                            ok=False, error="The user declined to run this script."
+                        )
+                    if decision.get("remember", False) and trust_service is not None:
+                        try:
+                            trust_service.grant_script_execution(skill_name)
+                        except Exception:  # noqa: BLE001 — grant is best-effort
+                            logger.opt(exception=True).debug(
+                                "Failed to persist skill script grant"
+                            )
+                try:
+                    outcome = asyncio.run(
+                        scope.run_skill_script(skill_name, script_path, list(args))
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    return ToolResult(ok=False, error=f"run_skill_script: {exc}")
+
+                lines = [f"exit_code: {outcome.exit_code}"]
+                if outcome.timed_out:
+                    lines.append("timed out — the script was killed")
+                if outcome.output_capped:
+                    lines.append("output was truncated at the size cap")
+                for warning in outcome.sandbox_warnings:
+                    lines.append(f"note: {warning}")
+                if outcome.stdout:
+                    lines.append(f"stdout:\n{outcome.stdout}")
+                if outcome.stderr:
+                    lines.append(f"stderr:\n{outcome.stderr}")
+                return ToolResult(ok=True, content="\n".join(lines))
+
         # [console] native_tool_calls kill-switch (Task 5): a caller-supplied
         # predicate (chat_screen.py's _console_native_tool_calls_enabled)
         # gates whether this run may use native provider tool-calls at all;
@@ -1162,6 +1254,7 @@ class ConsoleAgentBridge:
             review_tool_calls=review_tool_calls,
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
+            run_skill_script_tool=run_skill_script_tool,
         )
 
         supersede_run_id = (

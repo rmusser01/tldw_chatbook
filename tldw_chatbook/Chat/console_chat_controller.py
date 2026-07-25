@@ -77,6 +77,10 @@ _MCP_APPROVAL_POLL_SECONDS = 1.0
 #: injected -- mirrors `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`'s role for
 #: `request_skill_install_confirm`'s own wait loop.
 _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS = 120.0
+#: Fallback (and only) timeout for `request_skill_script_confirm`'s own
+#: wait loop -- mirrors `_DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS`;
+#: unlike the install confirm there is no test-override seam for this one.
+_DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 120.0
 
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
@@ -426,6 +430,16 @@ class ConsoleChatController:
         #: The active confirm round's release Event + shared decision box.
         self._pending_skill_install_event: threading.Event | None = None
         self._pending_skill_install_decision: dict[str, bool] | None = None
+        #: UI-thread callback that pushes/clears the pending skill-SCRIPT
+        #: confirm payload into the owning screen's task-resume state.
+        #: Invoked through self.app.call_from_thread from
+        #: request_skill_script_confirm. Mirrors set_pending_skill_install,
+        #: but the round-trip decision carries a "remember" flag too.
+        self.set_pending_skill_script: Callable[[dict | None], None] | None = None
+        #: The active script-confirm round's release Event + shared
+        #: decision box ({"allow": bool, "remember": bool}).
+        self._pending_skill_script_event: threading.Event | None = None
+        self._pending_skill_script_decision: dict[str, bool] | None = None
 
     async def submit_draft(self, draft: str) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution."""
@@ -722,6 +736,7 @@ class ConsoleChatController:
         # whenever no round is in flight.
         self._deny_pending_approval_on_context_change()
         self._deny_pending_skill_install_on_context_change()
+        self._deny_pending_skill_script_on_context_change()
         return session
 
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
@@ -1187,6 +1202,89 @@ class ConsoleChatController:
     def _deny_pending_skill_install_on_context_change(self) -> None:
         """Force-deny a pending confirm (Event set, decision left False)."""
         event = self._pending_skill_install_event
+        if event is not None:
+            event.set()
+
+    # -- Skill-script confirm bridge -----------------------------------------
+
+    def request_skill_script_confirm(self, payload: dict[str, Any]) -> dict[str, bool]:
+        """WORKER THREAD: ask the user to confirm running a skill's script.
+
+        Mirrors request_skill_install_confirm, but carries a two-part decision:
+        allow this run, and whether to remember the choice for this skill.
+
+        Args:
+            payload: Confirm details to render ({"skill_name", "script_path",
+                "mechanism", "args", ...}); a "timeout_seconds" key is added.
+
+        Returns:
+            ``{"allow": bool, "remember": bool}``. Every non-Allow path (deny,
+            cancel, stop, timeout, context change, no wired UI) returns
+            ``allow=False``.
+        """
+        if self.app is None or self.set_pending_skill_script is None:
+            return {"allow": False, "remember": False}
+
+        event = threading.Event()
+        decision: dict[str, bool] = {}
+        self._pending_skill_script_event = event
+        self._pending_skill_script_decision = decision
+
+        timeout_seconds = _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS
+        deadline = time.monotonic() + timeout_seconds
+        card_payload = dict(payload)
+        card_payload["timeout_seconds"] = timeout_seconds
+        try:
+            self._marshal_pending_skill_script(card_payload)
+            while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+                if self._stop_requested or (
+                    self._active_cancel_event is not None
+                    and self._active_cancel_event.is_set()
+                ):
+                    break
+                if time.monotonic() >= deadline:
+                    break
+            return {
+                "allow": bool(decision.get("allow", False)),
+                "remember": bool(decision.get("remember", False)),
+            }
+        finally:
+            self._pending_skill_script_event = None
+            self._pending_skill_script_decision = None
+            try:
+                self._marshal_pending_skill_script(None)
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).debug(
+                    "Failed to clear skill-script confirm during teardown"
+                )
+
+    def _marshal_pending_skill_script(self, payload: dict[str, Any] | None) -> None:
+        """WORKER THREAD: hand a skill-script confirm payload to the UI thread.
+
+        Args:
+            payload: The pending confirm dict to show, or None to hide it.
+        """
+        if self.app is not None and self.set_pending_skill_script is not None:
+            self.app.call_from_thread(self.set_pending_skill_script, payload)
+
+    def resolve_pending_skill_script(self, allow: bool, remember: bool) -> None:
+        """UI THREAD: apply the user's decision, releasing the worker thread.
+
+        Args:
+            allow: True to run the script this once.
+            remember: True to also grant this skill standing permission.
+        """
+        decision = self._pending_skill_script_decision
+        event = self._pending_skill_script_event
+        if decision is None or event is None:
+            return
+        decision["allow"] = bool(allow)
+        decision["remember"] = bool(remember)
+        event.set()
+
+    def _deny_pending_skill_script_on_context_change(self) -> None:
+        """Force-deny a pending script confirm (Event set, decision left False)."""
+        event = self._pending_skill_script_event
         if event is not None:
             event.set()
 
@@ -3281,6 +3379,7 @@ class ConsoleChatController:
                 turn_skill_bindings=skill_bindings,
                 turn_bundle_block=skill_bundle_block,
                 request_skill_install_confirm=self.request_skill_install_confirm,
+                request_skill_script_confirm=self.request_skill_script_confirm,
             )
         except asyncio.CancelledError:
             if self._stop_requested:
