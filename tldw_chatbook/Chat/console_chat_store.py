@@ -886,6 +886,9 @@ class ConsoleChatStore:
             anchor_message_id: Native id of the node to fork alongside
                 (typically the assistant message being regenerated).
             role: Role for the new sibling message.
+            attachments: Attachments to set on the new sibling (task-573:
+                Edit & resend carries the anchor's attachments onto the
+                fork). Same seam ``append_message`` uses; empty by default.
             content: Initial content. An empty-content assistant sibling
                 starts ``"pending"`` (mirrors ``append_message``), ready to
                 receive stream chunks via ``append_stream_chunk``.

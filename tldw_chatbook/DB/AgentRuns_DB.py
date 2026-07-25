@@ -348,6 +348,31 @@ class AgentRunsDB(BaseDB):
             ).fetchone()
         return self._row_to_dict(row) if row else None
 
+    def latest_primary_run(self, conversation_id: str) -> dict | None:
+        """Fetch the newest non-superseded PRIMARY run for a conversation.
+
+        A single bounded query (``LIMIT 1``) so hot callers (the user-Stop
+        path's run-anchor lookup) never materialize the whole run history;
+        interleaved newer sub-agent runs cannot hide the newest primary
+        because the kind filter is in the SQL.
+
+        Args:
+            conversation_id: The conversation whose runs to inspect.
+
+        Returns:
+            The newest matching run as a dict (``steps``/``budget``
+            JSON-decoded), or ``None`` when the conversation has no
+            non-superseded primary run.
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM agent_runs WHERE conversation_id = ? "
+                "AND agent_kind = 'primary' AND status != 'superseded' "
+                "ORDER BY created_at DESC, id DESC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+        return self._row_to_dict(row) if row else None
+
     def list_runs(
         self,
         conversation_id: str,

@@ -419,3 +419,30 @@ def test_memory_db_skips_wal():
     with db.connection() as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "memory"
         assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+
+
+def test_latest_primary_run_targets_newest_primary_only(tmp_path):
+    """Qodo (PR #872): the Stop-path lookup must be a single bounded query,
+    and interleaved newer SUBAGENT runs must not hide the newest primary."""
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+
+    old_primary = db.create_run(conversation_id="c1", agent_kind="primary", task="a")
+    newer_primary = db.create_run(conversation_id="c1", agent_kind="primary", task="b")
+    db.create_run(
+        conversation_id="c1",
+        agent_kind="subagent",
+        task="sub",
+        parent_run_id=newer_primary,
+    )
+
+    record = db.latest_primary_run("c1")
+    assert record is not None
+    assert record["id"] == newer_primary
+    assert record["agent_kind"] == "primary"
+
+    # Superseded newest primary falls back to the next non-superseded one.
+    db.set_status(newer_primary, "superseded")
+    record = db.latest_primary_run("c1")
+    assert record is not None and record["id"] == old_primary
+
+    assert db.latest_primary_run("no-such-conversation") is None

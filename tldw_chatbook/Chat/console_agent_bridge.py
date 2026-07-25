@@ -1476,14 +1476,7 @@ class ConsoleAgentBridge:
             The newest non-superseded primary run's id when its
             ``assistant_message_id`` is still NULL, else ``None``.
         """
-        record = next(
-            (
-                r
-                for r in self._db.list_runs(conversation_id, include_superseded=False)
-                if r["agent_kind"] == AGENT_KIND_PRIMARY
-            ),
-            None,
-        )
+        record = self._db.latest_primary_run(conversation_id)
         if record is None or record.get("assistant_message_id") is not None:
             return None
         return record["id"]
