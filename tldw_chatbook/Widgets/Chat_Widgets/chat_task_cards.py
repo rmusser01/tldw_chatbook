@@ -5,28 +5,34 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_resume_panel import ChatResumePanel
 from tldw_chatbook.Widgets.Chat_Widgets.skill_install_confirm_card import (
     SkillInstallConfirmCard,
 )
+from tldw_chatbook.Widgets.Chat_Widgets.skill_script_confirm_card import (
+    SkillScriptConfirmCard,
+)
 
 
 class ChatTaskCards(Container):
-    """Inline task-surface wrapper for approvals, skill-install, and resume."""
+    """Inline task-surface wrapper for approvals, skill-install/script, and resume."""
 
     def compose(self) -> ComposeResult:
         yield ChatApprovalCard(id="chat-approval-card")
         yield SkillInstallConfirmCard(id="chat-skill-install-card")
+        yield SkillScriptConfirmCard(id="chat-skill-script-card")
         yield ChatResumePanel(id="chat-resume-panel")
 
     def on_mount(self) -> None:
         self.display = False
 
     def sync_state(self, task_state) -> None:
-        """Sync the approval, skill-install, and resume cards from task state.
+        """Sync the approval, skill-install/script, and resume cards from task state.
 
         Args:
             task_state: The ``TaskResumeState`` snapshot (pending_approval,
-                pending_skill_install, and resume fields) to render.
+                pending_skill_install, pending_skill_script, and resume
+                fields) to render.
         """
         approval_card = self.query_one(ChatApprovalCard)
         install_card = self.query_one(SkillInstallConfirmCard)
+        script_card = self.query_one(SkillScriptConfirmCard)
         resume_panel = self.query_one(ChatResumePanel)
 
         approval = task_state.pending_approval
@@ -42,9 +48,11 @@ class ChatTaskCards(Container):
         else:
             approval_card.set_approval(approval)
         install_card.set_install(task_state.pending_skill_install)
+        script_card.set_script(task_state.pending_skill_script)
         resume_panel.set_resume_state(task_state)
         self.display = (
             task_state.has_pending_approval()
             or task_state.has_pending_skill_install()
+            or task_state.has_pending_skill_script()
             or task_state.has_resume_content()
         )

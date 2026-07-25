@@ -270,6 +270,7 @@ from ...UI.Workbench.focus import WorkbenchFocusRegistry
 from ...state.ui_state import UIState
 from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfirmCard
+from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
@@ -3347,6 +3348,9 @@ class ChatScreen(BaseAppScreen):
         )
         self._console_chat_controller.set_pending_skill_install = (
             self._set_console_pending_skill_install
+        )
+        self._console_chat_controller.set_pending_skill_script = (
+            self._set_console_pending_skill_script
         )
         self._sync_console_chat_core_state()
         return self._console_chat_controller
@@ -15603,6 +15607,23 @@ class ChatScreen(BaseAppScreen):
         current = self.chat_state.task_resume_state
         self.set_task_resume_state(replace(current, pending_skill_install=payload))
 
+    def _set_console_pending_skill_script(
+        self, payload: Dict[str, Any] | None
+    ) -> None:
+        """Set/clear the pending skill-script confirm, then sync the task cards.
+
+        UI-thread bridge target for ``ConsoleChatController.
+        request_skill_script_confirm``, invoked via ``call_from_thread``
+        (task-5). Mutates only ``pending_skill_script`` so an in-flight
+        approval/resume state is never clobbered.
+
+        Args:
+            payload: The pending confirm's dict (see
+                ``SkillScriptConfirmCard.set_script``), or None to clear it.
+        """
+        current = self.chat_state.task_resume_state
+        self.set_task_resume_state(replace(current, pending_skill_script=payload))
+
     @on(ChatApprovalCard.ApprovalDecided)
     def handle_console_approval_decided(
         self, event: ChatApprovalCard.ApprovalDecided
@@ -15622,6 +15643,25 @@ class ChatScreen(BaseAppScreen):
         controller = self._console_chat_controller
         if controller is not None:
             controller.resolve_pending_skill_install(event.allow)
+
+    @on(SkillScriptConfirmCard.ScriptDecided)
+    def handle_console_skill_script_decided(
+        self, event: SkillScriptConfirmCard.ScriptDecided
+    ) -> None:
+        """Forward the user's run decision to the controller's worker thread.
+
+        ``event.request_id`` MUST be threaded through unchanged: ``Console
+        ChatController.resolve_pending_skill_script`` (task-5) silently
+        drops a resolve whose id doesn't match the currently-armed round,
+        which is exactly what ``SkillScriptConfirmCard.ScriptDecided``
+        carries it for.
+        """
+        event.stop()
+        controller = self._console_chat_controller
+        if controller is not None:
+            controller.resolve_pending_skill_script(
+                event.allow, event.remember, request_id=event.request_id
+            )
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """

@@ -209,6 +209,7 @@ class TaskResumeState:
     last_step: str = ""
     pending_approval: Optional[Dict[str, Any]] = None
     pending_skill_install: Optional[Dict[str, Any]] = None
+    pending_skill_script: Optional[Dict[str, Any]] = None
     diff_summary: str = ""
     next_action: str = ""
 
@@ -235,6 +236,14 @@ class TaskResumeState:
         """
         return bool(self.pending_skill_install)
 
+    def has_pending_skill_script(self) -> bool:
+        """Return True when a skill-script confirm should be shown.
+
+        Returns:
+            True when a skill-script confirm should be shown.
+        """
+        return bool(self.pending_skill_script)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
@@ -242,6 +251,7 @@ class TaskResumeState:
             "last_step": self.last_step,
             "pending_approval": self.pending_approval,
             "pending_skill_install": self.pending_skill_install,
+            "pending_skill_script": self.pending_skill_script,
             "diff_summary": self.diff_summary,
             "next_action": self.next_action,
         }
@@ -257,6 +267,7 @@ class TaskResumeState:
             last_step=data.get("last_step", ""),
             pending_approval=data.get("pending_approval"),
             pending_skill_install=data.get("pending_skill_install"),
+            pending_skill_script=data.get("pending_skill_script"),
             diff_summary=data.get("diff_summary", ""),
             next_action=data.get("next_action", ""),
         )
