@@ -30,7 +30,12 @@ import httpx
 from loguru import logger
 
 from tldw_chatbook.config import _get_effective_config_path
-from tldw_chatbook.Image_Generation.config import ImageGenerationConfig, _NON_SECRET
+from tldw_chatbook.Image_Generation.config import (
+    ImageGenerationConfig,
+    _NON_SECRET,
+    _resolve_secret,
+    _SECRETS,
+)
 from tldw_chatbook.Image_Generation.listing import (
     _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS,
     _is_modelstudio_configured,
@@ -254,6 +259,29 @@ def load_user_image_generation_table() -> Mapping[str, Any]:
         return {}
     section = parsed.get("image_generation")
     return section if isinstance(section, dict) else {}
+
+
+def key_source_after_clear(backend_id: str) -> str:
+    """What the key-source line would show for ``backend_id`` if its locally
+    saved config value were removed right now (env/keyring fallback, or
+    ``"missing"``).
+
+    Used by the Settings > Image Gen Clear action to optimistically
+    re-render the source line before Save actually persists the deletion --
+    reuses the loader's own precedence resolver (``_resolve_secret``),
+    passing an EMPTY sub-config mapping so its ``"config"`` precedence
+    branch can never win (there is nothing for it to read).
+
+    Args:
+        backend_id: One of ``BACKEND_IDS``.
+
+    Returns:
+        ``"env:<VAR>"``, ``"keyring"``, or ``"missing"``. Backends with no
+        secret field (``stable_diffusion_cpp``) always return ``"missing"``.
+    """
+    if backend_id not in _SECRETS:
+        return "missing"
+    return _resolve_secret(backend_id, {})[2]
 
 
 _GLOBAL_DRAFT_KEYS: tuple[str, ...] = (

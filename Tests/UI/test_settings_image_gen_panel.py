@@ -11,6 +11,8 @@ from ``Tests/Internal_Prompts/conftest.py``).
 
 from __future__ import annotations
 
+import tomllib
+
 import pytest
 from textual.widgets import Button, Checkbox, Input, Static
 
@@ -27,6 +29,7 @@ from Tests.UI.test_settings_configuration_hub import (
 )
 from tldw_chatbook.Image_Generation.config import (
     DEFAULT_SWARMUI_TIMEOUT_SECONDS,
+    get_image_generation_config,
     reset_image_generation_config_cache,
 )
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
@@ -266,3 +269,289 @@ async def test_save_revert_test_buttons_present_but_disabled(scratch_config):
             assert panel.query_one(
                 f"#settings-imagegen-test-{backend_id}", Button
             ).disabled
+
+
+# ---------------------------------------------------------------------------
+# Task 5: draft/dirty editing + Save/Revert.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_edit_marks_dirty_and_save_writes_nested_toml(scratch_config, tmp_path):
+    scratch_config(
+        """
+[image_generation]
+default_backend = "openrouter"
+enabled_backends = ["openrouter"]
+
+[image_generation.openrouter]
+default_model = "old-model"
+"""
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        model_input = panel.query_one(
+            "#settings-imagegen-field-openrouter-default_model", Input
+        )
+        model_input.value = "openai/gpt-5-image-mini"
+        await pilot.pause()
+
+        rail_button = screen.query_one("#settings-category-image_generation", Button)
+        assert "*" in str(rail_button.label)
+        assert not panel.query_one("#settings-imagegen-save", Button).disabled
+
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
+
+        config_path = tmp_path / "config.toml"
+        with open(config_path, "rb") as f:
+            saved = tomllib.load(f)
+        assert (
+            saved["image_generation"]["openrouter"]["default_model"]
+            == "openai/gpt-5-image-mini"
+        )
+
+        cfg = get_image_generation_config(reload=True)
+        assert cfg.openrouter_image_default_model == "openai/gpt-5-image-mini"
+
+        rail_button = screen.query_one("#settings-category-image_generation", Button)
+        assert "*" not in str(rail_button.label)
+
+
+@pytest.mark.asyncio
+async def test_save_blocked_when_default_disabled(scratch_config, tmp_path):
+    scratch_config(
+        """
+[image_generation]
+default_backend = "openrouter"
+enabled_backends = ["openrouter"]
+"""
+    )
+    config_path = tmp_path / "config.toml"
+    before = config_path.read_text(encoding="utf-8")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        enabled_checkbox = panel.query_one(
+            "#settings-imagegen-enabled-openrouter", Checkbox
+        )
+        enabled_checkbox.value = False
+        await pilot.pause()
+
+        await pilot.click("#settings-imagegen-save")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert "Default backend must be enabled" in _visible_text(screen)
+
+    after = config_path.read_text(encoding="utf-8")
+    assert after == before
+
+
+@pytest.mark.asyncio
+async def test_revert_discards_draft(scratch_config, tmp_path):
+    scratch_config(
+        """
+[image_generation]
+default_backend = "openrouter"
+enabled_backends = ["openrouter"]
+
+[image_generation.openrouter]
+default_model = "original-model"
+"""
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        model_input = panel.query_one(
+            "#settings-imagegen-field-openrouter-default_model", Input
+        )
+        model_input.value = "typed-but-not-saved"
+        await pilot.pause()
+
+        rail_button = screen.query_one("#settings-category-image_generation", Button)
+        assert "*" in str(rail_button.label)
+
+        await pilot.click("#settings-imagegen-revert")
+        await pilot.pause()
+        await pilot.pause()
+
+        rail_button = screen.query_one("#settings-category-image_generation", Button)
+        assert "*" not in str(rail_button.label)
+
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        model_input = panel.query_one(
+            "#settings-imagegen-field-openrouter-default_model", Input
+        )
+        assert model_input.value == "original-model"
+
+    config_path = tmp_path / "config.toml"
+    with open(config_path, "rb") as f:
+        saved = tomllib.load(f)
+    assert saved["image_generation"]["openrouter"]["default_model"] == "original-model"
+
+
+@pytest.mark.asyncio
+async def test_clear_key_deletes_not_blanks(scratch_config, tmp_path, monkeypatch):
+    for var in _ALL_SECRET_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    scratch_config(
+        """
+[image_generation]
+default_backend = "openrouter"
+enabled_backends = ["openrouter"]
+
+[image_generation.openrouter]
+api_key = "sk-saved-key"
+"""
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        source_line = panel.query_one(
+            "#settings-imagegen-key-source-openrouter", Static
+        )
+        assert str(source_line.renderable) == "local config key saved"
+
+        # `.press()` (not a coordinate pilot.click) -- this DestinationHarness
+        # has no CSS_PATH, so the Clear button's compact-width TCSS classes
+        # never load and it renders at Textual's raw default (min-width 16,
+        # height 3), which can visually overlap the neighboring Impact pane
+        # column at this terminal size. Posting Button.Pressed directly is
+        # the same real message a click sends, without depending on pixel
+        # geometry this harness doesn't style.
+        panel.query_one(
+            "#settings-imagegen-clear-openrouter-api_key", Button
+        ).press()
+        await pilot.pause()
+
+        source_line = screen.query_one(
+            "#settings-imagegen-key-source-openrouter", Static
+        )
+        assert str(source_line.renderable) == "missing"
+
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
+
+    config_path = tmp_path / "config.toml"
+    with open(config_path, "rb") as f:
+        saved = tomllib.load(f)
+    assert "api_key" not in saved["image_generation"].get("openrouter", {})
+
+
+@pytest.mark.asyncio
+async def test_pasted_key_saves_and_input_resets(scratch_config, tmp_path, monkeypatch):
+    for var in _ALL_SECRET_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    scratch_config(
+        """
+[image_generation]
+default_backend = "openrouter"
+enabled_backends = ["openrouter"]
+"""
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        key_input = panel.query_one(
+            "#settings-imagegen-field-openrouter-api_key", Input
+        )
+        key_input.value = "sk-pasted-key"
+        await pilot.pause()
+
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
+
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        key_input = panel.query_one(
+            "#settings-imagegen-field-openrouter-api_key", Input
+        )
+        assert key_input.value == ""
+
+        source_line = panel.query_one(
+            "#settings-imagegen-key-source-openrouter", Static
+        )
+        assert str(source_line.renderable) == "local config key saved"
+
+    config_path = tmp_path / "config.toml"
+    with open(config_path, "rb") as f:
+        saved = tomllib.load(f)
+    assert saved["image_generation"]["openrouter"]["api_key"] == "sk-pasted-key"
+
+
+@pytest.mark.asyncio
+async def test_unedited_baked_field_produces_empty_diff_on_save(
+    scratch_config, tmp_path, monkeypatch
+):
+    """Pin (carry-note 1): a FRESH config (no ``[image_generation]`` section
+    at all -- every backend field is baked-default-only) must NOT write any
+    unedited field when the user saves after editing exactly ONE unrelated
+    field. Guards against a regression that builds the save draft by
+    reading ALL input values wholesale instead of tracking real edit
+    events -- that shape of bug would spuriously persist baked defaults
+    (e.g. ``default_backend``/``enabled_backends``, or another backend's
+    already-blank field rendered as an empty string) that the user never
+    touched.
+    """
+    for var in _ALL_SECRET_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    scratch_config(
+        """
+[general]
+default_theme = "textual-dark"
+"""
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        model_input = panel.query_one(
+            "#settings-imagegen-field-openrouter-default_model", Input
+        )
+        model_input.value = "openai/gpt-5-image-mini"
+        await pilot.pause()
+
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
+
+    config_path = tmp_path / "config.toml"
+    with open(config_path, "rb") as f:
+        saved = tomllib.load(f)
+
+    image_gen_section = saved.get("image_generation", {})
+    assert (
+        image_gen_section.get("openrouter", {}).get("default_model")
+        == "openai/gpt-5-image-mini"
+    )
+    # Nothing the user never touched gets written -- neither the
+    # baked-default global keys nor any other backend section, and no
+    # stray empty-string fields alongside the one real edit.
+    assert "default_backend" not in image_gen_section
+    assert "enabled_backends" not in image_gen_section
+    assert set(image_gen_section.keys()) == {"openrouter"}
+    assert set(image_gen_section["openrouter"].keys()) == {"default_model"}
