@@ -2733,11 +2733,8 @@ top_p = 0.95
 min_p = 0.05
 top_k = 50
 strip_thinking_tags = true
-use_enhanced_window = false  # Enable enhanced chat window with image support
-enable_tabs = true  # Enable tabbed chat interface
-max_tabs = 10  # Maximum number of chat tabs allowed
 
-# Image support settings (when use_enhanced_window = true)
+# Image attachment settings for chat
 [chat.images]
 enabled = true
 show_attach_button = true  # Show/hide the attach file button in chat

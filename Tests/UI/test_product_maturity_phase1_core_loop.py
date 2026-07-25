@@ -105,15 +105,11 @@ def _test_cli_setting(section: str, key: str, default=None):
         default: Caller-provided fallback value.
 
     Returns:
-        Test-pinned setting value for relevant chat/splash keys, otherwise
+        Test-pinned setting value for relevant splash keys, otherwise
         the caller default.
     """
     if section == "splash_screen" and key == "enabled":
         return False
-    if section == "chat_defaults" and key == "enable_tabs":
-        return True
-    if section == "chat_defaults" and key == "max_tabs":
-        return 10
     return default
 
 
@@ -124,17 +120,7 @@ async def test_search_rag_result_stages_context_into_console_core_loop() -> None
     app._initial_tab_value = "home"
     payload = _core_loop_payload()
 
-    with (
-        patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting),
-        patch(
-            "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting",
-            side_effect=_test_cli_setting,
-        ),
-        patch(
-            "tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container.get_cli_setting",
-            side_effect=_test_cli_setting,
-        ),
-    ):
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,

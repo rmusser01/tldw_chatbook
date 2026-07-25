@@ -81,79 +81,6 @@
     color: $text;
 }
 
-/* --- Empty State --- */
-#chat-empty-state {
-    width: 100%;
-    height: 1fr;
-    padding: 4 2;
-    text-align: center;
-    color: $text-muted;
-    content-align: center middle;
-}
-
-#chat-empty-state.hidden {
-    display: none;
-}
-
-/* Explicit sidebar styling for the enhanced sidebar */
-#chat-enhanced-sidebar {
-    width: 25%;
-    min-width: 35;
-    max-width: 35%;
-    height: 100%;
-    dock: left;
-    border-right: none;
-}
-/* VerticalScroll for chat messages */
-#chat-log {
-    height: 1fr; /* Takes remaining space */
-    width: 100%;
-    overflow-y: auto;  /* Ensure proper scrolling */
-    overflow-x: hidden;  /* Hide horizontal overflow */
-    /* border: round $surface; Optional: Add border to scroll area */
-    padding: 0 1; /* Padding around messages */
-}
-
-/* Input area styling (shared by chat and character) */
-#chat-input-area, #conv-char-input-area { /* Updated from #character-input-area */
-    height: auto;    /* Allow height to adjust */
-    max-height: 12;  /* Limit growth */
-    width: 100%;
-    align: left top; /* Align children to top-left */
-    padding: 1; /* Consistent padding */
-    border-top: round $surface;
-}
-
-/* All buttons in chat input area should have equal flexible width */
-#chat-input-area Button {
-    width: 1fr;      /* Equal flexible width for all buttons */
-    height: 3;       /* Standard button height */
-}
-/* Input widget styling (shared) */
-
-/* ========================================
- * ChatWindowEnhanced specific styles
- * ======================================== */
-
-ChatWindowEnhanced {
-    layout: horizontal;
-    height: 100%;
-}
-
-/* Image attachment indicator */
-#image-attachment-indicator {
-    margin: 0 1;
-    padding: 0 1;
-    background: $surface;
-    color: $text-muted;
-    height: 3;
-    display: none;
-}
-
-#image-attachment-indicator.visible {
-    display: block;
-}
-
 /* Send button states */
 .send-button {
     width: 2fr;
@@ -167,12 +94,6 @@ ChatWindowEnhanced {
 
 /* Attachment button */
 .attach-button {
-    width: auto;
-    margin-left: 1;
-}
-
-/* Microphone button */
-.mic-button {
     width: auto;
     margin-left: 1;
 }
@@ -217,14 +138,6 @@ ChatWindowEnhanced {
     margin: 1;
     border: solid $error;
 }
-.chat-input { /* Targets TextArea */
-    width: 6fr;        /* Take 6x the space compared to other flex items */
-    height: auto;      /* Allow height to adjust */
-    max-height: 100%;  /* Don't overflow parent */
-    margin-right: 1;   /* Space before button */
-    border: round $surface;
-}
-
 /* Send button styling (shared) */
 .send-button { /* Targets Button */
     width: 1fr;      /* Equal flexible width */
@@ -250,21 +163,6 @@ ChatWindowEnhanced {
     width: 1fr;      /* Equal flexible width */
     height: 3;
     margin-top: 0;
-}
-
-/* Action buttons in chat input area (attach, respond-for-me) */
-#chat-input-area .action-button {
-    width: 1fr;      /* Equal flexible width */
-    height: 3;       /* Standard button height */
-    border: none;
-    background: $surface-darken-1;
-    color: $text;
-}
-
-/* Save Chat Button in chat-right-sidebar in Chat Tab */
-.save-chat-button { /* Class used in character_sidebar.py */
-    margin-top: 2;   /* Add 1 cell/unit of space above the button */
-    /*width: 100%;      Optional: make it full width like other sidebar buttons */
 }
 
 /* Clone Chat Button in chat-right-sidebar */

@@ -31,14 +31,13 @@ from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
-from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResumeState
+from .chat_screen_state import ChatScreenState, TabState, TaskResumeState
 from .provider_model_resolution import (
     ResolvedProviderModelOption,
     resolve_effective_provider_model,
     resolve_provider_model_options,
 )
 from .settings_config_models import SettingsCategoryId
-from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.console_chat_controller import ConsoleChatController
 from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
@@ -251,7 +250,6 @@ from ...Library.library_rag_service import (
 )
 from ...Notes.notes_scope_service import ScopeType
 from ...Constants import TAB_SETTINGS
-from ...Utils.chat_diagnostics import ChatDiagnostics
 from ...Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
     normalize_console_background_effects,
@@ -272,7 +270,6 @@ from ...state.ui_state import UIState
 from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfirmCard
 from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
-from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
     ConsoleComposerBar,
@@ -361,9 +358,6 @@ from ...Workspaces import (
 from ...Widgets.compact_model_bar import CompactModelBar
 from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
 from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
-
-# Import the existing chat window to reuse its functionality
-from ..Chat_Window_Enhanced import ChatWindowEnhanced
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -556,21 +550,6 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
 def _is_empty_select_value(value: Any) -> bool:
     """Return True for Textual's blank/null select sentinels."""
     return value is None or value == Select.BLANK or str(value).startswith("Select.")
-
-
-def _derive_tab_title(tab_state: TabState) -> str:
-    assistant_name = None
-    if tab_state.assistant_kind == "character":
-        assistant_name = tab_state.character_name
-    elif tab_state.assistant_kind == "persona" and tab_state.assistant_id:
-        assistant_name = f"Persona {tab_state.assistant_id}"
-
-    return derive_conversation_title(
-        assistant_kind=tab_state.assistant_kind,
-        assistant_name=assistant_name,
-        fallback_title=tab_state.title,
-        character_id=tab_state.character_id,
-    )
 
 
 def _character_session_identity_from_handoff(
@@ -854,102 +833,21 @@ class ChatScreen(BaseAppScreen):
             return
         self.focus_previous()
 
-    async def _rebuild_chat_model_options(
-        self,
-        provider: str,
-        *,
-        current_model: str | None = None,
-        select_first: bool = False,
-    ) -> None:
-        """Rebuild #chat-api-model options (saved + capped discovered) preserving selection."""
-        if not self.chat_window:
-            return
-        try:
-            model_select = self.chat_window.query_one("#chat-api-model", Select)
-        except Exception:
-            return
-        try:
-            options = await resolve_provider_model_options(
-                self.app, provider=provider, current_model=current_model,
-            )
-        except Exception:
-            logger.opt(exception=True).warning(f"Could not resolve model options for {provider}")
-            return
-        select_options = [(option.label, option.model_id) for option in options]
-        model_select.set_options(select_options)  # resets selection — re-apply below
-        if select_first and options:
-            model_select.value = options[0].model_id
-        elif current_model and any(o.model_id == current_model for o in options):
-            model_select.value = current_model
-        model_select.prompt = "Select Model..." if options else "No models available"
-
-    @on(Select.Changed, "#chat-api-provider")
-    async def handle_provider_change(self, event: Select.Changed) -> None:
-        """Handle API provider change and update model dropdown + compact bar."""
-        logger.info(f"API provider changed to: {event.value}")
-
-        try:
-            new_provider = str(event.value)
-            await self._rebuild_chat_model_options(new_provider, select_first=True)
-
-            # Find the model select widget within the chat window
-            if self.chat_window:
-                try:
-                    model_select = self.chat_window.query_one("#chat-api-model", Select)
-                    selected_model = None if _is_empty_select_value(model_select.value) else str(model_select.value)
-                    self._sync_compact_shell_controls(
-                        provider=new_provider,
-                        model=selected_model,
-                    )
-                except Exception as e:
-                    logger.error(f"Could not find model select widget: {e}")
-
-                # Sync to compact model bar
-                try:
-                    from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
-
-                    compact_bar = self.chat_window.query_one(
-                        "#compact-model-bar", CompactModelBar
-                    )
-                    compact_bar.sync_from_sidebar(provider=new_provider)
-                except Exception:
-                    logger.debug("Compact bar not found for provider sync")
-                self.chat_window.refresh_first_run_orientation(new_provider)
-            else:
-                logger.error("chat_window is None")
-
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error updating model dropdown: {e}")
-
     async def handle_model_catalog_refreshed(self, event) -> None:
-        """Re-merge options when startup refresh updated the active provider."""
-        if not self.chat_window:
-            return
-        try:
-            provider_select = self.chat_window.query_one("#chat-api-provider", Select)
-            model_select = self.chat_window.query_one("#chat-api-model", Select)
-        except Exception:
-            return
-        provider = str(provider_select.value or "").strip()
-        if not provider:
-            return
-        if provider_config_key(provider) not in {
-            provider_config_key(list_key) for list_key in event.providers
-        }:
-            return
-        current = None if _is_empty_select_value(model_select.value) else str(model_select.value)
-        await self._rebuild_chat_model_options(provider, current_model=current)
+        """Re-merge options when startup refresh updated the active provider.
 
-    @on(Select.Changed, "#chat-api-model")
-    def on_chat_api_model_changed(self, event: Select.Changed) -> None:
-        """Mirror sidebar model changes into the compact shell controls."""
-        model = None if _is_empty_select_value(event.value) else str(event.value)
-        self._sync_compact_shell_controls(model=model)
+        The legacy sidebar Selects (``#chat-api-provider``/``#chat-api-model``)
+        this used to re-merge into lived only on the retired
+        ``ChatWindowEnhanced`` (never mounted -- ``self.chat_window`` is
+        permanently ``None``). Kept as a no-op call target: ``app.py``'s
+        ``ModelCatalogRefreshed`` handler duck-types onto this method name via
+        ``forward_model_catalog_refreshed`` for whichever screen is on the
+        stack, so the method must keep existing and keep accepting the event.
 
-    @on(Input.Changed, "#chat-temperature")
-    def on_chat_temperature_changed(self, event: Input.Changed) -> None:
-        """Mirror sidebar temperature changes into the compact shell controls."""
-        self._sync_compact_shell_controls(temperature=event.value)
+        Args:
+            event: The ``ModelCatalogRefreshed`` event forwarded by ``app.py``.
+        """
+        return
 
     @on(Input.Changed, "#console-workspace-conversation-search")
     def on_console_workspace_conversation_search_changed(
@@ -1929,13 +1827,11 @@ class ChatScreen(BaseAppScreen):
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "chat", **kwargs)
-        self.chat_window: Optional[ChatWindowEnhanced] = None
         self.console_session_surface: Optional[ConsoleSessionSurface] = None
         self.chat_state = ChatScreenState()
         self._console_composer_collapsed = False
         self._console_composer_layout_revision = 0
         self._state_dirty = False
-        self._diagnostics_run = False
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
         self._pending_console_launch_auto_open_inspector = False
@@ -2171,16 +2067,6 @@ class ChatScreen(BaseAppScreen):
             section in app_config
             for section in cls._CONSOLE_LIVE_CONFIG_MARKER_SECTIONS
         )
-
-    def _ensure_chat_window(self) -> ChatWindowEnhanced:
-        if self.chat_window is None:
-            self.chat_window = ChatWindowEnhanced(
-                self.app_instance,
-                show_shell_compact_controls=False,
-                id="chat-window",
-                classes="window",
-            )
-        return self.chat_window
 
     def _ensure_console_session_surface(self) -> ConsoleSessionSurface:
         settings = self._console_background_effect_settings()
@@ -4216,10 +4102,7 @@ class ChatScreen(BaseAppScreen):
                         return str(conversation_id)
                     break
 
-        session = self._get_active_chat_session()
-        session_data = getattr(session, "session_data", None)
-        conversation_id = getattr(session_data, "conversation_id", None)
-        return str(conversation_id) if conversation_id else None
+        return None
 
     def _active_native_console_session(self) -> Any | None:
         """Return the active native Console session without creating the store."""
@@ -8012,11 +7895,6 @@ class ChatScreen(BaseAppScreen):
 
     def _toggle_console_chat_sidebar(self) -> None:
         """Route Console-level compact control toggles to the embedded chat sidebar."""
-        if self.chat_window and hasattr(
-            self.chat_window, "handle_shell_sidebar_toggle_requested"
-        ):
-            self.chat_window.handle_shell_sidebar_toggle_requested()
-            return
         self.app_instance.notify(
             "Chat settings are still loading.",
             severity="warning",
@@ -8309,11 +8187,6 @@ class ChatScreen(BaseAppScreen):
 
         active_tab = self.chat_state.get_active_tab()
         if active_tab is not None and active_tab.messages:
-            return True
-
-        session = self._get_active_chat_session()
-        session_data = getattr(session, "session_data", None)
-        if coerce_non_negative_int(getattr(session_data, "message_count", 0)):
             return True
 
         chat_log = self._get_active_chat_log()
@@ -9570,11 +9443,6 @@ class ChatScreen(BaseAppScreen):
         # Call parent's on_mount
         super().on_mount()
 
-        if not self._diagnostics_run and self.chat_window:
-            self._diagnostics_run = True
-            # Run diagnostic in the background for the legacy direct widget only.
-            self.set_timer(0.5, self._run_diagnostic)
-
         # Restore collapsible states after mount
         self.set_timer(0.1, self._restore_collapsible_states)
         self.set_timer(0.05, self.sync_task_resume_state)
@@ -10165,37 +10033,6 @@ class ChatScreen(BaseAppScreen):
                 self.app_instance, "chat_right_sidebar_collapsed", False
             )
 
-            # Try to detect and save from different chat interface types.
-            tab_container = self._get_tab_container()
-
-            if tab_container and hasattr(tab_container, "sessions"):
-                # Tabbed interface detected
-                logger.debug(
-                    f"Detected tabbed interface with {len(tab_container.sessions)} tabs"
-                )
-
-                # Save all tab sessions
-                self._save_tab_sessions(tab_container)
-
-                # Save active tab
-                self.chat_state.active_tab_id = tab_container.active_session_id
-
-                # Save tab order
-                if hasattr(tab_container, "tab_bar") and tab_container.tab_bar:
-                    self.chat_state.tab_order = tab_container.tab_bar.get_tab_ids()
-
-                # Also save messages for the active session
-                if tab_container.active_session_id:
-                    active_tab = self.chat_state.get_tab_by_id(
-                        tab_container.active_session_id
-                    )
-                    if active_tab:
-                        self._extract_and_save_messages(active_tab)
-            elif self.chat_window:
-                # Non-tabbed legacy direct widget - try to save single chat state
-                logger.debug("Detected non-tabbed chat interface")
-                self._save_non_tabbed_state()
-
             # Always try to save current input text directly
             self._save_direct_input_text()
 
@@ -10253,9 +10090,18 @@ class ChatScreen(BaseAppScreen):
                 if self.chat_state.validate():
                     logger.info(f"Restoring {len(self.chat_state.tabs)} tabs")
 
-                    # Native Console does not mount legacy ChatTabContainer widgets.
+                    # Native Console does not mount legacy ChatTabContainer
+                    # widgets, so tabbed state saved by a pre-retirement
+                    # (task-577) build can never be restored onto anything --
+                    # log and move on instead of scheduling the old
+                    # `_perform_state_restoration` retry, which would have
+                    # retried forever.
                     if self.chat_state.tabs:
-                        self.set_timer(0.1, self._perform_state_restoration)
+                        logger.info(
+                            "Legacy tabbed chat state found in saved state; "
+                            "the tabbed chat surface is retired (task-577) -- "
+                            "state ignored."
+                        )
                 else:
                     logger.warning("Chat state validation failed, starting fresh")
                     self.chat_state = ChatScreenState()
@@ -10264,112 +10110,17 @@ class ChatScreen(BaseAppScreen):
             logger.opt(exception=True).error(f"Error restoring chat state: {e}")
             self.chat_state = ChatScreenState()
 
-    async def _perform_state_restoration(self) -> None:
-        """Perform actual state restoration after UI is ready."""
-        if not self.chat_window and not self._get_tab_container():
-            logger.warning("Console chat surface not ready for restoration")
-            # Try again in a moment
-            self.set_timer(0.2, self._perform_state_restoration)
-            return
-
-        try:
-            logger.info("Starting state restoration...")
-
-            # Restore UI preferences
-            self.app_instance.chat_sidebar_collapsed = (
-                self.chat_state.left_sidebar_collapsed
-            )
-            self.app_instance.chat_right_sidebar_collapsed = (
-                self.chat_state.right_sidebar_collapsed
-            )
-
-            # Get tab container
-            tab_container = self._get_tab_container()
-            if tab_container:
-                # Tabbed interface - restore tab sessions
-                await self._restore_tab_sessions(tab_container)
-
-                # Restore active tab
-                if self.chat_state.active_tab_id:
-                    await tab_container.switch_to_tab_async(
-                        self.chat_state.active_tab_id
-                    )
-            else:
-                # Non-tabbed interface - still need to restore state
-                logger.debug("Non-tabbed interface detected, restoring state directly")
-
-            # Always restore these regardless of tab container
-            # Restore input text
-            await self._restore_input_text()
-
-            # Restore sidebar settings (system prompt, temperature, etc.)
-            await self._restore_sidebar_settings()
-
-            # Restore scroll positions
-            await self._restore_scroll_positions()
-
-            # Restore attachments
-            await self._restore_attachments()
-
-            # Restore conversation messages
-            await self._restore_messages()
-            self.sync_task_resume_state()
-            await self._consume_pending_chat_handoff()
-
-            logger.info("Chat state restoration complete")
-
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error during state restoration: {e}")
-
-    def _get_tab_container(self):
-        """Get the ChatTabContainer widget."""
-        try:
-            return self.query_one("#console-chat-tabs", ChatTabContainer)
-        except NoMatches:
-            pass
-
-        try:
-            if self.chat_window is not None:
-                tab_container = getattr(self.chat_window, "_tab_container", None)
-                if tab_container is not None:
-                    return tab_container
-            if isinstance(self.chat_window, ChatWindowEnhanced):
-                return self.chat_window.query_one("ChatTabContainer")
-        except NoMatches:
-            return None
-        return None
-
-    def _get_active_chat_session(self):
-        """Return the active native/legacy chat session widget when available."""
-        tab_container = self._get_tab_container()
-        if not tab_container:
-            return None
-        get_active_session = getattr(tab_container, "get_active_session", None)
-        if callable(get_active_session):
-            return get_active_session()
-        active_session_id = getattr(tab_container, "active_session_id", None)
-        sessions = getattr(tab_container, "sessions", {})
-        if active_session_id and active_session_id in sessions:
-            return sessions[active_session_id]
-        return None
-
     def _chat_query_scope(self):
-        """Prefer the legacy chat window when present, else the native Console tree."""
-        return self.chat_window or self
+        """Return the widget scope to query for legacy chat-flavored selectors.
+
+        ``ChatWindowEnhanced`` is retired (``self.chat_window`` is
+        permanently ``None``), so this now always resolves to the native
+        Console tree (``self``).
+        """
+        return self
 
     def _get_active_chat_input(self) -> Optional[TextArea]:
         """Return the active session input before falling back to legacy single-chat input."""
-        session = self._get_active_chat_session()
-        if session is not None:
-            get_chat_input = getattr(session, "get_chat_input", None)
-            if callable(get_chat_input):
-                try:
-                    chat_input = get_chat_input()
-                    if chat_input is not None:
-                        return chat_input
-                except QueryError:
-                    logger.debug("Active session chat input was not mounted")
-
         try:
             return self._chat_query_scope().query_one("#chat-input", TextArea)
         except QueryError:
@@ -10377,27 +10128,6 @@ class ChatScreen(BaseAppScreen):
 
     def _get_active_chat_log(self):
         """Return the active session chat log before falling back to legacy chat logs."""
-        session = self._get_active_chat_session()
-        if session is not None:
-            get_chat_log = getattr(session, "get_chat_log", None)
-            if callable(get_chat_log):
-                try:
-                    chat_log = get_chat_log()
-                    if chat_log is not None:
-                        return chat_log
-                except QueryError:
-                    logger.debug("Active session chat log was not mounted")
-
-            session_data = getattr(session, "session_data", None)
-            tab_id = getattr(session_data, "tab_id", None)
-            if tab_id:
-                try:
-                    return session.query_one(f"#chat-log-{tab_id}", VerticalScroll)
-                except QueryError:
-                    logger.debug(
-                        f"Active session chat log for tab {tab_id} was not mounted"
-                    )
-
         return None
 
     @staticmethod
@@ -10428,37 +10158,6 @@ class ChatScreen(BaseAppScreen):
                 return self._first_query_result(containers)
 
         return None
-
-    def _session_data_for_handoff(self, payload: ChatHandoffPayload) -> ChatSessionData:
-        title_item_type = payload.item_type.replace("-", " ").title()
-        scope_type = payload.scope_type or "global"
-        character_identity = _character_session_identity_from_handoff(payload)
-        character_id = None
-        character_name = None
-        assistant_kind = None
-        assistant_id = None
-        discovery_owner = payload.discovery_owner
-        if character_identity is not None:
-            character_id, character_name, assistant_id = character_identity
-            assistant_kind = "character"
-            if discovery_owner == "general_chat" and payload.source == "personas":
-                discovery_owner = "ccp_character"
-        return ChatSessionData(
-            tab_id=uuid.uuid4().hex[:8],
-            title=f"{title_item_type}: {payload.title}",
-            conversation_id=None,
-            is_ephemeral=True,
-            runtime_backend=payload.runtime_backend,
-            discovery_owner=discovery_owner,
-            discovery_entity_id=payload.discovery_entity_id or payload.source_id,
-            character_id=character_id,
-            character_name=character_name,
-            assistant_kind=assistant_kind,
-            assistant_id=assistant_id,
-            scope_type=scope_type,
-            workspace_id=payload.workspace_id if scope_type == "workspace" else None,
-            handoff_payload=payload,
-        )
 
     async def _start_character_console_session(self, payload: ChatHandoffPayload) -> bool:
         """Build a dedicated character conversation from a Start-Chat handoff.
@@ -10579,35 +10278,17 @@ class ChatScreen(BaseAppScreen):
             if payload is None:
                 return
 
-            tab_container = self._get_tab_container()
-            if tab_container is None:
-                # The native Console composes no legacy tab surface. A
-                # Personas Start-Chat character handoff gets a dedicated
-                # character-bound session with its greeting seeded
-                # (task-427); anything else -- or a character session that
-                # failed to build -- stages into the Console live-work lane
-                # so the context lands in Staged Context instead of being
-                # dropped with a warning.
-                if await self._start_character_console_session(payload):
-                    self.app_instance.pending_chat_handoff = None
-                    return
-                self._stage_handoff_as_console_live_work(payload)
+            # The native Console composes no legacy tab surface. A
+            # Personas Start-Chat character handoff gets a dedicated
+            # character-bound session with its greeting seeded
+            # (task-427); anything else -- or a character session that
+            # failed to build -- stages into the Console live-work lane
+            # so the context lands in Staged Context instead of being
+            # dropped with a warning.
+            if await self._start_character_console_session(payload):
                 self.app_instance.pending_chat_handoff = None
                 return
-
-            session_data = self._session_data_for_handoff(payload)
-            tab_id = await tab_container.create_new_tab(session_data=session_data)
-            if not tab_id:
-                self.app_instance.notify(
-                    "Could not create a chat session for this context.",
-                    severity="error",
-                )
-                return
-
-            await tab_container.switch_to_tab_async(tab_id)
-            session = tab_container.sessions.get(tab_id)
-            if session is not None:
-                await self._apply_handoff_to_chat_session(session, payload)
+            self._stage_handoff_as_console_live_work(payload)
             self.app_instance.pending_chat_handoff = None
         finally:
             self._handoff_consumption_in_progress = False
@@ -10724,35 +10405,6 @@ class ChatScreen(BaseAppScreen):
         self.run_worker(
             self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
         )
-
-    async def _apply_handoff_to_chat_session(
-        self, session: Any, payload: ChatHandoffPayload
-    ) -> None:
-        mount_handoff_card = getattr(session, "mount_handoff_card", None)
-        if callable(mount_handoff_card):
-            result = mount_handoff_card(payload)
-            if inspect.isawaitable(result):
-                await result
-
-        set_draft_text = getattr(session, "set_draft_text", None)
-        if callable(set_draft_text):
-            set_draft_text(payload.default_prompt())
-
-    async def _append_console_system_event(self, message: str) -> None:
-        """Append a Console-native status event without legacy chat message chrome."""
-        try:
-            session = self._get_active_chat_session()
-            if session is None:
-                raise QueryError("No active Console chat session")
-            await session.get_chat_log().mount(
-                Static(
-                    Text(message),
-                    classes="console-transcript-system-event",
-                )
-            )
-            self._sync_console_transcript_guidance()
-        except Exception:
-            self.app_instance.notify(message, severity="warning")
 
     def _native_console_messages(self) -> list[Any]:
         """Return messages for the active native Console session."""
@@ -14235,20 +13887,13 @@ class ChatScreen(BaseAppScreen):
             preparing.difference_update(stale_keys)
 
     def _get_shell_bar(self):
-        """Get the mounted combined chat shell bar."""
-        if not self.chat_window:
-            return None
+        """Get the mounted combined chat shell bar.
 
-        if hasattr(self.chat_window, "get_shell_bar"):
-            try:
-                return self.chat_window.get_shell_bar()
-            except Exception:
-                logger.debug("Chat window shell bar seam was unavailable")
-
-        try:
-            return self.chat_window.query_one("#chat-shell-bar")
-        except Exception:
-            return None
+        ``ChatWindowEnhanced`` is retired (``self.chat_window`` is
+        permanently ``None``), so this always returns ``None`` now; kept as
+        a stable seam for its remaining live callers' fallback branches.
+        """
+        return None
 
     def _get_compact_model_bar(self) -> Optional[CompactModelBar]:
         """Get the embedded compact control bar from the mounted shell bar."""
@@ -14915,41 +14560,6 @@ class ChatScreen(BaseAppScreen):
             logger.debug("No compact model bar available for reverse sync")
         self._sync_console_control_bar()
 
-    def _sync_compact_shell_controls_from_sidebar(self) -> None:
-        """Mirror the current sidebar widget values into the compact shell controls."""
-        if not self.chat_window:
-            return
-
-        provider = None
-        model = None
-        temperature = None
-
-        try:
-            provider_select = self.chat_window.query_one("#chat-api-provider", Select)
-            if not _is_empty_select_value(provider_select.value):
-                provider = str(provider_select.value)
-        except Exception:
-            logger.debug("Sidebar provider select unavailable for compact sync")
-
-        try:
-            model_select = self.chat_window.query_one("#chat-api-model", Select)
-            if not _is_empty_select_value(model_select.value):
-                model = str(model_select.value)
-        except Exception:
-            logger.debug("Sidebar model select unavailable for compact sync")
-
-        try:
-            temperature_input = self.chat_window.query_one("#chat-temperature", Input)
-            temperature = temperature_input.value
-        except Exception:
-            logger.debug("Sidebar temperature input unavailable for compact sync")
-
-        self._sync_compact_shell_controls(
-            provider=provider,
-            model=model,
-            temperature=temperature,
-        )
-
     def sync_shell_bar_from_state(self) -> None:
         """Push the restored active tab state into the mounted shell bar."""
         shell_bar = self._get_shell_bar()
@@ -14973,660 +14583,25 @@ class ChatScreen(BaseAppScreen):
                 f"Failed to sync shell bar from state: {e}"
             )
 
-    def sync_shell_bar_from_session_data(
-        self, session_data: Optional[ChatSessionData]
-    ) -> None:
-        """Push the live active session contract into the mounted shell bar."""
-        self._sync_console_workspace_context(session_data)
-        shell_bar = self._get_shell_bar()
-        if not shell_bar:
-            self._hide_console_legacy_chat_inputs()
-            try:
-                composer = self.query_one(
-                    "#console-native-composer", ConsoleComposerBar
-                )
-                composer.sync_session_data(session_data)
-                session = self._get_active_chat_session()
-                draft = session.get_chat_input().text if session is not None else ""
-                if not composer.draft_text():
-                    composer.load_draft(draft)
-                self._focus_console_composer_if_needed()
-            except QueryError:
-                pass
-            self._sync_console_transcript_guidance()
-            logger.debug("No shell bar available for live session sync")
-            return
-
-        try:
-            shell_bar.sync_from_session_data(session_data)
-            self._hide_console_legacy_chat_inputs()
-            try:
-                composer = self.query_one(
-                    "#console-native-composer", ConsoleComposerBar
-                )
-                session = self._get_active_chat_session()
-                draft = session.get_chat_input().text if session is not None else ""
-                composer.sync_session_data(session_data)
-                if not composer.draft_text():
-                    composer.load_draft(draft)
-                self._focus_console_composer_if_needed()
-            except (QueryError, NoMatches):
-                pass
-            if session_data is None:
-                logger.debug("Synced shell bar from cleared live session")
-            else:
-                logger.debug(
-                    "Synced shell bar from live session {}",
-                    getattr(session_data, "tab_id", None),
-                )
-            self._sync_console_transcript_guidance()
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"Failed to sync shell bar from live session: {e}"
-            )
-
-    def on_chat_tab_container_active_session_changed(
-        self,
-        message: ChatTabContainer.ActiveSessionChanged,
-    ) -> None:
-        """Update the shell bar when the live active tab changes."""
-        self.sync_shell_bar_from_session_data(message.session_data)
-
-    def _save_tab_sessions(self, tab_container) -> None:
-        """Save all tab session states."""
-        self.chat_state.tabs.clear()
-
-        for session_id, session in tab_container.sessions.items():
-            tab_state = TabState(
-                tab_id=session_id,
-                title=session.session_data.title,
-                conversation_id=session.session_data.conversation_id,
-                runtime_backend=session.session_data.runtime_backend,
-                discovery_owner=session.session_data.discovery_owner,
-                discovery_entity_id=session.session_data.discovery_entity_id,
-                character_id=session.session_data.character_id,
-                character_name=session.session_data.character_name,
-                assistant_kind=session.session_data.assistant_kind,
-                assistant_id=session.session_data.assistant_id,
-                persona_memory_mode=session.session_data.persona_memory_mode,
-                scope_type=session.session_data.scope_type,
-                workspace_id=session.session_data.workspace_id,
-                is_active=(session_id == tab_container.active_session_id),
-                is_ephemeral=session.session_data.is_ephemeral,
-                has_unsaved_changes=session.session_data.has_unsaved_changes,
-                system_prompt_override=session.session_data.system_prompt_override,
-                temperature_override=session.session_data.temperature_override,
-                max_tokens_override=session.session_data.max_tokens_override,
-            )
-
-            # Save input text for this tab
-            try:
-                input_widget = session.query_one(f"#chat-input-{session_id}", TextArea)
-                if input_widget:
-                    tab_state.input_text = input_widget.text
-                    # TextArea might not have cursor_position, use selection if available
-                    if hasattr(input_widget, "cursor_position"):
-                        tab_state.cursor_position = input_widget.cursor_position
-                    elif hasattr(input_widget, "selection"):
-                        tab_state.cursor_position = (
-                            input_widget.selection.end if input_widget.selection else 0
-                        )
-                    else:
-                        tab_state.cursor_position = len(input_widget.text)
-            except Exception:
-                pass
-
-            # Save scroll position
-            try:
-                scroll_widget = session.query_one(f"#chat-log-{session_id}")
-                if scroll_widget:
-                    tab_state.scroll_position = scroll_widget.scroll_y
-            except Exception:
-                pass
-
-            self.chat_state.tabs.append(tab_state)
-
-    async def _restore_tab_sessions(self, tab_container) -> None:
-        """Restore all tab sessions."""
-        # Clear existing tabs except default
-        for session_id in list(tab_container.sessions.keys()):
-            if session_id != "default":
-                await tab_container.close_tab(session_id)
-
-        restored_reuse_keys = {}
-
-        # Restore saved tabs
-        for tab_state in self.chat_state.tabs:
-            restored_title = _derive_tab_title(tab_state)
-            reuse_key = None
-            if tab_state.conversation_id:
-                reuse_key = (tab_state.runtime_backend, tab_state.conversation_id)
-                existing_live_tab_id = restored_reuse_keys.get(reuse_key)
-                if existing_live_tab_id is not None:
-                    if self.chat_state.active_tab_id == tab_state.tab_id:
-                        self.chat_state.active_tab_id = existing_live_tab_id
-                    continue
-
-            if tab_state.tab_id == "default" and "default" in tab_container.sessions:
-                # Update default tab
-                session = tab_container.sessions["default"]
-                session.session_data.title = restored_title
-                session.session_data.conversation_id = tab_state.conversation_id
-                session.session_data.runtime_backend = tab_state.runtime_backend
-                session.session_data.discovery_owner = tab_state.discovery_owner
-                session.session_data.discovery_entity_id = tab_state.discovery_entity_id
-                session.session_data.character_id = tab_state.character_id
-                session.session_data.character_name = tab_state.character_name
-                session.session_data.assistant_kind = tab_state.assistant_kind
-                session.session_data.assistant_id = tab_state.assistant_id
-                session.session_data.persona_memory_mode = tab_state.persona_memory_mode
-                session.session_data.scope_type = tab_state.scope_type
-                session.session_data.workspace_id = tab_state.workspace_id
-                session.session_data.is_ephemeral = tab_state.is_ephemeral
-                session.session_data.has_unsaved_changes = tab_state.has_unsaved_changes
-                if reuse_key is not None:
-                    restored_reuse_keys[reuse_key] = "default"
-            else:
-                # Create new tab
-                session_data = ChatSessionData(
-                    tab_id=tab_state.tab_id,
-                    title=restored_title,
-                    conversation_id=tab_state.conversation_id,
-                    is_ephemeral=tab_state.is_ephemeral,
-                    runtime_backend=tab_state.runtime_backend,
-                    discovery_owner=tab_state.discovery_owner,
-                    discovery_entity_id=tab_state.discovery_entity_id,
-                    character_id=tab_state.character_id,
-                    character_name=tab_state.character_name,
-                    assistant_kind=tab_state.assistant_kind,
-                    assistant_id=tab_state.assistant_id,
-                    persona_memory_mode=tab_state.persona_memory_mode,
-                    scope_type=tab_state.scope_type,
-                    workspace_id=tab_state.workspace_id,
-                    has_unsaved_changes=tab_state.has_unsaved_changes,
-                    system_prompt_override=tab_state.system_prompt_override,
-                    temperature_override=tab_state.temperature_override,
-                    max_tokens_override=tab_state.max_tokens_override,
-                )
-                tab_id = await tab_container.create_new_tab(session_data=session_data)
-                if tab_id and tab_id in tab_container.sessions:
-                    if reuse_key is not None and reuse_key in restored_reuse_keys:
-                        if self.chat_state.active_tab_id == tab_state.tab_id:
-                            self.chat_state.active_tab_id = restored_reuse_keys[
-                                reuse_key
-                            ]
-                        continue
-
-                    session = tab_container.sessions[tab_id]
-                    session.session_data.conversation_id = tab_state.conversation_id
-                    session.session_data.runtime_backend = tab_state.runtime_backend
-                    session.session_data.discovery_owner = tab_state.discovery_owner
-                    session.session_data.discovery_entity_id = (
-                        tab_state.discovery_entity_id
-                    )
-                    session.session_data.character_id = tab_state.character_id
-                    session.session_data.character_name = tab_state.character_name
-                    session.session_data.assistant_kind = tab_state.assistant_kind
-                    session.session_data.assistant_id = tab_state.assistant_id
-                    session.session_data.persona_memory_mode = (
-                        tab_state.persona_memory_mode
-                    )
-                    session.session_data.scope_type = tab_state.scope_type
-                    session.session_data.workspace_id = tab_state.workspace_id
-                    session.session_data.is_ephemeral = tab_state.is_ephemeral
-                    session.session_data.has_unsaved_changes = (
-                        tab_state.has_unsaved_changes
-                    )
-                    if reuse_key is not None:
-                        restored_reuse_keys[reuse_key] = tab_id
-                    if self.chat_state.active_tab_id == tab_state.tab_id:
-                        self.chat_state.active_tab_id = tab_id
-
-    def _save_input_text(self) -> None:
-        """Save input text for active tab."""
-        try:
-            tab_container = self._get_tab_container()
-            if tab_container and tab_container.active_session_id:
-                active_tab = self.chat_state.get_tab_by_id(
-                    tab_container.active_session_id
-                )
-                if active_tab:
-                    input_widget = self._get_active_chat_input()
-                    if input_widget:
-                        active_tab.input_text = input_widget.text
-                        logger.debug(
-                            f"Saved input text for tab {tab_container.active_session_id}: '{input_widget.text[:50]}...'"
-                        )
-                        # TextArea might not have cursor_position
-                        if hasattr(input_widget, "cursor_position"):
-                            active_tab.cursor_position = input_widget.cursor_position
-                        elif hasattr(input_widget, "selection"):
-                            active_tab.cursor_position = (
-                                input_widget.selection.end
-                                if input_widget.selection
-                                else 0
-                            )
-                        else:
-                            active_tab.cursor_position = len(input_widget.text)
-        except Exception as e:
-            logger.debug(f"Could not save input text: {e}")
-
-    async def _restore_input_text(self) -> None:
-        """Restore input text for active tab."""
-        try:
-            active_tab = self.chat_state.get_active_tab()
-            if active_tab and active_tab.input_text:
-                logger.info(f"Restoring input text: '{active_tab.input_text[:50]}...'")
-                input_widget = self._get_active_chat_input()
-
-                if input_widget and hasattr(input_widget, "load_text"):
-                    input_widget.load_text(active_tab.input_text)
-                    logger.info("Successfully restored input text to widget")
-
-                    # Try to restore cursor position
-                    if hasattr(input_widget, "cursor_position"):
-                        try:
-                            input_widget.cursor_position = active_tab.cursor_position
-                        except Exception:
-                            pass
-                elif input_widget and hasattr(input_widget, "value"):
-                    # Try setting value directly
-                    input_widget.value = active_tab.input_text
-                    logger.info("Restored input text via value property")
-                else:
-                    logger.warning(
-                        f"Could not find suitable method to restore text to widget: {type(input_widget)}"
-                    )
-            else:
-                logger.debug("No input text to restore")
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error restoring input text: {e}")
-
     def _save_scroll_positions(self) -> None:
         """Save scroll positions for all tabs."""
         # Implementation depends on tab structure
         pass
 
-    async def _restore_scroll_positions(self) -> None:
-        """Restore scroll positions for visible tabs."""
-        # Implementation depends on tab structure
-        pass
-
     def _save_sidebar_settings(self) -> None:
         """Save sidebar settings including system prompt, temperature, etc."""
-        try:
-            if not self.chat_window:
-                logger.debug(
-                    "Legacy chat sidebar is not mounted; sidebar settings already live in Console controls"
-                )
-                return
-
-            active_tab = self.chat_state.get_active_tab()
-            if not active_tab:
-                # Create default tab if none exists
-                active_tab = TabState(tab_id="default", title="Chat", is_active=True)
-                self.chat_state.tabs = [active_tab]
-                self.chat_state.active_tab_id = "default"
-                self.chat_state.tab_order = ["default"]
-
-            logger.debug("Attempting to save sidebar settings...")
-
-            # Log widget IDs for debugging (only in debug mode)
-            # Note: loguru doesn't have a simple .level property, skip debug logging for now
-            # self._log_sidebar_widgets()
-
-            # Save system prompt from sidebar
-            system_prompt_saved = False
-            try:
-                system_prompt_widget = self.chat_window.query_one(
-                    "#chat-system-prompt", TextArea
-                )
-                if system_prompt_widget and hasattr(system_prompt_widget, "text"):
-                    active_tab.system_prompt_override = system_prompt_widget.text
-                    logger.info(
-                        f"✓ Saved system prompt: '{system_prompt_widget.text[:50]}...'"
-                    )
-                    system_prompt_saved = True
-            except Exception as e:
-                logger.debug(f"Could not find #chat-system-prompt: {e}")
-
-            if not system_prompt_saved:
-                # Try with all TextAreas and find the system prompt one
-                try:
-                    text_areas = self.chat_window.query("TextArea")
-                    for ta in text_areas:
-                        if ta.id and "system-prompt" in str(ta.id):
-                            active_tab.system_prompt_override = ta.text
-                            logger.info(
-                                f"✓ Saved system prompt from {ta.id}: '{ta.text[:50]}...'"
-                            )
-                            system_prompt_saved = True
-                            break
-                except Exception as e:
-                    logger.debug(f"Could not find system prompt TextArea: {e}")
-
-            # Save temperature
-            temp_saved = False
-            try:
-                temp_input = self.chat_window.query_one("#chat-temperature", Input)
-                if temp_input and temp_input.value:
-                    active_tab.temperature_override = float(temp_input.value)
-                    logger.info(f"✓ Saved temperature: {temp_input.value}")
-                    temp_saved = True
-            except Exception as e:
-                logger.debug(f"Could not find #chat-temperature: {e}")
-
-            if not temp_saved:
-                # Try to find temperature input by searching all inputs
-                try:
-                    inputs = self.chat_window.query("Input")
-                    for inp in inputs:
-                        if inp.id and "temperature" in str(inp.id):
-                            if inp.value:
-                                active_tab.temperature_override = float(inp.value)
-                                logger.info(
-                                    f"✓ Saved temperature from {inp.id}: {inp.value}"
-                                )
-                                temp_saved = True
-                                break
-                except Exception as e:
-                    logger.debug(f"Could not find temperature Input: {e}")
-
-            # Save max tokens
-            try:
-                max_tokens_input = self.chat_window.query_one(
-                    "#chat-llm-max-tokens", Input
-                )
-                if max_tokens_input and max_tokens_input.value:
-                    active_tab.max_tokens_override = int(max_tokens_input.value)
-                    logger.info(f"✓ Saved max tokens: {max_tokens_input.value}")
-            except Exception:
-                # Try alternative ID
-                try:
-                    max_tokens_input = self.chat_window.query_one(
-                        "#chat-max-tokens", Input
-                    )
-                    if max_tokens_input and max_tokens_input.value:
-                        active_tab.max_tokens_override = int(max_tokens_input.value)
-                        logger.info(f"✓ Saved max tokens: {max_tokens_input.value}")
-                except Exception as e:
-                    logger.debug(f"Could not find max tokens input: {e}")
-
-            logger.debug(
-                f"Sidebar settings saved - System prompt: {bool(active_tab.system_prompt_override)}, "
-                f"Temperature: {active_tab.temperature_override}, Max tokens: {active_tab.max_tokens_override}"
-            )
-
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error saving sidebar settings: {e}")
+        logger.debug(
+            "Legacy chat sidebar is not mounted; sidebar settings already live in Console controls"
+        )
 
     def _save_attachments(self) -> None:
-        """Save pending attachment states."""
-        if self.chat_window and hasattr(self.chat_window, "pending_image"):
-            active_tab = self.chat_state.get_active_tab()
-            if active_tab and self.chat_window.pending_image:
-                active_tab.pending_attachments = [self.chat_window.pending_image]
+        """Save pending attachment states.
 
-    async def _restore_sidebar_settings(self) -> None:
-        """Restore sidebar settings including system prompt, temperature, etc."""
-        try:
-            if not self.chat_window:
-                logger.debug(
-                    "Legacy chat sidebar is not mounted; skipping sidebar restore"
-                )
-                return
-
-            active_tab = self.chat_state.get_active_tab()
-            if not active_tab:
-                logger.debug("No active tab to restore sidebar settings from")
-                return
-
-            logger.debug(
-                f"Attempting to restore sidebar settings - System prompt: {bool(active_tab.system_prompt_override)}, "
-                f"Temperature: {active_tab.temperature_override}, Max tokens: {active_tab.max_tokens_override}"
-            )
-
-            # Restore system prompt to sidebar
-            if active_tab.system_prompt_override is not None:
-                system_restored = False
-                try:
-                    system_prompt_widget = self.chat_window.query_one(
-                        "#chat-system-prompt", TextArea
-                    )
-                    if system_prompt_widget:
-                        if hasattr(system_prompt_widget, "load_text"):
-                            system_prompt_widget.load_text(
-                                active_tab.system_prompt_override
-                            )
-                        elif hasattr(system_prompt_widget, "text"):
-                            system_prompt_widget.text = (
-                                active_tab.system_prompt_override
-                            )
-                        else:
-                            system_prompt_widget.value = (
-                                active_tab.system_prompt_override
-                            )
-                        logger.info(
-                            f"✓ Restored system prompt to sidebar: '{active_tab.system_prompt_override[:50]}...'"
-                        )
-                        system_restored = True
-                except Exception as e:
-                    logger.debug(f"Could not restore to #chat-system-prompt: {e}")
-
-                if not system_restored:
-                    # Try finding any TextArea with system-prompt in ID
-                    try:
-                        text_areas = self.chat_window.query("TextArea")
-                        for ta in text_areas:
-                            if ta.id and "system-prompt" in str(ta.id):
-                                if hasattr(ta, "load_text"):
-                                    ta.load_text(active_tab.system_prompt_override)
-                                elif hasattr(ta, "text"):
-                                    ta.text = active_tab.system_prompt_override
-                                else:
-                                    ta.value = active_tab.system_prompt_override
-                                logger.info(f"✓ Restored system prompt to {ta.id}")
-                                system_restored = True
-                                break
-                    except Exception as e:
-                        logger.debug(
-                            f"Could not restore system prompt to any TextArea: {e}"
-                        )
-
-            # Restore temperature
-            if active_tab.temperature_override is not None:
-                temp_restored = False
-                try:
-                    temp_input = self.chat_window.query_one("#chat-temperature", Input)
-                    if temp_input:
-                        temp_input.value = str(active_tab.temperature_override)
-                        logger.info(
-                            f"✓ Restored temperature: {active_tab.temperature_override}"
-                        )
-                        temp_restored = True
-                except Exception as e:
-                    logger.debug(f"Could not restore to #chat-temperature: {e}")
-
-                if not temp_restored:
-                    # Try finding any Input with temperature in ID
-                    try:
-                        inputs = self.chat_window.query("Input")
-                        for inp in inputs:
-                            if inp.id and "temperature" in str(inp.id):
-                                inp.value = str(active_tab.temperature_override)
-                                logger.info(
-                                    f"✓ Restored temperature to {inp.id}: {active_tab.temperature_override}"
-                                )
-                                temp_restored = True
-                                break
-                    except Exception as e:
-                        logger.debug(f"Could not restore temperature to any Input: {e}")
-
-            # Restore max tokens
-            if active_tab.max_tokens_override is not None:
-                try:
-                    max_tokens_input = self.chat_window.query_one(
-                        "#chat-llm-max-tokens", Input
-                    )
-                    if max_tokens_input:
-                        max_tokens_input.value = str(active_tab.max_tokens_override)
-                        logger.info(
-                            f"✓ Restored max tokens: {active_tab.max_tokens_override}"
-                        )
-                except Exception:
-                    # Try alternative ID
-                    try:
-                        max_tokens_input = self.chat_window.query_one(
-                            "#chat-max-tokens", Input
-                        )
-                        if max_tokens_input:
-                            max_tokens_input.value = str(active_tab.max_tokens_override)
-                            logger.info(
-                                f"✓ Restored max tokens: {active_tab.max_tokens_override}"
-                            )
-                    except Exception as e:
-                        logger.debug(f"Could not restore max tokens: {e}")
-
-            self._sync_compact_shell_controls_from_sidebar()
-
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error restoring sidebar settings: {e}")
-
-    async def _restore_attachments(self) -> None:
-        """Restore pending attachments."""
-        active_tab = self.chat_state.get_active_tab()
-        if active_tab and active_tab.pending_attachments and self.chat_window:
-            # Restore first attachment
-            if active_tab.pending_attachments:
-                self.chat_window.pending_image = active_tab.pending_attachments[0]
-                # Update UI to show attachment indicator
-                if hasattr(self.chat_window, "attachment_handler"):
-                    self.chat_window.attachment_handler._update_attachment_indicator()
-
-    async def _restore_messages(self) -> None:
-        """Restore conversation messages to the chat log."""
-        try:
-            active_tab = self.chat_state.get_active_tab()
-            if not active_tab or not active_tab.messages:
-                logger.debug("No messages to restore")
-                return
-
-            logger.info(f"Restoring {len(active_tab.messages)} messages to chat log")
-
-            log_selectors = [
-                "#chat-log",
-                ".chat-log",
-            ]
-            chat_log = self._find_chat_log_container(log_selectors)
-
-            if not chat_log:
-                logger.warning("Could not find chat log container to restore messages")
-                return
-
-            # Import message widget class
-            from ...Widgets.Chat_Widgets.chat_message_enhanced import (
-                ChatMessageEnhanced,
-            )
-
-            # Clear existing messages (optional - you might want to keep them)
-            # await chat_log.remove_children()
-
-            # Restore each message
-            for i, msg_data in enumerate(active_tab.messages):
-                try:
-                    # Create a new message widget
-                    image_data = None
-                    if msg_data.metadata and "image_data" in msg_data.metadata:
-                        image_data = msg_data.metadata["image_data"]
-
-                    message_widget = ChatMessageEnhanced(
-                        message=msg_data.content,
-                        role=msg_data.role,
-                        timestamp=msg_data.timestamp,
-                        message_id=msg_data.message_id,
-                        image_data=image_data,
-                        generation_complete=True,  # All restored messages are complete
-                    )
-
-                    # Mount the message widget to the chat log
-                    await chat_log.mount(message_widget)
-
-                    if i < 3:  # Log first few for debugging
-                        logger.debug(
-                            f"Restored message {i + 1}: {msg_data.role} - {msg_data.content[:50]}..."
-                        )
-
-                except Exception as e:
-                    logger.error(f"Error restoring message {i}: {e}")
-
-            logger.info(f"Successfully restored {len(active_tab.messages)} messages")
-
-            if self.chat_window and hasattr(self.chat_window, "hide_empty_state"):
-                self.chat_window.hide_empty_state()
-            else:
-                try:
-                    chat_log.display = True
-                except Exception:
-                    pass
-
-            # Scroll to bottom to show latest messages
-            chat_log.scroll_end(animate=False)
-
-        except Exception as e:
-            logger.error(f"Error in _restore_messages: {e}")
-
-    def _save_non_tabbed_state(self) -> None:
-        """Save state for non-tabbed chat interface."""
-        try:
-            # Create a single "default" tab to store the state
-            default_tab = TabState(tab_id="default", title="Chat", is_active=True)
-
-            # Try to find and save input text - be specific about chat input only
-            input_selectors = [
-                "#chat-input",  # Primary chat input ID
-                "TextArea#chat-input",  # TextArea with chat-input ID
-                ".chat-input",  # Class-based selector
-                "#message-input",  # Alternative message input ID
-            ]
-
-            for selector in input_selectors:
-                try:
-                    input_widgets = self.chat_window.query(selector)
-                    if input_widgets:
-                        for widget in input_widgets:
-                            # Make sure we're not saving system prompt or other TextAreas
-                            if hasattr(widget, "id") and widget.id:
-                                widget_id = str(widget.id).lower()
-                                # Skip if it's a system prompt or settings field
-                                if any(
-                                    x in widget_id
-                                    for x in ["system", "prompt", "settings", "config"]
-                                ):
-                                    logger.debug(
-                                        f"Skipping non-chat input: {widget.id}"
-                                    )
-                                    continue
-
-                            if hasattr(widget, "text"):
-                                default_tab.input_text = widget.text
-                                logger.info(
-                                    f"Found chat input text in {selector}: '{widget.text[:50]}...'"
-                                )
-                                break
-                        if default_tab.input_text:
-                            break
-                except Exception as e:
-                    logger.debug(f"Could not query {selector}: {e}")
-
-            # Save messages from chat log
-            self._extract_and_save_messages(default_tab)
-
-            self.chat_state.tabs = [default_tab]
-            self.chat_state.active_tab_id = "default"
-            self.chat_state.tab_order = ["default"]  # Fix validation issue
-
-        except Exception as e:
-            logger.error(f"Error saving non-tabbed state: {e}")
+        No-op: the legacy sidebar's pending-image seam
+        (``ChatWindowEnhanced.pending_image``) is retired; attachments are
+        owned by the Console composer's own staging state.
+        """
+        return
 
     def _save_direct_input_text(self) -> None:
         """Try to save input text directly from the chat input TextArea only."""
@@ -15691,97 +14666,6 @@ class ChatScreen(BaseAppScreen):
         except Exception as e:
             logger.debug(f"Error in _save_direct_input_text: {e}")
 
-    def _extract_and_save_messages(self, tab_state: TabState) -> None:
-        """Extract messages from the chat log and save them to the tab state.
-
-        Args:
-            tab_state: The tab state to save messages to
-        """
-        try:
-            # Import message widget classes
-            from ...Widgets.Chat_Widgets.chat_message_enhanced import (
-                ChatMessageEnhanced,
-            )
-
-            log_selectors = [
-                "#chat-log",
-                ".chat-log",
-                "#chat-messages-container",
-                ".chat-messages",
-            ]
-            chat_log = self._find_chat_log_container(log_selectors)
-
-            if not chat_log:
-                logger.warning("Could not find chat log container to save messages")
-                return
-
-            # Extract messages from the chat log
-            messages_found = 0
-            tab_state.messages = []  # Clear existing messages
-
-            # Find all message widgets - try different selectors
-            try:
-                # Try to find ChatMessageEnhanced widgets
-                enhanced_messages = list(chat_log.query(ChatMessageEnhanced))
-
-                # If no enhanced messages, try generic approach
-                if not enhanced_messages:
-                    # Look for any widgets with message-like attributes
-                    all_widgets = list(chat_log.children)
-                    enhanced_messages = [
-                        w
-                        for w in all_widgets
-                        if hasattr(w, "role") and hasattr(w, "message_text")
-                    ]
-
-                logger.info(
-                    f"Found {len(enhanced_messages)} message widgets in chat log"
-                )
-
-                for msg_widget in enhanced_messages:
-                    try:
-                        # Extract message data from widget
-                        message_data = MessageData(
-                            message_id=getattr(
-                                msg_widget,
-                                "message_id_internal",
-                                f"msg_{messages_found}",
-                            ),
-                            role=getattr(msg_widget, "role", "unknown"),
-                            content=getattr(msg_widget, "message_text", ""),
-                            timestamp=getattr(msg_widget, "timestamp", None),
-                        )
-
-                        # Save image data if present
-                        if hasattr(msg_widget, "image_data") and msg_widget.image_data:
-                            message_data.metadata = {
-                                "image_data": msg_widget.image_data
-                            }
-
-                        tab_state.messages.append(message_data)
-                        messages_found += 1
-
-                        # Log first few messages for debugging
-                        if messages_found <= 3:
-                            logger.debug(
-                                f"Saved message {messages_found}: role={message_data.role}, content={message_data.content[:50]}..."
-                            )
-
-                    except Exception as e:
-                        logger.warning(
-                            f"Error extracting message data from widget: {e}"
-                        )
-
-                logger.info(
-                    f"Successfully saved {messages_found} messages to tab state"
-                )
-
-            except Exception as e:
-                logger.error(f"Error querying for message widgets: {e}")
-
-        except Exception as e:
-            logger.error(f"Error in _extract_and_save_messages: {e}")
-
     # NOTE (task-247, perf): there used to be an on_screen_suspend() override
     # here that called self.save_state() again and discarded the result.
     # app.py already calls save_state() explicitly before switching screens
@@ -15829,12 +14713,8 @@ class ChatScreen(BaseAppScreen):
         try:
             task_cards = self.query_one("#console-task-surface", ChatTaskCards)
             task_cards.sync_state(self.chat_state.task_resume_state)
-            return
         except QueryError:
             pass
-
-        if self.chat_window:
-            self.chat_window.sync_task_resume_state(self.chat_state.task_resume_state)
 
     def _set_console_pending_approval(self, approval: Dict[str, Any] | None) -> None:
         """Set/clear the pending MCP approval batch, then sync the task cards.
@@ -16245,89 +15125,6 @@ class ChatScreen(BaseAppScreen):
             handled = await self.handle_console_message_action(event)
             if handled:
                 return
-
-        # Sidebar toggle is handled in ChatWindowEnhanced via @on decorator
-
-        # Buttons that are handled by @on decorators in ChatWindowEnhanced
-        # These should NOT be delegated to avoid double handling
-        handled_by_decorators = [
-            "send-stop-chat",
-            "attach-image",
-            "chat-mic",
-            # Removed sidebar toggles from here since they're handled above
-        ]
-
-        if button_id in handled_by_decorators:
-            # These are already handled by @on decorators, just stop propagation
-            event.stop()
-            return
-
-        # For remaining buttons that need legacy handling, delegate to ChatWindowEnhanced
-        if self.chat_window:
-            # The chat window knows how to handle its own buttons
-            await self.chat_window.on_button_pressed(event)
-            event.stop()  # Prevent bubbling to app level
-
-    async def _run_diagnostic(self) -> None:
-        """Run diagnostic tool on the chat widget structure."""
-        try:
-            if not self.chat_window:
-                return
-
-            logger.info("Running chat widget structure diagnostics...")
-            diagnostics = ChatDiagnostics()
-            report = diagnostics.inspect_widget_tree(self.chat_window, max_depth=5)
-
-            # Log key findings
-            logger.info(
-                f"Diagnostic: {report['chat_structure']['type']} interface detected"
-            )
-            logger.info(f"Found {report['text_areas']['count']} TextArea widgets")
-            logger.info(
-                f"Found {report['containers']['chat_containers']} chat containers"
-            )
-            logger.info(
-                f"Found {report['containers']['tab_containers']} tab containers"
-            )
-
-            # Log any input widgets found
-            if report["input_widgets"]:
-                for widget in report["input_widgets"]:
-                    logger.info(f"Input widget: {widget['id']} at {widget['path']}")
-
-            # Store report for potential debugging
-            self._diagnostic_report = report
-
-            # Also log all sidebar-related widgets for debugging
-            self._log_sidebar_widgets()
-
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error running diagnostics: {e}")
-
-    def _log_sidebar_widgets(self) -> None:
-        """Log all sidebar widgets for debugging state preservation."""
-        try:
-            logger.info("=== Sidebar Widget IDs ===")
-
-            # Find all TextAreas
-            text_areas = self.chat_window.query("TextArea")
-            for ta in text_areas:
-                if ta.id:
-                    logger.info(
-                        f"TextArea ID: {ta.id}, Has text: {bool(getattr(ta, 'text', None))}"
-                    )
-
-            # Find all Inputs
-            inputs = self.chat_window.query("Input")
-            for inp in inputs:
-                if inp.id:
-                    logger.info(
-                        f"Input ID: {inp.id}, Value: {getattr(inp, 'value', 'N/A')}"
-                    )
-
-            logger.info("=========================")
-        except Exception as e:
-            logger.debug(f"Error logging sidebar widgets: {e}")
 
     def watch_sidebar_state(self, new_state: dict) -> None:
         """Auto-save when sidebar state changes."""

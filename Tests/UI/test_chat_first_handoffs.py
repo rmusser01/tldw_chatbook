@@ -1,26 +1,19 @@
 from __future__ import annotations
 
-from pathlib import Path
-import re
-import tomllib
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.css.query import NoMatches
-from textual.widgets import Button, Static, TextArea
+from textual.widgets import Static
 
-from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.chat_handoff_models import (
     ChatHandoffPayload,
     HANDOFF_BODY_CHAR_LIMIT,
 )
-from tldw_chatbook.config import CONFIG_TOML_CONTENT
 from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Chat_Widgets.chat_handoff_card import ChatHandoffCard
-from tldw_chatbook.Widgets.Chat_Widgets.chat_session import ChatSession
 from tldw_chatbook.UX_Interop import (
     build_server_parity_fixture_payloads,
     build_server_parity_handoff_packet,
@@ -64,15 +57,6 @@ def test_chat_handoff_packet_exposes_sections_ui_needs_without_screen_inference(
     assert "server_unavailable" in sections["error_contracts"]
 
 
-def test_chat_tabs_are_enabled_by_default_for_handoff_capable_chat():
-    generated_config = tomllib.loads(CONFIG_TOML_CONTENT)
-    repo_config_path = Path(__file__).resolve().parents[2] / "config.toml"
-    repo_config = tomllib.loads(repo_config_path.read_text(encoding="utf-8"))
-
-    assert generated_config["chat_defaults"]["enable_tabs"] is True
-    assert repo_config["chat_defaults"]["enable_tabs"] is True
-
-
 def test_open_chat_with_handoff_stores_payload_and_navigates():
     app = Mock()
     app.pending_chat_handoff = None
@@ -84,8 +68,7 @@ def test_open_chat_with_handoff_stores_payload_and_navigates():
 
     from tldw_chatbook.app import TldwCli
 
-    with patch("tldw_chatbook.app.get_cli_setting", return_value=True):
-        TldwCli.open_chat_with_handoff(app, payload)
+    TldwCli.open_chat_with_handoff(app, payload)
 
     assert app.pending_chat_handoff is payload
     message = app.post_message.call_args.args[0]
@@ -93,32 +76,14 @@ def test_open_chat_with_handoff_stores_payload_and_navigates():
     assert message.screen_name == TAB_CHAT
 
 
-def test_open_chat_with_handoff_refuses_when_tabs_disabled():
-    app = Mock()
-    app.pending_chat_handoff = None
-    app.post_message = Mock()
-    app.notify = Mock()
-    payload = ChatHandoffPayload(
-        source="notes", item_type="note", title="Note", body="Body"
-    )
+def test_open_chat_with_handoff_proceeds_when_tabs_disabled():
+    """Handoffs proceed even when the retired chat-tabs flag is disabled.
 
-    from tldw_chatbook.app import TldwCli
-
-    with patch("tldw_chatbook.app.get_cli_setting", return_value=False):
-        TldwCli.open_chat_with_handoff(app, payload)
-
-    assert app.pending_chat_handoff is None
-    app.post_message.assert_not_called()
-    app.notify.assert_called_once()
-
-
-def test_open_chat_with_handoff_blocked_message_defaults_to_use_in_chat():
-    """Legacy callers (MediaWindow_v2, search_rag_window, the
-    standalone Notes tab, Study/Skills/Watchlists/Personas screens) don't
-    pass ``action_label`` and must keep seeing today's exact wording -- the
-    shared ``open_chat_with_handoff`` blocked-tabs gate is reachable from
-    many destinations whose own button still reads "Use in Chat" (UX wave
-    M2 investigation: this message is one shared string, not per-caller).
+    The retired chat-tabs subsystem's flag no longer gates handoffs
+    (task-577 U5): ``open_chat_with_handoff`` must stage the payload and
+    navigate to Chat unconditionally, even when ``enable_tabs`` is
+    absent/False in config, with no "requires chat tabs to be enabled"
+    notify.
     """
     app = Mock()
     app.pending_chat_handoff = None
@@ -133,160 +98,11 @@ def test_open_chat_with_handoff_blocked_message_defaults_to_use_in_chat():
     with patch("tldw_chatbook.app.get_cli_setting", return_value=False):
         TldwCli.open_chat_with_handoff(app, payload)
 
-    app.notify.assert_called_once()
-    assert (
-        app.notify.call_args.args[0] == "Use in Chat requires chat tabs to be enabled."
-    )
-
-
-def test_open_chat_with_handoff_blocked_message_honors_caller_action_label():
-    """The Library screen's four handoff call sites (notes/media/
-    conversations/hub) pass ``action_label="Use in Console"`` since every
-    Library "Use in"-style button already reads "Use in Console" -- the
-    blocked-tabs notify must match the button the user actually pressed
-    instead of always saying "Chat" (UX wave M2).
-    """
-    app = Mock()
-    app.pending_chat_handoff = None
-    app.post_message = Mock()
-    app.notify = Mock()
-    payload = ChatHandoffPayload(
-        source="library", item_type="media", title="Media", body="Body"
-    )
-
-    from tldw_chatbook.app import TldwCli
-
-    with patch("tldw_chatbook.app.get_cli_setting", return_value=False):
-        TldwCli.open_chat_with_handoff(app, payload, action_label="Use in Console")
-
-    app.notify.assert_called_once()
-    assert (
-        app.notify.call_args.args[0]
-        == "Use in Console requires chat tabs to be enabled."
-    )
-
-
-@pytest.mark.asyncio
-async def test_chat_screen_consumes_pending_handoff_into_fresh_ephemeral_tab():
-    payload = ChatHandoffPayload(
-        source="workspace",
-        item_type="workspace-source",
-        title="Transcript",
-        body="Body",
-        source_id="source-1",
-        runtime_backend="server",
-        source_owner="workspace",
-        source_selector_state="workspace",
-        active_server_profile_id="srv-primary",
-        discovery_owner="workspace",
-        discovery_entity_id="source-1",
-        scope_type="workspace",
-        workspace_id="workspace-1",
-        backend_contracts={
-            "workspace_isolation": {"workspace_scope_id": "workspace-1"}
-        },
-    )
-    app = Mock()
-    app.pending_chat_handoff = payload
-    app.notify = Mock()
-
-    session = Mock()
-    session.session_data = ChatSessionData(tab_id="tab-1")
-    tab_container = Mock()
-    tab_container.create_new_tab = AsyncMock(return_value="tab-1")
-    tab_container.sessions = {"tab-1": session}
-    tab_container.switch_to_tab_async = AsyncMock()
-
-    screen = ChatScreen(app)
-    screen.chat_window = Mock()
-    screen._get_tab_container = Mock(return_value=tab_container)
-    screen._apply_handoff_to_chat_session = AsyncMock()
-
-    await screen._consume_pending_chat_handoff()
-
-    session_data = tab_container.create_new_tab.await_args.kwargs["session_data"]
-    assert session_data.conversation_id is None
-    assert session_data.is_ephemeral is True
-    assert session_data.runtime_backend == "server"
-    assert session_data.handoff_payload.source_selector_state == "workspace"
-    assert session_data.handoff_payload.active_server_profile_id == "srv-primary"
-    assert session_data.scope_type == "workspace"
-    assert session_data.workspace_id == "workspace-1"
-    assert session_data.handoff_payload.title == "Transcript"
-    assert app.pending_chat_handoff is None
-
-
-def test_chat_screen_handoff_session_data_uses_unique_valid_tab_ids():
-    payload = ChatHandoffPayload(
-        source="notes",
-        item_type="note",
-        title="Plan",
-        body="Body",
-    )
-    screen = ChatScreen(Mock())
-
-    first = screen._session_data_for_handoff(payload)
-    second = screen._session_data_for_handoff(payload)
-
-    assert re.fullmatch(r"[a-f0-9]{8}", first.tab_id)
-    assert re.fullmatch(r"[a-f0-9]{8}", second.tab_id)
-    assert first.tab_id != second.tab_id
-
-
-def test_chat_screen_start_chat_handoff_binds_character_session_identity():
-    """Personas Start Chat should create character-bound Console sessions."""
-    payload = ChatHandoffPayload(
-        source="personas",
-        item_type="character-card",
-        title="Detective Sam (character)",
-        body="Name: Detective Sam\nDescription: Methodical investigator",
-        source_id="1",
-        suggested_prompt="Respond as Detective Sam.",
-        metadata={
-            "intent": "start_chat",
-            "selected_kind": "character",
-            "selected_record_id": "1",
-            "selected_name": "Detective Sam",
-            "selected_target_id": "local:character:1",
-        },
-    )
-    screen = ChatScreen(Mock())
-
-    session_data = screen._session_data_for_handoff(payload)
-
-    assert session_data.character_id == 1
-    assert session_data.character_name == "Detective Sam"
-    assert session_data.assistant_kind == "character"
-    assert session_data.assistant_id == "1"
-    assert session_data.discovery_owner == "ccp_character"
-    assert session_data.discovery_entity_id == "1"
-
-
-def test_chat_screen_start_chat_handoff_preserves_numeric_zero_character_id():
-    """Character handoff metadata should not treat integer zero as missing."""
-    payload = ChatHandoffPayload(
-        source="personas",
-        item_type="character-card",
-        title="Zero (character)",
-        body="Name: Zero",
-        source_id="0",
-        suggested_prompt="Respond as Zero.",
-        metadata={
-            "intent": "start_chat",
-            "selected_kind": "character",
-            "selected_record_id": 0,
-            "selected_name": "Zero",
-        },
-    )
-    screen = ChatScreen(Mock())
-
-    session_data = screen._session_data_for_handoff(payload)
-
-    assert session_data.character_id == 0
-    assert session_data.character_name == "Zero"
-    assert session_data.assistant_kind == "character"
-    assert session_data.assistant_id == "0"
-    assert session_data.discovery_owner == "ccp_character"
+    assert app.pending_chat_handoff is payload
+    message = app.post_message.call_args.args[0]
+    assert isinstance(message, NavigateToScreen)
+    assert message.screen_name == TAB_CHAT
+    app.notify.assert_not_called()
 
 
 def _character_start_chat_payload(
@@ -784,6 +600,16 @@ async def test_resume_clears_inherited_label_when_card_unresolved():
 
 @pytest.mark.asyncio
 async def test_chat_screen_pending_handoff_consumer_is_reentrant_safe():
+    """``_handoff_consumption_in_progress`` must block a re-entrant consume.
+
+    The native Console composes no legacy tab surface (``ChatTabContainer``
+    is retired -- task-577), so the only reachable consume path is
+    character-session creation or staging into the Console live-work lane.
+    Re-entrancy is exercised through ``_start_character_console_session``,
+    the first awaited call in ``_consume_pending_chat_handoff``, mirroring
+    the old test's use of ``tab_container.create_new_tab`` as the mid-flight
+    re-entry trigger.
+    """
     payload = ChatHandoffPayload(
         source="notes",
         item_type="note",
@@ -794,31 +620,25 @@ async def test_chat_screen_pending_handoff_consumer_is_reentrant_safe():
     app.pending_chat_handoff = payload
     app.notify = Mock()
 
-    session = Mock()
-    session.session_data = ChatSessionData(tab_id="tab-1")
-    tab_container = Mock()
-    tab_container.sessions = {"tab-1": session}
-    tab_container.switch_to_tab_async = AsyncMock()
-
     screen = ChatScreen(app)
-    screen.chat_window = Mock()
-    screen._get_tab_container = Mock(return_value=tab_container)
-    screen._apply_handoff_to_chat_session = AsyncMock()
 
     nested_called = False
 
-    async def create_new_tab(*, session_data):
+    async def start_character_console_session(_payload):
         nonlocal nested_called
         if not nested_called:
             nested_called = True
             await screen._consume_pending_chat_handoff()
-        return "tab-1"
+        return False
 
-    tab_container.create_new_tab = AsyncMock(side_effect=create_new_tab)
+    screen._start_character_console_session = AsyncMock(
+        side_effect=start_character_console_session
+    )
+    screen._stage_handoff_as_console_live_work = Mock()
 
     await screen._consume_pending_chat_handoff()
 
-    assert tab_container.create_new_tab.await_count == 1
+    assert screen._stage_handoff_as_console_live_work.call_count == 1
     assert app.pending_chat_handoff is None
 
 
@@ -1096,138 +916,6 @@ def test_handoff_card_ignores_malformed_sync_dry_run_report_copy():
 
     assert "Sync: dry-run only" in text
     assert "Write sync is not enabled." not in text
-
-
-class _HandoffSessionHarness(App):
-    def __init__(self, session_data: ChatSessionData) -> None:
-        super().__init__()
-        self._session_data = session_data
-        self.host = Mock()
-        self.host.chat_enhanced_mode = False
-        self.host.notify = Mock()
-
-    def compose(self) -> ComposeResult:
-        yield ChatSession(self.host, self._session_data)
-
-
-@pytest.mark.asyncio
-async def test_user_can_clear_staged_handoff_context_before_send():
-    payload = ChatHandoffPayload(
-        source="notes",
-        item_type="note",
-        title="Plan",
-        body="Body",
-        suggested_prompt="Use this note.",
-    )
-    session_data = ChatSessionData(tab_id="tab1", handoff_payload=payload)
-    app = _HandoffSessionHarness(session_data)
-    app.host._current_chat_handoff_payload = payload
-
-    async with app.run_test() as pilot:
-        session = pilot.app.query_one(ChatSession)
-        await session.mount_handoff_card(payload)
-        session.set_draft_text(payload.default_prompt())
-        await pilot.pause(0.05)
-
-        assert pilot.app.query_one(ChatHandoffCard) is not None
-        clear_button = pilot.app.query_one("#clear-chat-handoff-context-tab1", Button)
-
-        clear_button.press()
-        await pilot.pause(0.05)
-
-        with pytest.raises(NoMatches):
-            pilot.app.query_one(ChatHandoffCard)
-        assert session.session_data.handoff_payload is None
-        assert app.host._current_chat_handoff_payload is None
-        assert pilot.app.query_one("#chat-input-tab1", TextArea).text == ""
-
-
-@pytest.mark.asyncio
-async def test_clear_staged_handoff_context_preserves_unrelated_global_payload():
-    payload = ChatHandoffPayload(
-        source="notes",
-        item_type="note",
-        title="Plan",
-        body="Body",
-        suggested_prompt="Use this note.",
-    )
-    other_payload = ChatHandoffPayload(
-        source="media",
-        item_type="media",
-        title="Other tab",
-        body="Other body",
-        suggested_prompt="Use this media.",
-    )
-    session_data = ChatSessionData(tab_id="tab1", handoff_payload=payload)
-    app = _HandoffSessionHarness(session_data)
-    app.host._current_chat_handoff_payload = other_payload
-
-    async with app.run_test() as pilot:
-        session = pilot.app.query_one(ChatSession)
-        await session.mount_handoff_card(payload)
-        session.set_draft_text(payload.default_prompt())
-        await pilot.pause(0.05)
-
-        pilot.app.query_one("#clear-chat-handoff-context-tab1", Button).press()
-        await pilot.pause(0.05)
-
-        assert app.host._current_chat_handoff_payload is other_payload
-
-
-@pytest.mark.asyncio
-async def test_clear_staged_handoff_context_keeps_sent_handoff_cards():
-    staged_payload = ChatHandoffPayload(
-        source="notes",
-        item_type="note",
-        title="Plan",
-        body="Body",
-        suggested_prompt="Use this note.",
-    )
-    sent_payload = ChatHandoffPayload(
-        source="media",
-        item_type="media",
-        title="Already sent",
-        body="Sent body",
-        status="sent",
-    )
-    session_data = ChatSessionData(tab_id="tab1", handoff_payload=staged_payload)
-    app = _HandoffSessionHarness(session_data)
-
-    async with app.run_test() as pilot:
-        session = pilot.app.query_one(ChatSession)
-        await session.get_chat_log().mount(ChatHandoffCard(sent_payload))
-        await session.mount_handoff_card(staged_payload)
-        session.set_draft_text(staged_payload.default_prompt())
-        await pilot.pause(0.05)
-
-        pilot.app.query_one("#clear-chat-handoff-context-tab1", Button).press()
-        await pilot.pause(0.05)
-
-        cards = list(pilot.app.query(ChatHandoffCard))
-        assert len(cards) == 1
-        assert cards[0].payload.status == "sent"
-        assert cards[0].payload.title == "Already sent"
-
-
-@pytest.mark.asyncio
-async def test_apply_handoff_mounts_card_and_prefills_tab_input():
-    payload = ChatHandoffPayload(
-        source="notes",
-        item_type="note",
-        title="Plan",
-        body="Body",
-        suggested_prompt="Use this note.",
-    )
-    session = Mock()
-    session.mount_handoff_card = AsyncMock()
-    session.set_draft_text = Mock()
-
-    screen = ChatScreen(Mock())
-
-    await screen._apply_handoff_to_chat_session(session, payload)
-
-    session.mount_handoff_card.assert_awaited_once_with(payload)
-    session.set_draft_text.assert_called_once_with("Use this note.")
 
 
 def test_handoff_payload_formats_model_prompt_with_context_and_user_prompt():

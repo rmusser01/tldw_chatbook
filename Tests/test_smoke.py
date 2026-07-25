@@ -7,7 +7,7 @@ Run with: pytest Tests/test_smoke.py -v
 import pytest
 import tempfile
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # Test markers for organization
 pytestmark = pytest.mark.smoke
@@ -169,22 +169,6 @@ class TestUIComponents:
         # Check title (using TITLE constant)
         assert app.TITLE is not None
         assert "tldw chatbook" in app.TITLE
-
-    def test_chat_window_creation(self):
-        """Test that chat window can be created."""
-        from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
-
-        # Create a mock app instance
-        mock_app = MagicMock()
-
-        # Create window instance with required app_instance
-        window = ChatWindowEnhanced(app_instance=mock_app)
-        assert window is not None
-
-        # Check basic properties
-        assert hasattr(window, "app_instance")
-        assert window.app_instance == mock_app
-
 
 class TestConfiguration:
     """Smoke tests for configuration."""

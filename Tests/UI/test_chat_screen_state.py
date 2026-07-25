@@ -1,53 +1,14 @@
 from datetime import datetime
-from unittest.mock import AsyncMock, Mock
-
-import pytest
+from unittest.mock import Mock
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_models import ChatSessionData
-from tldw_chatbook.Chat.tabs import TabContext
-from tldw_chatbook.Chat.tabs.tab_state_manager import TabStateManager
-from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import (
     ChatScreenState,
     MessageData,
     TabState,
 )
-
-
-class EmptyChatLog:
-    children = []
-
-    def query(self, _selector):
-        return []
-
-
-class QueryResult(list):
-    def first(self):
-        return self[0]
-
-
-class FakeChatLog:
-    children = []
-
-    def __init__(self, messages=()):
-        self.messages = list(messages)
-        self.mount = AsyncMock()
-        self.scroll_end = Mock()
-        self.display = False
-
-    def query(self, _selector):
-        return list(self.messages)
-
-
-class FakeMessageWidget:
-    def __init__(self, *, message_id, role, message_text):
-        self.message_id_internal = message_id
-        self.role = role
-        self.message_text = message_text
-        self.timestamp = None
-        self.image_data = None
 
 
 class TestChatSessionDataSerialization:
@@ -278,334 +239,33 @@ class TestConsoleSessionSettingsPersonaLabelCompat:
         assert asdict(restored).get("persona_label") is None
 
 
-class TestChatScreenSave:
-    def test_save_state_uses_chat_tab_bar_public_tab_ids(self):
-        mock_app = Mock()
-        mock_app.get_current_screen_state = Mock(return_value={})
-        mock_app.chat_sidebar_collapsed = False
-        mock_app.chat_right_sidebar_collapsed = False
+class TestLegacyTabbedStateRestoreIgnored:
+    """task-577 PR1 Qodo fix: legacy tabbed ``chat_state`` must not schedule
+    the (now-deleted) infinite ``_perform_state_restoration`` retry loop.
 
-        screen = ChatScreen(mock_app)
-        screen.chat_window = Mock()
+    ``ChatWindowEnhanced``/``ChatTabContainer`` are retired, so tabbed state
+    saved by a pre-retirement build can never be restored onto anything --
+    ``restore_state`` must simply log and move on instead of scheduling a
+    timer that would fire forever.
+    """
 
-        session = Mock()
-        session.session_data = ChatSessionData(tab_id="tab-a", title="Tabbed Chat")
-        session.query_one.side_effect = LookupError("not mounted")
+    def test_perform_state_restoration_no_longer_exists(self):
+        assert not hasattr(ChatScreen, "_perform_state_restoration")
 
-        tab_bar = Mock()
-        tab_bar.get_tab_ids.return_value = ["tab-a"]
+    def test_restore_state_with_legacy_tabs_does_not_schedule_a_timer(self):
+        screen = ChatScreen(Mock())
+        screen.set_timer = Mock()
 
-        tab_container = Mock()
-        tab_container.sessions = {"tab-a": session}
-        tab_container.active_session_id = "tab-a"
-        tab_container.tab_bar = tab_bar
-
-        screen._get_tab_container = Mock(return_value=tab_container)
-        screen._extract_and_save_messages = Mock()
-        screen._save_direct_input_text = Mock()
-        screen._save_sidebar_settings = Mock()
-        screen._save_scroll_positions = Mock()
-        screen._save_attachments = Mock()
-
-        state = screen.save_state()
-
-        assert state["chat_state"]["tab_order"] == ["tab-a"]
-        tab_bar.get_tab_ids.assert_called_once_with()
-
-
-class TestTabStateManager:
-    @pytest.mark.asyncio
-    async def test_create_tab_state_uses_explicit_assistant_and_scope_fields(self):
-        manager = TabStateManager()
-
-        state = await manager.create_tab_state(
-            "tab-1",
-            runtime_backend="server",
-            discovery_owner="ccp_persona",
-            discovery_entity_id="persona.remote.helper",
-            assistant_kind="persona",
-            assistant_id="assistant-1",
-            persona_memory_mode="workspace",
-            scope_type="workspace",
-            workspace_id="workspace-1",
-            unknown_flag="kept-in-metadata",
+        state = ChatScreenState(
+            tabs=[TabState(tab_id="tab-1", title="Legacy Tab")],
+            active_tab_id="tab-1",
+            tab_order=["tab-1"],
         )
 
-        assert state.runtime_backend == "server"
-        assert state.discovery_owner == "ccp_persona"
-        assert state.discovery_entity_id == "persona.remote.helper"
-        assert state.assistant_kind == "persona"
-        assert state.assistant_id == "assistant-1"
-        assert state.persona_memory_mode == "workspace"
-        assert state.scope_type == "workspace"
-        assert state.workspace_id == "workspace-1"
-        assert "unknown_flag" not in state.__dict__
-        assert state.metadata["unknown_flag"] == "kept-in-metadata"
+        screen.restore_state({"chat_state": state.to_dict()})
 
-
-def test_tab_context_uses_original_query_callable_after_monkey_patch(monkeypatch):
-    selectors_seen = []
-    monkeypatch.setattr(
-        "tldw_chatbook.config.get_cli_setting",
-        lambda section, key, default=None: (
-            True if (section, key) == ("chat_defaults", "enable_tabs") else default
-        ),
-    )
-
-    def original_query_one(selector, widget_type=None):
-        selectors_seen.append((selector, widget_type))
-        return f"resolved:{selector}"
-
-    def recursive_query_one(_selector, _widget_type=None):
-        raise AssertionError("patched app.query_one should not be called recursively")
-
-    app = Mock()
-    app.query_one = recursive_query_one
-    context = TabContext(
-        app,
-        ChatSessionData(tab_id="tab-a"),
-        query_one=original_query_one,
-    )
-
-    assert context.query_one("#chat-input") == "resolved:#chat-input-tab-a"
-    assert selectors_seen == [("#chat-input-tab-a", None)]
-
-
-class TestChatScreenRestore:
-    @pytest.mark.asyncio
-    async def test_restore_tab_sessions_does_not_overwrite_authoritative_runtime_source(
-        self,
-    ):
-        mock_app = Mock()
-        mock_app.get_current_screen_state = Mock(return_value={})
-        mock_app.notify = Mock()
-        mock_app.runtime_policy = Mock(state=RuntimeSourceState(active_source="local"))
-        mock_app.current_runtime_backend = "local"
-        mock_app.runtime_backend = "local"
-
-        screen = ChatScreen(mock_app)
-        screen.chat_state = ChatScreenState(
-            tabs=[
-                TabState(
-                    tab_id="saved-tab-1",
-                    title="Remote Session",
-                    conversation_id="conv-restore",
-                    runtime_backend="server",
-                    is_ephemeral=False,
-                ),
-            ],
-            active_tab_id="saved-tab-1",
-            tab_order=["saved-tab-1"],
-        )
-
-        default_session = Mock()
-        default_session.session_data = ChatSessionData(
-            tab_id="default", title="Default"
-        )
-
-        tab_container = Mock()
-        tab_container.sessions = {"default": default_session}
-        tab_container.close_tab = AsyncMock()
-        tab_container.create_new_tab = AsyncMock(return_value="saved-tab-1")
-        tab_container.switch_to_tab = AsyncMock()
-
-        await screen._restore_tab_sessions(tab_container)
-
-        assert mock_app.runtime_policy.state.active_source == "local"
-
-    @pytest.mark.asyncio
-    async def test_restore_tab_sessions_preserves_first_duplicate_and_remaps_active_tab(
-        self,
-    ):
-        mock_app = Mock()
-        mock_app.get_current_screen_state = Mock(return_value={})
-        mock_app.notify = Mock()
-
-        screen = ChatScreen(mock_app)
-        screen.chat_state = ChatScreenState(
-            tabs=[
-                TabState(
-                    tab_id="saved-tab-1",
-                    title="First Runtime Session",
-                    conversation_id="conv-restore",
-                    runtime_backend="server",
-                    discovery_owner="general_chat",
-                    discovery_entity_id="assistant.remote.restore",
-                    is_ephemeral=False,
-                ),
-                TabState(
-                    tab_id="saved-tab-2",
-                    title="Second Runtime Session",
-                    conversation_id="conv-restore",
-                    runtime_backend="server",
-                    discovery_owner="general_chat",
-                    discovery_entity_id="assistant.remote.restore",
-                    is_ephemeral=False,
-                ),
-            ],
-            active_tab_id="saved-tab-2",
-            tab_order=["saved-tab-1", "saved-tab-2"],
-        )
-
-        restored_session = Mock()
-        restored_session.session_data = ChatSessionData(
-            tab_id="live-tab-1", title="placeholder"
-        )
-
-        async def fake_create_new_tab(title=None, session_data=None):
-            if "live-tab-1" not in tab_container.sessions:
-                tab_container.sessions["live-tab-1"] = restored_session
-                if session_data is not None:
-                    restored_session.session_data = session_data
-            return "live-tab-1"
-
-        tab_container = Mock()
-        tab_container.sessions = {}
-        tab_container.close_tab = AsyncMock()
-        tab_container.create_new_tab = AsyncMock(side_effect=fake_create_new_tab)
-
-        await screen._restore_tab_sessions(tab_container)
-
-        assert restored_session.session_data.title == "First Runtime Session"
-        assert restored_session.session_data.conversation_id == "conv-restore"
-        assert restored_session.session_data.runtime_backend == "server"
-        assert screen.chat_state.active_tab_id == "live-tab-1"
-
-    @pytest.mark.asyncio
-    async def test_restore_messages_shows_chat_log_when_messages_are_restored(self):
-        mock_app = Mock()
-        mock_app.get_current_screen_state = Mock(return_value={})
-        mock_app.notify = Mock()
-
-        screen = ChatScreen(mock_app)
-        screen.chat_state = ChatScreenState(
-            tabs=[
-                TabState(
-                    tab_id="default",
-                    title="Chat",
-                    is_active=True,
-                    messages=[
-                        MessageData(
-                            message_id="msg-1",
-                            role="user",
-                            content="hello",
-                            timestamp=datetime(2026, 4, 21, 12, 0, 0),
-                        )
-                    ],
-                )
-            ],
-            active_tab_id="default",
-            tab_order=["default"],
-        )
-
-        chat_log = Mock()
-        chat_log.mount = AsyncMock()
-        chat_log.scroll_end = Mock()
-        mock_app.query_one = Mock(return_value=chat_log)
-
-        screen.chat_window = Mock()
-        screen.chat_window._tab_container = None
-        screen.chat_window.hide_empty_state = Mock()
-        screen.chat_window.query = Mock(return_value=[])
-
-        await screen._restore_messages()
-
-        chat_log.mount.assert_awaited()
-        chat_log.scroll_end.assert_called_once_with(animate=False)
-        screen.chat_window.hide_empty_state.assert_called_once()
-
-
-def test_extract_messages_clears_messages_when_direct_chat_log_lookup_succeeds():
-    app = Mock()
-    app.query_one = Mock(return_value=EmptyChatLog())
-    screen = ChatScreen(app)
-    screen.chat_window = Mock()
-    tab_state = TabState(
-        tab_id="tab-1",
-        title="Chat",
-        messages=[
-            MessageData(message_id="old", role="user", content="stale", timestamp=None)
-        ],
-    )
-
-    screen._extract_and_save_messages(tab_state)
-
-    assert tab_state.messages == []
-    screen.chat_window.query.assert_not_called()
-
-
-def test_extract_messages_prefers_active_session_chat_log_over_first_matching_log():
-    app = Mock()
-    app.query_one = Mock(side_effect=LookupError("direct lookup unavailable"))
-    screen = ChatScreen(app)
-
-    inactive_log = FakeChatLog(
-        [
-            FakeMessageWidget(
-                message_id="inactive", role="user", message_text="wrong tab"
-            )
-        ]
-    )
-    active_log = FakeChatLog(
-        [FakeMessageWidget(message_id="active", role="user", message_text="active tab")]
-    )
-    screen.chat_window = Mock()
-    screen.chat_window.query = Mock(
-        return_value=QueryResult([inactive_log, active_log])
-    )
-
-    active_session = Mock()
-    active_session.get_chat_log.return_value = active_log
-    screen._get_active_chat_session = Mock(return_value=active_session)
-
-    tab_state = TabState(tab_id="active-tab", title="Active")
-
-    screen._extract_and_save_messages(tab_state)
-
-    assert [message.content for message in tab_state.messages] == ["active tab"]
-    screen.chat_window.query.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_restore_messages_prefers_active_session_chat_log_over_first_matching_log():
-    app = Mock()
-    app.query_one = Mock(side_effect=LookupError("direct lookup unavailable"))
-    screen = ChatScreen(app)
-    screen.chat_state = ChatScreenState(
-        tabs=[
-            TabState(
-                tab_id="active-tab",
-                title="Active",
-                is_active=True,
-                messages=[
-                    MessageData(
-                        message_id="msg-active",
-                        role="user",
-                        content="restore into active tab",
-                        timestamp=datetime(2026, 5, 7, 1, 0, 0),
-                    )
-                ],
-            )
-        ],
-        active_tab_id="active-tab",
-        tab_order=["active-tab"],
-    )
-
-    inactive_log = FakeChatLog()
-    active_log = FakeChatLog()
-    screen.chat_window = Mock()
-    screen.chat_window.hide_empty_state = Mock()
-    screen.chat_window.query = Mock(
-        return_value=QueryResult([inactive_log, active_log])
-    )
-
-    active_session = Mock()
-    active_session.get_chat_log.return_value = active_log
-    screen._get_active_chat_session = Mock(return_value=active_session)
-
-    await screen._restore_messages()
-
-    active_log.mount.assert_awaited_once()
-    inactive_log.mount.assert_not_awaited()
-    active_log.scroll_end.assert_called_once_with(animate=False)
-    screen.chat_window.query.assert_not_called()
+        screen.set_timer.assert_not_called()
+        # The tab data is still parsed into `chat_state` (non-tab
+        # restoration paths downstream may still want to know it existed);
+        # only the retry-loop scheduling is dropped.
+        assert len(screen.chat_state.tabs) == 1
