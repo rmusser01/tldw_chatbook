@@ -855,10 +855,12 @@ async def test_library_shell_search_history_prefers_app_config_over_cli_config(
     app.app_config["library"] = {"search": {"history": ["from-app-config"]}}
     _seed_conversations(app, _two_conversations())
 
-    def raising_get_cli_setting(*args, **kwargs):
-        raise AssertionError(
-            "get_cli_setting should not be called when app_config already has history"
-        )
+    def raising_get_cli_setting(section, *args, **kwargs):
+        if section == "library.search":
+            raise AssertionError(
+                "get_cli_setting should not be called when app_config already has history"
+            )
+        return None
 
     monkeypatch.setattr(
         library_screen_module, "get_cli_setting", raising_get_cli_setting
@@ -922,10 +924,12 @@ async def test_library_shell_rail_preferences_prefers_app_config_over_cli_config
     app.app_config["library"] = {"rail_state": {"sections": {"details_open": True}}}
     _seed_conversations(app, _two_conversations())
 
-    def raising_get_cli_setting(*args, **kwargs):
-        raise AssertionError(
-            "get_cli_setting should not be called when app_config already has rail state"
-        )
+    def raising_get_cli_setting(section, *args, **kwargs):
+        if section == "library.rail_state":
+            raise AssertionError(
+                "get_cli_setting should not be called when app_config already has rail state"
+            )
+        return None
 
     monkeypatch.setattr(
         library_screen_module, "get_cli_setting", raising_get_cli_setting
@@ -9261,7 +9265,9 @@ async def test_library_shell_ingest_canvas_db_unavailable_disables_start(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_library_shell_ingest_type_group_panel_expand_survives_recompose(tmp_path):
+async def test_library_shell_ingest_type_group_panel_expand_survives_recompose(
+    tmp_path,
+):
     """Per-type options panels stay expanded across recomposes.
 
     The canvas posts ``OptionPanelToggled`` messages; the screen persists the
@@ -9300,7 +9306,9 @@ async def test_library_shell_ingest_type_group_panel_expand_survives_recompose(t
                 break
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
-            raise AssertionError("Manual expand never synced back to expanded_type_groups.")
+            raise AssertionError(
+                "Manual expand never synced back to expanded_type_groups."
+            )
 
         # A direct recompose must leave the panel expanded.
         screen.refresh(recompose=True)
@@ -9394,12 +9402,14 @@ async def test_library_ingest_canvas_metadata_placeholders_are_optional_labeled(
 
 
 @pytest.mark.asyncio
-async def test_library_ingest_canvas_generic_chunk_size_input_renders_enabled():
-    """(A6) The generic/Plain text panel renders a chunk-size Input that is
-    enabled by default (it has no optional-dependency gate)."""
+async def test_library_ingest_canvas_generic_chunk_inputs_enable_when_chunk_checked():
+    """Built-in generic chunk controls follow the sibling Chunk toggle."""
     state = build_library_ingest_state(
         (),
-        form=LibraryIngestFormState(),
+        form=LibraryIngestFormState(
+            chunk=True,
+            type_options={"generic": {"chunk": True}},
+        ),
         preflight=PreflightResult(
             type_groups={"generic": ["/tmp/note.txt"]},
             warnings=[],
@@ -9413,8 +9423,11 @@ async def test_library_ingest_canvas_generic_chunk_size_input_renders_enabled():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await pilot.pause()
         chunk_size_input = host.query_one("#opt-generic-chunk_size", Input)
+        chunk_overlap_input = host.query_one("#opt-generic-chunk_overlap", Input)
         assert chunk_size_input.placeholder == "Chunk size"
         assert chunk_size_input.disabled is False
+        assert chunk_overlap_input.placeholder == "Chunk overlap"
+        assert chunk_overlap_input.disabled is False
 
 
 @pytest.mark.asyncio
@@ -9691,15 +9704,18 @@ async def test_library_shell_ingest_canvas_different_canvas_isolation(tmp_path):
 
         harness.submit_library_ingest_job(source_path=str(source))
 
+        media_label = "<rail row temporarily unmounted>"
         for _ in range(_INGEST_POLL_ATTEMPTS):
-            media_button = screen.query_one("#library-row-browse-media", Button)
-            if "Media (1)" in str(media_button.label):
+            media_buttons = screen.query("#library-row-browse-media")
+            if media_buttons:
+                media_label = str(media_buttons.first(Button).label)
+            if "Media (1)" in media_label:
                 break
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
             raise AssertionError(
                 f"Rail Media count never incremented while Notes was open. "
-                f"Label: {media_button.label!r}"
+                f"Label: {media_label!r}"
             )
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES

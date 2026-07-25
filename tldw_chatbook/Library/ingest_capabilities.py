@@ -30,9 +30,9 @@ class OptionField:
             ``number``.
         default: Default value when the field is first rendered.
         options: Allowed values for ``select`` fields; empty for other types.
-        depends_on: Optional dependency feature ID that must be installed for
-            this field to be editable. ``None`` means the field is always
-            available.
+        depends_on: Optional sibling field name that must be truthy, or
+            dependency feature ID that must be installed, for this field to
+            be editable. ``None`` means the field is always available.
     """
 
     name: str

@@ -5195,14 +5195,18 @@ class LibraryScreen(BaseAppScreen):
         # Sync generic top-level form fields into the generic options group so
         # the canvas renders current values for analyze/chunk/chunk_size.
         form = self._library_ingest_form
-        generic_options = dict(form.type_options.get("generic", {}))
+        render_type_options = {
+            group: dict(options) for group, options in form.type_options.items()
+        }
+        generic_options = dict(render_type_options.get("generic", {}))
         generic_options["analyze"] = form.analyze
         generic_options["chunk"] = form.chunk
         generic_options["chunk_size"] = form.chunk_size
-        form.type_options["generic"] = generic_options
+        render_type_options["generic"] = generic_options
+        render_form = dataclasses.replace(form, type_options=render_type_options)
         return build_library_ingest_state(
             jobs,
-            form=form,
+            form=render_form,
             runtime_source=runtime_source,
             media_db_available=getattr(self.app_instance, "media_db", None) is not None,
             registry_available=registry is not None,

@@ -48,11 +48,15 @@ class _MessageRecordingHost(App):
         yield LibraryIngestCanvas(self._state, id="library-ingest-canvas")
 
     @on(LibraryIngestCanvas.OptionValueChanged)
-    def _record_option_change(self, event: LibraryIngestCanvas.OptionValueChanged) -> None:
+    def _record_option_change(
+        self, event: LibraryIngestCanvas.OptionValueChanged
+    ) -> None:
         self.option_changes.append(event)
 
     @on(LibraryIngestCanvas.OptionPanelToggled)
-    def _record_panel_toggle(self, event: LibraryIngestCanvas.OptionPanelToggled) -> None:
+    def _record_panel_toggle(
+        self, event: LibraryIngestCanvas.OptionPanelToggled
+    ) -> None:
         self.panel_toggles.append(event)
 
 
@@ -168,9 +172,8 @@ async def test_unsupported_files_summary_renders():
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
         summary = pilot.app.query_one("#ingest-unsupported-summary", Static)
-        assert (
-            "1 unsupported file will be recorded as a failure."
-            == str(summary.renderable)
+        assert "1 unsupported file will be recorded as a failure." == str(
+            summary.renderable
         )
 
 
@@ -433,6 +436,29 @@ async def test_chunk_size_disabled_when_chunk_unchecked():
 
 
 @pytest.mark.asyncio
+async def test_initial_option_values_do_not_post_changes():
+    """Mount-time widget values must not echo back as user changes."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _MessageRecordingHost(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+    assert app.option_changes == []
+
+
+@pytest.mark.asyncio
 async def test_option_value_changed_posted_on_checkbox_change():
     """Toggling a checkbox posts ``OptionValueChanged`` with the right group/name."""
     state = build_library_ingest_state(
@@ -460,9 +486,7 @@ async def test_option_value_changed_posted_on_checkbox_change():
     matching = [
         event
         for event in app.option_changes
-        if event.group == "pdf"
-        and event.name == "ocr"
-        and event.value is True
+        if event.group == "pdf" and event.name == "ocr" and event.value is True
     ]
     assert len(matching) == 1
 
@@ -495,7 +519,9 @@ async def test_option_value_changed_posted_on_select_change():
     matching = [
         event
         for event in app.option_changes
-        if event.group == "pdf" and event.name == "pdf_engine" and event.value == "pymupdf"
+        if event.group == "pdf"
+        and event.name == "pdf_engine"
+        and event.value == "pymupdf"
     ]
     assert len(matching) == 1
 
@@ -524,7 +550,9 @@ async def test_option_value_changed_posted_on_input_change():
     matching = [
         event
         for event in app.option_changes
-        if event.group == "generic" and event.name == "chunk_size" and event.value == "1234"
+        if event.group == "generic"
+        and event.name == "chunk_size"
+        and event.value == "1234"
     ]
     assert len(matching) == 1
 
@@ -596,9 +624,7 @@ async def test_progress_line_renders_when_present():
     state = build_library_ingest_state((job,), form=_default_form())
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
-        progress = pilot.app.query_one(
-            "#library-ingest-progress-ingest-job-1", Static
-        )
+        progress = pilot.app.query_one("#library-ingest-progress-ingest-job-1", Static)
         text = str(progress.renderable)
         assert "parsing" in text
         assert "Extracting text…" in text
@@ -709,9 +735,7 @@ async def test_recent_ingests_section_renders_terminal_jobs():
         source_path="/tmp/queued.txt",
         state=IngestJobState.QUEUED,
     )
-    state = build_library_ingest_state(
-        (done, failed, queued), form=_default_form()
-    )
+    state = build_library_ingest_state((done, failed, queued), form=_default_form())
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
         recent = pilot.app.query_one("#library-ingest-recent", Collapsible)

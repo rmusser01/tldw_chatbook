@@ -72,11 +72,22 @@ class LibraryIngestCanvas(VerticalScroll):
         scope_label = f"These options apply to all {cap.label} files in this selection."
         children: list[Any] = [Static(scope_label, classes="type-group-scope")]
         summary_parts: list[str] = []
+        fields_by_name = {field.name: field for field in cap.fields}
 
         for field in cap.fields:
             value = values.get(field.name, field.default)
             summary_parts.append(f"{field.name}={value}")
-            disabled = field.depends_on is not None and not _is_installed(field.depends_on)
+            dependency_field = fields_by_name.get(field.depends_on or "")
+            if dependency_field is not None:
+                dependency_value = values.get(
+                    dependency_field.name,
+                    dependency_field.default,
+                )
+                disabled = not bool(dependency_value)
+            else:
+                disabled = field.depends_on is not None and not _is_installed(
+                    field.depends_on
+                )
             widget_id = f"opt-{group}-{field.name}"
 
             if field.type == "checkbox":
@@ -437,6 +448,21 @@ class LibraryIngestCanvas(VerticalScroll):
         name = "-".join(parts[2:])
         if name == "reset":
             return
+        cap = get_capabilities(group)
+        field = next(
+            (candidate for candidate in cap.fields if candidate.name == name), None
+        )
+        if field is None:
+            return
+        current_value = self.state.form.type_options.get(group, {}).get(
+            name,
+            field.default,
+        )
+        if isinstance(event, Input.Changed):
+            if str(current_value) == str(event.value):
+                return
+        elif current_value == event.value:
+            return
         self.post_message(self.OptionValueChanged(group, name, event.value))
 
     @on(Collapsible.Expanded)
@@ -450,7 +476,9 @@ class LibraryIngestCanvas(VerticalScroll):
         widget_id = collapsible.id
         if not widget_id or not widget_id.startswith("type-group-"):
             return
-        group = widget_id[len("type-group-"):]
+        group = widget_id[len("type-group-") :]
         self.post_message(
-            self.OptionPanelToggled(group, expanded=isinstance(event, Collapsible.Expanded))
+            self.OptionPanelToggled(
+                group, expanded=isinstance(event, Collapsible.Expanded)
+            )
         )
