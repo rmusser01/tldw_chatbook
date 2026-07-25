@@ -2831,6 +2831,29 @@ timeout_seconds = 180
 allowed_extra_params = []
 api_key = "<API_KEY_HERE>"
 
+# User-defined `/generate-image` @style templates, layered over the 13
+# built-ins (Media_Creation/generation_templates.py). A user template with
+# the same id as a builtin overrides it; new ids extend the set. Fields
+# mirror a builtin's shape: name/category/base_prompt are required,
+# everything else optional. Uncomment and edit to add your own, or drop
+# one *.toml file per template (same fields, no [image_generation.styles.*]
+# wrapper) under <user data dir>/image_generation_styles/ instead -- see
+# that module's docstring for the full precedence rule.
+# [image_generation.styles.my_glow]
+# name = "My Glow"
+# category = "Custom"
+# description = "Soft dreamy glow"
+# base_prompt = "{{subject}}, soft glow lighting, dreamy atmosphere"
+# negative_prompt = "harsh lighting, low quality"
+# tags = ["custom", "glow"]
+# [image_generation.styles.my_glow.default_params]
+# width = 768
+# height = 768
+# steps = 28
+# cfg_scale = 7.5
+# [image_generation.styles.my_glow.context_mappings]
+# subject = "last_message"
+
 [character_defaults]
 # Default settings specifically for the 'Character' tab
 provider = "Anthropic"

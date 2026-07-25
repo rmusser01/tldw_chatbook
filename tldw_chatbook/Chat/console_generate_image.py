@@ -33,9 +33,9 @@ from tldw_chatbook.Chat.console_command_grammar import (
     GENERATE_IMAGE_COMMAND_NAME,
 )
 from tldw_chatbook.Media_Creation.generation_templates import (
-    BUILTIN_TEMPLATES,
     GenerationTemplate,
     apply_template_to_prompt,
+    get_all_templates,
     get_template,
 )
 from tldw_chatbook.Media_Creation.image_generation_service import (
@@ -259,9 +259,12 @@ class StyleResolution:
 
 
 def resolve_style_token(token: str) -> StyleResolution:
-    """Resolve a raw ``@style`` token to a builtin generation template.
+    """Resolve a raw ``@style`` token to a generation template.
 
-    Matching is case-insensitive and tried in order, first hit wins:
+    Matches against every builtin AND user-defined style template (see
+    `generation_templates.get_all_templates` -- a user template with the
+    same id as a builtin overrides it). Case-insensitive, tried in order,
+    first hit wins:
 
     1. Exact template id (e.g. ``style_anime``).
     2. Exact template name, with spaces and underscores interchangeable in
@@ -284,17 +287,18 @@ def resolve_style_token(token: str) -> StyleResolution:
         return StyleResolution(template=None)
     cleaned_cf = cleaned.casefold()
     normalized_token = _normalize_style_text(cleaned)
+    templates = get_all_templates()
 
-    for template in BUILTIN_TEMPLATES.values():
+    for template in templates.values():
         if template.id.casefold() == cleaned_cf:
             return StyleResolution(template=template)
 
-    for template in BUILTIN_TEMPLATES.values():
+    for template in templates.values():
         if _normalize_style_text(template.name) == normalized_token:
             return StyleResolution(template=template)
 
     matched: dict[str, GenerationTemplate] = {}
-    for template in BUILTIN_TEMPLATES.values():
+    for template in templates.values():
         if template.id.casefold().startswith(cleaned_cf) or _normalize_style_text(
             template.name
         ).startswith(normalized_token):
@@ -486,7 +490,7 @@ def prepare_generation_request(
                 )
             )
         if resolution.template is None:
-            valid_ids = ", ".join(sorted(BUILTIN_TEMPLATES))
+            valid_ids = ", ".join(sorted(get_all_templates()))
             return GenerationRefusal(
                 reason=f"Unknown style '@{args.style}'. Valid styles: {valid_ids}"
             )

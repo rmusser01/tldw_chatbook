@@ -24,7 +24,7 @@ from ...Media_Creation import (
     ImageGenerationService,
     get_all_categories,
     get_templates_by_category,
-    BUILTIN_TEMPLATES,
+    get_template,
 )
 
 
@@ -289,8 +289,11 @@ class SwarmUIWidget(Container):
             template_id = event.value
 
             if template_id != "custom":
-                # Load template settings
-                template = BUILTIN_TEMPLATES.get(template_id)
+                # Load template settings (builtin or user-defined; the
+                # dropdown above is populated from the same merged set via
+                # `get_templates_by_category`, so a raw `BUILTIN_TEMPLATES`
+                # lookup here would silently no-op for a user template).
+                template = get_template(template_id)
                 if template:
                     # Update prompt with template base
                     prompt_input = self.query_one("#prompt-input", TextArea)

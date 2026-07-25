@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -33,14 +33,22 @@ from tldw_chatbook.Chat.console_command_grammar import (
     default_console_registry,
 )
 from tldw_chatbook.Chat.console_generate_image import parse_generate_image_args
-from tldw_chatbook.Media_Creation.generation_templates import BUILTIN_TEMPLATES
+from tldw_chatbook.Media_Creation import generation_templates as gt
+from tldw_chatbook.Media_Creation.generation_templates import (
+    BUILTIN_TEMPLATES,
+    GenerationTemplate,
+)
 from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console import console_style_picker_modal as picker_module
 from tldw_chatbook.Widgets.Console.console_style_picker_modal import (
+    DETAIL_EMPTY_COPY,
+    DETAIL_STATIC_ID,
     EMPTY_STORE_COPY,
     FILTER_INPUT_ID,
     ROW_ID_PREFIX,
     ConsoleStylePickerModal,
+    format_style_preview,
     search_style_templates,
 )
 
@@ -153,10 +161,171 @@ async def test_modal_unmatched_filter_shows_empty_copy():
         filter_input.value = "zzz-no-such-style"
         await pilot.pause(0.1)
 
-        from textual.widgets import Static
-
         empty = app.screen.query_one("#console-style-picker-empty", Static)
         assert str(empty.renderable) == EMPTY_STORE_COPY
+
+
+# ---------------------------------------------------------------------------
+# AC3: template preview detail line.
+# ---------------------------------------------------------------------------
+
+
+def test_format_style_preview_includes_base_and_negative_prompt():
+    template = GenerationTemplate(
+        id="t",
+        name="T",
+        category="C",
+        description="",
+        base_prompt="a dragon, epic fantasy",
+        negative_prompt="blurry, low quality",
+    )
+    preview = format_style_preview(template)
+    assert "a dragon, epic fantasy" in preview
+    assert "blurry, low quality" in preview
+
+
+def test_format_style_preview_omits_negative_line_when_blank():
+    template = GenerationTemplate(
+        id="t", name="T", category="C", description="", base_prompt="x", negative_prompt=""
+    )
+    preview = format_style_preview(template)
+    assert "Negative:" not in preview
+
+
+def test_format_style_preview_truncates_long_snippets():
+    long_prompt = "word " * 60  # far past the 90-char snippet cap
+    template = GenerationTemplate(
+        id="t", name="T", category="C", description="", base_prompt=long_prompt, negative_prompt=""
+    )
+    preview = format_style_preview(template)
+    prompt_line = next(line for line in preview.splitlines() if line.startswith("Prompt:"))
+    # "Prompt: " prefix + the (<=90-char, ellipsis-terminated) snippet.
+    assert len(prompt_line) <= len("Prompt: ") + 90
+    assert prompt_line.endswith("…")
+
+
+def test_format_style_preview_preserves_bracket_text_literally():
+    """A template whose prompt text itself looks like markup must survive
+    `format_style_preview` byte-for-byte -- the widget rendering it
+    (`markup=False`) is what keeps it from being interpreted, not this
+    function stripping/escaping anything."""
+    template = GenerationTemplate(
+        id="t",
+        name="T",
+        category="C",
+        description="",
+        base_prompt="a [red]dramatic[/red] scene",
+        negative_prompt="[bold]ugly[/bold]",
+    )
+    preview = format_style_preview(template)
+    assert "a [red]dramatic[/red] scene" in preview
+    assert "[bold]ugly[/bold]" in preview
+
+
+@pytest.mark.asyncio
+async def test_modal_detail_shows_preview_of_first_row_on_open():
+    app = ModalHarness()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(ConsoleStylePickerModal(), callback=app.capture)
+        await pilot.pause()
+
+        detail = app.screen.query_one(f"#{DETAIL_STATIC_ID}", Static)
+        first_template = search_style_templates("")[0]
+        assert str(detail.renderable) == format_style_preview(first_template)
+
+
+@pytest.mark.asyncio
+async def test_modal_detail_updates_when_highlight_moves():
+    app = ModalHarness()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(ConsoleStylePickerModal(), callback=app.capture)
+        await pilot.pause()
+
+        await pilot.press("down")
+        await pilot.pause()
+
+        detail = app.screen.query_one(f"#{DETAIL_STATIC_ID}", Static)
+        second_template = search_style_templates("")[1]
+        assert str(detail.renderable) == format_style_preview(second_template)
+
+
+@pytest.mark.asyncio
+async def test_modal_detail_shows_placeholder_when_no_matches():
+    app = ModalHarness()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(ConsoleStylePickerModal(), callback=app.capture)
+        await pilot.pause()
+
+        filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
+        filter_input.value = "zzz-no-such-style"
+        await pilot.pause(0.1)
+
+        detail = app.screen.query_one(f"#{DETAIL_STATIC_ID}", Static)
+        assert str(detail.renderable) == DETAIL_EMPTY_COPY
+
+
+@pytest.mark.asyncio
+async def test_modal_detail_disables_markup_interpretation(monkeypatch):
+    """Repo trap: labels/tooltips render markup by default -- pin that the
+    detail Static is built with `markup=False` so a template containing
+    `[red]`-style bracket text can never be interpreted as Rich markup."""
+    malicious = GenerationTemplate(
+        id="malicious",
+        name="Malicious",
+        category="Custom",
+        description="",
+        base_prompt="[red]bold[/red] injected",
+        negative_prompt="",
+    )
+    monkeypatch.setattr(
+        picker_module, "get_all_templates", lambda: {"malicious": malicious}, raising=False
+    )
+    app = ModalHarness()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(ConsoleStylePickerModal(), callback=app.capture)
+        await pilot.pause()
+
+        detail = app.screen.query_one(f"#{DETAIL_STATIC_ID}", Static)
+        assert detail._render_markup is False
+        assert "[red]bold[/red] injected" in str(detail.renderable)
+
+
+@pytest.mark.asyncio
+async def test_modal_lists_user_defined_template_after_merge(monkeypatch):
+    """AC4 integration: a config-section-defined user template shows up in
+    the picker's row list AND its preview, exactly like a builtin."""
+    gt.reset_templates_cache()
+    monkeypatch.setattr(
+        gt,
+        "_read_style_config_section",
+        lambda: {
+            "my_glow": {
+                "name": "My Glow",
+                "category": "Custom",
+                "base_prompt": "{{subject}}, soft glow lighting",
+                "negative_prompt": "harsh lighting",
+            }
+        },
+        raising=False,
+    )
+    gt.get_all_templates(reload=True)
+    try:
+        app = ModalHarness()
+        async with app.run_test(size=(100, 40)) as pilot:
+            await app.push_screen(
+                ConsoleStylePickerModal(initial_query="my_glow"), callback=app.capture
+            )
+            await pilot.pause()
+
+            row = app.screen.query_one(f"#{ROW_ID_PREFIX}my_glow", Button)
+            assert "My Glow" in row.label.plain
+            assert "Custom" in row.label.plain
+
+            detail = app.screen.query_one(f"#{DETAIL_STATIC_ID}", Static)
+            assert "soft glow lighting" in str(detail.renderable)
+            assert "harsh lighting" in str(detail.renderable)
+    finally:
+        gt.reset_templates_cache()
 
 
 @pytest.mark.asyncio
@@ -237,6 +406,7 @@ def test_modal_css_blocks_pinned_in_source_and_bundle():
             ".console-style-picker-row {",
             ".console-style-picker-row-highlighted {",
             "#console-style-picker-empty {",
+            "#console-style-picker-detail {",
         ):
             assert selector in text, f"missing CSS for {selector!r}"
 
