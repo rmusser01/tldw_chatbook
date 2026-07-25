@@ -1963,6 +1963,18 @@ class ConsoleChatController:
         if validation_error is not None:
             return self._block(session_id, validation_error)
 
+        # task-573: the resend carries the anchor's attachments, so the same
+        # vision gate a fresh send applies (see ``submit_draft``) must fire
+        # here too -- BEFORE any node is created (mutate-last discipline).
+        anchor_attachments = tuple(message.attachments)
+        if any(a.data is not None for a in anchor_attachments):
+            vision_model = self.model or self.configured_model
+            block_reason = vision_block_reason(
+                self.provider, vision_model, is_capable=is_vision_capable
+            )
+            if block_reason is not None:
+                return self._block(session_id, block_reason)
+
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
         )
@@ -1976,18 +1988,31 @@ class ConsoleChatController:
             return self._block(session_id, visible_copy)
 
         # Build + transform the payload BEFORE creating either new node
-        # (task-2 review fix): the edited text is synthesized as a plain
-        # dict standing in for the not-yet-created sibling, so a
-        # skill-substitution refusal (or any other transform failure) has
-        # nothing to clean up -- no orphan sibling, no stuck "pending"
-        # assistant node.
-        provider_messages = self._provider_messages_for_session(
-            session_id,
-            before_message_id=message_id,
-            annotate_ids=True,
+        # (task-2 review fix): the edited turn is synthesized as a
+        # not-yet-stored ``ConsoleChatMessage`` standing in for the sibling,
+        # so a skill-substitution refusal (or any other transform failure)
+        # has nothing to clean up -- no orphan sibling, no stuck "pending"
+        # assistant node. task-573: running ancestors + the synthesized turn
+        # through ONE ``_provider_message_payloads`` pass gives the carried
+        # attachments the same image-budget/vision/mime treatment as a fresh
+        # send (newest-first reservation included), instead of a hand-rolled
+        # text-only dict.
+        ancestors: list[ConsoleChatMessage] = []
+        for candidate in self.store.messages_for_session(session_id):
+            if candidate.id == message_id:
+                break
+            ancestors.append(candidate)
+        ancestors.append(
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER,
+                content=clean_content,
+                attachments=anchor_attachments,
+            )
         )
-        provider_messages.append(
-            {"role": ConsoleMessageRole.USER.value, "content": clean_content}
+        provider_messages = self._leading_system_message() + (
+            self._provider_message_payloads(
+                ancestors, skip_failed=True, annotate_ids=True
+            )
         )
         self._ensure_user_continuation_instruction(provider_messages)
         (
@@ -2020,6 +2045,7 @@ class ConsoleChatController:
             role=ConsoleMessageRole.USER,
             content=clean_content,
             persist=self.store.persistence is not None,
+            attachments=anchor_attachments,
         )
         assistant = self.store.append_message(
             session_id,

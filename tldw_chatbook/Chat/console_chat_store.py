@@ -864,6 +864,7 @@ class ConsoleChatStore:
         role: ConsoleMessageRole,
         content: str = "",
         persist: bool = False,
+        attachments: Sequence[MessageAttachment] = (),
     ) -> ConsoleChatMessage:
         """Fork a new node alongside ``anchor_message_id`` and make it active.
 
@@ -915,6 +916,9 @@ class ConsoleChatStore:
             content=content,
             status=self._initial_status(role=role, content=content),
         )
+        # task-573: a fork can carry the anchor's attachments (Edit & resend
+        # of an image-bearing user turn); same seam ``append_message`` uses.
+        self._set_message_attachments(message, tuple(attachments))
         self._sessions[session_id].updated_at = _utc_now_iso()
         self._register_tree_node(session_id, message, parent_native_id=parent_native_id)
         # Retarget the active leaf and rematerialize the active-path view
