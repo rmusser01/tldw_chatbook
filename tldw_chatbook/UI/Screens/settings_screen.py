@@ -1623,6 +1623,28 @@ class SettingsScreen(BaseAppScreen):
             shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
         self.register_footer_shortcuts(source="settings", shortcuts=shortcuts)
 
+    @staticmethod
+    def _binding_entry_key_action_description(
+        entry: object,
+    ) -> tuple[str, str, str] | None:
+        """(key, action, description) for a BINDINGS entry, or ``None`` if
+        ``entry`` isn't a recognized shape.
+
+        task-567: this used to only handle the tuple/list shape
+        (``(key, action, description=...)``); a ``Binding(...)`` instance --
+        Textual's OTHER valid BINDINGS entry shape -- silently vanished from
+        the flattened help output below.
+        """
+        if isinstance(entry, Binding):
+            return str(entry.key), str(entry.action), str(entry.description)
+        if isinstance(entry, (tuple, list)) and entry:
+            return (
+                str(entry[0]),
+                str(entry[1]),
+                str(entry[2]) if len(entry) > 2 else "",
+            )
+        return None
+
     async def action_show_workbench_help(self) -> None:
         """F1 help, scoped to bindings that actually do something right now.
 
@@ -1639,15 +1661,17 @@ class SettingsScreen(BaseAppScreen):
         show_rag_accelerators = (
             self._active_category_id() is SettingsCategoryId.LIBRARY_RAG
         )
-        shortcuts = tuple(
-            (str(entry[0]), str(entry[2]) if len(entry) > 2 else "")
+        parsed_entries = (
+            parts
             for entry in self.BINDINGS
-            if isinstance(entry, (tuple, list))
-            and entry
-            and (
-                show_rag_accelerators
-                or str(entry[1]) not in self._RAG_ACCELERATOR_ACTION_NAMES
-            )
+            if (parts := self._binding_entry_key_action_description(entry))
+            is not None
+        )
+        shortcuts = tuple(
+            (key, description)
+            for key, action, description in parsed_entries
+            if show_rag_accelerators
+            or action not in self._RAG_ACCELERATOR_ACTION_NAMES
         )
         screen_name = type(self).__name__
         state = WorkbenchHelpState(

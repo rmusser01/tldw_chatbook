@@ -26,6 +26,7 @@ import inspect
 from types import SimpleNamespace
 
 import pytest
+from textual.binding import Binding
 from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
 
 from Tests.UI.test_destination_shells import (
@@ -3265,6 +3266,38 @@ async def test_generic_help_includes_rag_accelerators_for_library_rag_category(
     assert any("Set active" in description for description in descriptions)
     assert any("Clone" in description for description in descriptions)
     assert any("Backfill" in description for description in descriptions)
+
+
+@pytest.mark.asyncio
+async def test_action_show_workbench_help_flattens_binding_instances_too(
+    monkeypatch, tmp_path, fake_app
+):
+    """task-567: the flattener above only ever handled tuple/list BINDINGS
+    entries -- a ``Binding(...)`` instance (Textual's OTHER valid BINDINGS
+    entry shape) would silently vanish from the F1 help with no test
+    failing, since ``isinstance(entry, (tuple, list))`` is False for it.
+    Forward-compat regression: a BINDINGS list mixing both shapes must
+    render a row for each."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.THEME.value
+    monkeypatch.setattr(
+        SettingsScreen,
+        "BINDINGS",
+        [
+            ("ctrl+z", "action_settings_undo_task567", "Undo edit"),
+            Binding("ctrl+y", "action_settings_redo_task567", "Redo edit"),
+        ],
+    )
+
+    await screen.action_show_workbench_help()
+
+    assert len(fake_app.pushed_screens) == 1
+    panel, _callback = fake_app.pushed_screens[0]
+    descriptions = [description for _key, description in panel.state.shortcuts]
+    assert "Undo edit" in descriptions
+    assert "Redo edit" in descriptions
 
 
 @pytest.mark.asyncio
