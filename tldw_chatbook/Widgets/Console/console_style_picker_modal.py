@@ -152,7 +152,7 @@ def format_style_preview(template: GenerationTemplate) -> str:
 
 
 class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
-    """Search and pick a built-in `/generate-image` style template."""
+    """Search and pick a `/generate-image` style template (built-in or user-defined)."""
 
     BINDINGS = [("escape", "dismiss_picker", "Cancel")]
 
