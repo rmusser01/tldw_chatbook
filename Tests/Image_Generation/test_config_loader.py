@@ -113,3 +113,99 @@ def test_context_llm_turns_and_timeout_clamped_to_minimums(monkeypatch):
     cfg = c.get_image_generation_config(reload=True)
     assert cfg.context_llm_turns == 1
     assert cfg.context_llm_timeout_seconds == 0.1
+
+
+def _capture_warnings():
+    """loguru is this project's logger; caplog does not intercept it -- attach
+    a temporary sink and return (messages, sink_id)."""
+    from loguru import logger as loguru_logger
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    return messages, sink_id
+
+
+def test_flat_backend_key_under_image_generation_warns_with_nested_replacement(monkeypatch):
+    # task-621: writing the FLAT dataclass field name directly under
+    # [image_generation] (instead of nested under [image_generation.openrouter])
+    # is silently ignored by the flattener -- it must log a warning naming the
+    # key and the exact nested replacement.
+    from loguru import logger as loguru_logger
+    from tldw_chatbook.Image_Generation import config as c
+    fake = {"openrouter_image_default_model": "google/gemini-2.5-flash-image"}
+    monkeypatch.setattr(c, "_read_image_generation_toml", lambda: fake, raising=False)
+    monkeypatch.setattr(c, "_keyring_get", lambda b: None, raising=False)
+
+    messages, sink_id = _capture_warnings()
+    try:
+        cfg = c.get_image_generation_config(reload=True)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    # Silently ignored: the flat key never reaches the dataclass field.
+    assert cfg.openrouter_image_default_model == c.DEFAULT_OPENROUTER_IMAGE_MODEL
+
+    matches = [m for m in messages if "openrouter_image_default_model" in m]
+    assert len(matches) == 1
+    assert "[image_generation.openrouter] default_model" in matches[0]
+
+
+def test_unrecognized_key_under_image_generation_warns_generically(monkeypatch):
+    from loguru import logger as loguru_logger
+    from tldw_chatbook.Image_Generation import config as c
+    fake = {"totally_made_up_key": "x"}
+    monkeypatch.setattr(c, "_read_image_generation_toml", lambda: fake, raising=False)
+    monkeypatch.setattr(c, "_keyring_get", lambda b: None, raising=False)
+
+    messages, sink_id = _capture_warnings()
+    try:
+        c.get_image_generation_config(reload=True)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    matches = [m for m in messages if "totally_made_up_key" in m]
+    assert len(matches) == 1
+    assert "unknown key" in matches[0]
+
+
+def test_nested_config_produces_no_unknown_key_warnings(monkeypatch):
+    from loguru import logger as loguru_logger
+    from tldw_chatbook.Image_Generation import config as c
+    fake = {
+        "default_backend": "swarmui",
+        "enabled_backends": ["swarmui", "openrouter"],
+        "swarmui": {"base_url": "http://example:9999"},
+        "openrouter": {"default_model": "google/gemini-2.5-flash-image", "timeout_seconds": 42},
+        "styles": {"my_glow": {"name": "My Glow"}},
+    }
+    monkeypatch.setattr(c, "_read_image_generation_toml", lambda: fake, raising=False)
+    monkeypatch.setattr(c, "_keyring_get", lambda b: None, raising=False)
+
+    messages, sink_id = _capture_warnings()
+    try:
+        c.get_image_generation_config(reload=True)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert messages == []
+
+
+def test_unknown_key_warning_fires_once_per_load_not_per_field_access(monkeypatch):
+    from loguru import logger as loguru_logger
+    from tldw_chatbook.Image_Generation import config as c
+    fake = {"openrouter_image_default_model": "x"}
+    monkeypatch.setattr(c, "_read_image_generation_toml", lambda: fake, raising=False)
+    monkeypatch.setattr(c, "_keyring_get", lambda b: None, raising=False)
+
+    messages, sink_id = _capture_warnings()
+    try:
+        cfg = c.get_image_generation_config(reload=True)
+        # Repeated field access on the already-built, cached dataclass must
+        # not re-trigger the loader (and thus must not add more warnings).
+        for _ in range(5):
+            _ = cfg.openrouter_image_default_model
+        _ = c.get_image_generation_config()  # cache hit, no reload
+    finally:
+        loguru_logger.remove(sink_id)
+
+    matches = [m for m in messages if "openrouter_image_default_model" in m]
+    assert len(matches) == 1

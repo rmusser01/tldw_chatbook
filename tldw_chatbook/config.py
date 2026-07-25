@@ -2767,6 +2767,11 @@ enabled = true
 allowed_hosts = []
 
 [image_generation]
+# Backend-specific fields (model, base_url, timeout_seconds, api_key, ...) go
+# ONLY under the matching [image_generation.<backend>] table below -- e.g.
+# [image_generation.openrouter] default_model = "...". A flat key such as
+# `openrouter_image_default_model` written directly in THIS [image_generation]
+# table is NOT read; it logs a startup warning and is ignored (task-621).
 default_backend = "swarmui"          # local SwarmUI instance is the friendliest zero-key default
 enabled_backends = ["swarmui"]
 max_width = 1024
