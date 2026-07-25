@@ -38,7 +38,13 @@ DEFAULT_SD_CPP_TIMEOUT_SECONDS = 120
 DEFAULT_SWARMUI_BASE_URL = "http://127.0.0.1:7801"
 DEFAULT_SWARMUI_TIMEOUT_SECONDS = 120
 DEFAULT_OPENROUTER_IMAGE_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_OPENROUTER_IMAGE_MODEL = "openai/gpt-image-1"
+# task-620: the original default ("openai/gpt-image-1", ported verbatim from
+# tldw_server) was retired from OpenRouter's catalog and 404s on every
+# request. Verified live against OpenRouter's catalog 2026-07-25:
+# "google/gemini-2.5-flash-image" exists, is cheap, and is fast -- picked
+# over "openai/gpt-5-image-mini" on cost. Re-verify against the live catalog
+# before changing this again; OpenRouter's image-model lineup moves.
+DEFAULT_OPENROUTER_IMAGE_MODEL = "google/gemini-2.5-flash-image"
 DEFAULT_OPENROUTER_IMAGE_TIMEOUT_SECONDS = 120
 DEFAULT_NOVITA_IMAGE_BASE_URL = "https://api.novita.ai"
 DEFAULT_NOVITA_IMAGE_MODEL = "sd_xl_base_1.0.safetensors"

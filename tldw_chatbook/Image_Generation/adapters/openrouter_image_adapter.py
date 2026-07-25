@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+import httpx
+
 from tldw_chatbook.Image_Generation.http_client import fetch_json
 from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest, ImageGenResult
 from tldw_chatbook.Image_Generation.adapters.image_format_utils import (
@@ -54,6 +56,21 @@ class OpenRouterImageAdapter:
                 # data, so its host is trusted.
                 trusted_origins=origin_set(url),
             )
+        except httpx.HTTPStatusError as exc:
+            # task-620: a bare "404 Not Found for url '...chat/completions'"
+            # (httpx's default message) is undiagnosable -- it looks like the
+            # endpoint itself is wrong, when in practice it's almost always
+            # the configured model id being retired/unavailable on
+            # OpenRouter. Name the model and point at the config key so the
+            # user isn't left guessing. Other statuses keep the generic
+            # wrapping below.
+            if exc.response is not None and exc.response.status_code == 404:
+                model_id = payload.get("model")
+                raise ImageGenerationError(
+                    f"model {model_id!r} was not accepted by OpenRouter (404) — it may have been "
+                    "retired; check [image_generation.openrouter] default_model"
+                ) from exc
+            raise ImageGenerationError(f"OpenRouter request failed: {exc}") from exc
         except Exception as exc:
             raise ImageGenerationError(f"OpenRouter request failed: {exc}") from exc
 

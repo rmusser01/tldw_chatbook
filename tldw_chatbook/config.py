@@ -2811,7 +2811,7 @@ allowed_extra_params = []
 
 [image_generation.openrouter]
 base_url = "https://openrouter.ai/api/v1"
-default_model = "openai/gpt-image-1"
+default_model = "google/gemini-2.5-flash-image"  # task-620: "openai/gpt-image-1" was retired upstream and 404s
 timeout_seconds = 120
 allowed_extra_params = []
 api_key = "<API_KEY_HERE>"
