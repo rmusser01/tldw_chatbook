@@ -91,7 +91,7 @@ the Ubuntu, macOS, and Windows matrix entries all pass for one final commit.
 Do not treat local success, the presence of the workflow, or a subset of the
 matrix as cross-platform proof.
 
-TASK-507 remains blocked while that native result is pending. Any native
+TASK-594 remains blocked while that native result is pending. Any native
 failure leaves TASK-505 in progress and requires the primitive or ADR-025 to be
 revisited before artifact-core implementation starts.
 
@@ -124,4 +124,4 @@ revisited before artifact-core implementation starts.
 - [Python 3.11 `fcntl.flock`](https://docs.python.org/3.11/library/fcntl.html#fcntl.flock)
 - [ADR-025](../decisions/025-shared-stt-artifacts-and-runtime-routing.md)
 - [TASK-505](../tasks/task-505%20-%20Prove-cross-platform-model-artifact-operation-leases.md)
-- [TASK-507](../tasks/task-507%20-%20Build-shared-model-artifact-descriptors-and-lifecycle.md)
+- [TASK-594](../tasks/task-594%20-%20Build-shared-model-artifact-descriptors-and-lifecycle.md)

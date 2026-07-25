@@ -10,7 +10,7 @@ shared/exclusive API behind Chatbook-owned typed leases. Lock filenames are
 SHA-256 derivations of validated opaque artifact identities, acquisition is
 non-blocking with monotonic timeout/cancellation polling, and multi-artifact
 sets acquire in canonical order with reverse rollback. Spawned native process
-tests are the gate: failure on Windows, macOS, or Linux blocks TASK-507 and
+tests are the gate: failure on Windows, macOS, or Linux blocks TASK-594 and
 requires an ADR-025 amendment instead of a platform-specific fallback.
 
 **Tech Stack:** Python 3.11+, `portalocker==3.2.0`, standard-library
@@ -77,7 +77,7 @@ dataclasses/enums/hashlib/multiprocessing/pathlib/time, pytest, GitHub Actions.
 
 - `backlog/docs/model-artifact-operation-leases.md` — selected primitive,
   supported semantics, evidence commands, limitations, dependency/license, and
-  TASK-507 gate.
+  TASK-594 gate.
 
 ---
 
@@ -984,7 +984,7 @@ git commit -m "ci: gate model artifact lease semantics"
 
 - Consumes: the committed local tests and successful native CI matrix.
 - Produces: durable primitive documentation and a completed prerequisite that
-  unblocks TASK-507.
+  unblocks TASK-594.
 
 - [ ] **Step 1: Write the selected-primitive documentation**
 
@@ -1027,7 +1027,7 @@ The suite proves:
 4. forced process termination releases the complete lease set; and
 5. partial set acquisition rolls back already acquired leases.
 
-TASK-507 remains blocked unless every native job passes for the same commit.
+TASK-594 remains blocked unless every native job passes for the same commit.
 
 ## Scope and limitations
 
@@ -1068,7 +1068,7 @@ gh pr checks --watch
 ```
 
 Expected: the `artifact-lease-spike` matrix passes on Ubuntu, macOS, and
-Windows. If any matrix entry fails, leave TASK-505 In Progress, keep TASK-507
+Windows. If any matrix entry fails, leave TASK-505 In Progress, keep TASK-594
 blocked, record the failure in the task notes, and amend ADR-025 before trying a
 different primitive.
 
@@ -1080,7 +1080,7 @@ Run:
 backlog task edit 505 \
   --check-ac 1 --check-ac 2 --check-ac 3 \
   --check-ac 4 --check-ac 5 --check-ac 6 \
-  --notes "Implemented the portalocker 3.2.0-backed shared/exclusive lease API, canonical multi-artifact lease sets, timeout and cancellation behavior, partial-acquisition rollback, and native spawn-process proofs. The Ubuntu, macOS, and Windows artifact-lease-spike jobs passed for the same commit. ADR-025 remains the governing decision; TASK-507 may now start." \
+  --notes "Implemented the portalocker 3.2.0-backed shared/exclusive lease API, canonical multi-artifact lease sets, timeout and cancellation behavior, partial-acquisition rollback, and native spawn-process proofs. The Ubuntu, macOS, and Windows artifact-lease-spike jobs passed for the same commit. ADR-025 remains the governing decision; TASK-594 may now start." \
   -s Done
 ```
 
@@ -1097,6 +1097,6 @@ git commit -m "docs: record model artifact lease proof"
 
 ## Execution stop condition
 
-Do not start TASK-507 in the same implementation run merely because local
+Do not start TASK-594 in the same implementation run merely because local
 tests pass. TASK-505 completes only after the three native operating-system
-jobs pass for one commit; TASK-507 receives a separate plan and review gate.
+jobs pass for one commit; TASK-594 receives a separate plan and review gate.
