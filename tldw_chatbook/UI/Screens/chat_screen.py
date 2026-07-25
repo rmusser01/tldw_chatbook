@@ -13227,12 +13227,26 @@ class ChatScreen(BaseAppScreen):
                 TTSPlaybackEvent,
             )
 
+            was_speaking = (
+                getattr(self, "_console_speaking_message_id", None) == message.id
+            )
             self.app_instance.post_message(
                 TTSPlaybackEvent(action="stop", message_id=message.id)
             )
-            if getattr(self, "_console_speaking_message_id", None) == message.id:
+            if was_speaking:
+                # Only when the screen itself believed this message was
+                # driving TTS do we clear state / re-sync / give feedback
+                # (fix round 1). A speak-stop dispatched for a message the
+                # screen never tracked as speaking -- e.g. a directly
+                # crafted button id, or a stale press racing an already-
+                # cleared state -- is a genuinely idle no-op: the stop
+                # event above is still posted for safety, but claiming
+                # "Stopped speaking." or forcing a re-sync for nothing
+                # would be misleading UI feedback.
                 self._console_speaking_message_id = None
-            await self._sync_native_console_chat_ui()
+                await self._sync_native_console_chat_ui()
+                self.app_instance.notify(result.visible_copy, severity="information")
+            return True
         if action_id == "edit" and result.status == "edit_requested":
             await self._open_console_message_edit_modal(
                 message_id=message_id,

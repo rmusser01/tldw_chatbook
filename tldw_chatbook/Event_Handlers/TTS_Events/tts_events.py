@@ -213,6 +213,14 @@ class TTSEventHandler:
         self._tts_service = None
         self._temp_manager = get_temp_manager()
         self._audio_files: Dict[str, Path] = {}  # Track audio files by message_id
+        # task-559 fix round 1: which file the player last loaded for a
+        # message, independent of `_audio_files` -- that cache is deleted
+        # 5s after playback STARTS (see handle_tts_playback's "play"
+        # branch), well before longer clips finish, so a stop-guard reading
+        # `_audio_files` alone silently stops working past that window.
+        # Protected by the same lock as `_audio_files` (related bookkeeping,
+        # always touched together).
+        self._last_played_audio_files: Dict[str, Path] = {}
         self._audio_files_lock = asyncio.Lock()  # Lock for audio files dictionary
         self._active_tasks: set[asyncio.Task] = set()  # Track active async tasks
         self._active_tasks_lock = asyncio.Lock()  # Lock for active tasks set
@@ -618,6 +626,19 @@ class TTSEventHandler:
             if audio_file and audio_file.exists():
                 # Play the audio file
                 play_audio_file(audio_file)
+                # Record what the player now has loaded, keyed independently
+                # of `_audio_files` (task-559 fix round 1): `_audio_files` is
+                # deleted by the cleanup scheduled right below, 5s after
+                # playback STARTS (not after it finishes), so a stop-guard
+                # keyed off `_audio_files` alone goes blind for any clip
+                # that plays longer than 5s -- the common case, since
+                # Console auto-plays every spoken message. This map is only
+                # ever cleared by an explicit stop (see below) or handler
+                # shutdown, never by the timed cache cleanup.
+                async with self._audio_files_lock:
+                    self._last_played_audio_files[event.message_id or "adhoc"] = (
+                        audio_file
+                    )
                 # Schedule cleanup after playback
                 asyncio.create_task(
                     self._cleanup_audio_file(event.message_id, delay=5.0)
@@ -635,12 +656,27 @@ class TTSEventHandler:
             # Interrupt in-flight playback (task-559 unit 2) -- only when
             # this message's audio is the one currently loaded in the
             # shared single-slot player, so stopping message A can never
-            # silence a different, actively-playing message B.
+            # silence a different, actively-playing message B. Reads (and
+            # clears) `_last_played_audio_files`, NOT `_audio_files` -- the
+            # latter is routinely gone-by-now (see the "play" branch above),
+            # but the player's own `get_current_file()` still reports the
+            # loaded path correctly even after the file itself was deleted
+            # (deletion doesn't rewrite the player's recorded Path).
             async with self._audio_files_lock:
-                audio_file = self._audio_files.get(event.message_id)
-            if audio_file is not None:
-                stop_audio_playback_if_current(audio_file)
-            # Clean up immediately if stopped
+                last_played = self._last_played_audio_files.pop(
+                    event.message_id or "adhoc", None
+                )
+            stopped = False
+            if last_played is not None:
+                stopped = stop_audio_playback_if_current(last_played)
+            if stopped:
+                logger.info(f"Stopped playback for message {event.message_id}")
+            else:
+                logger.debug(
+                    f"Stop requested for message {event.message_id}; "
+                    "nothing was playing"
+                )
+            # Clean up the (likely already-gone) cached file entry too.
             await self._cleanup_audio_file(event.message_id)
 
     async def handle_tts_export(self, event: TTSExportEvent) -> None:
@@ -753,6 +789,7 @@ class TTSEventHandler:
         async with self._audio_files_lock:
             files_to_clean = list(self._audio_files.items())
             self._audio_files.clear()
+            self._last_played_audio_files.clear()
 
         for message_id, audio_file in files_to_clean:
             secure_delete_file(audio_file)
@@ -779,7 +816,7 @@ def play_audio_file(file_path: Path) -> None:
         logger.error(f"Failed to play audio file: {file_path}")
 
 
-def stop_audio_playback_if_current(file_path: Path) -> None:
+def stop_audio_playback_if_current(file_path: Path) -> bool:
     """Stop the shared system audio player, but only if it currently owns ``file_path``.
 
     `SimpleAudioPlayer` (`TTS/audio_player.py`) is a single-slot global
@@ -789,13 +826,22 @@ def stop_audio_playback_if_current(file_path: Path) -> None:
     from silencing a different, unrelated message's still-playing audio
     (task-559 unit 2; a real scenario for legacy chat, where audio is not
     auto-played and several messages can sit cached-but-never-played
-    simultaneously while a different one is actively playing).
+    simultaneously while a different one is actively playing). The
+    comparison stays correct even after the underlying file was deleted by
+    the 5s cache cleanup (fix round 1) -- `get_current_file()` reports the
+    player's own recorded path, not disk state.
+
+    Returns:
+        ``True`` if the player was actually told to stop, ``False`` if
+        ``file_path`` wasn't the one currently loaded (a no-op).
     """
     from tldw_chatbook.TTS.audio_player import get_audio_player
 
     player = get_audio_player()
     if player.get_current_file() == file_path:
         player.stop()
+        return True
+    return False
 
 
 #

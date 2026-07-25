@@ -586,8 +586,10 @@ async def test_handle_console_message_action_speak_marks_message_as_speaking():
 @pytest.mark.asyncio
 async def test_handle_console_message_action_routes_speak_stop_to_tts_playback_event():
     """speak-stop posts the app's existing TTSPlaybackEvent(action="stop")
-    -- reuses the legacy stop-button plumbing, no new audio machinery -- and
-    clears the screen's speaking-message tracking so the row swaps back."""
+    -- reuses the legacy stop-button plumbing, no new audio machinery --
+    clears the screen's speaking-message tracking so the row swaps back,
+    AND (since the screen genuinely believed this message was speaking)
+    gives honest "Stopped speaking." feedback."""
     store = ConsoleChatStore()
     session = store.ensure_session(title="Chat 1")
     message = store.append_message(
@@ -600,6 +602,8 @@ async def test_handle_console_message_action_routes_speak_stop_to_tts_playback_e
     screen._console_speaking_message_id = message.id
     posted: list = []
     screen.app_instance.post_message = posted.append
+    notified: list = []
+    screen.app_instance.notify = lambda *a, **k: notified.append((a, k))
     button = Button(
         "stop", id=f"console-message-action-speak-stop-{message.id}"
     )
@@ -614,13 +618,19 @@ async def test_handle_console_message_action_routes_speak_stop_to_tts_playback_e
     assert event.message_id == message.id
     assert screen._console_speaking_message_id is None
     screen._sync_native_console_chat_ui.assert_awaited()
+    assert len(notified) == 1
+    assert notified[0][0][0] == "Stopped speaking."
 
 
 @pytest.mark.asyncio
 async def test_handle_console_message_action_speak_stop_safe_when_nothing_speaking():
-    """speak-stop is safe (no crash, no unrelated state mutation) even when
-    the screen never marked any message as speaking -- e.g. a stale/late
-    button press after the screen's own state already cleared."""
+    """speak-stop is a genuinely-idle no-op (fix round 1) when the screen
+    never marked any message as speaking -- e.g. a stale/late button press
+    after the screen's own state already cleared, or a directly-crafted
+    button id bypassing the UI gate that would normally hide this button.
+    Still safe to post the stop event (the app-level handler already
+    no-ops harmlessly for real) -- but must NOT claim "Stopped speaking."
+    for nothing, and must not force an unnecessary transcript re-sync."""
     store = ConsoleChatStore()
     session = store.ensure_session(title="Chat 1")
     message = store.append_message(
@@ -632,6 +642,8 @@ async def test_handle_console_message_action_speak_stop_safe_when_nothing_speaki
     screen = _bare_generation_screen(store)
     posted: list = []
     screen.app_instance.post_message = posted.append
+    notified: list = []
+    screen.app_instance.notify = lambda *a, **k: notified.append((a, k))
     button = Button(
         "stop", id=f"console-message-action-speak-stop-{message.id}"
     )
@@ -642,12 +654,16 @@ async def test_handle_console_message_action_speak_stop_safe_when_nothing_speaki
     assert len(posted) == 1
     assert posted[0].action == "stop"
     assert getattr(screen, "_console_speaking_message_id", None) is None
+    assert notified == []
+    screen._sync_native_console_chat_ui.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_handle_console_message_action_speak_stop_does_not_clear_other_message():
-    """Stopping message A must not clear message B's tracked speaking state
-    -- only an exact id match clears it."""
+    """Stopping message A must not clear message B's tracked speaking
+    state -- only an exact id match clears it -- and, since the screen
+    never believed message A itself was speaking, no "Stopped speaking."
+    feedback is given for A either."""
     store = ConsoleChatStore()
     session = store.ensure_session(title="Chat 1")
     message_a = store.append_message(
@@ -659,6 +675,8 @@ async def test_handle_console_message_action_speak_stop_does_not_clear_other_mes
     screen = _bare_generation_screen(store)
     screen._console_speaking_message_id = message_b.id
     screen.app_instance.post_message = lambda *a, **k: None
+    notified: list = []
+    screen.app_instance.notify = lambda *a, **k: notified.append((a, k))
     button = Button(
         "stop", id=f"console-message-action-speak-stop-{message_a.id}"
     )
@@ -667,6 +685,7 @@ async def test_handle_console_message_action_speak_stop_does_not_clear_other_mes
 
     assert handled is True
     assert screen._console_speaking_message_id == message_b.id
+    assert notified == []
 
 
 # --- Task 3: handler-level wiring test for /generate-image style threading ----

@@ -161,14 +161,28 @@ class TestTTSEventHandler:
     # cached audio file (`_cleanup_audio_file`) -- it never touched the
     # actual system audio player, so a "Stop" click did not silence audio
     # already playing (afplay/mpv/etc. keep streaming a deleted-but-open
-    # file on Unix). These tests pin the fix: stop now also asks the
-    # shared `SimpleAudioPlayer` singleton to stop, but ONLY when the
-    # message being stopped is the one currently loaded -- the singleton
-    # holds a single global "now playing" slot, and an unrelated message's
-    # cached-but-never-played file must not be able to silence a different,
-    # actively-playing message (a real scenario for legacy chat, where
-    # audio is not auto-played and multiple messages can sit in "ready"
-    # state simultaneously).
+    # file on Unix). Stop now also asks the shared `SimpleAudioPlayer`
+    # singleton to stop, but ONLY when the message being stopped is the one
+    # currently loaded -- the singleton holds a single global "now playing"
+    # slot, and an unrelated message's cached-but-never-played file must not
+    # be able to silence a different, actively-playing message (a real
+    # scenario for legacy chat, where audio is not auto-played and multiple
+    # messages can sit in "ready" state simultaneously).
+    #
+    # fix round 1: the FIRST fix (comparing against `self._audio_files`,
+    # the same dict `_cleanup_audio_file` deletes from) had its own bug --
+    # the "play" branch unconditionally schedules `_cleanup_audio_file(...,
+    # delay=5.0)` the moment playback STARTS, not when it finishes. Any
+    # clip that takes longer than 5s of wall-clock time between play and a
+    # user's stop click has its `_audio_files` entry (and file) already
+    # deleted, so the stop-guard found nothing and silently skipped calling
+    # `player.stop()` -- for the COMMON case (Console auto-plays every
+    # spoken message; anything over ~15 words exceeds 5s). These tests
+    # exercise the REAL play -> (cleanup) -> stop lifecycle through
+    # `handle_tts_playback` itself (not hand-seeded dicts) so this class of
+    # bug can't hide behind an unrealistic setup again. The fix tracks
+    # "what's currently loaded" in a separate `_last_played_audio_files`
+    # map that is NOT subject to the 5s disk cleanup.
 
     @pytest.mark.asyncio
     async def test_stop_action_stops_playback_when_message_is_current(
@@ -179,16 +193,59 @@ class TestTTSEventHandler:
         handler._audio_files["msg-1"] = test_audio
 
         fake_player = MagicMock()
+        fake_player.play.return_value = True
         fake_player.get_current_file.return_value = test_audio
         monkeypatch.setattr(
             "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
         )
 
-        event = TTSPlaybackEvent(action="stop", message_id="msg-1")
-        await handler.handle_tts_playback(event)
+        await handler.handle_tts_playback(
+            TTSPlaybackEvent(action="play", message_id="msg-1")
+        )
+        await handler.handle_tts_playback(
+            TTSPlaybackEvent(action="stop", message_id="msg-1")
+        )
 
         fake_player.stop.assert_called_once()
         assert "msg-1" not in handler._audio_files
+
+    @pytest.mark.asyncio
+    async def test_stop_action_stops_playback_after_5s_cache_cleanup_already_ran(
+        self, handler, tmp_path, monkeypatch
+    ):
+        """Reviewer repro (fix round 1). The play branch schedules the 5s
+        cache cleanup as soon as playback STARTS -- simulate that cleanup
+        having already run (bypassing only the `asyncio.sleep`, by calling
+        the real `_cleanup_audio_file` with `delay=0`) before the user
+        clicks stop. The player (per the mock) is still loaded with the
+        same clip -- afplay/mpv keep streaming a deleted-but-open file
+        descriptor on Unix -- so stop must still reach `player.stop()`."""
+        test_audio = tmp_path / "clip.mp3"
+        test_audio.write_bytes(b"fake audio data")
+        handler._audio_files["msg-1"] = test_audio
+
+        fake_player = MagicMock()
+        fake_player.play.return_value = True
+        fake_player.get_current_file.return_value = test_audio
+        monkeypatch.setattr(
+            "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
+        )
+
+        await handler.handle_tts_playback(
+            TTSPlaybackEvent(action="play", message_id="msg-1")
+        )
+
+        # The real cleanup code, run directly instead of waiting out the
+        # scheduled asyncio.create_task(..., delay=5.0) -- delay=0 bypasses
+        # only the sleep, not the logic.
+        await handler._cleanup_audio_file("msg-1", delay=0)
+        assert "msg-1" not in handler._audio_files  # cache entry really gone
+
+        await handler.handle_tts_playback(
+            TTSPlaybackEvent(action="stop", message_id="msg-1")
+        )
+
+        fake_player.stop.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_stop_action_does_not_stop_unrelated_playing_message(
@@ -202,13 +259,21 @@ class TestTTSEventHandler:
         handler._audio_files["msg-b"] = file_b
 
         fake_player = MagicMock()
+        fake_player.play.return_value = True
         fake_player.get_current_file.return_value = file_b  # b is playing
         monkeypatch.setattr(
             "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
         )
 
-        event = TTSPlaybackEvent(action="stop", message_id="msg-a")
-        await handler.handle_tts_playback(event)
+        # Only B was ever actually played -- A's file is cached but never
+        # loaded into the player.
+        await handler.handle_tts_playback(
+            TTSPlaybackEvent(action="play", message_id="msg-b")
+        )
+
+        await handler.handle_tts_playback(
+            TTSPlaybackEvent(action="stop", message_id="msg-a")
+        )
 
         fake_player.stop.assert_not_called()
         assert "msg-a" not in handler._audio_files  # cached file still cleared
@@ -216,6 +281,8 @@ class TestTTSEventHandler:
 
     @pytest.mark.asyncio
     async def test_stop_action_safe_when_nothing_cached(self, handler, monkeypatch):
+        """Genuinely idle: no play ever happened for this id -- stop must
+        be a silent no-op, not an error."""
         fake_player = MagicMock()
         monkeypatch.setattr(
             "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: fake_player
