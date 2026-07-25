@@ -76,8 +76,6 @@ class ChatWindowEnhanced(Container):
     """
 
     BINDINGS = [
-        ("ctrl+shift+left", "resize_sidebar_shrink", "Shrink sidebar"),
-        ("ctrl+shift+right", "resize_sidebar_expand", "Expand sidebar"),
         ("ctrl+e", "edit_focused_message", "Edit focused message"),
         ("ctrl+m", "toggle_voice_input", "Toggle voice input"),
     ]
@@ -574,7 +572,6 @@ class ChatWindowEnhanced(Container):
             "chat-mic",
             "clear-image",
             "toggle-chat-left-sidebar",
-            "toggle-chat-right-sidebar",
         }
         if button_id in decorator_handled_buttons:
             # Already handled by @on decorator, skip
@@ -661,10 +658,9 @@ class ChatWindowEnhanced(Container):
         """Handle sidebar-related buttons."""
         from ..Event_Handlers.Chat_Events import chat_events
         from ..Event_Handlers.Chat_Events import chat_events_sidebar
-        from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
 
         # Sidebar toggles
-        if button_id in ["toggle-chat-left-sidebar", "toggle-chat-right-sidebar"]:
+        if button_id == "toggle-chat-left-sidebar":
             await chat_events.handle_chat_tab_sidebar_toggle(self.app_instance, event)
             return True
 
@@ -696,12 +692,6 @@ class ChatWindowEnhanced(Container):
         # Check sidebar module handlers
         if button_id in chat_events_sidebar.CHAT_SIDEBAR_BUTTON_HANDLERS:
             await chat_events_sidebar.CHAT_SIDEBAR_BUTTON_HANDLERS[button_id](
-                self.app_instance, event
-            )
-            return True
-
-        if button_id in chat_events_sidebar_resize.CHAT_SIDEBAR_RESIZE_HANDLERS:
-            await chat_events_sidebar_resize.CHAT_SIDEBAR_RESIZE_HANDLERS[button_id](
                 self.app_instance, event
             )
             return True
@@ -997,18 +987,6 @@ class ChatWindowEnhanced(Container):
             event: The button press event
         """
         await self.sidebar_handler.handle_notes_expand_button(event)
-
-    async def action_resize_sidebar_shrink(self) -> None:
-        """Shrink sidebar width (keyboard shortcut action)."""
-        from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
-
-        await chat_events_sidebar_resize.handle_sidebar_shrink(self.app_instance, None)
-
-    async def action_resize_sidebar_expand(self) -> None:
-        """Expand sidebar width (keyboard shortcut action)."""
-        from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
-
-        await chat_events_sidebar_resize.handle_sidebar_expand(self.app_instance, None)
 
     async def action_edit_focused_message(self) -> None:
         """Edit the currently focused message (keyboard shortcut action)."""

@@ -206,31 +206,6 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
     display: none; /* ensures it doesn’t grab focus */
 }
 
-/* Right sidebar (chat-right-sidebar) */
-#chat-right-sidebar {
-    dock: right;
-    /* width: 70;   <-- REMOVE fixed width */
-    width: 25%;  /* <-- CHANGE to percentage (match .sidebar or use a different one) */
-    min-width: 20; /* <-- ADD a minimum width */
-    max-width: 80; /* <-- ADD a maximum width (optional) */
-    background: $boost;
-    padding: 1 2;
-    border-left: thick $background-darken-1; /* Border on the left */
-    height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-/* Collapsed state for the new right sidebar */
-#chat-right-sidebar.collapsed {
-    width: 0 !important;
-    min-width: 0 !important; /* Ensure min-width is also 0 */
-    border-left: none !important;
-    padding: 0 !important;
-    overflow: hidden !important;
-    display: none; /* Ensures it doesn't take space or grab focus */
-}
-
 /* Common sidebar elements */
 .sidebar-title { text-style: bold; margin-bottom: 1; width: 100%; text-align: left; }
 .sidebar-label { margin-top: 1; text-style: bold; }
@@ -344,31 +319,6 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 .save-chat-button { /* Class used in character_sidebar.py */
     margin-top: 2;   /* Add 1 cell/unit of space above the button */
     /*width: 100%;      Optional: make it full width like other sidebar buttons */
-}
-
-/* chat-right-sidebar Specific Styles */
-#chat-right-sidebar #chat-conversation-title-input { /* Title input */
-    /* width: 100%; (from .sidebar-input) */
-    /* margin-bottom: 1; (from .sidebar-input) */
-}
-
-#chat-right-sidebar .chat-keywords-textarea { /* Keywords TextArea specific class */
-    height: 4;  /* Or 3 to 5, adjust as preferred */
-    /* width: 100%; (from .sidebar-textarea) */
-    /* border: round $surface; (from .sidebar-textarea) */
-    /* margin-bottom: 1; (from .sidebar-textarea) */
-}
-
-/* Styling for the new "Save Details" button */
-#chat-right-sidebar .save-details-button {
-    margin-top: 1; /* Space above this button */
-    /* width: 100%;    Make it full width */
-}
-
-/* Ensure the Save Current Chat button also has clear styling if needed */
-#chat-right-sidebar .save-chat-button {
-    margin-top: 1; /* Ensure it has some space if it's after keywords */
-    /* width: 100%; */
 }
 
 /* Chat Sidebar - Prompts Section */
@@ -742,10 +692,6 @@ ChatMessage.-ai .message-actions.-generating {
 /* Specific margins for sidebar toggles based on position */
 #toggle-chat-left-sidebar {
     margin-right: 1; /* Original toggle on the left of input area */
-}
-
-#toggle-chat-right-sidebar {
-    margin-left: 1; /* New toggle on the right of input area */
 }
 
 #app-titlebar {
