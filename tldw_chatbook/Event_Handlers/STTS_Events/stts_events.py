@@ -3,7 +3,8 @@
 #
 # Imports
 import asyncio
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Mapping
+from copy import deepcopy
 from datetime import datetime
 from typing import Optional, Dict, Any, NamedTuple
 from pathlib import Path
@@ -17,7 +18,9 @@ from textual.widgets import Button, Select, RichLog, Static, ProgressBar
 #
 # Local imports
 from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
+from tldw_chatbook.TTS.adapter_registry import ReconfigureResult
 from tldw_chatbook.TTS.adapter_types import TTSProgress
+from tldw_chatbook.TTS.audio_cpp_config import project_audio_cpp_config
 from tldw_chatbook.TTS.legacy_bridge import legacy_provider_config
 from tldw_chatbook.TTS.TTS_Generation import _join_retained_task
 from tldw_chatbook.Utils.secure_temp_files import secure_delete_file
@@ -40,6 +43,10 @@ def _app_tts_binding(
 
 
 _TTS_SETTING_BINDINGS = {
+    "audio_cpp": _SettingBinding(
+        (("app_tts", "audio_cpp"),),
+        "audio_cpp",
+    ),
     "default_provider": _SettingBinding(
         (
             ("app_tts", "default_provider"),
@@ -216,6 +223,7 @@ _TTS_SETTING_BINDINGS = {
     ),
 }
 _TTS_PROVIDER_ORDER = (
+    "audio_cpp",
     "openai",
     "elevenlabs",
     "kokoro",
@@ -223,6 +231,16 @@ _TTS_PROVIDER_ORDER = (
     "higgs",
     "alltalk",
 )
+
+
+def _effective_provider_config(
+    provider_id: str,
+    effective_settings: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Project one provider's effective registry configuration."""
+    if provider_id == "audio_cpp":
+        return project_audio_cpp_config(effective_settings).to_mapping()
+    return legacy_provider_config(provider_id, effective_settings)
 
 
 class STTSPlaygroundGenerateEvent(Message):
@@ -253,7 +271,16 @@ class STTSSettingsSaveEvent(Message):
 
     def __init__(self, settings: Dict[str, Any]):
         super().__init__()
-        self.settings = settings
+        self.settings = deepcopy(settings)
+
+
+class STTSProviderConfigurationChanged(Message):
+    """Signal that one provider's effective configuration revision changed."""
+
+    def __init__(self, provider_id: str, configuration_revision: int) -> None:
+        super().__init__()
+        self.provider_id = provider_id
+        self.configuration_revision = configuration_revision
 
 
 class STTSAudioBookGenerateEvent(Message):
@@ -774,7 +801,9 @@ class STTSEventHandler:
                 if binding is None:
                     continue
                 for section, setting_name in binding.destinations:
-                    section_values.setdefault(section, {})[setting_name] = value
+                    section_values.setdefault(section, {})[setting_name] = deepcopy(
+                        value
+                    )
                     saved_destinations.append((key, section, setting_name))
                 if binding.provider_id is not None:
                     candidate_provider_ids.add(binding.provider_id)
@@ -799,7 +828,10 @@ class STTSEventHandler:
                     *(
                         service.reconfigure_provider(
                             provider_id,
-                            legacy_provider_config(provider_id, effective_settings),
+                            _effective_provider_config(
+                                provider_id,
+                                effective_settings,
+                            ),
                         )
                         for provider_id in candidate_providers
                     ),
@@ -810,6 +842,14 @@ class STTSEventHandler:
                     for provider_id, result in zip(candidate_providers, results)
                     if isinstance(result, BaseException)
                 ]
+                for provider_id, result in zip(candidate_providers, results):
+                    if result is ReconfigureResult.CHANGED:
+                        self.app.post_message(
+                            STTSProviderConfigurationChanged(
+                                provider_id,
+                                service.configuration_revision(provider_id),
+                            )
+                        )
                 if failed_providers:
                     logger.error(
                         "Failed to reconfigure TTS providers: {}",

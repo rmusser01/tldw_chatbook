@@ -3,6 +3,7 @@
 #
 # Imports
 import asyncio
+from collections.abc import Mapping
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -23,7 +24,7 @@ from textual.widgets import (
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual.binding import Binding
-from textual import on
+from textual import on, work
 from loguru import logger
 
 # Local imports
@@ -33,6 +34,8 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
     STTSAudioBookGenerateEvent,
 )
+from tldw_chatbook.TTS import get_tts_service
+from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_state
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import (
@@ -1963,8 +1966,20 @@ class TTSSettingsWidget(Widget):
     }
     """
 
+    @staticmethod
+    def _load_audio_cpp_config() -> AudioCppConfig:
+        """Load a safe external audio.cpp form snapshot."""
+        candidate = get_cli_setting("app_tts", "audio_cpp", {})
+        try:
+            values = candidate if isinstance(candidate, Mapping) else {}
+            return AudioCppConfig.from_mapping(values)
+        except (TypeError, ValueError):
+            logger.warning("Stored audio.cpp settings are invalid; using defaults")
+            return AudioCppConfig()
+
     def compose(self) -> ComposeResult:
         """Compose the TTS Settings UI"""
+        audio_cpp_config = self._load_audio_cpp_config()
         with ScrollableContainer(classes="tts-settings-container"):
             yield Label("⚙️ TTS Settings", classes="section-title")
 
@@ -2025,6 +2040,107 @@ class TTSSettingsWidget(Widget):
                         placeholder="0.25-4.0",
                         type="number",
                     )
+
+            with Collapsible(
+                title="audio.cpp External Server",
+                id="audio-cpp-settings",
+                classes="settings-section",
+                collapsed=False,
+            ):
+                with Horizontal(classes="form-row"):
+                    yield Label("Mode:", classes="form-label")
+                    yield Static("External", id="audio-cpp-mode-value")
+
+                with Horizontal(classes="form-row"):
+                    yield Label("Base URL:", classes="form-label")
+                    yield Input(
+                        id="audio-cpp-base-url-input",
+                        value=audio_cpp_config.base_url,
+                        placeholder="http://127.0.0.1:8080",
+                    )
+
+                with Horizontal(classes="form-row"):
+                    yield Label("Connect timeout:", classes="form-label")
+                    yield Input(
+                        id="audio-cpp-connect-timeout-input",
+                        value=str(audio_cpp_config.connect_timeout_seconds),
+                        type="number",
+                    )
+
+                with Horizontal(classes="form-row"):
+                    yield Label("Synthesis timeout:", classes="form-label")
+                    yield Input(
+                        id="audio-cpp-synthesis-timeout-input",
+                        value=str(audio_cpp_config.synthesis_timeout_seconds),
+                        type="number",
+                    )
+
+                with Horizontal(classes="form-row"):
+                    yield Label("Max input characters:", classes="form-label")
+                    yield Input(
+                        id="audio-cpp-max-input-characters-input",
+                        value=str(audio_cpp_config.max_input_characters),
+                        type="integer",
+                    )
+
+                with Horizontal(classes="form-row"):
+                    yield Label("Max response bytes:", classes="form-label")
+                    yield Input(
+                        id="audio-cpp-max-response-bytes-input",
+                        value=str(audio_cpp_config.max_response_bytes),
+                        type="integer",
+                    )
+
+                with Horizontal(classes="form-row"):
+                    yield Label("Max metadata bytes:", classes="form-label")
+                    yield Input(
+                        id="audio-cpp-max-metadata-bytes-input",
+                        value=str(audio_cpp_config.max_metadata_bytes),
+                        type="integer",
+                    )
+
+                with Horizontal(classes="form-row"):
+                    yield Label("Max catalog models:", classes="form-label")
+                    yield Input(
+                        id="audio-cpp-max-catalog-models-input",
+                        value=str(audio_cpp_config.max_catalog_models),
+                        type="integer",
+                    )
+
+                with Horizontal(classes="form-row"):
+                    yield Label("Max voices per model:", classes="form-label")
+                    yield Input(
+                        id="audio-cpp-max-voices-per-model-input",
+                        value=str(audio_cpp_config.max_voices_per_model),
+                        type="integer",
+                    )
+
+                with Horizontal(classes="form-row"):
+                    yield Label("Max identifier chars:", classes="form-label")
+                    yield Input(
+                        id="audio-cpp-max-identifier-characters-input",
+                        value=str(audio_cpp_config.max_identifier_characters),
+                        type="integer",
+                    )
+
+                yield Static(
+                    "External synthesis sends submitted text to the configured "
+                    "server. Save changes before testing.",
+                    id="audio-cpp-privacy-notice",
+                )
+                with Horizontal(classes="form-row"):
+                    yield Button(
+                        "Test Connection",
+                        id="audio-cpp-test-connection-btn",
+                    )
+                    yield Button(
+                        "Refresh Models",
+                        id="audio-cpp-refresh-models-btn",
+                    )
+                yield Static(
+                    "Not checked",
+                    id="audio-cpp-discovery-status",
+                )
 
             # OpenAI settings
             with Collapsible(title="OpenAI Settings", classes="settings-section"):
@@ -2829,6 +2945,12 @@ class TTSSettingsWidget(Widget):
         if event.button.id == "save-settings-btn":
             self._save_settings()
             event.stop()  # Prevent event from bubbling up
+        elif event.button.id == "audio-cpp-test-connection-btn":
+            self._discover_audio_cpp("test")
+            event.stop()
+        elif event.button.id == "audio-cpp-refresh-models-btn":
+            self._discover_audio_cpp("refresh")
+            event.stop()
         elif event.button.id == "add-voice-blend-btn":
             self.run_worker(self._show_add_voice_blend_dialog)
             event.stop()
@@ -3108,6 +3230,8 @@ class TTSSettingsWidget(Widget):
                 self.query_one("#default-speed-input", Input).value, 0.25, 4.0, 1.0
             )
 
+            settings["audio_cpp"] = self._collect_audio_cpp_config().to_mapping()
+
             # OpenAI settings
             openai_key = self.query_one("#openai-api-key-input", Input).value
             if openai_key:
@@ -3359,6 +3483,94 @@ class TTSSettingsWidget(Widget):
         except Exception:
             logger.error("Failed to collect TTS settings")
             self.app.notify("Failed to save settings", severity="error")
+
+    def _collect_audio_cpp_config(self) -> AudioCppConfig:
+        """Validate the complete external audio.cpp settings form."""
+        return AudioCppConfig.from_mapping(
+            {
+                "mode": "external",
+                "base_url": self.query_one("#audio-cpp-base-url-input", Input).value,
+                "connect_timeout_seconds": float(
+                    self.query_one("#audio-cpp-connect-timeout-input", Input).value
+                ),
+                "synthesis_timeout_seconds": float(
+                    self.query_one("#audio-cpp-synthesis-timeout-input", Input).value
+                ),
+                "max_input_characters": self._audio_cpp_integer(
+                    "#audio-cpp-max-input-characters-input"
+                ),
+                "max_response_bytes": self._audio_cpp_integer(
+                    "#audio-cpp-max-response-bytes-input"
+                ),
+                "max_metadata_bytes": self._audio_cpp_integer(
+                    "#audio-cpp-max-metadata-bytes-input"
+                ),
+                "max_catalog_models": self._audio_cpp_integer(
+                    "#audio-cpp-max-catalog-models-input"
+                ),
+                "max_voices_per_model": self._audio_cpp_integer(
+                    "#audio-cpp-max-voices-per-model-input"
+                ),
+                "max_identifier_characters": self._audio_cpp_integer(
+                    "#audio-cpp-max-identifier-characters-input"
+                ),
+            }
+        )
+
+    def _audio_cpp_integer(self, selector: str) -> int:
+        """Parse one audio.cpp integer field without coercing fractions."""
+        return int(self.query_one(selector, Input).value)
+
+    @work(
+        exclusive=True,
+        group="stts-audio-cpp-settings-discovery",
+        exit_on_error=False,
+    )
+    async def _discover_audio_cpp(self, action: str) -> None:
+        """Test or refresh the currently saved external audio.cpp service."""
+        status = self.query_one("#audio-cpp-discovery-status", Static)
+        status.update("Checking saved settings…")
+        try:
+            service = await get_tts_service()
+            before_revision = service.configuration_revision("audio_cpp")
+            catalog = await service.get_catalog("audio_cpp", refresh=True)
+            after_revision = service.configuration_revision("audio_cpp")
+            if before_revision != after_revision:
+                status.update("Settings changed; retry")
+                self.app.notify(
+                    "audio.cpp settings changed; retry the check",
+                    severity="warning",
+                )
+                return
+            if (
+                catalog.provider_id != "audio_cpp"
+                or catalog.health.state != "available"
+                or not catalog.health.fresh
+            ):
+                status.update("Unavailable")
+                self.app.notify(
+                    "audio.cpp is not ready; check the saved settings",
+                    severity="error",
+                )
+                return
+
+            model_count = len(catalog.models)
+            noun = "model" if model_count == 1 else "models"
+            if action == "test":
+                message = f"audio.cpp connection is ready ({model_count} {noun})"
+            else:
+                message = f"audio.cpp models refreshed ({model_count} {noun})"
+            status.update(message)
+            self.app.notify(message, severity="information")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("audio.cpp settings discovery failed")
+            status.update("Unavailable")
+            self.app.notify(
+                "audio.cpp is not ready; check the saved settings",
+                severity="error",
+            )
 
     def _validate_numeric_input(
         self, value: str, min_val: float, max_val: float, default: float
