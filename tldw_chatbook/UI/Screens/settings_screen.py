@@ -1314,6 +1314,16 @@ class SettingsScreen(BaseAppScreen):
         ("s", "settings_save_category", "Save Settings category"),
         ("r", "settings_revert_category", "Revert Settings category"),
         ("t", "settings_test_category", "Test Settings category"),
+        # Task 6 (541 AC6): RAG profile-workflow accelerators. Real Textual
+        # bindings (so they're inert, by design, while an Input/TextArea has
+        # focus -- those widgets consume printable keys before they bubble
+        # here), but each action ALSO self-guards to the LIBRARY_RAG
+        # category (see action_settings_rag_*) since this BINDINGS list is
+        # shared by every Settings category, unlike s/r/t which dispatch
+        # per-category internally.
+        ("a", "settings_rag_set_active", "Set active RAG profile"),
+        ("c", "settings_rag_clone", "Clone RAG profile"),
+        ("b", "settings_rag_backfill", "Backfill RAG index"),
     ]
 
     #: Footer hint set — mirrors the show=True bindings the retired Textual
@@ -1322,6 +1332,16 @@ class SettingsScreen(BaseAppScreen):
         ("s", "save category"),
         ("r", "revert category"),
         ("t", "test category"),
+    )
+
+    #: Task 6 (541 AC6): RAG-only accelerator hints, appended to
+    #: SETTINGS_SHORTCUTS whenever LIBRARY_RAG is the active category -- the
+    #: a/c/b bindings above are no-ops everywhere else, so they're only
+    #: advertised in the footer while they actually do something.
+    LIBRARY_RAG_SHORTCUTS = (
+        ("a", "set active"),
+        ("c", "clone"),
+        ("b", "backfill"),
     )
 
     active_category = reactive(SettingsCategoryId.OVERVIEW.value, recompose=True)
@@ -1562,10 +1582,17 @@ class SettingsScreen(BaseAppScreen):
         Persistence matters here: this screen's `recompose=True` reactives
         (`active_category`, the sync-row tuples) replace the footer widget on
         every category switch; the registration must survive that.
+
+        Task 6 (541 AC6): the rendered set is category-aware -- LIBRARY_RAG
+        additionally advertises the a/c/b profile-workflow accelerators.
+        Recomputed from `self.active_category` on every call, so re-calling
+        this after a category switch (see `_select_category`) keeps the
+        footer in sync without waiting for a recompose.
         """
-        self.register_footer_shortcuts(
-            source="settings", shortcuts=self.SETTINGS_SHORTCUTS
-        )
+        shortcuts = self.SETTINGS_SHORTCUTS
+        if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
+            shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
+        self.register_footer_shortcuts(source="settings", shortcuts=shortcuts)
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -9973,6 +10000,11 @@ class SettingsScreen(BaseAppScreen):
         # reset; a no-op for every category but LIBRARY_RAG.
         self._rag_reindex_confirm_in_flight = False
         self.active_category = category_value
+        # Task 6 (541 AC6): keep the footer's a/c/b hint in sync with a
+        # live in-session category switch (on_mount's call alone only
+        # covers the initial/restored-state paint -- see
+        # _register_footer_shortcuts' docstring).
+        self._register_footer_shortcuts()
         if category_value == SettingsCategoryId.OVERVIEW.value:
             self._queue_sync_rows_refresh()
         if category_value == SettingsCategoryId.LIBRARY_RAG.value:
@@ -10910,6 +10942,13 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-library-rag-profile-set-active")
     def handle_library_rag_profile_set_active(self, event: Button.Pressed) -> None:
         event.stop()
+        self._trigger_library_rag_profile_set_active()
+
+    # Task 6 (541 v2 UX AC6): factored out so the 'a' keyboard accelerator
+    # shares this SAME trigger -- identical dirty-draft switch-confirm modal
+    # + preview-clear behavior as clicking the button (mirrors how Task 5
+    # factored _trigger_library_rag_profile_clone/_index_backfill).
+    def _trigger_library_rag_profile_set_active(self) -> None:
         profile_id = self._library_rag_selected_profile_id()
         if profile_id is None:
             self.app.notify("Choose a profile first.", severity="warning")
@@ -12455,6 +12494,53 @@ class SettingsScreen(BaseAppScreen):
             "No test action is available for this Settings category yet.",
             severity="warning",
         )
+
+    # --- Task 6 (541 AC6): RAG profile-workflow keyboard accelerators ---
+    #
+    # Unlike s/r/t (dispatched per-category from within one shared action),
+    # these three are RAG-only: the guard lives in each action rather than a
+    # branch inside a shared method, since there is no cross-category
+    # meaning for "set active"/"clone"/"backfill". Each delegates to the
+    # EXACT SAME trigger its corresponding button uses, so a key press
+    # behaves identically to a click in every state (dirty-draft
+    # switch-confirm modal, preview clear, first-run starter panel, the
+    # backfill in-flight guard) -- no bespoke reimplementation here.
+
+    def action_settings_rag_set_active(
+        self, *, allow_text_entry_focus: bool = False
+    ) -> None:
+        """'a' -- Set active for whatever profile the picker currently
+        shows. No-op outside LIBRARY_RAG or while an Input/TextArea has
+        focus (same guard shape as s/r/t; matters for direct callers, since
+        a real keypress while typing is already swallowed by the focused
+        widget before it would reach this binding)."""
+        if not allow_text_entry_focus and self._settings_text_entry_has_focus():
+            return
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
+        self._trigger_library_rag_profile_set_active()
+
+    def action_settings_rag_clone(
+        self, *, allow_text_entry_focus: bool = False
+    ) -> None:
+        """'c' -- Clone the profile the picker currently shows. Same guard
+        as action_settings_rag_set_active."""
+        if not allow_text_entry_focus and self._settings_text_entry_has_focus():
+            return
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
+        self._trigger_library_rag_profile_clone()
+
+    def action_settings_rag_backfill(
+        self, *, allow_text_entry_focus: bool = False
+    ) -> None:
+        """'b' -- Backfill the active profile's index. Same guard as
+        action_settings_rag_set_active."""
+        if not allow_text_entry_focus and self._settings_text_entry_has_focus():
+            return
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
+        self._trigger_library_rag_index_backfill()
 
     @staticmethod
     def _save_console_behavior_values(

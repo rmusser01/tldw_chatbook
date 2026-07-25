@@ -51,6 +51,7 @@ from tldw_chatbook.UI.Screens.settings_screen import (
     SettingsScreen,
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
 
 @pytest.fixture(autouse=True)
@@ -2860,3 +2861,195 @@ def test_starter_panel_backfill_button_starts_the_same_backfill_worker(
     assert screen._library_rag_backfill_in_flight is True
     assert worker_calls == [True]
     assert fake_app.notifications[-1][1] == "information"
+
+
+# --- Task 6 (541 AC6): keyboard accelerators for the profile workflow
+# (Set active / Clone / Backfill), guarded to the LIBRARY_RAG category and
+# to the SAME text-entry-focus check s/r/t already use. Each action
+# delegates to the EXACT SAME trigger its button uses -- no bespoke
+# reimplementation. ---
+
+
+def test_settings_rag_set_active_action_dispatches_for_rag_category(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    calls: list[bool] = []
+    screen._trigger_library_rag_profile_set_active = lambda: calls.append(True)
+
+    screen.action_settings_rag_set_active(allow_text_entry_focus=True)
+
+    assert calls == [True]
+
+
+def test_settings_rag_clone_action_dispatches_for_rag_category(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    calls: list[bool] = []
+    screen._trigger_library_rag_profile_clone = lambda: calls.append(True)
+
+    screen.action_settings_rag_clone(allow_text_entry_focus=True)
+
+    assert calls == [True]
+
+
+def test_settings_rag_backfill_action_dispatches_for_rag_category(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    calls: list[bool] = []
+    screen._trigger_library_rag_index_backfill = lambda: calls.append(True)
+
+    screen.action_settings_rag_backfill(allow_text_entry_focus=True)
+
+    assert calls == [True]
+
+
+def test_settings_rag_accelerators_no_op_for_a_non_rag_category(
+    monkeypatch, tmp_path, fake_app
+):
+    """Regression guard: unlike s/r/t (which dispatch per-category from a
+    single shared action with a generic fallback), the RAG accelerators
+    have no meaning outside LIBRARY_RAG -- they must produce zero side
+    effects (no trigger call, no notification) for another category."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.THEME.value
+    calls: list[str] = []
+    screen._trigger_library_rag_profile_set_active = lambda: calls.append("set_active")
+    screen._trigger_library_rag_profile_clone = lambda: calls.append("clone")
+    screen._trigger_library_rag_index_backfill = lambda: calls.append("backfill")
+
+    screen.action_settings_rag_set_active(allow_text_entry_focus=True)
+    screen.action_settings_rag_clone(allow_text_entry_focus=True)
+    screen.action_settings_rag_backfill(allow_text_entry_focus=True)
+
+    assert calls == []
+    assert fake_app.notifications == []
+
+
+def test_settings_rag_accelerators_no_op_while_text_entry_has_focus(
+    monkeypatch, tmp_path, fake_app
+):
+    """Same defense-in-depth guard s/r/t use (see
+    `_settings_text_entry_has_focus`): a direct call while a text-entry
+    widget is focused (not routed through `allow_text_entry_focus=True`)
+    must be a no-op even with the RAG category active."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    monkeypatch.setattr(screen, "_settings_text_entry_has_focus", lambda: True)
+    calls: list[str] = []
+    screen._trigger_library_rag_profile_set_active = lambda: calls.append("set_active")
+    screen._trigger_library_rag_profile_clone = lambda: calls.append("clone")
+    screen._trigger_library_rag_index_backfill = lambda: calls.append("backfill")
+
+    screen.action_settings_rag_set_active()
+    screen.action_settings_rag_clone()
+    screen.action_settings_rag_backfill()
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_typing_accelerator_letters_into_the_top_k_input_does_not_fire_them(
+    monkeypatch, tmp_path
+):
+    """Real end-to-end key dispatch (not a simulated action call), mirroring
+    `test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts`'s
+    pattern for s/r/t: typing 'a'/'c'/'b' while the top-k Input is focused
+    must not clone (or set-active/backfill) -- Input consumes printable
+    keys (`Input._on_key` calls `event.stop()` unconditionally for any
+    printable character, even one `restrict` then rejects) before they ever
+    bubble to the screen's BINDINGS."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        calls: list[str] = []
+        screen._trigger_library_rag_profile_set_active = lambda: calls.append(
+            "set_active"
+        )
+        screen._trigger_library_rag_profile_clone = lambda: calls.append("clone")
+        screen._trigger_library_rag_index_backfill = lambda: calls.append("backfill")
+
+        top_k_input = screen.query_one(
+            "#settings-library-rag-default-top-k", Input
+        )
+        original_value = top_k_input.value
+        top_k_input.focus()
+        await pilot.pause()
+        assert screen.app.focused is top_k_input
+
+        await pilot.press("a", "c", "b")
+        await pilot.pause()
+
+        # `restrict=r"^[0-9]*$"` on this field rejects the (non-digit)
+        # insertion, but the KEY itself was still consumed by the Input --
+        # the point under test.
+        assert top_k_input.value == original_value
+        assert calls == []
+
+        # Defense-in-depth: calling the actions directly (bypassing normal
+        # key dispatch) while the Input still has focus is ALSO a no-op.
+        screen.action_settings_rag_set_active()
+        screen.action_settings_rag_clone()
+        screen.action_settings_rag_backfill()
+        assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_rag_category_footer_advertises_the_new_accelerators(
+    monkeypatch, tmp_path
+):
+    """The footer/hint line for LIBRARY_RAG advertises 'a set active',
+    'c clone', 'b backfill' alongside s/r/t; another category's footer
+    does not carry them."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        overview_footer = screen.query_one(AppFooterStatus)
+        for token in ("a set active", "c clone", "b backfill"):
+            assert token not in overview_footer.shortcut_text
+        for token in ("s save category", "r revert category", "t test category"):
+            assert token in overview_footer.shortcut_text
+
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        rag_footer = screen.query_one(AppFooterStatus)
+        for token in (
+            "a set active",
+            "c clone",
+            "b backfill",
+            "s save category",
+            "r revert category",
+            "t test category",
+        ):
+            assert token in rag_footer.shortcut_text
+
+        # Leaving the category again drops the RAG-only hints.
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        theme_footer = screen.query_one(AppFooterStatus)
+        for token in ("a set active", "c clone", "b backfill"):
+            assert token not in theme_footer.shortcut_text
