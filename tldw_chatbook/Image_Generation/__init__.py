@@ -23,4 +23,4 @@ def __getattr__(name):  # PEP 562 lazy re-export; keeps adapters/Pillow out of i
         from tldw_chatbook.Image_Generation.adapter_registry import get_registry as f
 
         return f
-    raise AttributeError(name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

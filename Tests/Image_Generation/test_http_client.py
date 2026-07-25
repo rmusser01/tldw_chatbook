@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 @pytest.fixture
@@ -62,5 +63,24 @@ def test_fetch_json_defaults_no_autofollow(hc):
     client = hc.create_client()
     try:
         assert client.follow_redirects is False
+    finally:
+        client.close()
+
+
+def test_create_client_respects_explicit_zero_timeout(hc):
+    # An explicit timeout=0 is a real, meaningful value (fail-fast) and must
+    # not be treated the same as "not given" -- `timeout or DEFAULT` would
+    # silently replace it with the 120s default since 0 is falsy.
+    client = hc.create_client(timeout=0)
+    try:
+        assert client.timeout == httpx.Timeout(timeout=0)
+    finally:
+        client.close()
+
+
+def test_create_client_defaults_when_timeout_omitted(hc):
+    client = hc.create_client()
+    try:
+        assert client.timeout == httpx.Timeout(timeout=hc._DEFAULT_TIMEOUT)
     finally:
         client.close()

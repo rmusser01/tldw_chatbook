@@ -99,7 +99,7 @@ def create_client(timeout: float | None = None, *, follow_redirects: bool = Fals
         A configured ``httpx.Client``.
     """
     return httpx.Client(
-        timeout=timeout or _DEFAULT_TIMEOUT,
+        timeout=_DEFAULT_TIMEOUT if timeout is None else timeout,
         follow_redirects=follow_redirects,
         max_redirects=DEFAULT_MAX_REDIRECTS,
     )
