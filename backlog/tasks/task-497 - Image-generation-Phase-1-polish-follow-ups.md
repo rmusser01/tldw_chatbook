@@ -2,10 +2,10 @@
 id: TASK-497
 title: >-
   Image-generation Phase-1 polish follow-ups
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-23 12:59'
-updated_date: '2026-07-23 12:59'
+updated_date: '2026-07-24 23:40'
 labels:
   - image-generation
   - followup

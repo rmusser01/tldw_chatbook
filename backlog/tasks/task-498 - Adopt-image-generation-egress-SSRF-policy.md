@@ -2,10 +2,10 @@
 id: TASK-498
 title: >-
   Adopt image-generation egress/SSRF policy (Utils/egress.py)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-22 11:32'
-updated_date: '2026-07-24 16:45'
+updated_date: '2026-07-24 23:40'
 labels:
   - image-generation
   - security
