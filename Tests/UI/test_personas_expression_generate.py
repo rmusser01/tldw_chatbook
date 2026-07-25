@@ -112,6 +112,36 @@ async def test_generate_buttons_present_in_compose():
             )
 
 
+async def test_expressions_header_does_not_push_siblings_off_row():
+    """Regression (P3 verification sweep): a bare ``Static`` defaults to
+    Textual's ``1fr`` width when nothing constrains it, so the "Expressions"
+    section header - sharing its row with the Style readout/pick, Generate
+    all, and Import/Export set controls - would otherwise claim the entire
+    row and render every sibling past the row's right edge. The row is a
+    plain ``Horizontal`` (no wrap, no horizontal scrollbar), so those five
+    controls would be permanently unreachable by mouse click. Live tmux
+    verification caught this; this pins the fix (an explicit ``width: auto``
+    on the header) at the compose level."""
+    app = _CaptureApp()
+    async with app.run_test(size=(200, 50)):
+        editor = app.query_one(PersonasCharacterEditorWidget)
+        row = editor.query_one(".personas-char-editor-expr-set-row")
+        row_right_edge = row.region.x + row.region.width
+        for widget_id in (
+            "personas-char-editor-style-readout",
+            "personas-char-editor-style-pick",
+            "personas-char-editor-expr-generate-all",
+            "personas-char-editor-expr-import",
+            "personas-char-editor-expr-export",
+        ):
+            node = editor.query_one(f"#{widget_id}")
+            assert node.region.x < row_right_edge, (
+                f"{widget_id} rendered at x={node.region.x}, at/past the "
+                f"row's right edge ({row_right_edge}) - unreachable by mouse "
+                "click."
+            )
+
+
 # ===== Mandatory assertion (a): pressing each generate button posts the
 # right message type (+ state for the per-state one). =====
 
