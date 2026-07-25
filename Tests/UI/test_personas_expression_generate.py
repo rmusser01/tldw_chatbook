@@ -46,6 +46,8 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterAvatarGenerateRequested,
     CharacterExpressionGenerateAllRequested,
     CharacterExpressionGenerateRequested,
+    CharacterExpressionSetExportRequested,
+    CharacterExpressionSetImportRequested,
     CharacterExpressionStylePickRequested,
 )
 
@@ -69,6 +71,8 @@ class _CaptureApp(App):
         self.expr_generate: list[CharacterExpressionGenerateRequested] = []
         self.expr_generate_all: list[CharacterExpressionGenerateAllRequested] = []
         self.style_pick: list[CharacterExpressionStylePickRequested] = []
+        self.expr_import: list[CharacterExpressionSetImportRequested] = []
+        self.expr_export: list[CharacterExpressionSetExportRequested] = []
 
     def compose(self) -> ComposeResult:
         yield PersonasCharacterEditorWidget()
@@ -93,6 +97,16 @@ class _CaptureApp(App):
     ) -> None:
         self.style_pick.append(message)
 
+    def on_character_expression_set_import_requested(
+        self, message: CharacterExpressionSetImportRequested
+    ) -> None:
+        self.expr_import.append(message)
+
+    def on_character_expression_set_export_requested(
+        self, message: CharacterExpressionSetExportRequested
+    ) -> None:
+        self.expr_export.append(message)
+
 
 # ===== Buttons exist =====
 
@@ -112,39 +126,85 @@ async def test_generate_buttons_present_in_compose():
             )
 
 
-async def test_expressions_header_does_not_push_siblings_off_row():
-    """Regression (P3 verification sweep): a bare ``Static`` defaults to
-    Textual's ``1fr`` width when nothing constrains it, so the "Expressions"
-    section header - sharing its row with the Style readout/pick, Generate
-    all, and Import/Export set controls - would otherwise claim the entire
-    row and render every sibling past the row's right edge. The row is a
-    plain ``Horizontal`` (no wrap, no horizontal scrollbar), so those five
-    controls would be unreachable by mouse click. Live tmux verification
-    caught this; this pins the fix (an explicit ``width: auto`` on the
-    header) at the compose level.
+@pytest.mark.parametrize("width", [80, 120, 200])
+async def test_expr_set_row_buttons_reachable_and_functional_at_width(width):
+    """task-563 AC1: supersedes the original 200-col-only regression test
+    below this docstring's history - a bare ``Static`` used to default to
+    Textual's ``1fr`` width, letting the "Expressions" section header claim
+    the whole row and push every sibling control off it (fixed by the
+    ``width: auto`` on the header, still in effect). That fix only proved
+    reachability at a 200-column viewport; live tmux verification separately
+    found the row's four action buttons (Style pick, Generate all, Import
+    set, Export set) still overflow and become unreachable at realistic
+    narrower widths (120 cols: Import/Export; 80 cols: Generate all too),
+    since a plain ``Horizontal`` has no wrap and (until this fix) no
+    horizontal scrollbar either.
 
-    Scope: this only proves the fix at the 200-column viewport tested here -
-    the 1fr-header defect is fixed and the five controls are reachable at
-    that width. It does NOT prove reachability at narrower terminal widths;
-    full narrow-terminal reachability of this row is a separate, already-
-    known issue, independent of the 1fr-header defect fixed here."""
+    The fix makes the row horizontally scrollable (``overflow-x: auto`` on
+    ``.personas-char-editor-expr-set-row``, mirroring ``MainNavigationBar``'s
+    own ``.main-nav`` idiom) instead of hard-clipping. This proves the fix
+    at all three widths in two parts:
+
+    - Reachable: after ``scroll_visible()`` (what a real user's mouse
+      wheel/shift-wheel, or Tab - which auto-scrolls the focused widget into
+      view - would do), the button's rendered region must fall entirely
+      within the actual terminal viewport (``0 <= region.x`` and
+      ``region.x + region.width <= width``). This is the assertion that
+      actually discriminates the fix: ``Pilot.click`` itself was found to
+      dispatch successfully even at an off-screen region (headless-mode
+      leniency a real terminal's mouse-reporting protocol cannot replicate,
+      since it cannot report coordinates beyond its own dimensions), so a
+      raw click-succeeds check alone does not prove real-terminal
+      reachability - the in-bounds region check does.
+    - Functional: a still-independent proof the button itself works, via
+      the same ``Button.press()`` this file's other tests already use.
+    """
     app = _CaptureApp()
-    async with app.run_test(size=(200, 50)):
+    async with app.run_test(size=(width, 50)) as pilot:
         editor = app.query_one(PersonasCharacterEditorWidget)
-        row = editor.query_one(".personas-char-editor-expr-set-row")
-        row_right_edge = row.region.x + row.region.width
-        for widget_id in (
-            "personas-char-editor-style-readout",
-            "personas-char-editor-style-pick",
-            "personas-char-editor-expr-generate-all",
-            "personas-char-editor-expr-import",
-            "personas-char-editor-expr-export",
+        editor.load_character({"id": 1, "name": "A"})  # saved -> row's buttons enabled
+        await pilot.pause()
+
+        for widget_id, captured, message_type in (
+            (
+                "personas-char-editor-style-pick",
+                app.style_pick,
+                CharacterExpressionStylePickRequested,
+            ),
+            (
+                "personas-char-editor-expr-generate-all",
+                app.expr_generate_all,
+                CharacterExpressionGenerateAllRequested,
+            ),
+            (
+                "personas-char-editor-expr-import",
+                app.expr_import,
+                CharacterExpressionSetImportRequested,
+            ),
+            (
+                "personas-char-editor-expr-export",
+                app.expr_export,
+                CharacterExpressionSetExportRequested,
+            ),
         ):
-            node = editor.query_one(f"#{widget_id}")
-            assert node.region.x < row_right_edge, (
-                f"{widget_id} rendered at x={node.region.x}, at/past the "
-                f"row's right edge ({row_right_edge}) - unreachable by mouse "
-                "click."
+            node = editor.query_one(f"#{widget_id}", Button)
+            node.scroll_visible(animate=False)
+            await pilot.pause()
+            await pilot.pause()  # let the (possibly animated-off) scroll settle
+            region = node.region
+            assert 0 <= region.x and region.x + region.width <= width, (
+                f"{widget_id} rendered at x={region.x}, width={region.width} "
+                f"- outside the {width}-column viewport even after "
+                "scroll_visible(), so a real terminal's mouse could never "
+                "reach it."
+            )
+
+            before = len(captured)
+            node.press()
+            await pilot.pause()
+            assert len(captured) == before + 1, (
+                f"{widget_id} did not post {message_type.__name__} at "
+                f"width={width}."
             )
 
 
@@ -533,6 +593,176 @@ async def test_generate_requested_backend_not_configured_notifies(
     )
 
 
+# ===== task-563 AC2: in-slot "Generating…" affordance =====
+#
+# Spec §1 promised a per-slot busy indicator while a generation runs; today
+# the only feedback is the completion/failure notify or the "already
+# generating" refusal on a second click. These tests pin the widget-level
+# setters (PersonasCharacterEditorWidget.set_expression_generating /
+# set_avatar_generating) and the screen-level wiring: set at dispatch,
+# cleared on success AND failure (both flow through _generate_one_slot's
+# existing ``finally``), and never leaked onto a DIFFERENT character's
+# same-named slot after a mid-generation editor switch.
+
+
+async def test_set_expression_generating_shows_and_clears_hint():
+    app = _CaptureApp()
+    async with app.run_test():
+        editor = app.query_one(PersonasCharacterEditorWidget)
+        editor.load_character({"id": 1, "name": "A"})  # saved -> enabled ("" hint)
+        hint = editor.query_one("#personas-char-editor-expr-thinking-hint", Static)
+        assert str(hint.renderable) == ""
+
+        editor.set_expression_generating("thinking", True)
+        assert str(hint.renderable) == "Generating…"
+
+        editor.set_expression_generating("thinking", False)
+        assert str(hint.renderable) == ""
+
+
+async def test_set_expression_generating_clear_restores_unsaved_hint():
+    app = _CaptureApp()
+    async with app.run_test():
+        editor = app.query_one(PersonasCharacterEditorWidget)
+        editor.load_character({"name": "A"})  # no id -> unsaved
+        editor.set_expression_generating("thinking", True)
+        hint = editor.query_one("#personas-char-editor-expr-thinking-hint", Static)
+        assert str(hint.renderable) == "Generating…"
+
+        editor.set_expression_generating("thinking", False)
+        assert str(hint.renderable) == "Save the character to add expressions."
+
+
+async def test_set_avatar_generating_shows_and_clears_status():
+    app = _CaptureApp()
+    async with app.run_test():
+        editor = app.query_one(PersonasCharacterEditorWidget)
+        editor.load_character({"id": 1, "name": "A"})
+        status = editor.query_one("#personas-char-editor-avatar-status", Static)
+        assert str(status.renderable) == "Avatar: none"
+
+        editor.set_avatar_generating(True)
+        assert str(status.renderable) == "Avatar: generating…"
+
+        editor.set_avatar_generating(False)
+        assert str(status.renderable) == "Avatar: none"
+
+
+async def test_generate_worker_shows_and_clears_in_slot_generating_hint(
+    personas_editor_with_saved_character, monkeypatch
+):
+    app, screen, db, char_id = personas_editor_with_saved_character
+    _configure_backend(monkeypatch)
+    editor = _set_description(screen, "A cheerful adventurer.")
+    hint = editor.query_one("#personas-char-editor-expr-thinking-hint", Static)
+
+    seen: dict = {}
+
+    def _run_generation(request):
+        seen["during"] = str(hint.renderable)
+        return SimpleNamespace(content=b"png-bytes", content_type="image/png")
+
+    monkeypatch.setattr(personas_screen_module, "run_generation", _run_generation)
+    screen._expression_generate_inflight.add((char_id, "thinking"))
+    editor.set_expression_generating("thinking", True)  # what the handler does at dispatch
+
+    await screen._generate_expression_image_worker(char_id, "thinking")
+
+    assert seen["during"] == "Generating…"
+    assert str(hint.renderable) == ""
+
+
+async def test_generate_worker_failure_clears_in_slot_generating_hint(
+    personas_editor_with_saved_character, monkeypatch
+):
+    app, screen, db, char_id = personas_editor_with_saved_character
+    _configure_backend(monkeypatch)
+    editor = _set_description(screen, "A cheerful adventurer.")
+    hint = editor.query_one("#personas-char-editor-expr-error-hint", Static)
+
+    def _boom(request):
+        raise RuntimeError("backend exploded")
+
+    monkeypatch.setattr(personas_screen_module, "run_generation", _boom)
+    screen._expression_generate_inflight.add((char_id, "error"))
+    editor.set_expression_generating("error", True)
+
+    await screen._generate_expression_image_worker(char_id, "error")
+
+    assert str(hint.renderable) == ""
+
+
+async def test_avatar_generate_worker_shows_and_clears_generating_status(
+    personas_editor_with_saved_character, monkeypatch
+):
+    app, screen, db, char_id = personas_editor_with_saved_character
+    _configure_backend(monkeypatch)
+    editor = _set_description(screen, "A cheerful adventurer.")
+    status = editor.query_one("#personas-char-editor-avatar-status", Static)
+
+    seen: dict = {}
+
+    def _run_generation(request):
+        seen["during"] = str(status.renderable)
+        return SimpleNamespace(content=b"png-bytes", content_type="image/png")
+
+    monkeypatch.setattr(personas_screen_module, "run_generation", _run_generation)
+    _capture_avatar_render_worker(screen)
+    screen._expression_generate_inflight.add((char_id, "avatar"))
+    editor.set_avatar_generating(True)
+
+    await screen._generate_expression_image_worker(char_id, "avatar")
+
+    assert seen["during"] == "Avatar: generating…"
+    assert str(status.renderable) == "Avatar: embedded"
+
+
+async def test_generate_worker_does_not_clear_generating_hint_of_switched_to_character(
+    personas_editor_with_saved_character, monkeypatch
+):
+    """The leak guard: while A's "thinking" generation is in flight, the
+    user switches the SAME editor widget to a DIFFERENT character B, which
+    happens to have its own INDEPENDENT "thinking" generation already
+    showing "Generating…" (started via a separate click after the switch).
+    A's stale completion must not clear B's legitimately-in-flight
+    indicator - the clear must only ever touch the (character_id, state)
+    pair it was set for."""
+    app, screen, db, char_id = personas_editor_with_saved_character
+    _configure_backend(monkeypatch)
+    editor = _set_description(screen, "CHARACTER A: a cheerful adventurer.")
+    other_id = db.add_character_card({"name": "Grim"})
+    hint = editor.query_one("#personas-char-editor-expr-thinking-hint", Static)
+
+    def _run_generation(request):
+        # Mid-flight for A's request: the user cancels and opens a
+        # DIFFERENT character (B) in the same editor widget.
+        screen._finish_cancel_edit()
+        screen._character_editor_generation += 1
+        screen._edit_mode = "edit"
+        screen.state.select_entity(
+            entity_kind="character", entity_id=str(other_id), entity_name="Grim"
+        )
+        screen._show_center("#ccp-character-editor-view")
+        editor.load_character(
+            {"id": other_id, "name": "Grim", "description": "B", "version": 1}
+        )
+        # B has its own, unrelated "thinking" generation already in flight.
+        editor.set_expression_generating("thinking", True)
+        return SimpleNamespace(content=b"png-bytes", content_type="image/png")
+
+    monkeypatch.setattr(personas_screen_module, "run_generation", _run_generation)
+    apply_mock = AsyncMock()
+    monkeypatch.setattr(screen, "_apply_expression_upload", apply_mock)
+    screen._expression_generate_inflight.add((char_id, "thinking"))
+    editor.set_expression_generating("thinking", True)
+
+    await screen._generate_expression_image_worker(char_id, "thinking")
+
+    apply_mock.assert_not_awaited()  # A's stale write is dropped, as before
+    # B's own (unrelated) "Generating…" must survive A's stale completion.
+    assert str(hint.renderable) == "Generating…"
+
+
 # ===== Image-gen P3 Task 4: avatar generate, Generate-all, style picker =====
 #
 # The refactor's own proof is above: this file's 14 original Task 3 tests
@@ -714,6 +944,191 @@ async def test_avatar_generate_requested_inflight_second_click_single_generation
     assert "already generating" in notifications[-1][0].lower()
 
 
+async def test_generate_requested_refused_while_generate_all_in_flight(
+    personas_editor_with_saved_character, monkeypatch
+):
+    """task-563 AC5: a per-slot key is freed the instant that slot's own
+    generation finishes inside the Generate-all sweep (``_generate_one_
+    slot``'s ``finally``), while the sweep itself keeps running the
+    remaining states. Without an explicit guard, a single-slot click for
+    that just-finished (or not-yet-started) state during the same sweep
+    would dispatch an independent, redundant regeneration. Closing this at
+    the "all" key's full lifetime (held for the whole sweep) is simpler and
+    stronger than trying to reason about per-slot timing windows."""
+    app, screen, db, char_id = personas_editor_with_saved_character
+    _configure_backend(monkeypatch)
+    _set_description(screen, "A cheerful adventurer.")
+    screen._expression_generate_inflight.add((char_id, "all"))
+
+    calls: list = []
+    monkeypatch.setattr(screen, "run_worker", lambda *a, **k: calls.append(1))
+    notifications = _capture_notifications(app)
+
+    screen._handle_character_expression_generate_requested(
+        CharacterExpressionGenerateRequested("thinking")
+    )
+
+    assert calls == []
+    assert notifications
+    assert notifications[-1][1] == "warning"
+    assert "generate all" in notifications[-1][0].lower()
+
+
+async def test_avatar_generate_requested_refused_while_generate_all_in_flight(
+    personas_editor_with_saved_character, monkeypatch
+):
+    """task-563 AC5: same guard as the expression-slot case, for the avatar
+    generate button - the avatar is itself one of the sweep's four states."""
+    app, screen, db, char_id = personas_editor_with_saved_character
+    _configure_backend(monkeypatch)
+    _set_description(screen, "A cheerful adventurer.")
+    screen._expression_generate_inflight.add((char_id, "all"))
+
+    calls: list = []
+    monkeypatch.setattr(screen, "run_worker", lambda *a, **k: calls.append(1))
+    notifications = _capture_notifications(app)
+
+    screen._handle_character_avatar_generate_requested(CharacterAvatarGenerateRequested())
+
+    assert calls == []
+    assert notifications
+    assert notifications[-1][1] == "warning"
+    assert "generate all" in notifications[-1][0].lower()
+
+
+# ----- task-563 AC3: Generate-all overwrite confirmation --------------------
+#
+# The sweep's blast radius (avatar + 3 expression states) exceeds the
+# per-slot regenerate-by-click contract, so it must confirm first whenever
+# it would actually overwrite something. Uses the same ConfirmationDialog /
+# push_screen_wait idiom as _confirm_delete / _confirm_dictionary_revert
+# (monkeypatch app.push_screen_wait, mirroring this file's own style-pick
+# tests above).
+
+
+async def test_generate_all_worker_no_confirmation_when_nothing_would_be_overwritten(
+    personas_editor_with_saved_character, monkeypatch
+):
+    app, screen, db, char_id = personas_editor_with_saved_character
+    _configure_backend(monkeypatch)
+    _set_description(screen, "A cheerful adventurer.")
+
+    push_calls: list = []
+
+    async def _fake_push_screen_wait(dialog):
+        push_calls.append(dialog)
+        return True
+
+    monkeypatch.setattr(app, "push_screen_wait", _fake_push_screen_wait)
+    monkeypatch.setattr(
+        personas_screen_module,
+        "run_generation",
+        lambda request: SimpleNamespace(content=b"png-bytes", content_type="image/png"),
+    )
+    apply_mock = AsyncMock()
+    monkeypatch.setattr(screen, "_apply_expression_upload", apply_mock)
+    _capture_avatar_render_worker(screen)
+    screen._expression_generate_inflight.add((char_id, "all"))
+
+    await screen._generate_all_expression_images_worker(char_id)
+
+    assert push_calls == []  # nothing to overwrite -> no dialog
+    assert apply_mock.await_count == 3  # the sweep still ran normally
+
+
+async def test_generate_all_worker_confirms_before_overwriting_staged_avatar(
+    personas_editor_with_saved_character, monkeypatch
+):
+    app, screen, db, char_id = personas_editor_with_saved_character
+    _configure_backend(monkeypatch)
+    editor = _set_description(screen, "A cheerful adventurer.")
+    editor.set_avatar_image(b"already-staged-avatar")
+
+    push_calls: list = []
+
+    async def _fake_push_screen_wait(dialog):
+        push_calls.append(dialog)
+        return True  # user confirms
+
+    monkeypatch.setattr(app, "push_screen_wait", _fake_push_screen_wait)
+    monkeypatch.setattr(
+        personas_screen_module,
+        "run_generation",
+        lambda request: SimpleNamespace(content=b"png-bytes", content_type="image/png"),
+    )
+    apply_mock = AsyncMock()
+    monkeypatch.setattr(screen, "_apply_expression_upload", apply_mock)
+    _capture_avatar_render_worker(screen)
+    screen._expression_generate_inflight.add((char_id, "all"))
+
+    await screen._generate_all_expression_images_worker(char_id)
+
+    assert len(push_calls) == 1
+    assert editor.current_avatar_bytes() == b"png-bytes"  # sweep proceeded
+    assert apply_mock.await_count == 3
+
+
+async def test_generate_all_worker_confirms_before_overwriting_existing_expression_image(
+    personas_editor_with_saved_character, monkeypatch
+):
+    """An existing expression-state image (not the avatar) also counts as
+    "would overwrite"."""
+    app, screen, db, char_id = personas_editor_with_saved_character
+    _configure_backend(monkeypatch)
+    _set_description(screen, "A cheerful adventurer.")
+    db.set_character_expression_image(char_id, "thinking", b"already-there")
+
+    push_calls: list = []
+
+    async def _fake_push_screen_wait(dialog):
+        push_calls.append(dialog)
+        return True
+
+    monkeypatch.setattr(app, "push_screen_wait", _fake_push_screen_wait)
+    monkeypatch.setattr(
+        personas_screen_module,
+        "run_generation",
+        lambda request: SimpleNamespace(content=b"png-bytes", content_type="image/png"),
+    )
+    _capture_avatar_render_worker(screen)
+    screen._expression_generate_inflight.add((char_id, "all"))
+
+    await screen._generate_all_expression_images_worker(char_id)
+
+    assert len(push_calls) == 1
+    assert db.get_character_expression_image(char_id, "thinking") == b"png-bytes"
+
+
+async def test_generate_all_worker_declining_confirmation_aborts_with_no_writes(
+    personas_editor_with_saved_character, monkeypatch
+):
+    app, screen, db, char_id = personas_editor_with_saved_character
+    _configure_backend(monkeypatch)
+    editor = _set_description(screen, "A cheerful adventurer.")
+    editor.set_avatar_image(b"already-staged-avatar")
+
+    async def _fake_push_screen_wait(dialog):
+        return False  # Cancel
+
+    monkeypatch.setattr(app, "push_screen_wait", _fake_push_screen_wait)
+    run_calls: list = []
+
+    def _run_generation(request):
+        run_calls.append(request)
+        return SimpleNamespace(content=b"png-bytes", content_type="image/png")
+
+    monkeypatch.setattr(personas_screen_module, "run_generation", _run_generation)
+    notifications = _capture_notifications(app)
+    screen._expression_generate_inflight.add((char_id, "all"))
+
+    await screen._generate_all_expression_images_worker(char_id)
+
+    assert run_calls == []  # nothing generated
+    assert editor.current_avatar_bytes() == b"already-staged-avatar"  # untouched
+    assert (char_id, "all") not in screen._expression_generate_inflight
+    assert not any("generated" in msg.lower() for msg, _sev in notifications)
+
+
 # ----- Mandatory (c): Generate-all, one failing state -----------------------
 
 
@@ -747,6 +1162,47 @@ async def test_generate_all_worker_one_failing_state_reports_partial_summary(
     for state in ("avatar", "thinking", "speaking", "error"):
         assert (char_id, state) not in screen._expression_generate_inflight
     assert notifications
+    assert notifications[-1] == ("3/4 generated.", "information")
+
+
+async def test_generate_all_worker_counts_only_genuinely_persisted_slots(
+    personas_editor_with_saved_character, monkeypatch
+):
+    """task-563 AC4: exercises the REAL ``_apply_expression_upload`` (not a
+    mock) so a DB-write failure for one state - generation itself
+    succeeded, only the persist step failed - must not be counted as a
+    success in the final summary, even though it already got its own
+    per-slot error notify."""
+    app, screen, db, char_id = personas_editor_with_saved_character
+    _configure_backend(monkeypatch)
+    _set_description(screen, "A cheerful adventurer.")
+
+    monkeypatch.setattr(
+        personas_screen_module,
+        "run_generation",
+        lambda request: SimpleNamespace(content=b"png-bytes", content_type="image/png"),
+    )
+    original_write = db.set_character_expression_image
+
+    def _flaky_write(character_id, state, image, mime=None):
+        if state == "speaking":
+            raise RuntimeError("disk full")
+        return original_write(character_id, state, image, mime)
+
+    monkeypatch.setattr(db, "set_character_expression_image", _flaky_write)
+    _capture_avatar_render_worker(screen)
+    notifications = _capture_notifications(app)
+    screen._expression_generate_inflight.add((char_id, "all"))
+
+    await screen._generate_all_expression_images_worker(char_id)
+
+    # avatar (staged) + thinking + error persisted; speaking's DB write
+    # failed, so it must not count despite generation itself succeeding.
+    assert db.get_character_expression_image(char_id, "speaking") is None
+    assert db.get_character_expression_image(char_id, "thinking") is not None
+    assert db.get_character_expression_image(char_id, "error") is not None
+    severities = [severity for _msg, severity in notifications]
+    assert "error" in severities  # the per-slot failure notify still fires
     assert notifications[-1] == ("3/4 generated.", "information")
 
 

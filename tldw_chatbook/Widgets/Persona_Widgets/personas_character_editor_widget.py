@@ -135,10 +135,22 @@ class PersonasCharacterEditorWidget(Container):
     }
 
     /* Import/export set buttons (Roleplay P3d-2 Task 4) - the "Expressions"
-       section header plus its two whole-set actions on one line. */
+       section header plus its two whole-set actions on one line. Task-563
+       AC1: at narrow terminal widths (120 cols: Import/Export overflow;
+       80 cols: Generate all overflows too) a plain Horizontal hard-clips
+       past its right edge with no way to reach the clipped buttons -
+       Textual has no flex-wrap for a horizontal layout. overflow-x: auto
+       makes the row horizontally scrollable instead (mouse wheel/shift-
+       wheel, or Tab, which auto-scrolls the focused button into view) -
+       the same idiom MainNavigationBar's .main-nav uses for its own
+       button row (UI/Navigation/main_navigation.py). The hidden scrollbar
+       keeps the row's height at 1 line rather than reserving a visible
+       scrollbar track. */
     PersonasCharacterEditorWidget .personas-char-editor-expr-set-row {
         height: auto;
         min-height: 1;
+        overflow-x: auto;
+        scrollbar-size-horizontal: 0;
     }
 
     /* Static defaults to 1fr with no width set, which would otherwise let
@@ -891,15 +903,60 @@ class PersonasCharacterEditorWidget(Container):
             "Advanced ▾" if open_ else "Advanced ▸"
         )
 
+    def has_avatar_image(self) -> bool:
+        """True when the editor holds any avatar image data (embedded bytes
+        or a legacy URL/path string).
+
+        Factored out of ``_set_avatar_status_from_record`` (task-563 AC3):
+        the screen reuses this same truthiness check to decide whether a
+        Generate-all sweep would overwrite an existing avatar and needs to
+        confirm first.
+        """
+        return bool(self._character_data.get("image") or self._character_data.get("avatar"))
+
     def _set_avatar_status_from_record(self) -> None:
-        avatar = (
-            "embedded"
-            if (self._character_data.get("image") or self._character_data.get("avatar"))
-            else "none"
-        )
+        avatar = "embedded" if self.has_avatar_image() else "none"
         self.query_one("#personas-char-editor-avatar-status", Static).update(
             f"Avatar: {avatar}"
         )
+
+    def set_expression_generating(self, state: str, busy: bool) -> None:
+        """Show/clear the in-slot "Generating…" affordance for one
+        expression state (task-563 AC2; spec §1 promised this).
+
+        Overwrites the same Static ``_sync_expression_slots_enabled`` uses
+        for the "Save the character…" hint. Clearing recomputes that same
+        enabled/disabled default from scratch rather than restoring a
+        remembered value, so it self-heals regardless of call order (and a
+        stale clear that lands after a genuine character switch just
+        re-asserts whatever the CURRENTLY loaded character's real hint
+        already is, touching only this one state's Static - never a
+        sibling's).
+
+        Args:
+            state: One of ``EXPRESSION_IMAGE_STATES``.
+            busy: ``True`` to show "Generating…", ``False`` to restore the
+                normal hint text.
+        """
+        hint = self.query_one(f"#personas-char-editor-expr-{state}-hint", Static)
+        if busy:
+            hint.update("Generating…")
+            return
+        enabled = self.expression_character_id() is not None
+        hint.update("" if enabled else "Save the character to add expressions.")
+
+    def set_avatar_generating(self, busy: bool) -> None:
+        """Show/clear the avatar row's "Generating…" affordance (task-563
+        AC2). Mirrors ``set_expression_generating``: clearing recomputes the
+        real status from ``_set_avatar_status_from_record`` rather than
+        restoring a remembered value.
+        """
+        if busy:
+            self.query_one("#personas-char-editor-avatar-status", Static).update(
+                "Avatar: generating…"
+            )
+            return
+        self._set_avatar_status_from_record()
 
     def _mark_dirty(self) -> None:
         if self._loading or self._dirty_posted or self._loaded_snapshot is None:
