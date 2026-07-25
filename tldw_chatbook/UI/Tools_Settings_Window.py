@@ -786,51 +786,6 @@ class ToolsSettingsWindow(Container):
                         tooltip="Controls randomness in responses (0=focused, 2=creative)",
                     )
 
-            # Add spacing before Chat Interface Settings section
-            yield Static("", classes="settings-section-spacer")
-            yield Static("", classes="settings-section-spacer")
-
-            # Chat Interface Settings Group
-            with Container(classes="settings-group"):
-                yield Static("🖥️ Interface Options", classes="settings-group-title")
-
-                yield Checkbox(
-                    "Use Enhanced Chat Window",
-                    value=chat_config.get("use_enhanced_window", False),
-                    id="general-enhanced-chat-window",
-                    classes="settings-checkbox",
-                    tooltip="Enable advanced features like image support and rich formatting",
-                )
-                yield Static(
-                    "⚡ Enhanced mode provides image support, better formatting, and advanced features",
-                    classes="help-text settings-indent",
-                )
-
-                yield Static("", classes="settings-separator")
-
-                yield Checkbox(
-                    "Enable Chat Tabs",
-                    value=chat_config.get("enable_tabs", False),
-                    id="general-enable-chat-tabs",
-                    classes="settings-checkbox",
-                    tooltip="Allow multiple chat conversations in tabs",
-                )
-
-                with Container(classes="settings-indent"):
-                    yield Label("Maximum Tabs:", classes="settings-label")
-                    yield Input(
-                        value=str(chat_config.get("max_tabs", 10)),
-                        id="general-max-chat-tabs",
-                        classes="settings-input settings-short-input",
-                        placeholder="10",
-                        tooltip="Maximum number of concurrent chat tabs",
-                    )
-
-                yield Static(
-                    "🔄 Interface changes require app restart to take effect",
-                    classes="help-text warning-text",
-                )
-
             # Add spacing before Quick Actions section
             yield Static("", classes="settings-section-spacer")
             yield Static("", classes="settings-section-spacer")
@@ -2235,14 +2190,6 @@ class ToolsSettingsWindow(Container):
                 "Strip Thinking Tags",
                 value=chat_config.get("strip_thinking_tags", True),
                 id="config-chat-strip-thinking",
-            )
-        )
-
-        widgets.append(
-            Checkbox(
-                "Use Enhanced Window (with image support)",
-                value=chat_config.get("use_enhanced_window", False),
-                id="config-chat-enhanced-window",
             )
         )
 
@@ -3881,61 +3828,6 @@ Thank you for using tldw-chatbook! 🎉
                     "Invalid chat temperature value", severity="warning"
                 )
 
-            # Enhanced Chat Window
-            enhanced_window = self.query_one(
-                "#general-enhanced-chat-window", Checkbox
-            ).value
-            current_enhanced = self.config_data.get("chat_defaults", {}).get(
-                "use_enhanced_window", False
-            )
-            if enhanced_window != current_enhanced:
-                if save_setting_to_cli_config(
-                    "chat_defaults", "use_enhanced_window", enhanced_window
-                ):
-                    saved_count += 1
-                    self.app_instance.notify(
-                        "Enhanced chat window setting changed. Please restart the app for this change to take effect.",
-                        severity="warning",
-                        timeout=8,
-                    )
-
-            # Chat Tabs Settings
-            enable_tabs = self.query_one("#general-enable-chat-tabs", Checkbox).value
-            current_tabs_enabled = self.config_data.get("chat_defaults", {}).get(
-                "enable_tabs", False
-            )
-            if enable_tabs != current_tabs_enabled:
-                if save_setting_to_cli_config(
-                    "chat_defaults", "enable_tabs", enable_tabs
-                ):
-                    saved_count += 1
-                    self.app_instance.notify(
-                        "Chat tabs setting changed. Please restart the app for this change to take effect.",
-                        severity="warning",
-                        timeout=8,
-                    )
-
-            max_tabs_str = self.query_one("#general-max-chat-tabs", Input).value
-            try:
-                max_tabs = int(max_tabs_str)
-                if max_tabs < 1:
-                    max_tabs = 1
-                    self.app_instance.notify(
-                        "Maximum tabs set to minimum value of 1", severity="info"
-                    )
-                elif max_tabs > 50:
-                    max_tabs = 50
-                    self.app_instance.notify(
-                        "Maximum tabs set to maximum value of 50", severity="info"
-                    )
-                if save_setting_to_cli_config("chat_defaults", "max_tabs", max_tabs):
-                    saved_count += 1
-            except ValueError:
-                self.app_instance.notify(
-                    f"Invalid max tabs value: {max_tabs_str}. Must be a number.",
-                    severity="warning",
-                )
-
             # Character Defaults
             if save_setting_to_cli_config(
                 "character_defaults",
@@ -4104,15 +3996,6 @@ Thank you for using tldw-chatbook! 🎉
             ).value = default_chat_provider
             self.query_one("#general-chat-model", Input).value = "gpt-4o"
             self.query_one("#general-chat-temperature", Input).value = "0.6"
-            self.query_one(
-                "#general-enhanced-chat-window", Checkbox
-            ).value = False  # Default is disabled
-            self.query_one(
-                "#general-enable-chat-tabs", Checkbox
-            ).value = False  # Default is disabled
-            self.query_one(
-                "#general-max-chat-tabs", Input
-            ).value = "10"  # Default is 10 tabs
 
             # Reset Character Defaults
             default_char_provider = (
@@ -5497,12 +5380,6 @@ Thank you for using tldw-chatbook! 🎉
                 self.query_one("#config-chat-strip-thinking", Checkbox).value,
             ):
                 saved_count += 1
-            if save_setting_to_cli_config(
-                "chat_defaults",
-                "use_enhanced_window",
-                self.query_one("#config-chat-enhanced-window", Checkbox).value,
-            ):
-                saved_count += 1
 
             # Save chat.images settings
             if save_setting_to_cli_config(
@@ -5594,7 +5471,6 @@ Thank you for using tldw-chatbook! 🎉
             self.query_one("#config-chat-min-p", Input).value = "0.05"
             self.query_one("#config-chat-top-k", Input).value = "50"
             self.query_one("#config-chat-strip-thinking", Checkbox).value = True
-            self.query_one("#config-chat-enhanced-window", Checkbox).value = False
 
             # Reset image settings
             self.query_one("#config-chat-images-enabled", Checkbox).value = True

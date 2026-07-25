@@ -105,15 +105,11 @@ def _test_cli_setting(section: str, key: str, default=None):
         default: Caller-provided fallback value.
 
     Returns:
-        Test-pinned setting value for relevant chat/splash keys, otherwise
+        Test-pinned setting value for relevant splash keys, otherwise
         the caller default.
     """
     if section == "splash_screen" and key == "enabled":
         return False
-    if section == "chat_defaults" and key == "enable_tabs":
-        return True
-    if section == "chat_defaults" and key == "max_tabs":
-        return 10
     return default
 
 

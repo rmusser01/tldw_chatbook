@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-import tomllib
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -12,7 +10,6 @@ from tldw_chatbook.Chat.chat_handoff_models import (
     ChatHandoffPayload,
     HANDOFF_BODY_CHAR_LIMIT,
 )
-from tldw_chatbook.config import CONFIG_TOML_CONTENT
 from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -60,15 +57,6 @@ def test_chat_handoff_packet_exposes_sections_ui_needs_without_screen_inference(
     assert "server_unavailable" in sections["error_contracts"]
 
 
-def test_chat_tabs_are_enabled_by_default_for_handoff_capable_chat():
-    generated_config = tomllib.loads(CONFIG_TOML_CONTENT)
-    repo_config_path = Path(__file__).resolve().parents[2] / "config.toml"
-    repo_config = tomllib.loads(repo_config_path.read_text(encoding="utf-8"))
-
-    assert generated_config["chat_defaults"]["enable_tabs"] is True
-    assert repo_config["chat_defaults"]["enable_tabs"] is True
-
-
 def test_open_chat_with_handoff_stores_payload_and_navigates():
     app = Mock()
     app.pending_chat_handoff = None
@@ -80,8 +68,7 @@ def test_open_chat_with_handoff_stores_payload_and_navigates():
 
     from tldw_chatbook.app import TldwCli
 
-    with patch("tldw_chatbook.app.get_cli_setting", return_value=True):
-        TldwCli.open_chat_with_handoff(app, payload)
+    TldwCli.open_chat_with_handoff(app, payload)
 
     assert app.pending_chat_handoff is payload
     message = app.post_message.call_args.args[0]
@@ -89,32 +76,12 @@ def test_open_chat_with_handoff_stores_payload_and_navigates():
     assert message.screen_name == TAB_CHAT
 
 
-def test_open_chat_with_handoff_refuses_when_tabs_disabled():
-    app = Mock()
-    app.pending_chat_handoff = None
-    app.post_message = Mock()
-    app.notify = Mock()
-    payload = ChatHandoffPayload(
-        source="notes", item_type="note", title="Note", body="Body"
-    )
-
-    from tldw_chatbook.app import TldwCli
-
-    with patch("tldw_chatbook.app.get_cli_setting", return_value=False):
-        TldwCli.open_chat_with_handoff(app, payload)
-
-    assert app.pending_chat_handoff is None
-    app.post_message.assert_not_called()
-    app.notify.assert_called_once()
-
-
-def test_open_chat_with_handoff_blocked_message_defaults_to_use_in_chat():
-    """Legacy callers (MediaWindow_v2, search_rag_window, the
-    standalone Notes tab, Study/Skills/Watchlists/Personas screens) don't
-    pass ``action_label`` and must keep seeing today's exact wording -- the
-    shared ``open_chat_with_handoff`` blocked-tabs gate is reachable from
-    many destinations whose own button still reads "Use in Chat" (UX wave
-    M2 investigation: this message is one shared string, not per-caller).
+def test_open_chat_with_handoff_proceeds_when_tabs_disabled():
+    """The retired chat-tabs subsystem's flag no longer gates handoffs
+    (task-577 U5): ``open_chat_with_handoff`` must stage the payload and
+    navigate to Chat unconditionally, even when ``enable_tabs`` is
+    absent/False in config, with no "requires chat tabs to be enabled"
+    notify.
     """
     app = Mock()
     app.pending_chat_handoff = None
@@ -129,37 +96,11 @@ def test_open_chat_with_handoff_blocked_message_defaults_to_use_in_chat():
     with patch("tldw_chatbook.app.get_cli_setting", return_value=False):
         TldwCli.open_chat_with_handoff(app, payload)
 
-    app.notify.assert_called_once()
-    assert (
-        app.notify.call_args.args[0] == "Use in Chat requires chat tabs to be enabled."
-    )
-
-
-def test_open_chat_with_handoff_blocked_message_honors_caller_action_label():
-    """The Library screen's four handoff call sites (notes/media/
-    conversations/hub) pass ``action_label="Use in Console"`` since every
-    Library "Use in"-style button already reads "Use in Console" -- the
-    blocked-tabs notify must match the button the user actually pressed
-    instead of always saying "Chat" (UX wave M2).
-    """
-    app = Mock()
-    app.pending_chat_handoff = None
-    app.post_message = Mock()
-    app.notify = Mock()
-    payload = ChatHandoffPayload(
-        source="library", item_type="media", title="Media", body="Body"
-    )
-
-    from tldw_chatbook.app import TldwCli
-
-    with patch("tldw_chatbook.app.get_cli_setting", return_value=False):
-        TldwCli.open_chat_with_handoff(app, payload, action_label="Use in Console")
-
-    app.notify.assert_called_once()
-    assert (
-        app.notify.call_args.args[0]
-        == "Use in Console requires chat tabs to be enabled."
-    )
+    assert app.pending_chat_handoff is payload
+    message = app.post_message.call_args.args[0]
+    assert isinstance(message, NavigateToScreen)
+    assert message.screen_name == TAB_CHAT
+    app.notify.assert_not_called()
 
 
 def _character_start_chat_payload(

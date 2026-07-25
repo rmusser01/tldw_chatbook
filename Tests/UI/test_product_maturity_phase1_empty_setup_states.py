@@ -89,12 +89,6 @@ def _test_cli_setting(section: str, key: str, default=None):
     return default
 
 
-def _test_chat_window_setting(section: str, key: str, default=None):
-    if section == "chat_defaults" and key == "enable_tabs":
-        return False
-    return _test_cli_setting(section, key, default)
-
-
 def _prepare_clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     for env_var, path_name in (
         ("HOME", "home"),
@@ -107,7 +101,7 @@ def _prepare_clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
         monkeypatch.setenv(env_var, str(path))
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        '[chat_defaults]\nprovider = "OpenAI"\nmodel = "gpt-4o"\nenable_tabs = false\n',
+        '[chat_defaults]\nprovider = "OpenAI"\nmodel = "gpt-4o"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))

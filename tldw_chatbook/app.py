@@ -3521,18 +3521,12 @@ class TldwCli(
             payload: The handoff payload to stage as pending Chat context.
             action_label: The calling surface's own action label (e.g. "Use
                 in Chat" for the legacy MediaWindow_v2/search_rag_window
-                surfaces, "Use in Console" for Library) so the blocked-gate
-                notify below reads honestly for whichever button the user
-                actually pressed, instead of always saying "Chat" even from
-                a destination whose own button says "Console" (M2).
+                surfaces, "Use in Console" for Library). Currently unused
+                inside this method -- it previously fed the retired
+                chat-tabs gate's blocked notify (task-577 U5, which removed
+                the gate so handoffs proceed unconditionally); kept for
+                caller-signature compatibility.
         """
-        if not get_cli_setting("chat_defaults", "enable_tabs", True):
-            self.notify(
-                f"{action_label} requires chat tabs to be enabled.",
-                severity="warning",
-            )
-            return
-
         self.pending_chat_handoff = payload
         self.post_message(NavigateToScreen(TAB_CHAT))
 
