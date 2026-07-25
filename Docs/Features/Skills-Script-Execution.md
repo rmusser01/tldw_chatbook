@@ -54,6 +54,59 @@ Deleting a skill also drops its grant, so reinstalling the same name never silen
 reactivates a permission you gave to a previous installation. Grants are visible and
 revocable per skill in **Library ▸ Skills**, in the trust panel ("Revoke script access").
 
+## Trust material
+
+Both seams that expose a bundle's files to an agent — **running** a script and
+**reading** one via the `skill_file` tool — require the file to appear in the skill's
+trusted manifest. Passing the path validator is not enough.
+
+This matters because trust review is not a whole-directory guarantee. The fingerprint
+scan prunes VCS/OS/build junk so a real bundle's litter cannot make a skill permanently
+untrustable, and a pruned file is consequently never fingerprinted, never diffed, and
+never displayed to you during review. Anything reachable through those seams must
+therefore be something you actually saw.
+
+The pruned set is `.git/`, `.github/`, `.hg/`, `.svn/`, `node_modules/`, `__pycache__/`,
+`.DS_Store`, `Thumbs.db`, and the suffixes `.pyc`, `.pyo`, `~`, `.tmp`, `.swp`, `.part`.
+Most of those were already unreachable — the supporting-path validator rejects any
+segment that does not begin with an alphanumeric, which covers every dot- and
+underscore-prefixed entry above. The reachable remainder was `node_modules/**`,
+`Thumbs.db`, and files ending `.tmp`/`.part`/`.swp`/`.pyc`/`.pyo`; of those, all but
+`node_modules/**` text and `*.tmp`/`*.part` text are binary or editor artifacts that
+reads already refused.
+
+**Decision (task-578):** reads were tightened to match execution, with **one deliberate
+exemption for vendored dependency data**. A skill that vendors a dependency legitimately
+needs to read it, and requiring `node_modules/` to be fingerprinted would defeat the very
+pruning that keeps such bundles trustable at all.
+
+So reads resolve as follows:
+
+| Path | Readable? | Runnable? |
+|---|---|---|
+| Fingerprinted (in the trust manifest) | Yes | Yes, subject to the three gates |
+| Vendored dependency tree (`node_modules/**`) | **Yes, exempted** | **Never** |
+| Other pruned paths (`*.tmp`, `*.part`, `*.swp`, `*.pyc`, …) | No | No |
+
+The exemption is **read-only and narrow by design**. Transient editor and build artifacts
+are not data any skill needs to read, so they stay refused; and vendored code never
+becomes runnable, since execution still demands manifest membership with no exemption.
+
+Because an exempted file is by definition one no human saw at trust review, the read is
+labelled: the result carries `trust_reviewed: false` and the returned content is prefixed
+with a banner telling the agent to treat it as untrusted input rather than instructions.
+That banner rides in the content because content is the only channel that reaches the
+model.
+
+The residual is worth stating plainly: **a bundle can place agent-readable text under
+`node_modules/` that never appears in your trust review.** The banner mitigates it, but a
+sufficiently credulous agent could still act on such text. If that matters for your
+threat model, do not install bundles that vendor dependencies you have not inspected.
+
+In both seams, a file that exists but is neither trust material nor exempt is refused with
+the *same* error as a genuinely missing file, so the refusal cannot be used to probe what
+a bundle contains.
+
 ## What can be run
 
 Two mechanisms, chosen by the file itself:
@@ -147,11 +200,11 @@ The sandbox is best-effort, not a jail. Known and accepted:
   your user account can — including back into its own bundle or another skill's. A write
   that lands on a *fingerprinted* file is caught: it quarantines the skill and drops any
   standing grant at the next check. A write to a junk-pruned path (`node_modules/`,
-  `*.tmp`, ...) leaves the digest untouched and raises no alarm. That cannot escalate into
-  execution, because only manifest-fingerprinted files can ever run — but it is not
-  invisible either: a pruned file's contents are still *readable* by the agent through the
-  `skill_file` tool, so a script can leave text there that a later turn reads and acts on,
-  and the trust review will never have shown it to you.
+  `*.tmp`, ...) leaves the digest untouched and raises no alarm. Such a file can never be
+  executed, since execution requires trust-manifest membership with no exemption. It is
+  also unreadable — *except* under a vendored dependency tree, which is read-exempt (see
+  "Trust material"); a write there produces agent-readable text that trust review never
+  showed you, flagged by the unreviewed-read banner but not prevented.
 - **Memory is not capped on macOS/BSD.** `RLIMIT_AS` cannot be lowered there, so peak
   memory is bounded only by the CPU and wall-clock limits. A warning is surfaced with the
   run when this applies.
