@@ -41,6 +41,7 @@ EXPECTED_NAV = [
     ("nav-mcp", "9 MCP"),
     ("nav-acp", "0 ACP"),
     ("nav-lab", "Lab"),
+    ("nav-logs", "Logs"),
     ("nav-settings", "Settings"),
 ]
 
