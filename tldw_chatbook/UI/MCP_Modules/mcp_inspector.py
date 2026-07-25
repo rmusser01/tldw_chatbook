@@ -130,6 +130,7 @@ _ORIGIN_SENTENCES: dict[str, str] = {
     "tool_override": "From this tool's override.",
     "server_default": "Inherited from the server default.",
     "global_default": "Inherited from the global default.",
+    "builtin_default": "Built-in tools default to allow.",
 }
 # Minor 6: fallback for an origin this dict doesn't recognize (e.g.
 # "gate_error", `_resolve_test_gate()`'s synthetic fail-closed origin) --

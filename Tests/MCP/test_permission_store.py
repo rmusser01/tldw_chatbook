@@ -250,3 +250,116 @@ def test_store_states_and_default_global_constants():
     assert STORE_STATES == ("allow", "ask", "deny")
     assert DEFAULT_GLOBAL == "ask"
     assert SCHEMA_VERSION == 1
+
+
+# -- Task 2: GatedToolRef + resolve_builtin_state -----------------------------
+
+from tldw_chatbook.MCP.permission_store import (
+    BUILTIN_TOOL_SERVER_KEY,
+    GatedToolRef,
+    resolve_builtin_state,
+)
+
+BUILTIN_KEY = "agent:builtin"
+
+
+def _ref(name="calculator", tags=()):
+    return GatedToolRef(
+        server_key=BUILTIN_KEY,
+        name=name,
+        description="d",
+        input_schema={"type": "object"},
+        tags=tuple(tags),
+    )
+
+
+def _payload(*, global_default=None, server_default=None, tool_state=None):
+    server: dict = {}
+    if server_default is not None:
+        server["default"] = server_default
+    if tool_state is not None:
+        server["tools"] = {"calculator": {"state": tool_state}}
+    profile: dict = {"servers": {BUILTIN_KEY: server} if server else {}}
+    if global_default is not None:
+        profile["global_default"] = global_default
+    return {"profiles": {"default": profile}}
+
+
+def test_builtin_floor_is_allow_not_the_mcp_global_default():
+    # MCP's global default is "ask"; built-ins must NOT inherit it, or
+    # calculator would prompt on every use.
+    eff = resolve_builtin_state(_payload(global_default="ask"), _ref())
+    assert eff.state == "allow"
+    assert eff.risk_floored is False
+
+
+def test_empty_payload_resolves_to_allow_floor():
+    eff = resolve_builtin_state({}, _ref())
+    assert eff.state == "allow"
+
+
+def test_high_risk_tag_floors_inherited_allow_to_ask():
+    eff = resolve_builtin_state({}, _ref(tags=("mutates",)))
+    assert eff.state == "ask"
+    assert eff.risk_floored is True
+
+
+def test_explicit_tool_override_allow_is_not_floored():
+    eff = resolve_builtin_state(
+        _payload(tool_state="allow"), _ref(tags=("mutates",))
+    )
+    assert eff.state == "allow"
+    assert eff.origin == "tool_override"
+    assert eff.risk_floored is False
+
+
+def test_server_default_beats_the_builtin_floor():
+    eff = resolve_builtin_state(_payload(server_default="deny"), _ref())
+    assert eff.state == "deny"
+    assert eff.origin == "server_default"
+
+
+def test_no_hash_comparison_for_builtins():
+    # An allow override with a STALE/absent definition_hash must stay
+    # allow -- the rug-pull guard is deliberately not applied to
+    # in-process code (it would re-prompt on every app upgrade).
+    payload = _payload(tool_state="allow")
+    entry = payload["profiles"]["default"]["servers"][BUILTIN_KEY]["tools"]
+    entry["calculator"]["definition_hash"] = "stale-and-wrong"
+    eff = resolve_builtin_state(payload, _ref())
+    assert eff.state == "allow"
+    assert eff.config_changed is False
+
+
+def test_builtin_and_mcp_builtin_server_namespaces_are_disjoint():
+    """A decision for the built-in MCP SERVER must not govern the
+    agent-runtime tool of the same name, or vice versa."""
+    from tldw_chatbook.MCP.readiness import BUILTIN_SERVER_KEY
+
+    assert BUILTIN_SERVER_KEY != BUILTIN_TOOL_SERVER_KEY
+    # A deny recorded against the MCP built-in server leaves the
+    # agent-runtime tool of the same name on its own floor.
+    payload = {
+        "profiles": {
+            "default": {
+                "servers": {
+                    BUILTIN_SERVER_KEY: {"tools": {"calculator": {"state": "deny"}}}
+                }
+            }
+        }
+    }
+    assert resolve_builtin_state(payload, _ref("calculator")).state == "allow"
+
+
+def test_mcp_resolver_is_unaffected_by_the_builtin_floor():
+    # Guard the "do not modify resolve_effective_state" constraint: an
+    # MCP tool with no entries still inherits the MCP global default.
+    from tldw_chatbook.MCP.permission_store import resolve_effective_state
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    tool = HubTool(
+        server_key="local:x", server_label="x", source="local",
+        name="t", description="d", input_schema=None, tags=(),
+        stale=False, executable=True,
+    )
+    assert resolve_effective_state({}, tool).state == "ask"
