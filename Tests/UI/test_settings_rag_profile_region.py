@@ -3698,8 +3698,12 @@ async def test_recompose_releases_a_capture_that_lands_in_the_deferred_teardown_
     Fixed by also overriding ``BaseAppScreen.recompose()`` (not just
     ``refresh()``): it releases capture as the coroutine's first
     synchronous statement, immediately before ``super().recompose()``
-    performs the actual removal -- closing the window rather than merely
-    narrowing it.
+    performs the actual removal -- narrowing the window to the teardown
+    drain itself (an EARLIER draft of this docstring overclaimed "closing
+    it entirely"; a code-review probe proved a residual gap during the
+    drain -- see ``test_post_recompose_sweep_releases_a_capture_dispatched_during_the_teardown_drain``
+    immediately below, and ``recompose()``'s own docstring, for that
+    narrower window and its separate post-recompose sweep fix).
     """
     app = _build_test_app()
     seen_routes: list[str] = []
@@ -3744,4 +3748,67 @@ async def test_recompose_releases_a_capture_that_lands_in_the_deferred_teardown_
         assert seen_routes, (
             "top nav bar click produced no route change -- clicks are "
             "still being swallowed app-wide (task-627)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_post_recompose_sweep_releases_a_capture_dispatched_during_the_teardown_drain():
+    """task-627 code-review finding (Important, confirmed reproducible at
+    the reviewed commit): a RESIDUAL capture-leak window survives the
+    ``recompose()`` override above, one level deeper than the
+    call_next-scheduling gap that override closes.
+
+    ``BaseAppScreen.recompose()``'s pre-teardown release (this file's
+    other task-627 test) runs once, as the very first synchronous
+    statement of the coroutine -- but ``super().recompose()`` itself then
+    ``await``s ``query_children("*")...remove()``, and Textual lets each
+    child's OWN message pump drain during that removal (a separate asyncio
+    task per widget). A message ALREADY queued on a CHILD's pump BEFORE
+    that pre-teardown release even ran -- e.g. a MouseDown
+    ``Screen._forward_event`` posted to an Input, not yet dispatched when
+    the screen's recompose starts -- can still be processed DURING the
+    drain: ``Input._on_mouse_down`` calls ``capture_mouse()``
+    unconditionally, and ``Widget.capture_mouse``/``App.capture_mouse``
+    have no attachment guard, so the widget is re-captured while it is
+    mid-removal. By the time ``recompose()`` returns, ``App.mouse_captured``
+    is left pointing at that now-detached widget -- the exact same
+    app-wide click-swallowing symptom, from a narrower but still-real
+    window.
+
+    Reproduced deterministically here with ``call_later`` on the VICTIM's
+    own message pump (not the screen's) -- mechanism-equivalent to a
+    forwarded MouseDown whose dispatch is still pending on the widget's
+    pump when the enclosing screen's teardown begins.
+
+    Fixed by a post-``super().recompose()`` sweep in
+    ``BaseAppScreen.recompose()``: once the ENTIRE recompose (removal AND
+    remount) has finished, any still-captured widget that is NOT
+    ``is_attached`` is by definition stale (nothing legitimately captured
+    during remount would already be detached) and is released again.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        victim = screen.query_one("#settings-category-search", Input)
+
+        # Schedule the recompose first (screen next-callback), then queue a
+        # capture-inducing message on the VICTIM's own pump -- modelling a
+        # MouseDown forwarded to the Input but not yet dispatched when the
+        # teardown starts.
+        screen.active_category = "overview"
+        victim.call_later(lambda: pilot.app.capture_mouse(victim))
+
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+
+        captured = pilot.app.mouse_captured
+        assert captured is None, (
+            f"stale capture survived the teardown drain: {captured!r} "
+            f"(attached={getattr(captured, 'is_attached', None)}) -- clicks "
+            "anywhere in the app are silently swallowed again (task-627 "
+            "review finding)"
         )

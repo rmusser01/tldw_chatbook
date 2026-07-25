@@ -118,12 +118,32 @@ class BaseAppScreen(Screen):
         statement of that same coroutine. asyncio only yields control at
         ``await`` points, so nothing else in the event loop can run between
         this release and ``super().recompose()`` initiating the real
-        ``remove()``/``mount_all()`` teardown below it: the window is
-        closed entirely, not just narrowed. Recomposing ALWAYS removes and
-        remounts every child regardless of which specific widget currently
-        holds capture (mirrors the `refresh()` guard's own reasoning), so
-        this releases unconditionally rather than trying to identify
-        whether the captured widget is actually a descendant.
+        ``remove()``/``mount_all()`` teardown below it: this NARROWS the
+        window to the teardown drain itself, it does not close it entirely
+        (post-review correction, task-627: an EARLIER draft of this
+        docstring overclaimed "closed entirely" -- a code-review probe
+        proved that wrong). ``super().recompose()``'s own
+        ``query_children("*")...remove()`` await lets each child's message
+        pump drain before it's actually pruned; a message ALREADY queued on
+        a CHILD's own pump before this method ever ran (e.g. a forwarded
+        MouseDown not yet dispatched) can still be processed DURING that
+        drain -- ``Input._on_mouse_down`` calls ``capture_mouse()``
+        unconditionally, and ``Widget.capture_mouse()`` has no attachment
+        guard, so it happily re-captures a widget that is mid-removal.
+        Recomposing ALWAYS removes and remounts every child regardless of
+        which specific widget currently holds capture (mirrors the
+        `refresh()` guard's own reasoning), so the pre-teardown release
+        above stays unconditional rather than trying to identify whether
+        the captured widget is actually a descendant.
+
+        The sweep below closes that residual gap: once ``recompose()`` has
+        fully finished (removal AND remount both done), a capture that
+        landed during the drain is by definition now pointing at a
+        NO-LONGER-ATTACHED widget (nothing legitimately mounted during
+        remount would already be captured) -- ``is_attached`` distinguishes
+        that stale case from a widget a *later*, entirely unrelated
+        interaction has since legitimately captured (which must be left
+        alone).
         """
         if self.is_running:
             try:
@@ -134,6 +154,16 @@ class BaseAppScreen(Screen):
                     exc_info=True,
                 )
         await super().recompose()
+        if self.is_running:
+            captured = self.app.mouse_captured
+            if captured is not None and not captured.is_attached:
+                try:
+                    self.app.capture_mouse(None)
+                except Exception:
+                    logger.debug(
+                        "Stale post-recompose mouse-capture sweep skipped.",
+                        exc_info=True,
+                    )
 
     def compose(self) -> ComposeResult:
         """Compose the screen with navigation bar and content."""
