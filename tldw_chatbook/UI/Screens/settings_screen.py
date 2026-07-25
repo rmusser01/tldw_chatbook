@@ -7633,7 +7633,16 @@ class SettingsScreen(BaseAppScreen):
         *, rerank_enabled: bool, field_disabled: bool
     ) -> tuple[bool, str]:
         disabled = (not rerank_enabled) or field_disabled
-        suffix = "" if rerank_enabled else " (enable reranking to edit)"
+        # Review fix (AC #4): the suffix names reranking-off as the reason
+        # ONLY when that's the actual, user-actionable reason -- not when a
+        # builtin read-only lock is ALSO in play (the Enable-reranking
+        # checkbox is itself disabled then, so "enable reranking to edit"
+        # would be an unactionable instruction pointing at the wrong cause).
+        suffix = (
+            " (enable reranking to edit)"
+            if (not rerank_enabled and not field_disabled)
+            else ""
+        )
         return disabled, suffix
 
     def _apply_library_rag_rerank_field_state(

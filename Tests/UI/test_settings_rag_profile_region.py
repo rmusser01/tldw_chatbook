@@ -590,6 +590,36 @@ async def test_library_rag_detail_renders_fields_disabled_for_readonly_active_pr
         assert screen.query_one("#settings-library-rag-max-context-size", Input).disabled
 
 
+@pytest.mark.asyncio
+async def test_rerank_fields_disabled_for_readonly_builtin_omit_reranking_suffix(
+    monkeypatch, tmp_path
+):
+    """Review fix (AC #4): a builtin read-only active profile with reranking
+    OFF (e.g. a fresh install's default `hybrid_basic`, and 9 of the 12
+    builtins) must show the rerank Inputs disabled WITHOUT the
+    "(enable reranking to edit)" suffix -- that instruction is unactionable
+    here since the Enable-reranking checkbox is itself disabled by the
+    builtin lock, not by the user's own choice. The suffix is reserved for
+    the case where reranking-off is the ACTUAL, user-actionable reason."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path, active_id="hybrid_basic")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        model_input = screen.query_one("#settings-library-rag-reranker-model", Input)
+        top_k_input = screen.query_one("#settings-library-rag-reranker-top-k", Input)
+        assert model_input.disabled is True
+        assert top_k_input.disabled is True
+        visible_text = _visible_text(screen)
+        assert "(enable reranking to edit)" not in visible_text
+        assert "Reranker model" in visible_text
+        assert "Rerank results" in visible_text
+
+
 # --- Task 1 (RAG settings v2 UX, AC #4): the citations/reranking toggles are
 # real Checkboxes (not Buttons whose label just says "Enabled"/"Disabled"),
 # and the rerank model/results Inputs are dimmed -- never hidden -- whenever
