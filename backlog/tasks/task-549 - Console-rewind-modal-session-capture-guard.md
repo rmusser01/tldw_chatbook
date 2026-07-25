@@ -1,7 +1,7 @@
 ---
 id: TASK-549
 title: 'Console /rewind: guard the modal callback against a changed active session'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-24'
 labels:
@@ -18,6 +18,10 @@ dependencies: []
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The rewind choice callback no-ops with a notify when the active session differs from the one the modal was opened for
-- [ ] #2 Covered by a unit test (fake a session switch between open and dismiss)
+- [x] #1 The rewind choice callback no-ops with a notify when the active session differs from the one the modal was opened for
+- [x] #2 Covered by a unit test (fake a session switch between open and dismiss)
 <!-- AC:END -->
+
+## Implementation Notes
+
+Added an active-session guard at the top of `_apply_console_rewind_choice`: on a mismatch between the store's active session and the session captured at modal-open, the callback notifies ('Console session changed — rewind cancelled.') and returns with zero mutation — covering restore, summarize, and None branches. Unit tests fake a session switch between open and dismiss for both actions.

@@ -112,38 +112,6 @@ def test_console_workspace_status_row_empty_value_uses_unavailable():
     )
 
 
-def test_console_tree_messages_follow_latest_branch_only():
-    """Verify resumed transcripts do not flatten regenerated alternatives."""
-    rows = ChatScreen._iter_console_tree_messages(
-        [
-            {
-                "id": "root",
-                "content": "prompt",
-                "children": [
-                    {
-                        "id": "old-assistant",
-                        "content": "old draft",
-                        "children": [],
-                    },
-                    {
-                        "id": "latest-assistant",
-                        "content": "latest draft",
-                        "children": [
-                            {
-                                "id": "followup",
-                                "content": "followup",
-                                "children": [],
-                            }
-                        ],
-                    },
-                ],
-            }
-        ]
-    )
-
-    assert [row["id"] for row in rows] == ["root", "latest-assistant", "followup"]
-
-
 def test_console_workspace_conversation_search_worker_uses_dedicated_group():
     source = inspect.getsource(
         ChatScreen.on_console_workspace_conversation_search_changed

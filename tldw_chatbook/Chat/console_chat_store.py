@@ -1337,11 +1337,28 @@ class ConsoleChatStore:
         self._persist_context_summary(session_id, summary, boundary_native_id)
 
     def active_path_message_ids(self, session_id: str) -> list[str]:
-        """Return native ids along the active path, root -> active leaf."""
+        """Return native ids along the active path, root -> active leaf.
+
+        A visited-set guards against a malformed cyclic parent chain (real
+        DBs can't produce one -- unique PKs -- so this is defensive-only,
+        mirroring ``_nearest_persisted_ancestor_id``).
+
+        Args:
+            session_id: Native Console session ID.
+
+        Returns:
+            Native message ids on the active path, ordered root first and
+            active leaf last; empty when the session has no active leaf.
+
+        Raises:
+            KeyError: If the session is unknown.
+        """
         self._session_or_raise(session_id)
         ids: list[str] = []
+        visited: set[str] = set()
         current = self._active_leaf_by_session.get(session_id)
-        while current is not None:
+        while current is not None and current not in visited:
+            visited.add(current)
             ids.append(current)
             current = self._native_parent_by_message.get(current)
         ids.reverse()
@@ -2538,12 +2555,18 @@ class ConsoleChatStore:
         transient ``sibling_index``/``sibling_count`` is filled from its native
         parent's ordered child list so the renderer can show ``<``/``>`` + an
         ``n/m`` counter without reaching into store internals.
+
+        A visited-set guards against a malformed cyclic parent chain (real
+        DBs can't produce one -- unique PKs -- so this is defensive-only,
+        mirroring ``_nearest_persisted_ancestor_id``).
         """
         nodes = self._nodes_by_session.get(session_id, {})
         children = self._children_by_parent.get(session_id, {})
         path_ids: list[str] = []
+        visited: set[str] = set()
         current = self._active_leaf_by_session.get(session_id)
-        while current is not None:
+        while current is not None and current not in visited:
+            visited.add(current)
             path_ids.append(current)
             current = self._native_parent_by_message.get(current)
         path_ids.reverse()
@@ -2683,7 +2706,15 @@ class ConsoleChatStore:
         in-memory summary state is set. Absent, unreadable, or dangling (no
         stored summary, or a boundary id not present on the loaded tree)
         leaves the in-memory state unset -- fail-open, matching the design's
-        rule that an inert/dangling boundary falls back to full history.
+        rule that an inert/dangling boundary falls back to full history. A
+        DANGLING boundary additionally best-effort clears the stale
+        persisted pair (``set_conversation_context_summary(conversation_id,
+        None, None)``, guarded + exception-swallowed like the write-through
+        above) so a permanently-orphaned boundary (e.g. its branch was
+        hard-deleted, or a foreign client rewrote history) doesn't linger in
+        the DB row indefinitely -- benign either way (this path already
+        fails open, and the next summarize overwrites it), just misleading
+        to anything that reads the column directly.
         """
         session = self._sessions.get(session_id)
         conversation_id = (
@@ -2710,7 +2741,23 @@ class ConsoleChatStore:
             return
         boundary_native_id = persisted_to_native.get(boundary_persisted_id)
         if boundary_native_id is None:
-            # Dangling: the persisted boundary message isn't on the loaded tree.
+            # Dangling: the persisted boundary message isn't on the loaded
+            # tree. Leave the in-memory state unset (fail-open) AND
+            # best-effort clear the now-permanently-orphaned persisted pair
+            # so it doesn't linger indefinitely -- non-fatal, mirrors
+            # ``_persist_context_summary``'s write-through guard.
+            try:
+                persistence_db.set_conversation_context_summary(
+                    conversation_id, None, None
+                )
+            except Exception:
+                logger.bind(
+                    session_id=session_id,
+                    conversation_id=conversation_id,
+                ).exception(
+                    "Failed to clear stale Console context-summary with a "
+                    "dangling boundary; the persisted pair may linger."
+                )
             return
         self._context_summary_by_session[session_id] = (summary, boundary_native_id)
 

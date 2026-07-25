@@ -325,3 +325,38 @@ def test_deferred_active_leaf_pointer_written_on_append_after_swipe():
         assert db.get_conversation_active_leaf(conversation_id) == a2_pid
     finally:
         db.close_connection()
+
+
+def test_active_path_message_ids_terminates_on_manufactured_cycle():
+    """A visited-set guard keeps the ancestry walk from hanging on a cycle.
+
+    Real DBs can't produce a cyclic parent chain (unique PKs), so this is
+    defensive-only hardening (mirrors ``_nearest_persisted_ancestor_id``'s
+    guard) against a malformed test double or future in-memory bug -- hand
+    -wire a 2-cycle into ``_native_parent_by_message`` directly since the
+    public API refuses to create one.
+    """
+    store, sid = _store_with_session()
+    u = store.append_message(sid, role=ConsoleMessageRole.USER, content="hi")
+    a = store.append_message(sid, role=ConsoleMessageRole.ASSISTANT, content="yo")
+    # hand-wire a cycle: a -> u -> a (bypassing the normal append plumbing,
+    # which can never produce this)
+    store._native_parent_by_message[u.id] = a.id
+
+    ids = store.active_path_message_ids(sid)
+    assert set(ids) <= {u.id, a.id}
+    assert len(ids) <= 2
+
+
+def test_recompute_active_path_terminates_on_manufactured_cycle():
+    """Same cycle guard for ``_recompute_active_path``'s node-materializing walk."""
+    store, sid = _store_with_session()
+    u = store.append_message(sid, role=ConsoleMessageRole.USER, content="hi")
+    a = store.append_message(sid, role=ConsoleMessageRole.ASSISTANT, content="yo")
+    store._native_parent_by_message[u.id] = a.id
+
+    store._recompute_active_path(sid)
+
+    path = store.messages_for_session(sid)
+    assert len(path) <= 2
+    assert {m.id for m in path} <= {u.id, a.id}
