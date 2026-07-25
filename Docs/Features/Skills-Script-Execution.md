@@ -130,11 +130,14 @@ The sandbox is best-effort, not a jail. Known and accepted:
   account can read.
 - **Writes outside the scratch directory are still possible.** Only the *working
   directory* is scratch; nothing blocks an absolute path. A script can write anywhere
-  your user account can — including back into its own bundle or another skill's. Such a
-  write does not go unnoticed for anything that matters: a new or modified fingerprinted
-  file quarantines the skill and drops any standing grant at the next check. But a write
-  to a junk-pruned path (`node_modules/`, `*.tmp`, ...) leaves the digest untouched — it
-  simply produces nothing runnable, since only manifest-fingerprinted files can execute.
+  your user account can — including back into its own bundle or another skill's. A write
+  that lands on a *fingerprinted* file is caught: it quarantines the skill and drops any
+  standing grant at the next check. A write to a junk-pruned path (`node_modules/`,
+  `*.tmp`, ...) leaves the digest untouched and raises no alarm. That cannot escalate into
+  execution, because only manifest-fingerprinted files can ever run — but it is not
+  invisible either: a pruned file's contents are still *readable* by the agent through the
+  `skill_file` tool, so a script can leave text there that a later turn reads and acts on,
+  and the trust review will never have shown it to you.
 - **Memory is not capped on macOS/BSD.** `RLIMIT_AS` cannot be lowered there, so peak
   memory is bounded only by the CPU and wall-clock limits. A warning is surfaced with the
   run when this applies.

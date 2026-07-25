@@ -1002,6 +1002,12 @@ class LocalSkillsService:
                 raise ValueError(f"local_skill_exists:{skill_name}")
             skill_dir = self._skill_dir(skill_name)
             if request.overwrite and skill_dir.exists():
+                # Replacing a skill's files drops any standing script grant, so
+                # the permission never carries from the granted installation to
+                # a different one under the same name (same reason delete_skill
+                # revokes). A byte-identical re-import would re-pin to the same
+                # digest anyway; this keeps the invariant uniform.
+                self._revoke_script_grant_best_effort(skill_name)
                 shutil.rmtree(skill_dir)
             skill_dir.mkdir(parents=True, exist_ok=True)
             existing = records.get(skill_name) if request.overwrite else None
@@ -1086,6 +1092,9 @@ class LocalSkillsService:
                 raise ValueError(f"local_skill_exists:{skill_name}")
             skill_dir = self._skill_dir(skill_name)
             if overwrite and skill_dir.exists():
+                # See import_skill: replacing a skill's files drops any standing
+                # script grant so it cannot carry to a different installation.
+                self._revoke_script_grant_best_effort(skill_name)
                 shutil.rmtree(skill_dir)
             skill_dir.mkdir(parents=True, exist_ok=True)
             existing = records.get(skill_name) if overwrite else None
@@ -1435,7 +1444,16 @@ class LocalSkillsService:
             )
             return False
         try:
-            return relative_path in accessor(skill_name)
+            trusted = accessor(skill_name)
+            # Coerce to a set before the membership test. A trust service that
+            # returned a plain str would otherwise turn `in` into a SUBSTRING
+            # match, so a manifest rendered as "scripts/a.py|node_modules/x.sh"
+            # would make an untrusted path test True -- the exact hole this
+            # gate exists to close. Every sibling guard here is duck-type
+            # hardened the same way.
+            if isinstance(trusted, (str, bytes)):
+                return False
+            return relative_path in set(trusted)
         except Exception:  # noqa: BLE001 — an unanswerable trust query is a refusal
             logger.warning(
                 "trusted_file_paths() failed for skill {!r}; refusing script run",
