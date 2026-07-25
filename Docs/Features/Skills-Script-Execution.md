@@ -54,6 +54,39 @@ Deleting a skill also drops its grant, so reinstalling the same name never silen
 reactivates a permission you gave to a previous installation. Grants are visible and
 revocable per skill in **Library ▸ Skills**, in the trust panel ("Revoke script access").
 
+## Trust material
+
+Both seams that expose a bundle's files to an agent — **running** a script and
+**reading** one via the `skill_file` tool — require the file to appear in the skill's
+trusted manifest. Passing the path validator is not enough.
+
+This matters because trust review is not a whole-directory guarantee. The fingerprint
+scan prunes VCS/OS/build junk so a real bundle's litter cannot make a skill permanently
+untrustable, and a pruned file is consequently never fingerprinted, never diffed, and
+never displayed to you during review. Anything reachable through those seams must
+therefore be something you actually saw.
+
+The pruned set is `.git/`, `.github/`, `.hg/`, `.svn/`, `node_modules/`, `__pycache__/`,
+`.DS_Store`, `Thumbs.db`, and the suffixes `.pyc`, `.pyo`, `~`, `.tmp`, `.swp`, `.part`.
+Most of those were already unreachable — the supporting-path validator rejects any
+segment that does not begin with an alphanumeric, which covers every dot- and
+underscore-prefixed entry above. The reachable remainder was `node_modules/**`,
+`Thumbs.db`, and files ending `.tmp`/`.part`/`.swp`/`.pyc`/`.pyo`; of those, all but
+`node_modules/**` text and `*.tmp`/`*.part` text are binary or editor artifacts that
+reads already refused.
+
+**Decision (task-578):** reads were tightened to match execution rather than left
+permissive. A skill that legitimately needs the agent to read a file should ship it on a
+fingerprinted path, so the file appears in trust review. The alternative — allowing reads
+of unreviewed content — would let a bundle carry agent-readable instructions you never
+saw. The compatibility cost is narrow by the analysis above, and it is a deliberate
+breaking change for any bundle that relied on reading its own vendored `node_modules/`
+text or a `*.tmp`/`*.part` file.
+
+In both seams, a file that exists but is not trust material is refused with the *same*
+error as a genuinely missing file, so the refusal cannot be used to probe what a bundle
+contains.
+
 ## What can be run
 
 Two mechanisms, chosen by the file itself:
@@ -147,11 +180,10 @@ The sandbox is best-effort, not a jail. Known and accepted:
   your user account can — including back into its own bundle or another skill's. A write
   that lands on a *fingerprinted* file is caught: it quarantines the skill and drops any
   standing grant at the next check. A write to a junk-pruned path (`node_modules/`,
-  `*.tmp`, ...) leaves the digest untouched and raises no alarm. That cannot escalate into
-  execution, because only manifest-fingerprinted files can ever run — but it is not
-  invisible either: a pruned file's contents are still *readable* by the agent through the
-  `skill_file` tool, so a script can leave text there that a later turn reads and acts on,
-  and the trust review will never have shown it to you.
+  `*.tmp`, ...) leaves the digest untouched and raises no alarm — but it is inert: such a
+  file can neither be executed nor read back, because both seams require trust-manifest
+  membership (see "Trust material" below). The write itself is not prevented; it simply
+  produces nothing the agent can use.
 - **Memory is not capped on macOS/BSD.** `RLIMIT_AS` cannot be lowered there, so peak
   memory is bounded only by the CPU and wall-clock limits. A warning is surfaced with the
   run when this applies.

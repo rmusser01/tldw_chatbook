@@ -1239,8 +1239,6 @@ class LocalSkillsService:
         return self._response_for_record(self._load_index()[skill_name])
 
     async def export_skill(self, skill_name: str) -> Any:
-        import stat
-
         from ..tldw_api.skills_schemas import _normalize_skill_name
 
         self._enforce("skills.export.launch.local")
@@ -1325,12 +1323,19 @@ class LocalSkillsService:
         load-bearing: policy gate, per-READ trust re-verification (a skill
         revoked mid-run stops being readable immediately), path validation,
         containment (checked before any filesystem stat, so an escape can
-        never be distinguished from a genuinely missing file), then the same
-        read discipline `_read_text_preserving_newlines` already applies to
-        the skill body. The exact canonical body path (``"SKILL.md"``) is
-        readable through this seam too -- only that literal path skips the
-        supporting-file validator's case-insensitive rejection; any nested
-        or differently-cased variant still goes through it unchanged.
+        never be distinguished from a genuinely missing file), trusted-manifest
+        membership, then the same read discipline
+        `_read_text_preserving_newlines` already applies to the skill body. The
+        exact canonical body path (``"SKILL.md"``) is readable through this
+        seam too -- only that literal path skips the supporting-file
+        validator's case-insensitive rejection; any nested or differently-cased
+        variant still goes through it unchanged.
+
+        A file must be TRUST MATERIAL to be readable (task-578): the trust
+        scanner prunes VCS/OS/build junk, so a pruned path is never
+        fingerprinted and never shown in a trust review -- reading one would
+        surface content the reviewing human never saw. This seam therefore
+        asks the manifest, exactly as the execution seam does; the two agree.
 
         Args:
             skill_name: Canonical skill name.
@@ -1343,8 +1348,11 @@ class LocalSkillsService:
 
         Raises:
             SkillTrustBlockedError: Skill not currently trusted.
-            ValueError: Bad path, unknown skill, or missing file
-                (``local_skill_file_not_found:...``).
+            ValueError: Bad path, unknown skill, missing file, or a file the
+                trust manifest does not fingerprint -- all surfaced as the
+                same ``local_skill_file_not_found:<relative_path>`` error KIND,
+                so neither an escape nor an untrusted-but-present file can be
+                distinguished from a genuinely missing one.
         """
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.skills_schemas import validate_supporting_file_path
@@ -1375,7 +1383,19 @@ class LocalSkillsService:
         # resolution escapes skill_dir short-circuits to the SAME
         # "local_skill_file_not_found" error as a missing file, before
         # is_file()/stat() ever run on it.
-        if get_safe_relative_path(path, skill_dir) is None:
+        contained = get_safe_relative_path(path, skill_dir)
+        if contained is None:
+            raise ValueError(f"local_skill_file_not_found:{relative_path}")
+        # task-578: trusted-manifest membership, mirroring _resolve_script.
+        # The trust scanner prunes VCS/OS/build junk, so "the skill is
+        # trusted" says NOTHING about a pruned file: it is never
+        # fingerprinted, never diffed, and never shown in the trust review.
+        # Reading one would hand the agent content the reviewer never saw --
+        # and a script running under a standing grant could keep writing more
+        # of it without perturbing the digest. Checked BEFORE any stat (it is
+        # a pure manifest lookup), so an unfingerprinted file is refused with
+        # the SAME error kind as a missing one and its existence never leaks.
+        if not self._path_is_trust_material(skill_name, contained.as_posix()):
             raise ValueError(f"local_skill_file_not_found:{relative_path}")
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"local_skill_file_not_found:{relative_path}")
@@ -1402,7 +1422,7 @@ class LocalSkillsService:
             return {"content": text, "truncated": True, "size": raw_size}
         return {"content": text, "truncated": False, "size": raw_size}
 
-    def _script_path_is_trust_material(self, skill_name: str, relative_path: str) -> bool:
+    def _path_is_trust_material(self, skill_name: str, relative_path: str) -> bool:
         """Return whether the trust manifest actually fingerprints this file.
 
         Trust review is NOT a whole-directory guarantee: the trust scanner
@@ -1474,7 +1494,7 @@ class LocalSkillsService:
         Raises:
             ValueError: Unknown skill, or a path that is unsafe, missing, a
                 symlink, the canonical body, or NOT recorded in the skill's
-                trusted manifest (see ``_script_path_is_trust_material``) --
+                trusted manifest (see ``_path_is_trust_material``) --
                 all surfaced as the same
                 ``local_skill_script_not_found:<script_path>`` error KIND
                 (the caller's own ``script_path`` is echoed back, but the
@@ -1515,7 +1535,7 @@ class LocalSkillsService:
         # describe_skill_script and run_skill_script inherit this by sharing
         # this helper.
         # ``relative`` is an OS Path; the manifest keys are POSIX strings.
-        if not self._script_path_is_trust_material(skill_name, relative.as_posix()):
+        if not self._path_is_trust_material(skill_name, relative.as_posix()):
             raise ValueError(f"{_SCRIPT_NOT_FOUND_ERROR}:{script_path}")
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"{_SCRIPT_NOT_FOUND_ERROR}:{script_path}")
