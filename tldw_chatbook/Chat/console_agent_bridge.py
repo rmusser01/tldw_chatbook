@@ -113,8 +113,26 @@ _KNOWN_SUBAGENT_PREFIXES: set[str] = {SUBAGENT_SYSTEM_PROMPT}
 # bare max_steps=8, so this override applies only at the Console bridge's
 # own config-assembly site (run_reply below); other callers of
 # RunBudget()/AgentConfig keep the conservative engine default.
+#: Tool-calling rounds the Console agent gets per user message. THE primary
+#: limiter -- the two constants below exist to keep it reachable.
+CONSOLE_MAX_MODEL_TURNS = 20
+
+#: Step backstop. A fence round costs 3 steps (STEP_MODEL + STEP_TOOL_CALL +
+#: STEP_TOOL_RESULT) and the wrap-up reply costs 1, so N turns need
+#: 3*(N-1)+1 steps -- 58 at N=20. 64 clears that while staying a real
+#: backstop for native multi-call batches (1 + 2N steps per turn).
+#: `test_console_budget_step_cap_admits_a_full_model_turn_run` fails if this
+#: ever drops below the derived minimum.
+CONSOLE_MAX_STEPS = 64
+
+#: Wall-clock backstop for the whole run, at the slow local-model pace this
+#: gate exercises (25-50s per turn x CONSOLE_MAX_MODEL_TURNS).
+CONSOLE_MAX_WALL_SECONDS = 1200.0
+
 CONSOLE_RUN_BUDGET = RunBudget(
-    max_steps=64, max_wall_seconds=1200.0, max_model_turns=20
+    max_steps=CONSOLE_MAX_STEPS,
+    max_wall_seconds=CONSOLE_MAX_WALL_SECONDS,
+    max_model_turns=CONSOLE_MAX_MODEL_TURNS,
 )
 
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
