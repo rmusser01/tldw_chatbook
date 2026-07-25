@@ -45,6 +45,8 @@ RUNTIME_TOOL_NAMES = frozenset(
 
 DIRECT_DISCLOSE_THRESHOLD = 8
 LOOP_DETECTION_N = 3
+# Longest tool-call cycle period the runtime detects (A->B->A->B is period 2).
+MAX_LOOP_PERIOD = 4
 
 
 @dataclass

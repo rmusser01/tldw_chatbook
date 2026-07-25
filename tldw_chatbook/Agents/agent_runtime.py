@@ -6,6 +6,7 @@ No Textual, app, DB, or I/O imports.
 from __future__ import annotations
 
 import json
+from collections import deque
 from dataclasses import dataclass
 from typing import Callable
 
@@ -16,6 +17,7 @@ from .agent_models import (
     INSTALL_SKILL_TOOL_NAME,
     LOAD_TOOLS_NAME,
     LOOP_DETECTION_N,
+    MAX_LOOP_PERIOD,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_STUCK,
@@ -274,6 +276,30 @@ def _append_tool_result(messages: list[dict], call: ToolCall, content: str) -> N
         )
 
 
+def _detect_cycle(recent) -> "tuple[int, int] | None":
+    """Detect a repeating tool-call cycle in the tail of ``recent``.
+
+    Returns ``(period, repeats)`` when the last ``repeats*period`` call-keys
+    are ``repeats`` consecutive copies of the trailing ``period``-block, else
+    ``None``. Threshold: ``LOOP_DETECTION_N`` (3) repeats for period 1
+    (backward-compatible with the prior identical-consecutive check), 2 for
+    periods >= 2. Smallest period first, so a longer cycle is never
+    mis-attributed to a shorter period. Pure (no I/O).
+    """
+    seq = list(recent)
+    n = len(seq)
+    for period in range(1, MAX_LOOP_PERIOD + 1):
+        repeats = LOOP_DETECTION_N if period == 1 else 2
+        need = repeats * period
+        if n < need:
+            continue
+        tail = seq[-need:]
+        block = tail[-period:]
+        if all(tail[i] == block[i % period] for i in range(need)):
+            return (period, repeats)
+    return None
+
+
 def run_agent_loop(
     config: AgentConfig,
     initial_messages: list[dict],
@@ -319,8 +345,7 @@ def run_agent_loop(
     spawned = 0
     model_turns = 0
     total_tokens = 0
-    last_key: tuple | None = None
-    repeat_count = 0
+    recent_calls: deque = deque(maxlen=LOOP_DETECTION_N * MAX_LOOP_PERIOD)
 
     def add(kind: str, **kw) -> AgentStep:
         step = AgentStep(index=len(steps), kind=kind, **kw)
@@ -406,14 +431,13 @@ def run_agent_loop(
         for call in calls:
             if deps.should_cancel():
                 return _outcome(RUN_CANCELLED)
-            key = (call.name, json.dumps(call.args, sort_keys=True))
-            repeat_count = repeat_count + 1 if key == last_key else 1
-            last_key = key
-            if repeat_count >= LOOP_DETECTION_N:
+            recent_calls.append((call.name, json.dumps(call.args, sort_keys=True)))
+            cycle = _detect_cycle(recent_calls)
+            if cycle is not None:
+                period, repeats = cycle
                 add(
                     STEP_ERROR,
-                    summary=f"loop detected: {call.name} repeated "
-                    f"{repeat_count}x with identical args",
+                    summary=f"loop detected: {period}-cycle repeated {repeats}x",
                 )
                 return _outcome(RUN_STUCK)
 

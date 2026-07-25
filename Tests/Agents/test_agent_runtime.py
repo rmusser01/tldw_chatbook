@@ -2,9 +2,11 @@
 """Pure loop tests with deterministic fake callables."""
 
 import json
+from collections import deque
 
 from tldw_chatbook.Agents.agent_models import (
     LOOP_DETECTION_N,
+    MAX_LOOP_PERIOD,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_STUCK,
@@ -20,7 +22,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
 )
-from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
+from tldw_chatbook.Agents.agent_runtime import LoopDeps, _detect_cycle, run_agent_loop
 
 CALC = ToolSchema(
     id="builtin:calculator",
@@ -279,6 +281,67 @@ def test_same_tool_different_args_is_not_stuck():
         ),
     )
     assert out.status == RUN_DONE
+
+
+def _keys(*names):
+    # cycle-detection keys are (name, args-json); args identical here.
+    return deque([(n, "{}") for n in names], maxlen=LOOP_DETECTION_N * MAX_LOOP_PERIOD)
+
+
+def test_detect_cycle_period1_needs_three():
+    assert _detect_cycle(_keys("A", "A")) is None  # 2 identical: not yet
+    assert _detect_cycle(_keys("A", "A", "A")) == (1, 3)  # 3 identical: trip
+
+
+def test_detect_cycle_period2_trips_at_two_repeats():
+    assert _detect_cycle(_keys("A", "B", "A")) is None  # incomplete
+    assert _detect_cycle(_keys("A", "B", "A", "B")) == (2, 2)
+
+
+def test_detect_cycle_period3_trips_at_two_repeats():
+    assert _detect_cycle(_keys("A", "B", "C", "A", "B", "C")) == (3, 2)
+
+
+def test_detect_cycle_non_cyclic_is_none():
+    assert _detect_cycle(_keys("A", "B", "C", "D", "E")) is None
+
+
+def test_alternating_calls_trip_loop_detection():
+    # A->B->A->B with IDENTICAL args must trip RUN_STUCK (was a gap: only
+    # consecutive-identical calls tripped detection before this fix).
+    a = ModelTurn(text=fence("calculator", {"expression": "6*7"}))
+    b = ModelTurn(text=fence("new_tool", {}))
+    out = run(
+        [a, b, a, b, ModelTurn(text="x")],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator", "new_tool"),
+            budget=RunBudget(max_steps=50),
+        ),
+    )
+    assert out.status == RUN_STUCK
+    assert out.steps[-1].kind == "error"
+    assert "loop detected" in out.steps[-1].summary
+
+
+def test_alternating_different_args_not_stuck():
+    # Four distinct calculator calls with different args: no repeating
+    # cycle at any period, so this must not trip RUN_STUCK.
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": f"{i}+{i}"}))
+        for i in range(4)
+    ] + [ModelTurn(text="done")]
+    out = run(
+        turns,
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(max_steps=50),
+        ),
+    )
+    assert out.status != RUN_STUCK
 
 
 def test_cancel_lands_at_step_boundary():
