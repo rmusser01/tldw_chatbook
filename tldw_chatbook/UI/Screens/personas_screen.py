@@ -32,16 +32,25 @@ from ...Character_Chat.Character_Chat_Lib import (
     list_character_tags,
     validate_character_book,
 )
+from ...Character_Chat.expression_generation import (
+    EXPRESSION_PROMPT_STATES,
+    compose_expression_prompt,
+)
 from ...Character_Chat.persona_list_paging import page_user_profiles
 from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
 from ...DB.ChaChaNotes_DB import ConflictError
+from ...Image_Generation.config import get_image_generation_config
+from ...Image_Generation.listing import list_image_models_for_catalog
+from ...Image_Generation.worker import build_request, run_generation
+from ...Media_Creation.generation_templates import GenerationTemplate, get_template
 from ...tldw_api import UserProfileCreate, UserProfileUpdate
 from ...Utils.path_validation import validate_path_simple
 from ...Utils.paths import get_user_data_dir
 from ...Widgets.Console.console_rail_handle import ConsoleRailHandle
+from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.Persona_Widgets.persona_profile_card_widget import (
@@ -86,10 +95,14 @@ from ...Widgets.Persona_Widgets.personas_messages import (
 )
 from ...Widgets.Persona_Widgets.tag_filter_picker import TagFilterPicker
 from ...Widgets.Persona_Widgets.personas_pane_messages import (
+    CharacterAvatarGenerateRequested,
     CharacterEditorCancelled,
     CharacterExpressionClearRequested,
+    CharacterExpressionGenerateAllRequested,
+    CharacterExpressionGenerateRequested,
     CharacterExpressionSetExportRequested,
     CharacterExpressionSetImportRequested,
+    CharacterExpressionStylePickRequested,
     CharacterExpressionUploadRequested,
     CharacterImageRemoveRequested,
     CharacterImageUploadRequested,
@@ -565,6 +578,18 @@ class PersonasScreen(BaseAppScreen):
         # Same refuse-reentry idiom for the delete confirmation dialog.
         self._delete_dialog_active: bool = False
         self._character_editor_generation: int = 0
+        # Image-gen P3 Task 3: (character_id, state) pairs with an expression
+        # generation worker currently in flight - refuses a re-entrant
+        # generate click for the same slot rather than racing two writes.
+        # Task 4 widens the key: the avatar state's character_id may be
+        # ``None`` (an unsaved character - avatar generation is allowed
+        # pre-save), and a Generate-all sweep additionally claims the
+        # ``"all"`` pseudo-state for its own single-flight guard.
+        self._expression_generate_inflight: set[tuple[int | None, str]] = set()
+        # Image-gen P3 Task 4: the style template picked via the "Style…"
+        # button, applied to every subsequent avatar/expression generation
+        # until changed. ``None`` means no style (plain prompt composition).
+        self._expression_generate_style: GenerationTemplate | None = None
         self._profile_save_inflight: bool = False
         # Mirrors _profile_save_inflight for the character editor: guards
         # against a re-entrant Save (double-click/Ctrl+S) while an earlier
@@ -3769,6 +3794,9 @@ class PersonasScreen(BaseAppScreen):
 
     async def _begin_create_character(self) -> None:
         self._character_editor_generation += 1
+        # A picked image-gen style is scoped to the editor session that
+        # picked it (fix round 1) - must not bleed into this new one.
+        self._reset_expression_generate_style()
         self._edit_mode = "create"
         self.state.clear_selection()
         # A new session starts unclaimed - re-arms the save-in-place dedup
@@ -4154,6 +4182,10 @@ class PersonasScreen(BaseAppScreen):
             self._notify("Character data is not loaded yet.", severity="warning")
             return
         self._character_editor_generation += 1
+        # A picked image-gen style is scoped to the editor session that
+        # picked it (fix round 1) - opening this (possibly different)
+        # character must not silently inherit the previous session's style.
+        self._reset_expression_generate_style()
         self._edit_mode = "edit"
         # A new session starts unclaimed (see _begin_create_character).
         self._character_save_inflight = False
@@ -4735,6 +4767,193 @@ class PersonasScreen(BaseAppScreen):
             group="personas-io",
         )
 
+    def _image_generation_backend_warning(self) -> str | None:
+        """Return a warning string if no usable image-gen backend is
+        configured, else ``None``.
+
+        Image-gen P3 Task 4: factored out of the single-slot generate
+        handler so the avatar and Generate-all handlers share the exact
+        same check + copy (matches the Console's own ``/generate-image``
+        refusal text) instead of three near-duplicate blocks.
+        """
+        cfg = get_image_generation_config()
+        backend = cfg.default_backend
+        if not backend:
+            return (
+                "No image generation backend configured. Set "
+                "[image_generation].default_backend."
+            )
+        catalog = list_image_models_for_catalog()
+        entry = next((item for item in catalog if item.get("name") == backend), None)
+        if entry is None or not entry.get("is_configured"):
+            return (
+                f"Image backend '{backend}' is not enabled/configured. "
+                "Check [image_generation] settings."
+            )
+        return None
+
+    @on(CharacterExpressionGenerateRequested)
+    def _handle_character_expression_generate_requested(
+        self, message: CharacterExpressionGenerateRequested
+    ) -> None:
+        """Dispatch an AI-generation worker for one expression-state slot.
+
+        Image-gen P3 Task 3: mirrors ``_handle_character_expression_upload_
+        requested``'s gate sequence (editor active -> saved character ->
+        not-already-busy) with two extra gates specific to generation: the
+        live description must be non-empty (there's nothing to prompt from
+        otherwise), and the configured backend must actually be usable
+        (same check + copy as the Console's ``/generate-image`` command).
+        """
+        message.stop()
+        if not self._character_editor_is_active():
+            self._notify(
+                "Open a character editor before generating an expression image.",
+                "warning",
+            )
+            return
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        character_id = editor.expression_character_id()
+        if character_id is None:
+            self._notify("Save the character to add expressions.", "warning")
+            return
+        if not editor._area("description").text.strip():
+            self._notify("Add a description first.", "warning")
+            return
+        backend_warning = self._image_generation_backend_warning()
+        if backend_warning:
+            self._notify(backend_warning, "warning")
+            return
+        key = (character_id, message.state)
+        if key in self._expression_generate_inflight:
+            self._notify(
+                f"Already generating the {message.state} expression image.",
+                "warning",
+            )
+            return
+        self._expression_generate_inflight.add(key)
+        self.run_worker(
+            self._generate_expression_image_worker(character_id, message.state),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    @on(CharacterAvatarGenerateRequested)
+    def _handle_character_avatar_generate_requested(
+        self, message: CharacterAvatarGenerateRequested
+    ) -> None:
+        """Dispatch an AI-generation worker for the avatar image.
+
+        Image-gen P3 Task 4: mirrors ``_handle_character_expression_generate_
+        requested``'s gate sequence, but WITHOUT the saved-character gate -
+        a generated avatar stages into the editor exactly like a manually
+        uploaded one (``PersonasCharacterEditorWidget.set_avatar_image``),
+        persisting only once the character is Saved, so an unsaved
+        (id-less) session is allowed to generate one. The in-flight key
+        therefore carries ``character_id`` (``None`` when unsaved) rather
+        than requiring it non-``None``.
+        """
+        message.stop()
+        if not self._character_editor_is_active():
+            self._notify(
+                "Open a character editor before generating an avatar image.",
+                "warning",
+            )
+            return
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        if not editor._area("description").text.strip():
+            self._notify("Add a description first.", "warning")
+            return
+        backend_warning = self._image_generation_backend_warning()
+        if backend_warning:
+            self._notify(backend_warning, "warning")
+            return
+        character_id = editor.expression_character_id()
+        key = (character_id, "avatar")
+        if key in self._expression_generate_inflight:
+            self._notify("Already generating the avatar image.", "warning")
+            return
+        self._expression_generate_inflight.add(key)
+        self.run_worker(
+            self._generate_expression_image_worker(character_id, "avatar"),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    @on(CharacterExpressionGenerateAllRequested)
+    def _handle_character_expression_generate_all_requested(
+        self, message: CharacterExpressionGenerateAllRequested
+    ) -> None:
+        """Dispatch a single worker that generates avatar + all 3 expression
+        states sequentially.
+
+        Image-gen P3 Task 4: gates once, up front, exactly like the
+        single-slot handler (a saved character IS required here - unlike
+        the avatar-only handler, the sweep also covers the three DB-backed
+        expression states, which always require an id). The ``"all"``
+        pseudo-state claims its own in-flight key so a second Generate-all
+        click is refused independent of any individual slot's own key.
+        """
+        message.stop()
+        if not self._character_editor_is_active():
+            self._notify(
+                "Open a character editor before generating expression images.",
+                "warning",
+            )
+            return
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        character_id = editor.expression_character_id()
+        if character_id is None:
+            self._notify("Save the character to add expressions.", "warning")
+            return
+        if not editor._area("description").text.strip():
+            self._notify("Add a description first.", "warning")
+            return
+        backend_warning = self._image_generation_backend_warning()
+        if backend_warning:
+            self._notify(backend_warning, "warning")
+            return
+        all_key = (character_id, "all")
+        if all_key in self._expression_generate_inflight:
+            self._notify("Already generating all expression images.", "warning")
+            return
+        self._expression_generate_inflight.add(all_key)
+        self.run_worker(
+            self._generate_all_expression_images_worker(character_id),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    @on(CharacterExpressionStylePickRequested)
+    def _handle_expression_style_pick_requested(
+        self, message: CharacterExpressionStylePickRequested
+    ) -> None:
+        """Open the style picker to set the AI-generation style template.
+
+        Image-gen P3 Task 4: same io-dialog convention as
+        ``_handle_character_expression_upload_requested``
+        (``_io_dialog_active`` refuse-reentry, since this too pushes a
+        modal via ``push_screen_wait``), but distinct from the whole
+        upload/generate/import/export family - it never touches the DB or
+        an in-flight generation key, only the picked-style state consulted
+        by the next generation.
+        """
+        message.stop()
+        if not self._character_editor_is_active():
+            return
+        if self._io_dialog_active:
+            logger.debug(
+                "Import/export dialog already active; ignoring style pick "
+                "request."
+            )
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._expression_style_pick_dialog_worker(),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
     @on(CharacterExpressionClearRequested)
     def _handle_character_expression_clear_requested(
         self, message: CharacterExpressionClearRequested
@@ -4822,6 +5041,263 @@ class PersonasScreen(BaseAppScreen):
 
         mime = mimetypes.guess_type(path)[0]
         await self._apply_expression_upload(character_id, state, image_data, mime)
+
+    async def _generate_one_slot(
+        self,
+        character_id: int | None,
+        state: str,
+        style_template: GenerationTemplate | None,
+    ) -> bool:
+        """Generate one avatar/expression-state image and stage/write it.
+
+        Image-gen P3 Task 4: the shared core both
+        ``_generate_expression_image_worker`` (single-slot, including the
+        avatar) and ``_generate_all_expression_images_worker`` (the
+        sequential Generate-all sweep) call per state - the original Task 3
+        worker's body, factored out so both share one implementation.
+
+        Reads live (unsaved) form values straight from the editor's
+        widgets - never ``_character_data`` - since the user may be
+        generating from text they haven't saved yet. The blocking adapter
+        call runs off-thread via ``asyncio.to_thread``; the session token
+        is captured immediately before that await and re-checked
+        immediately after, mirroring ``_stage_character_expression_from_
+        path``'s stale-write guard so a Cancel/new-session/save-in-place
+        that happens mid-generation drops the result instead of writing it
+        into the wrong (or no-longer-open) character.
+
+        The ``"avatar"`` state stages the result into the editor (persists
+        on the next Save) exactly like a manual avatar upload - rejecting
+        an oversized result the same way ``_read_avatar_image_bytes``
+        rejects an oversized upload - then kicks the same off-thread
+        thumbnail render an upload does. The three DB-backed expression
+        states write straight through ``_apply_expression_upload`` (the
+        same seam a manual upload uses).
+
+        Never raises: every failure path (prompt composition, request
+        validation, adapter call, oversized avatar, DB write) notifies once
+        and returns ``False`` instead of propagating into the worker's
+        default panic-on-exception behavior - so a Generate-all sweep can
+        keep going through the remaining slots after one fails.
+
+        Args:
+            character_id: The character's row id, or ``None`` for the
+                avatar state on an unsaved (id-less) session.
+            state: ``"avatar"`` or one of ``EXPRESSION_IMAGE_STATES``.
+            style_template: The style template to compose the prompt with,
+                or ``None`` for a plain (unstyled) composition.
+
+        Returns:
+            ``True`` if the image was generated and applied/staged,
+            ``False`` on any failure.
+        """
+        key = (character_id, state)
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+            name = editor._input("name").value
+            description = editor._area("description").text
+            personality = editor._area("personality").text
+            prompt, negative_prompt, params = compose_expression_prompt(
+                name=name,
+                description=description,
+                personality=personality,
+                state=state,
+                style_template=style_template,
+            )
+            cfg = get_image_generation_config()
+            request = build_request(
+                backend=cfg.default_backend,
+                prompt=prompt,
+                negative_prompt=negative_prompt or None,
+                seed=-1,
+                image_format="png",
+                width=params.get("width"),
+                height=params.get("height"),
+                steps=params.get("steps"),
+                cfg_scale=params.get("cfg_scale"),
+            )
+            session_token = self._character_editor_session_token()
+            if session_token is None:
+                logger.debug(
+                    "Image generation skipped because no character editor "
+                    f"session is open. character_id={character_id!r}, "
+                    f"state={state!r}"
+                )
+                return False
+            result = await asyncio.to_thread(run_generation, request)
+            if self._character_editor_session_token() != session_token:
+                logger.debug(
+                    "Image generation result ignored because the character "
+                    f"editor session changed. character_id={character_id!r}, "
+                    f"state={state!r}, original_session={session_token!r}, "
+                    f"current_session={self._character_editor_session_token()!r}"
+                )
+                return False
+            if state == "avatar":
+                if len(result.content) > PERSONAS_AVATAR_MAX_BYTES:
+                    self._notify(
+                        "Generated avatar image must be "
+                        f"{PERSONAS_AVATAR_MAX_SIZE_COPY} or smaller.",
+                        "error",
+                    )
+                    return False
+                editor.set_avatar_image(result.content)
+                self.run_worker(
+                    self._render_character_editor_avatar(),
+                    group="personas-avatar-render",
+                    exit_on_error=False,
+                )
+                self._notify(
+                    "Avatar image generated — Save to keep it.", "information"
+                )
+                return True
+            await self._apply_expression_upload(
+                character_id, state, result.content, result.content_type
+            )
+            return True
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                f"Image generation failed for character {character_id!r} "
+                f"state={state!r}: {exc}"
+            )
+            self._notify(f"Image generation failed for {state}: {exc}", "error")
+            return False
+        finally:
+            self._expression_generate_inflight.discard(key)
+
+    async def _generate_expression_image_worker(
+        self, character_id: int | None, state: str
+    ) -> None:
+        """Single-slot generate worker: a thin wrapper over
+        ``_generate_one_slot`` using the currently-picked style template
+        (Image-gen P3 Task 4's refactor of the original Task 3 worker
+        body - this method's behavior is unchanged, only its
+        implementation moved).
+        """
+        await self._generate_one_slot(
+            character_id, state, getattr(self, "_expression_generate_style", None)
+        )
+
+    async def _generate_all_expression_images_worker(
+        self, character_id: int
+    ) -> None:
+        """Generate avatar + all 3 expression-state images sequentially.
+
+        Image-gen P3 Task 4: reuses ``_generate_one_slot`` per state, so
+        each slot gets the exact same per-slot in-flight guard,
+        session-token guard, and error isolation as a single-slot
+        generate - one state's failure does not abort the sweep. A slot
+        already claimed by an independent single-slot generate click
+        (started just before this sweep) is skipped rather than raced.
+        Reports a single "k/N generated" summary at the end (N =
+        len(EXPRESSION_PROMPT_STATES)) - counting only
+        the slots that actually completed before any session-identity
+        mismatch stopped the sweep (see below).
+
+        Re-checks session identity at the TOP of every iteration (not just
+        once up front) and stops the sweep the moment it no longer matches
+        the character this sweep was launched for - the user may cancel the
+        editor and open a different character in the same widget between
+        slots, and each slot's own generation can take long enough for that
+        to happen mid-sweep. This deliberately does NOT reuse
+        ``_character_editor_session_token()`` for that check: the token's
+        generation counter is bumped by ``_apply_expression_upload`` on
+        every successful write (Task 1's staleness signal for OTHER
+        seams), so a token captured before the loop would already
+        mismatch after this sweep's own first successful slot. Comparing
+        the freshly-resolved editor's loaded character id is immune to
+        that self-inflicted bump.
+        """
+        style_template = getattr(self, "_expression_generate_style", None)
+        succeeded = 0
+        try:
+            for state in EXPRESSION_PROMPT_STATES:
+                if not self._character_editor_is_active():
+                    break
+                try:
+                    editor = self.query_one(PersonasCharacterEditorWidget)
+                except QueryError:
+                    break
+                if editor.expression_character_id() != character_id:
+                    break
+                slot_key = (character_id, state)
+                if slot_key in self._expression_generate_inflight:
+                    continue
+                self._expression_generate_inflight.add(slot_key)
+                if await self._generate_one_slot(character_id, state, style_template):
+                    succeeded += 1
+        finally:
+            self._expression_generate_inflight.discard((character_id, "all"))
+        self._notify(
+            f"{succeeded}/{len(EXPRESSION_PROMPT_STATES)} generated.", "information"
+        )
+
+    async def _expression_style_pick_dialog_worker(self) -> None:
+        """Show the style picker; store the choice and refresh the readout.
+
+        Image-gen P3 Task 4: ``None`` (Escape/Cancel) keeps whatever style
+        was previously picked - matches ``ConsoleStylePickerModal``'s own
+        ``dismiss(None)`` convention. The modal's docstring documents that
+        its CALLER is responsible for restoring focus once it dismisses
+        (it only dismisses itself); this refocuses the button that opened
+        it, mirroring how the Console's own style-insert flow refocuses
+        its composer after the same modal closes. Mirrors
+        ``_expression_upload_dialog_worker``'s own nested try/except around
+        ``push_screen_wait``; the dispatching ``run_worker`` call also
+        passes ``exit_on_error=False`` (final review F5) so an uncaught
+        exception here only kills this dialog's worker instead of the app.
+        """
+        try:
+            try:
+                choice = await self.app.push_screen_wait(ConsoleStylePickerModal())
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the image-generation style picker."
+                )
+                return
+            if choice is not None:
+                style_id = str(choice.get("id") or "")
+                self._expression_generate_style = get_template(style_id)
+                self._update_expression_style_readout()
+        finally:
+            self._io_dialog_active = False
+            try:
+                self.query_one("#personas-char-editor-style-pick", Button).focus()
+            except QueryError:
+                pass
+
+    def _update_expression_style_readout(self) -> None:
+        """Sync the editor's "Style: {name}" / "Style: Custom" readout to
+        ``self._expression_generate_style``."""
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        template = self._expression_generate_style
+        text = f"Style: {template.name}" if template is not None else "Style: Custom"
+        editor.set_style_readout(text)
+
+    def _reset_expression_generate_style(self) -> None:
+        """Clear the picked style template at a genuine editor-session
+        boundary (fix round 1).
+
+        The picked style is scoped to "this editor session, not persisted"
+        (Task 4's spec) - without this, a style picked while editing
+        character A silently bleeds into character B once opened in the
+        same screen session, since ``_expression_generate_style`` is
+        otherwise screen-lifetime state.
+
+        Called only from the 3 sites where ``_character_editor_generation``
+        bumps to mark a genuinely NEW/ended character-editor session
+        (``_begin_create_character``, ``_handle_edit_requested``,
+        ``_finish_cancel_edit``) - NOT from the other bump sites in this
+        file (avatar Remove, expression-set apply, expression upload/clear,
+        save-in-place), which bump the same counter merely to invalidate a
+        stale in-flight render within the SAME session and must leave a
+        picked style untouched.
+        """
+        self._expression_generate_style = None
+        self._update_expression_style_readout()
 
     # ===== Expression SET import/export (Roleplay P3d-2 Task 4) =====
     #
@@ -6215,6 +6691,9 @@ class PersonasScreen(BaseAppScreen):
 
     def _finish_cancel_edit(self) -> None:
         self._character_editor_generation += 1
+        # A picked image-gen style is scoped to the editor session that
+        # picked it (fix round 1) - the session just ended.
+        self._reset_expression_generate_style()
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
         inspector = self.query_one(PersonasInspectorPane)

@@ -56,6 +56,16 @@ class CharacterImageRemoveRequested(Message):
     """User requested to remove the avatar image from the active character editor."""
 
 
+class CharacterAvatarGenerateRequested(Message):
+    """User requested AI generation of a new avatar image for the active
+    character editor.
+
+    Image-gen P3: distinct from ``CharacterImageUploadRequested`` (a manual
+    file pick) - this triggers a generation worker instead, staging the
+    result into the editor the same way an uploaded avatar would.
+    """
+
+
 class CharacterExpressionUploadRequested(Message):
     """User requested to choose an image for one expression-state slot
     (thinking/speaking/error) in the active character editor.
@@ -78,12 +88,42 @@ class CharacterExpressionClearRequested(Message):
         super().__init__()
 
 
+class CharacterExpressionGenerateRequested(Message):
+    """User requested AI generation of one expression-state slot
+    (thinking/speaking/error) in the active character editor.
+
+    Image-gen P3: mirrors ``CharacterExpressionUploadRequested`` but triggers
+    a generation worker instead of a file picker.
+    """
+
+    def __init__(self, state: str) -> None:
+        self.state = state
+        super().__init__()
+
+
 class CharacterExpressionSetImportRequested(Message):
     """Roleplay P3d-2: import a whole expression set from a .zip."""
 
 
 class CharacterExpressionSetExportRequested(Message):
     """Roleplay P3d-2: export the character's expression set to a .zip."""
+
+
+class CharacterExpressionGenerateAllRequested(Message):
+    """Image-gen P3: user requested AI generation of all expression-state
+    slots (thinking/speaking/error) at once."""
+
+
+class CharacterExpressionStylePickRequested(Message):
+    """Image-gen P3: user requested to pick a style template used by
+    subsequent avatar/expression AI generations in the active character
+    editor.
+
+    Mirrors the Console's own style picker (``ConsoleStylePickerModal``)
+    but stores the resolved template on the screen instead of inserting a
+    token into a composer draft - the character editor has no draft text
+    for a token to live in.
+    """
 
 
 class EditUserProfileRequested(Message):
