@@ -3246,6 +3246,97 @@ def test_blank_select_row_exits_preview_instead_of_becoming_a_bogus_id(
     assert synced == [True]
 
 
+# --- task-565: remaining Select.BLANK -> Select.NULL sweep ---
+
+
+def test_select_value_text_treats_select_null_as_blank():
+    """task-565: ``Select.BLANK`` doesn't exist on this Textual version --
+    it silently resolves to the unrelated ``Widget.BLANK`` (``False``), so
+    the old ``value is Select.BLANK`` check never matched the real blank
+    sentinel ``Select.NULL``. Pre-fix, a blank provider Select would
+    stringify to the literal text "Select.NULL" instead of the empty
+    string ``_select_value_text`` promises for a blank selection."""
+    assert SettingsScreen._select_value_text(Select.NULL) == ""
+
+
+def test_select_value_text_still_renders_real_values_unchanged():
+    """Companion to the NULL-aware fix above: real Select values (and the
+    pre-existing ``None`` blank case) must render exactly as before -- the
+    fix must not touch the non-blank path."""
+    assert SettingsScreen._select_value_text("openai") == "openai"
+    assert SettingsScreen._select_value_text(" openai ") == "openai"
+    assert SettingsScreen._select_value_text(None) == ""
+
+
+@pytest.mark.asyncio
+async def test_library_rag_selected_profile_id_returns_none_for_select_null(
+    monkeypatch, tmp_path
+):
+    """task-565: same ``Select.BLANK``-doesn't-exist bug as above, but in
+    ``_library_rag_selected_profile_id`` -- pre-fix, picking the picker's
+    blank row (``allow_blank=True``) delivered ``Select.NULL``, which the
+    stale ``value is Select.BLANK`` check never matched, so the stringified
+    sentinel ("Select.NULL") would escape downstream as if it were a real
+    profile id."""
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = Select.NULL
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_rag_selected_profile_id() is None
+
+
+@pytest.mark.asyncio
+async def test_set_active_with_blank_selection_shows_friendly_notice_not_adapter_error(
+    monkeypatch, tmp_path
+):
+    """task-565 AC3: clicking Set active while the picker sits on its blank
+    row must hit the EXISTING "Choose a profile first." guard in
+    ``_trigger_library_rag_profile_set_active`` -- which only fires when
+    ``_library_rag_selected_profile_id()`` returns ``None``. Pre-fix, the
+    stale ``Select.BLANK`` check let the stringified "Select.NULL" sentinel
+    through as a bogus profile id, so this would have gone to
+    ``activate_profile("Select.NULL")`` and surfaced an adapter-level error
+    instead of this friendly notice."""
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = Select.NULL
+        await pilot.pause()
+        await pilot.pause()
+
+        notify_calls = []
+        monkeypatch.setattr(
+            host,
+            "notify",
+            lambda message, *, severity="information", **kwargs: notify_calls.append(
+                (message, severity)
+            ),
+        )
+        dispatch_calls = []
+        monkeypatch.setattr(
+            screen, "_dispatch_rag_set_active", lambda pid: dispatch_calls.append(pid)
+        )
+
+        screen.handle_library_rag_profile_set_active(
+            Button.Pressed(Button(id="settings-library-rag-profile-set-active"))
+        )
+        await pilot.pause()
+
+        assert notify_calls == [("Choose a profile first.", "warning")]
+        assert dispatch_calls == []
+
+
 @pytest.mark.asyncio
 async def test_stale_active_profile_pointer_composes_blank_instead_of_crashing(
     monkeypatch, tmp_path

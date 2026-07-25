@@ -5537,7 +5537,10 @@ class SettingsScreen(BaseAppScreen):
 
     @staticmethod
     def _select_value_text(value: object) -> str:
-        if value is None or value is Select.BLANK:
+        # task-565: `Select.NULL` is the real blank sentinel on this Textual
+        # version -- `Select.BLANK` doesn't exist, it silently resolves to
+        # the unrelated `Widget.BLANK` (`False`), so it never matched here.
+        if value is None or value is Select.NULL:
             return ""
         return str(value).strip()
 
@@ -8103,7 +8106,11 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return None
         value = select.value
-        if value is None or value is Select.BLANK:
+        # task-565: `Select.NULL` is the real blank sentinel on this Textual
+        # version -- `Select.BLANK` doesn't exist, it silently resolves to
+        # the unrelated `Widget.BLANK` (`False`), so it never matched here,
+        # letting the stringified sentinel escape as a bogus profile id.
+        if value is None or value is Select.NULL:
             return None
         return str(value)
 
