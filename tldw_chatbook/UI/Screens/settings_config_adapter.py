@@ -17,6 +17,7 @@ else:
     import tomllib
 
 from ...config import (
+    delete_settings_from_cli_config,
     load_cli_config_and_ensure_existence,
     save_setting_to_cli_config,
     save_settings_to_cli_config,
@@ -68,6 +69,25 @@ class SettingsConfigAdapter:
     def save_sections(self, section_values: Mapping[str, Mapping[str, Any]]) -> bool:
         """Persist values across one or more sections in a single config write."""
         return save_settings_to_cli_config(section_values)
+
+    def delete_values(self, section: str, keys: list[str]) -> bool:
+        """Delete keys from one config section and persist the file atomically.
+
+        Used for the "Clear" action on saved secrets/fields -- a cleared
+        field must be removed from config.toml, never written back as an
+        empty string (that would shadow env/keyring fallbacks with a
+        falsy-but-present value).
+
+        Args:
+            section: Dotted config section path (e.g. ``"image_generation.openrouter"``).
+            keys: Keys to remove from that section.
+
+        Returns:
+            True on success, including the no-op cases where the keys are
+            already absent. False only if the file exists but can't be
+            read or rewritten.
+        """
+        return delete_settings_from_cli_config(section, list(keys))
 
     def validate_raw_toml(self, text: str) -> SettingsValidationResult:
         """Validate TOML text and require a top-level table/mapping."""
