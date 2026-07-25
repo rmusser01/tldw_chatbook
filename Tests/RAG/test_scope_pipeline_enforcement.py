@@ -1997,6 +1997,42 @@ class TestFreshPromptBoundaryAuthority:
         assert authorized == (candidate,)
 
     @pytest.mark.asyncio
+    async def test_fresh_workspace_with_valid_zero_item_scope_remains_unscoped(
+        self, media_db, tmp_path, monkeypatch
+    ):
+        media_id = _seed_media(media_db, n=1)[0]
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task2-empty")
+        )
+        registry.create_workspace(workspace_id="ws-empty", name="Empty")
+        with registry.db.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO workspace_rag_scopes (workspace_id, payload, updated_at)
+                VALUES (?, ?, ?)
+                """,
+                (
+                    "ws-empty",
+                    json.dumps({"version": 1, "items": [], "updated_at": "t1"}),
+                    "t1",
+                ),
+            )
+        session = SimpleNamespace(
+            persisted_conversation_id=None,
+            workspace_id="ws-empty",
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+        candidate = self._normalized("media", media_id, "Media", rank=1)
+
+        effective = await cre.resolve_effective_scope_for_chat(app, use_cache=False)
+        authorized = await cre.authorize_local_results_for_prompt(app, (candidate,))
+
+        assert effective.state == "unscoped"
+        assert authorized == (candidate,)
+
+    @pytest.mark.asyncio
     async def test_fresh_missing_linked_workspace_fails_closed(
         self, media_db, tmp_path, monkeypatch
     ):

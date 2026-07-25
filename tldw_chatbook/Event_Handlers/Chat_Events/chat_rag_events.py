@@ -664,6 +664,8 @@ def _read_fresh_workspace_scope_sync(
     scope = _parse_fresh_scope(raw_scope)
     if scope is None:
         raise ValueError("workspace scope authority is malformed")
+    if not scope.items:
+        return None
     return scope
 
 
