@@ -1,5 +1,5 @@
 ---
-id: TASK-621
+id: TASK-626
 title: Validate RAGConfig/ProfileConfig at profile load and save boundaries
 status: Done
 assignee:
@@ -37,7 +37,7 @@ RAG profile JSON files are untrusted input: they can be hand-edited, migrated fr
 3. RED: add tests to Tests/RAG/test_config_profiles.py -- (a) test_save_profile_rejects_hard_invalid_rag_config (chunk_overlap >= chunk_size) expects ValueError and confirms no registration/no file written; (b) test_load_degrades_gracefully_on_hand_corrupted_profile_json writes a profile JSON with a bad vector_store.type enum and a negative default_top_k directly to disk, constructs a manager, asserts it does NOT raise, the profile IS loaded with its (corrupted) values intact, and a warning was logged (loguru sink capture, per Tests/Agents/test_agent_runtime_review_hook.py's pattern -- caplog does not capture loguru in this repo). Run to confirm RED.
 4. Implement the two validate() call sites; rerun the new tests to confirm GREEN.
 5. Run the full Tests/RAG/ suite to confirm no regressions, plus Tests/UI/test_settings_rag_profile_adapter.py (the screen's own save path) to confirm no double-reporting/behavior change there.
-6. Commit as feat(rag): validate profiles at load/save boundaries (task-621).
+6. Commit as feat(rag): validate profiles at load/save boundaries (task-626).
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -58,5 +58,5 @@ Modified files:
 - Tests/RAG/test_config_profiles.py (4 new tests; one existing test's chunk_size fixed to a value valid alongside its overlap)
 - Tests/UI/test_settings_rag_profile_adapter.py (2 existing tests' fixture setup adjusted to mutate the live profile in place instead of re-saving)
 
-Verification: Tests/RAG/ -> 558 passed, 8 skipped (baseline 552/8 + 2 seam-lock tests from task-620 + 4 new task-621 tests). Tests/UI/test_settings_rag_profile_adapter.py + test_settings_rag_profile_region.py -> 181 passed.
+Verification: Tests/RAG/ -> 558 passed, 8 skipped (baseline 552/8 + 2 seam-lock tests from task-620 + 4 new task-626 tests). Tests/UI/test_settings_rag_profile_adapter.py + test_settings_rag_profile_region.py -> 181 passed.
 <!-- SECTION:NOTES:END -->

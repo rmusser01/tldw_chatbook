@@ -1,5 +1,5 @@
 ---
-id: TASK-620
+id: TASK-625
 title: Remove dead shadowed create_rag_service in rag_service.py
 status: Done
 assignee:
@@ -34,7 +34,7 @@ The simplified RAG package's public seam (tldw_chatbook.RAG_Search.simplified) r
 2. RED: add a seam-lock test file Tests/RAG/simplified/test_create_rag_service_seam.py asserting (a) the public seam tldw_chatbook.RAG_Search.simplified.create_rag_service is rag_factory's create_rag_service, and (b) the rag_service module no longer exposes a create_rag_service attribute at all. Run it to confirm it fails on (b) (RED).
 3. Delete the dead create_rag_service function (and its 'Convenience functions' comment context if it becomes orphaned) from tldw_chatbook/RAG_Search/simplified/rag_service.py.
 4. Run the new seam-lock test to confirm GREEN, then run the full Tests/RAG/ suite to confirm no regressions.
-5. Commit as chore(rag): remove shadowed create_rag_service (task-620).
+5. Commit as chore(rag): remove shadowed create_rag_service (task-625).
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
