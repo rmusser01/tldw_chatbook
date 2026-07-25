@@ -9,6 +9,8 @@ See ``Docs/superpowers/specs/2026-07-25-builtin-tool-permission-gate-design.md``
 
 from __future__ import annotations
 
+import contextlib
+
 from typing import Any
 
 from loguru import logger
@@ -69,6 +71,46 @@ class BuiltinToolGate:
         """
         self._payload = None
         self._stamps.clear()
+
+    @contextlib.contextmanager
+    def stamp_scope(self):
+        """Snapshot this turn's stamps on enter; RESTORE (not merge) on exit.
+
+        task-628. Wired as part of ``AgentService``'s ``review_state_scope``
+        so it wraps every NESTED sub-agent run, mirroring
+        ``MCPToolProvider.stamp_scope``.
+
+        ``spawn_subagent`` runs the child's entire loop INLINE and
+        synchronously on the parent's own call stack, before the parent's
+        remaining same-batch tool calls are dispatched, and the child
+        invokes the SAME shared review hook — whose first act is
+        ``begin_turn()``, which clears ``_stamps``. Without this scope a
+        child wipes the verdicts the parent's user just gave for this turn.
+
+        That is worse for built-ins than the MCP case it mirrors: MCP's
+        ``invoke`` has a per-call ``_approval_callback`` fallback, so a lost
+        stamp merely re-prompts. ``BuiltinToolGate.check`` has no such
+        fallback — its only approval sources are ``_stamps`` (set solely by
+        the batch review hook) and a live session approval — so a clobbered
+        stamp fails CLOSED outright, making an approved tool unusable from
+        inside any sub-agent.
+
+        ``_payload`` is restored too: it is a per-turn cache the child's
+        ``begin_turn()`` also drops, and restoring it keeps the parent's
+        "one permission-store load per turn" property intact.
+
+        Yields:
+            None. On exit the parent's stamps and cached payload are put
+            back exactly as they were, discarding whatever the nested run
+            recorded — a restore, never a merge.
+        """
+        stamps = dict(self._stamps)
+        payload = self._payload
+        try:
+            yield
+        finally:
+            self._stamps = stamps
+            self._payload = payload
 
     def stamp(self, tool_name: str, decision: str) -> None:
         """Record this turn's decision for ``tool_name``.

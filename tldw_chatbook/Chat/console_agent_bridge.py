@@ -11,6 +11,7 @@ asyncio.to_thread). No widget mutation.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -136,6 +137,43 @@ CONSOLE_RUN_BUDGET = RunBudget(
 )
 
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
+
+
+def _combine_state_scopes(scopes: list) -> "Any | None":
+    """Combine per-turn state scopes into the one ``review_state_scope`` seam.
+
+    ``AgentService.review_state_scope`` holds a single
+    ``Callable[[], AbstractContextManager]``, but more than one component
+    can own per-turn stamp state that a nested sub-agent run would clobber
+    (task-628): the MCP provider's ``_stamped_decisions`` and the built-in
+    gate's ``_stamps``. Entering them together keeps the seam's shape while
+    guarding both.
+
+    Args:
+        scopes: Zero or more zero-argument callables, each returning a
+            context manager that snapshots and restores its owner's
+            per-turn state.
+
+    Returns:
+        ``None`` when ``scopes`` is empty (the service then uses a
+        ``nullcontext``), the single callable when there is exactly one
+        (byte-identical to the pre-task-628 wiring), else a callable that
+        enters every scope on an ``ExitStack`` so all are restored in
+        reverse order even if the nested run raises.
+    """
+    if not scopes:
+        return None
+    if len(scopes) == 1:
+        return scopes[0]
+
+    @contextlib.contextmanager
+    def _combined():
+        with contextlib.ExitStack() as stack:
+            for scope in scopes:
+                stack.enter_context(scope())
+            yield
+
+    return _combined
 
 
 def compose_agent_system_prompt(session_prompt: str) -> str:
@@ -1346,11 +1384,26 @@ class ConsoleAgentBridge:
         # stamp_scope at all, and MUST NOT be forced to); production always
         # hands in a real, fully-composed MCPToolProvider here, which always
         # has it.
-        review_state_scope = (
-            getattr(mcp_provider, "stamp_scope", None)
-            if mcp_provider is not None
-            else None
-        )
+        # task-628: the seam holds ONE context manager, but two components
+        # now own per-turn stamp state a nested sub-agent run would clobber
+        # -- the MCP provider's `_stamped_decisions` and the built-in gate's
+        # `_stamps`. Compose whichever exist rather than leaving the gate's
+        # state unguarded (it was, before this task, and unlike MCP it has
+        # no per-call approval fallback to degrade to: a lost stamp fails
+        # closed outright).
+        _scopes = [
+            scope
+            for scope in (
+                getattr(mcp_provider, "stamp_scope", None)
+                if mcp_provider is not None
+                else None,
+                getattr(builtin_gate, "stamp_scope", None)
+                if builtin_gate is not None
+                else None,
+            )
+            if scope is not None
+        ]
+        review_state_scope = _combine_state_scopes(_scopes)
         service = AgentService(
             self._db,
             registry,
