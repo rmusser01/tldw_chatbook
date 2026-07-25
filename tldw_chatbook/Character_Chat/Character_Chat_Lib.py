@@ -1248,10 +1248,33 @@ def extract_json_from_image_file(
                     metadata_key = candidate_key
                     break
 
+        # WebP (and JPEG) character cards embed the base64 card JSON in the
+        # EXIF UserComment tag (37510) instead of a 'chara' text chunk.
+        exif_user_comment: Optional[Any] = None
+        if metadata_key is None:
+            try:
+                exif_data = img_obj.getexif()
+                if exif_data:
+                    exif_user_comment = exif_data.get(37510)  # UserComment
+            except Exception as exif_err:
+                logger.debug(
+                    f"Could not read EXIF from '{file_name_for_log}': {exif_err}"
+                )
+            if exif_user_comment:
+                metadata_key = "exif_user_comment"
+
         if metadata_key:
-            chara_base64_str = img_obj.info[metadata_key]
+            if metadata_key == "exif_user_comment":
+                chara_base64_str = exif_user_comment
+            else:
+                chara_base64_str = img_obj.info[metadata_key]
             if isinstance(chara_base64_str, bytes):
-                chara_base64_str = chara_base64_str.decode("utf-8", errors="replace")
+                raw_b64_bytes = chara_base64_str
+                # EXIF UserComment values often carry an 8-byte charset
+                # prefix, e.g. b'ASCII\x00\x00\x00' - strip it if present.
+                if len(raw_b64_bytes) > 8 and raw_b64_bytes[:5] == b"ASCII":
+                    raw_b64_bytes = raw_b64_bytes[8:]
+                chara_base64_str = raw_b64_bytes.decode("utf-8", errors="replace")
             try:
                 decoded_chara_json_str = base64.b64decode(chara_base64_str).decode(
                     "utf-8"
@@ -1279,7 +1302,7 @@ def extract_json_from_image_file(
                 return None
         else:
             logger.debug(
-                f"'chara'/'ccv3' key not found in image metadata for '{file_name_for_log}'. Available metadata keys: {list(img_obj.info.keys()) if isinstance(img_obj.info, dict) else 'N/A'}"
+                f"'chara'/'ccv3'/EXIF-UserComment metadata not found in image '{file_name_for_log}'. Available metadata keys: {list(img_obj.info.keys()) if isinstance(img_obj.info, dict) else 'N/A'}"
             )
             return None
 
@@ -1316,6 +1339,9 @@ def _coerce_card_text(value: Any, default: str = "") -> str:
         return "\n".join(str(item) for item in value if item is not None)
     if isinstance(value, (int, float, bool)):
         return str(value)
+    logger.debug(
+        f"Card text field has unsupported type {type(value).__name__}; using default empty string."
+    )
     return default
 
 
@@ -1328,6 +1354,48 @@ def _coerce_card_str_list(value: Any) -> List[str]:
     if isinstance(value, list):
         return [str(item) for item in value if item is not None and str(item).strip()]
     return []
+
+
+def _find_source_card_name(card_data_json: Dict[str, Any]) -> str:
+    """Finds a usable character name in a raw card dict, if one exists.
+
+    Checks the locations used by every supported format: the V2/V3 'data'
+    node, the V1 root 'name', TextGen's 'char_name', CharacterAI's
+    'participant__name' and nested 'info.character.name', and the generic
+    fallbacks 'character_name'/'title'.
+
+    Returns:
+        str: The stripped name, or "" if the card has no usable name.
+    """
+    if not isinstance(card_data_json, dict):
+        return ""
+
+    data_node = card_data_json.get("data")
+    if isinstance(data_node, dict):
+        name = _coerce_card_text(data_node.get("name")).strip()
+        if name:
+            return name
+
+    for field in (
+        "name",
+        "char_name",
+        "character_name",
+        "title",
+        "participant__name",
+    ):
+        name = _coerce_card_text(card_data_json.get(field)).strip()
+        if name:
+            return name
+
+    info_node = card_data_json.get("info")
+    if isinstance(info_node, dict):
+        character_node = info_node.get("character")
+        if isinstance(character_node, dict):
+            name = _coerce_card_text(character_node.get("name")).strip()
+            if name:
+                return name
+
+    return ""
 
 
 def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1391,7 +1459,9 @@ def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "character_version": _coerce_card_text(
                 data_node.get("character_version")
             ),
-            "extensions": data_node.get("extensions")
+            # Shallow copy so the character_book insertion below can never
+            # mutate the caller's original card dict.
+            "extensions": dict(data_node["extensions"])
             if isinstance(data_node.get("extensions"), dict)
             else {},
             "image_base64": data_node.get("char_image") or data_node.get("image"),
@@ -2076,9 +2146,26 @@ def import_character_card_from_json_string(
                     # the lenient V2 parser to get DB schema field names.
                     parsed_card = parse_v2_card(detected_card)
                     if parsed_card:
-                        logger.info(
-                            f"Parsed card via '{detected_format}' format fallback."
-                        )
+                        # The detector substitutes an "Unknown" placeholder when
+                        # no name exists where it looked. If the source card
+                        # genuinely has no name, reject the import: accepting
+                        # the placeholder would silently merge distinct
+                        # nameless cards through name-conflict resolution
+                        # downstream. If a real name exists elsewhere in the
+                        # source card, use it instead of the placeholder.
+                        if parsed_card.get("name") == "Unknown":
+                            source_name = _find_source_card_name(card_data_dict)
+                            if not source_name:
+                                logger.error(
+                                    "Generic parsing produced placeholder name 'Unknown' and the source card has no name; rejecting import to avoid merging distinct nameless cards."
+                                )
+                                parsed_card = None
+                            else:
+                                parsed_card["name"] = source_name
+                        if parsed_card:
+                            logger.info(
+                                f"Parsed card via '{detected_format}' format fallback."
+                            )
             except Exception as e_generic:
                 logger.warning(f"Generic multi-format parsing failed: {e_generic}")
 

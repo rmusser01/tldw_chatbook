@@ -231,3 +231,111 @@ def test_load_v3_png_card_end_to_end(tmp_path):
 
     assert parsed is not None
     assert parsed["name"] == "Test Char"
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups: nameless cards, mutation safety, WebP EXIF
+# ---------------------------------------------------------------------------
+
+
+def test_nameless_v2_card_is_rejected_not_named_unknown():
+    # A V2 card with no name anywhere must NOT import as placeholder "Unknown".
+    card = {"spec": "chara_card_v2", "spec_version": "2.0", "data": {
+        "description": "No name here.",
+        "first_mes": "Hello?",
+    }}
+    assert import_character_card_from_json_string(json.dumps(card)) is None
+
+
+def test_nameless_flat_card_is_rejected_not_named_unknown():
+    # Flat card with no name-like field at all must be rejected too.
+    card = {"description": "Just a description.", "first_mes": "Hi."}
+    assert import_character_card_from_json_string(json.dumps(card)) is None
+
+
+def test_generic_fallback_rescues_name_from_alternate_fields():
+    # CharacterAI-style export: name lives in participant__name, not 'name'.
+    card = {
+        "participant__name": "CAI Hero",
+        "greeting": "Greetings, traveler.",
+        "description": "A CharacterAI export.",
+    }
+    parsed = import_character_card_from_json_string(json.dumps(card))
+    assert parsed is not None
+    assert parsed["name"] == "CAI Hero"
+
+
+def test_two_nameless_cards_do_not_merge_into_one_character(tmp_path):
+    # Regression: previously two distinct nameless cards both parsed as
+    # "Unknown"; the second then hit name-conflict resolution and silently
+    # resolved to the first character's ID.
+    from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+        import_and_save_character_from_file,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "nameless.db", "test-client")
+    card_a = tmp_path / "a.json"
+    card_b = tmp_path / "b.json"
+    card_a.write_text(json.dumps({"spec": "chara_card_v2", "spec_version": "2.0",
+                                  "data": {"description": "Card A"}}), encoding="utf-8")
+    card_b.write_text(json.dumps({"spec": "chara_card_v2", "spec_version": "2.0",
+                                  "data": {"description": "Card B"}}), encoding="utf-8")
+
+    id_a = import_and_save_character_from_file(db, str(card_a))
+    id_b = import_and_save_character_from_file(db, str(card_b))
+
+    assert id_a is None
+    assert id_b is None
+    # The DB seeds a default character on init; the regression check is that
+    # no placeholder "Unknown" character was created from the nameless cards.
+    names = [c["name"] for c in db.list_character_cards()]
+    assert "Unknown" not in names
+
+
+def test_parse_v2_card_does_not_mutate_input_extensions():
+    card = _v2_card(extensions={"chub": {"id": 1}})
+    card["data"]["character_book"] = {"entries": []}
+    original_extensions = card["data"]["extensions"]
+
+    parsed = import_character_card_from_json_string(json.dumps(card))
+
+    assert parsed is not None
+    # character_book must land in the parsed extensions...
+    assert "character_book" in parsed["extensions"]
+    # ...but the caller's original dict must be untouched.
+    assert "character_book" not in original_extensions
+
+
+def test_dict_valued_text_field_defaults_to_empty_string():
+    card = _v2_card(description={"unexpected": "mapping"})
+    parsed = import_character_card_from_json_string(json.dumps(card))
+    assert parsed is not None
+    assert parsed["description"] == ""
+
+
+def _write_webp_with_exif_chara(path, payload: dict):
+    img = Image.new("RGB", (10, 10), color="blue")
+    exif = Image.Exif()
+    # SillyTavern-style: UserComment carries an ASCII charset prefix + base64.
+    exif[37510] = b"ASCII\x00\x00\x00" + _b64_json(payload).encode("ascii")
+    img.save(path, "WEBP", exif=exif)
+    return path
+
+
+def test_extract_chara_from_webp_exif_user_comment(tmp_path):
+    webp_path = _write_webp_with_exif_chara(tmp_path / "card.webp", _v2_card())
+
+    extracted = extract_json_from_image_file(str(webp_path), str(tmp_path))
+
+    assert extracted is not None
+    assert json.loads(extracted)["data"]["name"] == "Test Char"
+
+
+def test_load_webp_card_end_to_end(tmp_path):
+    webp_path = _write_webp_with_exif_chara(tmp_path / "card.webp", _v2_card())
+
+    parsed = load_character_card_from_file(webp_path)
+
+    assert parsed is not None
+    assert parsed["name"] == "Test Char"
