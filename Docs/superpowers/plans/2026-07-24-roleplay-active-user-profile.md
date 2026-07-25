@@ -384,7 +384,7 @@ Each with a no-active twin asserting `"User"` (RED for the active case; the twin
 
 ## Task 5: Byte-compat pins + bookkeeping
 
-**Files:** tests only + `backlog/tasks/task-442 - Active-persona-concept-with-user-name-substitution-in-chats.md`.
+**Files:** tests only + `backlog/archive/tasks/task-442 - Active-persona-concept-with-user-name-substitution-in-chats.md` (archived as Done; the live-tree duplicate stub was removed by task-544's backlog dedup).
 
 - [ ] **Step 1:** Pin tests (some may exist from T4 twins — consolidate, don't duplicate): no active profile ⇒ preview seed, Start-Chat greeting, chat_events output ALL byte-identical to pre-feature strings; `set_speakers` not called with a user override; `user_profile_label` stays `"General"`. Plus the alias pin: `{{persona}}`/`{{character}}` substitute the character name with NO active profile set.
 - [ ] **Step 2:** Task file → Done, ACs checked, Implementation Plan + Notes (the rename map applied, the boundary judgments, the compat shims, the placeholder table restated).
