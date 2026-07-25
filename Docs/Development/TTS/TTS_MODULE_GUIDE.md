@@ -142,11 +142,11 @@ Validated bytes are then yielded as one asynchronous chunk. The asynchronous
 stream contract is preserved, but Slice 2 does not provide incremental audio
 streaming.
 
-Provider operation errors expose only a stable code, safe message,
-retryability, local operation ID, and optional recovery action. Connectivity
-and required-contract failures make cached health stale; invalid requests,
-optional voice failures, busy responses, generation failures, invalid audio,
-and cancellation do not. There is no automatic fallback to another model or a
+`TTSOperationError` exposes only a stable code, safe message, retryability,
+local operation ID, and optional recovery action. Connectivity and
+required-contract failures make cached health stale; invalid requests, optional
+voice failures, busy responses, generation failures, invalid audio, and
+cancellation do not. There is no automatic fallback to another model or a
 legacy provider.
 Successful response metadata contains only safe scalar provenance, sample, and
 bounded timing values. Logs exclude submitted text, configured origins and
