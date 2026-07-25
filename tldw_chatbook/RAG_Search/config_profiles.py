@@ -8,6 +8,7 @@ along with utilities for experiment tracking and A/B testing.
 import json
 import os
 import re
+import threading
 import time
 from typing import Dict, Any, Optional, List, Literal, Tuple
 from dataclasses import dataclass, field, asdict
@@ -1212,6 +1213,22 @@ class ConfigProfileManager:
 # An explicit profiles_dir always bypasses the cache and gets a fresh
 # instance -- tests rely on that for per-test isolation.
 _GLOBAL_PROFILE_MANAGER: Optional["ConfigProfileManager"] = None
+# task-634 round-2 review: guards ONLY the _GLOBAL_PROFILE_MANAGER
+# check-and-create below -- a live UAT session hit a genuine race here: the
+# Settings screen's Clone-modal-open handler (active_profile_info(), main
+# thread) and the RAG shared-service construction path
+# (rag_factory.create_rag_service() -> get_profile_manager(), worker thread)
+# can both reach this function on a genuinely first (uncached) touch only
+# ~7ms apart. Without a lock, both see `_GLOBAL_PROFILE_MANAGER is None`
+# and each constructs its OWN ConfigProfileManager -- breaking the "sharing
+# one instance keeps writes visible to every default-dir caller" invariant
+# documented above (whichever call loses the race ends up holding an
+# orphaned manager that never sees the other's profile CRUD). Held only
+# across the construction of ConfigProfileManager itself, which does no
+# cross-thread/call_from_thread work, so this is safe to hold across (unlike
+# ingestion_indexing._shared_service_build_lock, which must NOT be held
+# across create_rag_service() -- see that module for why).
+_profile_manager_lock = threading.Lock()
 
 
 def get_profile_manager(profiles_dir: Optional[Path] = None) -> ConfigProfileManager:
@@ -1231,8 +1248,11 @@ def get_profile_manager(profiles_dir: Optional[Path] = None) -> ConfigProfileMan
     global _GLOBAL_PROFILE_MANAGER
     if profiles_dir is not None:
         return ConfigProfileManager(profiles_dir)
-    if _GLOBAL_PROFILE_MANAGER is None:
-        _GLOBAL_PROFILE_MANAGER = ConfigProfileManager()
+    if _GLOBAL_PROFILE_MANAGER is not None:
+        return _GLOBAL_PROFILE_MANAGER
+    with _profile_manager_lock:
+        if _GLOBAL_PROFILE_MANAGER is None:
+            _GLOBAL_PROFILE_MANAGER = ConfigProfileManager()
     return _GLOBAL_PROFILE_MANAGER
 
 
@@ -1245,7 +1265,8 @@ def reset_profile_manager_cache() -> None:
     singleton otherwise outlives any single test's env patching.
     """
     global _GLOBAL_PROFILE_MANAGER
-    _GLOBAL_PROFILE_MANAGER = None
+    with _profile_manager_lock:
+        _GLOBAL_PROFILE_MANAGER = None
 
 
 def quick_profile(use_case: ProfileType) -> ProfileConfig:
