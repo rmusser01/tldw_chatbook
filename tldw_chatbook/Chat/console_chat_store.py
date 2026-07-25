@@ -361,6 +361,15 @@ class ConsoleChatStore:
         most-recent-child leaf, repairing the durable pointer, when the pointer
         is missing or dangling).
 
+        task-558: also hydrates every restored node's ``generation_metadata``
+        from the ``message_generation_metadata`` sidecar table, via one
+        batched ``persistence.get_generation_metadata_for_messages`` call
+        feeding ``hydrate_generation_metadata`` (see
+        ``_hydrate_generation_metadata_from_persistence``) -- callers do not
+        need to drive that seam themselves. Silently skipped (nodes stay
+        metadata-only) when ``persistence`` is ``None`` or doesn't implement
+        the batch-fetch method.
+
         Args:
             title: Display title for the restored Console session.
             workspace_id: Workspace scope recorded on the persisted conversation,

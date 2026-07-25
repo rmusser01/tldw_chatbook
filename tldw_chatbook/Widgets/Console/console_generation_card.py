@@ -239,7 +239,6 @@ def _generation_card_image_widget(spec: ConsoleGenerationCardSpec) -> Widget:
             )
             widget.styles.max_width = PIXELS_MAX_COLS
             widget.styles.max_height = PIXELS_MAX_LINES
-    widget.add_class("console-generation-card-image")
     return widget
 
 

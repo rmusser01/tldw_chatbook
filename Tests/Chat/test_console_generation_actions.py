@@ -689,3 +689,84 @@ async def test_generate_image_handler_threads_prepared_fields_into_batch(monkeyp
     append_kwargs = appended_messages[0]
     assert append_kwargs["content"].startswith("[image] ")
     assert "a dragon" in append_kwargs["content"]
+
+
+class _FakeComposer:
+    """Minimal composer double: draft_text()/clear_draft()/insert_text_as_paste()."""
+
+    def __init__(self, text: str = ""):
+        self._text = text
+
+    def draft_text(self) -> str:
+        return self._text
+
+    def clear_draft(self) -> None:
+        self._text = ""
+
+    def insert_text_as_paste(self, text: str) -> None:
+        self._text = text
+
+
+@pytest.mark.asyncio
+async def test_generate_image_handler_restores_draft_when_batch_raises(monkeypatch):
+    """task-558: today only the zero-success RETURN path restores the
+    composer draft; when ``run_generation_batch`` RAISES instead (e.g. an
+    unexpected adapter bug, not a caught-and-reported ``ImageGenerationError``
+    per-variant failure), the draft stayed cleared and the user's typed
+    prompt was lost with no way to recover it. This pins the fix: an
+    ``except`` around the batch call restores the draft the same way the
+    zero-success path does, reports the error, and the in-flight guard is
+    still released via ``finally``."""
+    store = ConsoleChatStore()
+    screen = _bare_generation_screen(store)
+
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+
+    screen._default_console_session_settings = lambda: ConsoleSessionSettings(
+        provider="openai"
+    )
+    screen._console_generate_image_conversation_pairs = lambda store, session_id: []
+
+    composer = _FakeComposer("a red dragon that got typed before the crash")
+    screen._console_composer_or_none = lambda: composer
+
+    system_messages: list[str] = []
+
+    async def _fake_append_system(text: str) -> None:
+        system_messages.append(text)
+
+    screen._append_native_console_system_message = _fake_append_system
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(
+            default_backend="swarmui", default_batch=1, max_variants_per_message=8
+        ),
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "list_image_models_for_catalog",
+        lambda: [{"name": "swarmui", "is_configured": True}],
+    )
+
+    def _raising_batch(**kwargs):
+        raise RuntimeError("adapter exploded unexpectedly")
+
+    monkeypatch.setattr(chat_screen_module, "run_generation_batch", _raising_batch)
+
+    from tldw_chatbook.Chat.console_command_grammar import CommandParse
+
+    parse = CommandParse(kind="command", name="generate-image", args="a red dragon")
+
+    await screen._console_command_generate_image(parse)
+
+    # The draft the user had typed before dispatch must come back.
+    assert composer.draft_text() == "a red dragon that got typed before the crash"
+    # The failure must be reported, not silently swallowed.
+    assert any("adapter exploded unexpectedly" in msg for msg in system_messages)
+    # The in-flight guard must still be released -- a crashed batch must
+    # never wedge the session against further /generate-image commands.
+    assert store.ensure_session().id not in screen._console_imagegen_inflight_sessions()
+    # No orphan generation message from a batch that never produced a result.
+    assert store.messages_for_session(store.ensure_session().id) == []

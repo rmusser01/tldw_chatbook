@@ -316,6 +316,23 @@ def test_generation_card_details_text_omits_indicator_for_single_variant():
     assert "1/1" not in text
 
 
+def test_generation_card_details_text_omits_negative_row_when_empty():
+    """task-558: `_detail_rows` only appends the Negative row `if
+    meta.negative_prompt`; every other test in this file uses the
+    default truthy "blurry" negative prompt, so the empty-string branch
+    (an unstyled/raw-prompt generation with no negative prompt at all) was
+    never exercised."""
+    meta = _meta(negative_prompt="")
+    spec = _card_spec("gen-1", meta=meta)
+
+    text = generation_card_details_text(spec)
+
+    assert "Negative" not in text
+    # Sanity: the omission is targeted -- every other row still renders.
+    assert "Prompt: a red dragon" in text
+    assert "Style: cinematic" in text
+
+
 # --- Widget build: both modes + byte-less placeholder -------------------------
 
 

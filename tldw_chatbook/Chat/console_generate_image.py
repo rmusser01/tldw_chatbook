@@ -642,12 +642,20 @@ def run_generation_batch(
         except Exception as exc:  # noqa: BLE001 - collected per-variant, never aborts the batch
             errors.append(str(exc))
             continue
+        # task-558: prefer a resolved seed/model the adapter's result
+        # reports over the request's own values, when present. `getattr`
+        # (not attribute access) tolerates both a real `ImageGenResult`
+        # (which always carries these, defaulting to ``None``) and the
+        # minimal test doubles used across this module's test suite that
+        # predate these fields entirely.
+        resolved_seed = getattr(result, "resolved_seed", None)
+        resolved_model = getattr(result, "resolved_model", None)
         meta = GenerationVariantMeta(
             prompt=prompt,
             negative_prompt=negative_prompt or "",
             backend=backend,
-            model=None,
-            seed=variant_seed,
+            model=resolved_model,
+            seed=resolved_seed if resolved_seed is not None else variant_seed,
             style=style_name,
             params={},
         )

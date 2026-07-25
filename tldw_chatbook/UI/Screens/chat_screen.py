@@ -9956,6 +9956,17 @@ class ChatScreen(BaseAppScreen):
             messages_by_session=restored_messages_by_session,
             active_session_id=active_session_id,
         )
+        # task-558: `restore_state` (unlike `restore_persisted_session`, the
+        # DB-resume path) does not itself hydrate `generation_metadata` --
+        # `_serialize_console_message` never serialized it into screen state
+        # (matching the no-bytes-in-screen-state policy for the sidecar
+        # row's provenance), so a tab-switch-restored generation message
+        # would otherwise lose its card. Must run AFTER `restore_state`,
+        # which is what populates the store's tree nodes
+        # `hydrate_generation_metadata` looks up by session id.
+        self._rehydrate_console_message_generation_metadata(
+            store, restored_messages_by_session
+        )
         self._adopt_console_pending_attachments(store)
         self._console_visible_draft_session_id = None
         self._last_native_transcript_refresh_key = None
@@ -10059,6 +10070,61 @@ class ChatScreen(BaseAppScreen):
                     display_name=row.get("display_name") or entries[index].display_name,
                 )
             _apply_console_message_attachments(message, entries)
+
+    def _rehydrate_console_message_generation_metadata(
+        self,
+        store: "ConsoleChatStore",
+        restored_messages_by_session: Dict[str, list[ConsoleChatMessage]],
+    ) -> None:
+        """Batch-refill ``generation_metadata`` for messages restored from screen state.
+
+        Counterpart of ``_rehydrate_console_message_attachments`` for the
+        generation-metadata sidecar: `restore_state` -- the tab-switch
+        (in-memory) restore path -- does not itself hydrate
+        `generation_metadata`, unlike `restore_persisted_session` (the
+        DB-resume path), which drives this same
+        `get_generation_metadata_for_messages` +
+        `ConsoleChatStore.hydrate_generation_metadata` seam internally. One
+        batched call covers every restored message across every restored
+        session in this pass, then `hydrate_generation_metadata` is invoked
+        once per session (it filters by that session's own tree-node
+        persisted ids, so handing it the whole merged mapping is safe and
+        avoids a second per-session round trip). Must run AFTER
+        `store.restore_state(...)`, which is what populates the store's
+        tree nodes (and therefore `persisted_message_id` lookups)
+        `hydrate_generation_metadata` needs. Any failure (missing DB,
+        unreachable batch call) leaves messages metadata-only -- graceful
+        degradation, matching `_rehydrate_console_message_attachments`'s
+        own contract.
+
+        Args:
+            store: The Console chat store just populated by `restore_state`.
+            restored_messages_by_session: The same per-session message lists
+                passed to `store.restore_state(...)`.
+        """
+        persistence = getattr(store, "persistence", None)
+        getter = getattr(persistence, "get_generation_metadata_for_messages", None)
+        if not callable(getter):
+            return
+        ids = [
+            message.persisted_message_id
+            for messages in restored_messages_by_session.values()
+            for message in messages
+            if message.persisted_message_id
+        ]
+        if not ids:
+            return
+        try:
+            rows_by_message = getter(ids)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Console restore generation-metadata batch fetch failed."
+            )
+            return
+        if not isinstance(rows_by_message, dict):
+            return
+        for session_id in restored_messages_by_session:
+            store.hydrate_generation_metadata(session_id, rows_by_message)
 
     def save_state(self) -> Dict[str, Any]:
         """
@@ -11861,7 +11927,11 @@ class ChatScreen(BaseAppScreen):
         generation"): the blocking batch loop (`run_generation_batch`) then
         runs off the UI loop via `asyncio.to_thread`, exactly like
         `_prep_console_images`. On the zero-success path the original draft
-        is restored so the user can edit and retry. One or more successes
+        is restored so the user can edit and retry -- and the same restore
+        happens if `run_generation_batch` RAISES outright instead of
+        returning a zero-success `BatchResult` (an `except Exception`
+        around the whole batch call/append/sync sequence; the failure is
+        reported as a system message either way). One or more successes
         append a single generation message via
         `ConsoleChatStore.append_generation_message` with a trailing
         partial status line when some variants failed. The in-flight guard
@@ -11955,6 +12025,22 @@ class ChatScreen(BaseAppScreen):
                     ),
                 )
             await self._sync_native_console_chat_ui()
+        except Exception as exc:  # noqa: BLE001 - reported to the user, never a bare app crash
+            # task-558: `run_generation_batch` itself raising (as opposed to
+            # catching a per-variant failure and returning it in
+            # `batch.errors`, the zero-success path above) used to propagate
+            # straight past the draft-restore logic -- the user's typed
+            # prompt was gone with no way to recover it. Mirrors the
+            # zero-success restore exactly.
+            if composer is not None and saved_draft:
+                composer.clear_draft()
+                composer.insert_text_as_paste(saved_draft)
+            logger.opt(exception=True).error(
+                f"Image generation batch raised for session {session.id}: {exc}"
+            )
+            await self._append_native_console_system_message(
+                f"Image generation failed: {exc}"
+            )
         finally:
             inflight.discard(session.id)
 
