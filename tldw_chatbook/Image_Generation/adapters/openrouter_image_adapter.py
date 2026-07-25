@@ -23,6 +23,7 @@ from tldw_chatbook.Image_Generation.config import (
 )
 from tldw_chatbook.Image_Generation.exceptions import ImageBackendUnavailableError, ImageGenerationError
 from tldw_chatbook.Image_Generation.request_validation import effective_inline_max_bytes
+from tldw_chatbook.Utils.egress import origin_set
 
 
 class OpenRouterImageAdapter:
@@ -49,6 +50,9 @@ class OpenRouterImageAdapter:
                 headers=self._headers(api_key),
                 json=payload,
                 timeout=self._config.openrouter_image_timeout_seconds or DEFAULT_OPENROUTER_IMAGE_TIMEOUT_SECONDS,
+                # url is built from the configured base_url, not API-returned
+                # data, so its host is trusted.
+                trusted_origins=origin_set(url),
             )
         except Exception as exc:
             raise ImageGenerationError(f"OpenRouter request failed: {exc}") from exc
@@ -193,6 +197,8 @@ class OpenRouterImageAdapter:
         if raw.startswith("data:"):
             return decode_data_url(raw, max_bytes=self._max_output_bytes())
         if raw.startswith("http://") or raw.startswith("https://"):
+            # `raw` came from the OpenRouter API response body -- no
+            # trusted_origins, fully subject to the egress policy.
             return fetch_image_bytes(
                 raw,
                 timeout=self._config.openrouter_image_timeout_seconds or DEFAULT_OPENROUTER_IMAGE_TIMEOUT_SECONDS,

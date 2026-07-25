@@ -1,10 +1,13 @@
-"""Sync HTTP shim + light egress guard for the ported image adapters.
+"""Sync HTTP shim for the ported image adapters, backed by the app-wide SSRF policy.
 
 Provides the exact surface the server's http_client exposed to Image_Generation,
-backed by httpx.Client. Full SSRF hardening is deferred to task-498; this guard
-rejects non-http(s) schemes, enforces a redirect cap, and re-validates every
-redirect hop, while staying permissive for user-configured (incl. local) backend
-base URLs.
+backed by httpx.Client. Egress is enforced by ``Utils/egress.py`` (the app-wide
+SSRF policy, task-498): a URL is allowed iff every resolved IP is public and
+not a cloud metadata endpoint, OR its hostname is in the caller-supplied
+``trusted_origins`` set. Callers pass ``trusted_origins`` for hosts derived
+from a user-configured backend ``base_url`` (e.g. a local SwarmUI/sd.cpp
+server); URLs extracted from a remote API's response body (image links from
+OpenRouter/Novita/ModelStudio) must NOT be trusted and are fully enforced.
 """
 from __future__ import annotations
 import os
@@ -13,6 +16,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 import httpx
 from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+from tldw_chatbook.Utils import egress
 
 
 def _int_env(name: str, default: int) -> int:
@@ -35,19 +39,26 @@ DEFAULT_MAX_REDIRECTS = _int_env("HTTP_MAX_REDIRECTS", 5)
 _DEFAULT_TIMEOUT = 120.0
 
 
-def _validate_egress_or_raise(url: str) -> None:
-    """Reject a URL the adapters must not fetch (light Phase-1 guard).
+def _validate_egress_or_raise(url: str, *, trusted_origins: frozenset = frozenset()) -> None:
+    """Reject a URL the adapters must not fetch, per the app-wide egress policy.
+
+    Delegates to ``Utils/egress.py``: non-http(s) schemes, private/link-local
+    ranges, and cloud metadata endpoints are blocked, except that a hostname
+    in ``trusted_origins`` may resolve to a private/link-local IP (metadata
+    endpoints are always blocked regardless of trust).
 
     Args:
         url: The absolute URL about to be requested.
+        trusted_origins: Hostnames the caller has already established as
+            user-intended (e.g. a configured backend ``base_url``'s host).
 
     Raises:
-        ImageGenerationError: If the scheme is not http/https.
+        ImageGenerationError: If the URL is blocked by the egress policy.
     """
-    scheme = (urlparse(url).scheme or "").lower()
-    if scheme not in ("http", "https"):
-        raise ImageGenerationError(f"Refusing non-http(s) URL: {url!r}")
-    # task-498: private/link-local/metadata range blocking for API-returned URLs goes here.
+    try:
+        egress.check_url_or_raise(url, trusted_origins=trusted_origins)
+    except egress.EgressBlockedError as exc:
+        raise ImageGenerationError(f"Refusing blocked URL ({exc.reason}): {url!r}") from exc
 
 
 def _resolve_redirect_url(base: str, location: str) -> str:
@@ -61,24 +72,31 @@ class URLPolicyResult:
     reason: str | None = None
 
 
-def evaluate_url_policy(url: str, *, allowed_hosts: set[str] | None = None) -> URLPolicyResult:
-    """Decide whether ``url`` may be fetched, optionally against a host allowlist.
+def evaluate_url_policy(
+    url: str,
+    *,
+    allowed_hosts: set[str] | None = None,
+    trusted_origins: frozenset = frozenset(),
+) -> URLPolicyResult:
+    """Decide whether ``url`` may be fetched: egress policy, then an optional allowlist.
 
     Args:
-        url: The absolute URL to evaluate (scheme is always validated).
+        url: The absolute URL to evaluate.
         allowed_hosts: If given, ``url``'s host must equal or be a subdomain of
-            one of these; if empty/None, any http(s) host is allowed.
+            one of these; if empty/None, any host that clears the egress
+            policy is allowed.
+        trusted_origins: Hostnames the caller has already established as
+            user-intended (see ``_validate_egress_or_raise``).
 
     Returns:
         A ``URLPolicyResult`` with ``allowed`` and an optional ``reason``.
-
-    Raises:
-        ImageGenerationError: If the scheme is not http/https.
     """
-    _validate_egress_or_raise(url)
+    decision = egress.evaluate_url_policy(url, trusted_origins=trusted_origins)
+    if not decision.allowed:
+        return URLPolicyResult(False, decision.reason)
     if not allowed_hosts:
         return URLPolicyResult(True, None)
-    host = (urlparse(url).hostname or "").lower()
+    host = decision.host or (urlparse(url).hostname or "").lower()
     if any(host == h or host.endswith("." + h) for h in allowed_hosts):
         return URLPolicyResult(True, None)
     return URLPolicyResult(False, f"host {host!r} not in allowlist")
@@ -99,7 +117,7 @@ def create_client(timeout: float | None = None, *, follow_redirects: bool = Fals
         A configured ``httpx.Client``.
     """
     return httpx.Client(
-        timeout=timeout or _DEFAULT_TIMEOUT,
+        timeout=_DEFAULT_TIMEOUT if timeout is None else timeout,
         follow_redirects=follow_redirects,
         max_redirects=DEFAULT_MAX_REDIRECTS,
     )
@@ -114,35 +132,59 @@ def fetch_json(
     params: dict | None = None,
     cookies: dict | None = None,
     timeout: float | None = None,
+    trusted_origins: frozenset = frozenset(),
 ) -> Any:
     """Issue a JSON HTTP request, validating the egress URL on every hop.
 
     Redirects are followed manually so ``_validate_egress_or_raise`` re-runs on
     each ``Location`` — a blindly-followed redirect could reach a disallowed
-    host/scheme and defeat the egress guard.
+    host/scheme and defeat the egress guard. ``headers``/``cookies`` are also
+    re-evaluated per hop: ``Authorization``/``Cookie``/``Proxy-Authorization``
+    are stripped on any hop whose host differs from the original request's
+    host, so a redirect cannot be used to exfiltrate credentials to a
+    different (still-public, so not SSRF-blocked) origin. ``params`` is only
+    applied to the first hop — the redirected URL already carries whatever
+    query the server encoded into ``Location``.
 
     Args:
         method: HTTP method.
         url: Absolute request URL (validated before each hop).
-        headers: Optional request headers.
+        headers: Optional request headers; credential headers are dropped on
+            cross-origin hops (see above).
         json: Optional JSON body.
-        params: Optional query params.
-        cookies: Optional cookies.
+        params: Optional query params (first hop only).
+        cookies: Optional cookies; dropped on cross-origin hops.
         timeout: Per-request timeout in seconds.
+        trusted_origins: Hostnames trusted to resolve to a private/internal
+            IP (e.g. a configured backend ``base_url``'s host). Leave empty
+            for URLs sourced from a remote API's response body.
 
     Returns:
         The parsed JSON response body.
 
     Raises:
-        ImageGenerationError: On a non-http(s) URL, a redirect without a
-            ``Location``, or exceeding the redirect cap.
+        ImageGenerationError: On a blocked URL (see ``_validate_egress_or_raise``),
+            a redirect without a ``Location``, or exceeding the redirect cap.
     """
     current = url
+    first_host = egress.host_of(url)
     with create_client(timeout=timeout) as client:
-        for _ in range(DEFAULT_MAX_REDIRECTS + 1):
-            _validate_egress_or_raise(current)
+        for hop in range(DEFAULT_MAX_REDIRECTS + 1):
+            _validate_egress_or_raise(current, trusted_origins=trusted_origins)
+            # A redirect to a DIFFERENT origin must not carry credentials --
+            # public hosts (unlike private ones) are not blocked by the SSRF
+            # policy, so this is the only guard against a compromised/malicious
+            # backend exfiltrating our Authorization/Cookie via a 30x. Mirrors
+            # Utils.egress._hop_headers, the same rule the app's other egress
+            # consumers already apply.
+            same_origin = egress.host_of(current) == first_host
             resp = client.request(
-                method, current, headers=headers, json=json, params=params, cookies=cookies
+                method,
+                current,
+                headers=egress._hop_headers(headers, same_origin),
+                json=json,
+                params=params if hop == 0 else None,
+                cookies=cookies if same_origin else None,
             )
             if resp.is_redirect:
                 location = resp.headers.get("location") or resp.headers.get("Location")

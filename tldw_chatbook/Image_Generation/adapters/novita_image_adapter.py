@@ -23,6 +23,7 @@ from tldw_chatbook.Image_Generation.config import (
 )
 from tldw_chatbook.Image_Generation.exceptions import ImageBackendUnavailableError, ImageGenerationError
 from tldw_chatbook.Image_Generation.request_validation import effective_inline_max_bytes
+from tldw_chatbook.Utils.egress import origin_set
 
 
 class NovitaImageAdapter:
@@ -96,6 +97,9 @@ class NovitaImageAdapter:
                 headers=self._headers(api_key),
                 json=payload,
                 timeout=self._config.novita_image_timeout_seconds or DEFAULT_NOVITA_IMAGE_TIMEOUT_SECONDS,
+                # submit_url is built from the configured base_url, not
+                # API-returned data, so its host is trusted.
+                trusted_origins=origin_set(submit_url),
             )
         except Exception as exc:
             raise ImageGenerationError(f"Novita submit request failed: {exc}") from exc
@@ -122,6 +126,7 @@ class NovitaImageAdapter:
                     headers=self._headers(api_key),
                     params={"task_id": task_id},
                     timeout=self._config.novita_image_timeout_seconds or DEFAULT_NOVITA_IMAGE_TIMEOUT_SECONDS,
+                    trusted_origins=origin_set(poll_url),
                 )
             except Exception as exc:
                 raise ImageGenerationError(f"Novita task polling failed: {exc}") from exc
@@ -262,6 +267,9 @@ class NovitaImageAdapter:
         if raw.startswith("data:"):
             return decode_data_url(raw, max_bytes=self._max_output_bytes())
         if raw.startswith("http://") or raw.startswith("https://"):
+            # `raw` came from the Novita API response body, not from our own
+            # configured base_url -- no trusted_origins, so it is fully
+            # subject to the egress policy (private/link-local/metadata blocked).
             return fetch_image_bytes(
                 raw,
                 timeout=self._config.novita_image_timeout_seconds or DEFAULT_NOVITA_IMAGE_TIMEOUT_SECONDS,

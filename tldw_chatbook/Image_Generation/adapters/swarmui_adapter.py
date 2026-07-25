@@ -21,6 +21,7 @@ from tldw_chatbook.Image_Generation.config import (
 )
 from tldw_chatbook.Image_Generation.exceptions import ImageBackendUnavailableError, ImageGenerationError
 from tldw_chatbook.Image_Generation.request_validation import effective_inline_max_bytes
+from tldw_chatbook.Utils.egress import origin_set
 
 
 class SwarmUIAdapter:
@@ -37,11 +38,14 @@ class SwarmUIAdapter:
             raise ImageGenerationError(f"unsupported output format: {output_format}")
 
         base_url = self._resolve_base_url()
-        session_id = self._ensure_session(base_url)
+        # base_url is user-configured (config.toml/env), never API-returned data,
+        # so its host is trusted to resolve to a private/local IP (e.g. 127.0.0.1).
+        trusted_origins = origin_set(base_url)
+        session_id = self._ensure_session(base_url, trusted_origins)
 
         payload = self._build_payload(request, session_id)
         generate_url = f"{base_url}/API/GenerateText2Image"
-        data = self._post_generate(generate_url, payload)
+        data = self._post_generate(generate_url, payload, trusted_origins)
 
         image_ref = self._extract_first_image_ref(data)
         if not image_ref:
@@ -58,7 +62,7 @@ class SwarmUIAdapter:
             return ImageGenResult(content=content, content_type=content_type, bytes_len=len(content))
 
         image_url = self._resolve_image_url(base_url, image_ref)
-        content, content_type = self._fetch_image_bytes(image_url)
+        content, content_type = self._fetch_image_bytes(image_url, trusted_origins)
         content, content_type = validate_and_convert_image_output(
             content,
             content_type,
@@ -84,15 +88,15 @@ class SwarmUIAdapter:
     def _max_output_bytes(self) -> int:
         return effective_inline_max_bytes(self._config)
 
-    def _ensure_session(self, base_url: str) -> str:
+    def _ensure_session(self, base_url: str, trusted_origins: frozenset) -> str:
         if self._session_id:
             return self._session_id
-        self._session_id = self._request_session_id(base_url)
+        self._session_id = self._request_session_id(base_url, trusted_origins)
         return self._session_id
 
-    def _request_session_id(self, base_url: str) -> str:
+    def _request_session_id(self, base_url: str, trusted_origins: frozenset) -> str:
         url = f"{base_url}/API/GetNewSession"
-        data = self._post_json(url, {})
+        data = self._post_json(url, {}, trusted_origins)
         session_id = None
         if isinstance(data, dict):
             session_id = data.get("session_id")
@@ -133,15 +137,15 @@ class SwarmUIAdapter:
                 payload[key] = value
         return payload
 
-    def _post_generate(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        data = self._post_json(url, payload)
+    def _post_generate(self, url: str, payload: dict[str, Any], trusted_origins: frozenset) -> dict[str, Any]:
+        data = self._post_json(url, payload, trusted_origins)
         error_id = data.get("error_id") if isinstance(data, dict) else None
         if error_id == "invalid_session_id":
             logger.info("SwarmUI session invalid; refreshing session_id")
-            self._session_id = self._request_session_id(self._resolve_base_url())
+            self._session_id = self._request_session_id(self._resolve_base_url(), trusted_origins)
             retry_payload = dict(payload)
             retry_payload["session_id"] = self._session_id
-            data = self._post_json(url, retry_payload)
+            data = self._post_json(url, retry_payload, trusted_origins)
             error_id = data.get("error_id") if isinstance(data, dict) else None
 
         if isinstance(data, dict):
@@ -151,7 +155,7 @@ class SwarmUIAdapter:
                 raise ImageGenerationError(str(data.get("error")))
         return data if isinstance(data, dict) else {}
 
-    def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _post_json(self, url: str, payload: dict[str, Any], trusted_origins: frozenset) -> dict[str, Any]:
         try:
             data = fetch_json(
                 method="POST",
@@ -159,6 +163,7 @@ class SwarmUIAdapter:
                 json=payload,
                 cookies=self._cookies(),
                 timeout=self._config.swarmui_timeout_seconds or DEFAULT_SWARMUI_TIMEOUT_SECONDS,
+                trusted_origins=trusted_origins,
             )
         except Exception as exc:
             raise ImageGenerationError(f"SwarmUI request failed: {exc}") from exc
@@ -215,13 +220,14 @@ class SwarmUIAdapter:
             return 80
         return None
 
-    def _fetch_image_bytes(self, url: str) -> tuple[bytes, str]:
+    def _fetch_image_bytes(self, url: str, trusted_origins: frozenset) -> tuple[bytes, str]:
         try:
             return fetch_shared_image_bytes(
                 url,
                 cookies=self._cookies(),
                 timeout=self._config.swarmui_timeout_seconds or DEFAULT_SWARMUI_TIMEOUT_SECONDS,
                 max_bytes=self._max_output_bytes(),
+                trusted_origins=trusted_origins,
             )
         except Exception as exc:
             raise ImageGenerationError(f"SwarmUI image fetch failed: {exc}") from exc
