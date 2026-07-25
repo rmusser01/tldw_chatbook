@@ -26,7 +26,16 @@ _PERMITTING = {"approve_once", "approve_session", "always_allow"}
 
 
 def tool_ref(tool: Tool) -> GatedToolRef:
-    """Adapt a built-in ``Tool`` into the resolver's reference type."""
+    """Adapt a built-in ``Tool`` into the resolver's reference type.
+
+    Args:
+        tool: The built-in tool to adapt.
+
+    Returns:
+        A ``GatedToolRef`` carrying ``tool``'s name, description, input
+        schema, and risk tags under the built-in server key, suitable for
+        ``resolve_builtin_state``.
+    """
     return GatedToolRef(
         server_key=BUILTIN_TOOL_SERVER_KEY,
         name=tool.name,
@@ -169,17 +178,29 @@ class BuiltinToolGate:
         if self._kill_switch():
             return "tool execution is disabled by the kill switch"
 
+        # An effective `deny` (the user set the tool -- or its server
+        # default -- to "Off") is absolute: it must be consulted BEFORE
+        # any permitting stamp or session approval, never after. Built-in
+        # tools have no catalog filtering (unlike MCP's
+        # `compose_catalog`, which never discloses a denied tool to the
+        # model in the first place) -- this `check()` is the ONLY thing
+        # standing between the model and execution, so a stamp or a live
+        # session approval must never be allowed to shadow a resolved
+        # deny. `resolve()` is cheap here even on the stamped path:
+        # `_load_payload` caches per turn (`begin_turn()` clears it), so
+        # this adds no extra I/O within a turn.
+        state = self.resolve(tool)
+        if state.state == "deny":
+            return f"tool is set to Off: {tool.name}"
+
         stamp = self._stamps.get(tool.name)
         if stamp == "deny":
             return f"tool call denied by the user: {tool.name}"
         if stamp in _PERMITTING:
             return None
 
-        state = self.resolve(tool)
         if state.state == "allow":
             return None
-        if state.state == "deny":
-            return f"tool is set to Off: {tool.name}"
         if self._session_approved(tool.name):
             return None
         # "ask" with no stamp and no session approval: fail closed. In P1
@@ -202,5 +223,16 @@ def build_builtin_gate(service: Any | None = None) -> BuiltinToolGate:
     yields a service-less gate, which is fail-closed-correct per
     Constraint 7 (untagged tools still run, `"mutates"` tools still fail
     closed) rather than "ungated".
+
+    Args:
+        service: The control-plane service (typically
+            `UnifiedMCPControlPlaneService`) whose `permission_store`,
+            `get_kill_switch`, `is_session_approved`, and
+            `approve_for_session` the gate reads and calls. `None` builds
+            a service-less gate that still gates (fail-closed), not an
+            ungated one.
+
+    Returns:
+        A `BuiltinToolGate` wired to `service`.
     """
     return BuiltinToolGate(service)

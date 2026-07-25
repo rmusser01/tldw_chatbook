@@ -204,3 +204,40 @@ def test_build_builtin_gate_uses_the_passed_service():
     gate = build_builtin_gate(svc)
     reason = gate.check(CalculatorTool())
     assert reason is not None and "kill switch" in reason.lower()
+
+
+def test_effective_deny_wins_over_stamped_approve_once():
+    """Finding 1: an effective ``deny`` (Off) must be absolute -- a
+    stamped ``approve_once`` for this turn must NOT override it. Before
+    the fix, ``check()`` consulted the stamp before the resolved state,
+    so a permitting stamp on a tool the user set to Off would still let
+    it execute."""
+    payload = {
+        "profiles": {
+            "default": {
+                "servers": {"agent:builtin": {"default": "deny"}},
+            }
+        }
+    }
+    gate = BuiltinToolGate(_FakeService(payload=payload))
+    gate.begin_turn()
+    gate.stamp("calculator", "approve_once")
+    reason = gate.check(CalculatorTool())
+    assert reason is not None and "off" in reason.lower()
+
+
+def test_effective_deny_wins_over_live_session_approval():
+    """Finding 1: an effective ``deny`` (Off) must be absolute -- a live
+    session approval for this turn must NOT override it either. Before
+    the fix, a session-approved tool short-circuited before the resolved
+    ``deny`` branch was ever reached."""
+    payload = {
+        "profiles": {
+            "default": {
+                "servers": {"agent:builtin": {"default": "deny"}},
+            }
+        }
+    }
+    gate = BuiltinToolGate(_FakeService(payload=payload, session={"calculator"}))
+    reason = gate.check(CalculatorTool())
+    assert reason is not None and "off" in reason.lower()

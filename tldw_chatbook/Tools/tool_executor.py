@@ -47,6 +47,10 @@ class Tool(ABC):
         ``HIGH_RISK_TAGS`` (``mutates``/``process``) -- a tool tagged with
         one of those has an INHERITED ``allow`` floored to ``ask`` by
         ``resolve_builtin_state``. Read-only tools leave this empty.
+
+        Returns:
+            A tuple of risk tag strings drawn from ``HIGH_RISK_TAGS``;
+            empty for a tool with no elevated risk.
         """
         return ()
 
