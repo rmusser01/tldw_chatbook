@@ -16,6 +16,7 @@ from ...Chat.rag_scope import (
     CONVERSATION_METADATA_SCOPE_KEY,
     EffectiveScope,
     RagScope,
+    SCOPE_VERSION,
     SCOPE_EMPTY_NOTICE_TEMPLATE,
     SCOPE_REASON_EMPTY,
     SCOPE_STATUS_EMPTY,
@@ -643,22 +644,42 @@ def _read_fresh_workspace_scope_sync(
     with registry_db.connection() as conn:
         row = conn.execute(
             """
-            SELECT payload
-            FROM workspace_rag_scopes
-            WHERE workspace_id = ?
+            SELECT records.workspace_id, scopes.payload
+            FROM workspace_records AS records
+            LEFT JOIN workspace_rag_scopes AS scopes
+                ON scopes.workspace_id = records.workspace_id
+            WHERE records.workspace_id = ?
             """,
             (workspace_id,),
         ).fetchone()
     if row is None:
-        return None
+        raise LookupError("linked workspace authority is unavailable")
     try:
         payload = row["payload"]
     except (IndexError, KeyError, TypeError):
-        payload = row[0]
+        payload = row[1]
+    if payload is None:
+        return None
     raw_scope = json.loads(payload)
-    scope = parse_scope(raw_scope)
+    scope = _parse_fresh_scope(raw_scope)
     if scope is None:
         raise ValueError("workspace scope authority is malformed")
+    return scope
+
+
+def _parse_fresh_scope(raw_scope: Any) -> Optional[RagScope]:
+    """Parse fresh authority without exposing an untrusted version in logs."""
+
+    if raw_scope is None:
+        return None
+    if not isinstance(raw_scope, dict):
+        raise ValueError("fresh scope authority is malformed")
+    version = raw_scope.get("version")
+    if type(version) is not int or version != SCOPE_VERSION:
+        raise ValueError("fresh scope authority version is invalid")
+    scope = parse_scope(raw_scope)
+    if scope is None:
+        raise ValueError("fresh scope authority is malformed")
     return scope
 
 
@@ -687,13 +708,14 @@ async def resolve_scope_for_session(
     Phase 3 of the rag-scope-narrowing program). The workspace's stored
     scope is normally read through ``workspace_registry_service``'s
     ``get_workspace_scope`` method. Fresh prompt authorization instead reads
-    the registry row directly so a genuinely missing row remains unscoped
-    while a malformed stored row is distinguishable and fails closed. A
-    missing service or a missing/empty ``workspace_id`` degrades to
-    ``ws_scope=None`` only outside fresh authorization. A storage READ FAILURE
-    does NOT degrade to ``ws_scope=None``, because that would silently drop the
-    workspace bound and widen a hard-filter feature on error. Instead this
-    function returns early with an EMPTY ``EffectiveScope`` (``cause="workspace-scope-
+    workspace record and optional scope row together so an existing workspace
+    with no scope remains unscoped while a missing workspace or malformed
+    stored scope fails closed. A missing service or a missing/empty
+    ``workspace_id`` degrades to ``ws_scope=None`` only outside fresh
+    authorization. A storage READ FAILURE does NOT degrade to ``ws_scope=None``,
+    because that would silently drop the workspace bound and widen a hard-filter
+    feature on error. Instead this function returns early with an EMPTY
+    ``EffectiveScope`` (``cause="workspace-scope-
     unavailable"``), regardless of whether the conversation itself has a
     scope, since conv-scope-alone is always wider than the (conv ∩
     workspace) intersection that can no longer be computed.
@@ -770,7 +792,7 @@ async def resolve_scope_for_session(
                     if not isinstance(metadata, dict):
                         raise ValueError("conversation metadata is not an object")
                 raw_scope = metadata.get(CONVERSATION_METADATA_SCOPE_KEY)
-                conv_scope = parse_scope(raw_scope)
+                conv_scope = _parse_fresh_scope(raw_scope)
                 if raw_scope is not None and conv_scope is None:
                     raise ValueError("conversation scope is malformed")
                 if conv_scope is not None and not conv_scope.items:

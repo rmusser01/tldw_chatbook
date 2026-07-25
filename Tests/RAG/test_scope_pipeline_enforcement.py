@@ -23,6 +23,7 @@ mirroring ``Tests/RAG_Search/test_pipeline_notes_search.py`` and
 """
 
 import asyncio
+import json
 import threading
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -1934,8 +1935,9 @@ class TestFreshPromptBoundaryAuthority:
             "{PRIVATE-WORKSPACE-SCOPE-SENTINEL",
             '{"version": 1, "items": "PRIVATE-WORKSPACE-SCOPE-SENTINEL", '
             '"updated_at": "t1"}',
+            '{"version": true, "items": [], "updated_at": "t1"}',
         ],
-        ids=["malformed-json", "decoded-invalid-scope"],
+        ids=["malformed-json", "decoded-invalid-scope", "bool-version"],
     )
     @pytest.mark.asyncio
     async def test_fresh_malformed_workspace_scope_fails_closed(
@@ -1993,6 +1995,135 @@ class TestFreshPromptBoundaryAuthority:
 
         assert effective.state == "unscoped"
         assert authorized == (candidate,)
+
+    @pytest.mark.asyncio
+    async def test_fresh_missing_linked_workspace_fails_closed(
+        self, media_db, tmp_path, monkeypatch
+    ):
+        media_id = _seed_media(media_db, n=1)[0]
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task2-missing")
+        )
+        session = SimpleNamespace(
+            persisted_conversation_id=None,
+            workspace_id="workspace-does-not-exist",
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+        candidate = self._normalized("media", media_id, "Media", rank=1)
+
+        effective = await cre.resolve_effective_scope_for_chat(app, use_cache=False)
+        authorized = await cre.authorize_local_results_for_prompt(app, (candidate,))
+
+        assert effective.state == "empty"
+        assert effective.cause == "workspace-scope-unavailable"
+        assert authorized == ()
+
+    @pytest.mark.asyncio
+    async def test_fresh_workspace_version_rejection_does_not_log_raw_value(
+        self, media_db, tmp_path, monkeypatch
+    ):
+        sentinel = "PRIVATE-VERSION-SENTINEL"
+        media_id = _seed_media(media_db, n=1)[0]
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task2-version")
+        )
+        registry.create_workspace(workspace_id="ws-version", name="Version")
+        payload = json.dumps(
+            {
+                "version": sentinel,
+                "items": [{"source_type": SOURCE_TYPE_MEDIA, "source_id": media_id}],
+                "updated_at": "t1",
+            }
+        )
+        with registry.db.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO workspace_rag_scopes (workspace_id, payload, updated_at)
+                VALUES (?, ?, ?)
+                """,
+                ("ws-version", payload, "t1"),
+            )
+        session = SimpleNamespace(
+            persisted_conversation_id=None,
+            workspace_id="ws-version",
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+        candidate = self._normalized("media", media_id, "Media", rank=1)
+        captured = []
+        sink_id = loguru_logger.add(
+            captured.append,
+            level="WARNING",
+            format="{message}",
+        )
+        try:
+            effective = await cre.resolve_effective_scope_for_chat(app, use_cache=False)
+            authorized = await cre.authorize_local_results_for_prompt(app, (candidate,))
+        finally:
+            loguru_logger.remove(sink_id)
+
+        rendered = "".join(str(message) for message in captured)
+        assert effective.state == "empty"
+        assert effective.cause == "workspace-scope-unavailable"
+        assert authorized == ()
+        assert sentinel not in rendered
+
+    @pytest.mark.asyncio
+    async def test_fresh_conversation_version_rejection_does_not_log_raw_value(
+        self, media_db, cha_db, monkeypatch
+    ):
+        sentinel = "PRIVATE-VERSION-SENTINEL"
+        media_id = _seed_media(media_db, n=1)[0]
+        conversation_id = cha_db.add_conversation({"title": "Version"})
+        record = cha_db.get_conversation_by_id(conversation_id)
+        assert record is not None
+        cha_db.update_conversation(
+            conversation_id,
+            {
+                "metadata": json.dumps(
+                    {
+                        "rag_scope": {
+                            "version": sentinel,
+                            "items": [
+                                {
+                                    "source_type": SOURCE_TYPE_MEDIA,
+                                    "source_id": media_id,
+                                }
+                            ],
+                            "updated_at": "t1",
+                        }
+                    }
+                )
+            },
+            expected_version=record["version"],
+        )
+        session = SimpleNamespace(
+            persisted_conversation_id=conversation_id,
+            workspace_id=None,
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        app = _App(media_db=media_db, chachanotes_db=cha_db)
+        candidate = self._normalized("media", media_id, "Media", rank=1)
+        captured = []
+        sink_id = loguru_logger.add(
+            captured.append,
+            level="WARNING",
+            format="{message}",
+        )
+        try:
+            effective = await cre.resolve_effective_scope_for_chat(app, use_cache=False)
+            authorized = await cre.authorize_local_results_for_prompt(app, (candidate,))
+        finally:
+            loguru_logger.remove(sink_id)
+
+        rendered = "".join(str(message) for message in captured)
+        assert effective.state == "empty"
+        assert effective.cause == "conversation-scope-unavailable"
+        assert authorized == ()
+        assert sentinel not in rendered
 
     @pytest.mark.asyncio
     async def test_prompt_authority_failure_log_omits_sensitive_values(
