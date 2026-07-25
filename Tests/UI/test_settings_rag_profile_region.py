@@ -26,7 +26,7 @@ import inspect
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -45,10 +45,14 @@ from tldw_chatbook.UI.Screens.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
 )
+from tldw_chatbook.UI.Workbench import WorkbenchHelpPanel
 from tldw_chatbook.UI.Screens.settings_screen import (
+    RagProfileNameModal,
     RagProfileSwitchConfirmModal,
     SettingsScreen,
 )
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
 
 @pytest.fixture(autouse=True)
@@ -173,6 +177,26 @@ def test_confirm_modal_discard_pops_draft_before_dispatching_set_active(
     assert SettingsCategoryId.LIBRARY_RAG not in screen._settings_drafts
 
 
+def test_confirm_modal_discard_from_a_preview_clears_the_preview_first(
+    monkeypatch, tmp_path, fake_app
+):
+    """Task 4 review (Important, coherence): reaching this modal at all
+    requires the Select to be on a DIFFERENT profile than active -- which
+    is exactly what a genuine browse would have already put into preview.
+    A stale preview must not survive into the (async) gap before the
+    set-active worker completes: `_rag_preview_profile_id` must be cleared
+    before the discard's bare resync, not after."""
+    screen, callback, other_id = _dirty_screen_with_switch_pushed(
+        monkeypatch, tmp_path, fake_app
+    )
+    screen._rag_preview_profile_id = other_id
+    screen._dispatch_rag_set_active = lambda profile_id: None
+
+    callback("discard")
+
+    assert screen._rag_preview_profile_id is None
+
+
 def test_confirm_modal_save_arms_pending_activate_and_routes_through_save_action(
     monkeypatch, tmp_path, fake_app
 ):
@@ -186,6 +210,49 @@ def test_confirm_modal_save_arms_pending_activate_and_routes_through_save_action
 
     assert screen._rag_profile_pending_activate == other_id
     assert save_calls == [{"allow_text_entry_focus": True}]
+
+
+def test_confirm_modal_save_from_a_preview_clears_preview_and_the_save_actually_dispatches(
+    monkeypatch, tmp_path, fake_app
+):
+    """Task 4 review CRITICAL regression: picking a non-active profile in
+    the Select now ALWAYS enters preview (handle_library_rag_profile_
+    select_changed), so "Set active" while dirty -> "Save" reaches this
+    callback with `_rag_preview_profile_id` still armed at the target
+    profile. Before the fix, `action_settings_save_category`'s own preview
+    guard (added earlier for the plain Save button) would silently no-op
+    THIS save too -- and since that guard sits above the
+    `_rag_profile_pending_activate` capture-and-clear, the pending id would
+    leak forever, ready to fire an unrelated later save's profile switch.
+    This exercises the REAL `action_settings_save_category` (not
+    monkeypatched) to prove the save actually reaches dispatch."""
+    screen, callback, other_id = _dirty_screen_with_switch_pushed(
+        monkeypatch, tmp_path, fake_app
+    )
+    # Simulate the genuine browse that got the user here: selecting `other`
+    # in the dropdown already entered preview before "Set active" was ever
+    # clicked.
+    screen._rag_preview_profile_id = other_id
+    dispatched: list[tuple] = []
+    screen._confirm_reindex_then_save = lambda values, pending: dispatched.append(
+        (values, pending)
+    )
+
+    callback("save")
+
+    assert screen._rag_preview_profile_id is None
+    # The save must have actually reached the reindex-confirm gate with the
+    # correct pending-activate target -- not been silently blocked.
+    assert len(dispatched) == 1
+    _values, pending = dispatched[0]
+    assert pending == other_id
+    # And the pending id must NOT be left armed for a later, unrelated save
+    # to pick up (the leak the reviewer flagged).
+    assert screen._rag_profile_pending_activate is None
+    assert not any(
+        "Return to the active profile to save" in message
+        for message, _severity in fake_app.notifications
+    )
 
 
 # --- Finding 2: `_rag_profile_pending_activate` must not leak past an
@@ -420,7 +487,18 @@ async def test_clone_success_selects_the_clone_in_the_real_select_widget(
 ):
     """Full-mount regression lock for item 1: after a clone completes, the
     ACTUAL profile Select widget's value is the clone's id (not snapped
-    back to the still-active source profile)."""
+    back to the still-active source profile).
+
+    541-v2 final review item 1: the ``select.value``/toast/caption
+    assertions below are all determined synchronously the moment
+    ``_rag_after_profile_action`` returns -- none of them actually
+    exercised the real bug (Select posts its resulting ``Changed``
+    message(s) ASYNCHRONOUSLY, so a single early ``pilot.pause()`` was a
+    timing coincidence, not a guarantee). Two more pauses below, draining
+    those deferred messages, plus a ``_rag_preview_profile_id`` assertion,
+    close that gap -- see
+    ``test_cloning_leaves_the_select_on_the_clone_without_auto_entering_preview``
+    for the dedicated regression."""
     mgr, _profile, _state = _wire_rag_profile_adapter(
         monkeypatch, tmp_path, active_id="hybrid_basic"
     )
@@ -446,6 +524,15 @@ async def test_clone_success_selects_the_clone_in_the_real_select_widget(
         # The active profile hasn't changed (only the picker's highlight
         # has) -- the decoupling caption (item 2) must still name the
         # original active profile, not the clone.
+        assert "Editing: Hybrid Basic." in _visible_text(screen)
+
+        # Drain the resync's own deferred Select.Changed message(s) (the
+        # transient Select.NULL `set_options()` causes, then the clone id)
+        # -- neither may flip the editor into a profile-picker PREVIEW.
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._rag_preview_profile_id is None
+        assert select.value == clone.id
         assert "Editing: Hybrid Basic." in _visible_text(screen)
 
 
@@ -476,13 +563,25 @@ async def test_editing_caption_names_the_active_profile_not_the_select_value(
         ) in _visible_text(screen)
 
         # Browse to a different profile in the dropdown WITHOUT pressing
-        # "Set active" -- the caption must not follow the Select.
+        # "Set active" -- the caption must not follow the Select. 541-v2
+        # final review item 2: it's hidden entirely while previewing (it
+        # used to keep naming the active profile here, which read as a
+        # direct contradiction sitting right above the editor's own
+        # "Previewing: Other RAG" title) -- and it never shows the browsed
+        # profile's name in its place either.
         select = screen.query_one("#settings-library-rag-profile-select", Select)
         select.value = other.id
         await pilot.pause()
 
+        visible = _visible_text(screen)
+        assert f"Editing: {profile.name}." not in visible
+        assert "Editing: Other RAG." not in visible
+
+        # Browsing back to the active profile's own id exits preview and
+        # restores the caption.
+        select.value = profile.id
+        await pilot.pause()
         assert f"Editing: {profile.name}." in _visible_text(screen)
-        assert "Editing: Other RAG." not in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -582,10 +681,201 @@ async def test_library_rag_detail_renders_fields_disabled_for_readonly_active_pr
         assert screen.query_one("#settings-library-rag-vector-top-k", Input).disabled
         assert screen.query_one("#settings-library-rag-hybrid-alpha", Input).disabled
         assert screen.query_one("#settings-library-rag-score-threshold", Input).disabled
-        assert screen.query_one("#settings-library-rag-include-citations", Button).disabled
+        assert screen.query_one(
+            "#settings-library-rag-include-citations", Checkbox
+        ).disabled
         assert screen.query_one("#settings-library-rag-citation-style", Select).disabled
         assert screen.query_one("#settings-library-rag-snippet-max-chars", Input).disabled
         assert screen.query_one("#settings-library-rag-max-context-size", Input).disabled
+
+
+@pytest.mark.asyncio
+async def test_rerank_fields_disabled_for_readonly_builtin_omit_reranking_suffix(
+    monkeypatch, tmp_path
+):
+    """Review fix (AC #4): a builtin read-only active profile with reranking
+    OFF (e.g. a fresh install's default `hybrid_basic`, and 9 of the 12
+    builtins) must show the rerank Inputs disabled WITHOUT the
+    "(enable reranking to edit)" suffix -- that instruction is unactionable
+    here since the Enable-reranking checkbox is itself disabled by the
+    builtin lock, not by the user's own choice. The suffix is reserved for
+    the case where reranking-off is the ACTUAL, user-actionable reason."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path, active_id="hybrid_basic")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        model_input = screen.query_one("#settings-library-rag-reranker-model", Input)
+        top_k_input = screen.query_one("#settings-library-rag-reranker-top-k", Input)
+        assert model_input.disabled is True
+        assert top_k_input.disabled is True
+        visible_text = _visible_text(screen)
+        assert "(enable reranking to edit)" not in visible_text
+        assert "Reranker model" in visible_text
+        assert "Rerank results" in visible_text
+
+
+# --- Task 1 (RAG settings v2 UX, AC #4): the citations/reranking toggles are
+# real Checkboxes (not Buttons whose label just says "Enabled"/"Disabled"),
+# and the rerank model/results Inputs are dimmed -- never hidden -- whenever
+# reranking itself is off, distinct from the builtin read-only lock. ---
+
+
+@pytest.mark.asyncio
+async def test_citation_and_reranking_toggles_are_checkboxes_mirroring_loaded_values(
+    monkeypatch, tmp_path
+):
+    from tldw_chatbook.RAG_Search.reranker import RerankingConfig
+
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.rag_config.search.include_citations = False
+    profile.reranking_config = RerankingConfig()
+    mgr.save_profile(profile)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        citations_checkbox = screen.query_one(
+            "#settings-library-rag-include-citations", Checkbox
+        )
+        rerank_checkbox = screen.query_one(
+            "#settings-library-rag-enable-reranking", Checkbox
+        )
+        assert citations_checkbox.value is False
+        assert rerank_checkbox.value is True
+
+
+@pytest.mark.asyncio
+async def test_rerank_fields_dimmed_when_reranking_off_and_re_enable_on_toggle(
+    monkeypatch, tmp_path
+):
+    """The default hybrid_basic clone has no reranking_config (reranking
+    off) -- the rerank model/results Inputs must compose disabled with the
+    "(enable reranking to edit)" suffix, and toggling the checkbox on must
+    immediately re-enable them (live, before any Save)."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        model_input = screen.query_one("#settings-library-rag-reranker-model", Input)
+        top_k_input = screen.query_one("#settings-library-rag-reranker-top-k", Input)
+        assert model_input.disabled is True
+        assert top_k_input.disabled is True
+        assert (
+            "Reranker model (enable reranking to edit)" in _visible_text(screen)
+        )
+        assert (
+            "Rerank results (enable reranking to edit)" in _visible_text(screen)
+        )
+
+        rerank_checkbox = screen.query_one(
+            "#settings-library-rag-enable-reranking", Checkbox
+        )
+        screen.handle_library_rag_enable_reranking_changed(
+            Checkbox.Changed(rerank_checkbox, True)
+        )
+        await pilot.pause()
+
+        assert model_input.disabled is False
+        assert top_k_input.disabled is False
+        assert "(enable reranking to edit)" not in _visible_text(screen)
+
+        # And back off again -- the dimming (and suffix) must reapply.
+        screen.handle_library_rag_enable_reranking_changed(
+            Checkbox.Changed(rerank_checkbox, False)
+        )
+        await pilot.pause()
+
+        assert model_input.disabled is True
+        assert top_k_input.disabled is True
+        assert "(enable reranking to edit)" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_rerank_fields_stay_dimmed_after_a_profile_switch_resync(
+    monkeypatch, tmp_path
+):
+    """Regression: `_sync_library_rag_profile_widgets` runs AFTER
+    `_sync_library_rag_widgets` on every set-active/clone/rename/delete
+    resync and used to blanket-set `disabled = read_only` for every field
+    including the rerank Inputs -- silently re-enabling them after
+    switching to a non-builtin profile with reranking off. Exercises the
+    same resync path a real Set-active click uses."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    mgr.save_profile(profile)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        model_input = screen.query_one("#settings-library-rag-reranker-model", Input)
+        assert model_input.disabled is True
+
+        screen._sync_library_rag_widgets()
+        screen._sync_library_rag_profile_widgets()
+        await pilot.pause()
+
+        assert model_input.disabled is True
+        assert (
+            "Reranker model (enable reranking to edit)" in _visible_text(screen)
+        )
+
+
+@pytest.mark.asyncio
+async def test_toggling_include_citations_checkbox_stages_draft_value_aware(
+    monkeypatch, tmp_path
+):
+    """Retargets the pre-existing Button.Pressed dirty-marking assertions
+    (see test_settings_library_rag_renders_guided_defaults_and_validates in
+    test_settings_configuration_hub.py) at the new Checkbox.Changed handler:
+    toggling away from the loaded value stages a draft, and staging the SAME
+    value the profile already has must NOT mark the category dirty."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.rag_config.search.include_citations = True
+    mgr.save_profile(profile)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+
+        checkbox = screen.query_one(
+            "#settings-library-rag-include-citations", Checkbox
+        )
+        screen.handle_library_rag_include_citations_changed(
+            Checkbox.Changed(checkbox, False)
+        )
+
+        assert screen.query_one("#settings-save-category", Button).disabled is False
+        assert "Unsaved" in _visible_text(screen)
+
+        # Staging the SAME value as loaded must clear the draft again
+        # (value-aware -- exactly like the old Button.Pressed path).
+        screen.handle_library_rag_include_citations_changed(
+            Checkbox.Changed(checkbox, True)
+        )
+
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert "No unsaved changes" in _visible_text(screen)
 
 
 # --- UX review item 6 (P2, imported-settings provenance): the active
@@ -1181,3 +1471,1823 @@ def test_after_set_active_with_unknown_index_status_shows_honest_notice_without_
     message, severity = fake_app.notifications[-1]
     assert settings_screen_module.RAG_INDEX_CHANGE_WARNING not in message
     assert "unavailable" in message.lower()
+
+
+# --- Task 2 (541 v2 UX): pre-commit re-index confirmation. A save that
+# would re-point the active profile at a fresh, EMPTY vector collection
+# while the CURRENT collection is actually built (has vectors worth
+# losing) must be confirmed BEFORE the save worker dispatches -- not just
+# warned about after the fact (that's the existing RAG_INDEX_CHANGE_WARNING
+# post-save notice, which still covers the absent/empty/unknown case). ---
+
+
+def _dirty_screen_ready_for_reindex_gate(
+    monkeypatch, tmp_path, fake_app, *, cached_status, pending_activate=None
+):
+    """Wire an isolated adapter, force `index_change_pending` True (so the
+    gate always evaluates the STATUS branch regardless of which field the
+    draft actually touches), seed the screen's cached index-status with
+    `cached_status`, and stub the save worker so dispatch is observable
+    without touching real profile files."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module, "index_change_pending", lambda values: True
+    )
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)
+    screen._library_rag_index_status_cache = cached_status
+    if pending_activate is not None:
+        screen._rag_profile_pending_activate = pending_activate
+    worker_calls: list[tuple] = []
+    screen._settings_save_library_rag_worker = lambda *args: worker_calls.append(args)
+    return screen, worker_calls
+
+
+def test_save_with_built_index_pushes_confirm_modal_with_count_and_backfill(
+    monkeypatch, tmp_path, fake_app
+):
+    screen, worker_calls = _dirty_screen_ready_for_reindex_gate(
+        monkeypatch,
+        tmp_path,
+        fake_app,
+        cached_status={"state": "built", "count": 1234, "provenance": {}},
+    )
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+
+    # Nothing dispatched yet -- the modal gates the worker.
+    assert worker_calls == []
+    assert len(fake_app.pushed_screens) == 1
+    modal, callback = fake_app.pushed_screens[0]
+    assert isinstance(modal, ConfirmationDialog)
+    # 541-v2 final review item 3: thousands separator -- 1234 renders as
+    # "1,234", not the bare digit run.
+    assert "1,234" in modal.message
+    assert "1234" not in modal.message
+    assert "Backfill" in modal.message
+
+
+def test_reindex_confirm_cancel_does_not_save_and_clears_pending_activate(
+    monkeypatch, tmp_path, fake_app
+):
+    screen, worker_calls = _dirty_screen_ready_for_reindex_gate(
+        monkeypatch,
+        tmp_path,
+        fake_app,
+        cached_status={"state": "built", "count": 1234, "provenance": {}},
+        pending_activate="target-profile-id",
+    )
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+    _modal, callback = fake_app.pushed_screens[0]
+
+    callback(False)
+
+    assert worker_calls == []
+    assert screen._rag_profile_pending_activate is None
+    # The draft is left staged -- Cancel must not lose the user's edits.
+    assert SettingsCategoryId.LIBRARY_RAG in screen._settings_drafts
+
+
+def test_reindex_confirm_confirm_dispatches_save_and_rearms_pending_activate(
+    monkeypatch, tmp_path, fake_app
+):
+    screen, worker_calls = _dirty_screen_ready_for_reindex_gate(
+        monkeypatch,
+        tmp_path,
+        fake_app,
+        cached_status={"state": "built", "count": 1234, "provenance": {}},
+        pending_activate="target-profile-id",
+    )
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+    _modal, callback = fake_app.pushed_screens[0]
+
+    callback(True)
+
+    assert len(worker_calls) == 1
+    values, index_will_change = worker_calls[0]
+    assert index_will_change is True
+    assert screen._rag_profile_pending_activate == "target-profile-id"
+
+
+@pytest.mark.parametrize("state", ["absent", "empty"])
+def test_save_with_index_change_but_nothing_built_skips_modal_and_saves_directly(
+    monkeypatch, tmp_path, fake_app, state
+):
+    screen, worker_calls = _dirty_screen_ready_for_reindex_gate(
+        monkeypatch,
+        tmp_path,
+        fake_app,
+        cached_status={"state": state, "count": 0, "provenance": {}},
+    )
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+
+    assert fake_app.pushed_screens == []
+    assert len(worker_calls) == 1
+    values, index_will_change = worker_calls[0]
+    assert index_will_change is True
+
+
+def test_save_then_switch_reindex_confirm_survives_a_confirm(
+    monkeypatch, tmp_path, fake_app
+):
+    """The save-then-switch flow (dirty prompt -> Save) must still complete
+    end to end even when the save it defers to gets its own re-index
+    confirm: pending-activate armed by "Save" on the switch prompt must
+    survive a Confirm on the (second) reindex-confirm modal."""
+    screen, callback, other_id = _dirty_screen_with_switch_pushed(
+        monkeypatch, tmp_path, fake_app
+    )
+    monkeypatch.setattr(
+        settings_screen_module, "index_change_pending", lambda values: True
+    )
+    screen._library_rag_index_status_cache = {
+        "state": "built",
+        "count": 7,
+        "provenance": {},
+    }
+    worker_calls: list[tuple] = []
+    screen._settings_save_library_rag_worker = lambda *args: worker_calls.append(args)
+
+    callback("save")  # arms _rag_profile_pending_activate=other_id, calls Save
+
+    assert worker_calls == []
+    assert len(fake_app.pushed_screens) == 2
+    reindex_modal, reindex_callback = fake_app.pushed_screens[-1]
+    assert isinstance(reindex_modal, ConfirmationDialog)
+
+    reindex_callback(True)
+
+    assert len(worker_calls) == 1
+    assert screen._rag_profile_pending_activate == other_id
+
+
+def test_save_then_switch_reindex_confirm_survives_a_cancel(
+    monkeypatch, tmp_path, fake_app
+):
+    """Same setup, Cancel branch: the deferred switch must NOT fire and
+    _rag_profile_pending_activate must end up clear, not stuck armed."""
+    screen, callback, _other_id = _dirty_screen_with_switch_pushed(
+        monkeypatch, tmp_path, fake_app
+    )
+    monkeypatch.setattr(
+        settings_screen_module, "index_change_pending", lambda values: True
+    )
+    screen._library_rag_index_status_cache = {
+        "state": "built",
+        "count": 7,
+        "provenance": {},
+    }
+    worker_calls: list[tuple] = []
+    screen._settings_save_library_rag_worker = lambda *args: worker_calls.append(args)
+
+    callback("save")
+    _reindex_modal, reindex_callback = fake_app.pushed_screens[-1]
+
+    reindex_callback(False)
+
+    assert worker_calls == []
+    assert screen._rag_profile_pending_activate is None
+
+
+def test_save_with_no_cached_status_fetches_then_confirms_when_built(
+    monkeypatch, tmp_path, fake_app
+):
+    """Step 2: when nothing has been cached yet (category never shown /
+    status never fetched), the gate dispatches its own off-thread fetch
+    before deciding. `_FakeApp` can't run the real Textual worker
+    machinery, so the dispatch call itself is stubbed (same idiom as
+    ``test_backfill_button_click_starts_a_worker_and_notifies``) and the
+    thread-body is invoked directly afterwards (same idiom as
+    ``test_rag_test_category_worker_completion_notifies_state_and_preview``)
+    to simulate the off-thread fetch completing."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module, "index_change_pending", lambda values: True
+    )
+    monkeypatch.setattr(
+        settings_screen_module,
+        "fetch_index_status",
+        lambda: {"state": "built", "count": 99, "provenance": {}},
+    )
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)
+    assert screen._library_rag_index_status_cache is None
+    worker_calls: list[tuple] = []
+    screen._settings_save_library_rag_worker = lambda *args: worker_calls.append(args)
+    fetch_dispatches: list[tuple] = []
+    screen._rag_reindex_confirm_status_worker = lambda *args: fetch_dispatches.append(
+        args
+    )
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+
+    # No modal from the (synchronous) action call itself -- only the fetch
+    # was dispatched, off-thread.
+    assert fake_app.pushed_screens == []
+    assert len(fetch_dispatches) == 1
+    values, pending_activate = fetch_dispatches[0]
+
+    # Simulate the off-thread fetch completing by invoking the real
+    # thread-body directly, bypassing @work's dispatch machinery.
+    worker = SettingsScreen.__dict__["_rag_reindex_confirm_status_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen, values, pending_activate)
+
+    assert worker_calls == []  # gated behind the modal, not dispatched yet
+    assert screen._library_rag_index_status_cache == {
+        "state": "built",
+        "count": 99,
+        "provenance": {},
+    }
+    assert len(fake_app.pushed_screens) == 1
+    modal, callback = fake_app.pushed_screens[0]
+    assert isinstance(modal, ConfirmationDialog)
+    assert "99" in modal.message
+
+    callback(True)
+
+    assert len(worker_calls) == 1
+
+
+def test_save_with_no_cached_status_fetches_then_saves_directly_when_absent(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module, "index_change_pending", lambda values: True
+    )
+    monkeypatch.setattr(
+        settings_screen_module,
+        "fetch_index_status",
+        lambda: {"state": "absent", "count": 0, "provenance": {}},
+    )
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)
+    worker_calls: list[tuple] = []
+    screen._settings_save_library_rag_worker = lambda *args: worker_calls.append(args)
+    fetch_dispatches: list[tuple] = []
+    screen._rag_reindex_confirm_status_worker = lambda *args: fetch_dispatches.append(
+        args
+    )
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+    assert len(fetch_dispatches) == 1
+    values, pending_activate = fetch_dispatches[0]
+
+    worker = SettingsScreen.__dict__["_rag_reindex_confirm_status_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen, values, pending_activate)
+
+    assert fake_app.pushed_screens == []
+    assert len(worker_calls) == 1
+
+
+# --- Task 2 review (Important): the cache-miss branch's off-thread status
+# fetch must be debounced against a second Save click landing before the
+# first fetch completes. Without a guard, a second click while
+# `_library_rag_index_status_cache` is still None dispatches a SECOND
+# `_rag_reindex_confirm_status_worker` in the same `exclusive=True` @work
+# group as the first -- which CANCELS the first call, silently dropping ITS
+# `pending_activate` (a function-local the cancelled call never hands back
+# to anything: no notification, no error, the deferred profile switch just
+# never happens). ---
+
+
+def test_double_save_click_during_no_cache_fetch_does_not_drop_pending_activate(
+    monkeypatch, tmp_path, fake_app
+):
+    screen, callback, other_id = _dirty_screen_with_switch_pushed(
+        monkeypatch, tmp_path, fake_app
+    )
+    monkeypatch.setattr(
+        settings_screen_module, "index_change_pending", lambda values: True
+    )
+    monkeypatch.setattr(
+        settings_screen_module,
+        "fetch_index_status",
+        lambda: {"state": "built", "count": 3, "provenance": {}},
+    )
+    assert screen._library_rag_index_status_cache is None
+    assert screen._rag_reindex_confirm_in_flight is False
+    worker_calls: list[tuple] = []
+    screen._settings_save_library_rag_worker = lambda *args: worker_calls.append(args)
+    fetch_dispatches: list[tuple] = []
+    screen._rag_reindex_confirm_status_worker = lambda *args: fetch_dispatches.append(
+        args
+    )
+
+    callback("save")  # 1st Save click: arms pending_activate=other_id, cache miss
+
+    assert len(fetch_dispatches) == 1
+    assert screen._rag_reindex_confirm_in_flight is True
+
+    # 2nd Save click while the 1st fetch is still "in flight" -- must be
+    # debounced (no 2nd dispatch), or the real exclusive @work group would
+    # cancel the 1st worker and drop its pending_activate.
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+    assert len(fetch_dispatches) == 1
+
+    # Complete the 1st (and only) fetch, simulating the off-thread worker
+    # landing.
+    values, pending_activate = fetch_dispatches[0]
+    assert pending_activate == other_id
+    worker = SettingsScreen.__dict__["_rag_reindex_confirm_status_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen, values, pending_activate)
+
+    # The guard clears once the flow's decision is made. pushed_screens[0]
+    # is the earlier RagProfileSwitchConfirmModal from `_dirty_screen_with_
+    # switch_pushed`'s own Set-active click -- this is the SECOND push.
+    assert screen._rag_reindex_confirm_in_flight is False
+    assert len(fake_app.pushed_screens) == 2
+    modal, modal_callback = fake_app.pushed_screens[-1]
+    assert isinstance(modal, ConfirmationDialog)
+
+    modal_callback(True)
+
+    # The 1st click's pending_activate survived the double-click race.
+    assert len(worker_calls) == 1
+    assert screen._rag_profile_pending_activate == other_id
+
+    # The guard is not stuck True: a LATER cache-miss window dispatches a
+    # fresh fetch normally -- a subsequent Save is not bricked.
+    screen._library_rag_index_status_cache = None
+    screen._confirm_reindex_then_save(values, None)
+    assert len(fetch_dispatches) == 2
+
+
+def test_reindex_confirm_in_flight_cleared_on_cancel(monkeypatch, tmp_path, fake_app):
+    """The in-flight guard must clear on the Cancel branch too (defensive
+    -- by the time the modal resolves it's normally already cleared by the
+    worker callback, but the handler clears it unconditionally as well)."""
+    screen, worker_calls = _dirty_screen_ready_for_reindex_gate(
+        monkeypatch,
+        tmp_path,
+        fake_app,
+        cached_status={"state": "built", "count": 5, "provenance": {}},
+    )
+    screen._rag_reindex_confirm_in_flight = True
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+    _modal, callback = fake_app.pushed_screens[0]
+
+    callback(False)
+
+    assert screen._rag_reindex_confirm_in_flight is False
+    assert worker_calls == []
+
+
+# --- Task 3 (541 v2 UX AC3): context-sensitive Scope Inspector guidance --
+# the impact pane follows the focused RAG field / expanded Collapsible
+# group instead of always showing the same static blurb. Mirrors the
+# Providers-category machinery (_provider_field_guidance_rows /
+# _refresh_provider_field_guidance / the DescendantFocus hook). ---
+
+
+def _flattened_guidance_text(rows) -> str:
+    return " ".join(f"{label} {value}" for label, value in rows).lower()
+
+
+def test_rag_field_guidance_no_field_focused_matches_static_fallback(
+    monkeypatch, tmp_path
+):
+    """RED case 1: with nothing focused and no group ever expanded (fresh
+    first paint), the guidance must be byte-for-byte the same terse rows
+    the UX review (item 9) shortened this to -- unchanged by this task."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    assert screen._active_settings_field_id is None
+    assert screen._active_rag_scope_group is None
+    assert screen._rag_field_guidance_rows() == (
+        ("Search mode", "plain=keyword, semantic=embeddings, hybrid=blend"),
+        ("Result limits", "bounds default/keyword/vector result counts"),
+        ("Hybrid balance", "0.0=keyword, 1.0=semantic"),
+        ("Citations", "adds source markers to answers when supported"),
+        ("Snippet/context", "snippet length + context budget for retrieved text"),
+    )
+    # Calling the refresh on an unmounted screen must be a safe no-op
+    # (query_one raises, caught the same way _refresh_provider_field_guidance
+    # already handles it) rather than raising.
+    screen._refresh_rag_field_guidance()
+
+
+def test_rag_field_guidance_reranking_field_focused_mentions_reranking(
+    monkeypatch, tmp_path
+):
+    """RED case 2: focusing a Reranking field yields guidance rows
+    mentioning reranking (simulated the way the brief describes: set
+    `_active_settings_field_id` directly, then call the refresh)."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    screen._active_settings_field_id = "settings-library-rag-reranker-model"
+    screen._refresh_rag_field_guidance()
+
+    text = _flattened_guidance_text(screen._rag_field_guidance_rows())
+    assert "reranking" in text
+    # Reranking is explicitly NOT index-determining -- must not tell the
+    # user to Backfill (the guidance does say "no index rebuild", which is
+    # the informative negative, not a rebuild instruction).
+    assert "backfill" not in text
+
+
+def test_rag_field_guidance_chunking_field_focused_mentions_reindex_backfill(
+    monkeypatch, tmp_path
+):
+    """RED case 3: focusing a Chunking field yields re-index/backfill
+    guidance (chunk_size/chunk_overlap/chunking_method are all
+    index-determining -- see collection_fingerprint._index_fields())."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    for field_id in (
+        "settings-library-rag-chunk-size",
+        "settings-library-rag-chunk-overlap",
+        "settings-library-rag-chunking-method",
+    ):
+        screen._active_settings_field_id = field_id
+        text = _flattened_guidance_text(screen._rag_field_guidance_rows())
+        assert "backfill" in text, field_id
+        assert "rebuild" in text, field_id
+
+
+def test_rag_field_guidance_embedding_and_vector_store_fields_flag_index_rebuild(
+    monkeypatch, tmp_path
+):
+    """The other two index-determining groups (embedding model/max length,
+    distance metric) also surface the Backfill/rebuild warning. Guidance is
+    per-GROUP (one concise entry, not one per field -- see
+    _RAG_GROUP_GUIDANCE), so device/batch-size (in the same Embedding
+    group, but NOT themselves index-determining) show the identical
+    group entry -- which is worded to name model/max length specifically
+    as the ⚠ fields, not device/batch size."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    for field_id in (
+        "settings-library-rag-embedding-model",
+        "settings-library-rag-embedding-max-length",
+        "settings-library-rag-embedding-device",
+        "settings-library-rag-embedding-batch-size",
+        "settings-library-rag-distance-metric",
+    ):
+        screen._active_settings_field_id = field_id
+        text = _flattened_guidance_text(screen._rag_field_guidance_rows())
+        assert "backfill" in text, field_id
+        assert "rebuild" in text, field_id
+
+    screen._active_settings_field_id = "settings-library-rag-embedding-device"
+    embedding_text = _flattened_guidance_text(screen._rag_field_guidance_rows())
+    # The group entry itself scopes the ⚠ down to model + max length, not
+    # every field in the group.
+    assert "model + max length" in embedding_text
+
+
+def test_rag_field_guidance_profile_and_index_fields_have_dedicated_entries(
+    monkeypatch, tmp_path
+):
+    """Profile controls (select/set-active/clone/rename/delete) and the
+    index row (Backfill button) each get their own group entry -- not the
+    generic search-mode fallback."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    screen._active_settings_field_id = "settings-library-rag-profile-set-active"
+    profile_text = _flattened_guidance_text(screen._rag_field_guidance_rows())
+    assert "profile" in profile_text
+
+    screen._active_settings_field_id = "settings-library-rag-index-backfill"
+    index_text = _flattened_guidance_text(screen._rag_field_guidance_rows())
+    assert "index" in index_text
+    assert "backfill" in index_text
+
+
+def test_rag_field_guidance_focused_field_takes_priority_over_expanded_group(
+    monkeypatch, tmp_path
+):
+    """A focused field's own group always wins over a merely-expanded
+    group -- e.g. tabbing into the Reranking checkbox while Chunking is
+    still expanded from an earlier click must show Reranking guidance."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    screen._active_rag_scope_group = "chunking"
+    screen._active_settings_field_id = "settings-library-rag-enable-reranking"
+
+    text = _flattened_guidance_text(screen._rag_field_guidance_rows())
+    assert "reranking" in text
+    assert "chunking" not in text
+
+
+def test_every_rag_field_group_has_a_guidance_entry():
+    """Coverage: no field-id -> group mapping can point at a group key
+    with no `_RAG_GROUP_GUIDANCE` entry (a typo'd key would otherwise
+    silently fall back to the generic guidance instead of failing loud)."""
+    assert settings_screen_module._RAG_FIELD_GROUP_BY_ID
+    for field_id, group in settings_screen_module._RAG_FIELD_GROUP_BY_ID.items():
+        assert group in settings_screen_module._RAG_GROUP_GUIDANCE, (
+            f"{field_id} -> {group!r} has no guidance entry"
+        )
+
+
+def test_every_library_rag_editable_field_id_has_a_guidance_group(
+    monkeypatch, tmp_path
+):
+    """Coverage: every widget id `_library_rag_field_selector` resolves
+    (the 19 validated/staged fields) plus the two Checkbox ids Task 1
+    introduced must each map to a guidance group -- so no RAG control is
+    ever focusable without the inspector explaining it."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    field_keys = [
+        "default_search_mode",
+        "default_top_k",
+        "fts_top_k",
+        "vector_top_k",
+        "hybrid_alpha",
+        "score_threshold",
+        "citation_style",
+        "snippet_max_chars",
+        "max_context_size",
+        "embedding_model",
+        "embedding_device",
+        "embedding_batch_size",
+        "embedding_max_length",
+        "chunk_size",
+        "chunk_overlap",
+        "chunking_method",
+        "distance_metric",
+        "reranker_model",
+        "reranker_top_k",
+    ]
+    for key in field_keys:
+        selector = screen._library_rag_field_selector(key)
+        assert selector is not None, key
+        widget_id = selector.removeprefix("#")
+        assert widget_id in settings_screen_module._RAG_FIELD_GROUP_BY_ID, key
+
+    for checkbox_id in (
+        "settings-library-rag-include-citations",
+        "settings-library-rag-enable-reranking",
+    ):
+        assert checkbox_id in settings_screen_module._RAG_FIELD_GROUP_BY_ID
+
+
+@pytest.mark.asyncio
+async def test_expanding_chunking_collapsible_switches_context_without_focus(
+    monkeypatch, tmp_path
+):
+    """Expanding a group (without focusing any field inside it) already
+    switches the inspector's context, via `@on(Collapsible.Toggled)`."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        # First paint: "Search" composes with collapsed=False, so Textual's
+        # Collapsible posts its own Expanded message during construction
+        # (see the comment on _RAG_GROUP_GUIDANCE_FALLBACK) -- the resolved
+        # scope is "search" here, not None. That's harmless: the "search"
+        # entry is the same fallback tuple, so the rendered text is
+        # unaffected either way.
+        assert screen._active_rag_scope_group == "search"
+        chunking = screen.query_one(
+            "#settings-library-rag-chunking-group", Collapsible
+        )
+        assert chunking.collapsed is True
+
+        chunking.collapsed = False
+        screen.handle_settings_library_rag_collapsible_toggled(
+            Collapsible.Toggled(chunking)
+        )
+        await pilot.pause()
+
+        assert screen._active_rag_scope_group == "chunking"
+        await _wait_for_settings_text(screen, pilot, "Focused group: Chunking")
+        text = _visible_text(screen)
+        assert "Backfill" in text
+
+        # Collapsing the same group again falls back to the static guidance.
+        chunking.collapsed = True
+        screen.handle_settings_library_rag_collapsible_toggled(
+            Collapsible.Toggled(chunking)
+        )
+        await pilot.pause()
+
+        assert screen._active_rag_scope_group is None
+        await _wait_for_settings_text(screen, pilot, "Snippet/context:")
+
+
+@pytest.mark.asyncio
+async def test_focusing_reranker_model_input_updates_inspector_end_to_end(
+    monkeypatch, tmp_path
+):
+    """End-to-end (not simulated): focusing a real mounted Reranking Input
+    via the actual DescendantFocus path updates `_active_settings_field_id`
+    and the rendered pane, exactly like the Providers category's own
+    focus-follows-field behavior."""
+    from tldw_chatbook.RAG_Search.reranker import RerankingConfig
+
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.reranking_config = RerankingConfig()
+    mgr.save_profile(profile)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        reranker_input = screen.query_one(
+            "#settings-library-rag-reranker-model", Input
+        )
+        assert reranker_input.disabled is False
+        reranker_input.focus()
+        await pilot.pause()
+
+        assert (
+            screen._active_settings_field_id
+            == "settings-library-rag-reranker-model"
+        )
+        await _wait_for_settings_text(screen, pilot, "Focused group: Reranking")
+
+
+# --- Task 4 (541 v2 UX AC1): manage-vs-edit split + read-only preview-on-
+# select. Browsing the profile picker to a NON-active profile previews that
+# profile's values read-only, WITHOUT staging a draft -- drafts belong to
+# the active profile only. Selecting the active profile's own id again
+# restores the ordinary, draft-aware editor (including any still-staged
+# draft: the draft is never touched by preview). ---
+
+
+def _wire_library_rag_with_other_profile(monkeypatch, tmp_path):
+    """Wire an isolated adapter with a distinctive NON-active "Other RAG"
+    profile and a fresh test app/harness, ready for a test to open the
+    Library/RAG category and drive the Select with."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    other.rag_config.search.default_top_k = 77
+    mgr.save_profile(other)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    return mgr, profile, other, host
+
+
+@pytest.mark.asyncio
+async def test_browsing_to_a_non_active_profile_previews_it_read_only_without_staging(
+    monkeypatch, tmp_path
+):
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
+        assert top_k.value == str(profile.rag_config.search.default_top_k)
+        assert screen._rag_preview_profile_id is None
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+
+        assert screen._rag_preview_profile_id == other.id
+        assert top_k.value == "77"
+        assert top_k.disabled is True
+        # Every other editor field is ALSO forced disabled during preview,
+        # not just the one field under test.
+        assert (
+            screen.query_one("#settings-library-rag-search-mode", Select).disabled
+            is True
+        )
+        assert (
+            screen.query_one("#settings-library-rag-enable-reranking", Checkbox).disabled
+            is True
+        )
+        # No draft was created by merely browsing.
+        assert SettingsCategoryId.LIBRARY_RAG not in screen._settings_drafts
+        banner_text = _visible_text(screen)
+        assert (
+            "Previewing 'Other RAG' (read-only) — press Set active to edit it"
+            in banner_text
+        )
+
+
+@pytest.mark.asyncio
+async def test_field_changed_events_during_preview_never_stage_a_draft(
+    monkeypatch, tmp_path
+):
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+        assert screen._rag_preview_profile_id == other.id
+
+        top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
+        # Simulate a (disabled, but the handler must be robust regardless
+        # of widget-level enforcement) edit attempt while previewing.
+        screen.handle_library_rag_default_top_k_changed(
+            Input.Changed(top_k, "999")
+        )
+
+        assert SettingsCategoryId.LIBRARY_RAG not in screen._settings_drafts
+        assert screen._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG) is False
+
+
+@pytest.mark.asyncio
+async def test_returning_to_active_profile_restores_a_staged_draft_after_preview(
+    monkeypatch, tmp_path
+):
+    """The hard round-trip: stage a draft on the ACTIVE profile, browse away
+    (preview), browse back -- the staged value must still be showing AND
+    still dirty. The draft is never touched by the preview round-trip."""
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
+        top_k.value = "12"
+        screen.handle_library_rag_default_top_k_changed(
+            Input.Changed(top_k, top_k.value)
+        )
+        assert screen._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG) is True
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+        assert screen._rag_preview_profile_id == other.id
+        assert top_k.value == "77"
+
+        select.value = profile.id
+        await pilot.pause()
+
+        assert screen._rag_preview_profile_id is None
+        assert top_k.value == "12"
+        assert top_k.disabled is False
+        assert screen._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG) is True
+
+
+@pytest.mark.asyncio
+async def test_set_active_from_preview_exits_preview_on_success(monkeypatch, tmp_path):
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+        assert screen._rag_preview_profile_id == other.id
+
+        # Not dirty (no draft staged) -- handle_library_rag_profile_set_active
+        # dispatches straight through, same as the pre-existing flow.
+        screen.handle_library_rag_profile_set_active(
+            Button.Pressed(Button(id="settings-library-rag-profile-set-active"))
+        )
+        await pilot.pause()
+        # Simulate the worker's completion callback (existing test
+        # convention -- see test_after_set_active_success_clears_draft_and_notifies).
+        screen._rag_after_set_active(True, "")
+        await pilot.pause()
+
+        assert screen._rag_preview_profile_id is None
+        top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
+        assert top_k.disabled is False
+
+
+def test_set_active_from_preview_with_dirty_draft_still_pushes_confirm_modal(
+    monkeypatch, tmp_path, fake_app
+):
+    """Set active from a preview must honor the EXISTING dirty-prompt flow
+    exactly like a non-preview Set active does -- previewing a DIFFERENT
+    profile never bypasses the "you have unsaved changes" gate for the
+    ACTIVE profile's own draft."""
+    mgr, _profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    mgr.save_profile(other)
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)
+    screen._rag_preview_profile_id = other.id
+    monkeypatch.setattr(screen, "_library_rag_selected_profile_id", lambda: other.id)
+
+    button = Button(id="settings-library-rag-profile-set-active")
+    screen.handle_library_rag_profile_set_active(Button.Pressed(button))
+
+    assert len(fake_app.pushed_screens) == 1
+    modal, _callback = fake_app.pushed_screens[0]
+    assert isinstance(modal, RagProfileSwitchConfirmModal)
+    # The preview flag itself is untouched by merely OPENING the prompt --
+    # only a completed switch (_rag_after_set_active) clears it.
+    assert screen._rag_preview_profile_id == other.id
+
+
+def test_save_is_blocked_with_a_notification_while_previewing(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    screen._rag_preview_profile_id = "some-other-profile-id"
+    dispatched: list[object] = []
+    screen._confirm_reindex_then_save = lambda *a, **k: dispatched.append(True)
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+
+    assert dispatched == []
+    message, severity = fake_app.notifications[-1]
+    assert message == "Return to the active profile to save."
+    assert severity == "warning"
+
+
+def test_revert_is_blocked_with_a_notification_while_previewing(
+    monkeypatch, tmp_path, fake_app
+):
+    """Task 4 review IMPORTANT: `action_settings_revert_category` had no
+    preview guard (unlike Save) -- pressing 'r' while previewing would pop
+    the ACTIVE profile's own (unrelated) staged draft, a silent data-loss
+    bug, and leave stale preview chrome on screen."""
+    mgr, _profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)  # dirty draft on the ACTIVE profile
+    screen._rag_preview_profile_id = "some-other-profile-id"
+
+    screen.action_settings_revert_category(allow_text_entry_focus=True)
+
+    # The draft must be intact -- revert must not have popped it.
+    assert SettingsCategoryId.LIBRARY_RAG in screen._settings_drafts
+    message, severity = fake_app.notifications[-1]
+    assert message == "Return to the active profile to revert."
+    assert severity == "warning"
+
+
+def test_cloning_while_previewing_uses_the_previewed_profile_as_the_source(
+    monkeypatch, tmp_path, fake_app
+):
+    """Task 4 review (cheap Clone-from-preview coverage): the Clone button
+    resolves its source from `_library_rag_selected_profile_id()` -- the
+    Select's current value, which is exactly the previewed profile while
+    `_rag_preview_profile_id` is armed. Completing the clone must still
+    clear the preview (the ok branch of `_rag_after_profile_action`)."""
+    mgr, _profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    mgr.save_profile(other)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    screen._rag_preview_profile_id = other.id
+    monkeypatch.setattr(screen, "_library_rag_selected_profile_id", lambda: other.id)
+
+    button = Button(id="settings-library-rag-profile-clone")
+    screen.handle_library_rag_profile_clone(Button.Pressed(button))
+
+    assert len(fake_app.pushed_screens) == 1
+    _modal, callback = fake_app.pushed_screens[0]
+    dispatched: list[tuple] = []
+    screen._dispatch_rag_profile_action = lambda action, profile_id, arg: dispatched.append(
+        (action, profile_id, arg)
+    )
+
+    callback("My Clone")
+
+    assert dispatched == [("clone", other.id, "My Clone")]
+
+    screen._rag_after_profile_action("clone", True, "new-clone-id")
+    assert screen._rag_preview_profile_id is None
+
+
+def test_library_rag_save_enabled_is_false_while_previewing_even_with_a_dirty_draft(
+    monkeypatch, tmp_path
+):
+    mgr, _profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)  # valid dirty value (12)
+    assert screen._library_rag_save_enabled() is True
+
+    screen._rag_preview_profile_id = "some-other-profile-id"
+
+    assert screen._library_rag_save_enabled() is False
+
+
+@pytest.mark.asyncio
+async def test_profiles_and_editor_render_inside_their_own_titled_containers(
+    monkeypatch, tmp_path
+):
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        profiles_card = screen.query_one("#settings-library-rag-profiles-card")
+        editor_card = screen.query_one("#settings-library-rag-editor-card")
+        assert profiles_card.border_title == "Profiles"
+        assert editor_card.border_title == f"Editing: {profile.name}"
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+
+        assert editor_card.border_title == f"Previewing: {other.name}"
+
+        select.value = profile.id
+        await pilot.pause()
+
+        assert editor_card.border_title == f"Editing: {profile.name}"
+
+
+@pytest.mark.asyncio
+async def test_preview_banner_and_title_escape_markup_significant_profile_names(
+    monkeypatch, tmp_path
+):
+    """Repo lesson: profile names can contain markup-significant characters
+    (e.g. `[bold]`) -- both the preview banner and the editor title must
+    escape them rather than let Rich interpret them as markup tags."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    other = mgr.clone_profile("hybrid_basic", "[bold]Other[/bold]")
+    mgr.save_profile(other)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+
+        editor_card = screen.query_one("#settings-library-rag-editor-card")
+        assert editor_card.border_title == r"Previewing: \[bold]Other\[/bold]"
+        banner = screen.query_one("#settings-library-rag-preview-banner", Static)
+        assert r"\[bold]Other\[/bold]" in str(banner.renderable)
+
+
+@pytest.mark.asyncio
+async def test_cloning_leaves_the_select_on_the_clone_without_auto_entering_preview(
+    monkeypatch, tmp_path
+):
+    """The profile-picker's own imperative resync
+    (`_sync_library_rag_profile_widgets`, e.g. the clone flow's
+    `select_override`) must never itself trigger a preview -- only a
+    genuine user browse (a real Select.Changed from interacting with the
+    dropdown) does.
+
+    541-v2 final review item 1: full-mount (a REAL Select widget, not a
+    sync-constructed/unmounted screen) and DRAINS its deferred
+    Select.Changed messages -- an earlier, sync-constructed version of
+    this test asserted the same conclusion but passed vacuously: without
+    a real Select there's no Changed message for anything to suppress,
+    so it couldn't have caught the bug it was named for. Reproduces the
+    real bug pre-fix: `_sync_library_rag_profile_widgets`'s post-clone
+    resync (`select_override=clone.id`, a NON-active id) posts its own
+    transient `Select.NULL` then the clone id as separate, asynchronously
+    -delivered Changed messages (confirmed with a mounted-pilot probe);
+    the pre-fix boolean `_syncing_library_rag_profile_select` flag was
+    already reset by the time those arrived, so the second one drove the
+    editor straight into an unrequested PREVIEW of the profile the user
+    had just landed on -- exactly what the two `pilot.pause()` calls
+    below flush out."""
+    mgr, _profile, _state = _wire_rag_profile_adapter(
+        monkeypatch, tmp_path, active_id="hybrid_basic"
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        assert screen._rag_preview_profile_id is None
+
+        clone = mgr.clone_profile("hybrid_basic", "My Clone")
+        mgr.save_profile(clone)
+        screen._rag_after_profile_action("clone", True, clone.id)
+        await pilot.pause()
+        await pilot.pause()
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        assert select.value == clone.id
+        assert screen._rag_preview_profile_id is None
+        editor_card = screen.query_one("#settings-library-rag-editor-card")
+        assert editor_card.border_title == "Editing: Hybrid Basic"
+
+
+@pytest.mark.asyncio
+async def test_genuine_profile_browse_right_after_a_resync_still_enters_preview(
+    monkeypatch, tmp_path
+):
+    """Companion regression to the suppression fix above: it must not
+    over-consume. A genuine user browse to a DIFFERENT non-active
+    profile, arriving right after a programmatic resync's own deferred
+    Select.Changed messages have already been drained, must still enter
+    preview exactly as before -- the suppression queue only ever swallows
+    the resync's OWN expected messages, never an unrelated later
+    selection."""
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        # Trigger + fully drain a programmatic resync first (a no-override
+        # resync is a convenient way to do this without a clone -- it
+        # still round-trips through Select.NULL and posts two deferred
+        # Changed messages, same as the clone flow).
+        screen._sync_library_rag_profile_widgets()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._rag_preview_profile_id is None
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+
+        assert screen._rag_preview_profile_id == other.id
+
+
+def test_leaving_the_library_rag_category_clears_a_stale_preview(monkeypatch, tmp_path):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    screen._rag_preview_profile_id = "some-other-profile-id"
+    # 541-v2 final review item 1: a suppression expectation queued against
+    # the about-to-be-recomposed Select instance is just as stale as the
+    # preview flag above -- must not survive to swallow a brand-new Select
+    # instance's own first genuine Changed message on a later visit.
+    screen._rag_select_suppress_queue.append("some-queued-value")
+
+    screen._select_category(SettingsCategoryId.STORAGE.value)
+
+    assert screen._rag_preview_profile_id is None
+    assert screen._rag_select_suppress_queue == []
+
+
+# --- Task 5 (541 v2 UX AC5): first-run starter panel -- replaces the "wall
+# of disabled fields" a brand-new install (builtin active, no user profiles,
+# no vector index yet) used to show with a direct next step. The panel keys
+# off the SAME cached index-status fetch the status row uses (never an extra
+# fetch of its own), so its visibility is toggled from the SAME
+# _apply_library_rag_index_status funnel every existing fetch trigger
+# (category show / 't' test / backfill completion / set-active) already goes
+# through -- see is_first_run_state in test_settings_rag_profile_adapter.py
+# for the pure predicate itself. ---
+
+
+def _stub_index_status(monkeypatch, state: str) -> None:
+    monkeypatch.setattr(
+        settings_screen_module,
+        "fetch_index_status",
+        lambda: {"state": state, "count": 0, "provenance": {}},
+    )
+
+
+def _wire_rag_profile_adapter_no_user_profiles(
+    monkeypatch, tmp_path, *, active_id: str = "hybrid_basic"
+):
+    """Like `_wire_rag_profile_adapter`, but WITHOUT its always-present "My
+    RAG" user-profile clone -- the first-run predicate specifically
+    requires a genuinely EMPTY user-profile list, which the shared helper
+    can never produce (it registers "My RAG" unconditionally, active or
+    not)."""
+    from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager
+    import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as rag_adapter_module
+
+    mgr = ConfigProfileManager(profiles_dir=tmp_path / "profiles")
+    state = {"active": active_id}
+    monkeypatch.setattr(rag_adapter_module, "_manager", lambda: mgr, raising=False)
+    monkeypatch.setattr(
+        rag_adapter_module, "_active_profile_id", lambda: state["active"], raising=False
+    )
+    return mgr, state
+
+
+@pytest.mark.asyncio
+async def test_starter_panel_shown_when_builtin_active_no_users_and_index_absent(
+    monkeypatch, tmp_path
+):
+    """The true first-run case: renders the exact copy naming the active
+    profile, and the Search group -- the only one that composes expanded by
+    default -- ends up collapsed alongside it (Embedding/Chunking/Vector
+    store/Reranking are already collapsed by default)."""
+    _wire_rag_profile_adapter_no_user_profiles(monkeypatch, tmp_path)
+    _stub_index_status(monkeypatch, "absent")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        panel = screen.query_one("#settings-library-rag-starter-panel")
+        assert panel.display is True
+        copy_text = str(
+            screen.query_one("#settings-library-rag-starter-copy", Static).renderable
+        )
+        assert (
+            "Search already works on Hybrid Basic. Clone it to tune retrieval, "
+            "or run Backfill to enable semantic results." == copy_text
+        )
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is True
+        )
+        clone_button = screen.query_one(
+            "#settings-library-rag-starter-clone", Button
+        )
+        backfill_button = screen.query_one(
+            "#settings-library-rag-starter-backfill", Button
+        )
+        assert str(clone_button.label) == "Clone to tune…"
+        assert str(backfill_button.label) == "Backfill now"
+
+
+@pytest.mark.asyncio
+async def test_starter_panel_hidden_when_active_profile_is_not_a_builtin(
+    monkeypatch, tmp_path
+):
+    """`_wire_rag_profile_adapter`'s default active profile is the writable
+    "My RAG" clone -- never first-run even with an absent index and no
+    OTHER user profiles."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    _stub_index_status(monkeypatch, "absent")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        panel = screen.query_one("#settings-library-rag-starter-panel")
+        assert panel.display is False
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_starter_panel_hidden_when_a_user_profile_already_exists(
+    monkeypatch, tmp_path
+):
+    mgr, _state = _wire_rag_profile_adapter_no_user_profiles(monkeypatch, tmp_path)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    mgr.save_profile(other)
+    _stub_index_status(monkeypatch, "absent")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        panel = screen.query_one("#settings-library-rag-starter-panel")
+        assert panel.display is False
+
+
+@pytest.mark.asyncio
+async def test_starter_panel_hidden_when_the_index_is_already_built(
+    monkeypatch, tmp_path
+):
+    _wire_rag_profile_adapter_no_user_profiles(monkeypatch, tmp_path)
+    _stub_index_status(monkeypatch, "built")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        panel = screen.query_one("#settings-library-rag-starter-panel")
+        assert panel.display is False
+
+
+@pytest.mark.asyncio
+async def test_starter_panel_disappears_after_a_clone_completes(monkeypatch, tmp_path):
+    """State-driven, no dismissal persistence: a successful clone gives the
+    active builtin its first user profile, which falsifies the predicate on
+    the very next sync -- no explicit "dismiss" affordance needed.
+
+    Reviewer finding (541 v2 UX AC5, Important): the fix must be
+    TRANSITION-gated, not unconditional -- the Search group is forced back
+    OPEN here specifically because first-run just ENDED, not merely because
+    a status happened to refresh. See
+    ``test_normal_state_status_refresh_never_reopens_a_deliberately_collapsed_search_group``
+    below for the companion guard."""
+    mgr, _state = _wire_rag_profile_adapter_no_user_profiles(monkeypatch, tmp_path)
+    _stub_index_status(monkeypatch, "absent")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen.query_one("#settings-library-rag-starter-panel").display is True
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is True
+        )
+
+        clone = mgr.clone_profile("hybrid_basic", "My Clone")
+        mgr.save_profile(clone)
+        screen._rag_after_profile_action("clone", True, clone.id)
+        await pilot.pause()
+
+        assert screen.query_one("#settings-library-rag-starter-panel").display is False
+        # The user who just cloned to tune retrieval must land on an
+        # editable, EXPANDED Search group -- not one still collapsed behind
+        # a now-hidden starter panel.
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_starter_panel_disappears_after_backfill_completes(monkeypatch, tmp_path):
+    """Backfill itself only fills the vector store; the fake status swap
+    below stands in for "the fetch that runs right after Backfill now sees a
+    non-absent index" -- exercised through the real
+    _refresh_library_rag_index_status -> _rag_index_status_worker funnel the
+    backfill worker's own completion already dispatches."""
+    _wire_rag_profile_adapter_no_user_profiles(monkeypatch, tmp_path)
+    _stub_index_status(monkeypatch, "absent")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen.query_one("#settings-library-rag-starter-panel").display is True
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is True
+        )
+
+        _stub_index_status(monkeypatch, "built")
+        screen._refresh_library_rag_index_status()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.query_one("#settings-library-rag-starter-panel").display is False
+        # Same reviewer finding as the clone path above: Backfill completing
+        # is exactly as much a first-run EXIT as a clone is -- the Search
+        # group must not stay collapsed behind a now-hidden starter panel.
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_normal_state_status_refresh_never_reopens_a_deliberately_collapsed_search_group(
+    monkeypatch, tmp_path
+):
+    """Guard for the transition-gating itself: a user already in NORMAL
+    (non-first-run) state who deliberately collapses Search must not have it
+    forcibly reopened by an ordinary status refresh (category re-show / Save
+    / 't' test / set-active) that lands while first-run was never active this
+    session. Only the actual first-run -> not-first-run TRANSITION (see the
+    two tests above) may flip ``collapsed`` back to False."""
+    # `_wire_rag_profile_adapter` (not the `_no_user_profiles` variant) seeds
+    # a writable "My RAG" user profile as active -- never first-run, per
+    # `is_first_run_state`.
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    _stub_index_status(monkeypatch, "built")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen.query_one("#settings-library-rag-starter-panel").display is False
+
+        search_group = screen.query_one(
+            "#settings-library-rag-search-group", Collapsible
+        )
+        search_group.collapsed = True
+
+        # An unchanged, still-non-first-run status landing again (e.g. a
+        # plain category re-show or Save-path refresh) must leave the
+        # user's own collapse alone.
+        screen._apply_library_rag_index_status(
+            {"state": "built", "count": 3, "provenance": {}}
+        )
+        await pilot.pause()
+
+        assert screen.query_one("#settings-library-rag-starter-panel").display is False
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is True
+        )
+
+
+@pytest.mark.asyncio
+async def test_preview_started_while_starter_panel_visible_leaves_panel_state_coherent(
+    monkeypatch, tmp_path
+):
+    """Reviewer-requested coverage: browsing the profile picker into a
+    PREVIEW of a different builtin (via the Select's own Changed handler,
+    exactly like a real user browse) while the first-run starter panel is
+    showing must not crash or desync the panel -- previewing never touches
+    the first-run predicate's own trigger funnel
+    (`_apply_library_rag_index_status` / `_rag_after_profile_action`)."""
+    _wire_rag_profile_adapter_no_user_profiles(monkeypatch, tmp_path)
+    _stub_index_status(monkeypatch, "absent")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen.query_one("#settings-library-rag-starter-panel").display is True
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = "bm25_only"
+        await pilot.pause()
+
+        assert screen._rag_preview_profile_id == "bm25_only"
+        assert screen.query_one("#settings-library-rag-starter-panel").display is True
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is True
+        )
+
+
+@pytest.mark.asyncio
+async def test_set_active_to_another_first_run_eligible_builtin_keeps_panel_visible(
+    monkeypatch, tmp_path
+):
+    """Reviewer-requested coverage: switching the active profile from one
+    read-only builtin to ANOTHER read-only builtin, still with no user
+    profiles and an absent index, stays first-run throughout
+    (`is_first_run_state` doesn't care WHICH builtin is active) -- no
+    spurious collapse/expand thrash across a non-transition."""
+    _wire_rag_profile_adapter_no_user_profiles(
+        monkeypatch, tmp_path, active_id="bm25_only"
+    )
+    _stub_index_status(monkeypatch, "absent")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen.query_one("#settings-library-rag-starter-panel").display is True
+
+        screen._rag_after_set_active(
+            True, "", {"state": "absent", "count": 0, "provenance": {}}
+        )
+        await pilot.pause()
+
+        assert screen.query_one("#settings-library-rag-starter-panel").display is True
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).collapsed
+            is True
+        )
+
+
+def test_starter_panel_clone_button_opens_the_same_clone_modal(
+    monkeypatch, tmp_path, fake_app
+):
+    """The starter panel's "Clone to tune…" button reuses the EXACT same
+    modal + dispatch path as the Profiles block's own "Clone…" button --
+    never a bespoke implementation."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path, active_id="hybrid_basic")
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    button = Button(id="settings-library-rag-starter-clone")
+    screen.handle_library_rag_starter_clone(Button.Pressed(button))
+
+    assert len(fake_app.pushed_screens) == 1
+    modal, _callback = fake_app.pushed_screens[0]
+    assert isinstance(modal, RagProfileNameModal)
+    assert modal._modal_title == "Clone profile"
+
+
+def test_starter_panel_backfill_button_starts_the_same_backfill_worker(
+    monkeypatch, tmp_path, fake_app
+):
+    """The starter panel's "Backfill now" button reuses the EXACT same
+    in-flight guard + thread-worker dispatch as the Index row's own
+    "Backfill" button."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path, active_id="hybrid_basic")
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    worker_calls: list[bool] = []
+    screen._rag_backfill_worker = lambda: worker_calls.append(True)
+
+    button = Button(id="settings-library-rag-starter-backfill")
+    screen.handle_library_rag_starter_backfill(Button.Pressed(button))
+
+    assert screen._library_rag_backfill_in_flight is True
+    assert worker_calls == [True]
+    assert fake_app.notifications[-1][1] == "information"
+
+
+# --- Task 6 (541 AC6): keyboard accelerators for the profile workflow
+# (Set active / Clone / Backfill), guarded to the LIBRARY_RAG category and
+# to the SAME text-entry-focus check s/r/t already use. Each action
+# delegates to the EXACT SAME trigger its button uses -- no bespoke
+# reimplementation. ---
+
+
+def test_settings_rag_set_active_action_dispatches_for_rag_category(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    calls: list[bool] = []
+    screen._trigger_library_rag_profile_set_active = lambda: calls.append(True)
+
+    screen.action_settings_rag_set_active(allow_text_entry_focus=True)
+
+    assert calls == [True]
+
+
+def test_settings_rag_clone_action_dispatches_for_rag_category(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    calls: list[bool] = []
+    screen._trigger_library_rag_profile_clone = lambda: calls.append(True)
+
+    screen.action_settings_rag_clone(allow_text_entry_focus=True)
+
+    assert calls == [True]
+
+
+def test_settings_rag_backfill_action_dispatches_for_rag_category(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    calls: list[bool] = []
+    screen._trigger_library_rag_index_backfill = lambda: calls.append(True)
+
+    screen.action_settings_rag_backfill(allow_text_entry_focus=True)
+
+    assert calls == [True]
+
+
+def test_settings_rag_accelerators_no_op_for_a_non_rag_category(
+    monkeypatch, tmp_path, fake_app
+):
+    """Regression guard: unlike s/r/t (which dispatch per-category from a
+    single shared action with a generic fallback), the RAG accelerators
+    have no meaning outside LIBRARY_RAG -- they must produce zero side
+    effects (no trigger call, no notification) for another category."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.THEME.value
+    calls: list[str] = []
+    screen._trigger_library_rag_profile_set_active = lambda: calls.append("set_active")
+    screen._trigger_library_rag_profile_clone = lambda: calls.append("clone")
+    screen._trigger_library_rag_index_backfill = lambda: calls.append("backfill")
+
+    screen.action_settings_rag_set_active(allow_text_entry_focus=True)
+    screen.action_settings_rag_clone(allow_text_entry_focus=True)
+    screen.action_settings_rag_backfill(allow_text_entry_focus=True)
+
+    assert calls == []
+    assert fake_app.notifications == []
+
+
+def test_settings_rag_accelerators_no_op_while_text_entry_has_focus(
+    monkeypatch, tmp_path, fake_app
+):
+    """Same defense-in-depth guard s/r/t use (see
+    `_settings_text_entry_has_focus`): a direct call while a text-entry
+    widget is focused (not routed through `allow_text_entry_focus=True`)
+    must be a no-op even with the RAG category active."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    monkeypatch.setattr(screen, "_settings_text_entry_has_focus", lambda: True)
+    calls: list[str] = []
+    screen._trigger_library_rag_profile_set_active = lambda: calls.append("set_active")
+    screen._trigger_library_rag_profile_clone = lambda: calls.append("clone")
+    screen._trigger_library_rag_index_backfill = lambda: calls.append("backfill")
+
+    screen.action_settings_rag_set_active()
+    screen.action_settings_rag_clone()
+    screen.action_settings_rag_backfill()
+
+    assert calls == []
+
+
+# --- Task 6 review (Important): the app-level F1 help panel
+# (`TldwCli.action_show_workbench_help` -> `_show_generic_screen_help`) flattens
+# `SettingsScreen.BINDINGS` unconditionally, so it advertised the a/c/b RAG
+# accelerators from EVERY Settings category even though they're guarded
+# no-ops outside LIBRARY_RAG (see the action_settings_rag_* guards above).
+# `SettingsScreen.action_show_workbench_help` is the delegation hook
+# `TldwCli.action_show_workbench_help` checks for first (see
+# `test_app_workbench_delegation_awaits_async_screen_actions` in
+# test_workbench_focus_help.py) -- this screen now defines it so the help
+# panel stays truthful, mirroring the footer's own LIBRARY_RAG gating. ---
+
+
+@pytest.mark.asyncio
+async def test_generic_help_omits_rag_accelerators_outside_library_rag_category(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.THEME.value
+
+    await screen.action_show_workbench_help()
+
+    assert len(fake_app.pushed_screens) == 1
+    panel, _callback = fake_app.pushed_screens[0]
+    assert isinstance(panel, WorkbenchHelpPanel)
+    descriptions = [description for _key, description in panel.state.shortcuts]
+    assert not any("Set active" in description for description in descriptions)
+    assert not any("Clone" in description for description in descriptions)
+    assert not any("Backfill" in description for description in descriptions)
+    # The always-on category shortcuts must still be present.
+    assert any("Save" in description for description in descriptions)
+    assert any("Revert" in description for description in descriptions)
+    assert any("Test" in description for description in descriptions)
+
+
+@pytest.mark.asyncio
+async def test_generic_help_includes_rag_accelerators_for_library_rag_category(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    await screen.action_show_workbench_help()
+
+    assert len(fake_app.pushed_screens) == 1
+    panel, _callback = fake_app.pushed_screens[0]
+    assert isinstance(panel, WorkbenchHelpPanel)
+    descriptions = [description for _key, description in panel.state.shortcuts]
+    assert any("Set active" in description for description in descriptions)
+    assert any("Clone" in description for description in descriptions)
+    assert any("Backfill" in description for description in descriptions)
+
+
+@pytest.mark.asyncio
+async def test_typing_accelerator_letters_into_the_top_k_input_does_not_fire_them(
+    monkeypatch, tmp_path
+):
+    """Real end-to-end key dispatch (not a simulated action call), mirroring
+    `test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts`'s
+    pattern for s/r/t: typing 'a'/'c'/'b' while the top-k Input is focused
+    must not clone (or set-active/backfill) -- Input consumes printable
+    keys (`Input._on_key` calls `event.stop()` unconditionally for any
+    printable character, even one `restrict` then rejects) before they ever
+    bubble to the screen's BINDINGS."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        calls: list[str] = []
+        screen._trigger_library_rag_profile_set_active = lambda: calls.append(
+            "set_active"
+        )
+        screen._trigger_library_rag_profile_clone = lambda: calls.append("clone")
+        screen._trigger_library_rag_index_backfill = lambda: calls.append("backfill")
+
+        top_k_input = screen.query_one(
+            "#settings-library-rag-default-top-k", Input
+        )
+        original_value = top_k_input.value
+        top_k_input.focus()
+        await pilot.pause()
+        assert screen.app.focused is top_k_input
+
+        await pilot.press("a", "c", "b")
+        await pilot.pause()
+
+        # `restrict=r"^[0-9]*$"` on this field rejects the (non-digit)
+        # insertion, but the KEY itself was still consumed by the Input --
+        # the point under test.
+        assert top_k_input.value == original_value
+        assert calls == []
+
+        # Defense-in-depth: calling the actions directly (bypassing normal
+        # key dispatch) while the Input still has focus is ALSO a no-op.
+        screen.action_settings_rag_set_active()
+        screen.action_settings_rag_clone()
+        screen.action_settings_rag_backfill()
+        assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_rag_category_footer_advertises_the_new_accelerators(
+    monkeypatch, tmp_path
+):
+    """The footer/hint line for LIBRARY_RAG advertises 'a set active',
+    'c clone', 'b backfill' alongside s/r/t; another category's footer
+    does not carry them."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        overview_footer = screen.query_one(AppFooterStatus)
+        for token in ("a set active", "c clone", "b backfill"):
+            assert token not in overview_footer.shortcut_text
+        for token in ("s save category", "r revert category", "t test category"):
+            assert token in overview_footer.shortcut_text
+
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        rag_footer = screen.query_one(AppFooterStatus)
+        for token in (
+            "a set active",
+            "c clone",
+            "b backfill",
+            "s save category",
+            "r revert category",
+            "t test category",
+        ):
+            assert token in rag_footer.shortcut_text
+
+        # Leaving the category again drops the RAG-only hints.
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        theme_footer = screen.query_one(AppFooterStatus)
+        for token in ("a set active", "c clone", "b backfill"):
+            assert token not in theme_footer.shortcut_text
+
+
+# --- PR #863 review: Select blank-sentinel handling ---
+
+
+def test_blank_select_row_exits_preview_instead_of_becoming_a_bogus_id(
+    monkeypatch, tmp_path, fake_app
+):
+    """PR #863 review item 5: the picker is ``allow_blank=True``, so a user
+    CAN pick the blank row, which delivers ``Select.NULL`` -- the real blank
+    sentinel on this Textual version (``Select.BLANK`` doesn't exist; it
+    resolves to the unrelated ``Widget.BLANK``). Pre-fix, the handler
+    stringified the sentinel into ``_rag_preview_profile_id = 'Select.NULL'``
+    and rendered a bogus preview; it must instead exit preview cleanly."""
+    mgr, _profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    mgr.save_profile(other)
+
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    screen._rag_preview_profile_id = other.id
+    synced: list[bool] = []
+    monkeypatch.setattr(
+        screen, "_sync_rag_editor_display", lambda: synced.append(True)
+    )
+
+    event = SimpleNamespace(value=Select.NULL, stop=lambda: None)
+    screen.handle_library_rag_profile_select_changed(event)
+
+    assert screen._rag_preview_profile_id is None
+    assert synced == [True]
+
+
+@pytest.mark.asyncio
+async def test_stale_active_profile_pointer_composes_blank_instead_of_crashing(
+    monkeypatch, tmp_path
+):
+    """PR #863 review item 4 (task-565's motivating case): when the active
+    profile pointer names an id that is NOT in the picker options (the
+    synthetic "(missing)" scenario for a stale/deleted pointer), the compose
+    fallback must be ``Select.NULL`` -- pre-fix it was ``Select.BLANK``
+    (== ``Widget.BLANK`` == ``False``), and ``Select(value=False)`` raises
+    ``InvalidSelectValueError`` at mount, breaking the whole Settings
+    screen."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path, active_id="hybrid_basic")
+
+    real_info = settings_screen_module.active_profile_info
+    real_grouped = settings_screen_module.list_profiles_grouped
+
+    def ghost_info():
+        info = dict(real_info())
+        info["id"] = "ghost-deleted-profile"
+        info["name"] = "(missing)"
+        return info
+
+    def ghost_grouped():
+        # The compose path takes the picker's active id from
+        # ``grouped["active_id"]`` (not ``active_profile_info()``): point it
+        # at an id that is absent from the option lists to hit the fallback.
+        grouped = dict(real_grouped())
+        grouped["active_id"] = "ghost-deleted-profile"
+        return grouped
+
+    monkeypatch.setattr(settings_screen_module, "active_profile_info", ghost_info)
+    monkeypatch.setattr(
+        settings_screen_module, "list_profiles_grouped", ghost_grouped
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        # Mount survived and the picker sits on the blank sentinel.
+        assert select.value is Select.NULL
+        assert "Active: (missing)" in _visible_text(screen)

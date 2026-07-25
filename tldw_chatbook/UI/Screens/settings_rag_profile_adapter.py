@@ -59,6 +59,38 @@ def load_rag_defaults_from_active_profile() -> SettingsLibraryRagDefaults:
     profile = _active_profile()
     if profile is None:
         return SettingsLibraryRagDefaults()
+    return _defaults_from_profile(profile)
+
+
+def get_profile_defaults(profile_id: str) -> Optional[SettingsLibraryRagDefaults]:
+    """Pure read of ANY registered profile's search settings (Task 4, 541 v2
+    UX AC1: profile-picker PREVIEW-on-select).
+
+    Unlike ``load_rag_defaults_from_active_profile``, this never touches the
+    active-profile pointer -- it reads whatever profile ``profile_id`` names
+    (builtin or user, active or not) straight from the manager's cache.
+    Read-only: never mutates the manager-cached ``ProfileConfig`` (mirrors
+    ``_active_profile()``'s own read-only contract -- neither function
+    deep-copies because neither ever writes back).
+
+    Args:
+        profile_id: The profile id to read.
+
+    Returns:
+        The mapped ``SettingsLibraryRagDefaults``, or ``None`` when
+        ``profile_id`` doesn't resolve to a registered profile.
+    """
+    profile = _manager().get_profile(profile_id)
+    if profile is None:
+        return None
+    return _defaults_from_profile(profile)
+
+
+def _defaults_from_profile(profile: ProfileConfig) -> SettingsLibraryRagDefaults:
+    """Map any ``ProfileConfig``'s search settings onto the category
+    dataclass (shared by ``load_rag_defaults_from_active_profile`` and
+    ``get_profile_defaults`` -- the mapping itself doesn't care whether the
+    profile handed in happens to be the active one)."""
     s = profile.rag_config.search
     e = profile.rag_config.embedding
     c = profile.rag_config.chunking
@@ -464,6 +496,36 @@ def list_profiles_grouped() -> dict:
     builtin.sort(key=lambda p: p["name"])
     user.sort(key=lambda p: p["name"])
     return {"builtin": builtin, "user": user, "active_id": _active_profile_id()}
+
+
+def is_first_run_state(info: dict, grouped: dict, index_state: str) -> bool:
+    """Whether the Library/RAG editor is showing the FIRST-RUN state
+    (Task 5, 541 v2 UX AC5): a brand-new install where the active profile
+    is still the read-only builtin default, no user profile has ever been
+    created, and the vector index doesn't exist yet -- i.e. the "wall of
+    disabled fields" a fresh install used to show with no direct next step.
+
+    Pure: no I/O. Callers pass already-fetched data -- ``info`` from
+    ``active_profile_info()``, ``grouped`` from ``list_profiles_grouped()``,
+    and ``index_state`` from the SAME cached index-status fetch the status
+    row already uses (never triggers an extra fetch of its own). An
+    unfetched/unknown index state must never read as first-run -- only a
+    confirmed ``"absent"`` does.
+
+    Args:
+        info: ``active_profile_info()``'s dict (uses ``read_only``).
+        grouped: ``list_profiles_grouped()``'s dict (uses ``user``).
+        index_state: The active profile's cached index state, one of
+            ``"absent"``, ``"empty"``, ``"built"``, ``"unknown"``.
+
+    Returns:
+        True only when all three conditions hold.
+    """
+    return (
+        bool(info.get("read_only"))
+        and not grouped.get("user")
+        and index_state == "absent"
+    )
 
 
 def activate_profile(profile_id: str) -> tuple[bool, str]:

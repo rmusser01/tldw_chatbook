@@ -1052,3 +1052,159 @@ def test_save_failure_leaves_the_cached_active_profile_at_its_original_values(
     # The manager's OWN cached object (identity, not just value) must be
     # untouched -- get_profile(p.id) still returns the pre-edit profile.
     assert mgr.get_profile(p.id).rag_config.search.default_top_k == original_top_k
+
+
+# --- Task 4 (541 v2 UX AC1): `get_profile_defaults` -- a pure read of ANY
+# registered profile (not just the active one), used by the Settings screen
+# to render a read-only PREVIEW when the profile picker browses a
+# non-active profile. ---
+
+
+def test_get_profile_defaults_reads_a_non_active_profile_by_id(wired):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        get_profile_defaults,
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    # `_user_profile` sets `state["active"]` to the NEW profile -- clone a
+    # SECOND, distinctive profile and re-point active back at the first so
+    # the one under test is genuinely non-active.
+    active_profile = _user_profile(mgr, state, default_top_k=11)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    other.rag_config.search.default_top_k = 77
+    other.rag_config.search.hybrid_alpha = 0.9
+    mgr.save_profile(other)
+    assert state["active"] == active_profile.id
+
+    d = get_profile_defaults(other.id)
+
+    assert d is not None
+    assert d.default_top_k == 77
+    assert d.hybrid_alpha == 0.9
+    # The ACTIVE profile's own loader must be unaffected -- reading a
+    # different profile's defaults never repoints anything.
+    assert load_rag_defaults_from_active_profile().default_top_k == 11
+
+
+def test_get_profile_defaults_round_trips_distinctive_values(wired):
+    """Round-trip check mirroring
+    ``test_load_round_trips_the_extended_fields_from_a_distinctive_profile``,
+    but through `get_profile_defaults` against an explicit (non-active) id
+    instead of the active-profile loader."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        get_profile_defaults,
+    )
+    mgr, state = wired
+    p = mgr.clone_profile("hybrid_basic", "Distinctive RAG")
+    p.rag_config.embedding.model = "BAAI/bge-large-en-v1.5"
+    p.rag_config.embedding.device = "cuda"
+    p.rag_config.embedding.batch_size = 8
+    p.rag_config.embedding.max_length = 1024
+    p.rag_config.chunking.chunk_size = 777
+    p.rag_config.chunking.chunk_overlap = 99
+    p.rag_config.chunking.chunking_method = "sentences"
+    p.rag_config.vector_store.distance_metric = "l2"
+    p.reranking_config = RerankingConfig(model_name="my-reranker", top_k_to_rerank=13)
+    p.rag_config.search.enable_reranking = True
+    mgr.save_profile(p)
+    # `state["active"]` is still "hybrid_basic" (the `wired` fixture's
+    # default) -- `p` is deliberately never activated.
+    assert state["active"] == "hybrid_basic"
+
+    d = get_profile_defaults(p.id)
+
+    assert d is not None
+    assert d.embedding_model == "BAAI/bge-large-en-v1.5"
+    assert d.embedding_device == "cuda"
+    assert d.embedding_batch_size == 8
+    assert d.embedding_max_length == 1024
+    assert d.chunk_size == 777
+    assert d.chunk_overlap == 99
+    assert d.chunking_method == "sentences"
+    assert d.distance_metric == "l2"
+    assert d.enable_reranking is True
+    assert d.reranker_model == "my-reranker"
+    assert d.reranker_top_k == 13
+
+
+def test_get_profile_defaults_reads_a_builtin_profile(wired):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        get_profile_defaults,
+    )
+    d = get_profile_defaults("hybrid_basic")
+    assert d is not None
+    assert d.default_search_mode == "hybrid"
+
+
+def test_get_profile_defaults_unknown_id_returns_none(wired):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        get_profile_defaults,
+    )
+    assert get_profile_defaults("does-not-exist") is None
+
+
+def test_get_profile_defaults_never_mutates_the_managers_cached_profile(wired):
+    """Reading a preview must be side-effect-free: the manager's cached
+    ``ProfileConfig`` for `other.id` must be the SAME object (identity) and
+    unmutated after `get_profile_defaults` runs."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        get_profile_defaults,
+    )
+    mgr, state = wired
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    mgr.save_profile(other)
+    cached_before = mgr.get_profile(other.id)
+
+    get_profile_defaults(other.id)
+
+    cached_after = mgr.get_profile(other.id)
+    assert cached_after is cached_before
+    assert cached_after.rag_config.search.default_top_k == (
+        cached_before.rag_config.search.default_top_k
+    )
+
+
+# --- Task 5 (541 v2 UX AC5): is_first_run_state -- pure predicate driving the
+# Settings > Library/RAG first-run starter panel. Truth table: all three
+# conditions (builtin active, no user profiles, index absent) must hold; any
+# single one being false must make the whole thing false. ---
+
+
+def _info(*, read_only: bool) -> dict:
+    return {"id": "hybrid_basic", "name": "Hybrid Basic", "read_only": read_only, "description": ""}
+
+
+def _grouped(*, user: list) -> dict:
+    return {"builtin": [{"id": "hybrid_basic", "name": "Hybrid Basic"}], "user": user, "active_id": "hybrid_basic"}
+
+
+def test_is_first_run_state_true_when_builtin_no_users_and_index_absent():
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import is_first_run_state
+
+    assert is_first_run_state(_info(read_only=True), _grouped(user=[]), "absent") is True
+
+
+def test_is_first_run_state_false_when_active_is_not_read_only():
+    """A non-builtin (user-authored) active profile is never first-run, even
+    with no OTHER user profiles and an absent index -- the user already has
+    a writable profile to edit directly."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import is_first_run_state
+
+    assert is_first_run_state(_info(read_only=False), _grouped(user=[]), "absent") is False
+
+
+def test_is_first_run_state_false_when_a_user_profile_already_exists():
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import is_first_run_state
+
+    grouped = _grouped(user=[{"id": "my-rag", "name": "My RAG"}])
+    assert is_first_run_state(_info(read_only=True), grouped, "absent") is False
+
+
+def test_is_first_run_state_false_when_index_is_not_absent():
+    """built/empty/unknown must all read as NOT first-run -- only a
+    confirmed "absent" index counts. "unknown" in particular guards against
+    an unfetched/failed status read false-triggering the starter panel."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import is_first_run_state
+
+    for state in ("built", "empty", "unknown"):
+        assert is_first_run_state(_info(read_only=True), _grouped(user=[]), state) is False, state
