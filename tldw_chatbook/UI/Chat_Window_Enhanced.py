@@ -647,11 +647,8 @@ class ChatWindowEnhanced(Container):
             # "send-stop-chat" is handled by @on decorator, removed to avoid duplicate handling
             "chat-new-conversation-button": chat_events.handle_chat_new_conversation_button_pressed,
             "chat-new-temp-chat-button": chat_events.handle_chat_new_temp_chat_button_pressed,
-            "chat-save-current-chat-button": chat_events.handle_chat_save_current_chat_button_pressed,
-            "chat-clone-current-chat-button": chat_events.handle_chat_clone_current_chat_button_pressed,
             "chat-save-conversation-details-button": chat_events.handle_chat_save_details_button_pressed,
             "chat-convert-to-note-button": chat_events.handle_chat_convert_to_note_button_pressed,
-            "chat-conversation-load-selected-button": chat_events.handle_chat_load_selected_button_pressed,
             "chat-apply-template-button": chat_events.handle_chat_apply_template_button_pressed,
         }
 

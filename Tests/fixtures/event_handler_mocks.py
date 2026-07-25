@@ -124,8 +124,6 @@ def setup_mock_widgets(app):
             TextArea, text="User message", sync_methods=["clear"]
         ),
         "#chat-log": mock_chat_log,
-        "#chat-chat-title": create_widget_mock(Input, value=""),
-        "#chat-chat-id": create_widget_mock(Input, value=""),
         # Chat settings
         "#chat-api-provider": create_widget_mock(Select, value="OpenAI"),
         "#chat-api-model": create_widget_mock(Select, value="gpt-4"),
