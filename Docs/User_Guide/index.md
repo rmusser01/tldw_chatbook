@@ -14,8 +14,7 @@ agent/tool workflows — all stored locally in SQLite.
 1. Install and launch — see the [README](../../README.md#installation).
 2. Open **Settings** (coming in G4) and set a provider + model (or point at
    a local server).
-3. Press **2** to open **Console** (coming in G1) and send your first
-   message.
+3. Open **Console** (coming in G1) by clicking "Console" in the nav bar, or use **Ctrl+P** → "Switch to Console"; then send your first message. (From most screens, you can also press **2**.)
 4. Press **F1** anywhere for contextual help; **Ctrl+P** opens the command
    palette.
 
@@ -33,14 +32,14 @@ agent/tool workflows — all stored locally in SQLite.
 | 8 | [Workflows](workflows.md) 🚧 | Reusable procedures, recipes, dry-runs, and outputs. |
 | 9 | [MCP](mcp.md) 🚧 | MCP servers, tools, permissions, auth, and audit. |
 | 0 | [ACP](acp.md) 🚧 | Agent Client Protocol agents, sessions, runtimes, diffs, and terminals. |
-| — | [Lab](lab.md) 🚧 | Opens the **Models** screen — providers, models, speech, and evaluation runs. |
+| — | [Lab](lab.md) 🚧 | Models, speech, and evaluation runs. |
 | — | [Logs](logs.md) 🚧 | Application logs and diagnostics. |
 | — | Settings (coming in G4) | Global app preferences, appearance, accounts, and storage. |
 
 Lab, Logs, and Settings have no dedicated number key — reach them by
 clicking the nav label or via the command palette (**Ctrl+P**).
 
-\* Number keys switch tabs from most screens right after launch, but not
+**Note:** Number keys switch tabs from most screens right after launch, but not
 once a text field (composer, search box) — or in at least one observed
 case, another auto-focused widget — has focus; that keystroke is consumed
 by the field instead of the app shell. Click the nav label or use
@@ -65,6 +64,7 @@ commands" table.
 |----------|--------------|
 | Notes | Library (coming in G2) |
 | Prompts | Library (coming in G2) |
+| Skills | Library ▸ Skills (coming in G2) |
 | Subscriptions | [Watchlists](watchlists.md) 🚧 |
 | Coding | Console (coming in G1) |
 | Conversations / CCP | Roleplay & Chat Dictionaries (coming in G3) |
