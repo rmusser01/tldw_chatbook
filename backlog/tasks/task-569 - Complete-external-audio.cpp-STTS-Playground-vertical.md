@@ -1,11 +1,11 @@
 ---
 id: TASK-569
 title: Complete external audio.cpp STTS Playground vertical
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-25 13:47'
-updated_date: '2026-07-25 16:55'
+updated_date: '2026-07-25 18:05'
 labels:
   - tts
   - audio-cpp
@@ -61,22 +61,21 @@ Reason: ADR-023 already governs the adapter registry, catalog-driven Playground,
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the catalog-driven external audio.cpp STTS Playground vertical through the application-owned TTS service. Added immutable request/artifact contracts, lazy descriptor/catalog/voice resolution, validated external settings and explicit discovery actions, native complete-WAV generation, provenance-safe playback/export, retained handler-owned generation, artifact leasing/cleanup, fixed safe recovery copy, and exact stale provider/configuration/catalog/model rejection. Preserved the six legacy providers behind the temporary bridge, including their original model/voice defaults and friendly labels. Hardened explicit-voice rediscovery so ordinary current voice failures can use Server default while stale and registry lifecycle failures cannot mutate or enable current generation. Updated ADR-023, the approved design, the TTS module guide, and user-facing external-server/privacy guidance; no new ADR was needed.
+Implemented the catalog-driven external audio.cpp STTS Playground vertical through the application-owned TTS service. Added immutable request/artifact contracts, lazy descriptor/catalog/voice resolution, validated external settings and explicit discovery actions, native complete-WAV generation, provenance-safe playback/export, retained handler-owned generation, artifact leasing/cleanup, fixed safe recovery copy, and exact stale provider/configuration/catalog/model rejection. Preserved the six legacy providers behind the temporary bridge, including their original model/voice defaults and friendly labels. Hardened review edges with final-destination export validation, a strict frozen Pydantic audio.cpp configuration model, out-of-band UI sentinels that cannot collide with opaque remote IDs, synchronously reserved catalog/voice request generations, settings action generations, and playback-lifetime artifact leases. Ordinary current voice failures can use Server default while superseded, stale, and registry lifecycle results cannot mutate current state. Updated ADR-023, the approved design, the TTS module guide, and user-facing external-server/privacy guidance; no new ADR was needed.
 
 Verification evidence:
-- Focused Slice 3 matrix after the final rebase: 185 passed, 1 existing RequestsDependencyWarning.
-- Broad TTS/STTS regressions after the final rebase: 892 passed, 14 expected optional skips, 6 existing dependency/SWIG deprecation warnings.
-- Full audio.cpp Playground file: 31 passed.
-- Ruff check passed and Ruff format confirmed 16 scoped files formatted.
+- Focused Slice 3 matrix after the final rebase: 203 passed, 1 existing RequestsDependencyWarning.
+- Broad TTS/STTS regressions on the final implementation: 896 passed, 14 expected optional skips, 6 existing dependency/SWIG deprecation warnings.
+- Full audio.cpp Playground and pure catalog files: 54 passed.
+- Ruff check passed and Ruff format confirmed 17 scoped files formatted.
 - compileall passed for TTS, STTS Window/catalog, and STTS event handler.
 - Scoped mypy passed for 5 changed typed source modules.
 - Managed-mode added-line boundary search returned no matches; git diff --check passed.
-- Documentation reference search passed.
-- Rebased without conflicts onto latest origin/dev 6ed2b9c00b355fa5b0344539cf7d944d97a5ac69; it is an ancestor of the feature head.
-- Range-diff marked all 15 rewritten commits patch-identical.
-- Final independent post-rebase review at e07287275 found no Critical or Important issues and declared the code merge-ready for correctness, races, lifecycle, security, privacy, compatibility, and integration with the new dev base.
+- Rebased without conflicts onto latest origin/dev 3d401a1e709576273b7f542c4ea747fc93ce94bf; it is an ancestor of the feature head.
+- The final base-only rebase changed unrelated Console/task-623 files; range-diff marked all 18 rewritten commits patch-identical.
+- Final independent review at d4ccdaa004b7b53bc47bbc987c2dcdcf69e4121d found no Critical, Important, or Minor issues and declared the code merge-ready for correctness, cancellation ordering, races, lifecycle, security, privacy, compatibility, and integration with the current dev base.
 
-Core files changed include TTS/playground_types.py, TTS/TTS_Generation.py, TTS/legacy_catalogs.py, UI/stts_playground_catalog.py, UI/STTS_Window.py, Event_Handlers/STTS_Events/stts_events.py, focused TTS/UI tests, and the governing/user documentation. The deliberate tradeoff remains external-only, complete-WAV-first delivery through an async-stream-compatible interface; binary/server.json launch and supervision remain deferred.
+Core files changed include TTS/playground_types.py, TTS/TTS_Generation.py, TTS/audio_cpp_config.py, TTS/legacy_catalogs.py, UI/stts_playground_catalog.py, UI/STTS_Window.py, Event_Handlers/STTS_Events/stts_events.py, focused TTS/UI tests, and the governing/user documentation. The deliberate tradeoff remains external-only, complete-WAV-first delivery through an async-stream-compatible interface; binary/server.json launch and supervision remain deferred.
 <!-- SECTION:NOTES:END -->
 
 ## Definition of Done
