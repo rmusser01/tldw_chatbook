@@ -1278,6 +1278,27 @@ def extract_json_from_image_file(
                     metadata_key = candidate_key
                     break
 
+        # SillyTavern and other tools write the character text chunks AFTER
+        # the IDAT (image data) chunk. Pillow only surfaces trailing chunks in
+        # .info once the image data has been decoded, so force a full load and
+        # re-check before falling back to EXIF or giving up.
+        if metadata_key is None:
+            try:
+                img_obj.load()
+            except Exception as load_err:
+                logger.debug(
+                    f"Full image decode failed for '{file_name_for_log}': {load_err}"
+                )
+            if hasattr(img_obj, "info") and isinstance(img_obj.info, dict):
+                for candidate_key in ("chara", "ccv3"):
+                    if candidate_key in img_obj.info:
+                        metadata_key = candidate_key
+                        break
+            if metadata_key:
+                logger.debug(
+                    f"Found '{metadata_key}' metadata in a trailing (post-IDAT) chunk of '{file_name_for_log}'."
+                )
+
         # WebP (and JPEG) character cards embed the base64 card JSON in the
         # EXIF UserComment tag (37510) instead of a 'chara' text chunk.
         exif_user_comment: Optional[Any] = None
