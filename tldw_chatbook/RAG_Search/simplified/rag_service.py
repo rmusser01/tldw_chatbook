@@ -1517,49 +1517,11 @@ async def create_and_index(
     return service, results
 
 
-def create_rag_service(
-    embedding_model: Optional[Union[str, RAGConfig]] = None,
-    vector_store: str = "chroma",
-    persist_dir: Optional[Union[str, Path]] = None,
-    **kwargs,
-) -> RAGService:
-    """
-    Create a RAG service with common configurations.
-
-    Args:
-        embedding_model: Embedding model to use, or a RAGConfig object
-        vector_store: Vector store type ("chroma" or "memory")
-        persist_dir: Directory for persistence (if using chroma)
-        **kwargs: Additional config parameters
-
-    Returns:
-        Configured RAGService instance
-    """
-    # If the first argument is already a RAGConfig, use it directly
-    if isinstance(embedding_model, RAGConfig):
-        return RAGService(embedding_model)
-
-    # Create a default config
-    config = RAGConfig()
-
-    # Update embedding model if provided
-    if embedding_model:
-        config.embedding.model = embedding_model
-
-    # Update vector store settings
-    config.vector_store.type = vector_store
-    if persist_dir:
-        config.vector_store.persist_directory = Path(persist_dir)
-
-    # Update any additional kwargs that match config structure
-    for key, value in kwargs.items():
-        if hasattr(config.embedding, key):
-            setattr(config.embedding, key, value)
-        elif hasattr(config.vector_store, key):
-            setattr(config.vector_store, key, value)
-        elif hasattr(config.chunking, key):
-            setattr(config.chunking, key, value)
-        elif hasattr(config.search, key):
-            setattr(config.search, key, value)
-
-    return RAGService(config)
+# NOTE (task-620): a `create_rag_service(embedding_model=None, vector_store=
+# "chroma", persist_dir=None, **kwargs)` convenience function used to live
+# here. `simplified/__init__.py` never imported it -- it only imports the
+# same-named `rag_factory.create_rag_service(profile_name="hybrid_basic",
+# ...)`, which is what the public seam and every real caller (production and
+# tests) actually reach. The version in this module was therefore dead code
+# with a different, misleading signature; it was removed rather than kept as
+# an unreachable duplicate. See Tests/RAG/simplified/test_create_rag_service_seam.py.
