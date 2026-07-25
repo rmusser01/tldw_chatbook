@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from .skill_trust_crypto import (
     SkillTrustKeys,
     canonical_json,
@@ -71,6 +73,11 @@ class SkillTrustService:
         self._keys: SkillTrustKeys | None = None
         self._salt: bytes | None = None
         self._reviews: dict[str, dict[str, Any]] = {}
+        # task-624: one-shot latch for the cached-key unlock. Keychain reads
+        # are not free and posture is queried on every Library render, so the
+        # attempt is made at most once per state generation rather than per
+        # query. Cleared whenever the trust state itself changes.
+        self._keyring_unlock_attempted = False
 
     def unlock_with_passphrase(
         self, passphrase: str, *, salt: bytes | None = None
@@ -93,6 +100,30 @@ class SkillTrustService:
         salt = self._require_salt()
         self.key_cache.save_keys(keys, salt=salt)
         self.keyring_convenience_enabled = True
+
+    def _try_cached_unlock(self) -> None:
+        """Load cached trust keys if this session has none yet (task-624).
+
+        Enabling keyring convenience persists the derived keys precisely so the
+        passphrase need not be re-entered, but nothing consumed them: every
+        lockedness decision saw ``self._keys is None`` and reported "locked for
+        this session" while the keys sat unused in the keychain. Every such
+        decision point now calls this first.
+
+        Deliberately silent and non-raising: a missing, stale, or broken cache
+        simply leaves the session locked, so the existing Unlock path stays the
+        fallback. Attempted at most once per trust-state generation, because
+        keychain reads are not free and posture is queried on every render.
+        """
+        if self._keys is not None or self._keyring_unlock_attempted:
+            return
+        self._keyring_unlock_attempted = True
+        try:
+            self.unlock_from_keyring_convenience()
+        except Exception:  # noqa: BLE001 — an unusable cache is just "locked"
+            logger.opt(exception=True).debug(
+                "Cached skill-trust key unlock failed; staying locked"
+            )
 
     def unlock_from_keyring_convenience(self) -> bool:
         """Load derived trust keys from a salt-bound secure keyring cache."""
@@ -156,6 +187,7 @@ class SkillTrustService:
         self._keys = None
         self._salt = None
         self.keyring_convenience_enabled = False
+        self._keyring_unlock_attempted = False
 
     def _safe_load_marker(self) -> tuple[dict[str, Any] | None, bool]:
         """Return (marker, available). available=False iff the marker store raised."""
@@ -193,6 +225,7 @@ class SkillTrustService:
             - ``"ready"`` -- trust is set up, unlocked, and valid.
         """
         has_manifest = self.trust_store.has_manifest()
+        self._try_cached_unlock()
         marker, available = self._safe_load_marker()
         if not available:
             return "unavailable"
@@ -254,6 +287,7 @@ class SkillTrustService:
     def status_for_skill(self, skill_name: str) -> SkillTrustStatus:
         """Return visible trust status without raising for locked or bad manifests."""
 
+        self._try_cached_unlock()
         try:
             normalized_name = self._normalize_skill_name(skill_name)
         except ValueError:
@@ -387,6 +421,7 @@ class SkillTrustService:
             normalized_name = self._normalize_skill_name(skill_name)
         except ValueError:
             return frozenset()
+        self._try_cached_unlock()
         if self._keys is None or not self.trust_store.has_manifest():
             return frozenset()
         try:
@@ -820,6 +855,7 @@ class SkillTrustService:
         return manifest
 
     def _require_keys(self) -> SkillTrustKeys:
+        self._try_cached_unlock()
         if self._keys is None:
             raise SkillTrustBlockedError(
                 skill_name="<all>",
