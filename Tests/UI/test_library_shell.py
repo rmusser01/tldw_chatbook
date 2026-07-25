@@ -6286,8 +6286,8 @@ async def test_library_shell_note_conflict_shows_overwrite_reload_and_keeps_user
             message="The version conflict was never reached.",
         )
 
-        assert screen.query("#library-note-conflict-overwrite")
-        assert screen.query("#library-note-conflict-reload")
+        await _wait_for_selector(screen, pilot, "#library-note-conflict-overwrite")
+        await _wait_for_selector(screen, pilot, "#library-note-conflict-reload")
         meta = str(screen.query_one("#library-note-meta").renderable)
         assert "changed elsewhere" in meta
         assert screen.query_one("#library-note-body", TextArea).text == (
