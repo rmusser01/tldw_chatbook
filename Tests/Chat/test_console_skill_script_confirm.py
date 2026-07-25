@@ -408,9 +408,9 @@ def test_allow_round_trip(make_controller):
 
     thread = threading.Thread(target=worker)
     thread.start()
-    _wait_until(lambda: controller._pending_skill_script_event is not None)
+    _wait_until(lambda: bool(controller.pending_skill_script_ids()))
     controller.resolve_pending_skill_script(
-        True, False, request_id=controller._pending_skill_script_request_id
+        True, False, request_id=controller.pending_skill_script_ids()[0]
     )
     thread.join(timeout=5)
     assert result["decision"] == {"allow": True, "remember": False}
@@ -425,9 +425,9 @@ def test_always_allow_round_trip(make_controller):
 
     thread = threading.Thread(target=worker)
     thread.start()
-    _wait_until(lambda: controller._pending_skill_script_event is not None)
+    _wait_until(lambda: bool(controller.pending_skill_script_ids()))
     controller.resolve_pending_skill_script(
-        True, True, request_id=controller._pending_skill_script_request_id
+        True, True, request_id=controller.pending_skill_script_ids()[0]
     )
     thread.join(timeout=5)
     assert result["decision"] == {"allow": True, "remember": True}
@@ -442,7 +442,7 @@ def test_context_change_denies_a_pending_confirm(make_controller):
 
     thread = threading.Thread(target=worker)
     thread.start()
-    _wait_until(lambda: controller._pending_skill_script_event is not None)
+    _wait_until(lambda: bool(controller.pending_skill_script_ids()))
     controller._deny_pending_skill_script_on_context_change()
     thread.join(timeout=5)
     assert result["decision"]["allow"] is False
@@ -461,7 +461,7 @@ def test_switch_session_denies_a_pending_skill_script_confirm(make_controller):
 
     thread = threading.Thread(target=worker)
     thread.start()
-    _wait_until(lambda: controller._pending_skill_script_event is not None)
+    _wait_until(lambda: bool(controller.pending_skill_script_ids()))
     controller.switch_session(other.id)
     thread.join(timeout=5)
     assert result["decision"]["allow"] is False
@@ -482,14 +482,14 @@ def test_confirm_payload_carries_timeout_and_request_id(make_controller):
 
     thread = threading.Thread(target=worker)
     thread.start()
-    _wait_until(lambda: controller._pending_skill_script_event is not None)
+    _wait_until(lambda: bool(controller.pending_skill_script_ids()))
     shown = controller.pending_skill_script_payloads[0]
     assert shown is not None
     assert shown["skill_name"] == "demo"
     assert shown["script_path"] == "scripts/hello.py"
     assert isinstance(shown["timeout_seconds"], float)
     assert shown["timeout_seconds"] > 0
-    assert shown["request_id"] == controller._pending_skill_script_request_id
+    assert shown["request_id"] == controller.pending_skill_script_ids()[0]
     assert shown["request_id"]  # non-empty
     controller.resolve_pending_skill_script(True, False, request_id=shown["request_id"])
     thread.join(timeout=5)
@@ -505,7 +505,7 @@ def test_stale_request_id_is_dropped_then_matching_id_resolves(make_controller):
     controller = make_controller()
 
     # Round 1: arm, capture its id, then deny it via context-change so it
-    # tears down (clearing _pending_skill_script_request_id) without ever
+    # tears down (dropping its round from the registry) without ever
     # being resolved by a matching id.
     round_one_result = {}
 
@@ -516,13 +516,13 @@ def test_stale_request_id_is_dropped_then_matching_id_resolves(make_controller):
 
     t1 = threading.Thread(target=round_one)
     t1.start()
-    _wait_until(lambda: controller._pending_skill_script_event is not None)
-    stale_id = controller._pending_skill_script_request_id
+    _wait_until(lambda: bool(controller.pending_skill_script_ids()))
+    stale_id = controller.pending_skill_script_ids()[0]
     assert stale_id
     controller._deny_pending_skill_script_on_context_change()
     t1.join(timeout=5)
     assert round_one_result["decision"]["allow"] is False
-    assert controller._pending_skill_script_request_id is None  # torn down
+    assert controller.pending_skill_script_ids() == []  # torn down
 
     # Round 2: arms a fresh id. A resolve carrying round 1's stale id must
     # be dropped -- the round stays armed, unresolved.
@@ -535,14 +535,14 @@ def test_stale_request_id_is_dropped_then_matching_id_resolves(make_controller):
 
     t2 = threading.Thread(target=round_two)
     t2.start()
-    _wait_until(lambda: controller._pending_skill_script_event is not None)
-    fresh_id = controller._pending_skill_script_request_id
+    _wait_until(lambda: bool(controller.pending_skill_script_ids()))
+    fresh_id = controller.pending_skill_script_ids()[0]
     assert fresh_id and fresh_id != stale_id
 
     controller.resolve_pending_skill_script(True, False, request_id=stale_id)
     time.sleep(0.1)
     assert t2.is_alive(), "a stale request_id must not resolve the armed round"
-    assert controller._pending_skill_script_event is not None  # still armed
+    assert controller.pending_skill_script_ids()  # still armed
 
     # The matching (current) id resolves it correctly.
     controller.resolve_pending_skill_script(True, False, request_id=fresh_id)
@@ -561,14 +561,14 @@ def test_resolve_with_no_request_id_is_dropped(make_controller):
 
     thread = threading.Thread(target=worker)
     thread.start()
-    _wait_until(lambda: controller._pending_skill_script_event is not None)
+    _wait_until(lambda: bool(controller.pending_skill_script_ids()))
 
     controller.resolve_pending_skill_script(True, False)  # request_id omitted
     time.sleep(0.1)
     assert thread.is_alive(), "an id-less resolve must not resolve the armed round"
 
     controller.resolve_pending_skill_script(
-        True, False, request_id=controller._pending_skill_script_request_id
+        True, False, request_id=controller.pending_skill_script_ids()[0]
     )
     thread.join(timeout=5)
     assert result["decision"] == {"allow": True, "remember": False}

@@ -651,14 +651,16 @@ class ConsoleChatController:
         self.skill_script_confirm_timeout_seconds: Callable[[], float] | None = None
         #: The active script-confirm round's release Event + shared
         #: decision box ({"allow": bool, "remember": bool}).
-        self._pending_skill_script_event: threading.Event | None = None
-        self._pending_skill_script_decision: dict[str, bool] | None = None
+        #: task-581: rounds keyed by request_id, not a single slot. Two rounds
+        #: armed at once previously clobbered each other's event/decision and
+        #: both worker threads then blocked to their full deadline.
+        self._pending_skill_script_rounds: dict[str, dict[str, Any]] = {}
+        self._pending_skill_script_lock = threading.Lock()
         #: The currently-armed round's unique id (see `request_skill_script_
         #: confirm` / `resolve_pending_skill_script`). A resolve carrying any
         #: other id (including None) is dropped -- this is what stops a
         #: late button press from a torn-down round 1 from authorizing
         #: round 2's script. `None` whenever no round is armed.
-        self._pending_skill_script_request_id: str | None = None
 
     async def submit_draft(self, draft: str) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution."""
@@ -1456,9 +1458,11 @@ class ConsoleChatController:
         event = threading.Event()
         decision: dict[str, bool] = {}
         request_id = str(uuid4())
-        self._pending_skill_script_event = event
-        self._pending_skill_script_decision = decision
-        self._pending_skill_script_request_id = request_id
+        with self._pending_skill_script_lock:
+            self._pending_skill_script_rounds[request_id] = {
+                "event": event,
+                "decision": decision,
+            }
 
         timeout_seconds = (
             self.skill_script_confirm_timeout_seconds()
@@ -1484,11 +1488,14 @@ class ConsoleChatController:
                 "remember": bool(decision.get("remember", False)),
             }
         finally:
-            self._pending_skill_script_event = None
-            self._pending_skill_script_decision = None
-            self._pending_skill_script_request_id = None
+            with self._pending_skill_script_lock:
+                self._pending_skill_script_rounds.pop(request_id, None)
+                still_armed = bool(self._pending_skill_script_rounds)
             try:
-                self._marshal_pending_skill_script(None)
+                # Clearing unconditionally would hide a sibling round's card;
+                # only blank the surface when nothing is left pending.
+                if not still_armed:
+                    self._marshal_pending_skill_script(None)
             except Exception:  # noqa: BLE001
                 logger.opt(exception=True).debug(
                     "Failed to clear skill-script confirm during teardown"
@@ -1532,21 +1539,37 @@ class ConsoleChatController:
                 ``None`` (the default) never matches an armed round, so an
                 un-migrated or malformed caller fails closed by omission.
         """
-        decision = self._pending_skill_script_decision
-        event = self._pending_skill_script_event
-        if decision is None or event is None:
+        if request_id is None:
             return
-        if request_id is None or request_id != self._pending_skill_script_request_id:
+        with self._pending_skill_script_lock:
+            round_state = self._pending_skill_script_rounds.get(request_id)
+        if round_state is None:
             return
-        decision["allow"] = bool(allow)
-        decision["remember"] = bool(remember)
-        event.set()
+        round_state["decision"]["allow"] = bool(allow)
+        round_state["decision"]["remember"] = bool(remember)
+        round_state["event"].set()
 
     def _deny_pending_skill_script_on_context_change(self) -> None:
-        """Force-deny a pending script confirm (Event set, decision left False)."""
-        event = self._pending_skill_script_event
-        if event is not None:
-            event.set()
+        """Force-deny every armed script confirm (Events set, decisions left False).
+
+        Denies ALL rounds, not just the newest: a conversation switch
+        invalidates the context every pending confirm was raised in.
+        """
+        with self._pending_skill_script_lock:
+            rounds = list(self._pending_skill_script_rounds.values())
+        for round_state in rounds:
+            round_state["event"].set()
+
+    def pending_skill_script_ids(self) -> list[str]:
+        """Return the request ids of every currently-armed confirm round.
+
+        Returns:
+            The armed round ids, in insertion order. Empty when none is
+            pending. Exposed for tests and for any surface that needs to
+            know whether a decision is outstanding.
+        """
+        with self._pending_skill_script_lock:
+            return list(self._pending_skill_script_rounds)
 
     def stop_active_run(self, *, record_user_stop: bool = True) -> bool:
         """Request the active stream to stop at the next safe boundary.
