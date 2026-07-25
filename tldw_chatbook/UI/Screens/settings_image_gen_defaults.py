@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,7 +27,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+from loguru import logger
 
+from tldw_chatbook.config import _get_effective_config_path
 from tldw_chatbook.Image_Generation.config import ImageGenerationConfig, _NON_SECRET
 from tldw_chatbook.Image_Generation.listing import (
     _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS,
@@ -195,6 +198,62 @@ def effective_placeholder(cfg: ImageGenerationConfig, backend_id: str, toml_key:
     flat_field = _NON_SECRET[(backend_id, toml_key)]
     value = getattr(cfg, flat_field, None)
     return "" if value is None else str(value)
+
+
+def load_user_image_generation_table() -> Mapping[str, Any]:
+    """Read the user's OWN ``[image_generation]`` table, UNMERGED with baked defaults.
+
+    DISPLAY-ONLY -- do not use this as a diff/save baseline (task 5's
+    ``diff_to_sections`` must keep comparing against ``SettingsConfigAdapter
+    .load()``'s merged raw config; that stays correct regardless of what this
+    function returns, since comparing a draft against a MERGED config can
+    only ever suppress writing an unedited key that already equals its baked
+    default -- never emit an extra one).
+
+    ``load_cli_config_and_ensure_existence`` (which both ``SettingsConfig
+    Adapter.load()`` and ``Image_Generation.config.get_image_generation_
+    config()`` read through) deep-merges ``config.py``'s bundled
+    ``DEFAULT_CONFIG_FROM_TOML`` template into whatever's on disk. That
+    template bakes a literal, non-empty value into nearly every
+    ``[image_generation.<backend>]`` field (e.g. openrouter's
+    ``default_model = "google/gemini-2.5-flash-image"``), so on a fresh
+    install (or any scratch config that doesn't set a field), the merged
+    config makes that field look "explicitly set" -- the Settings panel would
+    render it as the input's VALUE instead of a placeholder, even though the
+    user never typed it (a set-vs-default blur; the spec's own openrouter
+    model example is the sharpest case).
+
+    This function bypasses that merge: it parses ONLY the on-disk file at the
+    effective config path (the same resolution ``config._get_effective_
+    config_path()`` / ``SettingsScreen._config_path()`` already use) and
+    returns its raw ``[image_generation]`` table exactly as the user wrote
+    it -- the true "what did the user actually set" source for the Settings
+    panel's input VALUES. Placeholders keep coming from
+    ``effective_placeholder()`` (unchanged; it already reads the resolved/
+    merged config, which is correct for "what will actually be used").
+
+    Returns:
+        The raw ``[image_generation]`` table, or ``{}`` if the config file
+        doesn't exist, has no ``[image_generation]`` table, or fails to
+        parse. Never raises.
+    """
+    try:
+        config_path = _get_effective_config_path()
+    except Exception as exc:
+        logger.debug(f"image_generation: could not resolve config path: {exc}")
+        return {}
+    if not config_path.exists():
+        return {}
+    try:
+        with open(config_path, "rb") as f:
+            parsed = tomllib.load(f)
+    except Exception as exc:
+        logger.debug(
+            f"image_generation: could not parse config file {config_path}: {exc}"
+        )
+        return {}
+    section = parsed.get("image_generation")
+    return section if isinstance(section, dict) else {}
 
 
 _GLOBAL_DRAFT_KEYS: tuple[str, ...] = (

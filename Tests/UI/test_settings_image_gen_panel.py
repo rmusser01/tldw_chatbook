@@ -138,19 +138,54 @@ default_model = "m-x"
             cfg, "swarmui", "default_model"
         )
 
-        # config.py's bundled default template (CONFIG_TOML_CONTENT) bakes a
-        # literal `timeout_seconds = 120` into every backend's TOML section,
-        # and load_cli_config_and_ensure_existence deep-merges that template
-        # under ANY existing config file (even an empty scratch one) -- so
-        # this field is never actually absent from the raw section the way
-        # the string fields above are. The panel must still show the RAW
-        # value here (not silently substitute the resolved/placeholder
-        # value), proving the value/placeholder split reads from the right
-        # source rather than always preferring one or the other.
+        # A field WITH a real, non-empty Python-level baked default
+        # (swarmui timeout_seconds) proves the placeholder mechanism shows
+        # the actual value that will be used, not a degenerate empty string.
+        # This only holds because the panel reads the USER'S OWN unmerged
+        # config file for the VALUE (load_user_image_generation_table()) --
+        # config.py's bundled default template bakes a literal
+        # `timeout_seconds = 120` into every backend's TOML section, and
+        # load_cli_config_and_ensure_existence deep-merges that template
+        # into the loaded config regardless of what's on disk. Reading the
+        # MERGED config for the value (the pre-fix bug) would show "120" as
+        # the VALUE here even though this scratch file never sets it.
         swarmui_timeout = panel.query_one(
             "#settings-imagegen-field-swarmui-timeout_seconds", Input
         )
-        assert swarmui_timeout.value == str(DEFAULT_SWARMUI_TIMEOUT_SECONDS)
+        assert swarmui_timeout.value == ""
+        assert swarmui_timeout.placeholder == str(DEFAULT_SWARMUI_TIMEOUT_SECONDS)
+
+
+@pytest.mark.asyncio
+async def test_fresh_config_shows_placeholder_not_merged_default_value(scratch_config):
+    """Set-vs-default blur regression (Fix Round 1).
+
+    A config file with NO ``[image_generation]`` section at all (the
+    freshest possible install state) must render every field EMPTY with its
+    resolved-effective value as the placeholder -- never the value baked
+    into config.py's bundled default template. Uses the design spec's own
+    named example (openrouter's model): pre-fix, ``SettingsConfigAdapter
+    .load()``'s deep-merged config made this render as if the user had
+    explicitly set ``default_model`` to the template's baked value.
+    """
+    scratch_config(
+        """
+[general]
+default_theme = "textual-dark"
+"""
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        openrouter_model = panel.query_one(
+            "#settings-imagegen-field-openrouter-default_model", Input
+        )
+        assert openrouter_model.value == ""
+        assert openrouter_model.placeholder == "google/gemini-2.5-flash-image"
 
 
 @pytest.mark.asyncio

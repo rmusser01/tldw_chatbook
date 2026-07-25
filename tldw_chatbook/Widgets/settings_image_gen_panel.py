@@ -9,10 +9,16 @@ wired in tasks 5-6. The screen composes this widget with a single line
 ``_render_detail_pane``), keeping the 13k-line monolith's diff to a single
 import + one compose branch.
 
-READ-ONLY this task: every input renders a value (raw-config value when
-set, ``effective_placeholder`` when unset) but stays ``disabled=True``.
-Secrets are never echoed -- the input is always empty; a source line next
-to it reports where the *effective* secret came from
+READ-ONLY this task: every input renders a value (the USER'S OWN unmerged
+config-file value when set, ``effective_placeholder`` when unset) but stays
+``disabled=True``. Values come from ``load_user_image_generation_table()``,
+NOT ``SettingsConfigAdapter().load()``'s config -- the adapter's config is
+deep-merged with ``config.py``'s bundled default template, which bakes a
+literal value into nearly every backend field; reading it directly would
+make a field the user never touched look "set" instead of showing its
+placeholder (see that helper's docstring for the full set-vs-default-blur
+story). Secrets are never echoed -- the input is always empty; a source
+line next to it reports where the *effective* secret came from
 (``ImageGenBackendRow.key_source``), reusing the exact three/four display
 strings the design spec pins: ``"env: <VAR>"``, ``"local config key
 saved"``, ``"keyring"``, ``"missing"``. SwarmUI's ``swarm_token`` is
@@ -34,7 +40,6 @@ from tldw_chatbook.Media_Creation.generation_templates import (
     BUILTIN_TEMPLATES,
     get_all_templates,
 )
-from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     BACKEND_IDS,
     BACKEND_LABELS,
@@ -42,6 +47,7 @@ from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     ImageGenBackendRow,
     build_backend_rows,
     effective_placeholder,
+    load_user_image_generation_table,
 )
 
 
@@ -108,8 +114,12 @@ class ImageGenSettingsPanel(Vertical):
 
     def compose(self) -> ComposeResult:
         cfg = get_image_generation_config(reload=True)
-        raw_config: Mapping = SettingsConfigAdapter().load()
-        raw_top: Mapping = raw_config.get("image_generation") or {}
+        # Display-only, UNMERGED with config.py's baked default template --
+        # see load_user_image_generation_table()'s docstring. Using the
+        # merged SettingsConfigAdapter().load() config here would make an
+        # untouched field (e.g. openrouter's default_model) render as a
+        # VALUE instead of a placeholder.
+        raw_top: Mapping = load_user_image_generation_table()
         rows = build_backend_rows(cfg)
         rows_by_id: dict[str, ImageGenBackendRow] = {row.backend_id: row for row in rows}
         selected_backend = (

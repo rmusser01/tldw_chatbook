@@ -775,6 +775,14 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
         SettingsCategoryId.WORKFLOWS,
         SettingsCategoryId.MCP_DEFAULTS,
         SettingsCategoryId.ACP_DEFAULTS,
+        SettingsCategoryId.IMAGE_GENERATION,
+    }
+    # LIBRARY_RAG and IMAGE_GENERATION are the two "Domain Defaults" members
+    # with a full self-owned editor (Settings genuinely persists their
+    # config) rather than a pure view-only pointer to another destination.
+    mutable_categories = {
+        SettingsCategoryId.LIBRARY_RAG,
+        SettingsCategoryId.IMAGE_GENERATION,
     }
 
     assert set(contracts) == expected_categories
@@ -783,7 +791,7 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
         assert contract.owner_destination
         assert contract.source_of_truth
         assert contract.follow_up
-        if category is SettingsCategoryId.LIBRARY_RAG:
+        if category in mutable_categories:
             assert contract.settings_can_mutate is True
         else:
             assert contract.settings_can_mutate is False

@@ -26,6 +26,7 @@ from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     build_backend_rows,
     diff_to_sections,
     effective_placeholder,
+    load_user_image_generation_table,
     probe_backend,
     validate_draft,
 )
@@ -316,6 +317,53 @@ def test_effective_placeholder_shows_configured_value(monkeypatch):
 def test_effective_placeholder_empty_when_unset_and_no_baked_default(monkeypatch):
     cfg = _fake_cfg(monkeypatch)
     assert effective_placeholder(cfg, "stable_diffusion_cpp", "model_path") == ""
+
+
+# --- load_user_image_generation_table (Fix Round 1: set-vs-default blur) ----------
+
+
+def test_load_user_table_missing_config_file_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "does-not-exist.toml"))
+    assert load_user_image_generation_table() == {}
+
+
+def test_load_user_table_no_image_generation_section_returns_empty(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[general]\ndefault_theme = "textual-dark"\n', encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    assert load_user_image_generation_table() == {}
+
+
+def test_load_user_table_returns_raw_unmerged_content(tmp_path, monkeypatch):
+    """The core set-vs-default-blur fix: this must return EXACTLY what the
+    user wrote -- no other backend keys, no baked-in template values --
+    unlike SettingsConfigAdapter.load(), which deep-merges config.py's
+    bundled default template into every [image_generation.*] field."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[image_generation]\ndefault_backend = "openrouter"\n\n'
+        '[image_generation.openrouter]\ndefault_model = "m-x"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    table = load_user_image_generation_table()
+
+    assert table == {
+        "default_backend": "openrouter",
+        "openrouter": {"default_model": "m-x"},
+    }
+    # The blur this fixes: a merged read would also carry every OTHER
+    # backend's baked default section (swarmui, novita, together, ...).
+    assert "swarmui" not in table
+    assert "novita" not in table
+
+
+def test_load_user_table_malformed_toml_returns_empty_without_raising(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("this is not [ valid toml", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    assert load_user_image_generation_table() == {}
 
 
 # --- SettingsConfigAdapter.delete_values ------------------------------------------

@@ -618,6 +618,34 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
         ),
         follow_up="Follow-up: add ACP defaults after ACP exposes a persisted runtime/session preference contract.",
     ),
+    SettingsDomainCategoryContract(
+        category=SettingsCategoryId.IMAGE_GENERATION,
+        title="Image Gen",
+        owner_destination="Console",
+        source_of_truth=(
+            "config.toml [image_generation] (+ nested backend sections)",
+            "Image_Generation engine (adapters/worker)",
+        ),
+        rows=(
+            (
+                "Generation actions",
+                "Console owns /generate-image, cards, variants",
+            ),
+            (
+                "Settings role",
+                "Settings edits persisted backend/config defaults only",
+            ),
+            (
+                "Style templates",
+                "config/templates dir own definitions; management UI planned",
+            ),
+        ),
+        settings_can_mutate=True,
+        follow_up=(
+            "Follow-up: add a dedicated style-template create/edit/delete UI (v2); "
+            "v1 shows a read-only count only."
+        ),
+    ),
 )
 
 
@@ -1997,6 +2025,34 @@ class SettingsScreen(BaseAppScreen):
                     )
                 )
                 continue
+            if contract.category is SettingsCategoryId.IMAGE_GENERATION:
+                records.append(
+                    SettingsOwnershipRecord(
+                        category=contract.category,
+                        owns_config_sections=(
+                            "image_generation.default_backend",
+                            "image_generation.enabled_backends",
+                            "image_generation.<backend>.*",
+                            "image_generation.default_batch",
+                            "image_generation.max_variants_per_message",
+                            "image_generation.context_llm_enabled",
+                            "image_generation.context_llm_turns",
+                            "image_generation.context_llm_timeout_seconds",
+                        ),
+                        reads_runtime_state_from=contract.source_of_truth,
+                        writes_allowed=True,
+                        runtime_owner="Settings persisted defaults; Console /generate-image",
+                        boundary_copy=(
+                            "Settings owns persisted backend and generation-default config; "
+                            "Console owns /generate-image, cards, and variant actions."
+                        ),
+                        recovery_copy=(
+                            "Edit image_generation values in Advanced Config until "
+                            "Save/Revert land on this page."
+                        ),
+                    )
+                )
+                continue
             records.append(
                 SettingsOwnershipRecord(
                     category=contract.category,
@@ -2209,36 +2265,6 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 recovery_copy=(
                     "Reset a prompt from its editor to restore the packaged default text."
-                ),
-            ),
-            SettingsOwnershipRecord(
-                category=SettingsCategoryId.IMAGE_GENERATION,
-                owns_config_sections=(
-                    "image_generation.default_backend",
-                    "image_generation.enabled_backends",
-                    "image_generation.<backend>.*",
-                    "image_generation.default_batch",
-                    "image_generation.max_variants_per_message",
-                    "image_generation.context_llm_enabled",
-                    "image_generation.context_llm_turns",
-                    "image_generation.context_llm_timeout_seconds",
-                ),
-                reads_runtime_state_from=(
-                    "Image_Generation.config effective backend config",
-                    "Media_Creation generation templates",
-                ),
-                writes_allowed=False,
-                runtime_owner="Settings Image Gen panel",
-                boundary_copy=(
-                    "Settings will own image generation backend and generation-default "
-                    "config; Console's /generate-image reads it at call time."
-                ),
-                recovery_copy=(
-                    "Edit image_generation values in Advanced Config until Save/Revert land."
-                ),
-                read_only_reason=(
-                    "Save/Revert/Test are wired in a follow-up task; this page is "
-                    "read-only for now."
                 ),
             ),
             *self._domain_category_ownership_records(),
