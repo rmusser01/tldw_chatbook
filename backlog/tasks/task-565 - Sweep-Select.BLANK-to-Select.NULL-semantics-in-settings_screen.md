@@ -1,9 +1,11 @@
 ---
 id: TASK-565
 title: Sweep Select.BLANK to Select.NULL semantics in settings_screen
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-25 07:57'
+updated_date: '2026-07-25 15:58'
 labels:
   - settings
   - rag
@@ -22,7 +24,30 @@ PARTIAL DELIVERY in PR #863 (Qodo review): the compose fallback (was ~:8405) and
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 All Select.BLANK usages in settings_screen.py replaced with Select.NULL-correct logic
-- [ ] #2 Corrupt active-profile pointer no longer crashes Settings mount (regression test) — delivered in PR #863
-- [ ] #3 Blank selection + Set active yields a friendly notice instead of an adapter error
+- [x] #1 All Select.BLANK usages in settings_screen.py replaced with Select.NULL-correct logic
+- [x] #2 Corrupt active-profile pointer no longer crashes Settings mount (regression test) — delivered in PR #863
+- [x] #3 Blank selection + Set active yields a friendly notice instead of an adapter error
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add regression tests for `_library_rag_selected_profile_id` and `_select_value_text` blank-select handling (Select.NULL, not the nonexistent Select.BLANK).
+2. Fix both sites in settings_screen.py to compare against `Select.NULL`.
+3. Confirm the existing "Choose a profile first." friendly-notice path in `_trigger_library_rag_profile_set_active` is now reachable.
+4. Run the RAG profile region test file green.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed the two remaining Select.BLANK comparisons (settings_screen.py:5540 `_select_value_text`, :8106 `_library_rag_selected_profile_id`) -- Select.BLANK does not exist on Textual 8.2.7 and silently resolves to Widget.BLANK (False), so the comparison never matched the real blank sentinel Select.NULL. Both now compare against Select.NULL.
+
+Effect: `_library_rag_selected_profile_id()` now correctly returns None when the profile picker sits on its blank row, which lets the pre-existing "Choose a profile first." warning notice in `_trigger_library_rag_profile_set_active` fire instead of the stringified sentinel ("Select.NULL") being passed to `activate_profile()` as a bogus id. `_select_value_text` now renders "" for a blank provider Select instead of the literal text "Select.NULL", with real values unaffected.
+
+AC #2 (mount-crash fix) was already delivered in PR #863 -- left as-is, no changes needed there.
+
+Tests added to Tests/UI/test_settings_rag_profile_region.py: test_select_value_text_treats_select_null_as_blank, test_select_value_text_still_renders_real_values_unchanged (regression guard for no behavior change on real values), test_library_rag_selected_profile_id_returns_none_for_select_null (full pilot mount, real Select widget), test_set_active_with_blank_selection_shows_friendly_notice_not_adapter_error (AC3, asserts the friendly notice fires and _dispatch_rag_set_active is never called). All 4 verified RED before the fix, GREEN after; full file 111 passed.
+
+Follow-up (full-suite verification, not part of the original plan): fixing `_select_value_text` broke one pre-existing test in test_settings_configuration_hub.py, `test_settings_provider_blank_select_value_is_not_treated_as_provider`, which simulated a blank provider Select by feeding `Select.BLANK` (== `False`) directly into a constructed `Select.Changed` event -- that only ever passed by coincidence of the old dead-sentinel comparison. Updated it to use `Select.NULL`, the real blank sentinel, matching the fix's actual runtime behavior. Confirmed no other test file references `_select_value_text`/`handle_provider_value_changed` besides that file and test_settings_provider_switch_atomic.py (also re-run clean).
+<!-- SECTION:NOTES:END -->

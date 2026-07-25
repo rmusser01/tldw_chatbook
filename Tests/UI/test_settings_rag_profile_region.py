@@ -26,6 +26,7 @@ import inspect
 from types import SimpleNamespace
 
 import pytest
+from textual.binding import Binding
 from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
 
 from Tests.UI.test_destination_shells import (
@@ -1313,6 +1314,37 @@ def test_rag_test_category_worker_completion_notifies_state_and_preview(
     )
 
 
+def test_stale_test_category_worker_landing_after_nav_away_skips_the_toast(
+    monkeypatch, tmp_path, fake_app
+):
+    """task-566 review (Important): ``_apply_rag_test_category_result``
+    calls the now-guarded ``_apply_library_rag_index_status`` (task-566,
+    no-ops after nav-away), but its OWN ``self.app.notify("RAG check:
+    ...")`` was still unconditional -- a stale ``'t'`` test-category
+    worker landing after the user has already navigated away from
+    Library/RAG would still toast the RAG check summary over whatever
+    category they're now on. Must be guarded the same way."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module,
+        "fetch_index_status",
+        lambda: {"state": "absent", "count": 0, "provenance": {}},
+    )
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    # The user navigates away from Library/RAG WHILE the 't' test-category
+    # fetch is still in flight -- exactly the race this task targets.
+    screen.active_category = SettingsCategoryId.THEME.value
+
+    worker = SettingsScreen.__dict__["_rag_test_category_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen)  # simulate the off-thread fetch completing anyway
+
+    assert fake_app.notifications == []
+
+
 # --- Task 4 review Finding 1: backfill worker must be thread-isolated, not
 # an async worker awaiting on the UI event loop (backfill_semantic_index has
 # long synchronous stretches between awaits that would otherwise freeze the
@@ -1817,6 +1849,151 @@ def test_double_save_click_during_no_cache_fetch_does_not_drop_pending_activate(
     screen._library_rag_index_status_cache = None
     screen._confirm_reindex_then_save(values, None)
     assert len(fetch_dispatches) == 2
+
+
+# --- task-566: cancel settings-rag-index-status workers on category nav ---
+
+
+def test_leaving_library_rag_cancels_the_index_status_worker_group(
+    monkeypatch, tmp_path
+):
+    """task-566 AC1: the exclusive ``settings-rag-index-status`` worker
+    group (index-status fetch on category show / 't' test / Save-path
+    reindex confirm) must be cancelled the moment the user navigates away
+    from Library/RAG, so a stale fetch can't linger and land its callback
+    over an unrelated category.
+
+    ``self.workers`` resolves through ``self.app`` -- a bare-constructed
+    screen only has one once it's mounted (``is_mounted`` -- a plain
+    ``_is_mounted`` instance flag, flipped True here) or a real running app
+    context. Faking ``workers`` at the class level (same trick as the
+    ``fake_app`` fixture's ``app`` override) avoids needing a full pilot
+    mount just to observe the cancel call.
+    """
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    screen._is_mounted = True
+    cancelled: list[tuple] = []
+    monkeypatch.setattr(
+        SettingsScreen,
+        "workers",
+        property(
+            lambda self: SimpleNamespace(
+                cancel_group=lambda node, group: cancelled.append((node, group))
+            )
+        ),
+        raising=False,
+    )
+
+    screen._select_category(SettingsCategoryId.THEME.value)
+
+    assert cancelled == [(screen, "settings-rag-index-status")]
+
+
+def test_apply_library_rag_index_status_no_ops_after_navigating_away(
+    monkeypatch, tmp_path
+):
+    """task-566 AC2: a stale ``settings-rag-index-status`` worker callback
+    that lands after the user has already left Library/RAG must not write
+    the status Static, update the cached status, or refresh the first-run
+    panel -- all of that belongs to a category the user isn't looking at
+    anymore (worker cancellation is best-effort: a thread already running
+    still completes and still calls back, so this callback-side guard is
+    what actually matters)."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.THEME.value
+    screen._library_rag_index_status_cache = None
+    refreshed: list[bool] = []
+    monkeypatch.setattr(
+        screen, "_refresh_rag_first_run_panel_state", lambda: refreshed.append(True)
+    )
+
+    screen._apply_library_rag_index_status(
+        {"state": "built", "count": 3, "provenance": {}}
+    )
+
+    assert screen._library_rag_index_status_cache is None
+    assert refreshed == []
+
+
+def test_stale_reindex_confirm_worker_landing_after_nav_away_skips_the_modal(
+    monkeypatch, tmp_path, fake_app
+):
+    """task-566 AC2: the Save-path reindex-confirm worker landing its
+    decision callback AFTER the user has already navigated away from
+    Library/RAG must never pop the destructive "Re-index required" modal
+    over whatever unrelated category is now showing -- the exact post-541
+    finding this task closes. The save attempt is dropped rather than
+    auto-confirmed or shown out of context; there's no one left to confirm
+    it."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module, "index_change_pending", lambda values: True
+    )
+    monkeypatch.setattr(
+        settings_screen_module,
+        "fetch_index_status",
+        lambda: {"state": "built", "count": 99, "provenance": {}},
+    )
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)
+    worker_calls: list[tuple] = []
+    screen._settings_save_library_rag_worker = lambda *args: worker_calls.append(args)
+    fetch_dispatches: list[tuple] = []
+    screen._rag_reindex_confirm_status_worker = lambda *args: fetch_dispatches.append(
+        args
+    )
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+    assert len(fetch_dispatches) == 1
+    values, pending_activate = fetch_dispatches[0]
+
+    # The user navigates away from Library/RAG WHILE that fetch is still
+    # in flight -- exactly the race this task targets.
+    screen.active_category = SettingsCategoryId.THEME.value
+
+    # Simulate the off-thread fetch completing anyway (thread already
+    # running -- cancellation can't stop it), same idiom as
+    # `test_save_with_no_cached_status_fetches_then_confirms_when_built`.
+    worker = SettingsScreen.__dict__["_rag_reindex_confirm_status_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen, values, pending_activate)
+
+    assert fake_app.pushed_screens == []
+    assert worker_calls == []
+
+
+def test_reentering_library_rag_after_leaving_still_fetches_fresh_status(
+    monkeypatch, tmp_path
+):
+    """task-566 AC3: cancelling the worker group on the way out must not
+    prevent a fresh index-status fetch from being dispatched the next time
+    the user re-enters Library/RAG."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    screen._is_mounted = True
+    monkeypatch.setattr(
+        SettingsScreen,
+        "workers",
+        property(lambda self: SimpleNamespace(cancel_group=lambda *a, **k: None)),
+        raising=False,
+    )
+    refreshed: list[bool] = []
+    monkeypatch.setattr(
+        screen, "_refresh_library_rag_index_status", lambda: refreshed.append(True)
+    )
+
+    screen._select_category(SettingsCategoryId.THEME.value)
+    assert refreshed == []
+
+    screen._select_category(SettingsCategoryId.LIBRARY_RAG.value)
+    assert refreshed == [True]
 
 
 def test_reindex_confirm_in_flight_cleared_on_cancel(monkeypatch, tmp_path, fake_app):
@@ -3123,6 +3300,38 @@ async def test_generic_help_includes_rag_accelerators_for_library_rag_category(
 
 
 @pytest.mark.asyncio
+async def test_action_show_workbench_help_flattens_binding_instances_too(
+    monkeypatch, tmp_path, fake_app
+):
+    """task-567: the flattener above only ever handled tuple/list BINDINGS
+    entries -- a ``Binding(...)`` instance (Textual's OTHER valid BINDINGS
+    entry shape) would silently vanish from the F1 help with no test
+    failing, since ``isinstance(entry, (tuple, list))`` is False for it.
+    Forward-compat regression: a BINDINGS list mixing both shapes must
+    render a row for each."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.THEME.value
+    monkeypatch.setattr(
+        SettingsScreen,
+        "BINDINGS",
+        [
+            ("ctrl+z", "action_settings_undo_task567", "Undo edit"),
+            Binding("ctrl+y", "action_settings_redo_task567", "Redo edit"),
+        ],
+    )
+
+    await screen.action_show_workbench_help()
+
+    assert len(fake_app.pushed_screens) == 1
+    panel, _callback = fake_app.pushed_screens[0]
+    descriptions = [description for _key, description in panel.state.shortcuts]
+    assert "Undo edit" in descriptions
+    assert "Redo edit" in descriptions
+
+
+@pytest.mark.asyncio
 async def test_typing_accelerator_letters_into_the_top_k_input_does_not_fire_them(
     monkeypatch, tmp_path
 ):
@@ -3244,6 +3453,97 @@ def test_blank_select_row_exits_preview_instead_of_becoming_a_bogus_id(
 
     assert screen._rag_preview_profile_id is None
     assert synced == [True]
+
+
+# --- task-565: remaining Select.BLANK -> Select.NULL sweep ---
+
+
+def test_select_value_text_treats_select_null_as_blank():
+    """task-565: ``Select.BLANK`` doesn't exist on this Textual version --
+    it silently resolves to the unrelated ``Widget.BLANK`` (``False``), so
+    the old ``value is Select.BLANK`` check never matched the real blank
+    sentinel ``Select.NULL``. Pre-fix, a blank provider Select would
+    stringify to the literal text "Select.NULL" instead of the empty
+    string ``_select_value_text`` promises for a blank selection."""
+    assert SettingsScreen._select_value_text(Select.NULL) == ""
+
+
+def test_select_value_text_still_renders_real_values_unchanged():
+    """Companion to the NULL-aware fix above: real Select values (and the
+    pre-existing ``None`` blank case) must render exactly as before -- the
+    fix must not touch the non-blank path."""
+    assert SettingsScreen._select_value_text("openai") == "openai"
+    assert SettingsScreen._select_value_text(" openai ") == "openai"
+    assert SettingsScreen._select_value_text(None) == ""
+
+
+@pytest.mark.asyncio
+async def test_library_rag_selected_profile_id_returns_none_for_select_null(
+    monkeypatch, tmp_path
+):
+    """task-565: same ``Select.BLANK``-doesn't-exist bug as above, but in
+    ``_library_rag_selected_profile_id`` -- pre-fix, picking the picker's
+    blank row (``allow_blank=True``) delivered ``Select.NULL``, which the
+    stale ``value is Select.BLANK`` check never matched, so the stringified
+    sentinel ("Select.NULL") would escape downstream as if it were a real
+    profile id."""
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = Select.NULL
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_rag_selected_profile_id() is None
+
+
+@pytest.mark.asyncio
+async def test_set_active_with_blank_selection_shows_friendly_notice_not_adapter_error(
+    monkeypatch, tmp_path
+):
+    """task-565 AC3: clicking Set active while the picker sits on its blank
+    row must hit the EXISTING "Choose a profile first." guard in
+    ``_trigger_library_rag_profile_set_active`` -- which only fires when
+    ``_library_rag_selected_profile_id()`` returns ``None``. Pre-fix, the
+    stale ``Select.BLANK`` check let the stringified "Select.NULL" sentinel
+    through as a bogus profile id, so this would have gone to
+    ``activate_profile("Select.NULL")`` and surfaced an adapter-level error
+    instead of this friendly notice."""
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = Select.NULL
+        await pilot.pause()
+        await pilot.pause()
+
+        notify_calls = []
+        monkeypatch.setattr(
+            host,
+            "notify",
+            lambda message, *, severity="information", **kwargs: notify_calls.append(
+                (message, severity)
+            ),
+        )
+        dispatch_calls = []
+        monkeypatch.setattr(
+            screen, "_dispatch_rag_set_active", lambda pid: dispatch_calls.append(pid)
+        )
+
+        screen.handle_library_rag_profile_set_active(
+            Button.Pressed(Button(id="settings-library-rag-profile-set-active"))
+        )
+        await pilot.pause()
+
+        assert notify_calls == [("Choose a profile first.", "warning")]
+        assert dispatch_calls == []
 
 
 @pytest.mark.asyncio
