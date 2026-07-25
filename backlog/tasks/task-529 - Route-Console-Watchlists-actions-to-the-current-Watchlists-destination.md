@@ -42,7 +42,7 @@ Reason: ADR-018 already requires the subscriptions route to alias/fold into watc
 <!-- SECTION:NOTES:BEGIN -->
 Changed the Console live-work primary-action resolver to return `watchlists_collections` for Watchlists runs, matching the app handler and ADR-018. Direct and mounted tests now verify the current `pending_watchlists_section`/`pending_watchlists_run_id` staging contract, current destination, and absence of warning notifications. The mounted test uses Textual's deterministic `Button.press()` path because coordinate clicking the off-screen card landed on the composer send button.
 
-The full UI sweep exposed the route regression as two failures: the resolver returned retired `subscriptions`, which the app primary-action handler intentionally no longer accepts. Focused schedule/Watchlists coverage passes 8/8; the complete live-work handoff module passes 48/48; Ruff and formatting checks pass.
+The full UI sweep exposed the route regression as two failures: the resolver returned retired `subscriptions`, which the app primary-action handler intentionally no longer accepts. Focused schedule/Watchlists coverage passes 8/8; the complete live-work handoff module passes 47/47 on this branch; Ruff and formatting checks pass.
 
 ADR required: no new ADR. Existing `backlog/decisions/018-watchlists-tui-screen.md` owns the SubscriptionWindow retirement and Watchlists destination alias.
 <!-- SECTION:NOTES:END -->

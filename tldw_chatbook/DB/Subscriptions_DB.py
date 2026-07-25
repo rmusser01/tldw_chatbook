@@ -316,27 +316,41 @@ class SubscriptionsDB(BaseDB):
         cursor = conn.cursor()
 
         # Add columns to subscription_items
-        items_cols = {row[1] for row in cursor.execute("PRAGMA table_info(subscription_items)")}
+        items_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(subscription_items)")
+        }
         if "queued_for_briefing" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN queued_for_briefing BOOLEAN DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN queued_for_briefing BOOLEAN DEFAULT 0"
+            )
         if "run_id" not in items_cols:
             cursor.execute("ALTER TABLE subscription_items ADD COLUMN run_id INTEGER")
         if "alert_matches" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN alert_matches TEXT")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN alert_matches TEXT"
+            )
 
         # Add columns to subscription_filters
-        filters_cols = {row[1] for row in cursor.execute("PRAGMA table_info(subscription_filters)")}
+        filters_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(subscription_filters)")
+        }
         if "priority" not in filters_cols:
-            cursor.execute("ALTER TABLE subscription_filters ADD COLUMN priority INTEGER DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscription_filters ADD COLUMN priority INTEGER DEFAULT 0"
+            )
         if "is_include_required" not in filters_cols:
-            cursor.execute("ALTER TABLE subscription_filters ADD COLUMN is_include_required BOOLEAN DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscription_filters ADD COLUMN is_include_required BOOLEAN DEFAULT 0"
+            )
 
         # Widen CHECK constraint on subscription_filters.action.
         # Must check for the literal action value 'include' rather than the
         # bare substring, because the new column `is_include_required` would
         # otherwise make the substring match and skip the migration.
         existing_check = None
-        for row in cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"):
+        for row in cursor.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"
+        ):
             existing_check = row[0]
         if existing_check and "'include'" not in existing_check:
             cursor.execute("""
@@ -362,7 +376,9 @@ class SubscriptionsDB(BaseDB):
                 FROM subscription_filters
             """)
             cursor.execute("DROP TABLE subscription_filters")
-            cursor.execute("ALTER TABLE subscription_filters_new RENAME TO subscription_filters")
+            cursor.execute(
+                "ALTER TABLE subscription_filters_new RENAME TO subscription_filters"
+            )
             cursor.execute("""
                 CREATE TRIGGER IF NOT EXISTS update_subscription_filters_timestamp
                 AFTER UPDATE ON subscription_filters
@@ -372,8 +388,12 @@ class SubscriptionsDB(BaseDB):
             """)
 
         # Indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_queued ON subscription_items(queued_for_briefing, status)")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_items_queued ON subscription_items(queued_for_briefing, status)"
+        )
         conn.commit()
 
     @property

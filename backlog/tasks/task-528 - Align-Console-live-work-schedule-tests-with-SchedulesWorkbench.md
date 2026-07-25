@@ -44,7 +44,7 @@ Reason: This updates stale tests to the already-decided SchedulesWorkbench route
 <!-- SECTION:NOTES:BEGIN -->
 Updated the Console live-work handoff module to instantiate `SchedulesWorkbench`, await its active-work adapter seam, and assert the current generic `Follow in Console` button and recovery tooltip for empty, active-run, and digest-output states. Removed assertions tied only to the retired `SchedulesScreen` dynamic labels, inspector copy, and thread-worker implementation; unique routing and payload coverage remains.
 
-The full UI sweep exposed nine schedule failures whose expectations matched the retired screen. The active workbench suite passes 36/36 and the updated live-work module passes 48/48. A broader destination-tooltip audit still reports the pre-existing missing tooltip on `scheduling-owner-local`; that unchanged control is outside this task's handoff contract.
+The full UI sweep exposed nine schedule failures whose expectations matched the retired screen. The active workbench suite passes 36/36 and the updated live-work module passes 47/47 on this branch. A broader destination-tooltip audit still reports the pre-existing missing tooltip on `scheduling-owner-local`; that unchanged control is outside this task's handoff contract.
 
 ADR required: no. This is test alignment to the existing SchedulesWorkbench architecture and changes no service, storage, or runtime boundary.
 <!-- SECTION:NOTES:END -->
