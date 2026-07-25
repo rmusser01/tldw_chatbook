@@ -174,6 +174,26 @@ def test_confirm_modal_discard_pops_draft_before_dispatching_set_active(
     assert SettingsCategoryId.LIBRARY_RAG not in screen._settings_drafts
 
 
+def test_confirm_modal_discard_from_a_preview_clears_the_preview_first(
+    monkeypatch, tmp_path, fake_app
+):
+    """Task 4 review (Important, coherence): reaching this modal at all
+    requires the Select to be on a DIFFERENT profile than active -- which
+    is exactly what a genuine browse would have already put into preview.
+    A stale preview must not survive into the (async) gap before the
+    set-active worker completes: `_rag_preview_profile_id` must be cleared
+    before the discard's bare resync, not after."""
+    screen, callback, other_id = _dirty_screen_with_switch_pushed(
+        monkeypatch, tmp_path, fake_app
+    )
+    screen._rag_preview_profile_id = other_id
+    screen._dispatch_rag_set_active = lambda profile_id: None
+
+    callback("discard")
+
+    assert screen._rag_preview_profile_id is None
+
+
 def test_confirm_modal_save_arms_pending_activate_and_routes_through_save_action(
     monkeypatch, tmp_path, fake_app
 ):
@@ -187,6 +207,49 @@ def test_confirm_modal_save_arms_pending_activate_and_routes_through_save_action
 
     assert screen._rag_profile_pending_activate == other_id
     assert save_calls == [{"allow_text_entry_focus": True}]
+
+
+def test_confirm_modal_save_from_a_preview_clears_preview_and_the_save_actually_dispatches(
+    monkeypatch, tmp_path, fake_app
+):
+    """Task 4 review CRITICAL regression: picking a non-active profile in
+    the Select now ALWAYS enters preview (handle_library_rag_profile_
+    select_changed), so "Set active" while dirty -> "Save" reaches this
+    callback with `_rag_preview_profile_id` still armed at the target
+    profile. Before the fix, `action_settings_save_category`'s own preview
+    guard (added earlier for the plain Save button) would silently no-op
+    THIS save too -- and since that guard sits above the
+    `_rag_profile_pending_activate` capture-and-clear, the pending id would
+    leak forever, ready to fire an unrelated later save's profile switch.
+    This exercises the REAL `action_settings_save_category` (not
+    monkeypatched) to prove the save actually reaches dispatch."""
+    screen, callback, other_id = _dirty_screen_with_switch_pushed(
+        monkeypatch, tmp_path, fake_app
+    )
+    # Simulate the genuine browse that got the user here: selecting `other`
+    # in the dropdown already entered preview before "Set active" was ever
+    # clicked.
+    screen._rag_preview_profile_id = other_id
+    dispatched: list[tuple] = []
+    screen._confirm_reindex_then_save = lambda values, pending: dispatched.append(
+        (values, pending)
+    )
+
+    callback("save")
+
+    assert screen._rag_preview_profile_id is None
+    # The save must have actually reached the reindex-confirm gate with the
+    # correct pending-activate target -- not been silently blocked.
+    assert len(dispatched) == 1
+    _values, pending = dispatched[0]
+    assert pending == other_id
+    # And the pending id must NOT be left armed for a later, unrelated save
+    # to pick up (the leak the reviewer flagged).
+    assert screen._rag_profile_pending_activate is None
+    assert not any(
+        "Return to the active profile to save" in message
+        for message, _severity in fake_app.notifications
+    )
 
 
 # --- Finding 2: `_rag_profile_pending_activate` must not leak past an
@@ -2228,6 +2291,62 @@ def test_save_is_blocked_with_a_notification_while_previewing(
     message, severity = fake_app.notifications[-1]
     assert message == "Return to the active profile to save."
     assert severity == "warning"
+
+
+def test_revert_is_blocked_with_a_notification_while_previewing(
+    monkeypatch, tmp_path, fake_app
+):
+    """Task 4 review IMPORTANT: `action_settings_revert_category` had no
+    preview guard (unlike Save) -- pressing 'r' while previewing would pop
+    the ACTIVE profile's own (unrelated) staged draft, a silent data-loss
+    bug, and leave stale preview chrome on screen."""
+    mgr, _profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)  # dirty draft on the ACTIVE profile
+    screen._rag_preview_profile_id = "some-other-profile-id"
+
+    screen.action_settings_revert_category(allow_text_entry_focus=True)
+
+    # The draft must be intact -- revert must not have popped it.
+    assert SettingsCategoryId.LIBRARY_RAG in screen._settings_drafts
+    message, severity = fake_app.notifications[-1]
+    assert message == "Return to the active profile to revert."
+    assert severity == "warning"
+
+
+def test_cloning_while_previewing_uses_the_previewed_profile_as_the_source(
+    monkeypatch, tmp_path, fake_app
+):
+    """Task 4 review (cheap Clone-from-preview coverage): the Clone button
+    resolves its source from `_library_rag_selected_profile_id()` -- the
+    Select's current value, which is exactly the previewed profile while
+    `_rag_preview_profile_id` is armed. Completing the clone must still
+    clear the preview (the ok branch of `_rag_after_profile_action`)."""
+    mgr, _profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    mgr.save_profile(other)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    screen._rag_preview_profile_id = other.id
+    monkeypatch.setattr(screen, "_library_rag_selected_profile_id", lambda: other.id)
+
+    button = Button(id="settings-library-rag-profile-clone")
+    screen.handle_library_rag_profile_clone(Button.Pressed(button))
+
+    assert len(fake_app.pushed_screens) == 1
+    _modal, callback = fake_app.pushed_screens[0]
+    dispatched: list[tuple] = []
+    screen._dispatch_rag_profile_action = lambda action, profile_id, arg: dispatched.append(
+        (action, profile_id, arg)
+    )
+
+    callback("My Clone")
+
+    assert dispatched == [("clone", other.id, "My Clone")]
+
+    screen._rag_after_profile_action("clone", True, "new-clone-id")
+    assert screen._rag_preview_profile_id is None
 
 
 def test_library_rag_save_enabled_is_false_while_previewing_even_with_a_dirty_draft(

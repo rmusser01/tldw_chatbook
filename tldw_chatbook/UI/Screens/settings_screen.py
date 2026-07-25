@@ -10757,15 +10757,37 @@ class SettingsScreen(BaseAppScreen):
     def _handle_rag_profile_switch_confirm(
         self, result: str | None, profile_id: str
     ) -> None:
+        # Task 4 review (Critical fix): reaching THIS modal at all required
+        # `_library_rag_selected_profile_id()` (the Select's current value)
+        # to differ from the active profile -- which is exactly what
+        # entering a profile-picker PREVIEW means (handle_library_rag_
+        # profile_select_changed fires on every such browse). "discard" and
+        # "save" both act on the ACTIVE profile's own draft (discard pops
+        # it, save persists it) -- a still-armed preview must never survive
+        # into either: `action_settings_save_category`'s LIBRARY_RAG guard
+        # would otherwise silently no-op the save AND leak
+        # `_rag_profile_pending_activate` (its capture-and-clear sits BELOW
+        # that guard), and a bare `_sync_library_rag_widgets()` alone would
+        # leave the fields showing the previewed profile's stale,
+        # forced-disabled values under a stale "Previewing: ..." banner/
+        # title during the async gap before the set-active worker (discard)
+        # or save worker (save) completes. "cancel"/None deliberately does
+        # NOT clear it here -- the user chose to keep browsing/editing
+        # exactly as they left it.
         if result == "discard":
+            self._rag_preview_profile_id = None
+            self._sync_rag_editor_display()
             self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
             self._sync_library_rag_widgets()
             self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
             self._dispatch_rag_set_active(profile_id)
         elif result == "save":
+            self._rag_preview_profile_id = None
+            self._sync_rag_editor_display()
             self._rag_profile_pending_activate = profile_id
             self.action_settings_save_category(allow_text_entry_focus=True)
-        # "cancel"/None (Escape): leave the draft and active profile untouched.
+        # "cancel"/None (Escape): leave the draft, active profile, and any
+        # in-progress preview untouched.
 
     def _dispatch_rag_set_active(self, profile_id: str) -> None:
         self._library_rag_profile_result = "Setting active profile..."
@@ -12040,6 +12062,20 @@ class SettingsScreen(BaseAppScreen):
         ):
             self.app.notify(
                 "Use the editor's own buttons for this category", severity="information"
+            )
+            return
+        # Task 4 review (Important): Revert is blocked (no-op + notify)
+        # while the Library/RAG editor is showing a profile-picker PREVIEW
+        # -- MUST run before the generic draft pop below, which would
+        # otherwise silently discard the ACTIVE profile's own (unrelated
+        # to whatever is being previewed) staged draft. Mirrors the Save
+        # guard in action_settings_save_category.
+        if (
+            category is SettingsCategoryId.LIBRARY_RAG
+            and self._rag_preview_profile_id is not None
+        ):
+            self.app.notify(
+                "Return to the active profile to revert.", severity="warning"
             )
             return
         if not self._category_has_unsaved_changes(category):
