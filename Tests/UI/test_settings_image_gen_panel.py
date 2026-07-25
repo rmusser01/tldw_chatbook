@@ -1022,3 +1022,103 @@ base_url = "http://localhost:7801"
         panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
         badge = panel.query_one("#settings-imagegen-status-swarmui", Static)
         assert str(badge.renderable) == "Configured"
+
+
+# ---------------------------------------------------------------------------
+# Final review fix round: swarmui token config key, empty-value deletion
+# semantics, stale Task-4 copy, enabled_backends order, global min-clamps.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_emptying_a_saved_field_deletes_not_blanks(scratch_config, tmp_path):
+    """Important 1, end-to-end: selecting-all-and-deleting a saved field's
+    text (not the dedicated Clear button, which only exists for secrets)
+    must delete the key from config.toml, never write "" over it.
+    """
+    scratch_config(
+        """
+[image_generation]
+default_backend = "openrouter"
+enabled_backends = ["openrouter"]
+
+[image_generation.openrouter]
+default_model = "old-model"
+"""
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        model_input = panel.query_one(
+            "#settings-imagegen-field-openrouter-default_model", Input
+        )
+        model_input.value = ""
+        await pilot.pause()
+
+        rail_button = screen.query_one("#settings-category-image_generation", Button)
+        assert "*" in str(rail_button.label)
+
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
+
+    config_path = tmp_path / "config.toml"
+    with open(config_path, "rb") as f:
+        saved = tomllib.load(f)
+    assert "default_model" not in saved["image_generation"].get("openrouter", {})
+
+
+@pytest.mark.asyncio
+async def test_swarmui_token_saves_and_resolves_end_to_end(scratch_config, tmp_path, monkeypatch):
+    """CRITICAL fix, end-to-end: a pasted swarmui token must both persist
+    to config.toml AND actually resolve (key_sources == "config", input
+    resets, source line updates) through the real save -> cache-reset ->
+    recompose path -- not just at the loader-unit-test level.
+    """
+    for var in _ALL_SECRET_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    scratch_config(
+        """
+[image_generation]
+default_backend = "swarmui"
+enabled_backends = ["swarmui"]
+"""
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        token_input = panel.query_one(
+            "#settings-imagegen-field-swarmui-swarm_token", Input
+        )
+        token_input.value = "fake-swarm-token"
+        await pilot.pause()
+
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
+
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        token_input = panel.query_one(
+            "#settings-imagegen-field-swarmui-swarm_token", Input
+        )
+        assert token_input.value == ""
+
+        source_line = panel.query_one(
+            "#settings-imagegen-key-source-swarmui", Static
+        )
+        assert str(source_line.renderable) == "local config key saved"
+
+    config_path = tmp_path / "config.toml"
+    with open(config_path, "rb") as f:
+        saved = tomllib.load(f)
+    assert saved["image_generation"]["swarmui"]["swarm_token"] == "fake-swarm-token"
+
+    cfg = get_image_generation_config(reload=True)
+    assert cfg.swarmui_swarm_token == "fake-swarm-token"
+    assert cfg.key_sources["swarmui"] == "config"

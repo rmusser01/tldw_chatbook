@@ -321,6 +321,22 @@ _GLOBAL_DRAFT_KEYS: tuple[str, ...] = (
 )
 
 
+def canonical_backend_order(backend_ids: Any) -> list[str]:
+    """Normalize an ``enabled_backends``-shaped list to ``BACKEND_IDS``'
+    canonical order, dropping any unrecognized entries.
+
+    Final review Minor 1: a config file's ``enabled_backends`` list order
+    has no meaning (it's a set), but Python list equality IS order-
+    sensitive -- comparing it against a draft's list built by iterating
+    ``BACKEND_IDS`` (always canonical order) without normalizing BOTH
+    sides first spuriously diffs whenever the file happens to list the
+    same backends in a different order, causing an unnecessary rewrite on
+    every save and a rail dirty marker that never clears on its own.
+    """
+    ids = set(backend_ids or ())
+    return [backend_id for backend_id in BACKEND_IDS if backend_id in ids]
+
+
 @dataclass(frozen=True)
 class ImageGenDraftValues:
     """Pending Settings > Image Gen edits.
@@ -391,63 +407,104 @@ def diff_to_sections(
         keys/values that differ from ``raw_config`` (int fields coerced
         before comparing, so a round-tripped-unchanged int is never
         re-emitted). ``deletions`` maps the same section names to keys the
-        user explicitly cleared this session. A key present in both
+        user explicitly cleared this session, OR emptied back to a blank
+        string (final review Important 1: never write an empty-string
+        sentinel over a previously-saved value -- that would both discard
+        the saved value AND leave a falsy-but-present key shadowing its
+        env/keyring/baked-default fallback). A key present in both
         ``backend_fields`` and ``cleared_fields`` for the same backend
-        resolves to deletion, never a write of the stale edit.
+        resolves to deletion, never a write of the stale edit. An emptied
+        key that was never set in ``raw_config`` to begin with is a pure
+        no-op (dropped from both ``sections`` and ``deletions``) rather
+        than an empty diff or a delete-of-nothing.
     """
     raw_top: Mapping[str, Any] = (raw_config or {}).get("image_generation") or {}
     sections: dict[str, dict[str, Any]] = {}
     deletions: dict[str, list[str]] = {}
 
     global_diff: dict[str, Any] = {}
+    global_deletions: list[str] = []
     for key in _GLOBAL_DRAFT_KEYS:
         value = getattr(draft, key)
         if value is None:
             continue  # not touched this session
-        raw_value = raw_top.get(key)
         if key == "enabled_backends":
-            raw_value = raw_value or []
+            # Both sides normalized to canonical order first (Minor 1) --
+            # a config file's list order is meaningless (it's a set), but
+            # Python list equality isn't.
+            normalized_value = canonical_backend_order(value)
+            raw_value = canonical_backend_order(raw_top.get(key))
+            if normalized_value != raw_value:
+                global_diff[key] = normalized_value
+            continue
+        if isinstance(value, str) and not value.strip():
+            if key in raw_top:
+                global_deletions.append(key)
+            continue  # emptied, never set -- no-op, not a diff
+        raw_value = raw_top.get(key)
         if value != raw_value:
             global_diff[key] = value
     if global_diff:
         sections["image_generation"] = global_diff
+    if global_deletions:
+        deletions["image_generation"] = global_deletions
 
     for backend_id, fields in draft.backend_fields.items():
         raw_backend: Mapping[str, Any] = raw_top.get(backend_id) or {}
         cleared = set(draft.cleared_fields.get(backend_id, ()))
         backend_diff: dict[str, Any] = {}
+        empty_deletions: set[str] = set()
         for toml_key, raw_value in fields.items():
             if toml_key in cleared:
                 continue
+            if isinstance(raw_value, str) and not raw_value.strip():
+                if toml_key in raw_backend:
+                    empty_deletions.add(toml_key)
+                continue  # emptied, never set -- no-op, not a diff
             spec = _spec_for(backend_id, toml_key)
             coerced = _coerce_value(spec, raw_value)
             if coerced != raw_backend.get(toml_key):
                 backend_diff[toml_key] = coerced
         if backend_diff:
             sections[f"image_generation.{backend_id}"] = backend_diff
+        if empty_deletions:
+            section_key = f"image_generation.{backend_id}"
+            deletions[section_key] = sorted(
+                set(deletions.get(section_key, ())) | empty_deletions
+            )
 
     for backend_id, keys in draft.cleared_fields.items():
         if keys:
-            deletions[f"image_generation.{backend_id}"] = list(keys)
+            section_key = f"image_generation.{backend_id}"
+            deletions[section_key] = sorted(
+                set(deletions.get(section_key, ())) | set(keys)
+            )
 
     return sections, deletions
 
 
 # Global scalar fields that render as a plain-text Input (task 5): label
-# used in an inline error, and whether the field is int- or float-typed.
-# The screen stages an UNPARSEABLE edit as the raw string rather than
-# silently dropping it (so it still marks dirty and surfaces feedback);
-# validate_draft is what actually catches it before it could ever reach
-# diff_to_sections, matching the per-backend "int"-kind fields' treatment
-# below exactly.
-_GLOBAL_INT_FIELD_LABELS: dict[str, str] = {
-    "default_batch": "Default batch",
-    "max_variants_per_message": "Max variants / message",
-    "context_llm_turns": "Context LLM turns",
-}
-_GLOBAL_FLOAT_FIELD_LABELS: dict[str, str] = {
-    "context_llm_timeout_seconds": "Context LLM timeout (s)",
-}
+# used in an inline error, and whether the field is int- or float-typed,
+# plus the design spec's own minimum ("Ints/floats validated to the
+# loader's own clamps where they exist: default_batch >= 1,
+# context_llm_turns >= 1, context_llm_timeout_seconds >= 0.1" --
+# max_variants_per_message shares default_batch's >= 1 floor; the loader
+# only type-coerces these, so validate_draft is the one place that
+# actually enforces them). The screen stages an UNPARSEABLE OR EMPTIED
+# edit as the raw string rather than silently dropping it (so it still
+# marks dirty and surfaces feedback); validate_draft is what actually
+# catches an unparseable one before it could ever reach diff_to_sections,
+# matching the per-backend "int"-kind fields' treatment below exactly. An
+# EMPTIED one is validated by neither -- diff_to_sections turns it into a
+# deletion instead (final review Important 1).
+_GLOBAL_INT_FIELD_SPECS: tuple[tuple[str, str, int], ...] = (
+    ("default_batch", "Default batch", 1),
+    ("max_variants_per_message", "Max variants / message", 1),
+    ("context_llm_turns", "Context LLM turns", 1),
+)
+_GLOBAL_FLOAT_FIELD_SPECS: tuple[tuple[str, str, float], ...] = (
+    ("context_llm_timeout_seconds", "Context LLM timeout (s)", 0.1),
+)
 
 
 def _is_valid_numeric(value: Any, *, kind: type) -> bool:
@@ -476,8 +533,11 @@ def validate_draft(draft: ImageGenDraftValues) -> tuple[list[str], list[str]]:
         the global int/float fields (``default_batch``,
         ``max_variants_per_message``, ``context_llm_turns``,
         ``context_llm_timeout_seconds``) must parse as their expected type
-        (the screen stages an unparseable edit as the raw string rather
-        than silently dropping it -- this is what actually blocks it).
+        and respect the design spec's own minimum (the screen stages an
+        unparseable edit as the raw string rather than silently dropping
+        it -- this is what actually blocks it). An EMPTIED field (backend
+        or global) is validated by neither check -- ``diff_to_sections``
+        turns it into a deletion instead, never a value to reject.
         ``warnings`` are non-blocking hints: all backends disabled, and
         ``default_batch`` exceeding ``max_variants_per_message`` (the
         runtime already clamps this safely; skipped when either isn't
@@ -493,7 +553,12 @@ def validate_draft(draft: ImageGenDraftValues) -> tuple[list[str], list[str]]:
 
     for backend_id, fields in draft.backend_fields.items():
         backend_label = BACKEND_LABELS.get(backend_id, backend_id)
+        cleared = set(draft.cleared_fields.get(backend_id, ()))
         for toml_key, raw_value in fields.items():
+            if toml_key in cleared:
+                continue  # explicit Clear -- nothing to validate
+            if isinstance(raw_value, str) and not raw_value.strip():
+                continue  # emptied -- becomes a deletion, not a value to validate
             spec = _spec_for(backend_id, toml_key)
             if spec is None:
                 continue
@@ -512,14 +577,28 @@ def validate_draft(draft: ImageGenDraftValues) -> tuple[list[str], list[str]]:
                 if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
                     errors.append(f"{backend_label} {spec.label} must be a valid http(s) URL.")
 
-    for key, label in _GLOBAL_INT_FIELD_LABELS.items():
+    for key, label, minimum in _GLOBAL_INT_FIELD_SPECS:
         value = getattr(draft, key)
-        if value is not None and not _is_valid_numeric(value, kind=int):
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue  # emptied -- becomes a deletion, not invalid input
+        if not _is_valid_numeric(value, kind=int):
             errors.append(f"{label} must be a whole number.")
-    for key, label in _GLOBAL_FLOAT_FIELD_LABELS.items():
+            continue
+        if int(value) < minimum:
+            errors.append(f"{label} must be at least {minimum}.")
+    for key, label, minimum in _GLOBAL_FLOAT_FIELD_SPECS:
         value = getattr(draft, key)
-        if value is not None and not _is_valid_numeric(value, kind=float):
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if not _is_valid_numeric(value, kind=float):
             errors.append(f"{label} must be a number.")
+            continue
+        if float(value) < minimum:
+            errors.append(f"{label} must be at least {minimum}.")
 
     if not enabled:
         warnings.append(

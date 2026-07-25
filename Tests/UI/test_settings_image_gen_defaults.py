@@ -112,6 +112,35 @@ def test_field_schema_maps_to_real_loader_keys():
                 assert (backend, spec.toml_key) in _NON_SECRET
 
 
+@pytest.mark.parametrize(
+    "backend_id",
+    [
+        backend
+        for backend, specs in FIELD_SCHEMA.items()
+        if any(spec.kind == "secret" for spec in specs)
+    ],
+)
+def test_secret_field_round_trips_through_the_real_loader(monkeypatch, backend_id):
+    """Closes the drift-test hole the swarmui `swarm_token`/`api_key`
+    mismatch slipped through (final review CRITICAL fix):
+    `test_field_schema_maps_to_real_loader_keys` above only checks that a
+    `_SECRETS` entry EXISTS for the backend, never that the schema's own
+    `toml_key` is what the loader actually reads back. Writing the secret
+    via FIELD_SCHEMA's `toml_key` (never a hardcoded "api_key") into a
+    crafted section must resolve into the backend's flat field with
+    `key_sources == "config"`, for EVERY backend with a secret field --
+    this was RED for swarmui (whose real `toml_key` is `swarm_token`, not
+    `api_key`) before the loader fix.
+    """
+    spec = next(s for s in FIELD_SCHEMA[backend_id] if s.kind == "secret")
+    cfg = _fake_cfg(
+        monkeypatch, section={backend_id: {spec.toml_key: "fake-secret-value"}}
+    )
+    assert cfg.key_sources[backend_id] == "config"
+    flat_field = _SECRETS[backend_id][0]
+    assert getattr(cfg, flat_field) == "fake-secret-value"
+
+
 def test_field_schema_covers_every_backend_id():
     assert set(FIELD_SCHEMA) == set(BACKEND_IDS)
 
@@ -232,6 +261,121 @@ def test_diff_untouched_enabled_backends_matches_absent_raw_list():
     assert "enabled_backends" not in sections.get("image_generation", {})
 
 
+# --- Final-review Minor 1: enabled_backends order-insensitivity -------------
+
+
+def test_diff_enabled_backends_same_set_different_order_is_not_a_diff():
+    """A config file's enabled_backends list order is meaningless (it's a
+    set) -- comparing it against the draft's list (always built in
+    canonical BACKEND_IDS order) without normalizing BOTH sides first
+    would spuriously diff whenever the file happens to list the same
+    backends in a different order, rewriting the file on every save and
+    leaving the rail dirty marker stuck."""
+    draft = _draft(enabled_backends=["swarmui", "openrouter"])  # canonical order
+    sections, _ = diff_to_sections(
+        draft,
+        raw_config={"image_generation": {"enabled_backends": ["openrouter", "swarmui"]}},
+    )
+    assert "enabled_backends" not in sections.get("image_generation", {})
+
+
+def test_diff_enabled_backends_genuine_change_emits_canonical_order():
+    draft = _draft(enabled_backends=["openrouter"])
+    sections, _ = diff_to_sections(
+        draft,
+        raw_config={"image_generation": {"enabled_backends": ["swarmui", "openrouter"]}},
+    )
+    assert sections == {"image_generation": {"enabled_backends": ["openrouter"]}}
+
+
+def test_diff_enabled_backends_drops_unrecognized_entries_from_both_sides():
+    draft = _draft(enabled_backends=["swarmui", "openrouter", "not-a-real-backend"])
+    sections, _ = diff_to_sections(
+        draft,
+        raw_config={
+            "image_generation": {
+                "enabled_backends": ["openrouter", "also-not-real", "swarmui"]
+            }
+        },
+    )
+    assert "enabled_backends" not in sections.get("image_generation", {})
+
+
+# --- Final-review Important 1: emptying a field deletes, never blanks ------
+
+
+def test_diff_emptying_saved_secret_deletes_not_blanks():
+    draft = _draft(backend_fields={"openrouter": {"api_key": ""}})
+    sections, deletions = diff_to_sections(
+        draft,
+        raw_config={"image_generation": {"openrouter": {"api_key": "sk-saved-key"}}},
+    )
+    assert "api_key" not in sections.get("image_generation.openrouter", {})
+    assert deletions == {"image_generation.openrouter": ["api_key"]}
+
+
+def test_diff_emptying_saved_model_deletes_not_blanks():
+    draft = _draft(backend_fields={"openrouter": {"default_model": "   "}})
+    sections, deletions = diff_to_sections(
+        draft,
+        raw_config={"image_generation": {"openrouter": {"default_model": "old-model"}}},
+    )
+    assert "default_model" not in sections.get("image_generation.openrouter", {})
+    assert deletions == {"image_generation.openrouter": ["default_model"]}
+
+
+def test_diff_emptying_set_global_deletes_not_blanks():
+    draft = _draft(default_batch="")
+    sections, deletions = diff_to_sections(
+        draft, raw_config={"image_generation": {"default_batch": 4}}
+    )
+    assert "default_batch" not in sections.get("image_generation", {})
+    assert deletions == {"image_generation": ["default_batch"]}
+
+
+def test_diff_emptying_unset_backend_field_is_a_no_op_not_a_diff():
+    draft = _draft(backend_fields={"openrouter": {"default_model": ""}})
+    sections, deletions = diff_to_sections(
+        draft, raw_config={"image_generation": {"openrouter": {}}}
+    )
+    assert sections == {}
+    assert deletions == {}
+
+
+def test_diff_emptying_unset_global_is_a_no_op_not_a_diff():
+    draft = _draft(default_batch="")
+    sections, deletions = diff_to_sections(draft, raw_config={"image_generation": {}})
+    assert sections == {}
+    assert deletions == {}
+
+
+def test_diff_emptying_and_clearing_same_key_merges_deletions_not_overwrites():
+    """An emptied field on one backend and an explicit Clear on another
+    must both survive in `deletions` -- neither source overwrites the
+    other's section entry."""
+    draft = _draft(
+        backend_fields={
+            "openrouter": {"default_model": ""},
+            "swarmui": {"swarm_token": "typed-then-cleared"},
+        },
+        cleared_fields={"swarmui": ["swarm_token"]},
+    )
+    sections, deletions = diff_to_sections(
+        draft,
+        raw_config={
+            "image_generation": {
+                "openrouter": {"default_model": "old-model"},
+                "swarmui": {"swarm_token": "old-token"},
+            }
+        },
+    )
+    assert sections == {}
+    assert deletions == {
+        "image_generation.openrouter": ["default_model"],
+        "image_generation.swarmui": ["swarm_token"],
+    }
+
+
 # --- validate_draft -------------------------------------------------------------
 
 
@@ -267,6 +411,53 @@ def test_validate_rejects_malformed_base_url():
 
 def test_validate_accepts_well_formed_base_url():
     errors, _ = validate_draft(_draft(backend_fields={"swarmui": {"base_url": "http://127.0.0.1:7801"}}))
+    assert errors == []
+
+
+# --- Final review Minor 2: global scalar fields' spec min-clamps -----------
+
+
+def test_validate_rejects_default_batch_below_minimum():
+    errors, _ = validate_draft(_draft(default_batch=0))
+    assert any("Default batch must be at least 1" in e for e in errors)
+
+
+def test_validate_accepts_default_batch_at_minimum():
+    errors, _ = validate_draft(_draft(default_batch=1, enabled_backends=["openrouter"]))
+    assert errors == []
+
+
+def test_validate_rejects_max_variants_below_minimum():
+    errors, _ = validate_draft(_draft(max_variants_per_message=0))
+    assert any("Max variants / message must be at least 1" in e for e in errors)
+
+
+def test_validate_rejects_context_llm_turns_below_minimum():
+    errors, _ = validate_draft(_draft(context_llm_turns=0))
+    assert any("Context LLM turns must be at least 1" in e for e in errors)
+
+
+def test_validate_rejects_context_llm_timeout_below_minimum():
+    errors, _ = validate_draft(_draft(context_llm_timeout_seconds=0.05))
+    assert any("Context LLM timeout (s) must be at least 0.1" in e for e in errors)
+
+
+def test_validate_accepts_context_llm_timeout_at_minimum():
+    errors, _ = validate_draft(_draft(context_llm_timeout_seconds=0.1))
+    assert errors == []
+
+
+def test_validate_emptied_global_field_is_not_validated_as_invalid():
+    """An emptied global field becomes a deletion (diff_to_sections), not
+    a value validate_draft should ever reject."""
+    errors, _ = validate_draft(_draft(default_batch=""))
+    assert errors == []
+
+
+def test_validate_emptied_backend_field_is_not_validated_as_invalid():
+    errors, _ = validate_draft(
+        _draft(backend_fields={"openrouter": {"timeout_seconds": ""}})
+    )
     assert errors == []
 
 

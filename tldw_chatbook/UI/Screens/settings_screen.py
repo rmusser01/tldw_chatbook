@@ -128,6 +128,7 @@ from .settings_image_gen_defaults import (
     BACKEND_IDS as IMAGE_GEN_BACKEND_IDS,
     FIELD_SCHEMA as IMAGE_GEN_FIELD_SCHEMA,
     ImageGenDraftValues,
+    canonical_backend_order as image_gen_canonical_backend_order,
     diff_to_sections as image_gen_diff_to_sections,
     effective_placeholder as image_gen_effective_placeholder,
     effective_secret_value as image_gen_effective_secret_value,
@@ -1009,6 +1010,10 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
             "edits apply to internal tooling prompts only; no shared Settings draft state",
         ),
     ),
+    # NOTE: unreachable via _inspector_guidance() -- IMAGE_GENERATION has
+    # its own explicit branch there (checked before this dict), same as
+    # LIBRARY_RAG's identical pre-existing shadowing. Kept accurate anyway
+    # as a safety net for the dict-lookup fallback path.
     SettingsCategoryId.IMAGE_GENERATION: (
         (
             "Affected config",
@@ -1017,12 +1022,13 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Recovery",
-            "Console's /generate-image and the command-palette demo keep working "
-            "off config.toml regardless of this page",
+            "Revert discards unsaved edits; Console's /generate-image keeps "
+            "working off the last saved config.toml regardless",
         ),
         (
             "Boundary",
-            "read-only this task; Save/Revert/Test land in a follow-up task",
+            "Edits backend, key, and generation defaults here; Save applies "
+            "to config.toml",
         ),
     ),
 }
@@ -1933,7 +1939,7 @@ class SettingsScreen(BaseAppScreen):
                 "Image Gen",
                 "Image generation backend defaults for SwarmUI, OpenRouter, and "
                 "other backend models.",
-                "Read-only",
+                "Guided",
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.DIAGNOSTICS,
@@ -3000,7 +3006,15 @@ class SettingsScreen(BaseAppScreen):
                 f"#settings-imagegen-enabled-{backend_id}", Checkbox
             ).value
         ]
-        original = list(self._image_gen_raw_section().get("enabled_backends") or [])
+        # Normalized to canonical order (Minor 1, final review) -- `enabled_
+        # backends` is already canonical (built by iterating IMAGE_GEN_
+        # BACKEND_IDS above); without normalizing `original` the SAME way,
+        # a config file whose list happens to be in a different order would
+        # spuriously stage a "dirty" edit even when nothing actually
+        # changed, and the rail marker would never clear on its own.
+        original = image_gen_canonical_backend_order(
+            self._image_gen_raw_section().get("enabled_backends")
+        )
         self._image_gen_stage("enabled_backends", original, enabled_backends)
 
     _IMAGE_GEN_INT_GLOBAL_KEYS = {
@@ -7783,6 +7797,35 @@ class SettingsScreen(BaseAppScreen):
     def _inspector_guidance(
         self, category: SettingsCategoryId
     ) -> tuple[tuple[str, str], ...]:
+        if category is SettingsCategoryId.IMAGE_GENERATION:
+            # Final review Important 2: IMAGE_GENERATION sits in the
+            # "Domain Defaults" rail group (needed for that grouping + the
+            # settings_can_mutate=True domain contract test) but, unlike a
+            # pure view-only delegation card, Settings genuinely owns and
+            # writes this config -- an explicit branch here (mirroring
+            # _guided_action_message's/_category_state_banner_text's own
+            # IMAGE_GENERATION branches, both of which already win over the
+            # generic domain fallback below) keeps this page from showing
+            # the generic "nothing on this page is editable" copy that's
+            # true for every OTHER domain category but not this one.
+            return (
+                (
+                    "Affected config",
+                    "[image_generation] backend enable/default, per-backend "
+                    "fields (base URL, model, timeout, key), and generation "
+                    "defaults",
+                ),
+                (
+                    "Recovery",
+                    "Revert discards unsaved edits; Console's /generate-image "
+                    "keeps working off the last saved config.toml regardless",
+                ),
+                (
+                    "Boundary",
+                    "Edits backend, key, and generation defaults here; Save "
+                    "applies to config.toml",
+                ),
+            )
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
             contract = self._domain_category_contract(category)
             return (
