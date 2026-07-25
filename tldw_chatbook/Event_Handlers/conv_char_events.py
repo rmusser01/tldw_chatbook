@@ -4,6 +4,7 @@
 # Imports
 import asyncio
 import json  # For export
+import logging
 import os
 import re
 from datetime import datetime
@@ -41,7 +42,7 @@ from ..DB.ChaChaNotes_DB import (
     ConflictError,
     CharactersRAGDBError,
 )  # For specific error handling
-from .Chat_Events.chat_events import load_branched_conversation_history_ui
+from ..Widgets.Chat_Widgets.chat_message import ChatMessage
 
 #
 if TYPE_CHECKING:
@@ -1299,7 +1300,7 @@ async def handle_ccp_load_conversation_button_pressed(
 
         # FIXME/TODO - Conversation Branching
         # Pass the VerticalScroll widget for messages
-        await load_branched_conversation_history_ui(
+        await _load_branched_conversation_history_ui(
             app, loaded_conversation_id, messages_scroll
         )
 
@@ -1330,6 +1331,124 @@ async def handle_ccp_load_conversation_button_pressed(
         app.notify(
             "An unexpected error occurred while loading conversation.", severity="error"
         )
+
+
+async def _load_branched_conversation_history_ui(
+    app: "TldwCli", target_conversation_id: str, chat_log_widget: VerticalScroll
+) -> None:
+    """
+    Loads the complete message history for a given conversation_id,
+    tracing back through parent branches to the root if necessary.
+
+    Rehomed verbatim from ``Chat_Events/chat_events.py`` (task-577 PR2 T1):
+    this was the sole CCP-tab consumer of that module's
+    ``load_branched_conversation_history_ui``.
+    """
+    if not app.notes_service:
+        logging.error("Notes service not available for loading branched history.")
+        await chat_log_widget.mount(
+            ChatMessage(
+                "Error: Notes service unavailable.", role="System", classes="-error"
+            )
+        )
+        return
+
+    db = app.notes_service._get_db(app.notes_user_id)
+    await chat_log_widget.remove_children()
+    logging.debug(
+        f"Loading branched history for target_conversation_id: {target_conversation_id}"
+    )
+
+    # 1. Trace path from target_conversation_id up to its root,
+    #    collecting (conversation_id, fork_message_id_in_parent_that_started_this_segment)
+    #    The 'fork_message_id_in_parent' is what we need to stop at when loading the parent's messages.
+    path_segments_info = []  # Stores (conv_id, fork_msg_id_in_parent)
+
+    current_conv_id_for_path = target_conversation_id
+    while current_conv_id_for_path:
+        conv_details = db.get_conversation_by_id(current_conv_id_for_path)
+        if not conv_details:
+            logging.error(
+                f"Path tracing failed: Conversation {current_conv_id_for_path} not found."
+            )
+            await chat_log_widget.mount(
+                ChatMessage(
+                    f"Error: Conversation segment {current_conv_id_for_path} not found.",
+                    role="System",
+                    classes="-error",
+                )
+            )
+            return  # Stop if a segment is missing
+
+        path_segments_info.append(
+            {
+                "id": conv_details["id"],
+                "forked_from_message_id": conv_details.get("forked_from_message_id"),
+                # ID of message in PARENT where THIS conv started
+                "parent_conversation_id": conv_details.get("parent_conversation_id"),
+            }
+        )
+        current_conv_id_for_path = conv_details.get("parent_conversation_id")
+
+    path_segments_info.reverse()  # Now path_segments_info is from root-most to target_conversation_id
+
+    all_messages_to_display = []
+    for i, segment_info in enumerate(path_segments_info):
+        segment_conv_id = segment_info["id"]
+
+        # Get all messages belonging to this specific segment_conv_id
+        messages_this_segment = db.get_messages_for_conversation(
+            segment_conv_id,
+            order_by_timestamp="ASC",
+            limit=10000,  # Effectively all messages for this segment
+        )
+
+        # If this segment is NOT the last one in the path, it means it was forked FROM.
+        # We need to know where the NEXT segment (its child) forked from THIS segment.
+        # The 'forked_from_message_id' of the *next* segment is the message_id in *this* segment.
+        stop_at_message_id_for_this_segment = None
+        if (i + 1) < len(path_segments_info):  # If there is a next segment
+            next_segment_info = path_segments_info[i + 1]
+            # next_segment_info['forked_from_message_id'] is the message in current segment_conv_id
+            # from which the next_segment_info['id'] was forked.
+            stop_at_message_id_for_this_segment = next_segment_info[
+                "forked_from_message_id"
+            ]
+
+        for msg_data in messages_this_segment:
+            all_messages_to_display.append(msg_data)
+            if (
+                stop_at_message_id_for_this_segment
+                and msg_data["id"] == stop_at_message_id_for_this_segment
+            ):
+                logging.debug(
+                    f"Stopping message load for segment {segment_conv_id} at fork point {msg_data['id']}"
+                )
+                break  # Stop adding messages from this segment, as the next segment takes over
+
+    # Now mount all collected messages
+    logging.debug(
+        f"Total messages collected for display: {len(all_messages_to_display)}"
+    )
+    for msg_data in all_messages_to_display:
+        image_data_for_widget = msg_data.get("image_data")
+        chat_message_widget = ChatMessage(
+            message=msg_data["content"],
+            role=msg_data["sender"],
+            timestamp=msg_data.get("timestamp"),
+            image_data=image_data_for_widget,
+            image_mime_type=msg_data.get("image_mime_type"),
+            message_id=msg_data["id"],
+            message_version=msg_data.get("version"),
+            feedback=msg_data.get("feedback"),
+        )
+        await chat_log_widget.mount(chat_message_widget)
+
+    if chat_log_widget.is_mounted:
+        chat_log_widget.scroll_end(animate=False)
+    logging.info(
+        f"Loaded {len(all_messages_to_display)} messages for conversation {target_conversation_id} (including history)."
+    )
 
 
 async def handle_ccp_save_conversation_details_button_pressed(

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from tldw_chatbook.Chat.answer_citations import (
@@ -14,9 +12,6 @@ from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceBundle,
     EvidenceReference,
-)
-from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
-    attach_current_handoff_citation_validation,
 )
 
 
@@ -288,55 +283,3 @@ def test_chat_handoff_model_context_uses_answer_citation_prompt_contract() -> No
         "Cite each evidence-supported claim with its bracketed source label" in context
     )
     assert "Content:\nRetrieved content" in context
-
-
-def test_attach_current_handoff_citation_validation_sets_widget_and_app_payload() -> (
-    None
-):
-    app = SimpleNamespace(
-        _current_chat_handoff_payload=ChatHandoffPayload(
-            source="search-rag",
-            item_type="rag-result",
-            title="Incident Review",
-            body="Retrieved content",
-            metadata={
-                "evidence_bundle": _bundle(
-                    _reference("S1", source_id="note-1")
-                ).to_payload(),
-            },
-        ).to_dict()
-    )
-    widget = SimpleNamespace()
-
-    validation = attach_current_handoff_citation_validation(
-        app,
-        widget,
-        "The credential expired [S1].",
-    )
-
-    assert validation is not None
-    assert validation.status == "validated"
-    assert widget.citation_validation.status == "validated"
-    assert widget.citation_refs[0].evidence_id == "S1"
-    assert app._current_chat_answer_citation_validation["status"] == "validated"
-
-
-def test_attach_current_handoff_citation_validation_clears_stale_app_payload_without_evidence() -> (
-    None
-):
-    app = SimpleNamespace(
-        _current_chat_handoff_payload=None,
-        _current_chat_pending_evidence_bundle=None,
-        _current_chat_answer_citation_validation={"status": "validated"},
-    )
-    widget = SimpleNamespace()
-
-    validation = attach_current_handoff_citation_validation(
-        app,
-        widget,
-        "Ungrounded answer.",
-    )
-
-    assert validation is None
-    assert app._current_chat_answer_citation_validation is None
-    assert not hasattr(widget, "citation_validation")
