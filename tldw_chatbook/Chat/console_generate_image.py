@@ -473,9 +473,10 @@ class LLMContextOptions:
             response is abandoned in place (never joined) and treated as a
             failure.
         provider_ready: Whether the session has a usable, configured
-            provider right now (mirrors
-            ``ConsoleProviderResolution.ready`` -- config/env only, no
-            network I/O to compute).
+            provider right now (mirrors ``ConsoleProviderResolution.ready``
+            -- resolved the same way a normal Console send resolves it:
+            config/env for most providers, plus llama.cpp's own bounded
+            ``/health`` reachability probe for that one provider).
         api_endpoint: Resolved provider execution key for `chat_api_call`
             (``ConsoleProviderResolution.execution_key``). ``None`` when
             not ready.
@@ -605,13 +606,15 @@ def compose_llm_context_prompt(
     if not payload:
         return None
 
-    chat_call = options.chat_call
-    if chat_call is None:
-        from tldw_chatbook.Chat.Chat_Functions import chat_api_call as _chat_api_call
-
-        chat_call = _chat_api_call
-
     try:
+        chat_call = options.chat_call
+        if chat_call is None:
+            from tldw_chatbook.Chat.Chat_Functions import (
+                chat_api_call as _chat_api_call,
+            )
+
+            chat_call = _chat_api_call
+
         response = _call_chat_api_with_timeout(
             chat_call,
             options.timeout_seconds,

@@ -214,11 +214,15 @@ bearing requirement per the brief.
 **Provider resolution reused, not reinvented.** `ChatScreen._build_console_
 provider_selection()` + `ConsoleProviderGateway.resolve_for_send()` (both
 pre-existing, the exact seam a normal Console chat send already resolves
-provider/model through, config/env-only, no network I/O) are wrapped by a
-new `ChatScreen._console_generate_image_llm_context_options(cfg)`, called
-on the UI loop only when the invocation has no prompt. Any resolution
-failure (or the `context_llm_enabled` kill-switch being off) degrades to a
-not-ready `LLMContextOptions` -- never raises.
+provider/model through) are wrapped by a new `ChatScreen._console_
+generate_image_llm_context_options(cfg)`, called on the UI loop only when
+the invocation has no prompt -- this matches Console-send behavior
+exactly, INCLUDING llama.cpp's bounded `/health` reachability probe
+(`ConsoleProviderGateway._is_reachable`, capped at
+`PROBE_TIMEOUT_SECONDS`); every other provider's resolution is
+config/env-only. Any resolution failure (or the `context_llm_enabled`
+kill-switch being off) degrades to a not-ready `LLMContextOptions` --
+never raises.
 
 **Config** (`[image_generation]`, unit-1's flat-global-key convention):
 `context_llm_enabled` (bool, default true), `context_llm_turns` (int,
@@ -251,8 +255,10 @@ called `prepare_generation_request` directly on the UI loop. Since the
 no-prompt path can now perform blocking network I/O, the whole decision
 function now runs via `await asyncio.to_thread(prepare_generation_request,
 ...)` -- the same offload idiom `run_generation_batch` already used below
-it -- resolved-provider-identity is fetched on the loop first (cheap,
-config/env only). Inside the threaded call, `compose_llm_context_prompt`
+it -- resolved-provider-identity is fetched on the loop first, via the
+same resolution a normal Console send does at that point (config/env for
+most providers; llama.cpp additionally runs its own bounded `/health`
+probe there too). Inside the threaded call, `compose_llm_context_prompt`
 additionally bounds the network call itself to `context_llm_timeout_
 seconds` via a dedicated single-worker `ThreadPoolExecutor` +
 `future.result(timeout=...)`, `shutdown(wait=False)` on timeout (not the

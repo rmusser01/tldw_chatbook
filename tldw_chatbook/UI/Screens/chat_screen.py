@@ -11929,9 +11929,13 @@ class ChatScreen(BaseAppScreen):
         `_build_console_provider_selection` + `ConsoleProviderGateway.
         resolve_for_send` -- rather than inventing new resolution logic, so
         `/generate-image` with no prompt always composes against whatever
-        provider+model the session is actually configured to chat with.
-        `resolve_for_send` itself performs no network I/O (config/env only),
-        so calling it directly on the UI loop here is cheap; the resulting
+        provider+model the session is actually configured to chat with,
+        including llama.cpp's bounded ``/health`` reachability probe
+        (`ConsoleProviderGateway._is_reachable`, capped at
+        ``PROBE_TIMEOUT_SECONDS`` -- NOT config/env-only for that provider;
+        every other provider's resolution IS config/env-only). Calling it
+        directly on the UI loop here matches exactly what a normal Console
+        send already does at this same point; the resulting
         `LLMContextOptions` is what later runs the ACTUAL (potentially
         slow/blocking) LLM call off the UI loop, inside
         `asyncio.to_thread(prepare_generation_request, ...)`.
@@ -12024,8 +12028,10 @@ class ChatScreen(BaseAppScreen):
         run on the event loop -- exactly the same offloading rule
         `run_generation_batch` already follows below. The provider identity
         for that call is resolved first, on the loop, via
-        `_console_generate_image_llm_context_options` (cheap config/env
-        reads only, no network I/O).
+        `_console_generate_image_llm_context_options` -- the same cheap
+        resolution a normal Console send does at this point (config/env
+        for most providers; llama.cpp additionally does its own bounded
+        ``/health`` reachability probe there, same as a normal send).
         """
         args = parse_generate_image_args(parse.args)
         store = self._ensure_console_chat_store()
