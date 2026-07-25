@@ -1241,6 +1241,16 @@ class STTSEventHandler:
         """Handle settings save event"""
         self._start_event_task(self.handle_settings_save(event))
 
+    def on_stts_provider_configuration_changed(
+        self,
+        event: STTSProviderConfigurationChanged,
+    ) -> None:
+        """Invalidate any mounted Playground for the changed provider."""
+        for widget in self.app.query("TTSPlaygroundWidget"):
+            callback = getattr(widget, "mark_provider_configuration_changed", None)
+            if callable(callback):
+                callback(event.provider_id, event.configuration_revision)
+
     def on_stts_audiobook_generate_event(
         self, event: STTSAudioBookGenerateEvent
     ) -> None:

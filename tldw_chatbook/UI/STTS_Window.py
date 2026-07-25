@@ -4,6 +4,7 @@
 # Imports
 import asyncio
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -26,6 +27,7 @@ from textual.reactive import reactive
 from textual.binding import Binding
 from textual import on, work
 from loguru import logger
+from rich.text import Text
 
 # Local imports
 from tldw_chatbook.config import get_cli_setting
@@ -35,7 +37,20 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSAudioBookGenerateEvent,
 )
 from tldw_chatbook.TTS import get_tts_service
+from tldw_chatbook.TTS.adapter_types import (
+    TTSOperationError,
+    TTSProviderCatalog,
+    TTSProviderReconfiguringError,
+    TTSRegistryClosedError,
+)
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.UI.stts_playground_catalog import (
+    AUDIO_CPP_PROVIDER_ID,
+    CatalogRequestToken,
+    PlaygroundControls,
+    controls_from_catalog,
+    provider_options,
+)
 from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_state
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import (
@@ -206,6 +221,21 @@ class TTSPlaygroundWidget(Widget):
         self.higgs_reference_audio_path = None
         self._progress_timer_task = None
         self._play_worker_task = None
+        self._tts_service = None
+        self._provider_ids: frozenset[str] = frozenset()
+        self._provider_display_names: dict[str, str] = {}
+        self._displayed_provider_id: str | None = None
+        self._selected_provider_id: str | None = None
+        self._catalogs: dict[str, TTSProviderCatalog] = {}
+        self._catalog_configuration_revisions: dict[str, int] = {}
+        self._discovered_voices: dict[tuple[str, str], tuple[str, ...]] = {}
+        self._provider_control_snapshots: dict[str, dict[str, Any]] = {}
+        self._stale_providers: set[str] = set()
+        self._catalog_generation_allowed = False
+        self._applying_catalog_controls = False
+        self._applied_model_id: str | None = None
+        self._applied_voice_id: str | None = None
+        self._applied_format: str | None = None
         self.example_texts = [
             "Welcome to the Text-to-Speech playground! This is where you can experiment with different voices, providers, and settings to create natural-sounding speech.",
             "The quick brown fox jumps over the lazy dog. This pangram contains all letters of the alphabet.",
@@ -236,31 +266,41 @@ class TTSPlaygroundWidget(Widget):
             with Horizontal(classes="form-row"):
                 yield Label("Provider:", classes="form-label")
                 yield Select(
-                    options=[
-                        ("openai", "OpenAI"),
-                        ("elevenlabs", "ElevenLabs"),
-                        ("kokoro", "Kokoro (Local)"),
-                        ("chatterbox", "Chatterbox (Local)"),
-                        ("higgs", "Higgs Audio (Local)"),
-                        ("alltalk", "AllTalk (Local)"),
-                    ],
+                    options=[("Loading providers…", "__loading__")],
                     id="tts-provider-select",
+                    allow_blank=False,
+                    disabled=True,
                 )
+                yield Button(
+                    "Refresh Models",
+                    id="tts-refresh-catalog-btn",
+                    disabled=True,
+                )
+
+            yield Static(
+                "Loading TTS providers…",
+                id="tts-provider-status",
+                classes="status-text",
+            )
 
             # Voice selection (will be populated based on provider)
             with Horizontal(classes="form-row"):
                 yield Label("Voice:", classes="form-label")
                 yield Select(
-                    options=[],  # Will be populated on mount
+                    options=[("Waiting for provider…", "__loading__")],
                     id="tts-voice-select",
+                    allow_blank=False,
+                    disabled=True,
                 )
 
             # Model selection
             with Horizontal(classes="form-row"):
                 yield Label("Model:", classes="form-label")
                 yield Select(
-                    options=[],  # Will be populated on mount
+                    options=[("Waiting for provider…", "__loading__")],
                     id="tts-model-select",
+                    allow_blank=False,
+                    disabled=True,
                 )
 
             # Language selection (for Kokoro)
@@ -299,6 +339,7 @@ class TTSPlaygroundWidget(Widget):
                     value="1.0",
                     placeholder="0.25-4.0",
                     type="number",
+                    disabled=True,
                 )
 
             # ElevenLabs-specific settings
@@ -500,21 +541,24 @@ class TTSPlaygroundWidget(Widget):
             with Horizontal(classes="form-row"):
                 yield Label("Format:", classes="form-label")
                 yield Select(
-                    options=[
-                        ("mp3", "MP3"),
-                        ("opus", "Opus"),
-                        ("aac", "AAC"),
-                        ("flac", "FLAC"),
-                        ("wav", "WAV"),
-                        ("pcm", "PCM"),
-                    ],
+                    options=[("Waiting for provider…", "__loading__")],
                     id="tts-format-select",
+                    allow_blank=False,
+                    disabled=True,
                 )
+            yield Static(
+                "audio.cpp returns one complete WAV and currently uses speed 1.0.",
+                id="tts-audio-cpp-restrictions",
+                classes="status-text hidden",
+            )
 
             # Generate button and quick actions
             with Horizontal(classes="form-row"):
                 yield Button(
-                    "🔊 Generate Speech", id="tts-generate-btn", variant="primary"
+                    "🔊 Generate Speech",
+                    id="tts-generate-btn",
+                    variant="primary",
+                    disabled=True,
                 )
                 yield Button(
                     "🎲 Random Text", id="tts-random-text-btn", variant="default"
@@ -574,13 +618,14 @@ class TTSPlaygroundWidget(Widget):
             )
 
     def on_mount(self) -> None:
-        """Initialize default values on mount"""
-        # Delay initialization to ensure widgets are ready
-        self.set_timer(0.1, self._initialize_defaults)
+        """Load provider descriptors and only the selected provider catalog."""
+        self._load_provider_catalog(initialize=True)
 
     async def on_unmount(self) -> None:
         """Clean up resources when widget is unmounted"""
         try:
+            self.app.workers.cancel_group(self, "stts-catalog-discovery")
+            self.app.workers.cancel_group(self, "stts-voice-discovery")
             # Cancel any active progress timer
             if self._progress_timer_task and not self._progress_timer_task.done():
                 self._progress_timer_task.cancel()
@@ -603,481 +648,664 @@ class TTSPlaygroundWidget(Widget):
         except Exception as e:
             logger.error(f"Error during TTSPlaygroundWidget cleanup: {e}")
 
-    def _initialize_defaults(self) -> None:
-        """Initialize default values after mount"""
+    def _is_valid_voice(self, voice: str) -> bool:
+        """Check if a voice value is valid (not a separator)."""
+        return bool(voice) and not str(voice).startswith("_separator")
+
+    @work(
+        exclusive=True,
+        group="stts-catalog-discovery",
+        exit_on_error=False,
+    )
+    async def _load_provider_catalog(
+        self,
+        provider_id: str | None = None,
+        *,
+        refresh: bool = False,
+        initialize: bool = False,
+    ) -> None:
+        """Load descriptors and one selected provider catalog."""
         try:
-            # Set default provider
-            provider_select = self.query_one("#tts-provider-select", Select)
-            default_provider = get_cli_setting("app_tts", "default_provider", "openai")
+            if self._tts_service is None:
+                self._tts_service = await get_tts_service()
 
-            # Try to set the provider value
-            if default_provider in [
-                "openai",
-                "elevenlabs",
-                "kokoro",
-                "chatterbox",
-                "higgs",
-                "alltalk",
-            ]:
+            service = self._tts_service
+            if initialize:
+                descriptors = service.provider_descriptors()
+                options = provider_options(descriptors)
+                if not options:
+                    self._set_provider_status("No TTS providers are registered")
+                    return
+                self._provider_ids = frozenset(value for _label, value in options)
+                self._provider_display_names = {
+                    value: label for label, value in options
+                }
+                provider_select = self.query_one("#tts-provider-select", Select)
+                provider_select.set_options(self._safe_select_options(options))
+                provider_select.disabled = False
+                configured_default = get_cli_setting(
+                    "app_tts",
+                    "default_provider",
+                    options[0][1],
+                )
+                selected = (
+                    configured_default
+                    if configured_default in self._provider_ids
+                    else options[0][1]
+                )
+                self._selected_provider_id = selected
+                self._applying_catalog_controls = True
                 try:
-                    provider_select.value = default_provider
-                    current_provider = default_provider
-                except Exception as e:
-                    logger.debug(f"Could not set provider immediately: {e}")
-                    current_provider = provider_select.value or "openai"
-            else:
-                current_provider = provider_select.value or "openai"
+                    provider_select.value = selected
+                finally:
+                    self._applying_catalog_controls = False
+                self.query_one("#tts-refresh-catalog-btn", Button).disabled = False
+                self._show_provider_specific_controls(selected)
+                provider_id = selected
 
-            # If no value selected (shouldn't happen with options), default to openai
-            if current_provider is None or current_provider == Select.BLANK:
-                current_provider = "openai"
+            if provider_id is None:
+                provider_id = self._selected_provider_id
+            if provider_id is None or provider_id not in getattr(
+                self, "_provider_ids", ()
+            ):
+                return
 
-            logger.debug(f"Initializing with provider: {current_provider}")
+            configuration_revision = service.configuration_revision(provider_id)
+            token = CatalogRequestToken(
+                provider_id=provider_id,
+                configuration_revision=configuration_revision,
+            )
+            self._set_provider_status("Loading selected provider models…")
+            catalog = await service.get_catalog(provider_id, refresh=refresh)
+            if not self._catalog_token_is_current(token):
+                self._mark_stale_catalog_result(token)
+                return
+            if catalog.provider_id != provider_id:
+                self._catalog_failure(
+                    provider_id,
+                    "The selected provider returned an incompatible catalog",
+                )
+                return
 
-            # Always update voice and model options based on current provider
-            if current_provider != Select.BLANK:
-                self._update_voice_options(current_provider)
-                self._update_model_options(current_provider)
+            self._catalogs[provider_id] = catalog
+            self._catalog_configuration_revisions[provider_id] = configuration_revision
+            self._stale_providers.discard(provider_id)
+            self._apply_catalog(provider_id, catalog)
 
-            # Set default format
-            format_select = self.query_one("#tts-format-select", Select)
-            default_format = get_cli_setting("app_tts", "default_format", "mp3")
-            if default_format in ["mp3", "opus", "aac", "flac", "wav", "pcm"]:
-                try:
-                    format_select.value = default_format
-                except Exception as e:
-                    logger.debug(f"Could not set format immediately: {e}")
+            model_id = self._current_select_value("#tts-model-select")
+            if model_id is not None:
+                self._load_provider_voices(
+                    provider_id,
+                    model_id,
+                    catalog.revision,
+                    refresh=refresh,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            target = provider_id or self._selected_provider_id
+            if target is not None:
+                self._catalog_failure(
+                    target,
+                    self._catalog_error_copy(error, target),
+                )
 
-        except Exception as e:
-            logger.warning(f"Error initializing defaults: {e}")
+    @work(
+        exclusive=True,
+        group="stts-voice-discovery",
+        exit_on_error=False,
+    )
+    async def _load_provider_voices(
+        self,
+        provider_id: str,
+        model_id: str,
+        catalog_revision: int,
+        *,
+        refresh: bool = False,
+    ) -> None:
+        """Load voices for only the selected provider model."""
+        try:
+            service = self._tts_service
+            if service is None:
+                return
+            token = CatalogRequestToken(
+                provider_id=provider_id,
+                configuration_revision=service.configuration_revision(provider_id),
+                catalog_revision=catalog_revision,
+                model_id=model_id,
+            )
+            voices = await service.get_voices(
+                provider_id,
+                model_id,
+                refresh=refresh,
+            )
+            catalog = self._catalogs.get(provider_id)
+            current_revision = catalog.revision if catalog is not None else None
+            current_model = self._current_select_value("#tts-model-select")
+            if not token.matches(
+                provider_id=self._selected_provider_id or "",
+                configuration_revision=service.configuration_revision(provider_id),
+                catalog_revision=current_revision,
+                model_id=current_model,
+            ):
+                return
+            self._discovered_voices[(provider_id, model_id)] = tuple(voices)
+            if catalog is not None:
+                self._apply_catalog(provider_id, catalog)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logger.warning(
+                "TTS voice discovery failed ({})",
+                type(error).__name__,
+            )
+            if provider_id == self._selected_provider_id:
+                self._set_provider_status(
+                    "Voices are unavailable; the provider default remains available"
+                )
+
+    def _catalog_token_is_current(self, token: CatalogRequestToken) -> bool:
+        service = self._tts_service
+        if service is None:
+            return False
+        return token.matches(
+            provider_id=self._selected_provider_id or "",
+            configuration_revision=service.configuration_revision(token.provider_id),
+            catalog_revision=None,
+            model_id=None,
+        )
+
+    def _mark_stale_catalog_result(self, token: CatalogRequestToken) -> None:
+        if token.provider_id != self._selected_provider_id:
+            return
+        self._stale_providers.add(token.provider_id)
+        self._catalog_generation_allowed = False
+        display_name = self._provider_display_name(token.provider_id)
+        self._set_provider_status(f"{display_name} settings changed; refresh models")
+        self._sync_generate_enabled()
+
+    def _apply_catalog(
+        self,
+        provider_id: str,
+        catalog: TTSProviderCatalog,
+    ) -> None:
+        if provider_id != self._selected_provider_id:
+            return
+        snapshot = self._control_snapshot_for(provider_id)
+        selected_model = snapshot.get("model_id")
+        if selected_model is None:
+            selected_model = get_cli_setting("app_tts", "default_model", None)
+        selected_voice = snapshot.get("voice_id")
+        if selected_voice is None:
+            selected_voice = get_cli_setting("app_tts", "default_voice", None)
+        selected_format = snapshot.get("response_format")
+        if selected_format is None:
+            selected_format = get_cli_setting("app_tts", "default_format", None)
+        speed = self._snapshot_speed(snapshot)
+
+        voice_choices: tuple[tuple[str, str], ...] | None = None
+        discovered_voices: tuple[str, ...] | None
+        if provider_id == AUDIO_CPP_PROVIDER_ID:
+            model_for_voices = self._catalog_model_id(catalog, selected_model)
+            discovered_voices = (
+                self._discovered_voices.get((provider_id, model_for_voices))
+                if model_for_voices is not None
+                else None
+            )
+        else:
+            model_for_voices = self._catalog_model_id(catalog, selected_model)
+            base_voices = self._catalog_model_voices(catalog, model_for_voices)
+            voice_choices = self._legacy_voice_choices(provider_id, base_voices)
+            discovered_voices = tuple(value for _label, value in voice_choices)
+
+        controls = controls_from_catalog(
+            catalog,
+            selected_model_id=selected_model,
+            selected_voice_id=selected_voice,
+            discovered_voices=discovered_voices,
+            selected_format=selected_format,
+            speed=speed,
+        )
+        if voice_choices is not None:
+            controls = replace(controls, voice_options=voice_choices)
+        self._apply_controls(controls)
+
+    def _apply_controls(self, controls: PlaygroundControls) -> None:
+        model_select = self.query_one("#tts-model-select", Select)
+        voice_select = self.query_one("#tts-voice-select", Select)
+        format_select = self.query_one("#tts-format-select", Select)
+        speed_input = self.query_one("#tts-speed-input", Input)
+        self._applied_model_id = controls.selected_model_id
+        self._applied_voice_id = controls.selected_voice_id
+        self._applied_format = controls.selected_format
+        self._applying_catalog_controls = True
+        try:
+            self._set_select_state(
+                model_select,
+                controls.model_options,
+                controls.selected_model_id,
+                "No models available",
+            )
+            self._set_select_state(
+                voice_select,
+                controls.voice_options,
+                controls.selected_voice_id,
+                "No voices available",
+            )
+            format_options = tuple(
+                (audio_format.upper(), audio_format)
+                for audio_format in controls.format_options
+            )
+            self._set_select_state(
+                format_select,
+                format_options,
+                controls.selected_format,
+                "No formats available",
+            )
+            format_select.disabled = controls.format_locked
+            speed_input.value = str(controls.speed)
+            speed_input.disabled = controls.speed_locked
+        finally:
+            self._applying_catalog_controls = False
+
+        restriction = self.query_one("#tts-audio-cpp-restrictions", Static)
+        if controls.provider_id == AUDIO_CPP_PROVIDER_ID:
+            restriction.remove_class("hidden")
+            format_select.tooltip = "audio.cpp returns one complete WAV response"
+            speed_input.tooltip = "audio.cpp currently supports speed 1.0"
+        else:
+            restriction.add_class("hidden")
+            format_select.tooltip = None
+            speed_input.tooltip = None
+
+        catalog = self._catalogs[controls.provider_id]
+        self._displayed_provider_id = controls.provider_id
+        self._catalog_generation_allowed = (
+            controls.generation_allowed
+            and controls.provider_id not in self._stale_providers
+            and self._catalog_configuration_revisions.get(controls.provider_id)
+            == self._tts_service.configuration_revision(controls.provider_id)
+        )
+        self._set_provider_status(self._catalog_health_copy(catalog))
+        self._remember_current_controls(controls.provider_id)
+        self._sync_generate_enabled()
+        if controls.selection_changed:
+            self.app.notify(
+                "Available models or voices changed; a valid selection was chosen",
+                severity="warning",
+            )
+
+    @staticmethod
+    def _safe_select_options(
+        options: tuple[tuple[str, str], ...],
+    ) -> list[tuple[Text, str]]:
+        return [(Text(label, no_wrap=True), value) for label, value in options]
+
+    def _set_select_state(
+        self,
+        select: Select,
+        options: tuple[tuple[str, str], ...],
+        selected: str | None,
+        empty_label: str,
+    ) -> None:
+        if not options:
+            select.set_options([(empty_label, "__unavailable__")])
+            select.value = "__unavailable__"
+            select.disabled = True
+            return
+        select.set_options(self._safe_select_options(options))
+        select.disabled = False
+        select.value = selected or options[0][1]
+
+    def _control_snapshot_for(self, provider_id: str) -> dict[str, Any]:
+        if getattr(self, "_displayed_provider_id", None) == provider_id:
+            self._remember_current_controls(provider_id)
+        return dict(self._provider_control_snapshots.get(provider_id, {}))
+
+    def _remember_current_controls(self, provider_id: str) -> None:
+        if getattr(self, "_displayed_provider_id", None) != provider_id:
+            return
+        speed_value = self.query_one("#tts-speed-input", Input).value
+        try:
+            speed = float(speed_value)
+        except ValueError:
+            speed = 1.0
+        self._provider_control_snapshots[provider_id] = {
+            "model_id": self._current_select_value("#tts-model-select"),
+            "voice_id": self._current_select_value("#tts-voice-select"),
+            "response_format": self._current_select_value("#tts-format-select"),
+            "speed": speed,
+        }
+
+    @staticmethod
+    def _snapshot_speed(snapshot: Mapping[str, Any]) -> float:
+        speed = snapshot.get("speed", 1.0)
+        try:
+            return float(speed)
+        except (TypeError, ValueError):
+            return 1.0
+
+    def _current_select_value(self, selector: str) -> str | None:
+        value = self.query_one(selector, Select).value
+        if not isinstance(value, str) or value.startswith("__"):
+            return None
+        return value
+
+    @staticmethod
+    def _catalog_model_id(
+        catalog: TTSProviderCatalog,
+        selected_model_id: object,
+    ) -> str | None:
+        if isinstance(selected_model_id, str) and any(
+            model.model_id == selected_model_id for model in catalog.models
+        ):
+            return selected_model_id
+        return catalog.models[0].model_id if catalog.models else None
+
+    @staticmethod
+    def _catalog_model_voices(
+        catalog: TTSProviderCatalog,
+        model_id: str | None,
+    ) -> tuple[str, ...]:
+        for model in catalog.models:
+            if model.model_id == model_id:
+                return model.voices
+        return ()
+
+    def _legacy_voice_choices(
+        self,
+        provider_id: str,
+        base_voices: tuple[str, ...],
+    ) -> tuple[tuple[str, str], ...]:
+        if provider_id == "chatterbox":
+            choices = [
+                ("Default Voice", "default"),
+                ("Upload Reference Audio", "custom"),
+            ]
+            choices.extend(self._chatterbox_profile_choices())
+            return tuple(choices)
+        if provider_id == "higgs":
+            choices = [
+                ("Professional Female", "professional_female"),
+                ("Warm Female", "warm_female"),
+                ("Storyteller Male", "storyteller_male"),
+                ("Deep Male", "deep_male"),
+                ("Energetic Female", "energetic_female"),
+                ("Soft Female", "soft_female"),
+                ("Upload Reference Audio", "custom"),
+            ]
+            choices.extend(self._higgs_profile_choices())
+            return tuple(choices)
+        if provider_id == "alltalk":
+            return tuple(
+                (name.replace("_", " ").replace(".wav", "").title(), name)
+                for name in (
+                    "female_01.wav",
+                    "female_02.wav",
+                    "female_03.wav",
+                    "female_04.wav",
+                    "male_01.wav",
+                    "male_02.wav",
+                    "male_03.wav",
+                    "male_04.wav",
+                )
+            )
+
+        choices = [(voice.replace("_", " ").title(), voice) for voice in base_voices]
+        if provider_id == "kokoro":
+            choices.extend(self._kokoro_blend_choices())
+        return tuple(choices)
+
+    @staticmethod
+    def _kokoro_blend_choices() -> list[tuple[str, str]]:
+        blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+        if not blend_file.is_file():
+            return []
+        try:
+            payload = json.loads(blend_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            logger.warning("Saved Kokoro voice blends could not be loaded")
+            return []
+        if not isinstance(payload, Mapping):
+            return []
+        return [
+            (f"Voice blend: {name}", f"blend:{name}")
+            for name in payload
+            if isinstance(name, str) and name
+        ]
+
+    @staticmethod
+    def _chatterbox_profile_choices() -> list[tuple[str, str]]:
+        try:
+            from tldw_chatbook.TTS.backends.chatterbox_voice_manager import (
+                ChatterboxVoiceManager,
+            )
+
+            voice_dir = Path.home() / ".config" / "tldw_cli" / "chatterbox_voices"
+            if not voice_dir.is_dir():
+                return []
+            profiles = ChatterboxVoiceManager(voice_dir).list_profiles()
+            return [
+                (str(profile.get("display_name") or profile["name"]), profile["name"])
+                for profile in profiles
+                if isinstance(profile, Mapping)
+                and isinstance(profile.get("name"), str)
+                and profile["name"]
+            ]
+        except Exception:
+            logger.warning("Saved Chatterbox voice profiles could not be loaded")
+            return []
+
+    @staticmethod
+    def _higgs_profile_choices() -> list[tuple[str, str]]:
+        try:
+            from tldw_chatbook.TTS.backends.higgs_voice_manager import (
+                HiggsVoiceProfileManager,
+            )
+
+            voice_dir = Path.home() / ".config" / "tldw_cli" / "higgs_voices"
+            if not voice_dir.is_dir():
+                return []
+            profiles = HiggsVoiceProfileManager(voice_dir).list_profiles()
+            return [
+                (
+                    str(profile.get("display_name") or profile["name"]),
+                    f"profile:{profile['name']}",
+                )
+                for profile in profiles
+                if isinstance(profile, Mapping)
+                and isinstance(profile.get("name"), str)
+                and profile["name"]
+            ]
+        except Exception:
+            logger.warning("Saved Higgs voice profiles could not be loaded")
+            return []
+
+    def _catalog_health_copy(self, catalog: TTSProviderCatalog) -> str:
+        display_name = self._provider_display_name(catalog.provider_id)
+        if catalog.provider_id in self._stale_providers:
+            return f"{display_name} settings changed; refresh models"
+        health = catalog.health
+        if health.state == "available" and health.fresh:
+            return f"{display_name} is ready"
+        if health.state == "available":
+            return f"{display_name} catalog is stale; refresh models"
+        if health.state == "not_configured":
+            return f"{display_name} is not configured; open STTS Settings"
+        if health.state == "reconfiguring":
+            return f"{display_name} settings are being applied; retry shortly"
+        if health.state == "closed":
+            return "The TTS service is unavailable"
+        return f"{display_name} is unavailable; check STTS Settings"
+
+    def _provider_display_name(self, provider_id: str) -> str:
+        return self._provider_display_names.get(provider_id, "TTS provider")
+
+    def _catalog_error_copy(self, error: Exception, provider_id: str) -> str:
+        display_name = self._provider_display_name(provider_id)
+        if isinstance(error, TTSProviderReconfiguringError):
+            return f"{display_name} settings are being applied; retry shortly"
+        if isinstance(error, TTSRegistryClosedError):
+            return "The TTS service is unavailable"
+        if isinstance(error, TTSOperationError):
+            if error.code in {"configuration_invalid", "not_configured"}:
+                return f"{display_name} is not configured; open STTS Settings"
+            if error.code == "contract_incompatible":
+                return f"The configured {display_name} service is incompatible"
+            return f"{display_name} is unavailable; check STTS Settings"
+        if isinstance(error, ValueError):
+            return f"{display_name} is not configured; open STTS Settings"
+        return f"{display_name} is unavailable; check STTS Settings"
+
+    def _catalog_failure(self, provider_id: str, copy: str) -> None:
+        logger.warning("TTS catalog discovery failed for {}", provider_id)
+        if provider_id != self._selected_provider_id:
+            return
+        self._stale_providers.add(provider_id)
+        self._catalog_generation_allowed = False
+        self._set_provider_status(copy)
+        self._sync_generate_enabled()
+
+    def _set_provider_status(self, copy: str) -> None:
+        self.query_one("#tts-provider-status", Static).update(Text(copy))
+
+    def _sync_generate_enabled(self) -> None:
+        text_present = bool(self.query_one("#tts-text-input", TextArea).text.strip())
+        provider_id = self._selected_provider_id
+        revision_matches = False
+        if (
+            provider_id is not None
+            and self._tts_service is not None
+            and provider_id in self._catalog_configuration_revisions
+        ):
+            revision_matches = self._catalog_configuration_revisions[
+                provider_id
+            ] == self._tts_service.configuration_revision(provider_id)
+        self.query_one("#tts-generate-btn", Button).disabled = not (
+            text_present
+            and self._catalog_generation_allowed
+            and revision_matches
+            and not getattr(self.app, "_is_generating", False)
+        )
+
+    def _show_provider_specific_controls(self, provider_id: str) -> None:
+        language_row = self.query_one("#kokoro-language-row", Horizontal)
+        kokoro_settings = self.query_one("#kokoro-settings", Vertical)
+        elevenlabs_settings = self.query_one("#elevenlabs-settings", Vertical)
+        chatterbox_settings = self.query_one("#chatterbox-settings", Vertical)
+        higgs_settings = self.query_one("#higgs-settings", Vertical)
+        language_row.set_class(provider_id == "kokoro", "visible")
+        kokoro_settings.set_class(provider_id == "kokoro", "visible")
+        elevenlabs_settings.set_class(provider_id == "elevenlabs", "visible")
+        chatterbox_settings.set_class(provider_id == "chatterbox", "visible")
+        higgs_settings.set_class(provider_id == "higgs", "visible")
+        if provider_id == "higgs":
+            self._check_higgs_installation()
+
+    def mark_provider_configuration_changed(
+        self,
+        provider_id: str,
+        configuration_revision: int,
+    ) -> None:
+        """Invalidate cached controls after a changed provider configuration."""
+        del configuration_revision
+        self._stale_providers.add(provider_id)
+        self._discovered_voices = {
+            key: value
+            for key, value in self._discovered_voices.items()
+            if key[0] != provider_id
+        }
+        if provider_id != self._selected_provider_id:
+            return
+        self.app.workers.cancel_group(self, "stts-catalog-discovery")
+        self.app.workers.cancel_group(self, "stts-voice-discovery")
+        self._catalog_generation_allowed = False
+        display_name = self._provider_display_name(provider_id)
+        self._set_provider_status(f"{display_name} settings changed; refresh models")
+        self._sync_generate_enabled()
 
     @on(Select.Changed)
     def on_tts_provider_select_changed(self, event: Select.Changed) -> None:
-        """Handle provider/model selection changes"""
+        """Handle canonical provider/model/voice/format selections."""
+        if self._applying_catalog_controls:
+            return
         if event.select.id == "tts-provider-select":
-            # Get the provider select widget
-            provider_select = self.query_one("#tts-provider-select", Select)
-
-            # The event.value might be the display text, so we need to find the key
-            # by matching against the options
-            provider_value = None
-            for option_value, option_label in [
-                ("openai", "OpenAI"),
-                ("elevenlabs", "ElevenLabs"),
-                ("kokoro", "Kokoro (Local)"),
-                ("chatterbox", "Chatterbox (Local)"),
-                ("higgs", "Higgs Audio (Local)"),
-                ("alltalk", "AllTalk (Local)"),
-            ]:
-                if event.value == option_label or event.value == option_value:
-                    provider_value = option_value
-                    break
-
-            logger.info(f"Provider select changed - event.value: {event.value!r}")
-            logger.info(f"Resolved provider key: {provider_value!r}")
-            logger.debug(f"Provider widget value is: {provider_select.value}")
-
-            # The widget value should be the key (e.g., "kokoro")
-            if provider_value and provider_value != Select.BLANK:
-                self._update_voice_options(provider_value)
-                self._update_model_options(provider_value)
-
-            # Show/hide provider-specific settings
-            if provider_value and provider_value != Select.BLANK:
-                # Show/hide Kokoro language row
-                language_row = self.query_one("#kokoro-language-row", Horizontal)
-                if provider_value == "kokoro":
-                    logger.debug("Showing Kokoro language selection row")
-                    language_row.add_class("visible")
-                else:
-                    logger.debug("Hiding Kokoro language selection row")
-                    language_row.remove_class("visible")
-
-                # Show/hide Kokoro settings
-                kokoro_settings = self.query_one("#kokoro-settings", Vertical)
-                if provider_value == "kokoro":
-                    logger.debug("Showing Kokoro settings")
-                    kokoro_settings.add_class("visible")
-                else:
-                    logger.debug("Hiding Kokoro settings")
-                    kokoro_settings.remove_class("visible")
-
-                # Show/hide ElevenLabs settings
-                elevenlabs_settings = self.query_one("#elevenlabs-settings", Vertical)
-                if provider_value == "elevenlabs":
-                    elevenlabs_settings.add_class("visible")
-                else:
-                    elevenlabs_settings.remove_class("visible")
-
-                # Show/hide Chatterbox settings
-                chatterbox_settings = self.query_one("#chatterbox-settings", Vertical)
-                if provider_value == "chatterbox":
-                    chatterbox_settings.add_class("visible")
-                else:
-                    chatterbox_settings.remove_class("visible")
-
-                # Show/hide Higgs settings
-                higgs_settings = self.query_one("#higgs-settings", Vertical)
-                if provider_value == "higgs":
-                    higgs_settings.add_class("visible")
-                    # Check if Higgs is installed
-                    self._check_higgs_installation()
-                else:
-                    higgs_settings.remove_class("visible")
-
-        elif event.select.id == "tts-voice-select":
-            # Validate voice selection (prevent selecting separators)
-            if not self._is_valid_voice(event.value):
-                # Find and select the first valid voice
-                voice_select = event.select
-                for value, _ in voice_select._options:
-                    if self._is_valid_voice(value):
-                        voice_select.value = value
-                        break
-
-    def _is_valid_voice(self, voice: str) -> bool:
-        """Check if a voice value is valid (not a separator)"""
-        return bool(voice) and not str(voice).startswith("_separator")
-
-    def _set_valid_voice(self, voice_select, voice_options, fallback="af_bella"):
-        """Set a valid voice from options, skipping separators"""
-        # Find first valid voice option (skip separators)
-        valid_voice = None
-        for value, label in voice_options:
-            if self._is_valid_voice(value):
-                valid_voice = value
-                logger.debug(f"Found valid voice: {value} ({label})")
-                break
-
-        # Try to set the value with error handling
-        try:
-            if valid_voice:
-                logger.info(f"Setting voice to: {valid_voice}")
-                voice_select.value = valid_voice
+            if not isinstance(event.value, str) or event.value not in getattr(
+                self, "_provider_ids", ()
+            ):
+                return
+            if event.value == self._selected_provider_id:
+                return
+            if self._selected_provider_id is not None:
+                self._remember_current_controls(self._selected_provider_id)
+            self._selected_provider_id = event.value
+            self._show_provider_specific_controls(event.value)
+            self._catalog_generation_allowed = False
+            self._sync_generate_enabled()
+            self._load_provider_catalog(event.value)
+            return
+        if event.select.id == "tts-model-select":
+            provider_id = self._selected_provider_id
+            if provider_id is None or not isinstance(event.value, str):
+                return
+            if event.value == self._applied_model_id:
+                return
+            self._remember_current_controls(provider_id)
+            catalog = self._catalogs.get(provider_id)
+            if catalog is not None:
+                self._apply_catalog(provider_id, catalog)
+                model_id = self._current_select_value("#tts-model-select")
+                if model_id is not None:
+                    self._load_provider_voices(
+                        provider_id,
+                        model_id,
+                        catalog.revision,
+                    )
+            return
+        if event.select.id in {"tts-voice-select", "tts-format-select"}:
+            if (
+                event.select.id == "tts-voice-select"
+                and event.value == self._applied_voice_id
+            ) or (
+                event.select.id == "tts-format-select"
+                and event.value == self._applied_format
+            ):
+                return
+            if event.select.id == "tts-voice-select":
+                self._applied_voice_id = (
+                    event.value if isinstance(event.value, str) else None
+                )
             else:
-                logger.warning(f"No valid voice found, using fallback: {fallback}")
-                voice_select.value = fallback
-
-            # Log final state only if successfully set
-            logger.info(f"Voice select final value: {voice_select.value}")
-        except Exception as e:
-            logger.debug(f"Could not set voice value immediately: {e}")
-            # The value will be set later when the widget is ready
-
-    def _safe_set_select_value(
-        self, select_widget, value: str, widget_name: str = "widget"
-    ) -> None:
-        """Safely set a Select widget value with error handling"""
-        try:
-            select_widget.value = value
-            logger.debug(f"Successfully set {widget_name} to: {value}")
-        except Exception as e:
-            logger.debug(f"Could not set {widget_name} value immediately: {e}")
-
-    def _get_select_key(self, select_widget) -> Optional[str]:
-        """Get the actual key from a Select widget, not the display text"""
-        if not hasattr(select_widget, "_options") or not select_widget._options:
-            return None
-
-        current_value = select_widget.value
-        if current_value == Select.BLANK:
-            return None
-
-        # Find the key that matches the current value
-        for key, label in select_widget._options:
-            if label == current_value or key == current_value:
-                return key
-
-        return None
-
-    def _update_voice_options(self, provider: str) -> None:
-        """Update voice options based on provider"""
-        logger.info(
-            f"_update_voice_options called with provider: '{provider}' (type: {type(provider)})"
-        )
-
-        # Handle Select.BLANK
-        if provider == Select.BLANK or str(provider) == "Select.BLANK":
-            logger.debug("Provider is Select.BLANK, skipping update")
-            return
-
-        try:
-            voice_select = self.query_one("#tts-voice-select", Select)
-            logger.debug(
-                f"Found voice select widget, current value: {voice_select.value}, options: {len(voice_select._options) if hasattr(voice_select, '_options') else 'unknown'}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to find voice select widget: {e}")
-            return
-
-        if provider == "openai":
-            voice_select.set_options(
-                [
-                    ("alloy", "Alloy"),
-                    ("ash", "Ash"),
-                    ("ballad", "Ballad"),
-                    ("coral", "Coral"),
-                    ("echo", "Echo"),
-                    ("fable", "Fable"),
-                    ("onyx", "Onyx"),
-                    ("nova", "Nova"),
-                    ("sage", "Sage"),
-                    ("shimmer", "Shimmer"),
-                    ("verse", "Verse"),
-                ]
-            )
-            # Don't set value directly - let Select handle it
-            try:
-                voice_select.value = "alloy"
-            except Exception as e:
-                logger.debug(f"Could not set default voice value: {e}")
-        elif provider == "elevenlabs":
-            voice_select.set_options(
-                [
-                    ("21m00Tcm4TlvDq8ikWAM", "Rachel"),
-                    ("AZnzlk1XvdvUeBnXmlld", "Domi"),
-                    ("EXAVITQu4vr4xnSDxMaL", "Bella"),
-                    ("ErXwobaYiN019PkySvjV", "Antoni"),
-                    ("MF3mGyEYCl7XYWbV9V6O", "Elli"),
-                    ("TxGEqnHWrfWFTfGW9XjX", "Josh"),
-                    ("VR6AewLTigWG4xSOukaG", "Arnold"),
-                    ("pNInz6obpgDQGcFmaJgB", "Adam"),
-                    ("yoZ06aMxZJJ28mfd3POQ", "Sam"),
-                ]
-            )
-            try:
-                voice_select.value = "21m00Tcm4TlvDq8ikWAM"
-            except Exception as e:
-                logger.debug(f"Could not set default ElevenLabs voice value: {e}")
-        elif provider == "kokoro":
-            logger.info(f"Setting up Kokoro voices for provider: {provider}")
-            logger.debug(
-                f"Voice select widget state - value: {voice_select.value}, enabled: {not voice_select.disabled}"
-            )
-            voice_options = [
-                # American Female voices
-                ("af_alloy", "Alloy (US Female)"),
-                ("af_aoede", "Aoede (US Female)"),
-                ("af_bella", "Bella (US Female)"),
-                ("af_heart", "Heart (US Female)"),
-                ("af_jessica", "Jessica (US Female)"),
-                ("af_kore", "Kore (US Female)"),
-                ("af_nicole", "Nicole (US Female)"),
-                ("af_nova", "Nova (US Female)"),
-                ("af_river", "River (US Female)"),
-                ("af_sarah", "Sarah (US Female)"),
-                ("af_sky", "Sky (US Female)"),
-                # American Male voices
-                ("am_adam", "Adam (US Male)"),
-                ("am_michael", "Michael (US Male)"),
-                # British Female voices
-                ("bf_emma", "Emma (UK Female)"),
-                ("bf_isabella", "Isabella (UK Female)"),
-                # British Male voices
-                ("bm_george", "George (UK Male)"),
-                ("bm_lewis", "Lewis (UK Male)"),
-                # Note: Additional voices for other languages (Japanese, Chinese, Spanish, etc.)
-                # can be added here with proper voice codes
-            ]
-
-            # Add saved voice blends
-            blend_file = (
-                Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
-            )
-            if blend_file.exists():
-                try:
-                    import json
-
-                    with open(blend_file, "r") as f:
-                        blends = json.load(f)
-                        if blends:
-                            # Add separator
-                            voice_options.append(
-                                ("_separator", "──── Voice Blends ────")
-                            )
-                            # Add each blend
-                            for blend_name, blend_data in blends.items():
-                                display_name = f"🎭 {blend_name}"
-                                if blend_data.get("description"):
-                                    display_name += (
-                                        f" - {blend_data['description'][:30]}"
-                                    )
-                                voice_options.append(
-                                    (f"blend:{blend_name}", display_name)
-                                )
-                except Exception as e:
-                    logger.error(f"Failed to load voice blends: {e}")
-
-            voice_select.set_options(voice_options)
-            logger.debug(f"Set {len(voice_options)} voice options for Kokoro")
-
-            # Use helper method to set valid voice
-            self._set_valid_voice(voice_select, voice_options, fallback="af_bella")
-        elif provider == "chatterbox":
-            logger.info(f"Setting up Chatterbox voices for provider: {provider}")
-            voice_options = [
-                ("default", "Default Voice"),
-                ("_separator", "──── Custom Voices ────"),
-                ("custom", "Upload Reference Audio"),
-            ]
-
-            # Add saved voice profiles
-            try:
-                from tldw_chatbook.TTS.backends.chatterbox_voice_manager import (
-                    ChatterboxVoiceManager,
+                self._applied_format = (
+                    event.value if isinstance(event.value, str) else None
                 )
+            if self._selected_provider_id is not None:
+                self._remember_current_controls(self._selected_provider_id)
+            self._sync_generate_enabled()
 
-                voice_dir = Path.home() / ".config" / "tldw_cli" / "chatterbox_voices"
-                if voice_dir.exists():
-                    manager = ChatterboxVoiceManager(voice_dir)
-                    profiles = manager.list_profiles()
-                    if profiles:
-                        voice_options.append(
-                            ("_separator2", "──── Saved Profiles ────")
-                        )
-                        for profile in profiles:
-                            voice_options.append(
-                                (profile["name"], profile["display_name"])
-                            )
-                    logger.info(f"Loaded {len(profiles)} Chatterbox voice profiles")
-            except Exception as e:
-                logger.warning(f"Could not load Chatterbox voice profiles: {e}")
+    @on(Input.Changed)
+    def on_tts_speed_changed(self, event: Input.Changed) -> None:
+        if (
+            not self._applying_catalog_controls
+            and event.input.id == "tts-speed-input"
+            and self._selected_provider_id is not None
+        ):
+            self._remember_current_controls(self._selected_provider_id)
 
-            voice_select.set_options(voice_options)
-            self._safe_set_select_value(voice_select, "default", "Chatterbox voice")
-        elif provider == "higgs":
-            logger.info(f"Setting up Higgs voices for provider: {provider}")
-            voice_options = [
-                # Default Higgs voices
-                ("professional_female", "Professional Female"),
-                ("warm_female", "Warm Female"),
-                ("storyteller_male", "Storyteller Male"),
-                ("deep_male", "Deep Male"),
-                ("energetic_female", "Energetic Female"),
-                ("soft_female", "Soft Female"),
-                # Separator for custom voices
-                ("_separator", "──── Custom Voices ────"),
-                ("custom", "Upload Reference Audio"),
-            ]
+    @on(TextArea.Changed)
+    def on_tts_text_changed(self, _event: TextArea.Changed) -> None:
+        self._sync_generate_enabled()
 
-            # Add saved voice profiles
-            try:
-                from tldw_chatbook.TTS.backends.higgs_voice_manager import (
-                    HiggsVoiceProfileManager,
-                )
-
-                voice_dir = Path.home() / ".config" / "tldw_cli" / "higgs_voices"
-                if voice_dir.exists():
-                    manager = HiggsVoiceProfileManager(voice_dir)
-                    profiles = manager.list_profiles()
-                    if profiles:
-                        # Add separator
-                        voice_options.append(
-                            ("_separator2", "──── Saved Profiles ────")
-                        )
-                        # Add each profile
-                        for profile in profiles:
-                            display_name = f"📎 {profile['display_name']}"
-                            if profile.get("description"):
-                                display_name += f" - {profile['description'][:30]}"
-                            voice_options.append(
-                                (f"profile:{profile['name']}", display_name)
-                            )
-            except Exception as e:
-                logger.debug(f"Could not load Higgs voice profiles: {e}")
-
-            voice_select.set_options(voice_options)
-            self._set_valid_voice(
-                voice_select, voice_options, fallback="professional_female"
-            )
-        elif provider == "alltalk":
-            voice_select.set_options(
-                [
-                    ("female_01.wav", "Female 01"),
-                    ("female_02.wav", "Female 02"),
-                    ("female_03.wav", "Female 03"),
-                    ("female_04.wav", "Female 04"),
-                    ("male_01.wav", "Male 01"),
-                    ("male_02.wav", "Male 02"),
-                    ("male_03.wav", "Male 03"),
-                    ("male_04.wav", "Male 04"),
-                    # AllTalk typically supports more voices, these are common defaults
-                ]
-            )
-            self._safe_set_select_value(voice_select, "female_01.wav", "AllTalk voice")
-        else:
-            logger.warning(f"Unknown TTS provider: {provider}")
-            voice_select.set_options([("default", "Default")])
-
-    def _update_model_options(self, provider: str) -> None:
-        """Update model options based on provider"""
-        logger.debug(f"Updating model options for provider: {provider}")
-
-        # Handle Select.BLANK
-        if provider == Select.BLANK or str(provider) == "Select.BLANK":
-            logger.debug("Provider is Select.BLANK, skipping model update")
-            return
-
-        model_select = self.query_one("#tts-model-select", Select)
-
-        if provider == "openai":
-            model_select.set_options(
-                [
-                    ("tts-1", "TTS-1 (Standard)"),
-                    ("tts-1-hd", "TTS-1-HD (High Quality)"),
-                ]
-            )
-            self._safe_set_select_value(model_select, "tts-1", "OpenAI model")
-        elif provider == "elevenlabs":
-            model_select.set_options(
-                [
-                    ("eleven_monolingual_v1", "Eleven Monolingual v1"),
-                    ("eleven_multilingual_v1", "Eleven Multilingual v1"),
-                    ("eleven_multilingual_v2", "Eleven Multilingual v2 (Default)"),
-                    ("eleven_turbo_v2", "Eleven Turbo v2"),
-                    ("eleven_turbo_v2_5", "Eleven Turbo v2.5"),
-                    ("eleven_flash_v2", "Eleven Flash v2 (Low Latency)"),
-                    ("eleven_flash_v2_5", "Eleven Flash v2.5 (Ultra Low Latency)"),
-                ]
-            )
-            self._safe_set_select_value(
-                model_select, "eleven_multilingual_v2", "ElevenLabs model"
-            )
-        elif provider == "kokoro":
-            logger.info("Setting Kokoro model options")
-            model_select.set_options(
-                [
-                    ("kokoro", "Kokoro 82M"),
-                ]
-            )
-            self._safe_set_select_value(model_select, "kokoro", "Kokoro model")
-            logger.info("Kokoro model options configured")
-        elif provider == "chatterbox":
-            model_select.set_options(
-                [
-                    ("chatterbox", "Chatterbox 0.5B"),
-                ]
-            )
-            self._safe_set_select_value(model_select, "chatterbox", "Chatterbox model")
-        elif provider == "higgs":
-            logger.info("Setting Higgs model options")
-            model_select.set_options(
-                [
-                    ("higgs-audio-v2", "Higgs Audio V2 3B"),
-                ]
-            )
-            self._safe_set_select_value(model_select, "higgs-audio-v2", "Higgs model")
-            logger.info("Higgs model options configured")
-        elif provider == "alltalk":
-            model_select.set_options(
-                [
-                    ("alltalk", "AllTalk TTS"),
-                ]
-            )
-            self._safe_set_select_value(model_select, "alltalk", "AllTalk model")
-        else:
-            logger.warning(f"Unknown TTS provider for model: {provider}")
-            model_select.set_options([("default", "Default Model")])
+    def _get_select_key(self, select_widget: Select) -> Optional[str]:
+        """Return exact canonical values for catalog-driven controls."""
+        current = select_widget.value
+        if not isinstance(current, str) or current.startswith("__"):
+            return None
+        if select_widget.id == "tts-language-select":
+            for language_id, display_name in select_widget._options:
+                if display_name == current:
+                    return str(language_id)
+        return current
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
@@ -1085,6 +1313,13 @@ class TTSPlaygroundWidget(Widget):
         if event.button.id == "tts-generate-btn":
             self._generate_tts()
             event.stop()  # Prevent event from bubbling up
+        elif event.button.id == "tts-refresh-catalog-btn":
+            if self._selected_provider_id is not None:
+                self._load_provider_catalog(
+                    self._selected_provider_id,
+                    refresh=True,
+                )
+            event.stop()
         elif event.button.id == "tts-random-text-btn":
             self._insert_random_text()
             event.stop()
