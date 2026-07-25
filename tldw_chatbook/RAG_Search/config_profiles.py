@@ -590,7 +590,7 @@ class ConfigProfileManager:
                     profile = ProfileConfig.from_dict(json.load(f))
                 profile.read_only = False
 
-                # task-621: proportionate validation at the load boundary.
+                # task-626: proportionate validation at the load boundary.
                 # A profile file is untrusted input -- it may be hand-edited,
                 # migrated from an older version, or otherwise corrupted.
                 # RAGConfig.validate() issues (a bad enum value, a negative
@@ -786,7 +786,7 @@ class ConfigProfileManager:
         ``profile`` object is itself read-only or its id merely collides
         with an existing read-only builtin. Also refuses to persist a
         profile whose ``rag_config`` is hard-invalid per
-        ``RAGConfig.validate()`` (task-621).
+        ``RAGConfig.validate()`` (task-626).
 
         This is the single choke point every non-screen caller (``clone_
         profile``, ``create_custom_profile``, ``active_config.ensure_

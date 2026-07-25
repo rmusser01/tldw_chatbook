@@ -58,5 +58,5 @@ Modified files:
 - Tests/RAG/test_config_profiles.py (4 new tests; one existing test's chunk_size fixed to a value valid alongside its overlap)
 - Tests/UI/test_settings_rag_profile_adapter.py (2 existing tests' fixture setup adjusted to mutate the live profile in place instead of re-saving)
 
-Verification: Tests/RAG/ -> 558 passed, 8 skipped (baseline 552/8 + 2 seam-lock tests from task-620 + 4 new task-626 tests). Tests/UI/test_settings_rag_profile_adapter.py + test_settings_rag_profile_region.py -> 181 passed.
+Verification: Tests/RAG/ -> 558 passed, 8 skipped (baseline 552/8 + 2 seam-lock tests from task-625 + 4 new task-626 tests). Tests/UI/test_settings_rag_profile_adapter.py + test_settings_rag_profile_region.py -> 181 passed.
 <!-- SECTION:NOTES:END -->

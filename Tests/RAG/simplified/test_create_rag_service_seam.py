@@ -1,4 +1,4 @@
-"""Locks the public `create_rag_service` seam (task-620).
+"""Locks the public `create_rag_service` seam (task-625).
 
 `tldw_chatbook.RAG_Search.simplified.rag_service` used to define its own
 `create_rag_service(embedding_model=None, vector_store="chroma", ...)`, but
@@ -34,5 +34,5 @@ def test_rag_service_module_has_no_shadowed_create_rag_service():
     assert not hasattr(rag_service, "create_rag_service"), (
         "rag_service.py must not define its own create_rag_service -- it was "
         "dead code shadowed by rag_factory.create_rag_service at the public "
-        "package seam (task-620)."
+        "package seam (task-625)."
     )

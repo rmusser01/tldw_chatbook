@@ -290,7 +290,7 @@ def test_clone_builtin_creates_writable_copy(tmp_path):
     assert (tmp_path / "profiles" / f"{clone.id}.json").exists()
     # Editing the clone does not touch the builtin. 300 (not just any value
     # like 111) is deliberate: high_accuracy's builtin chunk_overlap is 128,
-    # and task-621 made save_profile reject a chunk_overlap >= chunk_size as
+    # and task-626 made save_profile reject a chunk_overlap >= chunk_size as
     # hard-invalid, so the edited value must stay above that overlap.
     clone.rag_config.chunking.chunk_size = 300
     m.save_profile(clone)
@@ -942,7 +942,7 @@ def test_save_profile_does_not_register_when_the_disk_write_fails(tmp_path, monk
     assert "my_profile" not in m.list_profiles()
 
 
-# --- task-621: validate RAGConfig at the load and save boundaries. ---------
+# --- task-626: validate RAGConfig at the load and save boundaries. ---------
 #
 # RAGConfig.validate() already exists (the settings adapter's hard/soft split
 # -- settings_rag_profile_adapter.hard_config_errors -- is its first live
@@ -1029,7 +1029,7 @@ def test_load_still_skips_a_structurally_unparseable_profile_file(tmp_path):
     # Companion to the above: genuine structural corruption (not just an
     # invalid-but-well-formed rag_config) must still be isolated per-file and
     # logged as an error, exactly as before -- this is the pre-existing
-    # try/except in _load_custom_profiles, unchanged by task-621.
+    # try/except in _load_custom_profiles, unchanged by task-626.
     pdir = tmp_path / "profiles"
     pdir.mkdir(parents=True)
     (pdir / "broken.json").write_text("{not valid json")
