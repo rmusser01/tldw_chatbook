@@ -50,6 +50,31 @@ def _write_png_with_metadata(path, metadata: dict):
     return path
 
 
+def _write_png_with_trailing_metadata(path, metadata: dict):
+    """Writes a PNG whose text chunks sit AFTER IDAT, like SillyTavern exports."""
+    import struct
+    import zlib
+
+    img = Image.new("RGB", (10, 10), color="green")
+    img.save(path, "PNG")
+    raw = path.read_bytes()
+
+    def make_text_chunk(key: str, value: str) -> bytes:
+        data = key.encode("latin-1") + b"\x00" + value.encode("latin-1")
+        crc = zlib.crc32(b"tEXt" + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + b"tEXt" + data + struct.pack(">I", crc)
+
+    # Insert the text chunks right before IEND (i.e., after IDAT).
+    iend_start = raw.rfind(b"IEND") - 4  # include IEND's length field
+    assert iend_start > 8
+    out = raw[:iend_start]
+    for key, value in metadata.items():
+        out += make_text_chunk(key, value)
+    out += raw[iend_start:]
+    path.write_bytes(out)
+    return path
+
+
 def _b64_json(payload: dict) -> str:
     return base64.b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
 
@@ -384,3 +409,33 @@ def test_unsupported_image_extension_rejected_explicitly(tmp_path):
 def test_traversal_path_rejected():
     assert load_character_card_from_file("../../etc/passwd.json") is None
     assert load_character_card_from_file("..\\..\\Windows\\win.ini") is None
+
+
+# ---------------------------------------------------------------------------
+# Trailing (post-IDAT) PNG metadata - how SillyTavern writes character files
+# ---------------------------------------------------------------------------
+
+
+def test_extract_chara_from_trailing_post_idat_chunk(tmp_path):
+    # SillyTavern writes chara/ccv3 tEXt chunks AFTER the IDAT chunk; Pillow
+    # only surfaces them in .info after a full image decode.
+    png_path = _write_png_with_trailing_metadata(
+        tmp_path / "trailing.png",
+        {"chara": _b64_json(_v2_card()), "ccv3": _b64_json(_v2_card())},
+    )
+
+    extracted = extract_json_from_image_file(str(png_path), str(tmp_path))
+
+    assert extracted is not None
+    assert json.loads(extracted)["data"]["name"] == "Test Char"
+
+
+def test_load_trailing_metadata_png_end_to_end(tmp_path):
+    png_path = _write_png_with_trailing_metadata(
+        tmp_path / "trailing.png", {"chara": _b64_json(_v2_card())}
+    )
+
+    parsed = load_character_card_from_file(png_path)
+
+    assert parsed is not None
+    assert parsed["name"] == "Test Char"
