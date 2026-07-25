@@ -5514,6 +5514,11 @@ async def test_settings_provider_category_blocks_empty_manual_provider_save(
 
 @pytest.mark.asyncio
 async def test_settings_provider_blank_select_value_is_not_treated_as_provider():
+    """task-565: ``Select.NULL`` is the real blank sentinel a blank Select
+    delivers on this Textual version -- ``Select.BLANK`` doesn't exist, it
+    silently resolves to the unrelated ``Widget.BLANK`` (``False``), so a
+    test that simulates a blank selection must use ``Select.NULL`` too (see
+    ``_select_value_text`` in settings_screen.py, the fix this exercises)."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     host = DestinationHarness(app, "settings")
@@ -5523,11 +5528,11 @@ async def test_settings_provider_blank_select_value_is_not_treated_as_provider()
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
 
-        screen.handle_provider_value_changed(Select.Changed(provider, Select.BLANK))
+        screen.handle_provider_value_changed(Select.Changed(provider, Select.NULL))
 
         draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
         assert draft.values["provider"] is None
-        assert "Select.BLANK" not in _visible_text(screen)
+        assert "Select.NULL" not in _visible_text(screen)
 
 
 @pytest.mark.asyncio
