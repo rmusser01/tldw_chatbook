@@ -225,7 +225,9 @@ def test_limits_apply_to_a_non_python_target(tmp_path):
         limits=ScriptRunLimits(file_size_bytes=file_size_bytes, cpu_seconds=cpu_seconds),
     )
     assert result.exit_code == 0
-    echoed, cpu_limit, file_limit = result.stdout.split()
+    tokens = result.stdout.split()
+    assert len(tokens) == 3, f"expected exactly 3 whitespace-separated tokens, got {result.stdout!r}"
+    echoed, cpu_limit, file_limit = tokens
     assert echoed == "shell-ran"
     # RLIMIT_CPU is reported in seconds by every shell — no unit ambiguity.
     assert cpu_limit == str(cpu_seconds), f"child did not inherit RLIMIT_CPU: {result.stdout!r}"
@@ -273,6 +275,29 @@ def test_resolve_interpreter_uses_scrubbed_path_only(tmp_path, monkeypatch):
     assert resolve_interpreter("tldw-fake-interpreter") is None
     assert resolve_interpreter("sh") == "/bin/sh"
     assert resolve_interpreter("definitely-not-a-real-interpreter-xyz") is None
+
+
+def test_resolve_interpreter_rejects_relative_name_with_separator(tmp_path, monkeypatch):
+    """A relative name containing a separator must never resolve.
+
+    ``shutil.which`` special-cases any argument with a dirname component: it
+    checks that path against the process's CURRENT WORKING DIRECTORY and
+    silently ignores ``path=``. That means a name like ``sub/evilpy`` would
+    otherwise resolve to a string that was never actually validated against
+    SCRUBBED_PATH — and would be checked here against the app's cwd while the
+    caller executes it under a different (scratch) cwd later, so the file
+    inspected would not be the file run. Proven non-vacuous by planting a
+    real, executable ``sub/evilpy`` relative to the current working directory
+    and confirming it still refuses to resolve.
+    """
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    evilpy = sub / "evilpy"
+    evilpy.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    evilpy.chmod(0o755)
+    monkeypatch.chdir(tmp_path)
+
+    assert resolve_interpreter("sub/evilpy") is None
 
 
 @pytest.mark.skipif(
@@ -356,7 +381,12 @@ def test_short_deadline_bounds_the_call_with_a_live_grandchild(tmp_path):
 
     assert result.timed_out is True
     assert elapsed >= 2.5, "must actually honour the deadline, not return early"
-    assert elapsed < 10.0, "must return at the deadline plus a bounded teardown grace"
+    # True worst case is wall_clock_seconds (3.0) + teardown grace (reap
+    # _REAP_TIMEOUT_SECONDS=2.0 + two sequential reader joins at
+    # _READER_JOIN_GRACE_SECONDS=2.0 each = 4.0) = 9.0s. 20.0 leaves
+    # comfortable headroom for a loaded CI machine while still proving the
+    # call returns nowhere near the grandchild's own 30s lifetime.
+    assert elapsed < 20.0, "must return at the deadline plus a bounded teardown grace"
     assert "SPAWNED" in result.stdout, "output read before the deadline must survive"
     grandchild_pid = int(marker.read_text())
     assert _pid_is_dead(grandchild_pid), "a run must not leave descendants behind"

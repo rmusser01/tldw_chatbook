@@ -121,19 +121,31 @@ def memory_limit_enforced() -> bool:
 def resolve_interpreter(name: str) -> str | None:
     """Resolve an interpreter without ever consulting ``os.environ['PATH']``.
 
-    A bare name is searched only on :data:`SCRUBBED_PATH`, so a poisoned
-    ambient PATH cannot substitute an attacker's binary. An absolute path is
-    taken at face value (no search) but must still name an existing, regular,
-    executable file — an arbitrary caller-supplied string never resolves to a
-    directory, a device, or a non-executable data file.
+    Exactly two shapes are accepted:
+
+    1. An absolute path (``/bin/sh``), taken at face value (no search) but
+       which must still name an existing, regular, executable file.
+    2. A bare name with no path separator (``python3``), searched only on
+       :data:`SCRUBBED_PATH` so a poisoned ambient PATH cannot substitute an
+       attacker's binary.
+
+    A relative name that contains a separator (``sub/evilpy``) is rejected
+    outright rather than resolved: ``shutil.which`` special-cases any
+    argument with a dirname component by checking THAT path against the
+    process's current working directory and silently ignoring ``path=``, so
+    the returned string would not actually have been validated against
+    :data:`SCRUBBED_PATH` at all — and it would be checked here against the
+    app's cwd while the caller later executes it under a different (scratch)
+    cwd, so the file inspected would not be the file run.
 
     Args:
         name: Interpreter name (``python3``) or absolute path (``/bin/sh``).
 
     Returns:
         The absolute path, or None when it does not resolve on the scrubbed
-        PATH / is not an executable regular file (the caller surfaces that as
-        an unavailable mechanism rather than falling back to the user's
+        PATH / is not an executable regular file / is a relative name
+        containing a path separator (the caller surfaces that as an
+        unavailable mechanism rather than falling back to the user's
         environment).
     """
     if not name:
@@ -141,6 +153,8 @@ def resolve_interpreter(name: str) -> str | None:
     if os.path.isabs(name):
         if os.path.isfile(name) and os.access(name, os.X_OK):
             return name
+        return None
+    if os.sep in name or (os.altsep and os.altsep in name):
         return None
     return shutil.which(name, path=SCRUBBED_PATH)
 
@@ -278,10 +292,15 @@ def run_script_subprocess(
 ) -> ScriptRunResult:
     """Run ``target_argv`` under best-effort containment and capped output.
 
-    The call is bounded by ``limits.wall_clock_seconds`` plus a small fixed
-    teardown grace — the deadline covers the WHOLE call, not just the wait for
-    the direct child, so a script that exits while leaving a long-lived
-    descendant behind cannot stall the caller.
+    The call is bounded by ``limits.wall_clock_seconds`` plus a fixed teardown
+    grace — the deadline covers the WHOLE call, not just the wait for the
+    direct child, so a script that exits while leaving a long-lived
+    descendant behind cannot stall the caller. That grace is, worst case,
+    ``_REAP_TIMEOUT_SECONDS`` to reap the SIGKILLed child plus
+    ``_READER_JOIN_GRACE_SECONDS`` for EACH of the two reader threads
+    (stdout, stderr), joined one after another rather than concurrently: with
+    the current defaults that is 2.0 + 2.0 + 2.0 = 6.0 seconds, so the true
+    worst-case wall time for one call is ``wall_clock_seconds + 6.0``.
 
     A run leaves no descendants behind: the child's entire process group is
     SIGKILLed before returning on every path, including a clean exit. That is
@@ -340,9 +359,12 @@ def run_script_subprocess(
         start_new_session=True,
     )
     # start_new_session makes the child a session/group leader, so its pgid is
-    # its pid. Capture it now: once the child is reaped the pid is no longer
-    # queryable, and both Linux and BSD keep a pid number reserved while it is
-    # still in use as a pgid, so this can never signal an unrelated group.
+    # its pid. Capture it now, before anything can reap the child: POSIX keeps
+    # a pid number reserved for as long as it is still in use as a pgid, so
+    # killing this pgid while the child is confirmed not yet reaped (the
+    # timeout branch below) cannot hit a recycled, unrelated group. See the
+    # comment at the kill site for the one branch where that is not fully
+    # guaranteed.
     pgid = process.pid
     streams = (process.stdout, process.stderr)
 
@@ -377,13 +399,17 @@ def run_script_subprocess(
             break
         time.sleep(_POLL_INTERVAL_SECONDS)
 
-    # The child can exit in the sliver between the last poll and the deadline
-    # check; a clean finish is not a timeout, whatever the clock says.
-    if timed_out and process.poll() is not None:
-        timed_out = False
-
     # Unconditional, including the clean-exit path: surviving descendants hold
     # the pipes open (readers would block forever) and would outlive the run.
+    #
+    # Deliberately kill before doing any further polling of our own: on the
+    # timeout branch the loop's last poll() found the child still running, so
+    # it is still unreaped right here and this kill cannot race a recycled
+    # pgid. On the clean-exit branch the loop's OWN completion-detecting
+    # poll() already reaped the child as a side effect of answering "is it
+    # done" — there is no portable peek-without-reap primitive available here
+    # to avoid that, so a vanishingly small (pid-wraparound-within-
+    # microseconds) window remains on that branch only.
     _kill_group(pgid)
     exit_code = _reap(process)
     if exit_code is None:
@@ -391,6 +417,15 @@ def run_script_subprocess(
             "the sandboxed process did not exit after SIGKILL; its exit status "
             "is unknown and its output may be incomplete"
         )
+    elif timed_out and exit_code != -signal.SIGKILL:
+        # The child can finish in the sliver between the last poll and the
+        # deadline check above. The SIGKILL just sent lands regardless (it is
+        # a no-op if the child is already a zombie), so it can no longer be
+        # used to tell "we killed it" from "it had already finished" — the
+        # exit status can: a signal-terminated status of exactly SIGKILL means
+        # this kill is what ended it; anything else means it had already
+        # exited on its own, so this was not actually a timeout.
+        timed_out = False
 
     for reader in readers:
         reader.join(timeout=_READER_JOIN_GRACE_SECONDS)
