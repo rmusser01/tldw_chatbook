@@ -2,10 +2,10 @@
 id: TASK-563
 title: >-
   Image-gen P3 polish follow-ups
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-24 23:34'
-updated_date: '2026-07-24 23:34'
+updated_date: '2026-07-25 01:30'
 labels:
   - image-generation
   - personas
