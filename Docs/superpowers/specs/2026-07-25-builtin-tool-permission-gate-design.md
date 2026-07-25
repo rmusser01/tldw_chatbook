@@ -103,7 +103,7 @@ Always built (built-ins always exist); MCP's per-call gate is folded in when a p
 ### 5. Two enforcement points
 
 - **Pre-dispatch** (the run-level hook): batches everything needing approval into one card per turn.
-- **`BuiltinToolProvider.invoke`**: kill switch → resolved state → stamped verdict. Defense-in-depth, so a caller that skips the hook still cannot execute ungated.
+- **`BuiltinToolProvider.invoke`**: kill switch → **stamped verdict** → resolved state → session approval. Defense-in-depth, so a caller that skips the hook still cannot execute ungated. This order matches the already-shipped `MCPToolProvider.invoke` (`Agents/mcp_tool_provider.py:433-479`), whose docstring states the same precedence: the kill switch is checked first and cannot be bypassed by a stamp, and this turn's stamped verdict then wins outright — a stamped `deny` returns before session approval is ever consulted.
 
 Denials return `ToolResult(ok=False, error=...)` — **never a raise**. `run_agent_loop` is a pure loop that must not see exceptions from tool invocation.
 
