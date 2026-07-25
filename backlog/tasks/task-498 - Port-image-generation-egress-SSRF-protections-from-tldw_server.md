@@ -5,7 +5,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-22 11:32'
-updated_date: '2026-07-22 11:32'
+updated_date: '2026-07-24 13:30'
 labels:
   - image-generation
   - security
@@ -17,20 +17,16 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Follow-up to the image-generation multi-provider foundation (Phase 1 of the in-chat image-gen program; see `docs/superpowers/specs/` image-generation design). The server's `Image_Generation` package we port includes egress/SSRF guards that tldw_chatbook currently lacks app-wide: `_validate_egress_or_raise` / `_resolve_redirect_url` in `http_client`, and `evaluate_url_policy` from `Security/egress`. Phase 1 deliberately ships only a **light** guard (reject non-`http(s)` schemes; keep each adapter's built-in per-backend host checks — SwarmUI same-origin, ModelStudio `aliyuncs` allowlist) and stays permissive for user-configured `base_url`s so local backends (127.0.0.1 SwarmUI, local sd.cpp) keep working.
-
-That light guard does NOT protect against SSRF via **API-returned image URLs** (OpenRouter / Novita / ModelStudio can return arbitrary `http(s)` URLs that the adapters then fetch via `fetch_image_bytes`). Port the server's real egress protections so those fetches are validated (block private/link-local/metadata ranges for URLs the app did not originate, DNS-rebinding-aware where feasible), while still allowing user-configured local backend base URLs. This is the security hardening the light guard is a placeholder for, and it doubles as the first real SSRF protection in the app.
-
-TASK-328 has now shipped a shared egress module at `tldw_chatbook/Utils/egress.py` that can be reused here (see TASK-506 for the adoption follow-up).
+RESCOPED 2026-07-24: dev now ships its own SSRF policy — `Utils/egress.py` (PR #822: per-hop redirect revalidation, private/link-local/metadata blocking, cross-origin cred-strip, byte caps) — so this task is no longer a port from tldw_server. Instead, ADOPT `Utils/egress.py` inside `tldw_chatbook/Image_Generation/http_client.py`, replacing the Phase-1 light guard (`_validate_egress_or_raise` scheme-check placeholder). The original intent stands: image URLs RETURNED by remote backends (OpenRouter/Novita/ModelStudio) must be validated before fetch, while user-configured local backend base_urls (127.0.0.1 SwarmUI, local sd.cpp) keep working. Also wire ModelStudio's dead `allowlist` local (built but only partially enforced) through the adopted policy, and cover `fetch_json`'s manual redirect loop + `image_format_utils.fetch_image_bytes`.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] Image URLs returned by remote backends (OpenRouter/Novita/ModelStudio) are validated before fetch: private, link-local, loopback, and cloud-metadata (169.254.169.254) ranges are blocked for app-non-originated URLs.
-- [ ] User-configured backend `base_url`s (e.g. `http://127.0.0.1:7801` SwarmUI, local paths) continue to work — the guard distinguishes user-configured endpoints from API-returned URLs.
-- [ ] Non-`http(s)` schemes and redirect chains beyond the configured max are rejected.
-- [ ] Guard is unit-tested with SSRF payloads (private IPs, metadata IP, scheme abuse, redirect-to-private) and does not regress local-backend generation.
+- [ ] `Image_Generation/http_client.py`'s egress guard delegates to `Utils/egress.py` policy (no parallel/duplicate SSRF logic): API-returned image URLs are blocked for private/link-local/loopback/metadata ranges; user-configured backend `base_url`s (e.g. `http://127.0.0.1:7801`) continue to work.
+- [ ] Every hop of `fetch_json`'s manual redirect loop and `fetch_image_bytes` re-validates through the adopted policy.
+- [ ] ModelStudio's host allowlist (aliyuncs + base host) is enforced via the adopted policy; the dead `allowlist` local in `modelstudio_image_adapter._is_allowed_remote_image_url` is wired or removed.
+- [ ] Unit tests with SSRF payloads (private IPs, metadata IP, scheme abuse, redirect-to-private) pass and local-backend generation does not regress.
 <!-- AC:END -->
 
 ## Implementation Plan
