@@ -36,7 +36,11 @@ from .skill_trust_models import (
     TRUST_STATUS_UNINITIALIZED,
 )
 from .skill_trust_scanner import scan_skill_directory
-from .skill_trust_store import SkillTrustMarkerUnavailable, SkillTrustStore
+from .skill_trust_store import (
+    SkillTrustMarkerUnavailable,
+    SkillTrustStore,
+    _atomic_write_json,
+)
 
 
 _SKILL_FILENAME = "SKILL.md"
@@ -575,17 +579,31 @@ class SkillTrustService:
     def _save_script_grants(self, grants: dict[str, str]) -> None:
         """Atomically persist the script-grant sidecar.
 
+        Reuses the trust store's `_atomic_write_json` helper (a private but
+        already package-internal helper; other modules here import
+        underscore-prefixed siblings the same way, e.g.
+        `_normalize_skill_name` from `tldw_api.skills_schemas`) instead of a
+        second hand-rolled write-temp-then-replace path, so the sidecar gets
+        the same symlink/path validation against the store dir that manifest
+        and snapshot writes already receive.
+
         Args:
             grants: Mapping of normalized skill name to pinned fingerprint digest.
         """
-        path = self._script_grants_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = path.with_suffix(".json.tmp")
-        tmp_path.write_text(json.dumps(grants, sort_keys=True), encoding="utf-8")
-        tmp_path.replace(path)
+        _atomic_write_json(
+            self._script_grants_path(),
+            grants,
+            base_dir=self.trust_store.store_dir,
+        )
 
     def current_fingerprint_digest(self, skill_name: str) -> str:
         """Return the digest of a skill's live on-disk fingerprints.
+
+        Write/derive-side helper (mirrors `capture_review`/`trust_current_skill`
+        in this class): a malformed name is a caller bug, not untrusted input
+        to shrug off, so it is surfaced rather than swallowed. Callers that
+        need a non-raising read over a possibly-malformed or untrusted name
+        should use `script_execution_granted`/`script_grant_digest` instead.
 
         Args:
             skill_name: Skill name (normalized internally).
@@ -593,6 +611,11 @@ class SkillTrustService:
         Returns:
             The same digest value that invalidates a captured trust review,
             so any content change also invalidates a script grant.
+
+        Raises:
+            ValueError: If `skill_name` cannot be normalized (empty, contains
+                characters outside lowercase letters/digits/hyphens, or
+                starts/ends with or doubles a hyphen).
         """
         normalized = self._normalize_skill_name(skill_name)
         return self._fingerprints_digest(self._scan_skill(normalized))
@@ -600,20 +623,35 @@ class SkillTrustService:
     def script_grant_digest(self, skill_name: str) -> str | None:
         """Return the fingerprint digest a script grant was pinned to.
 
+        Read-side: never raises. Mirrors `status_for_skill`'s handling of
+        `_normalize_skill_name` -- a malformed `skill_name` (e.g. from a UI
+        render path or agent-supplied input) is treated the same as "no
+        grant recorded" rather than propagating a `ValueError`.
+
         Args:
             skill_name: Skill name (normalized internally).
 
         Returns:
-            The pinned digest, or None when no grant is recorded.
+            The pinned digest, or None when no grant is recorded or
+            `skill_name` cannot be normalized.
         """
-        normalized = self._normalize_skill_name(skill_name)
+        try:
+            normalized = self._normalize_skill_name(skill_name)
+        except ValueError:
+            return None
         return self._load_script_grants().get(normalized)
 
     def grant_script_execution(self, skill_name: str) -> None:
         """Record an 'always allow scripts' grant pinned to current content.
 
+        Write-side: see `current_fingerprint_digest` for why a malformed
+        name raises here instead of failing silently.
+
         Args:
             skill_name: Skill name (normalized internally).
+
+        Raises:
+            ValueError: If `skill_name` cannot be normalized.
         """
         normalized = self._normalize_skill_name(skill_name)
         grants = self._load_script_grants()
@@ -623,8 +661,14 @@ class SkillTrustService:
     def revoke_script_execution(self, skill_name: str) -> None:
         """Drop any standing script grant for a skill.
 
+        Write-side: see `current_fingerprint_digest` for why a malformed
+        name raises here instead of failing silently.
+
         Args:
             skill_name: Skill name (normalized internally).
+
+        Raises:
+            ValueError: If `skill_name` cannot be normalized.
         """
         normalized = self._normalize_skill_name(skill_name)
         grants = self._load_script_grants()
@@ -638,17 +682,28 @@ class SkillTrustService:
         digest it was pinned to; any change (which already forces a trust
         re-review) drops it back to per-run confirmation.
 
+        Read-side: never raises. Mirrors `status_for_skill`'s handling of
+        `_normalize_skill_name` -- a malformed `skill_name` (e.g. from a UI
+        render path guarded only against `(NoMatches, QueryError,
+        AttributeError)`, or an agent-supplied name) is treated as "not
+        granted" rather than propagating a `ValueError`.
+
         Args:
             skill_name: Skill name (normalized internally).
 
         Returns:
             True only when a grant exists AND still matches live content.
+            False for a malformed `skill_name`.
         """
-        granted = self.script_grant_digest(skill_name)
+        try:
+            normalized = self._normalize_skill_name(skill_name)
+        except ValueError:
+            return False
+        granted = self._load_script_grants().get(normalized)
         if not granted:
             return False
         try:
-            return granted == self.current_fingerprint_digest(skill_name)
+            return granted == self.current_fingerprint_digest(normalized)
         except Exception:  # noqa: BLE001 — unreadable content ⇒ no grant
             return False
 

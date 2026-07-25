@@ -52,3 +52,63 @@ def test_grant_persists_across_a_fresh_service_instance(
     service.grant_script_execution(name)
     reloaded = make_trust_service()
     assert reloaded.script_execution_granted(name) is True
+
+
+_MALFORMED_SKILL_NAMES = [
+    "has spaces",
+    "double--hyphen",
+    "-leading-hyphen",
+    "",
+]
+
+
+@pytest.mark.parametrize("bad_name", _MALFORMED_SKILL_NAMES)
+def test_script_execution_granted_is_false_for_malformed_name(
+    trust_service_with_skill, bad_name
+):
+    """A malformed name must resolve to "not granted", never raise.
+
+    A later UI render path only catches (NoMatches, QueryError,
+    AttributeError); an uncaught ValueError here would escape and break
+    the panel render.
+    """
+    service, _name = trust_service_with_skill
+    assert service.script_execution_granted(bad_name) is False
+
+
+@pytest.mark.parametrize("bad_name", _MALFORMED_SKILL_NAMES)
+def test_script_grant_digest_is_none_for_malformed_name(
+    trust_service_with_skill, bad_name
+):
+    service, _name = trust_service_with_skill
+    assert service.script_grant_digest(bad_name) is None
+
+
+@pytest.mark.parametrize("bad_name", _MALFORMED_SKILL_NAMES)
+def test_current_fingerprint_digest_raises_for_malformed_name(
+    trust_service_with_skill, bad_name
+):
+    """Documented write/derive-side behavior: malformed names raise."""
+    service, _name = trust_service_with_skill
+    with pytest.raises(ValueError):
+        service.current_fingerprint_digest(bad_name)
+
+
+@pytest.mark.parametrize("bad_name", _MALFORMED_SKILL_NAMES)
+def test_grant_script_execution_raises_for_malformed_name(
+    trust_service_with_skill, bad_name
+):
+    """Documented write-side behavior: malformed names raise."""
+    service, _name = trust_service_with_skill
+    with pytest.raises(ValueError):
+        service.grant_script_execution(bad_name)
+
+
+@pytest.mark.parametrize("bad_name", _MALFORMED_SKILL_NAMES)
+def test_revoke_script_execution_raises_for_malformed_name(
+    trust_service_with_skill, bad_name
+):
+    """Documented write-side behavior: malformed names raise."""
+    service, _name = trust_service_with_skill
+    with pytest.raises(ValueError):
+        service.revoke_script_execution(bad_name)
