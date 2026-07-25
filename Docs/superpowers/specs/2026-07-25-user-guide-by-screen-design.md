@@ -39,8 +39,12 @@ README, `FAQs.md`, and eight deep-dive docs in `Docs/Features/`.
 
 ```
 Docs/User_Guide/
-  index.md                         # app intro, nav map, conventions, stub notice,
-                                   # legacy-route pointers ("Notes → Library ▸ Notes")
+  index.md                         # app intro, Quick Start (first five minutes:
+                                   # launch -> provider setup -> first chat), nav map,
+                                   # GLOBAL shortcuts table (F6, Ctrl+P, number-key nav),
+                                   # conventions ("guide tracks the dev branch"),
+                                   # stub notice, legacy-route pointers
+                                   # ("Notes → Library ▸ Notes")
   _template.md                     # canonical page template + capture recipe (authoring aid)
   images/<screen>/*.svg            # fresh captures, one folder per screen
   home.md
@@ -69,6 +73,11 @@ on-screen expansion in the live app and name the page/directory to match what
 users actually see (candidate: `roleplay.md` + `roleplay/`). File names
 otherwise follow visible nav labels, lowercased/kebab-cased.
 
+**Child-page lists above are PROVISIONAL.** They were drafted from program
+memory, not a live survey. Every phase (G1–G5) begins with a live IA survey
+of the actual screen; the survey's sub-surface inventory wins over this
+spec's tree, and the phase plan records any delta.
+
 ## Page template (fixed section order)
 
 ```markdown
@@ -80,7 +89,8 @@ otherwise follow visible nav labels, lowercased/kebab-cased.
                                  exactly as labeled on screen)
 ## Features & controls          (reference table per region: control → what it does)
 ## Common tasks                 (3–8 numbered step-by-step how-tos, imperative voice)
-## Keyboard & commands          (table: key / slash command → action)
+## Keyboard & commands          (table: key / slash command → action;
+                                 SCREEN-SPECIFIC only — globals live in index.md)
 ## Related settings & docs      (Settings panes, config.toml keys, Docs/Features links)
 ## Quirks & troubleshooting     (honest limitations with backlog refs, common errors
                                  and their fixes)
@@ -104,11 +114,14 @@ Authoring rules:
   content, no personal data; local llama endpoint when a live reply is needed.
 - One standard terminal size for all captures (fixed in `_template.md` during
   G0 after checking what renders best; candidate 200×50).
-- SVG preferred (crisp, diffable, text-searchable); the exact end-to-end
-  recipe (launch command, profile, sizing, export mechanism) is written into
-  `_template.md` in G0 so refreshing a stale image is minutes, not
-  archaeology. Capture tooling reuses the existing verification harness
-  (tmux / textual-serve pipeline already used for UX reviews).
+- Format: SVG preferred (crisp, diffable, text-searchable) — but the SVG
+  pipeline is UNPROVEN here. G0 gives it ONE timeboxed attempt (Textual's
+  own SVG export, or tmux ANSI -> rich `export_svg`); if it does not work
+  cleanly, fall back without ceremony to PNG via the PROVEN
+  textual-serve + Playwright harness used by the UX-review program. The
+  chosen recipe (launch command, profile, sizing, export mechanism) is
+  written into `_template.md` in G0 so refreshing a stale image is minutes,
+  not archaeology.
 
 ## Cross-linking and de-duplication
 
@@ -124,11 +137,16 @@ Authoring rules:
 
 ## Phasing (six PRs, each at the user merge gate)
 
-- **G0 — scaffold:** `index.md`, `_template.md` (template + capture recipe),
-  all eight stub pages, README link, RP&CD naming resolved. No captures.
+- **G0 — scaffold:** `index.md` (incl. Quick Start + global shortcuts),
+  `_template.md` (template + capture recipe, incl. the timeboxed SVG-vs-PNG
+  decision), all eight stub pages, README link, RP&CD naming resolved, and a
+  one-line maintenance hook in CLAUDE.md ("UI-changing PRs should update the
+  matching Docs/User_Guide page or its stamp"). No captures.
 - **G1 — Console:** `console.md` + five child pages + captures. (Largest;
   Console is where every new user lands and where the most undocumented
-  capability sits.)
+  capability sits.) The phase plan MAY split this into two PRs (parent +
+  chat-basics, then the four deeper children) if the single-PR review load
+  looks too heavy.
 - **G2 — Library:** `library.md` + five child pages.
 - **G3 — RP&CD:** parent + three child pages.
 - **G4 — Settings:** `settings.md`.
@@ -139,11 +157,18 @@ Authoring rules:
 
 1. Every control visible on the screen appears in *Features & controls*
    (swept against the live screen during the verification session).
+   Exception for form-heavy panes (chiefly Settings): self-describing form
+   fields may be summarized at field-group level; interactive/behavioral
+   controls are always enumerated individually.
 2. Every *Common task* was executed end-to-end live before being written.
 3. All links resolve; captures render; the verification stamp is present.
 4. No claim contradicts current dev behavior; known limitations carry backlog
    refs.
 5. Terminology matches on-screen labels exactly.
+6. Merge-time drift check: before the phase PR merges, confirm dev has not
+   changed the documented screen since the verification session (diff dev
+   history for the screen's modules); re-verify and re-stamp affected
+   sections if it has. (Concurrent sessions merge UI changes here daily.)
 
 ## Non-goals
 
