@@ -55,11 +55,9 @@ the [guide index](index.md))
 ## Capture recipe
 
 **Winner: Textual's built-in `App.save_screenshot()` SVG export**, driven
-headlessly through `run_test()`. This was the first of three candidates tried
-under the Step 1 timebox (tmux ANSI → rich SVG, and a textual-serve +
-Playwright PNG harness were the fallbacks) and it passed the fidelity bar on
-the first attempt, so the experiment stopped there — no need to try the other
-two.
+headlessly through `run_test()`. This approach passed the fidelity bar
+immediately under the Step 1 timebox, so the two fallback candidates (tmux ANSI → rich SVG, and a textual-serve +
+Playwright PNG harness) were never exercised.
 
 Fidelity bar: nav bar labels present and complete, box-drawing glyphs intact,
 theme colors rendered (not monochrome), no truncated right edge.
@@ -106,7 +104,7 @@ theme colors rendered (not monochrome), no truncated right edge.
 3. Run it against the scratch profile, writing straight into the page's image
    directory:
    ```bash
-   cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook   # repo root
+   cd "$(git rev-parse --show-toplevel)"   # your checkout of the branch being documented
    mkdir -p "Docs/User_Guide/images/<screen>"
    TLDW_CONFIG_PATH="$S/g0_profile/config.toml" \
      G0_CAPTURE_OUT="Docs/User_Guide/images/<screen>/<name>.svg" \
