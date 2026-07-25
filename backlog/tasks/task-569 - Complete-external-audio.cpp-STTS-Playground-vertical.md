@@ -1,11 +1,11 @@
 ---
 id: TASK-569
 title: Complete external audio.cpp STTS Playground vertical
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-25 13:47'
-updated_date: '2026-07-25 13:54'
+updated_date: '2026-07-25 16:30'
 labels:
   - tts
   - audio-cpp
@@ -29,16 +29,16 @@ Make the STTS Playground catalog-driven through the application-owned TTS servic
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The STTS provider selector is populated from sealed registry descriptors using canonical provider IDs without materializing every adapter, and all six legacy providers retain their visible behavior.
-- [ ] #2 Selecting audio_cpp lazily resolves only that provider, performs bounded readiness and model discovery, discards stale provider/configuration/catalog results, and exposes safe unavailable, incompatible, stale, and reconfiguring states.
-- [ ] #3 The external audio.cpp settings surface validates and persists only the approved external configuration, Save does not connect, changed configuration retires only audio_cpp, and Test Connection plus Refresh Models are explicit actions.
-- [ ] #4 Audio.cpp model and lazy voice controls use catalog metadata, select a local Server default sentinel that becomes voice=None, render identifiers safely, and choose a valid announced fallback when refreshed metadata removes a selection.
-- [ ] #5 Audio.cpp forces WAV and speed 1.0 with disabled explanatory controls, while switching to a legacy provider restores that provider's model, voice, format, speed, and provider-specific control state.
-- [ ] #6 Generate uses an immutable provider-neutral request snapshot through TTSService, never falls back, prevents overlapping generation, and keeps discovery, generation, playback, and save worker ownership independent.
-- [ ] #7 Successful complete-WAV results retain provider, model, voice, source-text snapshot, operation ID, and actual response metadata so later selector changes cannot relabel playback or saved filenames.
-- [ ] #8 Stable adapter failures, retryability, and recovery actions produce safe actionable Playground state; cancellation remains cancellation, stale catalogs disable new generation, and existing generated audio remains playable and saveable.
-- [ ] #9 The Playground communicates that external synthesis sends submitted text to the configured server while UI diagnostics and logs reveal neither synthesis text, configuration values, credentials, origins, nor unsafe remote identifiers.
-- [ ] #10 Deterministic service-fake and Textual tests cover the external end-to-end flow without an audio.cpp binary, server, model download, or managed binary/server.json UI, and relevant legacy STTS regressions remain green.
+- [x] #1 The STTS provider selector is populated from sealed registry descriptors using canonical provider IDs without materializing every adapter, and all six legacy providers retain their visible behavior.
+- [x] #2 Selecting audio_cpp lazily resolves only that provider, performs bounded readiness and model discovery, discards stale provider/configuration/catalog results, and exposes safe unavailable, incompatible, stale, and reconfiguring states.
+- [x] #3 The external audio.cpp settings surface validates and persists only the approved external configuration, Save does not connect, changed configuration retires only audio_cpp, and Test Connection plus Refresh Models are explicit actions.
+- [x] #4 Audio.cpp model and lazy voice controls use catalog metadata, select a local Server default sentinel that becomes voice=None, render identifiers safely, and choose a valid announced fallback when refreshed metadata removes a selection.
+- [x] #5 Audio.cpp forces WAV and speed 1.0 with disabled explanatory controls, while switching to a legacy provider restores that provider's model, voice, format, speed, and provider-specific control state.
+- [x] #6 Generate uses an immutable provider-neutral request snapshot through TTSService, never falls back, prevents overlapping generation, and keeps discovery, generation, playback, and save worker ownership independent.
+- [x] #7 Successful complete-WAV results retain provider, model, voice, source-text snapshot, operation ID, and actual response metadata so later selector changes cannot relabel playback or saved filenames.
+- [x] #8 Stable adapter failures, retryability, and recovery actions produce safe actionable Playground state; cancellation remains cancellation, stale catalogs disable new generation, and existing generated audio remains playable and saveable.
+- [x] #9 The Playground communicates that external synthesis sends submitted text to the configured server while UI diagnostics and logs reveal neither synthesis text, configuration values, credentials, origins, nor unsafe remote identifiers.
+- [x] #10 Deterministic service-fake and Textual tests cover the external end-to-end flow without an audio.cpp binary, server, model download, or managed binary/server.json UI, and relevant legacy STTS regressions remain green.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -58,11 +58,32 @@ ADR path: backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-bound
 Reason: ADR-023 already governs the adapter registry, catalog-driven Playground, external privacy boundary, complete-WAV contract, no-fallback policy, lifecycle, and ordered delivery slices; Slice 3 implements that accepted decision, so no new ADR is required.
 <!-- SECTION:PLAN:END -->
 
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented the catalog-driven external audio.cpp STTS Playground vertical through the application-owned TTS service. Added immutable request/artifact contracts, lazy descriptor/catalog/voice resolution, validated external settings and explicit discovery actions, native complete-WAV generation, provenance-safe playback/export, retained handler-owned generation, artifact leasing/cleanup, fixed safe recovery copy, and exact stale provider/configuration/catalog/model rejection. Preserved the six legacy providers behind the temporary bridge, including their original model/voice defaults and friendly labels. Hardened explicit-voice rediscovery so ordinary current voice failures can use Server default while stale and registry lifecycle failures cannot mutate or enable current generation. Updated ADR-023, the approved design, the TTS module guide, and user-facing external-server/privacy guidance; no new ADR was needed.
+
+Verification evidence:
+- Focused Slice 3 matrix after the final rebase: 185 passed, 1 existing RequestsDependencyWarning.
+- Broad TTS/STTS regressions after the final rebase: 892 passed, 14 expected optional skips, 6 existing dependency/SWIG deprecation warnings.
+- Full audio.cpp Playground file: 31 passed.
+- Ruff check passed and Ruff format confirmed 16 scoped files formatted.
+- compileall passed for TTS, STTS Window/catalog, and STTS event handler.
+- Scoped mypy passed for 5 changed typed source modules.
+- Managed-mode added-line boundary search returned no matches; git diff --check passed.
+- Documentation reference search passed.
+- Rebased without conflicts onto latest origin/dev 6ed2b9c00b355fa5b0344539cf7d944d97a5ac69; it is an ancestor of the feature head.
+- Range-diff marked all 15 rewritten commits patch-identical.
+- Final independent post-rebase review at e07287275 found no Critical or Important issues and declared the code merge-ready for correctness, races, lifecycle, security, privacy, compatibility, and integration with the new dev base.
+
+Core files changed include TTS/playground_types.py, TTS/TTS_Generation.py, TTS/legacy_catalogs.py, UI/stts_playground_catalog.py, UI/STTS_Window.py, Event_Handlers/STTS_Events/stts_events.py, focused TTS/UI tests, and the governing/user documentation. The deliberate tradeoff remains external-only, complete-WAV-first delivery through an async-stream-compatible interface; binary/server.json launch and supervision remain deferred.
+<!-- SECTION:NOTES:END -->
+
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 Automated unit, service-integration, and Textual tests cover the new catalog, settings, worker, generation, playback, save, stale-result, cancellation, error, and privacy behavior.
-- [ ] #2 Ruff, formatting, compileall, scoped mypy, focused and broad regressions, boundary searches, and diff hygiene pass.
-- [ ] #3 ADR-023, the approved design, TTS module guide, and user-facing configuration guidance describe the landed external Playground flow and preserve managed-mode deferrals.
-- [ ] #4 Self-review confirms no binary handling, server.json ownership, process launch, supervision, restart, managed log display, or automatic fallback entered Slice 3.
-- [ ] #5 Every acceptance criterion is checked and implementation notes record exact verification evidence before the task moves to Done.
+- [x] #1 Automated unit, service-integration, and Textual tests cover the new catalog, settings, worker, generation, playback, save, stale-result, cancellation, error, and privacy behavior.
+- [x] #2 Ruff, formatting, compileall, scoped mypy, focused and broad regressions, boundary searches, and diff hygiene pass.
+- [x] #3 ADR-023, the approved design, TTS module guide, and user-facing configuration guidance describe the landed external Playground flow and preserve managed-mode deferrals.
+- [x] #4 Self-review confirms no binary handling, server.json ownership, process launch, supervision, restart, managed log display, or automatic fallback entered Slice 3.
+- [x] #5 Every acceptance criterion is checked and implementation notes record exact verification evidence before the task moves to Done.
 <!-- DOD:END -->
