@@ -249,6 +249,14 @@ _TTS_PROVIDER_ORDER = (
     "alltalk",
 )
 
+_RECOVERY_ACTION_COPY = {
+    "check_server": "Check the configured audio.cpp server and retry.",
+    "configure_server": "Open STTS Settings and configure the audio.cpp server.",
+    "edit_request": "Adjust the text or selected options and retry.",
+    "refresh_models": "Refresh models in the STTS Playground and retry.",
+    "retry": "Retry from the STTS Playground.",
+}
+
 
 def _effective_provider_config(
     provider_id: str,
@@ -334,6 +342,7 @@ class STTSEventHandler:
         self._active_playground_operation_id: str | None = None
         self._playground_audio_files: set[Path] = set()
         self._playground_operation_files: dict[str, set[Path]] = {}
+        self._playground_file_leases: dict[Path, int] = {}
         self._cleanup_task: asyncio.Task[None] | None = None
         self._settings_save_lock = asyncio.Lock()
 
@@ -410,8 +419,53 @@ class STTSEventHandler:
         for path in tuple(self._playground_operation_files.get(operation_id, ())):
             if path in keep:
                 continue
+            if self._playground_file_leases.get(path, 0) > 0:
+                continue
             if secure_delete_file(path) or not path.exists():
                 self._forget_operation_file(operation_id, path)
+
+    def lease_playground_artifact(self, artifact: STTSGeneratedAudio) -> bool:
+        """Pin a handler-owned artifact across a deferred UI action."""
+        path = Path(artifact.path)
+        operation_files = self._playground_operation_files.get(
+            artifact.operation_id,
+            set(),
+        )
+        if (
+            path not in self._playground_audio_files
+            or path not in operation_files
+            or not path.exists()
+        ):
+            return False
+        self._playground_file_leases[path] = (
+            self._playground_file_leases.get(path, 0) + 1
+        )
+        return True
+
+    def release_playground_artifact(self, artifact: STTSGeneratedAudio) -> None:
+        """Release one lease and retire the artifact when it is no longer current."""
+        path = Path(artifact.path)
+        count = self._playground_file_leases.get(path, 0)
+        if count <= 0:
+            return
+        if count == 1:
+            self._playground_file_leases.pop(path, None)
+        else:
+            self._playground_file_leases[path] = count - 1
+            return
+
+        current_path = (
+            self._current_playground_artifact.path
+            if self._current_playground_artifact is not None
+            else None
+        )
+        if current_path == path:
+            return
+        for operation_id, operation_files in tuple(
+            self._playground_operation_files.items()
+        ):
+            if path in operation_files:
+                self._delete_operation_files(operation_id)
 
     def _accept_playground_artifact(self, artifact: STTSGeneratedAudio) -> None:
         """Store the new artifact before securely retiring older files."""
@@ -853,10 +907,11 @@ class STTSEventHandler:
     def _generation_error_copy(error: Exception) -> str:
         if isinstance(error, TTSOperationError):
             parts = [str(error)]
-            if error.recovery_action:
-                parts.append(error.recovery_action)
+            recovery_copy = _RECOVERY_ACTION_COPY.get(error.recovery_action or "")
+            if recovery_copy is not None:
+                parts.append(recovery_copy)
             elif error.retryable:
-                parts.append("Retry from the STTS Playground")
+                parts.append(_RECOVERY_ACTION_COPY["retry"])
             return " ".join(parts)
         if isinstance(error, TTSProviderReconfiguringError):
             return "TTS settings are being applied; retry shortly"
@@ -1322,6 +1377,7 @@ class STTSEventHandler:
         self._active_tasks.difference_update(tasks)
 
         owned_paths = tuple(self._playground_audio_files)
+        self._playground_file_leases.clear()
         for path in owned_paths:
             if secure_delete_file(path) or not path.exists():
                 self._playground_audio_files.discard(path)

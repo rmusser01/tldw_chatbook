@@ -3,7 +3,7 @@
 #
 # Imports
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import Optional, Dict, Any, List
 from pathlib import Path
@@ -52,7 +52,9 @@ from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.UI.stts_playground_catalog import (
     AUDIO_CPP_PROVIDER_ID,
     CatalogRequestToken,
+    FIRST_AVAILABLE_MODEL_ID,
     PlaygroundControls,
+    SERVER_DEFAULT_VOICE_ID,
     controls_from_catalog,
     provider_options,
     voice_id_for_request,
@@ -236,6 +238,7 @@ class TTSPlaygroundWidget(Widget):
         self._catalogs: dict[str, TTSProviderCatalog] = {}
         self._catalog_configuration_revisions: dict[str, int] = {}
         self._discovered_voices: dict[tuple[str, str], tuple[str, ...]] = {}
+        self._pending_voice_selections: dict[str, str] = {}
         self._provider_control_snapshots: dict[str, dict[str, Any]] = {}
         self._stale_providers: set[str] = set()
         self._catalog_generation_allowed = False
@@ -858,6 +861,9 @@ class TTSPlaygroundWidget(Widget):
         selected_voice = snapshot.get("voice_id")
         if selected_voice is None:
             selected_voice = get_cli_setting("app_tts", "default_voice", None)
+        pending_voice = self._pending_voice_selections.get(provider_id)
+        if pending_voice is not None:
+            selected_voice = pending_voice
         selected_format = snapshot.get("response_format")
         if selected_format is None:
             selected_format = get_cli_setting("app_tts", "default_format", None)
@@ -872,11 +878,20 @@ class TTSPlaygroundWidget(Widget):
                 if model_for_voices is not None
                 else None
             )
+            voice_discovery_pending = discovered_voices is None
+            if (
+                voice_discovery_pending
+                and isinstance(selected_voice, str)
+                and selected_voice
+            ):
+                pending_voice = selected_voice
+                self._pending_voice_selections[provider_id] = selected_voice
         else:
             model_for_voices = self._catalog_model_id(catalog, selected_model)
             base_voices = self._catalog_model_voices(catalog, model_for_voices)
             voice_choices = self._legacy_voice_choices(provider_id, base_voices)
             discovered_voices = tuple(value for _label, value in voice_choices)
+            voice_discovery_pending = False
 
         controls = controls_from_catalog(
             catalog,
@@ -888,7 +903,19 @@ class TTSPlaygroundWidget(Widget):
         )
         if voice_choices is not None:
             controls = replace(controls, voice_options=voice_choices)
+        if voice_discovery_pending and pending_voice is not None:
+            model_changed = (
+                selected_model is not None
+                and selected_model != controls.selected_model_id
+            )
+            controls = replace(controls, selection_changed=model_changed)
         self._apply_controls(controls)
+        if voice_discovery_pending and pending_voice is not None:
+            self._provider_control_snapshots.setdefault(provider_id, {})["voice_id"] = (
+                pending_voice
+            )
+        elif provider_id == AUDIO_CPP_PROVIDER_ID and discovered_voices is not None:
+            self._pending_voice_selections.pop(provider_id, None)
 
     def _apply_controls(self, controls: PlaygroundControls) -> None:
         model_select = self.query_one("#tts-model-select", Select)
@@ -1209,6 +1236,50 @@ class TTSPlaygroundWidget(Widget):
             and not getattr(self.app, "_is_generating", False)
         )
 
+    def _generation_readiness_error(
+        self,
+        provider_id: object,
+        model_id: object,
+    ) -> str | None:
+        """Return fixed UI copy when a generation snapshot is not authoritative."""
+        if self._generation_operation_id is not None:
+            return "TTS generation is already in progress"
+
+        handler = getattr(self.app, "_stts_handler", None)
+        state_getter = getattr(handler, "playground_state", None)
+        if callable(state_getter):
+            try:
+                if getattr(state_getter(), "generation_active", False):
+                    return "TTS generation is already in progress"
+            except Exception:
+                return "The TTS service is unavailable"
+
+        if (
+            not isinstance(provider_id, str)
+            or provider_id != self._selected_provider_id
+            or provider_id not in self._provider_ids
+        ):
+            return "Please select a valid TTS provider"
+        if not isinstance(model_id, str) or model_id.startswith("__"):
+            return "Please select a valid TTS model"
+
+        service = self._tts_service
+        catalog = self._catalogs.get(provider_id)
+        if service is None or catalog is None:
+            return "The selected provider catalog is not ready; refresh models"
+        if (
+            provider_id in self._stale_providers
+            or not self._catalog_generation_allowed
+            or catalog.health.state != "available"
+            or not catalog.health.fresh
+            or self._catalog_configuration_revisions.get(provider_id)
+            != service.configuration_revision(provider_id)
+        ):
+            return "The selected provider catalog is stale; refresh models"
+        if not any(model.model_id == model_id for model in catalog.models):
+            return "The selected model is no longer available; refresh models"
+        return None
+
     def _show_provider_specific_controls(self, provider_id: str) -> None:
         language_row = self.query_one("#kokoro-language-row", Horizontal)
         kokoro_settings = self.query_one("#kokoro-settings", Vertical)
@@ -1376,6 +1447,13 @@ class TTSPlaygroundWidget(Widget):
 
     def _generate_tts(self) -> None:
         """Generate TTS audio"""
+        if self._generation_operation_id is not None:
+            self.app.notify(
+                "TTS generation is already in progress",
+                severity="warning",
+            )
+            return
+
         # Get form values
         text_area = self.query_one("#tts-text-input", TextArea)
         text = text_area.text.strip()
@@ -1392,6 +1470,12 @@ class TTSPlaygroundWidget(Widget):
         provider = self._get_select_key(provider_select) or provider_select.value
         voice = self._get_select_key(voice_select) or voice_select.value
         model = self._get_select_key(model_select) or model_select.value
+
+        readiness_error = self._generation_readiness_error(provider, model)
+        if readiness_error is not None:
+            self._sync_generate_enabled()
+            self.app.notify(readiness_error, severity="warning")
+            return
 
         # Validate voice selection
         if not self._is_valid_voice(voice):
@@ -1495,7 +1579,7 @@ class TTSPlaygroundWidget(Widget):
                 "custom",
                 "_separator",
                 "_separator2",
-            ] and not voice.startswith("custom:"):
+            ] and not voice.startswith(("custom:", "profile:")):
                 # This is a saved profile - format it as profile:name
                 voice = f"profile:{voice}"
         elif provider == "higgs":
@@ -1548,7 +1632,7 @@ class TTSPlaygroundWidget(Widget):
                 "custom",
                 "_separator",
                 "_separator2",
-            ] and not voice.startswith("custom:"):
+            ] and not voice.startswith(("custom:", "profile:")):
                 # This is a saved profile - format it as profile:name
                 voice = f"profile:{voice}"
 
@@ -1666,6 +1750,49 @@ class TTSPlaygroundWidget(Widget):
             return None
         return Path(self.current_audio_file)
 
+    def _capture_audio_for_action(
+        self,
+    ) -> tuple[Path, Callable[[], None]] | None:
+        """Capture and, when handler-owned, lease the current artifact."""
+        artifact = self.current_audio_artifact
+        audio_path = self._current_generated_audio_path()
+        if audio_path is None:
+            return None
+        if artifact is None or artifact.path != audio_path:
+            return audio_path, lambda: None
+
+        handler = getattr(self.app, "_stts_handler", None)
+        acquire = getattr(handler, "lease_playground_artifact", None)
+        release = getattr(handler, "release_playground_artifact", None)
+        if not callable(acquire) or not callable(release):
+            return audio_path, lambda: None
+        try:
+            if not acquire(artifact):
+                return None
+        except Exception as error:
+            logger.debug(
+                "Could not lease Playground artifact ({})",
+                type(error).__name__,
+            )
+            return None
+
+        released = False
+
+        def release_once() -> None:
+            nonlocal released
+            if released:
+                return
+            released = True
+            try:
+                release(artifact)
+            except Exception as error:
+                logger.debug(
+                    "Could not release Playground artifact ({})",
+                    type(error).__name__,
+                )
+
+        return audio_path, release_once
+
     def _play_audio(self) -> None:
         """Play the generated audio"""
         logger.debug(
@@ -1681,16 +1808,18 @@ class TTSPlaygroundWidget(Widget):
             logger.debug("Play already in progress, ignoring request")
             return
 
-        audio_path = self._current_generated_audio_path()
-        if audio_path is None:
+        captured = self._capture_audio_for_action()
+        if captured is None:
             self.app.notify("No audio file to play", severity="warning")
             return
+        audio_path, release_artifact = captured
 
         logger.debug(
             f"Audio path: {audio_path}, exists: {audio_path.exists() if audio_path else False}"
         )
 
         if not audio_path.exists():
+            release_artifact()
             self.app.notify(
                 f"Audio file not found: {audio_path.name}", severity="warning"
             )
@@ -1710,18 +1839,30 @@ class TTSPlaygroundWidget(Widget):
 
             # Use the new audio player method
             # Store the worker task so we can check if it's running
-            self._play_worker_task = self.run_worker(
-                self._play_audio_async,
-                group="stts-playback",
-                exclusive=True,
-            )
+            playback = self._play_audio_async(audio_path, release_artifact)
+            try:
+                self._play_worker_task = self.run_worker(
+                    playback,
+                    group="stts-playback",
+                    exclusive=True,
+                )
+            except Exception:
+                playback.close()
+                release_artifact()
+                raise
         else:
+            release_artifact()
             self.app.notify("Audio playback not available", severity="warning")
 
-    async def _play_audio_async(self) -> None:
+    async def _play_audio_async(
+        self,
+        audio_path: Path | None = None,
+        release_artifact: Callable[[], None] | None = None,
+    ) -> None:
         """Play audio asynchronously using the audio player"""
         try:
-            audio_path = self._current_generated_audio_path()
+            if audio_path is None:
+                audio_path = self._current_generated_audio_path()
             if audio_path is not None:
                 if audio_path.exists():
                     # Get current player state before stopping
@@ -1800,6 +1941,9 @@ class TTSPlaygroundWidget(Widget):
             self.query_one("#pause-audio-btn", Button).disabled = True
             self.query_one("#stop-audio-btn", Button).disabled = True
             self.query_one("#audio-player-status", Static).update("Playback error")
+        finally:
+            if release_artifact is not None:
+                release_artifact()
 
     def _ensure_audio_player(self) -> bool:
         """Ensure audio player is initialized (lazy loading)"""
@@ -1935,8 +2079,13 @@ class TTSPlaygroundWidget(Widget):
 
     def _export_audio(self) -> None:
         """Export the generated audio"""
-        original_path = self._current_generated_audio_path()
-        if original_path is None:
+        captured = self._capture_audio_for_action()
+        if captured is None:
+            self.app.notify("No audio file to export", severity="warning")
+            return
+        original_path, release_artifact = captured
+        if not original_path.exists():
+            release_artifact()
             self.app.notify("No audio file to export", severity="warning")
             return
 
@@ -1961,11 +2110,27 @@ class TTSPlaygroundWidget(Widget):
             context="audio_export",
         )
 
-        self.app.push_screen(file_picker, self._handle_audio_export)
+        def handle_export(path: Optional[str]) -> None:
+            try:
+                self._handle_audio_export(path, source_path=original_path)
+            finally:
+                release_artifact()
 
-    def _handle_audio_export(self, path: Optional[str]) -> None:
+        try:
+            self.app.push_screen(file_picker, handle_export)
+        except Exception:
+            release_artifact()
+            raise
+
+    def _handle_audio_export(
+        self,
+        path: Optional[str],
+        *,
+        source_path: Path | None = None,
+    ) -> None:
         """Handle audio file export"""
-        source_path = self._current_generated_audio_path()
+        if source_path is None:
+            source_path = self._current_generated_audio_path()
         if not path or source_path is None:
             return
 
@@ -2289,6 +2454,7 @@ class TTSSettingsWidget(Widget):
                     yield Select(
                         options=[
                             ("OpenAI", "openai"),
+                            ("audio.cpp (External Server)", "audio_cpp"),
                             ("ElevenLabs", "elevenlabs"),
                             ("Kokoro (Local)", "kokoro"),
                             ("Chatterbox (Local)", "chatterbox"),
@@ -3054,6 +3220,7 @@ class TTSSettingsWidget(Widget):
             default_provider = get_cli_setting("app_tts", "default_provider", "openai")
             if default_provider in [
                 "openai",
+                "audio_cpp",
                 "elevenlabs",
                 "kokoro",
                 "chatterbox",
@@ -3110,6 +3277,7 @@ class TTSSettingsWidget(Widget):
             default_format = get_cli_setting("app_tts", "default_format", "mp3")
             if default_format in ["mp3", "opus", "aac", "flac", "wav"]:
                 format_select.value = default_format
+            self._update_audio_cpp_default_constraints(default_provider)
 
             # Set Kokoro device
             try:
@@ -3281,6 +3449,7 @@ class TTSSettingsWidget(Widget):
             # Update voice and model options when provider changes
             self._update_default_voice_options(event.value)
             self._update_default_model_options(event.value)
+            self._update_audio_cpp_default_constraints(event.value)
         elif event.select.id == "default-voice-select":
             # Validate voice selection (prevent selecting separators)
             if not self._is_valid_voice(event.value):
@@ -3295,7 +3464,26 @@ class TTSSettingsWidget(Widget):
         """Update default voice options based on provider"""
         voice_select = self.query_one("#default-voice-select", Select)
 
-        if provider == "openai":
+        if provider == AUDIO_CPP_PROVIDER_ID:
+            options = [("Server default", SERVER_DEFAULT_VOICE_ID)]
+            selected = SERVER_DEFAULT_VOICE_ID
+            configured_provider = get_cli_setting(
+                "app_tts",
+                "default_provider",
+                "openai",
+            )
+            stored_voice = get_cli_setting("app_tts", "default_voice", None)
+            if (
+                configured_provider == AUDIO_CPP_PROVIDER_ID
+                and isinstance(stored_voice, str)
+                and stored_voice
+                and stored_voice != SERVER_DEFAULT_VOICE_ID
+            ):
+                options.append(("Saved server voice", stored_voice))
+                selected = stored_voice
+            voice_select.set_options(options)
+            voice_select.value = selected
+        elif provider == "openai":
             voice_select.set_options(
                 [
                     ("Alloy", "alloy"),
@@ -3445,7 +3633,28 @@ class TTSSettingsWidget(Widget):
         """Update default model options based on provider"""
         model_select = self.query_one("#default-model-select", Select)
 
-        if provider == "openai":
+        if provider == AUDIO_CPP_PROVIDER_ID:
+            options = [
+                ("First available server model", FIRST_AVAILABLE_MODEL_ID),
+            ]
+            selected = FIRST_AVAILABLE_MODEL_ID
+            configured_provider = get_cli_setting(
+                "app_tts",
+                "default_provider",
+                "openai",
+            )
+            stored_model = get_cli_setting("app_tts", "default_model", None)
+            if (
+                configured_provider == AUDIO_CPP_PROVIDER_ID
+                and isinstance(stored_model, str)
+                and stored_model
+                and not stored_model.startswith("__")
+            ):
+                options.append(("Saved server model", stored_model))
+                selected = stored_model
+            model_select.set_options(options)
+            model_select.value = selected
+        elif provider == "openai":
             model_select.set_options(
                 [
                     ("TTS-1 (Standard)", "tts-1"),
@@ -3503,6 +3712,17 @@ class TTSSettingsWidget(Widget):
                 ]
             )
             model_select.value = "alltalk"
+
+    def _update_audio_cpp_default_constraints(self, provider: object) -> None:
+        """Mirror native audio.cpp's fixed format and speed without discovery."""
+        format_select = self.query_one("#default-format-select", Select)
+        speed_input = self.query_one("#default-speed-input", Input)
+        is_audio_cpp = provider == AUDIO_CPP_PROVIDER_ID
+        format_select.disabled = is_audio_cpp
+        speed_input.disabled = is_audio_cpp
+        if is_audio_cpp:
+            format_select.value = "wav"
+            speed_input.value = "1.0"
 
     def _save_settings(self) -> None:
         """Save TTS settings"""

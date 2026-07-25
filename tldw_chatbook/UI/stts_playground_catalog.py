@@ -10,6 +10,7 @@ from tldw_chatbook.TTS.adapter_types import (
 )
 
 AUDIO_CPP_PROVIDER_ID = "audio_cpp"
+FIRST_AVAILABLE_MODEL_ID = "__first_available_model__"
 SERVER_DEFAULT_VOICE_ID = "__server_default__"
 SERVER_DEFAULT_VOICE_LABEL = "Server default"
 

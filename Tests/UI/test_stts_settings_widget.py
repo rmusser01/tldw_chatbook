@@ -24,6 +24,10 @@ from tldw_chatbook.TTS.adapter_types import (
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.UI import STTS_Window
 from tldw_chatbook.UI.STTS_Window import TTSSettingsWidget
+from tldw_chatbook.UI.stts_playground_catalog import (
+    FIRST_AVAILABLE_MODEL_ID,
+    SERVER_DEFAULT_VOICE_ID,
+)
 
 
 class _SettingsHost(App[None]):
@@ -108,6 +112,81 @@ async def test_settings_selects_mount_with_canonical_values(
         )
         assert app.query_one("#kokoro-device-select", Select).value == "cpu"
         assert app.query_one("#higgs-device-select", Select).value == "auto"
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_stored_defaults_mount_and_save_without_nulls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = {
+        ("app_tts", "default_provider"): "audio_cpp",
+        ("app_tts", "default_model"): "<opaque:model>",
+        ("app_tts", "default_voice"): "[voice]",
+        ("app_tts", "default_format"): "wav",
+        ("app_tts", "audio_cpp"): AudioCppConfig().to_mapping(),
+    }
+    monkeypatch.setattr(
+        STTS_Window,
+        "get_cli_setting",
+        lambda section, key, default=None: stored.get((section, key), default),
+    )
+    monkeypatch.setattr(
+        TTSSettingsWidget,
+        "_load_kokoro_voice_blends",
+        lambda self: None,
+    )
+    app = _SettingsHost()
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await pilot.pause()
+        widget = app.query_one(TTSSettingsWidget)
+
+        assert app.query_one("#default-provider-select", Select).value == "audio_cpp"
+        assert app.query_one("#default-model-select", Select).value == "<opaque:model>"
+        assert app.query_one("#default-voice-select", Select).value == "[voice]"
+
+        widget._save_settings()
+        await pilot.pause()
+
+        settings = app.saved_events[-1].settings
+        assert settings["default_provider"] == "audio_cpp"
+        assert settings["default_model"] == "<opaque:model>"
+        assert settings["default_voice"] == "[voice]"
+        assert settings["default_format"] == "wav"
+        assert settings["default_speed"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_selecting_audio_cpp_defaults_uses_non_materializing_sentinels(
+    settings_config: None,
+) -> None:
+    del settings_config
+    app = _SettingsHost()
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await pilot.pause()
+        provider = app.query_one("#default-provider-select", Select)
+        provider.value = "audio_cpp"
+        await pilot.pause()
+
+        assert app.query_one("#default-model-select", Select).value == (
+            FIRST_AVAILABLE_MODEL_ID
+        )
+        assert app.query_one("#default-voice-select", Select).value == (
+            SERVER_DEFAULT_VOICE_ID
+        )
+        assert app.query_one("#default-format-select", Select).value == "wav"
+        assert app.query_one("#default-format-select", Select).disabled is True
+        assert app.query_one("#default-speed-input", Input).value == "1.0"
+        assert app.query_one("#default-speed-input", Input).disabled is True
+
+        app.query_one(TTSSettingsWidget)._save_settings()
+        await pilot.pause()
+
+        settings = app.saved_events[-1].settings
+        assert settings["default_provider"] == "audio_cpp"
+        assert settings["default_model"] == FIRST_AVAILABLE_MODEL_ID
+        assert settings["default_voice"] == SERVER_DEFAULT_VOICE_ID
 
 
 @pytest.mark.asyncio
