@@ -26,7 +26,7 @@ import inspect
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Checkbox, Input, Select, Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -582,10 +582,171 @@ async def test_library_rag_detail_renders_fields_disabled_for_readonly_active_pr
         assert screen.query_one("#settings-library-rag-vector-top-k", Input).disabled
         assert screen.query_one("#settings-library-rag-hybrid-alpha", Input).disabled
         assert screen.query_one("#settings-library-rag-score-threshold", Input).disabled
-        assert screen.query_one("#settings-library-rag-include-citations", Button).disabled
+        assert screen.query_one(
+            "#settings-library-rag-include-citations", Checkbox
+        ).disabled
         assert screen.query_one("#settings-library-rag-citation-style", Select).disabled
         assert screen.query_one("#settings-library-rag-snippet-max-chars", Input).disabled
         assert screen.query_one("#settings-library-rag-max-context-size", Input).disabled
+
+
+# --- Task 1 (RAG settings v2 UX, AC #4): the citations/reranking toggles are
+# real Checkboxes (not Buttons whose label just says "Enabled"/"Disabled"),
+# and the rerank model/results Inputs are dimmed -- never hidden -- whenever
+# reranking itself is off, distinct from the builtin read-only lock. ---
+
+
+@pytest.mark.asyncio
+async def test_citation_and_reranking_toggles_are_checkboxes_mirroring_loaded_values(
+    monkeypatch, tmp_path
+):
+    from tldw_chatbook.RAG_Search.reranker import RerankingConfig
+
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.rag_config.search.include_citations = False
+    profile.reranking_config = RerankingConfig()
+    mgr.save_profile(profile)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        citations_checkbox = screen.query_one(
+            "#settings-library-rag-include-citations", Checkbox
+        )
+        rerank_checkbox = screen.query_one(
+            "#settings-library-rag-enable-reranking", Checkbox
+        )
+        assert citations_checkbox.value is False
+        assert rerank_checkbox.value is True
+
+
+@pytest.mark.asyncio
+async def test_rerank_fields_dimmed_when_reranking_off_and_re_enable_on_toggle(
+    monkeypatch, tmp_path
+):
+    """The default hybrid_basic clone has no reranking_config (reranking
+    off) -- the rerank model/results Inputs must compose disabled with the
+    "(enable reranking to edit)" suffix, and toggling the checkbox on must
+    immediately re-enable them (live, before any Save)."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        model_input = screen.query_one("#settings-library-rag-reranker-model", Input)
+        top_k_input = screen.query_one("#settings-library-rag-reranker-top-k", Input)
+        assert model_input.disabled is True
+        assert top_k_input.disabled is True
+        assert (
+            "Reranker model (enable reranking to edit)" in _visible_text(screen)
+        )
+        assert (
+            "Rerank results (enable reranking to edit)" in _visible_text(screen)
+        )
+
+        rerank_checkbox = screen.query_one(
+            "#settings-library-rag-enable-reranking", Checkbox
+        )
+        screen.handle_library_rag_enable_reranking_changed(
+            Checkbox.Changed(rerank_checkbox, True)
+        )
+        await pilot.pause()
+
+        assert model_input.disabled is False
+        assert top_k_input.disabled is False
+        assert "(enable reranking to edit)" not in _visible_text(screen)
+
+        # And back off again -- the dimming (and suffix) must reapply.
+        screen.handle_library_rag_enable_reranking_changed(
+            Checkbox.Changed(rerank_checkbox, False)
+        )
+        await pilot.pause()
+
+        assert model_input.disabled is True
+        assert top_k_input.disabled is True
+        assert "(enable reranking to edit)" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_rerank_fields_stay_dimmed_after_a_profile_switch_resync(
+    monkeypatch, tmp_path
+):
+    """Regression: `_sync_library_rag_profile_widgets` runs AFTER
+    `_sync_library_rag_widgets` on every set-active/clone/rename/delete
+    resync and used to blanket-set `disabled = read_only` for every field
+    including the rerank Inputs -- silently re-enabling them after
+    switching to a non-builtin profile with reranking off. Exercises the
+    same resync path a real Set-active click uses."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    mgr.save_profile(profile)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        model_input = screen.query_one("#settings-library-rag-reranker-model", Input)
+        assert model_input.disabled is True
+
+        screen._sync_library_rag_widgets()
+        screen._sync_library_rag_profile_widgets()
+        await pilot.pause()
+
+        assert model_input.disabled is True
+        assert (
+            "Reranker model (enable reranking to edit)" in _visible_text(screen)
+        )
+
+
+@pytest.mark.asyncio
+async def test_toggling_include_citations_checkbox_stages_draft_value_aware(
+    monkeypatch, tmp_path
+):
+    """Retargets the pre-existing Button.Pressed dirty-marking assertions
+    (see test_settings_library_rag_renders_guided_defaults_and_validates in
+    test_settings_configuration_hub.py) at the new Checkbox.Changed handler:
+    toggling away from the loaded value stages a draft, and staging the SAME
+    value the profile already has must NOT mark the category dirty."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.rag_config.search.include_citations = True
+    mgr.save_profile(profile)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+
+        checkbox = screen.query_one(
+            "#settings-library-rag-include-citations", Checkbox
+        )
+        screen.handle_library_rag_include_citations_changed(
+            Checkbox.Changed(checkbox, False)
+        )
+
+        assert screen.query_one("#settings-save-category", Button).disabled is False
+        assert "Unsaved" in _visible_text(screen)
+
+        # Staging the SAME value as loaded must clear the draft again
+        # (value-aware -- exactly like the old Button.Pressed path).
+        screen.handle_library_rag_include_citations_changed(
+            Checkbox.Changed(checkbox, True)
+        )
+
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert "No unsaved changes" in _visible_text(screen)
 
 
 # --- UX review item 6 (P2, imported-settings provenance): the active

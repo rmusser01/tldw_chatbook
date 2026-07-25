@@ -2887,8 +2887,8 @@ class SettingsScreen(BaseAppScreen):
                     "#settings-library-rag-citation-style", Select
                 ).value = normalise_library_rag_citation_style(values["citation_style"])
                 self.query_one(
-                    "#settings-library-rag-include-citations", Button
-                ).label = "Enabled" if bool(values["include_citations"]) else "Disabled"
+                    "#settings-library-rag-include-citations", Checkbox
+                ).value = bool(values["include_citations"])
                 for selector, key in (
                     ("#settings-library-rag-default-top-k", "default_top_k"),
                     ("#settings-library-rag-fts-top-k", "fts_top_k"),
@@ -2910,10 +2910,8 @@ class SettingsScreen(BaseAppScreen):
                     values["distance_metric"]
                 )
                 self.query_one(
-                    "#settings-library-rag-enable-reranking", Button
-                ).label = (
-                    "Enabled" if bool(values["enable_reranking"]) else "Disabled"
-                )
+                    "#settings-library-rag-enable-reranking", Checkbox
+                ).value = bool(values["enable_reranking"])
                 for selector, key in (
                     ("#settings-library-rag-embedding-model", "embedding_model"),
                     ("#settings-library-rag-embedding-device", "embedding_device"),
@@ -2931,6 +2929,10 @@ class SettingsScreen(BaseAppScreen):
                     ("#settings-library-rag-reranker-top-k", "reranker_top_k"),
                 ):
                     self.query_one(selector, Input).value = str(values[key])
+                self._apply_library_rag_rerank_field_state(
+                    rerank_enabled=bool(values["enable_reranking"]),
+                    field_disabled=bool(active_profile_info()["read_only"]),
+                )
             except QueryError:
                 pass
         finally:
@@ -7617,19 +7619,51 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-status-row",
             )
 
-    def _library_rag_include_citations_label(self) -> str:
-        return (
-            "Enabled"
-            if bool(self._library_rag_setting_values()["include_citations"])
-            else "Disabled"
-        )
+    # Task 1 (RAG settings v2 UX, AC #4): the citations/reranking toggles
+    # used to be Buttons whose label just said "Enabled"/"Disabled" -- an
+    # honest control here is a real Checkbox (label describes WHAT it does,
+    # `.value` IS the state). The rerank model/results Inputs are dimmed
+    # (never hidden) whenever reranking itself is off, distinct from the
+    # builtin read-only lock: `_library_rag_rerank_field_state` computes
+    # BOTH the shared `disabled` bool and the label suffix, so compose (which
+    # can't query not-yet-mounted widgets) and the post-mount sync/handler
+    # paths below can never drift from each other.
+    @staticmethod
+    def _library_rag_rerank_field_state(
+        *, rerank_enabled: bool, field_disabled: bool
+    ) -> tuple[bool, str]:
+        disabled = (not rerank_enabled) or field_disabled
+        suffix = "" if rerank_enabled else " (enable reranking to edit)"
+        return disabled, suffix
 
-    def _library_rag_enable_reranking_label(self) -> str:
-        return (
-            "Enabled"
-            if bool(self._library_rag_setting_values()["enable_reranking"])
-            else "Disabled"
+    def _apply_library_rag_rerank_field_state(
+        self, *, rerank_enabled: bool, field_disabled: bool
+    ) -> None:
+        """Post-mount refresh of the rerank model/results Inputs' disabled
+        state and label suffix -- called after the checkbox is toggled and
+        from ``_sync_library_rag_widgets``/``_sync_library_rag_profile_widgets``
+        so a profile switch or revert can never leave a stale suffix/disabled
+        combination behind."""
+        disabled, suffix = self._library_rag_rerank_field_state(
+            rerank_enabled=rerank_enabled, field_disabled=field_disabled
         )
+        for input_selector, label_selector, base_label in (
+            (
+                "#settings-library-rag-reranker-model",
+                "#settings-library-rag-reranker-model-label",
+                "Reranker model",
+            ),
+            (
+                "#settings-library-rag-reranker-top-k",
+                "#settings-library-rag-reranker-top-k-label",
+                "Rerank results",
+            ),
+        ):
+            try:
+                self.query_one(input_selector, Input).disabled = disabled
+            except QueryError:
+                pass
+            self._set_static_text(label_selector, f"{base_label}{suffix}")
 
     @staticmethod
     def _library_rag_profile_select_options(grouped: dict) -> list[tuple[str, str]]:
@@ -8004,8 +8038,14 @@ class SettingsScreen(BaseAppScreen):
             "chunk_overlap",
             "chunking_method",
             "distance_metric",
-            "reranker_model",
-            "reranker_top_k",
+            # reranker_model/reranker_top_k are handled below via
+            # _apply_library_rag_rerank_field_state instead of this blanket
+            # read-only-only treatment: their disabled state also depends on
+            # whether reranking itself is enabled, and this method runs AFTER
+            # _sync_library_rag_widgets on every set-active/clone/rename/
+            # delete resync, so a naive `disabled = read_only` here would
+            # silently re-enable them whenever the active (non-builtin)
+            # profile just switched to has reranking off.
         ):
             selector = self._library_rag_field_selector(key)
             if selector is None:
@@ -8014,12 +8054,16 @@ class SettingsScreen(BaseAppScreen):
                 self.query_one(selector).disabled = bool(info["read_only"])
             except QueryError:
                 pass
+        self._apply_library_rag_rerank_field_state(
+            rerank_enabled=bool(self._library_rag_loaded_values()["enable_reranking"]),
+            field_disabled=bool(info["read_only"]),
+        )
         for selector in (
             "#settings-library-rag-include-citations",
             "#settings-library-rag-enable-reranking",
         ):
             try:
-                self.query_one(selector, Button).disabled = bool(info["read_only"])
+                self.query_one(selector, Checkbox).disabled = bool(info["read_only"])
             except QueryError:
                 pass
 
@@ -8039,6 +8083,10 @@ class SettingsScreen(BaseAppScreen):
         # state a brand-new install starts in (active = the "hybrid_basic"
         # builtin).
         field_disabled = active_profile_info()["read_only"]
+        rerank_enabled = bool(values["enable_reranking"])
+        rerank_field_disabled, rerank_suffix = self._library_rag_rerank_field_state(
+            rerank_enabled=rerank_enabled, field_disabled=field_disabled
+        )
 
         yield Static(
             "RAG", classes="destination-section settings-column-title"
@@ -8128,8 +8176,9 @@ class SettingsScreen(BaseAppScreen):
                         disabled=field_disabled,
                     )
                 yield Static("Citation and snippets", classes="destination-section")
-                yield Button(
-                    self._library_rag_include_citations_label(),
+                yield Checkbox(
+                    "Include citations",
+                    value=bool(values["include_citations"]),
                     id="settings-library-rag-include-citations",
                     tooltip="Toggle citation metadata in future RAG answers where supported.",
                     disabled=field_disabled,
@@ -8310,30 +8359,39 @@ class SettingsScreen(BaseAppScreen):
                     "disabling it removes that config entirely.",
                     classes="settings-detail-row",
                 )
-                yield Button(
-                    self._library_rag_enable_reranking_label(),
+                yield Checkbox(
+                    "Enable reranking",
+                    value=rerank_enabled,
                     id="settings-library-rag-enable-reranking",
                     tooltip="Toggle LLM-based reranking of retrieved results for this profile.",
                     disabled=field_disabled,
                 )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Reranker model", classes="settings-input-label")
+                    yield Static(
+                        f"Reranker model{rerank_suffix}",
+                        id="settings-library-rag-reranker-model-label",
+                        classes="settings-input-label",
+                    )
                     yield Input(
                         value=str(values["reranker_model"]),
                         id="settings-library-rag-reranker-model",
                         classes="settings-compact-input",
                         placeholder="blank = reranker default",
-                        disabled=field_disabled,
+                        disabled=rerank_field_disabled,
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Rerank results", classes="settings-input-label")
+                    yield Static(
+                        f"Rerank results{rerank_suffix}",
+                        id="settings-library-rag-reranker-top-k-label",
+                        classes="settings-input-label",
+                    )
                     yield Input(
                         value=str(values["reranker_top_k"]),
                         id="settings-library-rag-reranker-top-k",
                         classes="settings-compact-input",
                         placeholder=">= 1",
                         restrict=r"^[0-9]*$",
-                        disabled=field_disabled,
+                        disabled=rerank_field_disabled,
                     )
                 soft_warnings = self._library_rag_soft_warnings()
                 reranker_warning = Static(
@@ -10022,14 +10080,14 @@ class SettingsScreen(BaseAppScreen):
         )
         self._mark_library_rag_settings_staged()
 
-    @on(Button.Pressed, "#settings-library-rag-include-citations")
+    @on(Checkbox.Changed, "#settings-library-rag-include-citations")
     def handle_library_rag_include_citations_changed(
-        self, event: Button.Pressed
+        self, event: Checkbox.Changed
     ) -> None:
         event.stop()
-        next_value = not bool(self._library_rag_setting_values()["include_citations"])
-        self._stage_library_rag_value("include_citations", next_value)
-        event.button.label = "Enabled" if next_value else "Disabled"
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value("include_citations", bool(event.value))
         self._mark_library_rag_settings_staged()
 
     @on(Select.Changed, "#settings-library-rag-citation-style")
@@ -10136,12 +10194,19 @@ class SettingsScreen(BaseAppScreen):
         self._stage_library_rag_value("distance_metric", str(event.value or "cosine"))
         self._mark_library_rag_settings_staged()
 
-    @on(Button.Pressed, "#settings-library-rag-enable-reranking")
-    def handle_library_rag_enable_reranking_changed(self, event: Button.Pressed) -> None:
+    @on(Checkbox.Changed, "#settings-library-rag-enable-reranking")
+    def handle_library_rag_enable_reranking_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
         event.stop()
-        next_value = not bool(self._library_rag_setting_values()["enable_reranking"])
+        if self._syncing_library_rag_defaults:
+            return
+        next_value = bool(event.value)
         self._stage_library_rag_value("enable_reranking", next_value)
-        event.button.label = "Enabled" if next_value else "Disabled"
+        self._apply_library_rag_rerank_field_state(
+            rerank_enabled=next_value,
+            field_disabled=bool(active_profile_info()["read_only"]),
+        )
         self._mark_library_rag_settings_staged()
 
     @on(Input.Changed, "#settings-library-rag-reranker-model")

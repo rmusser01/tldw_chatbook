@@ -13,6 +13,7 @@ from textual.containers import VerticalScroll
 from textual.events import Key
 from textual.widgets import (
     Button,
+    Checkbox,
     Collapsible,
     Input,
     Select,
@@ -1016,11 +1017,11 @@ async def test_settings_library_rag_reranker_warning_shown_for_a_warning_trigger
         assert warning.display is False
         assert "exceeds default results" not in _visible_text(screen)
 
-        enable_button = screen.query_one(
-            "#settings-library-rag-enable-reranking", Button
+        enable_checkbox = screen.query_one(
+            "#settings-library-rag-enable-reranking", Checkbox
         )
         screen.handle_library_rag_enable_reranking_changed(
-            Button.Pressed(enable_button)
+            Checkbox.Changed(enable_checkbox, True)
         )
 
         top_k_input = screen.query_one("#settings-library-rag-reranker-top-k", Input)
