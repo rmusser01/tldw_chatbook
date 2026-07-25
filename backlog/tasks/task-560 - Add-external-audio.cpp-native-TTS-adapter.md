@@ -1,17 +1,17 @@
 ---
-id: TASK-551
+id: TASK-560
 title: Add external audio.cpp native TTS adapter
 status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 19:45'
-updated_date: '2026-07-25 01:15'
+updated_date: '2026-07-25 01:27'
 labels:
   - tts
   - audio-cpp
   - backend
 dependencies:
-  - TASK-402
+  - TASK-561
 references:
   - backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md
 documentation:
@@ -79,6 +79,11 @@ under [ADR-023](../decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boun
 final verification and acceptance closure were completed in Task 8.
 
 Post-rebase verification against origin/dev 238ac3041b626b7b34fd9bd40649443e26b7abac: 596 focused tests passed; the broader TTS, STTS capability/settings, audio-service, and media regression set passed 813 tests with 14 skips. Ruff checked and formatted 19 changed Python files, compileall passed, scoped mypy passed across 7 source files, the managed-process boundary search returned no production matches, and git diff --check passed. Final whole-branch review found no actionable issue and mapped AC #1-#10 plus DoD #1-#4 to passing evidence; ADR-023 remains sufficient. Pytest exited zero; existing dependency/deprecation warnings and the known interpreter-shutdown temp-file cleanup diagnostic remain outside this slice.
+
+After merge, this task was renumbered from TASK-551 to TASK-560 because the
+latest `dev` already contained an unrelated TASK-551. The filename,
+frontmatter, ADR, design, and implementation-plan references were updated
+without changing the shipped implementation.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

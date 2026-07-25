@@ -2,7 +2,7 @@
 
 **Status:** approved by the user on 2026-07-23; review amendments approved on 2026-07-23
 **Date:** 2026-07-23
-**Related tasks:** [TASK-402](<../../../backlog/tasks/task-402 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md>) and [TASK-551](<../../../backlog/tasks/task-551 - Add-external-audio.cpp-native-TTS-adapter.md>)
+**Related tasks:** [TASK-561](<../../../backlog/tasks/task-561 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md>) and [TASK-560](<../../../backlog/tasks/task-560 - Add-external-audio.cpp-native-TTS-adapter.md>)
 **Canonical ADR:** [ADR-023](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
 **Upstream contract reviewed:** `0xShug0/audio.cpp` commit `d3d748179e5ace353386fbf17bcaedfacf482d75`
 
@@ -23,7 +23,7 @@ save it.
 
 - Slice 1 established the authoritative registry and placed the six existing
   providers behind the temporary legacy bridge.
-- Slice 2, tracked by TASK-551, implements the external-only `audio_cpp` native
+- Slice 2, tracked by TASK-560, implements the external-only `audio_cpp` native
   adapter, bounded discovery, lazy voices, and complete-WAV synthesis. Its
   exact, alias-free, lazy, exclusive provider spec is registered before the six
   unchanged legacy entries.

@@ -55,7 +55,7 @@
   document the landed external adapter and the explicit provider-neutral lazy
   voice operation.
 - Modify
-  `backlog/tasks/task-551 - Add-external-audio.cpp-native-TTS-adapter.md`: record
+  `backlog/tasks/task-560 - Add-external-audio.cpp-native-TTS-adapter.md`: record
   plan, verification, acceptance completion, and implementation notes.
 
 ### Task 1: Extend the provider-neutral response and voice contracts
@@ -404,7 +404,7 @@ git commit -m "test(tts): harden audio cpp lifecycle and privacy"
 - Modify: `Docs/superpowers/specs/2026-07-23-audio-cpp-tts-adapter-registry-design.md`
 - Modify: `backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md`
 - Modify:
-  `backlog/tasks/task-551 - Add-external-audio.cpp-native-TTS-adapter.md`
+  `backlog/tasks/task-560 - Add-external-audio.cpp-native-TTS-adapter.md`
 
 - [x] **Step 1: Document the landed external adapter**
 
@@ -427,15 +427,15 @@ binary/`server.json` supervision is Slices 4–5.
 - [x] **Step 4: Commit documentation**
 
 ```bash
-git add Docs backlog/decisions backlog/tasks/task-551*
+git add Docs backlog/decisions backlog/tasks/task-560*
 git commit -m "docs(tts): document external audio cpp adapter"
 ```
 
-### Task 8: Run the full verification gate and finish TASK-551
+### Task 8: Run the full verification gate and finish TASK-560
 
 **Files:**
 - Modify:
-  `backlog/tasks/task-551 - Add-external-audio.cpp-native-TTS-adapter.md`
+  `backlog/tasks/task-560 - Add-external-audio.cpp-native-TTS-adapter.md`
 
 - [x] **Step 1: Run focused tests**
 
@@ -495,13 +495,13 @@ diagnostics, no text/value logging, no fallback, and no managed/UI code.
 - [x] **Step 5: Finish Backlog evidence**
 
 Check every acceptance and Definition-of-Done item, add concise implementation
-notes with exact verification counts, and move TASK-551 to Done only after all
+notes with exact verification counts, and move TASK-560 to Done only after all
 evidence is current.
 
 - [x] **Step 6: Final commit**
 
 ```bash
-git add "backlog/tasks/task-551 - Add-external-audio.cpp-native-TTS-adapter.md"
+git add "backlog/tasks/task-560 - Add-external-audio.cpp-native-TTS-adapter.md"
 git commit -m "chore(tts): close external audio cpp adapter task"
 ```
 

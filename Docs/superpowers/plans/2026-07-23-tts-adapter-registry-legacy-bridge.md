@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - This plan implements only delivery slice 1 from the approved design: registry authority, legacy containment, compatibility generation, and progress delivery.
-- Do not implement audio.cpp HTTP discovery, synthesis, configuration, process supervision, or STTS catalog-driven controls in TASK-402.
+- Do not implement audio.cpp HTTP discovery, synthesis, configuration, process supervision, or STTS catalog-driven controls in TASK-561.
 - Canonical provider IDs are exactly `openai`, `elevenlabs`, `kokoro`, `chatterbox`, `higgs`, and `alltalk` for this slice; `audio_cpp` is added by the next ordered slice.
 - The initial provider alias map is empty. Display labels never determine provider identity.
 - Runtime provider registration is sealed. The retained class-global wildcard registry is private to the legacy bridge and closed to new providers.
@@ -25,7 +25,7 @@
 - Architecture-boundary tests parse Python syntax rather than matching raw
   source text. The final independent `rg` check remains required.
 - New registry, bridge, and service diagnostics may not log configuration
-  values or synthesis text; TASK-402 also removes the existing OpenAI
+  values or synthesis text; TASK-561 also removes the existing OpenAI
   API-key-fragment disclosure.
 - No new dependency is added.
 - ADR required: yes
@@ -2587,13 +2587,13 @@ git commit -m "docs(tts): publish adapter service boundary"
 
 ---
 
-### Task 8: Verify compatibility and close TASK-402
+### Task 8: Verify compatibility and close TASK-561
 
 **Files:**
-- Modify: `backlog/tasks/task-402 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md`
+- Modify: `backlog/tasks/task-561 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md`
 
 **Interfaces:**
-- Consumes: all TASK-402 production and test changes.
+- Consumes: all TASK-561 production and test changes.
 - Produces: verified task notes, checked acceptance criteria, and Done status.
 
 - [x] **Step 0: Close final-review lifecycle and privacy regressions**
@@ -2679,7 +2679,7 @@ Confirm:
 
 ```bash
 rg -n "ADR-023|023-tts-adapter" \
-  "backlog/tasks/task-402 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md" \
+  "backlog/tasks/task-561 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md" \
   Docs/Development/TTS/TTS_MODULE_GUIDE.md
 rg -n "audio_cpp|audiocpp|AudioCpp" \
   tldw_chatbook/TTS Tests/TTS
@@ -2694,13 +2694,13 @@ slice.
 Use:
 
 ```bash
-backlog task edit 402 --notes "Implemented the app-owned sealed TTS adapter registry, operation leases and targeted provider retirement, six provider-scoped legacy adapters, enumerated compatibility routing, operation-scoped progress delivery, explicit application binding/shutdown, and the OpenAI key-prefix logging fix. Added focused registry, bridge, lifecycle, concurrency, privacy, and compatibility coverage. ADR-023 remains the governing architecture decision; audio.cpp native transport and supervision remain in later ordered tasks."
+backlog task edit 561 --notes "Implemented the app-owned sealed TTS adapter registry, operation leases and targeted provider retirement, six provider-scoped legacy adapters, enumerated compatibility routing, operation-scoped progress delivery, explicit application binding/shutdown, and the OpenAI key-prefix logging fix. Added focused registry, bridge, lifecycle, concurrency, privacy, and compatibility coverage. ADR-023 remains the governing architecture decision; audio.cpp native transport and supervision remain in later ordered tasks."
 ```
 
 After the verification evidence passes, check all eight criteria and set Done:
 
 ```bash
-backlog task edit 402 \
+backlog task edit 561 \
   --check-ac 1 \
   --check-ac 2 \
   --check-ac 3 \
@@ -2709,22 +2709,22 @@ backlog task edit 402 \
   --check-ac 6 \
   --check-ac 7 \
   --check-ac 8
-backlog task edit 402 \
+backlog task edit 561 \
   --check-dod 1 \
   --check-dod 2 \
   --check-dod 3 \
   --check-dod 4 \
   --check-dod 5
-backlog task edit 402 -s Done
-backlog task 402 --plain
+backlog task edit 561 -s Done
+backlog task 561 --plain
 ```
 
-Expected: TASK-402 shows status `Done`, all acceptance criteria checked, the
+Expected: TASK-561 shows status `Done`, all acceptance criteria checked, the
 implementation plan and notes present, and links to ADR-023 and this plan.
 
 - [ ] **Step 6: Commit task completion metadata**
 
 ```bash
-git add "backlog/tasks/task-402 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md"
+git add "backlog/tasks/task-561 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md"
 git commit -m "chore(tts): complete registry bridge task"
 ```
