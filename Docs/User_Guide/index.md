@@ -87,4 +87,4 @@ screen's own page for its "Keyboard & commands" table.
   than duplicate them.
 
 —
-*Verified against dev @ 9af99aba — 2026-07-25*
+*Verified against dev @ 8975c9b8 — 2026-07-25*
