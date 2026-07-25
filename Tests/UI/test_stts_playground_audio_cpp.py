@@ -100,6 +100,7 @@ class FakeTTSService:
         self.catalog_cancelled = False
         self.voice_started: asyncio.Event | None = None
         self.allow_voices: asyncio.Event | None = None
+        self.voice_error: Exception | None = None
 
     def provider_descriptors(self) -> tuple[TTSProviderDescriptor, ...]:
         self.descriptor_calls += 1
@@ -146,6 +147,8 @@ class FakeTTSService:
             self.voice_started.set()
         if self.allow_voices is not None:
             await self.allow_voices.wait()
+        if self.voice_error is not None:
+            raise self.voice_error
         return self.voices.get((provider_id, model_id), ())
 
     async def synthesize(self, *_args: Any, **_kwargs: Any) -> None:
@@ -218,6 +221,13 @@ def _option_labels(select: Select[Any]) -> tuple[str, ...]:
     for label, _value in select._options:
         labels.append(label.plain if isinstance(label, Text) else str(label))
     return tuple(labels)
+
+
+def _label_for_value(select: Select[Any], value: str) -> str:
+    for label, option_value in select._options:
+        if option_value == value:
+            return label.plain if isinstance(label, Text) else str(label)
+    raise AssertionError(f"Missing Select value: {value}")
 
 
 async def _wait_until(
@@ -379,6 +389,7 @@ async def test_catalog_revision_invalidates_old_voices_before_rediscovery(
         await app.workers.wait_for_complete()
         voice_select = app.query_one("#tts-voice-select", Select)
         voice_select.value = "[voice]"
+        app.query_one("#tts-text-input", TextArea).text = "pending voice"
         await pilot.pause()
 
         service.catalogs["audio_cpp"] = _audio_catalog(revision=12)
@@ -393,12 +404,24 @@ async def test_catalog_revision_invalidates_old_voices_before_rediscovery(
         assert _option_values(voice_select) == (SERVER_DEFAULT_VOICE_ID,)
         assert voice_select.value == SERVER_DEFAULT_VOICE_ID
         assert app.notices == notices_before
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+
+        widget.action_generate_tts()
+        await pilot.pause()
+
+        assert app.generation_events == []
+        pending_notices = [
+            *notices_before,
+            ("Voices are still loading; wait before generating", "warning"),
+        ]
+        assert app.notices == pending_notices
 
         service.allow_voices.set()
         await app.workers.wait_for_complete()
 
         assert voice_select.value == "[voice]"
-        assert app.notices == notices_before
+        assert app.notices == pending_notices
+        assert app.query_one("#tts-generate-btn", Button).disabled is False
 
 
 @pytest.mark.asyncio
@@ -437,6 +460,43 @@ async def test_catalog_revision_falls_back_only_after_refreshed_voice_is_removed
                 "warning",
             ),
         ]
+
+
+@pytest.mark.asyncio
+async def test_voice_discovery_failure_releases_pending_explicit_voice(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        voice_select = app.query_one("#tts-voice-select", Select)
+        voice_select.value = "[voice]"
+        app.query_one("#tts-text-input", TextArea).text = "fallback voice"
+        await pilot.pause()
+
+        service.catalogs["audio_cpp"] = _audio_catalog(revision=12)
+        service.voice_error = RuntimeError("untrusted upstream detail")
+        app.query_one(TTSPlaygroundWidget)._load_provider_catalog(
+            "audio_cpp",
+            refresh=True,
+        )
+        await app.workers.wait_for_complete()
+
+        assert voice_select.value == SERVER_DEFAULT_VOICE_ID
+        assert app.query_one("#tts-generate-btn", Button).disabled is False
+        assert (
+            str(app.query_one("#tts-provider-status", Static).render())
+            == "Voices are unavailable; the provider default remains available"
+        )
+
+        app.query_one(TTSPlaygroundWidget).action_generate_tts()
+        await pilot.pause()
+
+        assert len(app.generation_events) == 1
+        assert app.generation_events[0].request.voice_id is None
+        assert "untrusted upstream detail" not in str(app.notices)
 
 
 @pytest.mark.asyncio
@@ -490,6 +550,69 @@ async def test_legacy_control_state_is_restored_after_audio_cpp_switch(
         "audio_cpp",
         "openai",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "provider_id",
+        "model_id",
+        "model_label",
+        "voice_id",
+        "voice_label",
+    ),
+    (
+        ("openai", "tts-1", "TTS-1 (Standard)", "alloy", "Alloy"),
+        (
+            "elevenlabs",
+            "eleven_multilingual_v2",
+            "Eleven Multilingual v2 (Default)",
+            "21m00Tcm4TlvDq8ikWAM",
+            "Rachel",
+        ),
+        ("kokoro", "kokoro", "Kokoro 82M", "af_alloy", "Alloy (US Female)"),
+        (
+            "chatterbox",
+            "chatterbox",
+            "Chatterbox 0.5B",
+            "default",
+            "Default Voice",
+        ),
+        (
+            "higgs",
+            "higgs-audio-v2",
+            "Higgs Audio V2 3B",
+            "professional_female",
+            "Professional Female",
+        ),
+        ("alltalk", "alltalk", "AllTalk TTS", "female_01.wav", "Female 01"),
+    ),
+)
+async def test_legacy_provider_defaults_and_labels_are_preserved(
+    audio_cpp_playground: FakeTTSService,
+    provider_id: str,
+    model_id: str,
+    model_label: str,
+    voice_id: str,
+    voice_label: str,
+) -> None:
+    del audio_cpp_playground
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        app.query_one("#tts-provider-select", Select).value = provider_id
+        await _wait_until(
+            pilot,
+            lambda: app.query_one("#tts-model-select", Select).value == model_id,
+        )
+
+        model_select = app.query_one("#tts-model-select", Select)
+        voice_select = app.query_one("#tts-voice-select", Select)
+        assert model_select.value == model_id
+        assert _label_for_value(model_select, model_id) == model_label
+        assert voice_select.value == voice_id
+        assert _label_for_value(voice_select, voice_id) == voice_label
 
 
 @pytest.mark.asyncio

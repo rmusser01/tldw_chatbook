@@ -49,6 +49,11 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRegistryClosedError,
 )
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.legacy_catalogs import (
+    LEGACY_DEFAULT_MODELS,
+    LEGACY_DEFAULT_VOICES,
+    LEGACY_VOICE_OPTIONS,
+)
 from tldw_chatbook.UI.stts_playground_catalog import (
     AUDIO_CPP_PROVIDER_ID,
     CatalogRequestToken,
@@ -823,6 +828,13 @@ class TTSPlaygroundWidget(Widget):
                 type(error).__name__,
             )
             if provider_id == self._selected_provider_id:
+                self._pending_voice_selections.pop(provider_id, None)
+                self._provider_control_snapshots.setdefault(provider_id, {})[
+                    "voice_id"
+                ] = SERVER_DEFAULT_VOICE_ID
+                catalog = self._catalogs.get(provider_id)
+                if catalog is not None:
+                    self._apply_catalog(provider_id, catalog)
                 self._set_provider_status(
                     "Voices are unavailable; the provider default remains available"
                 )
@@ -857,10 +869,18 @@ class TTSPlaygroundWidget(Widget):
         snapshot = self._control_snapshot_for(provider_id)
         selected_model = snapshot.get("model_id")
         if selected_model is None:
-            selected_model = get_cli_setting("app_tts", "default_model", None)
+            selected_model = (
+                get_cli_setting("app_tts", "default_model", None)
+                if provider_id == AUDIO_CPP_PROVIDER_ID
+                else LEGACY_DEFAULT_MODELS.get(provider_id)
+            )
         selected_voice = snapshot.get("voice_id")
         if selected_voice is None:
-            selected_voice = get_cli_setting("app_tts", "default_voice", None)
+            selected_voice = (
+                get_cli_setting("app_tts", "default_voice", None)
+                if provider_id == AUDIO_CPP_PROVIDER_ID
+                else LEGACY_DEFAULT_VOICES.get(provider_id)
+            )
         pending_voice = self._pending_voice_selections.get(provider_id)
         if pending_voice is not None:
             selected_voice = pending_voice
@@ -883,6 +903,7 @@ class TTSPlaygroundWidget(Widget):
                 voice_discovery_pending
                 and isinstance(selected_voice, str)
                 and selected_voice
+                and selected_voice != SERVER_DEFAULT_VOICE_ID
             ):
                 pending_voice = selected_voice
                 self._pending_voice_selections[provider_id] = selected_voice
@@ -914,6 +935,8 @@ class TTSPlaygroundWidget(Widget):
             self._provider_control_snapshots.setdefault(provider_id, {})["voice_id"] = (
                 pending_voice
             )
+            self._catalog_generation_allowed = False
+            self._sync_generate_enabled()
         elif provider_id == AUDIO_CPP_PROVIDER_ID and discovered_voices is not None:
             self._pending_voice_selections.pop(provider_id, None)
 
@@ -1064,42 +1087,17 @@ class TTSPlaygroundWidget(Widget):
         provider_id: str,
         base_voices: tuple[str, ...],
     ) -> tuple[tuple[str, str], ...]:
+        configured_choices = LEGACY_VOICE_OPTIONS.get(provider_id)
+        choices = (
+            list(configured_choices)
+            if configured_choices is not None
+            else [(voice.replace("_", " ").title(), voice) for voice in base_voices]
+        )
         if provider_id == "chatterbox":
-            choices = [
-                ("Default Voice", "default"),
-                ("Upload Reference Audio", "custom"),
-            ]
             choices.extend(self._chatterbox_profile_choices())
-            return tuple(choices)
-        if provider_id == "higgs":
-            choices = [
-                ("Professional Female", "professional_female"),
-                ("Warm Female", "warm_female"),
-                ("Storyteller Male", "storyteller_male"),
-                ("Deep Male", "deep_male"),
-                ("Energetic Female", "energetic_female"),
-                ("Soft Female", "soft_female"),
-                ("Upload Reference Audio", "custom"),
-            ]
+        elif provider_id == "higgs":
             choices.extend(self._higgs_profile_choices())
-            return tuple(choices)
-        if provider_id == "alltalk":
-            return tuple(
-                (name.replace("_", " ").replace(".wav", "").title(), name)
-                for name in (
-                    "female_01.wav",
-                    "female_02.wav",
-                    "female_03.wav",
-                    "female_04.wav",
-                    "male_01.wav",
-                    "male_02.wav",
-                    "male_03.wav",
-                    "male_04.wav",
-                )
-            )
-
-        choices = [(voice.replace("_", " ").title(), voice) for voice in base_voices]
-        if provider_id == "kokoro":
+        elif provider_id == "kokoro":
             choices.extend(self._kokoro_blend_choices())
         return tuple(choices)
 
@@ -1262,6 +1260,8 @@ class TTSPlaygroundWidget(Widget):
             return "Please select a valid TTS provider"
         if not isinstance(model_id, str) or model_id.startswith("__"):
             return "Please select a valid TTS model"
+        if provider_id in self._pending_voice_selections:
+            return "Voices are still loading; wait before generating"
 
         service = self._tts_service
         catalog = self._catalogs.get(provider_id)
