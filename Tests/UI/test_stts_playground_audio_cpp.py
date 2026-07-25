@@ -488,6 +488,146 @@ async def test_superseded_catalog_failure_cannot_overwrite_newer_success(
 
 
 @pytest.mark.asyncio
+async def test_superseded_catalog_success_cannot_invalidate_newer_success(
+    audio_cpp_playground: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = audio_cpp_playground
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        widget = app.query_one(TTSPlaygroundWidget)
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        call_count = 0
+        older_catalog = _audio_catalog(revision=11)
+        newer_catalog = _audio_catalog(revision=12)
+
+        async def get_catalog(
+            provider_id: str,
+            refresh: bool = False,
+        ) -> TTSProviderCatalog:
+            nonlocal call_count
+            del refresh
+            assert provider_id == "audio_cpp"
+            call_count += 1
+            if call_count == 1:
+                first_started.set()
+                try:
+                    await release_first.wait()
+                except asyncio.CancelledError:
+                    await release_first.wait()
+                return older_catalog
+            return newer_catalog
+
+        monkeypatch.setattr(service, "get_catalog", get_catalog)
+
+        widget._load_provider_catalog("audio_cpp", refresh=True)
+        await first_started.wait()
+        widget._load_provider_catalog("audio_cpp", refresh=True)
+        await _wait_until(
+            pilot,
+            lambda: (
+                call_count == 2
+                and widget._catalogs.get("audio_cpp") is newer_catalog
+                and "ready"
+                in str(app.query_one("#tts-provider-status", Static).render()).lower()
+            ),
+        )
+
+        release_first.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert widget._catalogs["audio_cpp"] is newer_catalog
+        assert "audio_cpp" not in widget._stale_providers
+        assert widget._catalog_generation_allowed is True
+        assert (
+            "ready"
+            in str(app.query_one("#tts-provider-status", Static).render()).lower()
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("obsolete_fails", (False, True), ids=("success", "failure"))
+async def test_superseded_same_model_voice_result_cannot_overwrite_newer_success(
+    audio_cpp_playground: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+    obsolete_fails: bool,
+) -> None:
+    service = audio_cpp_playground
+    app = _PlaygroundHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        widget = app.query_one(TTSPlaygroundWidget)
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        call_count = 0
+        model_id = "<opaque:model>"
+        catalog_revision = service.catalogs["audio_cpp"].revision
+
+        async def get_voices(
+            provider_id: str,
+            requested_model_id: str,
+            refresh: bool = False,
+        ) -> tuple[str, ...]:
+            nonlocal call_count
+            del refresh
+            assert (provider_id, requested_model_id) == ("audio_cpp", model_id)
+            call_count += 1
+            if call_count == 1:
+                first_started.set()
+                try:
+                    await release_first.wait()
+                except asyncio.CancelledError:
+                    await release_first.wait()
+                if obsolete_fails:
+                    raise RuntimeError("obsolete voice request failed")
+                return ("obsolete-voice",)
+            return ("new-voice",)
+
+        monkeypatch.setattr(service, "get_voices", get_voices)
+
+        widget._load_provider_voices(
+            "audio_cpp",
+            model_id,
+            catalog_revision,
+            refresh=True,
+        )
+        await first_started.wait()
+        widget._load_provider_voices(
+            "audio_cpp",
+            model_id,
+            catalog_revision,
+            refresh=True,
+        )
+        await _wait_until(
+            pilot,
+            lambda: (
+                call_count == 2
+                and widget._discovered_voices.get(("audio_cpp", model_id))
+                == ("new-voice",)
+            ),
+        )
+
+        release_first.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert widget._discovered_voices[("audio_cpp", model_id)] == ("new-voice",)
+        assert _option_values(app.query_one("#tts-voice-select", Select)) == (
+            SERVER_DEFAULT_VOICE_ID,
+            "new-voice",
+        )
+        assert (
+            "voices are unavailable"
+            not in str(app.query_one("#tts-provider-status", Static).render()).lower()
+        )
+
+
+@pytest.mark.asyncio
 async def test_voice_discovery_does_not_cancel_inflight_catalog_refresh(
     audio_cpp_playground: FakeTTSService,
 ) -> None:

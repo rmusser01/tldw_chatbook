@@ -248,6 +248,7 @@ class TTSPlaygroundWidget(Widget):
         self._catalogs: dict[str, TTSProviderCatalog] = {}
         self._catalog_configuration_revisions: dict[str, int] = {}
         self._catalog_request_generations: dict[str, int] = {}
+        self._voice_request_generations: dict[tuple[str, str], int] = {}
         self._discovered_voices: dict[tuple[str, str], tuple[str, ...]] = {}
         self._pending_voice_selections: dict[str, str] = {}
         self._provider_control_snapshots: dict[str, dict[str, Any]] = {}
@@ -751,7 +752,8 @@ class TTSPlaygroundWidget(Widget):
             self._set_provider_status("Loading selected provider models…")
             catalog = await service.get_catalog(provider_id, refresh=refresh)
             if not self._catalog_token_is_current(token):
-                self._mark_stale_catalog_result(token)
+                if self._catalog_request_is_latest(token):
+                    self._mark_stale_catalog_result(token)
                 return
             if catalog.provider_id != provider_id:
                 self._catalog_failure(
@@ -814,11 +816,15 @@ class TTSPlaygroundWidget(Widget):
         service = self._tts_service
         if service is None:
             return
+        request_key = (provider_id, model_id)
+        request_generation = self._voice_request_generations.get(request_key, 0) + 1
+        self._voice_request_generations[request_key] = request_generation
         token = CatalogRequestToken(
             provider_id=provider_id,
             configuration_revision=service.configuration_revision(provider_id),
             catalog_revision=catalog_revision,
             model_id=model_id,
+            request_generation=request_generation,
         )
         try:
             voices = await service.get_voices(
@@ -829,6 +835,8 @@ class TTSPlaygroundWidget(Widget):
         except asyncio.CancelledError:
             raise
         except Exception as error:
+            if not self._voice_token_is_current(token):
+                return
             if isinstance(
                 error,
                 (TTSProviderReconfiguringError, TTSRegistryClosedError),
@@ -840,8 +848,6 @@ class TTSPlaygroundWidget(Widget):
                         self._catalog_error_copy(error, provider_id)
                     )
                     self._sync_generate_enabled()
-                return
-            if not self._voice_token_is_current(token):
                 return
             logger.warning(
                 "TTS voice discovery failed ({})",
@@ -885,7 +891,9 @@ class TTSPlaygroundWidget(Widget):
             configuration_revision=configuration_revision,
             catalog_revision=current_revision,
             model_id=current_model,
-            request_generation=None,
+            request_generation=self._voice_request_generations.get(
+                (token.provider_id, token.model_id or "")
+            ),
         )
 
     def _catalog_token_is_current(self, token: CatalogRequestToken) -> bool:
