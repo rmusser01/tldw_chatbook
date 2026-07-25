@@ -278,7 +278,13 @@ async def test_import_offpage_name_conflict_message(
 
         notes: list[tuple[str, str]] = []
         monkeypatch.setattr(
-            screen, "_notify", lambda msg, sev="warning": notes.append((msg, sev))
+            screen,
+            "_notify",
+            # task-445 gave the real ``_notify`` a keyword-only ``timeout``
+            # (import-conflict/import-success toasts now linger 6s instead
+            # of the 5s default); the fake must accept it too or a real call
+            # site passing timeout=... raises TypeError against this stub.
+            lambda msg, sev="warning", timeout=None: notes.append((msg, sev)),
         )
 
         selected: list[str] = []

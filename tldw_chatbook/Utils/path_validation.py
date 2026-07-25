@@ -69,6 +69,24 @@ def validate_path(
             )
             raise ValueError("Access to hidden files/directories is not allowed")
 
+        # Some callers pass the destination's own immediate parent as
+        # base_directory (e.g. to validate an arbitrary user-chosen export
+        # destination while still using this function for traversal/symlink
+        # checks, rather than confining to one fixed app-data root). In that
+        # pattern a hidden final directory is folded into base_directory
+        # itself, so it never appears in relative_parts above and the check
+        # is silently bypassed. Catch that by also rejecting a base
+        # directory whose own final component is dotted. This deliberately
+        # does not walk base_directory's ancestors, so a base dir that lives
+        # *under* a dotted ancestor (e.g. ~/.local/share/...) is unaffected.
+        if base_directory.name.startswith("."):
+            logger.warning(f"Hidden base directory rejected: {base_directory}")
+            log_counter(
+                "path_validation_security_violation",
+                labels={"type": "hidden_file_access"},
+            )
+            raise ValueError("Access to hidden files/directories is not allowed")
+
         # Log success
         duration = time.time() - start_time
         log_histogram(

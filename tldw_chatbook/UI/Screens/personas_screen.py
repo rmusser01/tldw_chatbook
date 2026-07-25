@@ -6536,8 +6536,15 @@ class PersonasScreen(BaseAppScreen):
             errors.append("name: required")
         book = data.get("character_book")
         if book:
-            ok, book_errors = validate_character_book(book)
-            if not ok:
+            # validate_character_book (task-100, commit 414183488) is lenient
+            # by design: it only returns ok=False when book_data itself isn't
+            # a dict, and reports every other issue (bad 'entries' type,
+            # malformed entries, etc.) as messages in book_errors while still
+            # returning ok=True. Gating on `book_errors` truthiness - not the
+            # `ok` flag - renders exactly what the (now-lenient) validator
+            # still reports, instead of silently dropping those messages.
+            _ok, book_errors = validate_character_book(book)
+            if book_errors:
                 errors.extend(str(error) for error in book_errors)
         return tuple(errors)
 
