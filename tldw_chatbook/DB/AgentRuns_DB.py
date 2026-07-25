@@ -46,6 +46,14 @@ class AgentRunsDB(BaseDB):
     def _get_connection(self) -> sqlite3.Connection:
         conn = super()._get_connection()
         conn.execute("PRAGMA foreign_keys = ON")
+        # WAL lets a reader and the single writer proceed concurrently; a
+        # busy_timeout makes a contended write wait up to 5s instead of
+        # raising 'database is locked' immediately. WAL is unavailable for
+        # in-memory DBs, so guard on is_memory_db (busy_timeout is harmless
+        # there and kept for uniformity).
+        if not self.is_memory_db:
+            conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
         conn.row_factory = sqlite3.Row
         return conn
 

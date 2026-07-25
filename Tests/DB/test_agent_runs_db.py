@@ -404,3 +404,18 @@ def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(tmp_path, mon
     assert db2.reconcile_orphaned_runs() == 1
     assert db2.get_run(rid)["status"] == "error"
     assert path_str in AgentRunsDB._swept_paths
+
+
+def test_file_db_uses_wal_and_busy_timeout(tmp_path):
+    db = AgentRunsDB(tmp_path / "agent_runs.db")
+    with db.connection() as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+
+
+def test_memory_db_skips_wal(tmp_path):
+    # :memory: cannot use WAL; must not raise and must stay 'memory'
+    db = AgentRunsDB(":memory:")
+    with db.connection() as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "memory"
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
