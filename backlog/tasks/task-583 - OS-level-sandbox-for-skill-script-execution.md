@@ -4,6 +4,7 @@ title: OS-level sandbox for skill script execution
 status: To Do
 assignee: []
 created_date: '2026-07-25 15:05'
+updated_date: '2026-07-25 23:25'
 labels:
   - skills
   - security
@@ -37,3 +38,24 @@ This is a design project, not a patch: the mechanism differs per platform (macOS
 - [ ] #6 The residual-risk section of Docs/Features/Skills-Script-Execution.md is rewritten to match what is actually enforced
 - [ ] #7 Existing skill scripts that only read their own bundle and write to the scratch directory continue to work unchanged
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+PAUSED by user 2026-07-25, before any implementation. Recording the feasibility prototype so it is not re-derived.
+
+FEASIBILITY: PROVEN on macOS 15.6. sandbox-exec exists at /usr/bin/sandbox-exec and a deny-default profile genuinely blocks both network egress and writes outside an allowed subpath. Full-stack prototype composed cleanly with the EXISTING runner: RLIMITs from our Python trampoline still applied (verified CPU 7 / NOFILE 64 inside the sandbox), network blocked, scratch write allowed, write outside blocked, and start_new_session still gave the child its own process group (so killpg teardown is unaffected). Exit 0.
+
+TWO CONSTRAINTS LEARNED THE HARD WAY:
+1. subpath rules MUST use the RESOLVED path. mktemp -d yields /var/folders/... but the sandbox matches /private/var/folders/...; the unresolved form silently denies writes to the very directory you meant to allow.
+2. A malformed profile makes sandbox-exec fail LOUDLY (it errored on a deliberate typo) rather than silently running unsandboxed — the failure direction you want from a containment layer.
+
+USER DECISIONS TAKEN DURING THE BRAINSTORM (carry these into the eventual spec):
+- Network: blocked by default with a per-skill opt-in.
+- The opt-in is a DECLARE/GRANT PAIR (user answered '1+2'): the skill declares  in SKILL.md frontmatter (so the request rides in reviewed, fingerprinted content — adding it later changes the digest, re-triggering review and dropping any standing script grant) AND the user grants it via a per-skill toggle in the Library trust panel. Network is permitted only when BOTH hold, so a skill cannot self-grant and a user cannot accidentally grant to a skill that never asked.
+- Fail mode: refuse to run when the sandbox cannot be applied, with a config knob permitting degraded best-effort execution for someone who knowingly wants it.
+
+RISKS TO ACCEPT KNOWINGLY: sandbox-exec is Apple-deprecated, so a future macOS could remove it and the fail-closed default would then turn script execution off until a replacement lands. Linux needs a different mechanism entirely (seccomp/namespaces/bubblewrap), so this ships macOS-first with Linux refusing-unless-opted-in.
+
+SCOPE NOTE: this is a multi-task layer (frontmatter key, second grant dimension, UI toggle, profile generation, fail-mode config), not a single PR.
+<!-- SECTION:NOTES:END -->
