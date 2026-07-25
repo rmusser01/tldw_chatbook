@@ -38,7 +38,13 @@ DEFAULT_SD_CPP_TIMEOUT_SECONDS = 120
 DEFAULT_SWARMUI_BASE_URL = "http://127.0.0.1:7801"
 DEFAULT_SWARMUI_TIMEOUT_SECONDS = 120
 DEFAULT_OPENROUTER_IMAGE_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_OPENROUTER_IMAGE_MODEL = "openai/gpt-image-1"
+# task-620: the original default ("openai/gpt-image-1", ported verbatim from
+# tldw_server) was retired from OpenRouter's catalog and 404s on every
+# request. Verified live against OpenRouter's catalog 2026-07-25:
+# "google/gemini-2.5-flash-image" exists, is cheap, and is fast -- picked
+# over "openai/gpt-5-image-mini" on cost. Re-verify against the live catalog
+# before changing this again; OpenRouter's image-model lineup moves.
+DEFAULT_OPENROUTER_IMAGE_MODEL = "google/gemini-2.5-flash-image"
 DEFAULT_OPENROUTER_IMAGE_TIMEOUT_SECONDS = 120
 DEFAULT_NOVITA_IMAGE_BASE_URL = "https://api.novita.ai"
 DEFAULT_NOVITA_IMAGE_MODEL = "sd_xl_base_1.0.safetensors"
@@ -111,6 +117,53 @@ _GLOBAL_KEYS = [
     "context_llm_enabled", "context_llm_turns", "context_llm_timeout_seconds",
 ]
 
+# task-621: flat_field_name -> (backend, toml_key), derived by reversing
+# _NON_SECRET and _SECRETS (whose secret TOML key is always "api_key"). Used
+# only to build a helpful unknown-key warning below -- never to accept the
+# flat spelling itself (decision: warn-on-unknown-key, not flat aliases, to
+# avoid two spellings of the same setting needing a collision-precedence
+# rule).
+_FLAT_MAP: dict[str, tuple[str, str]] = {
+    flat_field: (backend, toml_key) for (backend, toml_key), flat_field in _NON_SECRET.items()
+}
+_FLAT_MAP.update({
+    flat_field: (backend, "api_key") for backend, (flat_field, _env_vars, _kr_id) in _SECRETS.items()
+})
+
+# Known [image_generation.<backend>] subsection names.
+_BACKEND_NAMES = set(_SECRETS) | {backend for backend, _toml_key in _NON_SECRET}
+
+
+def _warn_unknown_top_level_keys(raw: dict) -> None:
+    """Warn once per unknown key found directly under ``[image_generation]``.
+
+    The flattener above only reads keys listed in ``_GLOBAL_KEYS`` plus the
+    known backend subsections (``[image_generation.<backend>]``) and
+    ``[image_generation.styles]``. A backend field written using its *flat*
+    dataclass name straight under ``[image_generation]`` (e.g.
+    ``openrouter_image_default_model``) matches none of those and is
+    silently ignored -- this surfaces that mistake with the exact nested
+    replacement to use. Never raises (config loading must never crash on a
+    malformed/unexpected key).
+    """
+    try:
+        for key in raw:
+            if not isinstance(key, str):
+                continue
+            if key in _GLOBAL_KEYS or key == "styles" or key in _BACKEND_NAMES:
+                continue
+            target = _FLAT_MAP.get(key)
+            if target is not None:
+                backend, toml_key = target
+                logger.warning(
+                    f"[image_generation] unknown key '{key}' is ignored -- flat backend keys are "
+                    f"not read here; use [image_generation.{backend}] {toml_key} = ... instead"
+                )
+            else:
+                logger.warning(f"[image_generation] unknown key '{key}' is ignored")
+    except Exception as e:  # never let a malformed section crash config loading
+        logger.debug(f"image_generation unknown-key scan failed: {e}")
+
 
 def _read_image_generation_toml() -> dict:
     """Return the raw [image_generation] section dict (nested). Patch point in tests."""
@@ -145,6 +198,7 @@ def _resolve_secret(backend: str, sub: dict):
 def _load_image_generation_section() -> dict:
     """Assemble the FLAT mapping the config builder expects, from nested TOML + env + keyring."""
     raw = _read_image_generation_toml()
+    _warn_unknown_top_level_keys(raw)
     flat: dict = {}
     for k in _GLOBAL_KEYS:
         if k in raw:

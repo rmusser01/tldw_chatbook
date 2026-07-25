@@ -2767,6 +2767,11 @@ enabled = true
 allowed_hosts = []
 
 [image_generation]
+# Backend-specific fields (model, base_url, timeout_seconds, api_key, ...) go
+# ONLY under the matching [image_generation.<backend>] table below -- e.g.
+# [image_generation.openrouter] default_model = "...". A flat key such as
+# `openrouter_image_default_model` written directly in THIS [image_generation]
+# table is NOT read; it logs a startup warning and is ignored (task-621).
 default_backend = "swarmui"          # local SwarmUI instance is the friendliest zero-key default
 enabled_backends = ["swarmui"]
 max_width = 1024
@@ -2811,7 +2816,7 @@ allowed_extra_params = []
 
 [image_generation.openrouter]
 base_url = "https://openrouter.ai/api/v1"
-default_model = "openai/gpt-image-1"
+default_model = "google/gemini-2.5-flash-image"  # task-620: "openai/gpt-image-1" was retired upstream and 404s
 timeout_seconds = 120
 allowed_extra_params = []
 api_key = "<API_KEY_HERE>"
