@@ -374,6 +374,67 @@ class SubscriptionsDB(BaseDB):
         # Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_queued ON subscription_items(queued_for_briefing, status)")
+
+        # Reader/body columns. `content` holds the renderable body: article text
+        # for feed items, diff text for site changes. `url_snapshots` remains the
+        # authority for full-page and previous-snapshot views.
+        if "content" not in items_cols:
+            cursor.execute("ALTER TABLE subscription_items ADD COLUMN content TEXT")
+        if "content_format" not in items_cols:
+            cursor.execute("ALTER TABLE subscription_items ADD COLUMN content_format TEXT")
+        if "content_kind" not in items_cols:
+            cursor.execute("ALTER TABLE subscription_items ADD COLUMN content_kind TEXT")
+        # Flag is a separate boolean, not a status: the status CHECK has no
+        # 'flagged' value, and an item can be flagged *and* reviewed at once.
+        if "is_flagged" not in items_cols:
+            cursor.execute("ALTER TABLE subscription_items ADD COLUMN is_flagged BOOLEAN DEFAULT 0")
+
+        # Watchlist bundle entity. `name` is intentionally not UNIQUE — uniqueness
+        # is enforced case-insensitively in WatchlistBundleService with
+        # auto-suffixing, because a SQL constraint would raise mid-migration.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS watchlists (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                tags TEXT,
+                is_active BOOLEAN DEFAULT 1,
+                sort_order INTEGER DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS watchlist_sources (
+                watchlist_id    INTEGER NOT NULL REFERENCES watchlists(id)     ON DELETE CASCADE,
+                subscription_id INTEGER NOT NULL REFERENCES subscriptions(id)  ON DELETE CASCADE,
+                added_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (watchlist_id, subscription_id)
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_watchlist_sources_subscription "
+            "ON watchlist_sources(subscription_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_items_flagged "
+            "ON subscription_items(is_flagged, status)"
+        )
+        cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS update_watchlists_timestamp
+            AFTER UPDATE ON watchlists
+            BEGIN
+                UPDATE watchlists SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+            END
+        """)
+        # Per-migration markers. schema_version cannot be reused: it is a single
+        # INTEGER PRIMARY KEY column with no room for keys.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS watchlist_migration_state (
+                key TEXT PRIMARY KEY,
+                applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.commit()
 
     @property
