@@ -923,6 +923,35 @@ consumers and the generated CSS bundle are unchanged."
 
 ---
 
+## Follow-ups surfaced by the final review (not done here, not yet filed)
+
+None of these block this branch. They need a backlog-ID scan and a decision on whether they fold
+into PR2, so they are recorded rather than filed.
+
+**(a) `Tests/UI/test_console_persistent_rails.py:278` is the only unscoped assertion** in a function
+whose every neighbour uses `_css_block(css, selector)`. Scoping it the same way is a one-line change
+and would clear the known-red test that this branch had to work around. Worth doing before PR2
+leans on that suite again.
+
+**(b) `personas_screen.py:989-998` `_sync_personas_rail_tooltips()` is now obsolete.** It exists only
+to overwrite Console's hard-coded `"Open Context rail"` after compose. The `open_tooltip` parameter
+this branch added makes it redundant — switching Personas' two handles to `DestinationRailHandle`
+deletes the method and yields correct tooltips for free. The extraction paid off and was not cashed
+in.
+
+**(c) The glyph constants are a real trade-off, not a settled call.** `destination_rail.py`
+re-declares `"▾"` / `"▸"` rather than importing them, guarded by an equality test. The final
+reviewer argued this installs a hidden *bidirectional* lockstep — neither module can change its
+glyphs without a test in a third file going red — and preferred inverting it (define in
+`destination_rail.py`, re-export from `console_glyphs.py`). The counter-argument is that inverting
+makes the Chat layer import from `Widgets/`, which is the worse direction. Decide before a second
+destination adopts the base.
+
+**(d) Four consumers still import the section header from Console's namespace** — `home_rail.py`,
+`library_rail.py`, `home_screen.py`, `library_screen.py` — via the `console_rail_section.py` shim.
+Migrating them is a textual swap with no behaviour change, and would let the shim carry a real
+deprecation horizon. Until then, "extracted out of Console's private namespace" is true only for Lab.
+
 ## Self-Review
 
 **Spec coverage.** This plan covers the spec's PR0 (`.lab-mode-chip.is-active` app-tier rule, rendered-label test, `.library-collection-row` live look, bundle regeneration) and PR1 (pure base in `Widgets/destination_rail.py`, `ConsoleRailHandle` as subclass, zero consumer edits, zero CSS diff). The spec's PR2–PR4 are deliberately out of scope, with the sequencing defect and proposed restructure recorded above.
