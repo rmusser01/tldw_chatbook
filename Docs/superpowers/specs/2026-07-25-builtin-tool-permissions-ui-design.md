@@ -64,11 +64,17 @@ resolve_builtin_state(payload, ref)  -> EffectiveToolState
 
 `MCPWorkbench` gains a built-in section built from the above and merged into the `effective` map **before** `_build_permission_rows()` runs, and a corresponding entry in the server ordering. `effective_tool_states()` and `resolve_effective_state` are **not** modified — MCP resolution stays byte-identical.
 
+**Built-ins must never be routed through `effective_tool_states()`**, even "for consistency" in a later refactor. Besides applying the wrong resolver, that method calls `store.mark_config_changed()` (`unified_control_plane_service.py:2487`) — the rug-pull marker. Today that marker can never be set for `agent:builtin` because built-ins never reach that path, which is why `resolve_builtin_state` can safely ignore `config_changed` entirely. Wiring them through it would set a marker the built-in resolver ignores, producing a stored flag with no effect — and would reintroduce exactly the fall-through class of bug this design exists to avoid.
+
 **Do not reuse `HubTool` for these rows.** Its `source` field is documented `local|builtin|server` and `builtin` already means the built-in MCP *server*; reusing it would create exactly the conflation AC#3 forbids. The built-in section carries its own row-source type.
 
 ### 4. Fail closed on an unrecognized namespace
 
 The merge helper resolves `agent:builtin` via `resolve_builtin_state` and everything else via the MCP path. A `server_key` matching neither must **fail closed** — rendered as `deny`/unknown, never silently inheriting either branch. This is the direct lesson from CheetahClaws' plan-mode hole: a fall-through decided its behavior, and the unsafe direction was the one that shipped.
+
+### 4b. Orphaned store entries
+
+The section enumerates tools from `BuiltinToolProvider`, so a persistent decision stored for a tool a later release **removes** would become invisible and therefore unclearable. The section must also surface any `agent:builtin` tool entry present in the store with no matching live tool, rendered as orphaned and clearable. Without this, the UI can create state it cannot reverse — the precise failure P1 avoided by refusing to persist at all.
 
 ### 5. Presentation
 
@@ -87,8 +93,9 @@ The built-in section is labelled distinctly from the built-in MCP server (AC#3).
 ## Acceptance criteria
 
 - [ ] `agent:builtin` and its tools appear in Permissions mode with effective state and origin, resolved via `resolve_builtin_state` (never `resolve_effective_state`).
-- [ ] A user can set and clear a persistent allow **and** deny for an individual built-in tool; the change is visible immediately without restart.
+- [ ] A user can set and clear a persistent allow **and** deny for an individual built-in tool; the change is visible in the UI immediately, with no restart. Note the precise runtime semantics: `BuiltinToolGate` caches the permission payload per turn (`begin_turn()` clears it), so a change made mid-run takes effect from the agent's **next turn**, not the in-flight one. The AC is satisfied by immediate UI reflection plus next-turn enforcement; a test should pin the next-turn behavior rather than asserting mid-turn preemption.
 - [ ] `HASH_FREE_SERVER_KEYS` gates the relaxation; a **non**-listed `server_key` still raises when setting `allow` without a hash — pinned by a test asserting MCP's guard is unchanged.
+- [ ] A test pins the *contents* of `HASH_FREE_SERVER_KEYS` to exactly `{agent:builtin}`. Adding a remote namespace to that set would silently disable the rug-pull guard for it, which is the one way this change could become a real weakening.
 - [ ] `resolve_effective_state` and `effective_tool_states` are unmodified; the existing MCP permissions tests pass untouched.
 - [ ] The UI labels `agent:builtin` distinctly from `builtin:tldw_chatbook`; a test asserts the two are never presented as one section.
 - [ ] A `server_key` in neither namespace fails closed rather than inheriting a branch.
@@ -99,10 +106,14 @@ The built-in section is labelled distinctly from the built-in MCP server (AC#3).
 
 - Changing MCP's resolver, hash guard for MCP keys, or `effective_tool_states`.
 - Permission **modes** (CheetahClaws' `auto`/`accept-edits`/`plan` axis) — a larger idea worth its own task; see below.
-- Porting tools (TASK-545/P2), agent budget settings (TASK-634).
+- Porting tools (TASK-545/P2), agent budget settings (TASK-635).
 
 ## Follow-ups to file
 
 1. **Hard floor / never-allowable category.** CheetahClaws puts its destructive-command denylist *inside* the execution primitive, below the mode branch, so no permission level can bypass it. We have "Off is absolute" per-tool but no category that can never be enabled at all.
-2. **Permission modes.** A mode axis (`auto`/`accept-edits`/`manual`/`plan`) is better UX than per-tool toggles and a natural home for TASK-634. If ever built: it must be driven by `risk_tags`, not tool-name lists, and must fail closed for unrecognized tools — the two things CheetahClaws got wrong.
+
+   **This repo already has the pattern**, added by task-582 (PR #893): `local_skills_service.MAX_SCRIPT_WALL_CLOCK_SECONDS = 600.0` with `overrides["wall_clock_seconds"] = min(wall, MAX_SCRIPT_WALL_CLOCK_SECONDS)` — a ceiling configuration cannot exceed, justified in-comment because "an unbounded override would strand the turn". Any hard-floor work should follow that shape rather than inventing one.
+
+   Task-582 is also the reference for TASK-635's config surface: three-argument `get_cli_setting("skills", key, None)` per knob, invalid values falling back to the default rather than producing a zero/unbounded budget, and a documented max. Note its own comment records that the section-dict form "silently returns {} for any section name without a dot" — i.e. new code is already working *around* TASK-547's bug rather than being blocked by it, which is worth knowing when P3 revisits that task.
+2. **Permission modes.** A mode axis (`auto`/`accept-edits`/`manual`/`plan`) is better UX than per-tool toggles and a natural home for TASK-635. If ever built: it must be driven by `risk_tags`, not tool-name lists, and must fail closed for unrecognized tools — the two things CheetahClaws got wrong.
 3. **Never let the model change its own permission posture.** CheetahClaws' `EnterPlanMode`/`ExitPlanMode` are always-auto-approved and mutate `permission_mode` directly, letting the LLM widen its own authority. Record this as a standing constraint before any mode work.
