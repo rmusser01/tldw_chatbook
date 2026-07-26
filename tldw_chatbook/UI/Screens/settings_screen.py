@@ -56,6 +56,13 @@ from ...Sync_Interop.sync_readiness import (
 )
 from ...Sync_Interop.manual_sync_control import ManualSyncPreview, ManualSyncRunResult
 from ...Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
+from ...Workspaces.models import RuntimeBindingStatus
+from ...Workspaces.registry_service import (
+    DEFAULT_WORKSPACE_ID,
+    LocalWorkspaceRegistryService,
+    WorkspaceRegistryServiceError,
+    next_local_workspace_identity,
+)
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Chat.provider_catalog import (
@@ -903,6 +910,20 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
             "server handoff does not move local source content unless explicitly requested",
         ),
     ),
+    SettingsCategoryId.WORKSPACES: (
+        (
+            "Affected config",
+            "workspace lifecycle records and their bound folders",
+        ),
+        (
+            "Recovery",
+            "switch/rename/archive in Console (Alt+W); create a workspace in Library",
+        ),
+        (
+            "Boundary",
+            "lifecycle and folder bindings apply immediately; there is no draft state here",
+        ),
+    ),
     SettingsCategoryId.PRIVACY_SECURITY: (
         (
             "Affected config",
@@ -1635,6 +1656,18 @@ class SettingsScreen(BaseAppScreen):
             "Appearance defaults have not been saved this session."
         )
         self._storage_result = "Storage defaults have not been saved this session."
+        #: Task 9 (workspace lifecycle card): the workspace row currently
+        #: selected in the list, or None when nothing is selected -- the
+        #: card renders nothing in that case. Reset whenever the user
+        #: navigates away from WORKSPACES (see _select_category) and
+        #: whenever a workspace is archived (its row disappears from the
+        #: default, not-showing-archived list).
+        self._settings_selected_workspace_id: str | None = None
+        #: Task 9: mirrors the "Show archived" checkbox; read directly by
+        #: `_render_workspaces_detail` on every (re)compose rather than
+        #: cached separately, so there is no stale-watcher state to wipe.
+        self._settings_show_archived_workspaces: bool = False
+        self._settings_workspaces_result = ""
         self._advanced_config_result = "Advanced config validation: not run"
         self._advanced_config_validated_text: str | None = None
         self._ownership_by_category_cache = self._build_ownership_by_category()
@@ -1811,10 +1844,21 @@ class SettingsScreen(BaseAppScreen):
     def on_screen_resume(self) -> None:
         self._queue_sync_rows_refresh()
         self._maybe_refresh_rag_index_status_on_show()
+        self._maybe_refresh_workspaces_pane_on_show()
 
     def _maybe_refresh_rag_index_status_on_show(self) -> None:
         if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
             self._refresh_library_rag_index_status()
+
+    def _maybe_refresh_workspaces_pane_on_show(self) -> None:
+        """Task 11: pick up registry changes made while this screen was
+        suspended (e.g. a workspace created/archived from Console) as soon
+        as the user resumes back into the WORKSPACES category -- mirrors
+        `_maybe_refresh_rag_index_status_on_show`'s per-category resume
+        guard above.
+        """
+        if self._active_category_id() is SettingsCategoryId.WORKSPACES:
+            self._refresh_settings_workspaces_pane()
 
     def _queue_sync_rows_refresh(self) -> None:
         if not getattr(self, "is_mounted", False):
@@ -1883,6 +1927,12 @@ class SettingsScreen(BaseAppScreen):
                 "Storage",
                 "Config path, local databases, and file locations.",
                 "Guided",
+            ),
+            SettingsCategorySummary(
+                SettingsCategoryId.WORKSPACES,
+                "Workspaces",
+                "Create, rename, archive, and bind folders for agent file tools.",
+                "Immediate actions",
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.PRIVACY_SECURITY,
@@ -2027,6 +2077,7 @@ class SettingsScreen(BaseAppScreen):
                 "Data & Privacy",
                 (
                     SettingsCategoryId.STORAGE,
+                    SettingsCategoryId.WORKSPACES,
                     SettingsCategoryId.PRIVACY_SECURITY,
                 ),
             ),
@@ -2164,10 +2215,9 @@ class SettingsScreen(BaseAppScreen):
                     value for _, value in SETTINGS_OVERVIEW_BOUNDARY_ROWS
                 ),
                 recovery_copy=(
-                    "Sync and workspace status here is read-only - switch "
-                    "workspaces in Console (Alt+W), manage them in "
-                    "Library > Details > Workspace, and run sync from the "
-                    "owning sync surfaces."
+                    "Sync status here is read-only - manage workspaces in "
+                    "Settings > Workspaces; switch in Console (Alt+W); run "
+                    "sync from the owning sync surfaces."
                 ),
                 read_only_reason="Overview summarizes status and ownership only.",
             ),
@@ -2270,6 +2320,19 @@ class SettingsScreen(BaseAppScreen):
                 recovery_copy=(
                     "Validate paths, save the config-only change, then restart Chatbook to "
                     "activate new storage defaults."
+                ),
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.WORKSPACES,
+                owns_config_sections=(),
+                reads_runtime_state_from=("workspace registry",),
+                writes_allowed=True,
+                runtime_owner="Workspace registry (immediate actions)",
+                boundary_copy=(
+                    "Lifecycle and folder bindings apply immediately; no draft state."
+                ),
+                recovery_copy=(
+                    "Quick actions: switch/rename/archive in Console (Alt+W); create in Library."
                 ),
             ),
             SettingsOwnershipRecord(
@@ -3409,6 +3472,11 @@ class SettingsScreen(BaseAppScreen):
             return "Use the editor's Apply/Save/Reset buttons to manage themes."
         if category == SettingsCategoryId.SPLASH_SCREEN:
             return "Splash defaults are saved automatically."
+        if category == SettingsCategoryId.WORKSPACES:
+            return (
+                "Immediate actions: workspace changes apply as you make them; "
+                "there is no draft to save or revert."
+            )
         if category == SettingsCategoryId.INTERNAL_PROMPTS:
             return "Use each prompt's Save / Reset buttons in the editor to manage overrides."
         if category == SettingsCategoryId.IMAGE_GENERATION:
@@ -4669,7 +4737,7 @@ class SettingsScreen(BaseAppScreen):
         # TASK-719: name the concrete owning surfaces instead of a vague list.
         return (
             "Local Default; switch in Console (Alt+W), "
-            "manage in Library > Details > Workspace"
+            "manage in Settings > Workspaces"
         )
 
     def _acp_runtime_session_state(self) -> ACPRuntimeSessionState:
@@ -10060,6 +10128,199 @@ class SettingsScreen(BaseAppScreen):
                 yield self._detail_row(label, value)
             yield self._detail_row("Follow-up", contract.follow_up)
 
+    def _render_workspaces_detail(self) -> ComposeResult:
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        yield Static("Workspace management", classes="destination-section")
+        if registry is None:
+            yield Static(
+                "Workspace service is not ready. Restart Chatbook and retry.",
+                id="settings-workspaces-result",
+                classes="settings-status-row",
+            )
+            return
+        show_archived = bool(self._settings_show_archived_workspaces)
+        active = registry.get_active_workspace()
+        active_id = active.workspace_id if active is not None else None
+        with Horizontal(classes="settings-input-row"):
+            yield Input(
+                placeholder="New workspace name",
+                id="settings-workspace-create-name",
+                classes="settings-compact-input",
+            )
+            yield Button("Create", id="settings-workspace-create", compact=True)
+        yield Checkbox(
+            "Show archived", show_archived, id="settings-workspaces-show-archived"
+        )
+        with Vertical(id="settings-workspaces-list"):
+            for record in registry.list_workspaces(include_archived=show_archived):
+                marker = " (active)" if record.workspace_id == active_id else ""
+                archived_suffix = " [archived]" if record.archived else ""
+                folders = (
+                    len(registry.list_folder_bindings(record.workspace_id))
+                    if record.workspace_id != DEFAULT_WORKSPACE_ID
+                    else 0
+                )
+                yield Button(
+                    f"{record.name}{marker}{archived_suffix} - {folders} folders",
+                    id=f"settings-workspace-row-{record.workspace_id}",
+                    classes="settings-workspace-row",
+                    compact=True,
+                )
+        yield Static(
+            self._settings_workspaces_result,
+            id="settings-workspaces-result",
+            classes="settings-status-row",
+        )
+        yield from self._render_workspace_card(registry, active_id)
+
+    def _render_workspace_card(
+        self,
+        registry: LocalWorkspaceRegistryService,
+        active_id: str | None,
+    ) -> ComposeResult:
+        """Render the selected workspace's lifecycle card, if any (Task 9).
+
+        Renders nothing when no workspace is selected. The built-in Default
+        workspace gets ONLY the protection notice -- it keeps its identity
+        (no rename/archive) and stays tool-less (no folder bindings, see
+        Task 10). An archived workspace (final review Finding 3) gets ONLY
+        an explanatory note + Unarchive -- rename/set-active/archive/folder
+        controls are withheld since they act on a workspace_id that is
+        currently archived. Every other workspace gets rename + set-active
+        (or a Static when it is already active -- never a disabled Button
+        expected to explain itself) + archive + folder bindings.
+        """
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        record = registry.get_workspace(workspace_id)
+        if record is None:
+            # The selection outlived its workspace (e.g. removed by another
+            # session) -- render nothing rather than a card for a ghost id.
+            return
+        yield Static("Selected workspace", classes="destination-section")
+        with Vertical(id="settings-workspace-card", classes="settings-focus-card"):
+            if record.workspace_id == DEFAULT_WORKSPACE_ID:
+                yield Static(
+                    "The built-in Default workspace keeps its identity and "
+                    "stays tool-less; create a workspace to bind folders.",
+                    classes="settings-detail-row",
+                )
+                return
+            if record.archived:
+                # Finding 3 (final review): rename/set-active/archive/folder
+                # controls all require an ACTIVE workspace_id underneath --
+                # offering them here let a user hit a bare-id error acting
+                # on a workspace that is currently invisible everywhere
+                # else. Unarchive first restores it to normal editing.
+                yield Static(
+                    "Archived workspace. Unarchive it to rename, activate, "
+                    "or edit folders.",
+                    id="settings-workspace-archived-note",
+                    classes="settings-status-row",
+                )
+                yield Button(
+                    "Unarchive", id="settings-workspace-unarchive", compact=True
+                )
+                return
+            with Horizontal(classes="settings-input-row"):
+                yield Input(
+                    value=record.name,
+                    id="settings-workspace-rename-input",
+                    classes="settings-compact-input",
+                )
+                yield Button(
+                    "Rename", id="settings-workspace-rename-apply", compact=True
+                )
+            if record.workspace_id == active_id:
+                yield Static(
+                    "This workspace is active.", classes="settings-detail-row"
+                )
+            else:
+                yield Button(
+                    "Set active", id="settings-workspace-set-active", compact=True
+                )
+            yield Button(
+                "Archive", id="settings-workspace-archive", compact=True
+            )
+            yield from self._render_workspace_folder_bindings(registry, record.workspace_id)
+
+    def _render_workspace_folder_bindings(
+        self,
+        registry: LocalWorkspaceRegistryService,
+        workspace_id: str,
+    ) -> ComposeResult:
+        """Render the folder-bindings editor for the selected workspace (task 10).
+
+        One row per bound folder with its access level and freshness
+        (recomputed from disk by `list_folder_bindings`), a per-row
+        ro/rw toggle and remove button, then an add row. Toggle/remove
+        buttons stash `binding_id` as a plain attribute at compose time
+        (mirrors the conversation browser's `conversation_id` stash) so
+        the handler never has to parse a uuid out of the button id.
+        """
+        yield Static(
+            "Folders (agent file-tool access)", classes="destination-section"
+        )
+        for binding in registry.list_folder_bindings(workspace_id):
+            access = binding.metadata.get("access", "ro")
+            freshness = (
+                "ready" if binding.status == RuntimeBindingStatus.READY else "missing"
+            )
+            yield Static(
+                f"{binding.locator} [{access}] {freshness}",
+                id=f"settings-workspace-folder-{binding.binding_id}",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row"):
+                toggle_button = Button(
+                    "Allow write" if access != "rw" else "Read-only",
+                    id=f"settings-workspace-folder-toggle-{binding.binding_id}",
+                    classes="settings-workspace-folder-toggle",
+                    compact=True,
+                )
+                toggle_button.binding_id = binding.binding_id
+                yield toggle_button
+                remove_button = Button(
+                    "Remove",
+                    id=f"settings-workspace-folder-remove-{binding.binding_id}",
+                    classes="settings-workspace-folder-remove",
+                    compact=True,
+                )
+                remove_button.binding_id = binding.binding_id
+                yield remove_button
+        with Horizontal(classes="settings-input-row"):
+            yield Input(
+                placeholder="~/path/to/folder",
+                id="settings-workspace-folder-path",
+                classes="settings-compact-input",
+            )
+            yield Button(
+                "Add folder", id="settings-workspace-folder-add", compact=True
+            )
+
+    def _set_settings_workspaces_result(self, text: str) -> None:
+        self._settings_workspaces_result = text
+        self._set_static_text("#settings-workspaces-result", text)
+
+    def _refresh_settings_workspaces_pane(self) -> None:
+        """Re-render the Workspaces category via the screen's existing
+        category-recompose path (task 9).
+
+        `active_category` is a `recompose=True` reactive that already
+        drives every category switch (`_select_category`); forcing it here
+        with `mutate_reactive` reuses that same, already-proven path
+        instead of recomposing a bespoke nested container (Textual only
+        regenerates a widget's children from ITS OWN `compose()` -- a
+        generic `Vertical` yielded inline here has none, so recomposing it
+        directly would just wipe it). `_render_workspaces_detail` reads
+        the registry plus the plain `_settings_selected_workspace_id` /
+        `_settings_show_archived_workspaces` attributes fresh on every
+        call, so there is no separate watcher-populated cache that could
+        go stale or get wiped by the recompose.
+        """
+        self.mutate_reactive(SettingsScreen.active_category)
+
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.OVERVIEW:
@@ -10315,6 +10576,8 @@ class SettingsScreen(BaseAppScreen):
                     "Handoff boundary",
                     "database and media paths remain local unless a server handoff is explicit",
                 )
+        elif category is SettingsCategoryId.WORKSPACES:
+            yield from self._render_workspaces_detail()
         elif category is SettingsCategoryId.PRIVACY_SECURITY:
             posture = self._settings_privacy_posture()
             yield Static(
@@ -10562,6 +10825,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategoryId.SPLASH_SCREEN,
             SettingsCategoryId.INTERNAL_PROMPTS,
             SettingsCategoryId.IMAGE_GENERATION,
+            SettingsCategoryId.WORKSPACES,
         ):
             save_button = Button(
                 "Save",
@@ -11090,6 +11354,12 @@ class SettingsScreen(BaseAppScreen):
         # category -- e.g. the user backs out mid-fetch. Unconditional
         # reset; a no-op for every category but LIBRARY_RAG.
         self._rag_reindex_confirm_in_flight = False
+        if category_value != SettingsCategoryId.WORKSPACES.value:
+            # Task 9: leaving the category recomposes the detail pane from
+            # scratch -- a selection that survived would point the freshly
+            # (re)composed card at a workspace id a later visit's list may
+            # not even show (e.g. after an archive elsewhere).
+            self._settings_selected_workspace_id = None
         self.active_category = category_value
         # Task 6 (541 AC6): keep the footer's a/c/b hint in sync with a
         # live in-session category switch (on_mount's call alone only
@@ -11460,6 +11730,230 @@ class SettingsScreen(BaseAppScreen):
         category_value = self._category_value_from_button(event.button)
         if category_value is not None:
             self._select_category(category_value, restore_focus=event.button.has_focus)
+
+    @on(Button.Pressed, ".settings-workspace-row")
+    def handle_workspace_row_pressed(self, event: Button.Pressed) -> None:
+        """Select a workspace row, then refresh so its card renders (task 9)."""
+        event.stop()
+        button_id = str(getattr(event.button, "id", "") or "")
+        prefix = "settings-workspace-row-"
+        if not button_id.startswith(prefix):
+            return
+        workspace_id = button_id.removeprefix(prefix)
+        if not workspace_id:
+            return
+        self._settings_selected_workspace_id = workspace_id
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Checkbox.Changed, "#settings-workspaces-show-archived")
+    def handle_workspaces_show_archived_changed(self, event: Checkbox.Changed) -> None:
+        event.stop()
+        self._settings_show_archived_workspaces = event.value
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-create")
+    def handle_workspace_create(self, event: Button.Pressed) -> None:
+        """Create a workspace from the typed name, or a generated one when
+        left blank -- the id always comes from `next_local_workspace_identity`
+        (task 9)."""
+        event.stop()
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        try:
+            name_input = self.query_one("#settings-workspace-create-name", Input)
+        except QueryError:
+            return
+        typed_name = name_input.value.strip()
+        workspace_id, generated_name = next_local_workspace_identity(registry)
+        try:
+            registry.create_workspace(
+                workspace_id=workspace_id, name=typed_name or generated_name
+            )
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-rename-apply")
+    def handle_workspace_rename_apply(self, event: Button.Pressed) -> None:
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        try:
+            rename_input = self.query_one("#settings-workspace-rename-input", Input)
+        except QueryError:
+            return
+        try:
+            registry.rename_workspace(workspace_id, rename_input.value)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-set-active")
+    def handle_workspace_set_active(self, event: Button.Pressed) -> None:
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        try:
+            registry.set_active_workspace(workspace_id)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-archive")
+    def handle_workspace_archive(self, event: Button.Pressed) -> None:
+        """Confirm, then archive (task 9).
+
+        Mirrors `ChatScreen._confirm_console_workspace_archive` (Console's
+        own archive flow): the SAME verbatim copy, and the SAME shape --
+        an async closure passed as `confirm_callback`, since
+        `ConfirmationDialog.on_button_pressed` `await`s that callback and a
+        plain sync function would raise there instead of archiving.
+        """
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        record = registry.get_workspace(workspace_id)
+        if record is None:
+            return
+
+        async def _archive() -> None:
+            try:
+                registry.archive_workspace(workspace_id)
+            except WorkspaceRegistryServiceError as exc:
+                self._set_settings_workspaces_result(str(exc))
+                return
+            # The row disappears from the default (not-showing-archived)
+            # list -- a selection surviving would point the card at a
+            # workspace no longer in view.
+            self._settings_selected_workspace_id = None
+            self._settings_workspaces_result = ""
+            self._refresh_settings_workspaces_pane()
+
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Archive workspace?",
+                message=(
+                    f"Archive {record.name}? Its conversations stay saved and "
+                    "remain visible in Library; the workspace disappears from "
+                    "the switcher and the Console browser."
+                ),
+                confirm_label="Archive",
+                confirm_callback=_archive,
+            )
+        )
+
+    @on(Button.Pressed, "#settings-workspace-unarchive")
+    def handle_workspace_unarchive(self, event: Button.Pressed) -> None:
+        """Restore a workspace to the default listing without activating it
+        (spec: never auto-activate on unarchive, task 9)."""
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        try:
+            registry.unarchive_workspace(workspace_id)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-folder-add")
+    def _settings_workspace_add_folder(self, event: Button.Pressed) -> None:
+        """Bind a folder as a read-only file-tool access root (task 10)."""
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        raw = self.query_one("#settings-workspace-folder-path", Input).value
+        try:
+            registry.add_folder_binding(workspace_id, raw)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._set_settings_workspaces_result("Folder added (read-only).")
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, ".settings-workspace-folder-toggle")
+    def _settings_workspace_toggle_folder_access(self, event: Button.Pressed) -> None:
+        """Flip a folder binding between read-only and read-write (task 10).
+
+        The binding id is read from `event.button.binding_id`, stashed at
+        compose time -- never parsed out of the button's dom id, which
+        would split a uuid on its own hyphens.
+        """
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        binding_id = str(getattr(event.button, "binding_id", "") or "")
+        if not binding_id:
+            return
+        current = next(
+            (
+                binding
+                for binding in registry.list_folder_bindings(workspace_id)
+                if binding.binding_id == binding_id
+            ),
+            None,
+        )
+        if current is None:
+            return
+        allow_write = current.metadata.get("access") != "rw"
+        try:
+            registry.set_folder_binding_access(binding_id, allow_write=allow_write)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, ".settings-workspace-folder-remove")
+    def _settings_workspace_remove_folder(self, event: Button.Pressed) -> None:
+        """Unbind a folder from the selected workspace (task 10)."""
+        event.stop()
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        binding_id = str(getattr(event.button, "binding_id", "") or "")
+        if not binding_id:
+            return
+        try:
+            registry.remove_runtime_binding(binding_id)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
 
     @on(Input.Changed, "#settings-category-search")
     def handle_category_search_changed(self, event: Input.Changed) -> None:
@@ -13463,6 +13957,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategoryId.THEME,
             SettingsCategoryId.SPLASH_SCREEN,
             SettingsCategoryId.INTERNAL_PROMPTS,
+            SettingsCategoryId.WORKSPACES,
         ):
             self.app.notify(
                 "Use the editor's own buttons for this category", severity="information"

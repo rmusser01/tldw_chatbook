@@ -1623,7 +1623,7 @@ class ChatScreen(BaseAppScreen):
             return
         if not workspaces:
             self.app_instance.notify(
-                "Create one with the rail's New button or in Library > Details > Workspace.",
+                "Create one with the rail's New button or in Settings > Workspaces.",
                 severity="warning",
             )
             return

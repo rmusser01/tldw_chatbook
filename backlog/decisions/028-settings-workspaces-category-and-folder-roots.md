@@ -21,6 +21,7 @@ Folders bound to a workspace define file-tool access roots — the boundaries wh
 - **Existence validation:** folders are validated at call time, not at binding time. A deleted folder drops out of the allowed set immediately and does not block tool operations.
 - **Workspace resolution:** the tool catalog injects a roots-provider closure bound to each run's workspace id, so the same tool instance cannot silently retarget if the active workspace changes mid-run. Only when a run has no workspace context does the provider fall back to `get_active_workspace()` at call time.
 - **Default workspace:** the built-in Default workspace cannot have folder bindings. It remains tool-less by design, preserving the existing sandbox-only behavior for everyday chats that do not opt into workspace separation.
+- **Archiving preserves bindings:** archiving a workspace intentionally preserves its folder bindings — archiving only hides the workspace from normal listings; bindings stay user-removable via the Show-archived card and are only reachable by that workspace's own runs.
 
 ### (c) Deliberate divergence from Codex prior art — reads are confined too
 

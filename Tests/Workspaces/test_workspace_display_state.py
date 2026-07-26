@@ -152,6 +152,40 @@ def test_console_workspace_state_reports_active_workspace_and_runtime(
     assert state.new_conversation_recovery == ""
 
 
+def test_console_workspace_state_recomputes_stale_filesystem_binding_status(
+    tmp_path: Path,
+) -> None:
+    """Finding 4 (final review): the Console tray's runtime label must not
+    trust a local-filesystem binding's STORED status forever.
+
+    `list_runtime_bindings` returns whatever status was last persisted
+    (READY at bind time); it never checks disk again. The moment the bound
+    folder is deleted out from under the binding, the tray must still
+    report it as missing -- mirrors `list_folder_bindings`' own
+    disk-recompute semantics instead of trusting the stale row.
+    """
+    service = _registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Research Sprint")
+    service.set_active_workspace("ws-a")
+    folder = tmp_path / "project"
+    folder.mkdir()
+    service.add_folder_binding("ws-a", folder)
+
+    state = build_console_workspace_state(
+        registry_service=service,
+        current_conversation=None,
+    )
+    assert state.runtime_label == "Runtime: 1 binding, 1 ready"
+
+    folder.rmdir()
+
+    state = build_console_workspace_state(
+        registry_service=service,
+        current_conversation=None,
+    )
+    assert state.runtime_label == "Runtime: 1 binding, 0 ready, 1 missing"
+
+
 def test_console_workspace_state_enables_switching_with_multiple_workspaces(
     tmp_path: Path,
 ) -> None:
