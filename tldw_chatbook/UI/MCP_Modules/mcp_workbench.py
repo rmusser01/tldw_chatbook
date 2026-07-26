@@ -1759,6 +1759,16 @@ class MCPWorkbench(Container):
         generic `except` below would otherwise toast verbatim. Every other
         state (`"ask"`/`"deny"`/`None`) works fine with `tool=None` -- only
         `"allow"` needs the live tool to fingerprint.
+
+        Task 4: `agent:builtin` rows have no `HubTool` at all -- they never
+        appear in `_last_hub_tools` (that list is the MCP catalog), so
+        `_tool_for()` always returns `None` for them. Without a branch here,
+        EVERY built-in row's first cycle (inherit -> allow) would hit the
+        "no longer in the catalog" guard above and never write. Skip the
+        `HubTool` lookup for `BUILTIN_TOOL_SERVER_KEY` entirely and call
+        `set_tool_state()` with no `tool=` -- safe only because Task 1 put
+        `agent:builtin` in `HASH_FREE_SERVER_KEYS`, so the service doesn't
+        require a tool to fingerprint for the rug-pull hash.
         """
         event.stop()
         service = self._service()
@@ -1779,16 +1789,28 @@ class MCPWorkbench(Container):
             elif event.row_kind == "server":
                 service.set_server_default(event.server_key, event.new_state)
             elif event.row_kind == "tool":
-                cycled_tool = self._tool_for(event.server_key, event.tool_name or "")
-                if cycled_tool is None and event.new_state == "allow":
-                    self.app.notify(
-                        _toast("Tool is no longer in the catalog — refresh and try again."),
-                        severity="warning",
+                if event.server_key == BUILTIN_TOOL_SERVER_KEY:
+                    # Task 4: built-in tools have no `HubTool` -- skip the
+                    # catalog lookup and its "no longer in the catalog"
+                    # guard, which would otherwise reject every built-in
+                    # row's first press. `tool=` is omitted deliberately:
+                    # `agent:builtin` is in `HASH_FREE_SERVER_KEYS`
+                    # (Task 1), so `set_tool_state()` doesn't need a
+                    # `HubTool` to fingerprint an "allow".
+                    service.set_tool_state(
+                        event.server_key, event.tool_name or "", event.new_state
                     )
-                    return
-                service.set_tool_state(
-                    event.server_key, event.tool_name or "", event.new_state, tool=cycled_tool
-                )
+                else:
+                    cycled_tool = self._tool_for(event.server_key, event.tool_name or "")
+                    if cycled_tool is None and event.new_state == "allow":
+                        self.app.notify(
+                            _toast("Tool is no longer in the catalog — refresh and try again."),
+                            severity="warning",
+                        )
+                        return
+                    service.set_tool_state(
+                        event.server_key, event.tool_name or "", event.new_state, tool=cycled_tool
+                    )
         except Exception as exc:
             logger.warning(f"MCP permission cycle failed: {exc}")
             self.app.notify(_toast(f"Permission update failed: {exc}"), severity="error")

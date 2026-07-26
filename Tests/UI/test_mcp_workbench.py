@@ -16,6 +16,7 @@ import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 import tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module
 from tldw_chatbook.MCP.permission_store import (
     BUILTIN_TOOL_SERVER_KEY,
+    HASH_FREE_SERVER_KEYS,
     EffectiveToolState,
     MCPPermissionStore,
     definition_hash,
@@ -3733,8 +3734,11 @@ class PermissionsHubService(FakeHubService):
         return {(t.server_key, t.name): resolve_effective_state(payload, t) for t in tools}
 
     def set_tool_state(self, server_key, tool_name, ui_state, *, tool=None):
+        # Mirrors `UnifiedControlPlaneService.set_tool_state()`'s
+        # HASH_FREE_SERVER_KEYS exemption (Task 1) -- `agent:builtin`
+        # doesn't need a `HubTool` to fingerprint an "allow".
         hash_value = None
-        if ui_state == "allow":
+        if ui_state == "allow" and server_key not in HASH_FREE_SERVER_KEYS:
             if tool is None:
                 raise ValueError("tool is required to set state 'allow'")
             hash_value = definition_hash(tool.description, tool.input_schema)
@@ -4114,6 +4118,205 @@ async def test_builtin_enumeration_failure_still_shows_a_cyclable_server_default
         # The stored server-level "deny" default is still visible (and, per
         # the "•" override marker, still cyclable back to Inherit).
         assert server_row[1] == "Off •"
+
+
+# -- TASK-627 Task 4: persisting built-in tool decisions from the UI --------
+#
+# `on_mcp_permissions_mode_state_cycle_requested()` used to resolve EVERY
+# "tool" row's `HubTool` via `_tool_for()` -- which only ever searches
+# `_last_hub_tools`, the MCP catalog. Built-in tools never populate that
+# list (Task 3's built-in section is rendered from `builtin_permission_
+# rows()`, a completely separate path -- Constraint 1), so `_tool_for()`
+# always returned `None` for an `agent:builtin` row. Since `cycle_ui_state`
+# is Inherit -> Allow -> Ask -> Off, the FIRST Space press from the default
+# state always lands on "allow" -- which the vanished-tool guard then
+# rejected before any write, with a factually wrong "no longer in the
+# catalog" toast. `ask`/`deny` were consequently unreachable: you can't
+# advance the ring past the step that's permanently blocked. These tests
+# exercise the first press specifically (a pre-seeded "allow" and cycling
+# from there would miss the bug entirely), plus the rest of the ring, an
+# orphaned row, and an MCP-row regression guard.
+
+
+@pytest.mark.asyncio
+async def test_space_cycle_first_press_on_builtin_tool_persists_allow_no_hash(tmp_path):
+    """The headline bug: a built-in tool row starts at Inherit, so the
+    FIRST Space press cycles straight to "allow" -- exactly the transition
+    the vanished-tool guard used to reject for every built-in row, because
+    `_tool_for()` can never find a `HubTool` for `agent:builtin`. Must
+    persist with no `definition_hash` (Task 1's HASH_FREE_SERVER_KEYS
+    exemption) and raise no error/warning toast.
+    """
+    store_path = tmp_path / "mcp_permissions.json"
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+
+        # Sanity: no explicit override exists yet -- this really is the
+        # first press from Inherit, not a pre-seeded "allow".
+        before = MCPPermissionStore(store_path).get_tool_entry(BUILTIN_TOOL_SERVER_KEY, "calculator")
+        assert before is None
+
+        workbench.post_message(
+            MCPPermissionsMode.StateCycleRequested(
+                row_kind="tool",
+                server_key=BUILTIN_TOOL_SERVER_KEY,
+                tool_name="calculator",
+                new_state="allow",
+            )
+        )
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        entry = MCPPermissionStore(store_path).get_tool_entry(BUILTIN_TOOL_SERVER_KEY, "calculator")
+        assert entry is not None
+        assert entry["state"] == "allow"
+        # No REAL hash was computed/stored -- `set_tool_state()` always
+        # writes the `definition_hash` key alongside an "allow" entry, but
+        # for a HASH_FREE_SERVER_KEYS server it's the sentinel `None`
+        # (never a fingerprint), because no `HubTool` was ever resolved
+        # or hashed for this row.
+        assert entry.get("definition_hash") is None
+
+        assert not any(severity in ("warning", "error") for _, severity in notifications), (
+            f"expected no error/warning toast for a built-in allow cycle, got: {notifications!r}"
+        )
+        # Reflected on the next render without a restart.
+        rows = _perm_all_rows(app)
+        tool_cells = {row[0].strip(): row[1] for row in rows}
+        assert tool_cells["calculator"] == "Allow •"
+
+
+@pytest.mark.asyncio
+async def test_space_cycle_ring_continues_through_ask_deny_and_back_to_inherit_for_builtin(
+    tmp_path,
+):
+    """Once the first-press bug above is fixed, the rest of the ring must
+    also work: allow -> ask -> deny (Off) -> inherit (cleared), each step
+    persisting to the real store."""
+    store_path = tmp_path / "mcp_permissions.json"
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        async def cycle(new_state):
+            workbench.post_message(
+                MCPPermissionsMode.StateCycleRequested(
+                    row_kind="tool",
+                    server_key=BUILTIN_TOOL_SERVER_KEY,
+                    tool_name="calculator",
+                    new_state=new_state,
+                )
+            )
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+        store = MCPPermissionStore(store_path)
+
+        await cycle("allow")
+        assert store.get_tool_entry(BUILTIN_TOOL_SERVER_KEY, "calculator")["state"] == "allow"
+
+        await cycle("ask")
+        assert store.get_tool_entry(BUILTIN_TOOL_SERVER_KEY, "calculator")["state"] == "ask"
+
+        await cycle("deny")
+        assert store.get_tool_entry(BUILTIN_TOOL_SERVER_KEY, "calculator")["state"] == "deny"
+
+        await cycle(None)
+        assert store.get_tool_entry(BUILTIN_TOOL_SERVER_KEY, "calculator") is None
+
+
+@pytest.mark.asyncio
+async def test_space_cycle_on_orphaned_builtin_row_clears_stored_entry(tmp_path):
+    """An orphaned built-in row (a stored decision for a tool name no
+    longer provided by the live registry, Task 2/3) must still be
+    cyclable to Inherit from the UI, clearing its stored entry -- the row
+    exists precisely so the user can clean it up."""
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_tool_state(
+        BUILTIN_TOOL_SERVER_KEY, "tool_that_no_longer_exists", "allow"
+    )
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        row_keys = _perm_row_keys(app)
+        assert "agent:builtin::tool_that_no_longer_exists" in row_keys
+
+        workbench.post_message(
+            MCPPermissionsMode.StateCycleRequested(
+                row_kind="tool",
+                server_key=BUILTIN_TOOL_SERVER_KEY,
+                tool_name="tool_that_no_longer_exists",
+                new_state=None,
+            )
+        )
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        entry = MCPPermissionStore(store_path).get_tool_entry(
+            BUILTIN_TOOL_SERVER_KEY, "tool_that_no_longer_exists"
+        )
+        assert entry is None
+        # The orphaned row itself disappears once its stored entry is
+        # cleared -- `builtin_permission_rows()` only lists a name absent
+        # from the live registry when a stored decision for it exists.
+        row_keys_after = _perm_row_keys(app)
+        assert "agent:builtin::tool_that_no_longer_exists" not in row_keys_after
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_row_cycle_path_unchanged_still_passes_hubtool_and_hashes(tmp_path):
+    """Regression guard for Constraint 2 ("MCP behavior stays byte-
+    identical"): an ordinary MCP tool row's cycle-to-allow must still
+    resolve and pass its `HubTool` through to `set_tool_state()`, and the
+    store must still end up with a `definition_hash` -- the built-in
+    branch must not have swallowed or short-circuited the MCP path."""
+    store_path = tmp_path / "mcp_permissions.json"
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        workbench.post_message(
+            MCPPermissionsMode.StateCycleRequested(
+                row_kind="tool",
+                server_key="local:docs",
+                tool_name="search",
+                new_state="allow",
+            )
+        )
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        entry = MCPPermissionStore(store_path).get_tool_entry("local:docs", "search")
+        assert entry is not None
+        assert entry["state"] == "allow"
+        # An MCP tool's hash is real content -- not merely present, but
+        # exactly what `definition_hash()` computes from the catalog
+        # `HubTool`'s own description/schema (proves `tool=cycled_tool`,
+        # a genuine resolved `HubTool`, was passed through -- a `None`
+        # fallback would have raised instead of reaching this assertion).
+        matching_tool = workbench._tool_for("local:docs", "search")
+        assert matching_tool is not None
+        expected_hash = definition_hash(matching_tool.description, matching_tool.input_schema)
+        assert entry["definition_hash"] == expected_hash
 
 
 class GuardedEffectiveStatesHubService(PermissionsHubService):
