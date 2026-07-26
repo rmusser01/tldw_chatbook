@@ -10,6 +10,7 @@ import pytest
 from tldw_chatbook.Evals.word_bench.analysis import (
     TRUNCATION_WARN_THRESHOLD,
     divergence,
+    effective_k,
     entropy,
     group_means,
     resolve_probe,
@@ -48,6 +49,39 @@ def test_entropy_accounts_for_unobserved_mass_as_one_bucket():
     assert e == pytest.approx(math.log(2), abs=1e-9)
 
 
+def test_entropy_at_full_k_differs_from_entropy_at_a_smaller_k():
+    """Sanity check that K actually changes the reading, so the
+    normalization test below isn't trivially true."""
+    cap = _cap([("a", 0.5), ("b", 0.3), ("c", 0.1), ("d", 0.05), ("e", 0.05)])
+    assert entropy(cap, k=2) != pytest.approx(entropy(cap), abs=1e-2)
+
+
+def test_entropy_normalizes_to_a_shared_k_like_divergence_does():
+    """Mirrors test_divergence_truncates_both_cells_to_min_k: divergence()
+    truncates both cells to min(K) precisely so a number reflects behaviour
+    rather than settings, but entropy() always used the full list -- the
+    same underlying distribution read at K=5 vs K=20 gave different
+    entropy. A rich (native K=3) and poor (native K=2) reading of the same
+    underlying distribution must produce equal entropy once both are read
+    at a shared k=2."""
+    rich = _cap([("a", 0.5), ("b", 0.3), ("c", 0.1)], k_returned=3)
+    poor = _cap([("a", 0.5), ("b", 0.3)], k_returned=2)
+    assert entropy(rich, k=2) == pytest.approx(entropy(poor, k=2), abs=1e-9)
+
+
+def test_effective_k_is_the_minimum_k_returned_across_cells():
+    """The grid-level K a mixed-K comparison (e.g. an OpenAI legacy target
+    capped at K=5 alongside a llama.cpp target requested at K=20) must
+    render entropy at."""
+    a = _cap([("a", 0.5)], k_returned=20)
+    b = _cap([("b", 0.5)], k_returned=5)
+    assert effective_k([a, b]) == 5
+
+
+def test_effective_k_of_no_cells_is_zero():
+    assert effective_k([]) == 0
+
+
 def test_divergence_of_identical_distributions_is_zero():
     a = _cap([("x", 0.6), ("y", 0.4)])
     jsd, bounded = divergence(a, a)
@@ -69,8 +103,13 @@ def test_divergence_is_symmetric():
 
 
 def test_divergence_flags_bounded_when_truncated_mass_is_material():
-    a = _cap([("x", 0.4)])   # 0.6 unobserved
-    b = _cap([("x", 0.5)])   # 0.5 unobserved
+    """Both truncations must be small enough alone to stay UNDER the
+    threshold (0.15 < 0.25) -- only their SUM (0.30) exceeds it. Using
+    values that individually clear the threshold (as an earlier version of
+    this test did) would not actually exercise the "combined" half of
+    ``combined_truncation > TRUNCATION_WARN_THRESHOLD``."""
+    a = _cap([("x", 0.85)])   # 0.15 unobserved
+    b = _cap([("x", 0.85)])   # 0.15 unobserved
     _, bounded = divergence(a, b)
     assert bounded is True, f"combined truncation exceeds {TRUNCATION_WARN_THRESHOLD}"
 
@@ -141,6 +180,102 @@ def test_divergence_matches_tokens_across_models_not_by_provider_token_id():
     )
     jsd, _ = divergence(a, b)
     assert jsd == pytest.approx(0.0, abs=1e-9)
+
+
+def test_divergence_treats_bytes_and_byteless_tokens_of_the_same_surface_form_as_identical():
+    """A bytes-carrying provider (llama.cpp) compared against a bytes-less
+    one (e.g. OpenAI legacy completions, queued as the next shape to
+    support) must not report ln(2) -- maximal divergence -- for identical
+    distributions just because one side omits `bytes`."""
+    a = CellCapture(
+        prompt_mode="raw", k_requested=1, k_returned=1, content_offset=0,
+        top_k=(TokenProb(token=" a", logprob=math.log(1.0), bytes_=(32, 97), token_id=1),),
+        canary="pass", captured_at="2026-07-26T00:00:00Z",
+    )
+    b = CellCapture(
+        prompt_mode="raw", k_requested=1, k_returned=1, content_offset=0,
+        top_k=(TokenProb(token=" a", logprob=math.log(1.0), bytes_=(), token_id=1),),
+        canary="pass", captured_at="2026-07-26T00:00:00Z",
+    )
+    jsd, _ = divergence(a, b)
+    assert jsd == pytest.approx(0.0, abs=1e-9)
+
+
+def test_duplicate_identities_within_one_cell_accumulate_rather_than_last_wins():
+    """Two distinct provider tokens that decode to the same identity (e.g.
+    two tokenizer merges emitting the same surface bytes) must have their
+    probability mass SUMMED when aligned, not silently overwritten by
+    whichever one happened to come last in top_k.
+
+    Both cells carry the same duplicate-identity split (0.3 + 0.2) so the
+    truncation in ``divergence()`` (``min(k_returned, len(top_k))`` on both
+    sides) keeps both entries in play; a last-wins bug would compare 0.2
+    against 0.2 instead of the correct 0.5 against 0.5 and still land on
+    zero by coincidence, so this asserts on the intermediate accumulated
+    map directly via ``_aligned`` as well as the end-to-end divergence."""
+    from tldw_chatbook.Evals.word_bench.analysis import _aligned
+
+    def _dup_cap(hi: float, lo: float) -> CellCapture:
+        return CellCapture(
+            prompt_mode="raw", k_requested=2, k_returned=2, content_offset=0,
+            top_k=(
+                TokenProb(token=" a", logprob=math.log(hi), bytes_=(32, 97), token_id=1),
+                TokenProb(token=" a", logprob=math.log(lo), bytes_=(32, 97), token_id=2),
+            ),
+            canary="pass", captured_at="2026-07-26T00:00:00Z",
+        )
+
+    a = _dup_cap(0.3, 0.2)  # duplicate " a" entries: true mass 0.5
+    b = _dup_cap(0.45, 0.05)  # duplicate " a" entries: true mass 0.5
+
+    # Both duplicate " a" entries collapse to ONE key (there's only one
+    # distinct identity between the two cells), so the aligned vector is
+    # [accumulated " a" mass, "other" bucket] -- [0.5, 0.5] on both sides if
+    # accumulation is correct; last-wins would instead give [0.2, 0.8] / [0.05, 0.95].
+    pa, pb = _aligned(a, b, k=2)
+    assert pa == pytest.approx([0.5, 0.5], abs=1e-9), "accumulated, not last-wins (0.2)"
+    assert pb == pytest.approx([0.5, 0.5], abs=1e-9), "accumulated, not last-wins (0.05)"
+
+    jsd, _ = divergence(a, b)
+    assert jsd == pytest.approx(0.0, abs=1e-9)
+
+
+def test_divergence_is_an_estimate_not_a_guaranteed_bound():
+    """Falsifies the module's former "always a lower bound" claim with a
+    concrete feasible completion.
+
+    Cells `a` and `b` each observe one token in their (K=1) top-K, and the
+    two observed tokens are different, so `_aligned` credits each cell 0.0
+    for the other's token -- current behaviour, and exactly approximation
+    (b) from the module docstring. But since each cell's own top-1
+    probability is 0.5 (K-th prob = 0.5, the individual per-token cap), a
+    FEASIBLE completion exists where each cell's entire unobserved mass is
+    the other cell's observed token: a_true = {"x": 0.5, "y": 0.5},
+    b_true = {"x": 0.5, "y": 0.5} -- i.e. a_true == b_true, so the TRUE
+    divergence for this feasible world is exactly 0. The reported value is
+    not."""
+    a = _cap([("x", 0.5)])  # 0.5 unobserved
+    b = _cap([("y", 0.5)])  # 0.5 unobserved
+
+    reported, _ = divergence(a, b)
+
+    # The feasible completion described above, computed directly (no
+    # lumped "other", no credit-0 approximation -- just the actual JSD of
+    # two literal, fully-specified distributions).
+    a_true = {"x": 0.5, "y": 0.5}
+    b_true = {"x": 0.5, "y": 0.5}
+    true_jsd = 0.0
+    for key in ("x", "y"):
+        p, q = a_true[key], b_true[key]
+        m = 0.5 * (p + q)
+        true_jsd += 0.5 * p * math.log(p / m) + 0.5 * q * math.log(q / m)
+
+    assert true_jsd == pytest.approx(0.0, abs=1e-9), "sanity: the feasible worlds are identical"
+    assert reported > true_jsd, (
+        "reported divergence must exceed the true divergence of this "
+        "feasible completion -- proving `reported` is NOT a guaranteed "
+        "lower bound of the true value"
+    )
 
 
 def test_group_means_exclude_ungrouped_rows():
