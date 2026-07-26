@@ -125,6 +125,7 @@ class TTSAdapterRegistry:
                 raise ValueError(f"Alias target is not registered: {target}")
 
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
+        self._generation_sequence = 0
         self._closed = False
         self._close_lock = asyncio.Lock()
         self._close_task: asyncio.Task[None] | None = None
@@ -146,6 +147,16 @@ class TTSAdapterRegistry:
     def configuration_generation(self, provider_id: str) -> int:
         """Return the latest settings generation applied to one provider."""
         return self._slots[self._resolve_id(provider_id)].applied_generation
+
+    def reserve_reconfiguration_generation(self) -> int:
+        """Reserve one registry-wide generation for a future transition.
+
+        Returns:
+            A monotonically increasing generation shared by compatibility
+            reconfiguration and retained settings publication.
+        """
+        self._generation_sequence += 1
+        return self._generation_sequence
 
     async def acquire(
         self,
@@ -235,12 +246,18 @@ class TTSAdapterRegistry:
 
         slot = self._slots[canonical_id]
         new_config = deepcopy(dict(config))
+        selected_generation = (
+            self.reserve_reconfiguration_generation()
+            if generation is None
+            else generation
+        )
+        self._generation_sequence = max(
+            self._generation_sequence,
+            selected_generation,
+        )
         async with slot.lock:
             if self._closed:
                 raise TTSRegistryClosedError("The TTS registry is closed")
-            selected_generation = (
-                slot.highest_generation + 1 if generation is None else generation
-            )
 
         if slot.spec.exclusive_reconfigure:
             return await self._begin_exclusive_reconfiguration(

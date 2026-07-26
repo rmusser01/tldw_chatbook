@@ -465,7 +465,10 @@ async def test_stts_event_cancellation_does_not_cancel_service_owned_settings(
 ) -> None:
     from tldw_chatbook import config as config_module
 
-    registry = TTSAdapterRegistry(specs=(), aliases={})
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", FakeAdapterFactory("audio_cpp")),),
+        aliases={},
+    )
     service = TTSService(registry)
     app = SimpleNamespace(notify=Mock(), post_message=Mock())
     handler = STTSEventHandler(app=app)

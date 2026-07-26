@@ -699,6 +699,8 @@ class TTSService:
             descriptor.provider_id for descriptor in self.registry.descriptors()
         )
         canonical_id_set = frozenset(canonical_ids)
+        if preferences.provider_id not in canonical_id_set:
+            raise ValueError("preferences must use a canonical registered provider ID")
         validated_configs: dict[str, dict[str, Any]] = {}
         for provider_id, config in provider_configs.items():
             if not isinstance(provider_id, str) or provider_id not in canonical_id_set:
@@ -712,8 +714,8 @@ class TTSService:
             if provider_id in validated_configs
         }
 
-        self._settings_generation += 1
-        generation = self._settings_generation
+        generation = self.registry.reserve_reconfiguration_generation()
+        self._settings_generation = generation
         foreground: asyncio.Future[TTSSettingsPublication] = (
             asyncio.get_running_loop().create_future()
         )
@@ -893,7 +895,10 @@ class TTSService:
             return "applied"
         if result is ReconfigureResult.UNCHANGED:
             return "unchanged"
-        return "superseded"
+        if self.preferences_generation() > ticket.generation:
+            return "superseded"
+        await self._seal_provider_configs((provider_id,))
+        return "unavailable"
 
     async def _seal_provider_configs(
         self,

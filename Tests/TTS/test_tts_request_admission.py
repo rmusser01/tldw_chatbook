@@ -9,6 +9,7 @@ import pytest
 
 from Tests.TTS.adapter_fakes import FakeAdapter
 from tldw_chatbook.TTS.adapter_registry import (
+    ReconfigureResult,
     TTSAdapterLease,
     TTSAdapterRegistry,
 )
@@ -985,6 +986,218 @@ async def test_pre_replacement_failure_changes_no_preferences_or_provider() -> N
     await response.aclose()
     await service.close()
     await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_first_publication_cannot_collide_with_compatibility_reconfigure() -> (
+    None
+):
+    adapters: list[_CapturingAdapter] = []
+
+    def factory(config: Mapping[str, Any]) -> _CapturingAdapter:
+        adapter = _CapturingAdapter(
+            "audio_cpp",
+            generation=str(config["generation"]),
+        )
+        adapters.append(adapter)
+        return adapter
+
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=factory,
+                initial_config={"generation": "initial"},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+    old_snapshot = _snapshot(model_id="Model/Initial")
+    saved_snapshot = _snapshot(model_id="Model/Saved")
+    service = TTSService(registry, preferences_snapshot=old_snapshot)
+
+    try:
+        assert (
+            await service.reconfigure_provider(
+                "audio_cpp",
+                {"generation": "compatibility"},
+            )
+            is ReconfigureResult.CHANGED
+        )
+        assert registry.configuration_revision("audio_cpp") == 2
+
+        ticket = service.begin_preferences_publication(
+            saved_snapshot,
+            {"audio_cpp": {"generation": "saved"}},
+            lambda: generation_module.TTSSettingsPersistenceOutcome(
+                True,
+                True,
+                None,
+            ),
+            foreground_timeout_seconds=0,
+        )
+        foreground = await asyncio.shield(ticket.foreground)
+        completion = await asyncio.shield(ticket.completion)
+
+        assert foreground.provider_statuses == {"audio_cpp": "applied"}
+        assert completion.provider_statuses == {"audio_cpp": "applied"}
+        assert service.preferences_snapshot() == saved_snapshot
+        assert service.preferences_generation() == ticket.generation
+        assert registry.configuration_generation("audio_cpp") == ticket.generation
+        assert registry.configuration_revision("audio_cpp") == 3
+
+        response = await service.synthesize_default(text="Saved generation")
+        assert adapters[0].generation == "saved"
+        assert adapters[0].requests[0].model_id == "Model/Saved"
+        await response.aclose()
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_compatibility_reconfigure_cannot_supersede_pending_publication() -> None:
+    adapters: list[_CapturingAdapter] = []
+
+    def factory(config: Mapping[str, Any]) -> _CapturingAdapter:
+        adapter = _CapturingAdapter(
+            "audio_cpp",
+            generation=str(config["generation"]),
+        )
+        adapters.append(adapter)
+        return adapter
+
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=factory,
+                initial_config={"generation": "initial"},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+    saved_snapshot = _snapshot(model_id="Model/Saved")
+    service = TTSService(
+        registry,
+        preferences_snapshot=_snapshot(model_id="Model/Initial"),
+    )
+    response = await service.synthesize_default(text="Active speech")
+
+    try:
+        publication = service.begin_preferences_publication(
+            saved_snapshot,
+            {"audio_cpp": {"generation": "saved"}},
+            lambda: generation_module.TTSSettingsPersistenceOutcome(
+                True,
+                True,
+                None,
+            ),
+            foreground_timeout_seconds=0,
+        )
+        foreground = await asyncio.shield(publication.foreground)
+        assert foreground.provider_statuses == {"audio_cpp": "pending"}
+
+        failed_publication = service.begin_preferences_publication(
+            _snapshot(model_id="Model/Not-Replaced"),
+            {},
+            lambda: generation_module.TTSSettingsPersistenceOutcome(
+                False,
+                False,
+                "before_replace",
+            ),
+            foreground_timeout_seconds=0,
+        )
+        failed_result = await asyncio.shield(failed_publication.completion)
+        assert failed_result.published is False
+        assert service.preferences_snapshot() == saved_snapshot
+
+        compatibility = asyncio.create_task(
+            service.reconfigure_provider(
+                "audio_cpp",
+                {"generation": "compatibility"},
+            )
+        )
+        await asyncio.sleep(0)
+        assert compatibility.done() is False
+
+        await response.aclose()
+        assert await compatibility is ReconfigureResult.CHANGED
+        completion = await asyncio.shield(publication.completion)
+
+        assert completion.provider_statuses == {"audio_cpp": "unavailable"}
+        assert service.preferences_snapshot() == saved_snapshot
+        with pytest.raises(TTSProviderUnavailableError):
+            await registry.acquire("audio_cpp")
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_provider_id", ("missing", "audio.cpp"))
+async def test_publication_rejects_noncanonical_preference_provider_synchronously(
+    invalid_provider_id: str,
+) -> None:
+    adapter = _CapturingAdapter("audio_cpp", generation="initial")
+    initial_snapshot = _snapshot(model_id="Model/Initial")
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=lambda _config: adapter,
+                initial_config={"generation": "initial"},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={"audio.cpp": "audio_cpp"},
+    )
+    service = TTSService(registry, preferences_snapshot=initial_snapshot)
+    persistence_calls = 0
+
+    def persistence() -> Any:
+        nonlocal persistence_calls
+        persistence_calls += 1
+        return generation_module.TTSSettingsPersistenceOutcome(True, True, None)
+
+    try:
+        with pytest.raises(
+            ValueError,
+            match="preferences must use a canonical registered provider ID",
+        ):
+            service.begin_preferences_publication(
+                _snapshot(
+                    provider_id=invalid_provider_id,
+                    model_id="Model/Invalid",
+                ),
+                {},
+                persistence,
+            )
+
+        await asyncio.sleep(0)
+        assert persistence_calls == 0
+        assert service._settings_publication_tasks == set()
+        assert service.preferences_snapshot() == initial_snapshot
+        assert service.preferences_generation() == 0
+        assert service._settings_generation == 0
+        assert registry._generation_sequence == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
 
 
 @pytest.mark.asyncio
