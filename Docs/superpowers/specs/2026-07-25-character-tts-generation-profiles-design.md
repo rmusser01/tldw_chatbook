@@ -87,12 +87,12 @@ observed lifecycle was complete `1`, playback `1`, progress `4`, and streaming
 healthy response were present before and after UAT, and application shutdown
 did not act on the external process.
 
-After the final rebase onto `origin/dev` `892011407`, all 25 pre-evidence
+After the final rebase onto `origin/dev` `5bff29934`, all 27 existing PR
 commits were range-diff `=` patch-identical. Fresh post-rebase verification
 recorded:
 
-- focused Slice 1 suite: 300 passed, 1 warning in 76.44 seconds;
-- broad TTS/STTS suite: 1,008 passed, 14 skipped, 1 warning in 332.03 seconds;
+- focused Slice 1 suite: 325 passed, 1 warning in 78.89 seconds;
+- broad TTS/STTS suite: 1,016 passed, 14 skipped, 1 warning in 370.04 seconds;
 - primary Ruff, config Ruff with only the known `F841` baseline ignored,
   task-scoped Ruff format across 73 files, compileall, focused mypy across seven
   files, and `git diff --check`: passed;

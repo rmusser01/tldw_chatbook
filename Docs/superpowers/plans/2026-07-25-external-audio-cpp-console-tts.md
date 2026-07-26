@@ -1489,10 +1489,10 @@ is linked, and set Done only when every repository DoD item is satisfied.
 - The same listener identity and healthy response were present before and
   after UAT. Chatbook shut down without launching, restarting, signaling,
   supervising, adopting, or stopping the external process.
-- All 25 pre-evidence commits were range-diff `=` patch-identical after the
-  final rebase onto `origin/dev` `892011407`. Following PR review hardening,
-  the focused suite passed 325 tests with 1 warning in 79.81 seconds; the broad
-  suite passed 1,016 tests with 14 skipped and 1 warning in 284.70 seconds.
+- All 27 existing PR commits were range-diff `=` patch-identical after the
+  final rebase onto `origin/dev` `5bff29934`. Following PR review hardening,
+  the focused suite passed 325 tests with 1 warning in 78.89 seconds; the broad
+  suite passed 1,016 tests with 14 skipped and 1 warning in 370.04 seconds.
 - Primary Ruff, config Ruff with only the known `F841` baseline ignored,
   task-scoped Ruff format across 73 files, compileall, focused mypy across seven
   files, and `git diff --check` passed. Full baseline mypy retained exactly the
