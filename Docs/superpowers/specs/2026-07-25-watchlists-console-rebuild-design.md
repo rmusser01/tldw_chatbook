@@ -85,7 +85,18 @@ CREATE INDEX IF NOT EXISTS idx_watchlist_sources_subscription
     ON watchlist_sources(subscription_id);
 ```
 
-`PRAGMA foreign_keys = ON` is already set (`Subscriptions_DB.py:82`), so these cascades take effect.
+**Foreign-key enforcement must be switched on first; it is currently off at runtime.** The
+`PRAGMA foreign_keys = ON` at `Subscriptions_DB.py:82` runs inside `_initialize_schema`'s
+`with closing(self._get_connection())` block, and that connection is closed immediately after. The
+pragma is per-connection, and `BaseDB._get_connection` (`base_db.py:104-110`) sets only
+`row_factory` — `Subscriptions_DB` never overrides it. Sibling databases do set it per connection
+(`ChaChaNotes_DB.py:2678`, `Client_Media_DB_v2.py:691`); this one is the exception.
+
+Consequence beyond this feature: `subscription_items` already declares
+`FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE`, which has never
+fired. Deleting a subscription has been silently orphaning its items. Implementation enables
+enforcement in its own commit before any of this schema lands. Cleaning up already-orphaned rows is
+deliberately **out of scope** — deleting user data deserves its own spec and a backup story.
 
 `watchlists.tags` is **comma-joined**, matching how `subscriptions.tags` is stored
 (`Subscriptions_DB.py:422` does `",".join(tags)`) — not JSON. This inherits the existing wart that

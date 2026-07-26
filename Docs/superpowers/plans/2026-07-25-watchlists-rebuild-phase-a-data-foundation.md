@@ -12,7 +12,7 @@
 
 - Spec: `Docs/superpowers/specs/2026-07-25-watchlists-console-rebuild-design.md`. Every requirement below is traceable to it.
 - All schema changes are **idempotent** — running twice is a no-op — and live in `SubscriptionsDB`: table creation in `_initialize_schema`, additive migration in `_ensure_watchlists_schema`. No table is created lazily from a service. (Ruling, 2026-07-25: this is why Task 2 relocates `local_watchlist_runs`.)
-- `PRAGMA foreign_keys = ON` is already set (`Subscriptions_DB.py:82`). Cascades are live; do not disable.
+- Foreign-key enforcement is enabled by **Task 1a**. It was previously off at runtime — see that task. Do not disable it.
 - `SubscriptionsDB` uses `threading.local()` connections (`:75`, `:368-370`). Never share a connection across threads.
 - Use `db.transaction()` (`:373`) for writes; it commits on success and rolls back on exception.
 - `subscriptions.tags` is **comma-joined**, not JSON (`:422`). `watchlists.tags` matches.
@@ -45,6 +45,108 @@ Phase A ships as its own PR and is independently testable — it has no UI surfa
 | `Tests/DB/test_subscriptions_db_watchlists.py` | **New.** Schema, FTS, backfill, counts | 1, 3, 7 |
 | `Tests/Subscriptions/test_item_persist.py` | **New.** Full-column-set persistence | 4 |
 | `Tests/Subscriptions/test_watchlist_bundle_service.py` | **New.** CRUD, membership, collisions, migration | 5, 6 |
+
+---
+
+### Task 1a: Enable foreign-key enforcement
+
+**Files:**
+- Modify: `tldw_chatbook/DB/Subscriptions_DB.py` — add a `_get_connection` override
+- Modify: `Tests/DB/test_subscriptions_db.py` — fix one test that depends on enforcement being off
+- Test: `Tests/DB/test_subscriptions_db.py`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: every `SubscriptionsDB` connection has `PRAGMA foreign_keys = ON`. Task 1's cascade behaviour depends on this.
+
+**Why this exists (ruling, 2026-07-25):** the spec originally claimed enforcement was already on, citing `Subscriptions_DB.py:82`. That pragma runs inside `_initialize_schema`'s `with closing(self._get_connection())` block, on a connection closed immediately afterwards. The pragma is per-connection, and `BaseDB._get_connection` (`base_db.py:104-110`) sets only `row_factory`. So enforcement has been **off** at runtime, and `subscription_items`' declared `ON DELETE CASCADE` has never fired — deleting a subscription silently orphaned its items.
+
+This ships as its own commit because it fixes a pre-existing bug with database-wide effect and must be revertable independently of the feature work. Cleaning up already-orphaned rows is out of scope.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `Tests/DB/test_subscriptions_db.py`:
+
+```python
+def test_foreign_keys_enforced_on_runtime_connection(db):
+    # PRAGMA foreign_keys is per-connection and defaults to OFF. The pragma in
+    # _initialize_schema runs on a connection that is closed immediately after,
+    # so it does not cover the thread-local connection everything else uses.
+    assert db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+
+def test_deleting_subscription_cascades_to_its_items(db):
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/feed"
+    )
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO subscription_items (subscription_id, url, title) VALUES (?, ?, ?)",
+            (source_id, "https://a.example/1", "An item"),
+        )
+
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM subscriptions WHERE id = ?", (source_id,))
+
+    orphans = db.conn.execute("SELECT COUNT(*) FROM subscription_items").fetchone()[0]
+    assert orphans == 0
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `source .venv/bin/activate && pytest Tests/DB/test_subscriptions_db.py -k "foreign_keys or cascades" -v`
+Expected: FAIL — the pragma reads `0`, and the orphaned item survives the parent delete.
+
+- [ ] **Step 3: Write the implementation**
+
+In `tldw_chatbook/DB/Subscriptions_DB.py`, add this method to `SubscriptionsDB` directly after `__init__`:
+
+```python
+    def _get_connection(self) -> sqlite3.Connection:
+        """Return a connection with foreign-key enforcement enabled.
+
+        ``PRAGMA foreign_keys`` is per-connection and defaults to OFF, and
+        ``BaseDB._get_connection`` sets only ``row_factory``. Without this
+        override every ``ON DELETE CASCADE`` in this schema is inert, which
+        silently orphaned ``subscription_items`` whenever a subscription was
+        deleted. Matches ``ChaChaNotes_DB`` and ``Client_Media_DB_v2``, which
+        each enable it per connection.
+        """
+        conn = super()._get_connection()
+        conn.execute("PRAGMA foreign_keys = ON;")
+        return conn
+```
+
+Confirm `import sqlite3` is already present at the top of the file; add it if not.
+
+- [ ] **Step 4: Fix the test that depended on enforcement being off**
+
+`test_subscription_filters_action_constraint_allows_include` inserts a `subscription_filters` row with `subscription_id=1` when no such subscription exists. It passes today only because enforcement is off — it asserts an invalid state. Give it a real parent row:
+
+```python
+def test_subscription_filters_action_constraint_allows_include(db):
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/feed"
+    )
+    cursor = db.conn.cursor()
+    cursor.execute(
+        "INSERT INTO subscription_filters (subscription_id, name, conditions, action) VALUES (?, ?, ?, ?)",
+        (source_id, "include ai", "{}", "include"),
+    )
+    db.conn.commit()
+```
+
+- [ ] **Step 5: Run the affected suites**
+
+Run: `source .venv/bin/activate && pytest Tests/DB/test_subscriptions_db.py Tests/Subscriptions Tests/Watchlists -q`
+Expected: all pass except the pre-existing, unrelated failure `Tests/Watchlists/test_watchlists_navigator.py::test_navigator_has_all_section_buttons`, which fails on this branch before any of your changes. If anything else fails, enabling enforcement surfaced another latent orphan — report it as DONE_WITH_CONCERNS with the specifics rather than working around it.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add tldw_chatbook/DB/Subscriptions_DB.py Tests/DB/test_subscriptions_db.py
+git commit -m "fix(db): enable foreign-key enforcement on SubscriptionsDB connections"
+```
 
 ---
 
