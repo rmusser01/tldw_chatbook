@@ -7,7 +7,6 @@ from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIng
 from tldw_chatbook.Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
     MEDIA_DB_UNAVAILABLE_COPY,
-    SERVER_QUIET_LINE_COPY,
     LibraryIngestFormState,
     _human_size,
     build_estimate_line,
@@ -40,11 +39,20 @@ def test_queue_heading_is_queue():
     assert state.queue_heading == "Queue"
 
 
-def test_server_runtime_shows_quiet_line():
+def test_browse_scope_no_longer_drives_the_ingest_line():
+    """Browsing server-side says nothing about where an import will run.
+
+    This test previously asserted the old "ingest runs on Local" warning, which
+    existed because ingest ignored the browse scope. Ingest now has its own
+    explicit target and never keys off browse scope, so on a local-only install
+    the line is silent rather than warning about a coupling that no longer
+    exists (task-684.1).
+    """
     state = build_library_ingest_state(
         (), form=LibraryIngestFormState(), runtime_source="server"
     )
-    assert state.server_quiet_line == SERVER_QUIET_LINE_COPY
+    assert state.server_quiet_line == ""
+    assert state.ingest_backend == "local"
 
 
 def test_local_runtime_hides_quiet_line():
@@ -1085,3 +1093,65 @@ def test_a_server_job_without_a_batch_offers_no_cancel():
     )
 
     assert _row_for(job).can_cancel is False
+
+
+# --- backend target + switch (task-684.1 slice 3) ---------------------------
+
+
+def test_local_only_install_says_nothing_about_backends():
+    """With no server configured there is no choice to explain.
+
+    The old "ingest runs on Local" line existed to warn that ingest ignored your
+    browse scope. Ingest no longer keys off browse scope at all, so on a
+    local-only install the line is just noise.
+    """
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(), runtime_source="server"
+    )
+
+    assert state.server_quiet_line == ""
+    assert state.show_backend_switch is False
+    assert state.ingest_backend == "local"
+
+
+def test_a_configured_server_names_the_target_and_offers_the_switch():
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        ingest_backend="local",
+        server_ingest_available=True,
+    )
+
+    assert "this machine" in state.server_quiet_line.lower()
+    assert state.show_backend_switch is True
+    assert state.ingest_backend == "local"
+
+
+def test_targeting_the_server_says_so_plainly():
+    """A user must be able to see that their files will leave the machine."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        ingest_backend="server",
+        server_ingest_available=True,
+    )
+
+    assert "server" in state.server_quiet_line.lower()
+    assert state.ingest_backend == "server"
+    assert state.show_backend_switch is True
+
+
+def test_server_target_is_still_named_when_the_server_went_away():
+    """An opted-in target must not silently look local if the seam vanished.
+
+    Otherwise the canvas would claim local while submit still tried the server.
+    """
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        ingest_backend="server",
+        server_ingest_available=False,
+    )
+
+    assert "server" in state.server_quiet_line.lower()
+    assert state.ingest_backend == "server"

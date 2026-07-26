@@ -39,7 +39,13 @@ def _generic_default(name: str, fallback: Any) -> Any:
 
 # Exact copy values (binding -- see the L3b plan's Global Constraints).
 INGEST_HEADER_COPY = "Import media"
+# Retired: the old scope-warning line ("ingest runs on Local") existed to say
+# that ingest ignored the Library's browse scope. Ingest never keys off browse
+# scope now -- it has its own explicit target -- so the line is replaced by one
+# that names that target. Kept as a name for any external reference.
 SERVER_QUIET_LINE_COPY = "ingest runs on Local"
+INGEST_TARGET_LOCAL_COPY = "Imports run on this machine."
+INGEST_TARGET_SERVER_COPY = "Imports run on the server."
 MEDIA_DB_UNAVAILABLE_COPY = "Media database is unavailable."
 INGEST_UNAVAILABLE_COPY = "Ingest is unavailable in this runtime."
 QUEUE_HEADING_COPY = "Queue"
@@ -452,6 +458,11 @@ class LibraryIngestCanvasState:
     type_groups: list[str]
     unsupported_files: list[str]
     recent_jobs: list[LibraryIngestJob]
+    #: Which backend a new ingest will target, so the canvas can say so.
+    ingest_backend: str = "local"
+    #: Whether to offer switching backends -- only meaningful when a
+    #: server is actually configured.
+    show_backend_switch: bool = False
 
 
 def _basename(source_path: str) -> str:
@@ -705,6 +716,8 @@ def build_library_ingest_state(
     now: float | None = None,
     preflight: PreflightResult | None = None,
     preflight_checking: bool | None = None,
+    ingest_backend: str = "local",
+    server_ingest_available: bool = False,
 ) -> LibraryIngestCanvasState:
     """Build the ingest canvas's full display state.
 
@@ -740,11 +753,17 @@ def build_library_ingest_state(
     active_preflight_checking = (
         form.preflight_checking if preflight_checking is None else preflight_checking
     )
-    server_quiet_line = (
-        SERVER_QUIET_LINE_COPY
-        if str(runtime_source or "local").strip().lower() == "server"
-        else ""
-    )
+    # The line names the *ingest target*, not the browse scope. On a local-only
+    # install there is no choice to explain, so it stays silent; a server target
+    # is always named, even if the seam has since gone away, so the canvas can
+    # never claim local while submit would still try the server.
+    targets_server = str(ingest_backend or "local").strip().lower() == "server"
+    if targets_server:
+        server_quiet_line = INGEST_TARGET_SERVER_COPY
+    elif server_ingest_available:
+        server_quiet_line = INGEST_TARGET_LOCAL_COPY
+    else:
+        server_quiet_line = ""
     if not registry_available:
         unavailable_line = INGEST_UNAVAILABLE_COPY
     elif not media_db_available:
@@ -813,6 +832,8 @@ def build_library_ingest_state(
     return LibraryIngestCanvasState(
         header=INGEST_HEADER_COPY,
         server_quiet_line=server_quiet_line,
+        ingest_backend="server" if targets_server else "local",
+        show_backend_switch=bool(server_ingest_available),
         unavailable_line=unavailable_line,
         form=form,
         start_enabled=start_enabled,

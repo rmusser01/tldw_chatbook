@@ -5374,12 +5374,26 @@ class LibraryScreen(BaseAppScreen):
         generic_options["chunk"] = form.chunk
         generic_options["chunk_size"] = form.chunk_size
         form.type_options["generic"] = generic_options
+        resolve_backend = getattr(
+            self.app_instance, "_resolve_ingest_backend", None
+        )
+        ingest_backend = resolve_backend() if callable(resolve_backend) else "local"
+        # "A server is available" means the seam exists AND can actually submit;
+        # a half-wired service would otherwise advertise a switch that fails.
+        server_service = getattr(
+            self.app_instance, "server_media_reading_service", None
+        )
+        server_ingest_available = callable(
+            getattr(server_service, "submit_ingest_jobs", None)
+        ) or callable(getattr(server_service, "submit_media_ingest_jobs", None))
         return build_library_ingest_state(
             jobs,
             form=form,
             runtime_source=runtime_source,
             media_db_available=getattr(self.app_instance, "media_db", None) is not None,
             registry_available=registry is not None,
+            ingest_backend=ingest_backend,
+            server_ingest_available=server_ingest_available,
         )
 
     def _ensure_library_notes_sync_config_loaded(self) -> None:
@@ -11643,6 +11657,27 @@ class LibraryScreen(BaseAppScreen):
         """Track the ingest keywords text as the user types it (state only)."""
         event.stop()
         self._library_ingest_form.keywords = event.value
+
+    @on(Button.Pressed, "#library-ingest-backend-switch")
+    def handle_library_ingest_backend_switch(self, event: Button.Pressed) -> None:
+        """Flip where new imports run, and remember the choice.
+
+        Persisted rather than session-only: a user who deliberately points
+        imports at their server should not silently be back on local next launch.
+        Only new submissions are affected -- jobs already queued keep the backend
+        they were sent to.
+
+        Args:
+            event: Button press event emitted by the backend switch.
+        """
+        event.stop()
+        resolve_backend = getattr(
+            self.app_instance, "_resolve_ingest_backend", None
+        )
+        current = resolve_backend() if callable(resolve_backend) else "local"
+        target = "local" if current == "server" else "server"
+        save_setting_to_cli_config("library.ingest", "backend", target)
+        self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-ingest-clear-path")
     def handle_library_ingest_clear_path(self, event: Button.Pressed) -> None:

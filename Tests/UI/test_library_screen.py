@@ -401,3 +401,61 @@ def test_ingestible_file_filters_separate_importable_from_the_rest() -> None:
     assert importable(Path("/tmp/notes.txt")) is True
     assert importable(Path("/tmp/paper.pdf")) is True
     assert importable(Path("/tmp/cover.jpg")) is False
+
+
+def test_backend_switch_flips_and_persists_the_target(monkeypatch) -> None:
+    """Switching backends writes the preference, so it survives a restart.
+
+    A user who deliberately points imports at their server should not silently
+    be back on local next launch (task-684.1).
+    """
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.app_instance._resolve_ingest_backend = MagicMock(return_value="local")
+    screen.refresh = MagicMock()
+
+    saved: list[tuple] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+
+    screen.handle_library_ingest_backend_switch(MagicMock())
+
+    assert saved == [("library.ingest", "backend", "server")]
+    assert screen.refresh.called
+
+
+def test_backend_switch_returns_to_local(monkeypatch) -> None:
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.app_instance._resolve_ingest_backend = MagicMock(return_value="server")
+    screen.refresh = MagicMock()
+
+    saved: list[tuple] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+
+    screen.handle_library_ingest_backend_switch(MagicMock())
+
+    assert saved == [("library.ingest", "backend", "local")]
+
+
+def test_switch_is_not_offered_when_the_server_seam_cannot_submit() -> None:
+    """A service object that cannot submit must not advertise a switch.
+
+    Otherwise the canvas offers a toggle whose only outcome is a failed job.
+    """
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.app_instance.media_db = object()
+    screen.app_instance._resolve_ingest_backend = MagicMock(return_value="local")
+    # A stand-in with no submit methods at all.
+    screen.app_instance.server_media_reading_service = object()
+    screen._library_ingest_registry = MagicMock(return_value=MagicMock(jobs=lambda: ()))
+
+    state = screen._build_library_ingest_state()
+
+    assert state.show_backend_switch is False

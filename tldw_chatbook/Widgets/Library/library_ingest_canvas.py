@@ -170,6 +170,17 @@ class LibraryIngestCanvas(VerticalScroll):
             classes="destination-section",
             markup=False,
         )
+        if state.show_backend_switch:
+            # Only offered when a server is actually configured; otherwise there
+            # is no choice to make and a dead toggle would be worse than none.
+            yield Button(
+                "Import on this machine"
+                if state.ingest_backend == "server"
+                else "Import on the server",
+                id="library-ingest-backend-switch",
+                classes="library-canvas-action",
+                compact=True,
+            )
         if state.server_quiet_line:
             yield Static(
                 state.server_quiet_line,
