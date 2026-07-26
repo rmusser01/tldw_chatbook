@@ -50,18 +50,33 @@ Measured mount cost (`run_test`, 120×40, three runs):
 display; `STTSWindow` mounts exactly one content widget at a time. The bigger file is the cheaper
 mount. This cost is pre-existing — every visit to Models already pays it.
 
-**Not verified live: Console's own frame.** Console renders a *blocking* setup modal
-(`chat_screen.py:6602` — "keep the workbench inert") whose dim backdrop covers the entire
-destination: no header, no rails, no handles, only the starfield and the "Get started" card.
-Reaching the mature frame requires satisfying `provider_done = readiness.native_send_supported`
-(`console_onboarding_state.py:188`); three config attempts against a live `llama-server` on :9099
-did not clear it. **Every Console structural claim in this spec is therefore source-derived, not
-observed** — if Console's real chrome differs from the source reading, this frame inherits the
-error. Closing that gap is worth doing before PR2 designs against it.
+**Console's frame, verified.** Console renders a *blocking* setup modal (`chat_screen.py:6602` —
+"keep the workbench inert") that covers the entire destination until
+`provider_done = readiness.native_send_supported` (`console_onboarding_state.py:188`). Clearing it
+needs a provider key from `NATIVE_CONSOLE_PROVIDER_KEYS`, which is exactly
+`{"llama_cpp", "local_llamacpp"}` — **not** `"llama.cpp"`. With `provider = "llama_cpp"` pointed at
+a live `llama-server`, the real frame renders:
 
-Screenshots (SVG, 200×50) for Models, Speech, Evals, and Console's blocked state were captured via
-`App.save_screenshot` under `run_test`. The app has no in-app screenshot command; a driver script
-is required.
+```
+DestinationHeader          Console / subtitle / [Ready]
+CONTROL BAR row 1          Provider: Llama_cpp | Model: … | Assistant: General |
+                           RAG: off | Sources: 0 staged | Tools: 0 ready | Approvals: 0 pending
+CONTROL BAR row 2          New tab  Settings  Attach context  Run Library RAG  Save Chatbook  Help
+workspace grid  [ left rail ~34 cols ][ main ][ Inspector handle ]
+  left rail: title row "Console context  ◀"  then  Session ▼ / Starred ▼ /
+             Workspaces ▼ / Chats ▼ / Context ▼
+composer                   separate bordered block below the grid
+footer                     F6 next pane | Shift+F6 previous pane | F1 help | …
+```
+
+Four things this corrected in the frame design below: Lab gains a **status row** (Console's
+defining density element, which Lab had no equivalent of); the rail gains an **in-rail title and
+collapse button**; the rail width is now chosen *against* Console's observed ~34 rather than
+invented; and the frame **registers footer shortcuts**, which was omitted entirely.
+
+Screenshots (SVG, 200×50) for Models, Speech, Evals, Console-blocked, and Console-frame were
+captured via `App.save_screenshot` under `run_test`. The app has no in-app screenshot command, so a
+driver script is required — worth keeping for future UI specs.
 
 ## Prerequisite — PR0: the invisible active-mode label
 
@@ -171,23 +186,37 @@ New base `LabScreen(BaseAppScreen)` in `tldw_chatbook/UI/Screens/lab_frame.py`. 
 
 ```
 DestinationHeader          5 rows   bordered block: title / subtitle / status
+LabStatusRow               1 row    mode-supplied status chips  (Console parity)
 LabModeStrip               1 row    Models | Speech | Evals
 LabWorkbench               1fr      Lab-private, three regions
  ┌──────┬──────────────┬───────────────────────┬────────────┬──────┐
  │handle│  LEFT RAIL   │        BODY           │ INSPECTOR  │handle│
- │ w=13 │  catalog     │        bench          │ collapsed  │ w=11 │
- │      │  width 26    │        1fr            │ by default │      │
+ │ w=13 │  title + ◀   │        bench          │ collapsed  │ w=11 │
+ │      │  catalog     │        1fr            │ by default │      │
+ │      │  width 26    │                       │            │      │
  └──────┴──────────────┴───────────────────────┴────────────┴──────┘
 ```
+
+Console pairs its status row with a second **action** row. Lab does not copy that: the mode strip
+already occupies that slot, and Lab's per-mode actions live in the body today. One status row is
+the parity worth taking; a second action row would be chrome without a consumer.
+
+`$ds-lab-rail-width: 26` against Console's observed ~34: Console's rail holds conversation titles,
+Lab's holds fixed short labels whose longest is `Speech Recognition` at 18 characters.
 
 ### Hooks
 
 | Hook | Default | Purpose |
 |---|---|---|
 | `lab_header_state()` | abstract | `WorkbenchHeaderState` for the header |
+| `lab_status_chips()` | `()` — row not rendered | status chips for this mode |
 | `compose_lab_rail()` | empty rail | the catalog |
 | `compose_lab_body()` | abstract | the bench |
 | `compose_lab_inspector()` | honest empty-state panel | the output |
+| `lab_footer_shortcuts()` | frame defaults | registered via `register_footer_shortcuts` |
+
+The frame also renders the rail's own title row and collapse button, mirroring Console's
+`Console context ◀`; modes supply only the title string.
 
 The frame owns collapse state, handle visibility, `$ds-*` tokens, framed-region borders, the
 density class, and the width contract. It owns nothing about any mode's content.
@@ -320,9 +349,13 @@ Three hazards, all distinct:
    sidebar branches, its `else` (`:5036-5044`) manually forwards unhandled presses into the active
    content widget. Stripping the sidebar branches carelessly takes the delegation with them,
    breaking buttons *inside* the playground, settings, and audiobook widgets.
-3. **The capability panel is a third element type** — not a mode, not an action, a status block
-   (`#speech-capability-status`). It moves into the rail as its own region and its current clipping
-   is fixed: the panel must wrap without breaking words mid-token and must close its border.
+3. **The capability panel becomes a status chip, not a rail region.** `#speech-capability-status` is
+   a status block, not a mode or an action, and today it renders **clipped** — the screenshot shows
+   it cut off mid-list at `local_tts,` with its bottom border never drawn. Relocating it into the
+   frame's status row (`lab_status_chips()`) fixes the clipping by removing the constraint that
+   caused it, rather than patching the box: a one-line chip such as `Local speech: deps missing`
+   with the full detail on hover, matching how Console renders `Tools: 0 ready`. This is the
+   concrete payoff of the Console status-row parity noted above.
 
 **IA decisions:**
 
@@ -435,7 +468,9 @@ three seams fail in ways a naive test sails past.
 | exactly one rail row carries `is-active`, and it is the row just clicked | Models' silent highlight death — a test asserting "clicking Ollama shows the Ollama view" passes while it is broken |
 | switching across all four Speech views raises nothing | the `query_one` → `NoMatches` crash |
 | a button owned by the mounted content widget is still handled after the sidebar leaves | the load-bearing delegation fallback |
-| the capability panel wraps without breaking words and closes its border | the clipping seen live |
+| the capability status renders as a one-line chip with full detail on hover | the clipped panel seen live |
+| a mode returning no status chips renders no status row at all | dead chrome on modes without status |
+| the footer carries this destination's shortcuts | the omitted `register_footer_shortcuts` wiring |
 
 ### Frame contract
 
