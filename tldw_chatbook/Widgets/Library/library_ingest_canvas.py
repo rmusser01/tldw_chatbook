@@ -170,6 +170,17 @@ class LibraryIngestCanvas(VerticalScroll):
             classes="destination-section",
             markup=False,
         )
+        # State before action: "Imports run on this machine." then the button
+        # that changes it. Rendering the button first read as a contradiction
+        # top-to-bottom -- "Import on the server / Imports run on this machine"
+        # (spotted on screen, not in a test).
+        if state.server_quiet_line:
+            yield Static(
+                state.server_quiet_line,
+                id="library-ingest-server-line",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
         if state.show_backend_switch:
             # Only offered when a server is actually configured; otherwise there
             # is no choice to make and a dead toggle would be worse than none.
@@ -180,13 +191,6 @@ class LibraryIngestCanvas(VerticalScroll):
                 id="library-ingest-backend-switch",
                 classes="library-canvas-action",
                 compact=True,
-            )
-        if state.server_quiet_line:
-            yield Static(
-                state.server_quiet_line,
-                id="library-ingest-server-line",
-                classes="library-ingest-quiet-line",
-                markup=False,
             )
         if state.unavailable_line:
             yield Static(

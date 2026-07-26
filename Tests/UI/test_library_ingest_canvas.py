@@ -987,7 +987,8 @@ async def test_backend_switch_appears_only_with_a_server_configured():
         assert len(pilot.app.query("#library-ingest-server-line")) == 0
 
     with_server = build_library_ingest_state(
-        (), form=LibraryIngestFormState(), server_ingest_available=True
+        (), form=LibraryIngestFormState(), runtime_source="server",
+        server_ingest_available=True
     )
     app = _CanvasHost(with_server)
     async with app.run_test() as pilot:
@@ -1003,6 +1004,7 @@ async def test_backend_switch_offers_the_way_back_when_targeting_the_server():
         (),
         form=LibraryIngestFormState(),
         ingest_backend="server",
+        runtime_source="server",
         server_ingest_available=True,
     )
     app = _CanvasHost(state)
@@ -1011,3 +1013,25 @@ async def test_backend_switch_offers_the_way_back_when_targeting_the_server():
         assert "this machine" in str(button.label).lower()
         line = pilot.app.query_one("#library-ingest-server-line", Static)
         assert "server" in str(line.renderable).lower()
+
+
+@pytest.mark.asyncio
+async def test_backend_state_is_rendered_before_the_switch():
+    """"Imports run on X" must precede the button that changes it.
+
+    With the button first, the pane read as a contradiction top-to-bottom:
+    "Import on the server" directly above "Imports run on this machine."
+    """
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(), runtime_source="server",
+        server_ingest_available=True
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        children = list(pilot.app.query_one(LibraryIngestCanvas).children)
+        ids = [c.id for c in children if c.id]
+        assert "library-ingest-server-line" in ids
+        assert "library-ingest-backend-switch" in ids
+        assert ids.index("library-ingest-server-line") < ids.index(
+            "library-ingest-backend-switch"
+        ), f"switch rendered before the state line: {ids[:6]}"

@@ -1119,6 +1119,7 @@ def test_a_configured_server_names_the_target_and_offers_the_switch():
         (),
         form=LibraryIngestFormState(),
         ingest_backend="local",
+        runtime_source="server",
         server_ingest_available=True,
     )
 
@@ -1133,6 +1134,7 @@ def test_targeting_the_server_says_so_plainly():
         (),
         form=LibraryIngestFormState(),
         ingest_backend="server",
+        runtime_source="server",
         server_ingest_available=True,
     )
 
@@ -1141,17 +1143,58 @@ def test_targeting_the_server_says_so_plainly():
     assert state.show_backend_switch is True
 
 
-def test_server_target_is_still_named_when_the_server_went_away():
-    """An opted-in target must not silently look local if the seam vanished.
+def test_canvas_and_submit_agree_when_the_precondition_is_unmet():
+    """An unmet precondition must show local, because submit will be local.
 
-    Otherwise the canvas would claim local while submit still tried the server.
+    This test previously asserted the opposite -- that a server target stays
+    named even when unusable -- to stop the canvas claiming local while submit
+    tried the server. That mismatch no longer exists: ``_resolve_ingest_backend``
+    applies the same runtime-policy gate, so an opted-in user whose runtime is
+    local really does get a local ingest. The canvas saying "this machine" is
+    now the truth, not a lie, and the line explains how to enable server
+    imports.
     """
     state = build_library_ingest_state(
         (),
         form=LibraryIngestFormState(),
         ingest_backend="server",
-        server_ingest_available=False,
+        runtime_source="local",
+        server_ingest_available=True,
     )
 
-    assert "server" in state.server_quiet_line.lower()
-    assert state.ingest_backend == "server"
+    assert state.ingest_backend == "local"
+    assert state.show_backend_switch is False
+    assert "server mode" in state.server_quiet_line.lower()
+
+
+def test_server_ingest_needs_server_mode_not_just_a_configured_server():
+    """Server ingest is gated by runtime policy, so the UI must say so.
+
+    ``media.ingestion_jobs.launch.server`` declares ``required_source="server"``
+    in the runtime-policy registry, so the service refuses the launch outright
+    when the Library runtime is local -- the same rule that makes the retired
+    ingest window disable its server panels in local mode. Offering the switch
+    regardless produced a job that failed with
+    "media.ingestion_jobs.launch.server requires server mode" (seen live).
+    """
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        runtime_source="local",
+        server_ingest_available=True,
+    )
+
+    assert state.show_backend_switch is False
+    assert "server mode" in state.server_quiet_line.lower()
+
+
+def test_server_mode_plus_a_configured_server_offers_the_switch():
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        runtime_source="server",
+        server_ingest_available=True,
+    )
+
+    assert state.show_backend_switch is True
+    assert "this machine" in state.server_quiet_line.lower()

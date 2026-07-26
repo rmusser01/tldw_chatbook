@@ -46,6 +46,10 @@ INGEST_HEADER_COPY = "Import media"
 SERVER_QUIET_LINE_COPY = "ingest runs on Local"
 INGEST_TARGET_LOCAL_COPY = "Imports run on this machine."
 INGEST_TARGET_SERVER_COPY = "Imports run on the server."
+INGEST_SERVER_NEEDS_SERVER_MODE_COPY = (
+    "Imports run on this machine. Switch the Library to server mode to "
+    "import on the server."
+)
 MEDIA_DB_UNAVAILABLE_COPY = "Media database is unavailable."
 INGEST_UNAVAILABLE_COPY = "Ingest is unavailable in this runtime."
 QUEUE_HEADING_COPY = "Queue"
@@ -757,10 +761,24 @@ def build_library_ingest_state(
     # install there is no choice to explain, so it stays silent; a server target
     # is always named, even if the seam has since gone away, so the canvas can
     # never claim local while submit would still try the server.
-    targets_server = str(ingest_backend or "local").strip().lower() == "server"
+    # Server ingest is gated by runtime policy, not just by a configured
+    # server: ``media.ingestion_jobs.launch.server`` declares
+    # ``required_source="server"``, so the service refuses the launch outright
+    # while the Library runtime is local -- the same rule that makes the retired
+    # ingest window disable its server panels in local mode. Offering the switch
+    # regardless produced a job that failed with "requires server mode".
+    in_server_mode = str(runtime_source or "local").strip().lower() == "server"
+    server_ingest_offerable = bool(server_ingest_available) and in_server_mode
+    targets_server = (
+        str(ingest_backend or "local").strip().lower() == "server"
+        and server_ingest_offerable
+    )
     if targets_server:
         server_quiet_line = INGEST_TARGET_SERVER_COPY
-    elif server_ingest_available:
+    elif server_ingest_available and not in_server_mode:
+        # Explain the precondition instead of letting the submit fail later.
+        server_quiet_line = INGEST_SERVER_NEEDS_SERVER_MODE_COPY
+    elif server_ingest_offerable:
         server_quiet_line = INGEST_TARGET_LOCAL_COPY
     else:
         server_quiet_line = ""
@@ -833,7 +851,7 @@ def build_library_ingest_state(
         header=INGEST_HEADER_COPY,
         server_quiet_line=server_quiet_line,
         ingest_backend="server" if targets_server else "local",
-        show_backend_switch=bool(server_ingest_available),
+        show_backend_switch=server_ingest_offerable,
         unavailable_line=unavailable_line,
         form=form,
         start_enabled=start_enabled,

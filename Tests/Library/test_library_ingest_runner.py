@@ -1975,8 +1975,10 @@ def _server_ingest_preference():
     """Patch the ingest backend preference to "server" for a test's duration.
 
     Sending an ingest to a server is an explicit opt-in stored under
-    ``[library.ingest] backend``; the Library's browse scope deliberately does
-    not decide it (see ``_resolve_ingest_backend``).
+    ``[library.ingest] backend``; the browse scope deliberately does not decide
+    it. The opt-in alone is not enough, though -- runtime policy requires the
+    runtime to be in server mode as well -- so tests that want a server route
+    must ALSO call ``_use_server_runtime`` (see ``_resolve_ingest_backend``).
     """
     real = _app_module.get_cli_setting
 
@@ -1986,6 +1988,20 @@ def _server_ingest_preference():
         return real(*args, **kwargs)
 
     return patch("tldw_chatbook.app.get_cli_setting", side_effect=_fake)
+
+
+def _use_server_runtime(app) -> None:
+    """Put the harness's runtime policy in server mode.
+
+    Required alongside the opt-in: ``media.ingestion_jobs.launch.server`` is
+    declared ``required_source="server"``, so the service refuses the launch in
+    local mode -- verified live, where it failed with "requires server mode".
+    """
+    from types import SimpleNamespace
+
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_source="server")
+    )
 
 
 @pytest.mark.asyncio
@@ -2018,6 +2034,7 @@ async def test_server_backend_submits_remotely_and_attaches_ids(
     app.server_media_reading_service = service
     source = _write_text_file(tmp_path, "note.txt", "Body.")
 
+    _use_server_runtime(app)
     with _server_ingest_preference():
       async with app.run_test() as pilot:
         job = app.submit_library_ingest_job(source_path=str(source), title="A title")
@@ -2053,6 +2070,7 @@ async def test_server_backend_without_a_service_fails_the_job_clearly(
     app.server_media_reading_service = None
     source = _write_text_file(tmp_path, "note.txt", "Body.")
 
+    _use_server_runtime(app)
     with _server_ingest_preference():
       async with app.run_test() as pilot:
         job = app.submit_library_ingest_job(source_path=str(source))
@@ -2069,6 +2087,7 @@ async def test_server_backend_refuses_a_source_it_cannot_send(tmp_path: Path) ->
     app = _IngestRunnerHarness(_make_db(tmp_path))
     app.server_media_reading_service = _RecordingServerService()
 
+    _use_server_runtime(app)
     with _server_ingest_preference():
       async with app.run_test() as pilot:
         job = app.submit_library_ingest_job(source_path="https://example.com/a-post")
@@ -2086,6 +2105,7 @@ async def test_server_submit_failure_marks_the_job_failed(tmp_path: Path) -> Non
     app.server_media_reading_service = _RecordingServerService(fail=True)
     source = _write_text_file(tmp_path, "note.txt", "Body.")
 
+    _use_server_runtime(app)
     with _server_ingest_preference():
       async with app.run_test() as pilot:
         job = app.submit_library_ingest_job(source_path=str(source))
@@ -2139,6 +2159,7 @@ async def test_an_unrecognised_backend_falls_back_to_local(tmp_path: Path) -> No
 async def test_server_backend_is_matched_case_insensitively(tmp_path: Path) -> None:
     """A raw "Server"/" SERVER " value should still route remotely."""
     app = _IngestRunnerHarness(_make_db(tmp_path))
+    _use_server_runtime(app)
     async with app.run_test():
         for value in ("server", "Server", " SERVER "):
             with patch(
@@ -2203,6 +2224,7 @@ async def test_an_explicit_server_preference_routes_remotely(tmp_path: Path) -> 
     app.REMOTE_INGEST_POLL_SECONDS = 0.01
     service = _RecordingServerService()
     app.server_media_reading_service = service
+    _use_server_runtime(app)
     source = _write_text_file(tmp_path, "note.txt", "Body.")
 
     with patch(
@@ -2271,3 +2293,34 @@ async def test_remote_poll_follows_pagination(tmp_path: Path) -> None:
             )
 
     assert 1 in service.offsets, "the poller never asked for the second page"
+
+
+@pytest.mark.asyncio
+async def test_opting_in_without_server_mode_still_ingests_locally(
+    tmp_path: Path,
+) -> None:
+    """The opt-in alone must not route remotely; policy requires server mode.
+
+    Runtime policy declares ``media.ingestion_jobs.launch.server`` as
+    ``required_source="server"``, so the service refuses the launch in local
+    mode. Verified live: it failed with "media.ingestion_jobs.launch.server
+    requires server mode". Falling back to a local ingest keeps the file where
+    it is and lets the canvas explain the precondition, rather than handing the
+    user a failed job.
+    """
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "note.txt", "Body.")
+    app = _IngestRunnerHarness(db)
+    service = _RecordingServerService()
+    app.server_media_reading_service = service
+    # Opted in, but the runtime is still local.
+
+    with _server_ingest_preference():
+        async with app.run_test() as pilot:
+            assert app._resolve_ingest_backend() == "local"
+            job = app.submit_library_ingest_job(source_path=str(source))
+            assert job.origin == "local"
+            await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
+            await _wait_for_runner_idle(app, pilot)
+
+    assert service.submissions == []

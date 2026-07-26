@@ -2630,8 +2630,22 @@ class LibraryIngestQueueMixin:
         keeps the file where it already is.
         """
         raw = get_cli_setting("library.ingest", "backend", "local")
-        backend = str(raw or "local").strip().lower()
-        return "server" if backend == "server" else "local"
+        if str(raw or "local").strip().lower() != "server":
+            return "local"
+        # The opt-in is necessary but not sufficient. Runtime policy declares
+        # ``media.ingestion_jobs.launch.server`` as ``required_source="server"``,
+        # so the service refuses the launch while the Library runtime is local.
+        # Honouring that here means an opted-in user whose runtime is local gets
+        # a local ingest -- the file stays put and the canvas explains how to
+        # enable server imports -- rather than a job that fails with "requires
+        # server mode" (seen live against a real server).
+        runtime_state = getattr(
+            getattr(self, "runtime_policy", None), "state", None
+        )
+        active_source = str(
+            getattr(runtime_state, "active_source", "local") or "local"
+        ).strip().lower()
+        return "server" if active_source == "server" else "local"
 
     def _submit_server_ingest_job(
         self,
