@@ -36,6 +36,9 @@ from tldw_chatbook.Utils.path_validation import (  # noqa: E402
     validate_path,
     validate_path_simple,
 )
+from tldw_chatbook.Character_Chat.world_book_import import (  # noqa: E402
+    character_book_to_world_book_block,
+)
 
 #
 ###############################################
@@ -1569,11 +1572,63 @@ def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "image_base64": data_node.get("char_image") or data_node.get("image"),
         }
 
-        if "character_book" in data_node and isinstance(
-            data_node["character_book"], dict
-        ):
+        # Preserve dev's behaviour first: the parsed card carries the legacy
+        # character_book in its extensions. The conversion below removes it
+        # again ONLY once a usable world-book block exists, so a book that
+        # yields nothing keeps this key and still injects the old way.
+        if isinstance(data_node.get("character_book"), dict):
             parsed_data["extensions"]["character_book"] = parse_character_book(
                 data_node["character_book"]
+            )
+
+        # TASK-429: convert an embedded V2 character_book into the app's managed
+        # character_world_books snapshot so it is visible/attached and injects
+        # ONCE. Handle the top-level V2 field AND the nested legacy key (cards
+        # exported by this app before the fix carry the book under extensions).
+        # Only drop character_book after a block with >=1 entry is built, so a
+        # book that yields nothing keeps its legacy key (still injects).
+        try:
+            if not isinstance(parsed_data["extensions"], dict):
+                parsed_data["extensions"] = {}
+            _source_book = None
+            if isinstance(data_node.get("character_book"), dict):
+                _source_book = data_node["character_book"]
+            elif isinstance(parsed_data["extensions"].get("character_book"), dict):
+                _source_book = parsed_data["extensions"]["character_book"]
+            if _source_book is not None:
+                _fallback = f"{parsed_data.get('name') or 'Character'} Lorebook"
+                _block, _imported, _skipped = character_book_to_world_book_block(
+                    _source_book, _fallback
+                )
+                if _block is not None and _imported > 0:
+                    _existing = parsed_data["extensions"].get("character_world_books")
+                    if not isinstance(_existing, list):
+                        _existing = []
+                    if not any(
+                        isinstance(b, dict)
+                        and str(b.get("name")) == str(_block.get("name"))
+                        for b in _existing
+                    ):
+                        _existing = _existing + [_block]
+                    parsed_data["extensions"]["character_world_books"] = _existing
+                    parsed_data["extensions"].pop("character_book", None)
+                    logger.info(
+                        f"Imported character lorebook '{_block['name']}': "
+                        f"{_imported} entries ({_skipped} skipped)"
+                    )
+                else:
+                    logger.warning(
+                        f"character_book on import yielded no usable entries "
+                        f"({_skipped} skipped); leaving any legacy key intact."
+                    )
+        except Exception as e_book:
+            # Name the card and its declared spec: without an identifier this
+            # line is unactionable in a log covering a bulk import.
+            logger.opt(exception=True).error(
+                "Error converting character_book during V2 card parsing "
+                f"(character={parsed_data.get('name') or 'unknown'!r}, "
+                f"spec={card_data_json.get('spec') or 'unknown'!r} "
+                f"{card_data_json.get('spec_version') or ''}): {e_book}"
             )
 
         # Log spec/version from top level if present, for info, but parsing proceeds based on data_node content.

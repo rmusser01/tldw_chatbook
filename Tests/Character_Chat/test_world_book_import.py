@@ -1,6 +1,9 @@
 import pytest
 
-from tldw_chatbook.Character_Chat.world_book_import import normalize_world_book_import
+from tldw_chatbook.Character_Chat.world_book_import import (
+    normalize_world_book_import,
+    character_book_to_world_book_block,
+)
 
 
 def _tldw_entry(**kw):
@@ -248,3 +251,147 @@ def test_bad_pattern_ignored_when_not_regex():
     # A would-be-bad "pattern" in a non-regex entry is a literal keyword — never validated.
     e = normalize_world_book_import({"entries": [{"keys": ["(a+)+"], "content": "c"}]})["entries"][0]
     assert e["keys"] == ["(a+)+"] and e["regex"] is False
+
+
+# --- character_book_to_world_book_block (task-429) ---
+
+
+def test_character_book_to_block_basic():
+    book = {
+        "name": "Second Chance Lore",
+        "description": "ship lore",
+        "scan_depth": 5,
+        "token_budget": 300,
+        "recursive_scanning": True,
+        "entries": [
+            {"keys": ["coffee"], "content": "The machine explodes.",
+             "enabled": True, "insertion_order": 1, "position": 0},
+            {"keys": ["airlock"], "content": "It sticks.",
+             "enabled": True, "insertion_order": 2},
+        ],
+    }
+    block, imported, skipped = character_book_to_world_book_block(book, "X Lorebook")
+    assert imported == 2 and skipped == 0
+    assert block["name"] == "Second Chance Lore"
+    assert block["scan_depth"] == 5 and block["token_budget"] == 300
+    assert block["recursive_scanning"] is True and block["enabled"] is True
+    # int position (0) normalized to the string enum
+    assert block["entries"][0]["position"] == "before_char"
+    assert block["entries"][0]["keys"] == ["coffee"]
+    assert block["entries"][0]["regex"] is False
+
+
+def test_character_book_to_block_skips_unsalvageable_and_counts():
+    book = {"name": "B", "entries": [
+        {"keys": ["ok"], "content": "good", "enabled": True, "insertion_order": 1},
+        {"content": "no keys", "enabled": True, "insertion_order": 2},   # no keys -> skip
+        {"keys": ["x"], "enabled": True, "insertion_order": 3},          # no content -> skip
+    ]}
+    block, imported, skipped = character_book_to_world_book_block(book, "X Lorebook")
+    assert imported == 1 and skipped == 2
+    assert len(block["entries"]) == 1
+
+
+def test_character_book_to_block_empty_name_uses_fallback():
+    block, _, _ = character_book_to_world_book_block(
+        {"name": "", "entries": []}, "Elara Lorebook")
+    assert block["name"] == "Elara Lorebook"
+
+
+def test_character_book_to_block_non_dict_returns_none():
+    assert character_book_to_world_book_block(None, "X") == (None, 0, 0)
+    assert character_book_to_world_book_block([1, 2], "X") == (None, 0, 0)
+
+
+def test_character_book_to_block_entries_as_object_form():
+    book = {"name": "B", "entries": {"0": {"keys": ["k"], "content": "c",
+            "enabled": True, "insertion_order": 1}}}
+    block, imported, skipped = character_book_to_world_book_block(book, "X")
+    assert imported == 1 and block["entries"][0]["keys"] == ["k"]
+
+
+# --- Review findings on #761 -------------------------------------------------
+
+
+def test_lorebook_imports_even_when_v2_validation_reports_problems():
+    """A card that fails V2 structural validation must still import its lorebook.
+
+    Review finding said the conversion could never run for explicit V2 cards
+    whose `character_book` fails `validate_v2_card`, because import aborted
+    first. Current dev made validation NON-fatal (lenient parsing), so this
+    asserts the end-to-end behaviour rather than trusting either claim.
+    """
+    import json
+
+    from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+        import_character_card_from_json_string,
+    )
+
+    card = {
+        "spec": "chara_card_v2",
+        "spec_version": "2.0",
+        "data": {
+            "name": "Seraphina",
+            # Deliberately malformed against the V2 schema: missing required
+            # sibling fields the validator complains about.
+            "character_book": {
+                "name": "Drowned Archive",
+                "entries": [
+                    {"keys": ["tide"], "content": "The water rises at dusk."}
+                ],
+            },
+        },
+    }
+
+    parsed = import_character_card_from_json_string(json.dumps(card))
+
+    assert parsed is not None
+    books = parsed["extensions"]["character_world_books"]
+    assert any(b["name"] == "Drowned Archive" for b in books)
+    assert "character_book" not in parsed["extensions"]
+
+
+def test_imported_lorebook_note_names_the_newly_converted_book():
+    """The toast must name the book just imported, not a pre-existing one.
+
+    `parse_v2_card` APPENDS the converted block to any existing
+    `character_world_books` list, while the note read `books[0]` -- so a card
+    that already carried a world book announced the wrong one.
+    """
+    from tldw_chatbook.Character_Chat.world_book_import import (
+        format_imported_lorebook_note,
+    )
+
+    books = [
+        {"name": "Pre-existing", "entries": [{"keys": ["a"], "content": "x"}]},
+        {
+            "name": "Drowned Archive",
+            "entries": [
+                {"keys": ["tide"], "content": "The water rises."},
+                {"keys": ["salt"], "content": "It tastes of salt."},
+            ],
+        },
+    ]
+
+    assert format_imported_lorebook_note(books) == (
+        " Lorebook 'Drowned Archive' attached (2 entries)."
+    )
+
+
+def test_imported_lorebook_note_is_empty_without_books():
+    from tldw_chatbook.Character_Chat.world_book_import import (
+        format_imported_lorebook_note,
+    )
+
+    assert format_imported_lorebook_note([]) == ""
+    assert format_imported_lorebook_note(None) == ""
+    assert format_imported_lorebook_note("not a list") == ""
+
+
+def test_imported_lorebook_note_tolerates_malformed_blocks():
+    """Import data is untrusted; a non-dict block must not raise."""
+    from tldw_chatbook.Character_Chat.world_book_import import (
+        format_imported_lorebook_note,
+    )
+
+    assert format_imported_lorebook_note(["nonsense"]) == ""
