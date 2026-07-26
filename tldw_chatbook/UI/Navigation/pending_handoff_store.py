@@ -106,6 +106,11 @@ class PendingHandoffStore:
         )
         return claim
 
+    def has_pending(self, channel: HandoffChannel) -> bool:
+        """Return whether a channel has an unclaimed value without exposing it."""
+        self._assert_owner_thread()
+        return self._slot_for(channel).pending is not None
+
     def acknowledge(self, claim: HandoffClaim[Any]) -> bool:
         """Settle only the exact claim currently in flight."""
         self._assert_owner_thread()

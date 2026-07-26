@@ -17,18 +17,29 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
+from textual.worker import Worker, WorkerState
 
 from ...Chat.answer_citations import summarize_citation_artifact_metadata
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.pending_handoff_store import (
+    ARTIFACT_CHATBOOK_RECORD_PREFIX,
+    HandoffChannel,
+    HandoffClaim,
+)
 from .destination_recovery import DestinationRecoveryState
 
 
 logger = logger.bind(module="ArtifactsScreen")
 CHATBOOK_SERVICE_ERROR_COPY = "Chatbook service unavailable; retry Artifacts later."
+CHATBOOK_TARGET_MISSING_COPY = "The requested local Chatbook artifact no longer exists."
 DANGEROUS_TEXT_PATTERNS = ("javascript:", "onclick=", "onerror=")
+CHATBOOK_OUTCOME_SUCCESS = "success"
+CHATBOOK_OUTCOME_EMPTY = "empty"
+CHATBOOK_OUTCOME_MISSING = "missing"
+CHATBOOK_OUTCOME_TRANSIENT = "transient"
 ARTIFACTS_EMPTY_CHATBOOK_RECOVERY = DestinationRecoveryState(
     status_label="Select an artifact",
     unavailable_what="Console launch for Chatbook artifacts",
@@ -49,6 +60,16 @@ ARTIFACTS_CHATBOOK_SERVICE_UNAVAILABLE_RECOVERY = DestinationRecoveryState(
     stable_selector="artifacts-console-unavailable",
     disabled_tooltip="Retry Artifacts after the local Chatbook service is available.",
 )
+ARTIFACTS_CHATBOOK_TARGET_MISSING_RECOVERY = DestinationRecoveryState(
+    status_label="Artifact not found",
+    unavailable_what="The requested local Chatbook artifact",
+    why="the requested local Chatbook artifact no longer exists",
+    next_action="Return to Console and choose an available Chatbook artifact.",
+    recovery_action="Console",
+    authority_owner="local Chatbook service",
+    stable_selector="artifacts-chatbook-target-missing",
+    disabled_tooltip=CHATBOOK_TARGET_MISSING_COPY,
+)
 
 
 class ArtifactsScreen(BaseAppScreen):
@@ -58,52 +79,200 @@ class ArtifactsScreen(BaseAppScreen):
         super().__init__(app_instance, "artifacts", **kwargs)
         self._latest_chatbook_console_launch: dict[str, Any] | None = None
         self._chatbook_lookup_error: str | None = None
-        self._requested_chatbook_target_id: str | None = None
+        self._chatbook_context_requested = False
+        self._chatbook_missing_target = False
         self._chatbook_context_loaded = False
+        self._active_chatbook_claim: HandoffClaim[str] | None = None
+        self._chatbook_refresh_worker: Worker[Any] | None = None
+        self._chatbook_refresh_generation = 0
+        self._chatbook_unmounted = True
 
     def on_mount(self) -> None:
         super().on_mount()
-        self._consume_pending_chatbook_target_id()
-        self._refresh_latest_chatbook_context()
+        self._chatbook_unmounted = False
+        self._start_chatbook_refresh()
 
     def on_screen_resume(self) -> None:
         """Refresh one-shot Chatbook handoffs when returning to Artifacts."""
-        if not str(
-            getattr(self.app_instance, "pending_artifacts_chatbook_target_id", "") or ""
-        ).strip():
-            return
-        self._consume_pending_chatbook_target_id()
-        self._refresh_latest_chatbook_context()
+        if self._chatbook_refresh_worker is None or (
+            self._active_chatbook_claim is None
+            and self.app_instance.pending_handoffs.has_pending(
+                HandoffChannel.ARTIFACT_CHATBOOK_TARGET
+            )
+        ):
+            self._start_chatbook_refresh()
 
-    def _consume_pending_chatbook_target_id(self) -> None:
-        target_id = str(
-            getattr(self.app_instance, "pending_artifacts_chatbook_target_id", "") or ""
-        ).strip()
-        if not target_id:
-            return
-        self._requested_chatbook_target_id = target_id
-        self.app_instance.pending_artifacts_chatbook_target_id = None
+    def on_unmount(self) -> None:
+        self._chatbook_unmounted = True
+        self._chatbook_refresh_generation += 1
+        self._release_active_chatbook_claim()
+        worker = self._chatbook_refresh_worker
+        if worker is not None and not worker.is_finished:
+            worker.cancel()
+        super().on_unmount()
 
-    @work(exclusive=True, thread=True)
-    def _refresh_latest_chatbook_context(self) -> None:
-        launch_kwargs, lookup_error = self._latest_local_chatbook_console_launch()
-        self.app.call_from_thread(
-            self._apply_latest_chatbook_context, launch_kwargs, lookup_error
+    def _release_active_chatbook_claim(self) -> None:
+        claim = self._active_chatbook_claim
+        if claim is None:
+            return
+        self.app_instance.pending_handoffs.release(claim)
+        if self._active_chatbook_claim is claim:
+            self._active_chatbook_claim = None
+
+    def _start_chatbook_refresh(self) -> None:
+        """Start one generation after releasing any superseded exact claim."""
+        if self._chatbook_unmounted:
+            return
+
+        previous_worker = self._chatbook_refresh_worker
+        self._release_active_chatbook_claim()
+        self._chatbook_refresh_generation += 1
+        generation = self._chatbook_refresh_generation
+        claim = self.app_instance.pending_handoffs.claim(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET
         )
-
-    def _apply_latest_chatbook_context(
-        self,
-        launch_kwargs: dict[str, Any] | None,
-        lookup_error: str | None = None,
-    ) -> None:
-        self._latest_chatbook_console_launch = launch_kwargs
-        self._chatbook_lookup_error = lookup_error
-        self._chatbook_context_loaded = True
+        self._active_chatbook_claim = claim
+        self._chatbook_context_loaded = False
+        self._chatbook_context_requested = False
+        self._chatbook_missing_target = False
+        self._chatbook_lookup_error = None
+        self._latest_chatbook_console_launch = None
         if self.is_mounted:
             self.refresh(recompose=True)
 
+        if previous_worker is not None and not previous_worker.is_finished:
+            previous_worker.cancel()
+        try:
+            self._chatbook_refresh_worker = self._refresh_chatbook_context(
+                generation,
+                claim,
+                claim.value if claim is not None else None,
+            )
+        except Exception as exc:
+            self._release_active_chatbook_claim()
+            logger.warning(
+                "Chatbook refresh could not start (exception_category={}).",
+                type(exc).__name__,
+            )
+
+    @work(exclusive=True, thread=True)
+    def _refresh_chatbook_context(
+        self,
+        generation: int,
+        claim: HandoffClaim[str] | None,
+        requested_target: str | None,
+    ) -> None:
+        if claim is None:
+            launch_kwargs, lookup_error = self._latest_local_chatbook_console_launch()
+            outcome = (
+                CHATBOOK_OUTCOME_TRANSIENT
+                if lookup_error
+                else (
+                    CHATBOOK_OUTCOME_SUCCESS
+                    if launch_kwargs is not None
+                    else CHATBOOK_OUTCOME_EMPTY
+                )
+            )
+        else:
+            outcome, launch_kwargs = self._exact_local_chatbook_console_launch(
+                requested_target
+            )
+        self.app.call_from_thread(
+            self._apply_chatbook_refresh_outcome,
+            generation,
+            claim,
+            outcome,
+            launch_kwargs,
+        )
+
+    def _apply_chatbook_refresh_outcome(
+        self,
+        generation: int,
+        claim: HandoffClaim[str] | None,
+        outcome: str,
+        launch_kwargs: dict[str, Any] | None,
+    ) -> None:
+        store = self.app_instance.pending_handoffs
+        if (
+            self._chatbook_unmounted
+            or generation != self._chatbook_refresh_generation
+            or claim is not self._active_chatbook_claim
+        ):
+            if claim is not None:
+                store.release(claim)
+            return
+
+        try:
+            self._latest_chatbook_console_launch = launch_kwargs
+            self._chatbook_context_requested = (
+                claim is not None and outcome == CHATBOOK_OUTCOME_SUCCESS
+            )
+            self._chatbook_missing_target = outcome == CHATBOOK_OUTCOME_MISSING
+            self._chatbook_lookup_error = (
+                CHATBOOK_SERVICE_ERROR_COPY
+                if outcome == CHATBOOK_OUTCOME_TRANSIENT
+                else None
+            )
+            self._chatbook_context_loaded = True
+            if self.is_mounted:
+                self.refresh(recompose=True)
+
+            if claim is None:
+                return
+            if outcome == CHATBOOK_OUTCOME_MISSING:
+                self.app_instance.notify(
+                    CHATBOOK_TARGET_MISSING_COPY,
+                    severity="warning",
+                )
+                store.acknowledge(claim)
+            elif outcome == CHATBOOK_OUTCOME_SUCCESS:
+                store.acknowledge(claim)
+            else:
+                store.release(claim)
+        except Exception as exc:
+            if claim is not None:
+                store.release(claim)
+            logger.warning(
+                "Chatbook refresh callback failed (exception_category={}).",
+                type(exc).__name__,
+            )
+        finally:
+            if self._active_chatbook_claim is claim:
+                self._active_chatbook_claim = None
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker is not self._chatbook_refresh_worker:
+            return
+        if event.state not in {
+            WorkerState.CANCELLED,
+            WorkerState.ERROR,
+            WorkerState.SUCCESS,
+        }:
+            return
+        if self._active_chatbook_claim is not None:
+            self._release_active_chatbook_claim()
+        if (
+            not self._chatbook_unmounted
+            and not self._chatbook_context_loaded
+            and event.state
+            in {WorkerState.CANCELLED, WorkerState.ERROR, WorkerState.SUCCESS}
+        ):
+            self._latest_chatbook_console_launch = None
+            self._chatbook_context_requested = False
+            self._chatbook_missing_target = False
+            self._chatbook_lookup_error = CHATBOOK_SERVICE_ERROR_COPY
+            self._chatbook_context_loaded = True
+            if self.is_mounted:
+                self.refresh(recompose=True)
+        if event.state is WorkerState.ERROR:
+            logger.warning(
+                "Chatbook refresh worker failed (exception_category=worker)."
+            )
+
     @property
     def _blocked_chatbook_recovery_state(self) -> DestinationRecoveryState:
+        if self._chatbook_missing_target:
+            return ARTIFACTS_CHATBOOK_TARGET_MISSING_RECOVERY
         return (
             ARTIFACTS_CHATBOOK_SERVICE_UNAVAILABLE_RECOVERY
             if self._chatbook_lookup_error
@@ -334,9 +503,11 @@ class ArtifactsScreen(BaseAppScreen):
             result = list_chatbooks(q=None, limit=25, offset=0)
             if inspect.isawaitable(result):
                 result = asyncio.run(result)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Failed to load latest local Chatbook artifact for Console launch.",
+        except Exception as exc:
+            logger.warning(
+                "Failed to load latest local Chatbook artifact "
+                "(exception_category={}).",
+                type(exc).__name__,
             )
             return None, CHATBOOK_SERVICE_ERROR_COPY
         records = [
@@ -344,20 +515,57 @@ class ArtifactsScreen(BaseAppScreen):
         ]
         if not records:
             return None, None
-        if self._requested_chatbook_target_id:
-            requested_record = next(
-                (
-                    record
-                    for record in records
-                    if self._chatbook_target_id(record)
-                    == self._requested_chatbook_target_id
-                ),
-                None,
-            )
-            if requested_record is not None:
-                return self._build_chatbook_console_launch(requested_record), None
         latest_record = max(records, key=self._chatbook_sort_key)
         return self._build_chatbook_console_launch(latest_record), None
+
+    def _exact_local_chatbook_console_launch(
+        self,
+        requested_target: str | None,
+    ) -> tuple[str, dict[str, Any] | None]:
+        if not isinstance(requested_target, str) or not requested_target.startswith(
+            ARTIFACT_CHATBOOK_RECORD_PREFIX
+        ):
+            return CHATBOOK_OUTCOME_TRANSIENT, None
+        chatbook_id = requested_target.removeprefix(
+            ARTIFACT_CHATBOOK_RECORD_PREFIX
+        ).strip()
+        if not chatbook_id:
+            return CHATBOOK_OUTCOME_TRANSIENT, None
+
+        service = getattr(self.app_instance, "local_chatbook_service", None)
+        get_chatbook = getattr(service, "get_chatbook", None)
+        if not callable(get_chatbook):
+            return CHATBOOK_OUTCOME_TRANSIENT, None
+        try:
+            record = get_chatbook(chatbook_id)
+            if inspect.isawaitable(record):
+                record = asyncio.run(record)
+        except KeyError:
+            return CHATBOOK_OUTCOME_MISSING, None
+        except Exception as exc:
+            logger.warning(
+                "Exact Chatbook lookup failed (exception_category={}).",
+                type(exc).__name__,
+            )
+            return CHATBOOK_OUTCOME_TRANSIENT, None
+
+        if not isinstance(record, Mapping):
+            logger.warning(
+                "Exact Chatbook lookup returned an invalid service response."
+            )
+            return CHATBOOK_OUTCOME_TRANSIENT, None
+        if self._chatbook_target_id(record) != requested_target:
+            logger.warning(
+                "Exact Chatbook lookup returned a mismatched service response."
+            )
+            return CHATBOOK_OUTCOME_TRANSIENT, None
+        launch_kwargs = self._build_chatbook_console_launch(record)
+        if launch_kwargs is None:
+            logger.warning(
+                "Exact Chatbook lookup returned an unusable service response."
+            )
+            return CHATBOOK_OUTCOME_TRANSIENT, None
+        return CHATBOOK_OUTCOME_SUCCESS, launch_kwargs
 
     def compose_content(self) -> ComposeResult:
         launch_kwargs = self._latest_chatbook_console_launch
@@ -488,12 +696,11 @@ class ArtifactsScreen(BaseAppScreen):
                     if launch_kwargs is not None:
                         title = str(launch_kwargs["title"])
                         payload = launch_kwargs.get("payload") or {}
-                        target_id = str(payload.get("target_id") or "").strip()
-                        is_requested = bool(
-                            self._requested_chatbook_target_id
-                            and target_id == self._requested_chatbook_target_id
+                        launch_scope = (
+                            "requested"
+                            if self._chatbook_context_requested
+                            else "latest"
                         )
-                        launch_scope = "requested" if is_requested else "latest"
                         description = str(payload.get("description") or "").strip()
                         provenance = self._console_saved_artifact_provenance(payload)
                         content_preview = str(

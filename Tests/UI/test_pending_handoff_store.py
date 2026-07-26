@@ -83,6 +83,21 @@ def test_claim_is_exclusive_until_exact_claim_settles() -> None:
     assert store.claim(HandoffChannel.CHAT) is None
 
 
+def test_has_pending_reports_only_unclaimed_channel_state() -> None:
+    store = PendingHandoffStore()
+
+    assert store.has_pending(HandoffChannel.CHAT) is False
+    store.stage(HandoffChannel.CHAT, _chat_payload())
+    assert store.has_pending(HandoffChannel.CHAT) is True
+
+    claim = store.claim(HandoffChannel.CHAT)
+
+    assert claim is not None
+    assert store.has_pending(HandoffChannel.CHAT) is False
+    assert store.release(claim) is True
+    assert store.has_pending(HandoffChannel.CHAT) is True
+
+
 def test_release_restores_same_revision_for_a_fresh_claim() -> None:
     store = PendingHandoffStore()
     revision = store.stage(HandoffChannel.CHAT, _chat_payload())
@@ -326,6 +341,7 @@ def test_all_mutations_reject_off_owner_thread() -> None:
         lambda: store.stage(HandoffChannel.CHAT, _chat_payload("worker")),
         lambda: store.clear_pending(HandoffChannel.CHAT),
         lambda: store.claim(HandoffChannel.CHAT),
+        lambda: store.has_pending(HandoffChannel.CHAT),
         lambda: store.acknowledge(claim),
         lambda: store.release(claim),
     )

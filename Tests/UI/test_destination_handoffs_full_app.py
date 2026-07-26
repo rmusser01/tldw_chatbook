@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+import threading
 from typing import Any
 
 from loguru import logger
@@ -12,6 +13,7 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.study_scope_models import (
     StudyScopeContext,
     StudySourceItem,
@@ -88,6 +90,79 @@ async def _wait_for_study_screen(app: TldwCli, pilot) -> StudyScreen:
             return app.screen
         await pilot.pause(0.01)
     raise AssertionError("full app did not mount the production Study screen")
+
+
+async def _wait_for_artifacts_screen(app: TldwCli, pilot) -> ArtifactsScreen:
+    for _ in range(300):
+        if isinstance(app.screen, ArtifactsScreen) and app.screen.is_mounted:
+            await pilot.pause(0.01)
+            return app.screen
+        await pilot.pause(0.01)
+    raise AssertionError("full app did not mount the production Artifacts screen")
+
+
+async def _wait_for_artifact_context(
+    screen: ArtifactsScreen,
+    pilot,
+    *,
+    title: str | None = None,
+) -> None:
+    for _ in range(300):
+        launch = screen._latest_chatbook_console_launch
+        if screen._chatbook_context_loaded and (
+            title is None or (launch is not None and launch["title"] == title)
+        ):
+            await pilot.pause(0.01)
+            return
+        await pilot.pause(0.01)
+    raise AssertionError("production Artifacts screen did not load expected context")
+
+
+def _chatbook_record(chatbook_id: int | str, title: str) -> dict[str, Any]:
+    return {
+        "id": str(chatbook_id),
+        "chatbook_id": chatbook_id,
+        "name": title,
+        "description": f"{title} description",
+        "updated_at": "2026-07-26T12:00:00+00:00",
+    }
+
+
+class InjectedChatbookService:
+    """Controllable Chatbook collaborator used by the mounted production app."""
+
+    def __init__(
+        self,
+        *,
+        listed: list[dict[str, Any]] | None = None,
+        exact: dict[str, dict[str, Any] | BaseException] | None = None,
+        barriers: dict[str, tuple[threading.Event, threading.Event]] | None = None,
+    ) -> None:
+        self.listed = list(listed or [])
+        self.exact = dict(exact or {})
+        self.barriers = dict(barriers or {})
+        self.list_calls: list[dict[str, Any]] = []
+        self.get_calls: list[str] = []
+
+    async def list_chatbooks(self, **kwargs: Any) -> list[dict[str, Any]]:
+        self.list_calls.append(dict(kwargs))
+        return list(self.listed)
+
+    async def get_chatbook(self, chatbook_id: int | str) -> dict[str, Any]:
+        normalized_id = str(chatbook_id)
+        self.get_calls.append(normalized_id)
+        barrier = self.barriers.get(normalized_id)
+        if barrier is not None:
+            started, finish = barrier
+            started.set()
+            if not finish.wait(timeout=5):
+                raise TimeoutError("injected Chatbook lookup barrier timed out")
+        result = self.exact.get(normalized_id)
+        if isinstance(result, BaseException):
+            raise result
+        if result is None:
+            raise KeyError(normalized_id)
+        return dict(result)
 
 
 @pytest.mark.asyncio
@@ -399,3 +474,375 @@ async def test_full_app_study_newer_scope_survives_older_consumer_acknowledge(
         replacement = app.pending_handoffs.claim(HandoffChannel.STUDY_SCOPE)
         assert replacement is not None
         assert replacement.value.material_title == "replacement"
+
+
+@pytest.mark.asyncio
+async def test_full_app_artifact_handoff_uses_exact_lookup_not_latest_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TldwCli()
+    service = InjectedChatbookService(
+        listed=[_chatbook_record(99, "Latest")],
+        exact={"77": _chatbook_record(77, "Requested")},
+    )
+    app.local_chatbook_service = service
+
+    async with _mounted_app(app, monkeypatch) as pilot:
+        app.pending_handoffs.stage(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
+            "local:chatbook:77",
+        )
+        app.post_message(NavigateToScreen("artifacts"))
+        screen = await _wait_for_artifacts_screen(app, pilot)
+        await _wait_for_artifact_context(screen, pilot, title="Requested")
+
+        assert service.get_calls == ["77"]
+        assert service.list_calls == []
+        assert screen._latest_chatbook_console_launch is not None
+        assert (
+            screen._latest_chatbook_console_launch["payload"]["target_id"]
+            == "local:chatbook:77"
+        )
+        assert "Requested" in str(screen.query_one("#artifacts-detail-ready").render())
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.ARTIFACT_CHATBOOK_TARGET) is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_full_app_missing_artifact_is_terminal_with_explicit_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TldwCli()
+    service = InjectedChatbookService(
+        listed=[_chatbook_record(99, "Latest")],
+        exact={},
+    )
+    app.local_chatbook_service = service
+
+    async with _mounted_app(app, monkeypatch) as pilot:
+        notifications: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            app,
+            "notify",
+            lambda message, *, severity="information", **_kwargs: notifications.append(
+                (message, severity)
+            ),
+        )
+        app.pending_handoffs.stage(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
+            "local:chatbook:77",
+        )
+        app.post_message(NavigateToScreen("artifacts"))
+        screen = await _wait_for_artifacts_screen(app, pilot)
+        await _wait_for_artifact_context(screen, pilot)
+
+        assert service.get_calls == ["77"]
+        assert service.list_calls == []
+        assert screen._latest_chatbook_console_launch is None
+        assert "no longer exists" in str(
+            screen.query_one("#artifacts-chatbook-target-missing").render()
+        )
+        assert notifications == [
+            (
+                "The requested local Chatbook artifact no longer exists.",
+                "warning",
+            )
+        ]
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.ARTIFACT_CHATBOOK_TARGET) is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_full_app_artifact_lookup_failure_releases_without_private_logging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "TASK-646-ARTIFACT-PRIVATE-SENTINEL"
+    app = TldwCli()
+    service = InjectedChatbookService(
+        exact={"77": RuntimeError(sentinel)},
+    )
+    app.local_chatbook_service = service
+
+    async with _mounted_app(app, monkeypatch) as pilot:
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, format="{message}")
+        try:
+            app.pending_handoffs.stage(
+                HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
+                "local:chatbook:77",
+            )
+            app.post_message(NavigateToScreen("artifacts"))
+            screen = await _wait_for_artifacts_screen(app, pilot)
+            await _wait_for_artifact_context(screen, pilot)
+        finally:
+            logger.remove(sink_id)
+
+        retry = app.pending_handoffs.claim(HandoffChannel.ARTIFACT_CHATBOOK_TARGET)
+        assert retry is not None
+        assert retry.value == "local:chatbook:77"
+        assert screen._latest_chatbook_console_launch is None
+        assert any("exception_category=RuntimeError" in message for message in messages)
+        assert all(sentinel not in message for message in messages)
+        assert all("local:chatbook:77" not in message for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_full_app_mismatched_artifact_record_releases_without_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TldwCli()
+    service = InjectedChatbookService(
+        exact={"77": _chatbook_record(78, "Wrong record")},
+    )
+    app.local_chatbook_service = service
+
+    async with _mounted_app(app, monkeypatch) as pilot:
+        app.pending_handoffs.stage(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
+            "local:chatbook:77",
+        )
+        app.post_message(NavigateToScreen("artifacts"))
+        screen = await _wait_for_artifacts_screen(app, pilot)
+        await _wait_for_artifact_context(screen, pilot)
+
+        retry = app.pending_handoffs.claim(HandoffChannel.ARTIFACT_CHATBOOK_TARGET)
+        assert retry is not None
+        assert retry.value == "local:chatbook:77"
+        assert service.list_calls == []
+        assert screen._latest_chatbook_console_launch is None
+
+
+@pytest.mark.asyncio
+async def test_full_app_artifacts_without_handoff_keeps_latest_list_behavior(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TldwCli()
+    service = InjectedChatbookService(
+        listed=[
+            {
+                **_chatbook_record(1, "Older"),
+                "updated_at": "2026-07-25T12:00:00+00:00",
+            },
+            _chatbook_record(99, "Latest"),
+        ],
+    )
+    app.local_chatbook_service = service
+
+    async with _mounted_app(app, monkeypatch, route="artifacts") as pilot:
+        screen = await _wait_for_artifacts_screen(app, pilot)
+        await _wait_for_artifact_context(screen, pilot, title="Latest")
+
+        assert service.get_calls == []
+        assert service.list_calls == [{"q": None, "limit": 25, "offset": 0}]
+        assert screen._latest_chatbook_console_launch is not None
+        assert (
+            screen._latest_chatbook_console_launch["payload"]["target_id"]
+            == "local:chatbook:99"
+        )
+
+
+@pytest.mark.asyncio
+async def test_full_app_artifact_replacement_survives_awaited_exact_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = threading.Event()
+    finish = threading.Event()
+    app = TldwCli()
+    service = InjectedChatbookService(
+        exact={"77": _chatbook_record(77, "Requested")},
+        barriers={"77": (started, finish)},
+    )
+    app.local_chatbook_service = service
+
+    async with _mounted_app(app, monkeypatch) as pilot:
+        app.pending_handoffs.stage(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
+            "local:chatbook:77",
+        )
+        app.post_message(NavigateToScreen("artifacts"))
+        screen = await _wait_for_artifacts_screen(app, pilot)
+        assert await asyncio.to_thread(started.wait, 2)
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.ARTIFACT_CHATBOOK_TARGET) is None
+        )
+
+        app.pending_handoffs.stage(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
+            "local:chatbook:78",
+        )
+        real_acknowledge = app.pending_handoffs.acknowledge
+        acknowledged_after_install: list[bool] = []
+
+        def acknowledge_after_install(claim) -> bool:
+            launch = screen._latest_chatbook_console_launch
+            acknowledged_after_install.append(
+                launch is not None
+                and launch["payload"]["target_id"] == "local:chatbook:77"
+            )
+            return real_acknowledge(claim)
+
+        monkeypatch.setattr(
+            app.pending_handoffs,
+            "acknowledge",
+            acknowledge_after_install,
+        )
+        finish.set()
+        await _wait_for_artifact_context(screen, pilot, title="Requested")
+
+        assert acknowledged_after_install == [True]
+        replacement = app.pending_handoffs.claim(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET
+        )
+        assert replacement is not None
+        assert replacement.value == "local:chatbook:78"
+
+
+@pytest.mark.asyncio
+async def test_full_app_absent_artifact_service_releases_for_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TldwCli()
+    app.local_chatbook_service = object()
+
+    async with _mounted_app(app, monkeypatch) as pilot:
+        app.pending_handoffs.stage(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
+            "local:chatbook:77",
+        )
+        app.post_message(NavigateToScreen("artifacts"))
+        screen = await _wait_for_artifacts_screen(app, pilot)
+        await _wait_for_artifact_context(screen, pilot)
+
+        retry = app.pending_handoffs.claim(HandoffChannel.ARTIFACT_CHATBOOK_TARGET)
+        assert retry is not None
+        assert retry.value == "local:chatbook:77"
+        assert "Service unavailable" in str(
+            screen.query_one("#artifacts-console-unavailable").render()
+        )
+
+
+@pytest.mark.asyncio
+async def test_full_app_artifact_unmount_releases_claim_and_ignores_late_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = threading.Event()
+    finish = threading.Event()
+    app = TldwCli()
+    service = InjectedChatbookService(
+        exact={"77": _chatbook_record(77, "Late result")},
+        barriers={"77": (started, finish)},
+    )
+    app.local_chatbook_service = service
+
+    async with _mounted_app(app, monkeypatch) as pilot:
+        app.pending_handoffs.stage(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
+            "local:chatbook:77",
+        )
+        app.post_message(NavigateToScreen("artifacts"))
+        screen = await _wait_for_artifacts_screen(app, pilot)
+        assert await asyncio.to_thread(started.wait, 2)
+
+        app.post_message(NavigateToScreen("home"))
+        for _ in range(300):
+            if not isinstance(app.screen, ArtifactsScreen):
+                break
+            await pilot.pause(0.01)
+        assert not isinstance(app.screen, ArtifactsScreen)
+
+        retry = app.pending_handoffs.claim(HandoffChannel.ARTIFACT_CHATBOOK_TARGET)
+        assert retry is not None
+        finish.set()
+        await pilot.pause(0.05)
+        assert screen._latest_chatbook_console_launch is None
+
+
+@pytest.mark.asyncio
+async def test_full_app_artifact_restart_releases_old_claim_and_rejects_late_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_started = threading.Event()
+    first_finish = threading.Event()
+    second_started = threading.Event()
+    second_finish = threading.Event()
+    app = TldwCli()
+    service = InjectedChatbookService(
+        exact={
+            "77": _chatbook_record(77, "Old result"),
+            "78": _chatbook_record(78, "Replacement"),
+        },
+        barriers={
+            "77": (first_started, first_finish),
+            "78": (second_started, second_finish),
+        },
+    )
+    app.local_chatbook_service = service
+
+    async with _mounted_app(app, monkeypatch) as pilot:
+        app.pending_handoffs.stage(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
+            "local:chatbook:77",
+        )
+        app.post_message(NavigateToScreen("artifacts"))
+        screen = await _wait_for_artifacts_screen(app, pilot)
+        assert await asyncio.to_thread(first_started.wait, 2)
+
+        app.pending_handoffs.stage(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
+            "local:chatbook:78",
+        )
+        screen._start_chatbook_refresh()
+        assert await asyncio.to_thread(second_started.wait, 2)
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.ARTIFACT_CHATBOOK_TARGET) is None
+        )
+
+        second_finish.set()
+        await _wait_for_artifact_context(screen, pilot, title="Replacement")
+        first_finish.set()
+        await pilot.pause(0.05)
+
+        assert screen._latest_chatbook_console_launch is not None
+        assert screen._latest_chatbook_console_launch["title"] == "Replacement"
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.ARTIFACT_CHATBOOK_TARGET) is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_full_app_artifact_worker_cancellation_releases_active_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = threading.Event()
+    finish = threading.Event()
+    app = TldwCli()
+    service = InjectedChatbookService(
+        exact={"77": _chatbook_record(77, "Cancelled result")},
+        barriers={"77": (started, finish)},
+    )
+    app.local_chatbook_service = service
+
+    async with _mounted_app(app, monkeypatch) as pilot:
+        app.pending_handoffs.stage(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
+            "local:chatbook:77",
+        )
+        app.post_message(NavigateToScreen("artifacts"))
+        screen = await _wait_for_artifacts_screen(app, pilot)
+        assert await asyncio.to_thread(started.wait, 2)
+
+        worker = screen._chatbook_refresh_worker
+        assert worker is not None
+        worker.cancel()
+        retry = None
+        for _ in range(300):
+            retry = app.pending_handoffs.claim(HandoffChannel.ARTIFACT_CHATBOOK_TARGET)
+            if retry is not None:
+                break
+            await pilot.pause(0.01)
+        finish.set()
+
+        assert retry is not None
+        assert retry.value == "local:chatbook:77"
