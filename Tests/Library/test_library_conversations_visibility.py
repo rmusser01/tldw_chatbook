@@ -170,3 +170,41 @@ def test_get_all_conversation_ids_matches_library_scope_all(
     db.soft_delete_conversation(deleted_id, expected_version=int(row["version"]))
 
     assert set(db.get_all_conversation_ids()) == {console_id, seeded_id}
+
+
+def test_scope_all_spans_client_ids(tmp_path) -> None:
+    """TASK-721: Browse-everything ("all") must not hide rows written by a
+    different client id. The live UAT saw Library count "Conversations (1)"
+    while the Console workspace browser listed six chats: Console's
+    membership rows carry no client filter, but the Library snapshot's count
+    query filtered on the reading handle's client_id, so rows written by any
+    other client (server sync, seeds, another install) were invisible."""
+    db_path = str(tmp_path / "shared.db")
+    mine = CharactersRAGDB(db_path, "app-client")
+    theirs = CharactersRAGDB(db_path, "other-client")
+
+    _create_console_workspace_chat(mine, title="Mine")
+    _create_console_workspace_chat(theirs, title="Theirs", workspace_id="ws-other")
+
+    service = ChatConversationService(mine)
+    result = service.list_conversations(scope_type="all", limit=50, offset=0)
+
+    titles = sorted(item["title"] for item in result["items"])
+    assert titles == ["Mine", "Theirs"]
+    assert result["pagination"]["total"] == 2
+
+
+def test_scoped_listing_keeps_client_filter(tmp_path) -> None:
+    """Scoped (non-"all") listings keep the historical client_id filter."""
+    db_path = str(tmp_path / "shared.db")
+    mine = CharactersRAGDB(db_path, "app-client")
+    theirs = CharactersRAGDB(db_path, "other-client")
+
+    mine.add_conversation({"title": "Mine global"})
+    theirs.add_conversation({"title": "Theirs global"})
+
+    service = ChatConversationService(mine)
+    result = service.list_conversations(scope_type="global", limit=50, offset=0)
+
+    assert [item["title"] for item in result["items"]] == ["Mine global"]
+    assert result["pagination"]["total"] == 1
