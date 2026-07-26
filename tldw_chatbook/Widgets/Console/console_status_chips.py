@@ -147,6 +147,7 @@ class ConsoleStatusChips(Horizontal):
     def compose(self) -> ComposeResult:
         yield self._chip(self.state.provider_label, id="console-provider-chip")
         yield self._chip(self.state.model_label, id="console-model-chip")
+        yield self._chip(self.state.character_label, id="console-character-chip")
         yield self._chip(self.state.user_profile_label, id="console-persona-chip")
         yield self._chip(self.state.rag_label, id="console-rag-chip")
         yield self._chip(

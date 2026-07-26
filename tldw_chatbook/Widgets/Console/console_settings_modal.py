@@ -768,6 +768,17 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         chat_defaults: dict[str, object] = {"streaming": bool(draft.streaming)}
         if provider_key:
             chat_defaults["provider"] = provider_key
+        if model:
+            # The model must be written here too, not only into
+            # [api_settings.<provider>]. `resolve_effective_provider_model`
+            # reads `chat_defaults.model` and hands it to
+            # `build_default_console_session_settings` as an EXPLICIT override,
+            # where it outranks the api_settings value. Writing only
+            # api_settings therefore left a stale `chat_defaults.model`
+            # winning in every new session -- new tab, character "Start Chat",
+            # and app relaunch all silently reverted to the previously
+            # selected model after the user had corrected it here.
+            chat_defaults["model"] = model
         sections["chat_defaults"] = chat_defaults
         return sections
 

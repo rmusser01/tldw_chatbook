@@ -79,6 +79,33 @@ def fit_image_cell_size(
     return w_cells, h_cells
 
 
+def scale_image_for_cell_box(
+    image: "PILImage.Image", box_cols: int, box_lines: int
+) -> "PILImage.Image":
+    """Return a copy of ``image`` scaled to fit a character-cell box.
+
+    ``Pixels.from_image`` bakes one cell per source pixel row-pair, so a Pixels
+    renderable built for a *large* box and then placed in a *small* widget is
+    clipped by Rich, not scaled -- the viewer sees the image's top-left corner.
+    Sizing the source to the destination box before building Pixels is what
+    makes the whole image visible.
+
+    Args:
+        image: Source PIL image; never modified.
+        box_cols: Destination box width in character columns.
+        box_lines: Destination box height in character lines.
+
+    Returns:
+        A scaled copy that fits within ``box_cols`` x ``box_lines * 2`` pixels
+        (terminal cells are ~2x taller than wide), preserving aspect ratio.
+    """
+    scaled = image.copy()
+    scaled.thumbnail(
+        (max(1, box_cols), max(1, box_lines) * 2), PILImage.Resampling.LANCZOS
+    )
+    return scaled
+
+
 def next_view_mode(current: ConsoleImageViewMode) -> ConsoleImageViewMode:
     """Return the next mode in the pixels -> graphics -> hidden cycle.
 

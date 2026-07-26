@@ -212,6 +212,7 @@ from ...Chat.console_image_view import (
     resolve_default_mode,
     resolve_react_character_expressions,
     resolve_show_character_avatar,
+    scale_image_for_cell_box,
 )
 from ...Chat.console_paste_attach import (
     extract_dropped_path,
@@ -3599,12 +3600,20 @@ class ChatScreen(BaseAppScreen):
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleControlState:
         """Build Console-owned control/readiness labels."""
-        provider, model, _settings = self._active_console_provider_model_display()
+        provider, model, settings = self._active_console_provider_model_display()
         source = pending_launch.source if pending_launch else None
         return ConsoleControlState.from_values(
             provider=provider,
             model=model,
-            persona=None,
+            # The AI side of the conversation: whatever character this session is
+            # actually roleplaying, so the chip stops being a constant. The
+            # session's `character_label` is set by the character handoff; the
+            # rail name covers resumed conversations.
+            character=(
+                getattr(settings, "character_label", None)
+                or self._current_console_rail_character_name()
+            ),
+            persona=getattr(settings, "user_profile_label", None),
             rag_enabled=_source_mentions_rag(source),
             staged_source_count=1 if pending_launch else 0,
             tool_count=self._console_tool_count(),
@@ -4247,10 +4256,15 @@ class ChatScreen(BaseAppScreen):
             if image:
                 ok = await asyncio.to_thread(cache.prepare, key, image)
                 if ok:
-                    if mode == "graphics":
-                        spec["pil"] = cache.get_pil(key)
-                    else:
-                        spec["pixels"] = cache.get_pixels(key)
+                    # Always carry the PIL, never the cache's pre-baked Pixels.
+                    # `cache.get_pixels` bakes at the TRANSCRIPT box
+                    # (PIXELS_MAX_COLS x PIXELS_MAX_LINES = 80x40 cells); the
+                    # avatar rail is 16x8, and Rich clips an oversized Pixels
+                    # renderable rather than scaling it -- which showed the
+                    # user only the top-left corner of their character's
+                    # portrait. The render path scales the PIL to the avatar
+                    # box before building Pixels.
+                    spec["pil"] = cache.get_pil(key)
         except Exception:
             logger.opt(exception=True).debug("avatar: expression decode failed")
         # Post-await staleness re-check on the FULL (character_id, state)
@@ -4344,8 +4358,9 @@ class ChatScreen(BaseAppScreen):
         try:
             pixels = spec.get("pixels")
             if pixels is None and spec.get("pil") is not None:
-                scaled = spec["pil"].copy()
-                scaled.thumbnail((CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES * 2))
+                scaled = scale_image_for_cell_box(
+                    spec["pil"], CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES
+                )
                 from rich_pixels import Pixels
                 pixels = Pixels.from_image(scaled)
             widget = Static(pixels if pixels is not None else "", id="console-character-avatar-image")
@@ -7997,14 +8012,14 @@ class ChatScreen(BaseAppScreen):
             value = label.partition(":")[2].strip()
             return value.split(maxsplit=1)[0] if value else "0"
 
-        persona = str(control_state.user_profile_label or "General")
-        if persona.startswith("Assistant: "):
-            persona = persona.removeprefix("Assistant: ").strip() or "General"
-        elif persona.startswith("As: "):
-            persona = persona.removeprefix("As: ").strip() or "User Profile"
+        # The mode summary names the AI side: in a roleplay session that is the
+        # character, which is what the user is actually tracking.
+        character = str(control_state.character_label or "")
+        if character.startswith("Character: "):
+            character = character.removeprefix("Character: ").strip()
         return (
             "Chat/RAG/Follow"
-            f" | {persona}"
+            f" | {character or 'no character'}"
             f" | Sources {readiness_count(control_state.sources_label)}"
             f" | Tools {readiness_count(control_state.tools_label)}"
             f" | Approvals {readiness_count(control_state.approvals_label)}"

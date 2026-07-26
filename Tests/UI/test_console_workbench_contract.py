@@ -173,7 +173,8 @@ def _control_state() -> ConsoleControlState:
     return ConsoleControlState(
         provider_label="Provider: llama.cpp",
         model_label="Model: local-model",
-        user_profile_label="Assistant: General",
+        character_label="Character: none",
+        user_profile_label="You: default",
         rag_label="RAG: off",
         sources_label="Sources: 0",
         tools_label="Tools: 0",
@@ -274,6 +275,7 @@ async def test_console_control_bar_renders_visible_state_chips():
         expected_selectors = (
             "#console-provider-chip",
             "#console-model-chip",
+            "#console-character-chip",
             "#console-persona-chip",
             "#console-rag-chip",
             "#console-sources-chip",
@@ -290,9 +292,10 @@ async def test_console_control_bar_renders_visible_state_chips():
 
         assert any("Provider:" in text for text in visible_chip_text)
         assert any("Model:" in text for text in visible_chip_text)
-        assert any(
-            "Assistant:" in text or "Persona:" in text for text in visible_chip_text
-        )
+        # The AI side (character) and the human side (user profile) are now
+        # separate chips; the old single "Assistant:" chip named neither.
+        assert any("Character:" in text for text in visible_chip_text)
+        assert any("You:" in text for text in visible_chip_text)
         assert any("RAG:" in text for text in visible_chip_text)
         assert any("Sources:" in text for text in visible_chip_text)
         assert any("Tools:" in text for text in visible_chip_text)
@@ -333,6 +336,7 @@ async def test_console_control_chips_are_focusable_and_reveal_full_label_on_focu
         chip_ids = (
             "#console-provider-chip",
             "#console-model-chip",
+            "#console-character-chip",
             "#console-persona-chip",
             "#console-rag-chip",
             "#console-sources-chip",
@@ -910,7 +914,8 @@ def test_console_workbench_state_hides_recovery_banner_when_provider_blocked():
         control_state=ConsoleControlState(
             provider_label="Provider: OpenAI",
             model_label="Model: --",
-            user_profile_label="Assistant: General",
+            character_label="Character: none",
+        user_profile_label="You: default",
             rag_label="RAG: off",
             sources_label="Sources: 0",
             tools_label="Tools: 0",

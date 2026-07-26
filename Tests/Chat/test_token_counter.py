@@ -252,3 +252,28 @@ class TestEstimator:
 #
 # End of test_token_counter.py
 ########################################################################################################################
+
+
+# --- Roleplay UAT regression: the unknown-model fallback window ---
+# A local llama.cpp GGUF resolved to the legacy 4096 fallback even though the
+# server advertised n_ctx=64000, so history was trimmed almost immediately.
+# Modern local models are >= 16k; the fallback now reflects that.
+
+
+def test_unknown_local_model_falls_back_to_16k_window():
+    """An unknown local model must not resolve to the legacy 4k window."""
+    from tldw_chatbook.Utils.token_counter import get_model_token_limit
+
+    assert (
+        get_model_token_limit(
+            "gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf", "llama_cpp"
+        )
+        == 16384
+    )
+
+
+def test_unknown_provider_and_model_falls_back_to_16k_window():
+    """The generic default applies to any unrecognized provider/model pair."""
+    from tldw_chatbook.Utils.token_counter import get_model_token_limit
+
+    assert get_model_token_limit("some-unknown-model", "some-unknown-provider") == 16384

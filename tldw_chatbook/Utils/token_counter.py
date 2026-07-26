@@ -198,8 +198,13 @@ MODEL_TOKEN_LIMITS = {
     "mistral-medium": 32000,
     "mistral-small": 32000,
     "mixtral-8x7b": 32000,
-    # Default for unknown models
-    "default": 4096,
+    # Default for unknown models. 16k, not the historical 4k: this value is what
+    # every local provider (llama.cpp/ollama/vllm/koboldcpp) resolves to, since
+    # their GGUF/model names never match the table above. 4k was far below what
+    # modern local models actually serve -- a llama.cpp server advertising
+    # n_ctx=64000 was being budgeted at 4096 -- which trimmed conversation
+    # history almost immediately and cost characters their memory.
+    "default": 16384,
 }
 
 

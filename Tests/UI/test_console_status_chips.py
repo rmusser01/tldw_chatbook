@@ -14,7 +14,8 @@ def _state(**overrides) -> ConsoleControlState:
     base = dict(
         provider_label="Provider: Anthropic",
         model_label="Model: claude-3-haiku",
-        user_profile_label="Assistant: General",
+        character_label="Character: none",
+        user_profile_label="You: default",
         rag_label="RAG: off",
         sources_label="Sources: 0 staged",
         tools_label="Tools: 0 ready",
@@ -37,14 +38,15 @@ class _ChipsApp(App):
 
 
 @pytest.mark.asyncio
-async def test_status_chips_render_all_seven_labels():
+async def test_status_chips_render_all_eight_labels():
     app = _ChipsApp(_state())
     async with app.run_test(size=(160, 6)) as pilot:
         await pilot.pause()
         for selector, expected in (
             ("#console-provider-chip", "Provider:"),
             ("#console-model-chip", "Model:"),
-            ("#console-persona-chip", "Assistant:"),
+            ("#console-character-chip", "Character:"),
+            ("#console-persona-chip", "You:"),
             ("#console-rag-chip", "RAG:"),
             ("#console-sources-chip", "Sources:"),
             ("#console-tools-chip", "Tools:"),
