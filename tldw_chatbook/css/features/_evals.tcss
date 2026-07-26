@@ -1,0 +1,209 @@
+/* ========================================
+ * FEATURE: Evals
+ * ========================================
+ * Three-pane workbench: library rail, detail pane, readiness inspector.
+ * Shared design-system classes -- .ds-panel, .destination-workbench,
+ * .destination-workbench-pane, .ds-inspector, .density-compact/comfortable
+ * -- are already defined in components/_agentic_terminal.tcss and
+ * layout/_panes.tcss; this file only adds Evals-specific rail/pane rules.
+ * ======================================== */
+
+#evals-shell {
+    height: 100%;
+    min-height: 0;
+}
+
+/* I4: panes never scrolled. Vertical's own DEFAULT_CSS is
+   `overflow: hidden hidden`, so content taller than a pane's bounded
+   height (post-C1, a real bounded height rather than a fixed 11-row
+   collapse) was simply clipped with no way to reach the hidden rows --
+   in an editor whose entire job is reviewing a list (snippets, targets,
+   run history). Scrolled at the narrowest level that isolates a LIST BODY
+   from a sibling control that must stay reachable without scrolling past
+   it (`#evals-import-snippets`, `#evals-primary-action`); the two
+   detail-content widgets with no separate list body to isolate
+   (`ClassicTaskDetail`, `EvalsInspector` -- the latter's readiness list
+   and estimate share one flow) scroll as a whole instead. */
+#evals-library-pane {
+    overflow-y: auto;
+}
+
+#evals-snippet-table,
+#evals-bench-target-table {
+    overflow-y: auto;
+}
+
+#evals-inspector-bench,
+#evals-classic-detail {
+    overflow-y: auto;
+}
+
+.evals-rail-section-header {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+}
+
+.evals-rail-section-label {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    text-style: bold;
+    color: $ds-text-primary;
+}
+
+.evals-rail-section-toggle {
+    width: 3;
+    min-width: 3;
+    max-width: 3;
+    height: 1;
+    min-height: 1;
+    padding: 0;
+    border: none;
+}
+
+.evals-rail-section-body {
+    height: auto;
+}
+
+.evals-rail-row {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    text-align: left;
+    content-align: left middle;
+}
+
+/* Explicit, not relying on the generic `.evals-rail-row { border: none }`
+   above to win by cascade order against `.is-active { border: round
+   $ds-action-focus }` (components/_agentic_terminal.tcss). Both rules are
+   equal specificity (one class each); today `.evals-rail-row` happens to
+   be declared later in the manifest, so it wins, but a manifest reorder
+   could silently flip that and reintroduce the row's only content line
+   being consumed by a round border (a real height-1 button needs at
+   least 2 lines for a round border to render at all) -- mirrors
+   `#mcp-hub-rail Button.mcp-rail-row.is-active`'s own override for the
+   identical reason. */
+.evals-rail-row.is-active {
+    border: none;
+    text-style: bold;
+}
+
+.evals-rail-empty-copy {
+    color: $ds-text-muted;
+    padding: 0 1;
+}
+
+/* I3: the labelled subgroup separating classic (non-word-bench) tasks from
+   word benches under the Benches section -- see library_rail.py's
+   CLASSIC_SUBGROUP_LABEL. Inert (a Static, never a Button); styled like
+   the empty-copy line above it, never like a selectable row. */
+.evals-rail-classic-separator {
+    color: $ds-text-muted;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+}
+
+.evals-pane-title {
+    height: 1;
+    min-height: 1;
+    text-style: bold;
+    color: $ds-text-primary;
+}
+
+.evals-pane-heading {
+    text-style: bold;
+    color: $ds-text-primary;
+}
+
+#evals-primary-action {
+    margin: 1 0 0 0;
+    width: 100%;
+}
+
+/* Task 4 (bench editor + readiness inspector). Status colour lives here,
+   in app-tier CSS, never in bench_editor.py/inspector.py's own widget
+   CSS -- `.ds-status-badge { color: $ds-text-primary }`
+   (components/_agentic_terminal.tcss) outranks any widget DEFAULT_CSS
+   regardless of specificity, so a per-status colour has to win the same
+   way: an app-tier rule combining `.ds-status-badge` with one of these
+   modifier classes. Tests assert the label text, never these colours --
+   see Tests/UI/test_evals_bench_editor.py. */
+.evals-status-ready {
+    color: $ds-status-ready;
+}
+
+.evals-status-unavailable {
+    color: $ds-status-warning;
+}
+
+.evals-status-blocked {
+    color: $ds-status-blocked;
+}
+
+.evals-status-unchecked {
+    color: $ds-text-muted;
+}
+
+.evals-bench-target-row {
+    height: auto;
+    padding: 0 1;
+}
+
+.evals-classic-run-row {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+}
+
+#evals-inspector-bench .ds-recovery-callout {
+    margin: 0 0 1 0;
+}
+
+/* Task 5 (snippet editor + import). The whitespace marker itself is a
+   Rich inline style embedded directly in each row's Text content (see
+   snippet_editor.py's WHITESPACE_MARKER_GLYPH/_WHITESPACE_MARKER_STYLE) --
+   not a CSS class -- because a Rich Text object passed as a Static's
+   content cannot reference Textual's $ds-* design tokens. This block only
+   lays the table out; it never colours the marker or the status text
+   (never colour, per the design contract -- tests assert the rendered
+   text, in Tests/UI/test_evals_snippet_editor.py). */
+.evals-snippet-table-header {
+    text-style: bold;
+    color: $ds-text-primary;
+    padding: 0 1;
+}
+
+.evals-snippet-row {
+    height: auto;
+    padding: 0 1;
+}
+
+.evals-snippet-index {
+    width: 4;
+    color: $ds-text-muted;
+}
+
+.evals-snippet-text {
+    width: 1fr;
+}
+
+.evals-snippet-meta {
+    width: auto;
+    color: $ds-text-muted;
+}
+
+#evals-snippet-editor-summary {
+    color: $ds-text-muted;
+}
+
+#evals-snippet-warnings-summary {
+    margin: 1 0 0 0;
+}
+
+#evals-import-snippets {
+    margin: 1 0 0 0;
+}

@@ -17,6 +17,7 @@ from tldw_chatbook.Evals.word_bench.storage import (
     create_run_group,
     load_bench,
     load_grid,
+    load_run_preflight,
     save_bench,
     save_cell,
 )
@@ -168,6 +169,51 @@ def test_bench_edit_leaves_dataset_id_untouched(db, config, targets):
     assert load_bench(db, task_id).dataset_id == original_dataset_id
 
 
+def test_snapshot_carries_preflight_so_a_reloaded_grid_can_explain_a_column(
+    db, config, targets, snippets
+):
+    """A grid opened next week must still say why a column is empty, without
+    re-contacting the provider."""
+    from tldw_chatbook.Evals.word_bench.models import PreflightResult
+
+    task_id = save_bench(db, config)
+    preflight = {
+        targets[0].id: PreflightResult(state="ok", k_returned=20, canary="pass"),
+        targets[1].id: PreflightResult(
+            state="unreachable", k_returned=None, canary="unchecked",
+            detail="connection refused",
+        ),
+    }
+    group_id, _ = create_run_group(
+        db, task_id, config, targets, snippets, preflight=preflight
+    )
+
+    grid = load_grid(db, group_id)
+    assert grid["preflight"][targets[1].id].state == "unreachable"
+    assert grid["preflight"][targets[1].id].status_label == "Unavailable"
+    assert grid["preflight"][targets[1].id].detail == "connection refused"
+
+
+def test_load_grid_defaults_preflight_for_run_groups_written_before_this_change(
+    db, config, targets, snippets
+):
+    """A run group's snapshot predating the preflight key must still load --
+    not raise -- with an empty preflight mapping rather than the caller
+    having to special-case a missing key."""
+    task_id = save_bench(db, config)
+    group_id, run_ids = create_run_group(db, task_id, config, targets, snippets)
+
+    # Simulate data written before this change: strip "preflight" out of the
+    # stored snapshot entirely, rather than leaving it present-but-empty.
+    for run_id in run_ids.values():
+        overrides = db.get_run(run_id)["config_overrides"]
+        overrides["snapshot"].pop("preflight", None)
+        db.update_run(run_id, {"config_overrides": overrides})
+
+    grid = load_grid(db, group_id)
+    assert grid["preflight"] == {}
+
+
 def test_load_grid_drains_every_page_of_results(db, config, targets):
     """get_run_results is paginated (default limit=1000); a grid with more
     cells than one page must still load in full, or the missing cells would
@@ -182,3 +228,78 @@ def test_load_grid_drains_every_page_of_results(db, config, targets):
     grid = load_grid(db, group_id, page_size=2)
     this_target_cells = {sid for (sid, tid) in grid["cells"] if tid == targets[0].id}
     assert this_target_cells == {s.id for s in snippets}
+
+
+# ---------------------------------------------------------------------------
+# I2: load_run_preflight -- readiness without paging eval_results
+# ---------------------------------------------------------------------------
+
+
+def test_load_run_preflight_matches_load_grids_preflight(db, config, targets, snippets):
+    """Same snapshot, same answer -- `load_run_preflight` must never
+    disagree with `load_grid`'s own `"preflight"` entry, since both are
+    reading the identical `runs[0].config_overrides.snapshot["preflight"]`
+    (see `_load_run_group_snapshot`, shared by both)."""
+    from tldw_chatbook.Evals.word_bench.models import PreflightResult
+
+    task_id = save_bench(db, config)
+    preflight = {
+        targets[0].id: PreflightResult(state="ok", k_returned=20, canary="pass"),
+        targets[1].id: PreflightResult(
+            state="unreachable", k_returned=None, canary="unchecked",
+            detail="connection refused",
+        ),
+    }
+    group_id, _ = create_run_group(
+        db, task_id, config, targets, snippets, preflight=preflight
+    )
+
+    from_preflight = load_run_preflight(db, group_id)
+    from_grid = load_grid(db, group_id)["preflight"]
+    assert from_preflight == from_grid
+    assert from_preflight[targets[1].id].detail == "connection refused"
+
+
+def test_load_run_preflight_never_pages_eval_results(
+    db, config, targets, snippets, monkeypatch
+):
+    """I2's actual perf claim, proven directly rather than inferred from
+    reading the source: `load_run_preflight` must not call
+    `get_run_results` at all -- `load_grid` pages every result row for
+    every run in the group and JSON-decodes each top-K payload only to
+    discard it all and return this same handful of `preflight` entries.
+    A monkeypatch that raises on any `get_run_results` call proves this
+    path never reaches it, cheaply -- no need for thousands of result rows
+    to make the cost visible."""
+    task_id = save_bench(db, config)
+    group_id, run_ids = create_run_group(db, task_id, config, targets, snippets)
+    for run_id in run_ids.values():
+        for snippet in snippets:
+            save_cell(db, run_id, snippet, _capture())
+
+    def _raise(*_args, **_kwargs):
+        raise AssertionError("load_run_preflight must not page eval_results")
+
+    monkeypatch.setattr(db, "get_run_results", _raise)
+    # Does not raise -- confirms get_run_results was never called.
+    load_run_preflight(db, group_id)
+
+
+def test_load_run_preflight_defaults_for_run_groups_written_before_this_change(
+    db, config, targets, snippets
+):
+    """Mirrors `test_load_grid_defaults_preflight_for_run_groups_written_
+    before_this_change` -- same fallback, same missing key."""
+    task_id = save_bench(db, config)
+    group_id, run_ids = create_run_group(db, task_id, config, targets, snippets)
+    for run_id in run_ids.values():
+        overrides = db.get_run(run_id)["config_overrides"]
+        overrides["snapshot"].pop("preflight", None)
+        db.update_run(run_id, {"config_overrides": overrides})
+
+    assert load_run_preflight(db, group_id) == {}
+
+
+def test_load_run_preflight_raises_for_an_unknown_run_group(db):
+    with pytest.raises(ValueError):
+        load_run_preflight(db, "does-not-exist")

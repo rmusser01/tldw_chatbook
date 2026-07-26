@@ -123,9 +123,9 @@ async def test_engine_produces_a_grid_whose_divergence_finds_the_steered_cell(
 ):
     task_id = save_bench(db, rich_config)
     runner = WordBenchRunner(db, lambda t: ScriptedClient(t, script=RICH_SCRIPT))
-    group_id = await runner.run(rich_config, rich_targets, rich_snippets, task_id)
+    outcome = await runner.run(rich_config, rich_targets, rich_snippets, task_id)
 
-    grid = load_grid(db, group_id)
+    grid = load_grid(db, outcome.group_id)
     assert len(grid["cells"]) == 12  # 4 snippets x 3 targets
 
     base, steered = rich_targets[0].id, rich_targets[1].id
@@ -153,8 +153,8 @@ async def test_spread_identifies_the_row_where_targets_disagree(
 ):
     task_id = save_bench(db, rich_config)
     runner = WordBenchRunner(db, lambda t: ScriptedClient(t, script=RICH_SCRIPT))
-    group_id = await runner.run(rich_config, rich_targets, rich_snippets, task_id)
-    grid = load_grid(db, group_id)
+    outcome = await runner.run(rich_config, rich_targets, rich_snippets, task_id)
+    grid = load_grid(db, outcome.group_id)
 
     base, steered = rich_targets[0].id, rich_targets[1].id
     neutral_row = [grid["cells"][("n1", t.id)] for t in rich_targets]
@@ -178,13 +178,13 @@ async def test_grid_survives_the_bench_being_edited_afterwards(
 ):
     task_id = save_bench(db, config)
     runner = WordBenchRunner(db, ScriptedClient)
-    group_id = await runner.run(config, targets, snippets, task_id)
+    outcome = await runner.run(config, targets, snippets, task_id)
 
     save_bench(db, BenchConfig(name="renamed", prompt_mode="chat", top_k=99,
                                dataset_id="d", target_ids=(targets[0].id,)),
                task_id=task_id)
 
-    grid = load_grid(db, group_id)
+    grid = load_grid(db, outcome.group_id)
     assert grid["snapshot"]["prompt_mode"] == "raw"
     assert grid["snapshot"]["top_k"] == 20
     assert len(grid["cells"]) == 4

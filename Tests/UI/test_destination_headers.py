@@ -18,6 +18,18 @@ from Tests.UI.test_screen_navigation import _build_test_app
 
 
 # route -> (screen import path pieces resolved lazily in the test), title
+#
+# "evals" is deliberately absent (PR3a Task 3): it moved from the flat
+# compose_content() pattern this list assumes -- DestinationHeader as
+# widgets[0], callable via list(screen.compose_content()) with no running
+# app -- to the three-pane workbench shell, which wraps everything in
+# with Vertical(id="evals-shell"): ..., and entering that context manager
+# requires an active Textual app. This mirrors why skills/mcp/personas/
+# watchlists_collections (already on the workbench shell pattern) were
+# never in this list either. See
+# test_evals_screen_composes_destination_header_in_the_workbench_shell
+# below for the equivalent header-identity coverage through a real
+# running app.
 _SIMPLE_SCREEN_ROUTES = (
     ("search", "Search"),
     ("media", "Media"),
@@ -26,7 +38,6 @@ _SIMPLE_SCREEN_ROUTES = (
     ("stts", "Speech"),
     ("logs", "Logs"),
     ("stats", "Stats"),
-    ("evals", "Evals"),
 )
 
 
@@ -59,10 +70,6 @@ def _screen_for_route(route: str, app):
         from tldw_chatbook.UI.Screens.stats_screen import StatsScreen
 
         return StatsScreen(app)
-    if route == "evals":
-        from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
-
-        return EvalsScreen(app)
     raise AssertionError(f"unmapped route: {route}")
 
 
@@ -86,6 +93,57 @@ def test_folded_screen_composes_destination_header_first(route, expected_title):
     assert "--" not in header.state.subtitle
     # States are text-labeled, never color-only.
     assert header.state.status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_evals_screen_composes_destination_header_in_the_workbench_shell():
+    """Equivalent of test_folded_screen_composes_destination_header_first
+    for Evals, which no longer fits that test's flat-compose_content()
+    assumption (see the comment on _SIMPLE_SCREEN_ROUTES above) -- driven
+    through a real running app instead, mirroring
+    test_study_screen_mounts_destination_header_and_boxes_library below.
+    """
+    from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
+
+    class _EvalsHarness(App):
+        def __init__(self, app_instance):
+            super().__init__()
+            self._app_instance = app_instance
+
+        async def on_mount(self) -> None:
+            await self.push_screen(EvalsScreen(self._app_instance))
+
+    app_instance = SimpleNamespace(
+        evaluation_orchestrator=None,
+        notify=lambda *args, **kwargs: None,
+    )
+    app = _EvalsHarness(app_instance)
+
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_stack[-1]
+
+        header = screen.query_one("#evals-destination-header", DestinationHeader)
+        assert header.has_class("workbench-header")
+        assert header.has_class("ds-destination-header")
+        title = screen.query_one(
+            "#evals-destination-header #workbench-header-title", Static
+        )
+        assert str(title.renderable) == "Evals"
+        subtitle = screen.query_one(
+            "#evals-destination-header #workbench-header-subtitle", Static
+        )
+        subtitle_text = str(subtitle.renderable)
+        # Plain purpose copy, kept short, with no em dashes.
+        assert subtitle_text
+        assert len(subtitle_text) <= 60
+        assert "—" not in subtitle_text
+        assert "--" not in subtitle_text
+        # States are text-labeled, never color-only.
+        status = screen.query_one(
+            "#evals-destination-header #workbench-header-status", Static
+        )
+        assert str(status.renderable) == "Ready"
 
 
 class _StudyHarness(App):

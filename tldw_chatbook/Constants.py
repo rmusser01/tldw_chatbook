@@ -1292,66 +1292,6 @@ MetricsScreen Label.-info-message {
 
 
 
-
-
-
-
-/* ----------------------------- ************************* ----------------------------- */
-/* --- Evals Tab --- */
-#evals-window { /* Matches TAB_EVALS, .window class provides layout: horizontal */
-    /* layout: horizontal; /* Provided by .window by default */
-}
-
-#evals-sidebar {
-    dock: left;
-    width: 25%;
-    min-width: 20;
-    max-width: 50; /* Adjusted max-width */
-    height: 100%;
-    background: $boost;
-    padding: 1; /* Standard padding */
-    border-right: thick $background-darken-1;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-#evals-sidebar.collapsed {
-    width: 0 !important;
-    min-width: 0 !important;
-    border-right: none !important;
-    padding: 0 !important;
-    overflow: hidden !important;
-    display: none !important; /* Ensure it's hidden */
-}
-
-/* Styles for the main content area within the Evals tab */
-#evals-main-content-area {
-    width: 1fr; /* Takes remaining horizontal space */
-    height: 100%;
-    padding: 1 2; /* Padding for the content area */
-    /* border: round $primary; /* Optional: for visual debugging */
-}
-
-/* Styles for the sidebar toggle button in the Evals tab */
-#toggle-evals-sidebar {
-    /* Positioned by EvalsWindow's compose, next to the content area */
-    /* dock: left; is set in EvalsWindow.py's DEFAULT_CSS for the button */
-    width: auto; /* Small width, text will determine */
-    height: 3;   /* Standard button height */
-    min-width: 0; /* Allow it to be small */
-    margin: 0 1 0 0; /* Top, Right, Bottom, Left margin - space it from main content */
-    /* color: $text; */
-    /* background: $surface-darken-1; */
-    /* border: none; */
-}
-/* Hover state for the toggle button if needed, can inherit from general .sidebar-toggle if class is added */
-/* #toggle-evals-sidebar:hover { background: $surface; } */
-
-/* --- End Evals Tab (Old Implementation) --- */
-/* ----------------------------- ************************* ----------------------------- */
-
-
-
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Media Tab Specific Options --- */
 .ingest-form-scrollable {
