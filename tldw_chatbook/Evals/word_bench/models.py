@@ -101,10 +101,16 @@ class BenchConfig:
 class TokenProb:
     """One token and its log probability.
 
-    ``token_id`` is the provider's token id where available (llama.cpp
-    supplies it, OpenAI does not) and is the identity key when present --
-    exact within a model, where string comparison across differing escaping
-    conventions is not. ``bytes_`` is the fallback.
+    ``bytes_`` is the raw UTF-8 of the token's surface form and is the
+    identity key: two tokens with identical bytes emit identical text, in any
+    tokenizer, with no escaping conventions to disagree about.
+
+    ``token_id`` is recorded for debugging and provenance but is deliberately
+    NOT used for matching. A token id is only meaningful within one model --
+    id 1623 in one tokenizer is an unrelated token in another -- and the whole
+    point of the grid is comparing distributions ACROSS models. Matching on it
+    would silently equate unrelated tokens and report divergence 0 for
+    completely disjoint distributions.
     """
 
     token: str
@@ -117,9 +123,7 @@ class TokenProb:
         return math.exp(self.logprob)
 
     def identity(self) -> tuple:
-        """A key that is stable within one model."""
-        if self.token_id is not None:
-            return ("id", self.token_id)
+        """A key comparable ACROSS models. See the class docstring."""
         if self.bytes_:
             return ("bytes", self.bytes_)
         return ("token", self.token)

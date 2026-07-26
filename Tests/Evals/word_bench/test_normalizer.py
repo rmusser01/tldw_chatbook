@@ -99,11 +99,15 @@ def test_chat_fixture_normalizes_with_the_same_shape():
     assert all(t.token_id is not None for t in top_k)
 
 
-def test_identity_prefers_token_id_when_present():
+def test_identity_is_bytes_based_so_it_compares_across_models():
+    """token_id is model-local: id 1623 here is an unrelated token in another
+    tokenizer. bytes are the raw UTF-8 of the surface form and mean the same
+    thing everywhere, so they -- not the id -- are the matching key."""
     top_k, _ = normalize_logprobs(
         _load("llamacpp_raw_completions.json"), want_content_token=False
     )
-    assert top_k[0].identity()[0] == "id"
+    assert top_k[0].identity() == ("bytes", (32, 109, 117, 99, 104))
+    assert top_k[0].token_id == 1623, "id is still recorded, just not matched on"
 
 
 def test_unrecognized_shape_raises_rather_than_guessing():
