@@ -70,6 +70,7 @@ class LocalRagContextResult:
 
     context: str | None
     citation_builder: CitationTraceBuilder | None
+    prompt_evidence_set_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1500,8 +1501,9 @@ async def _capture_local_pipeline_results(
             started_at=retrieval_started_at,
             ended_at=retrieval_ended_at,
         )
+        prompt_evidence_set_id = None
         if formatted.entries:
-            builder.record_prompt_evidence_set(
+            prompt_evidence_set_id = builder.record_prompt_evidence_set(
                 run_id=run_id,
                 evidence=formatted.entries,
                 created_at=datetime.now(UTC),
@@ -1513,7 +1515,7 @@ async def _capture_local_pipeline_results(
             f"duration_ms={retrieval_elapsed_ms}"
         )
         context = formatted.context if formatted.context.strip() else None
-        return LocalRagContextResult(context, builder)
+        return LocalRagContextResult(context, builder, prompt_evidence_set_id)
     except Exception:
         logger.error("Canonical RAG capture failed; reason=canonical_capture_failure")
         return LocalRagContextResult(None, None)
@@ -1669,7 +1671,7 @@ async def capture_console_staged_evidence_for_chat(
             started_at=captured_at,
             ended_at=captured_at,
         )
-        builder.record_prompt_evidence_set(
+        prompt_evidence_set_id = builder.record_prompt_evidence_set(
             run_id=run_id,
             evidence=formatted.entries,
             created_at=captured_at,
@@ -1685,7 +1687,7 @@ async def capture_console_staged_evidence_for_chat(
         f"candidates={len(authorization.candidates)}; "
         f"prompt_entries={len(formatted.entries)}"
     )
-    return LocalRagContextResult(context, builder)
+    return LocalRagContextResult(context, builder, prompt_evidence_set_id)
 
 
 async def get_rag_context_capture_for_chat(

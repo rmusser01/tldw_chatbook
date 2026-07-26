@@ -1065,7 +1065,7 @@ def _real_capture_repository(tmp_path, availability):
     "search_mode",
     ["plain", "semantic", "hybrid", "custom-pipeline"],
 )
-async def test_capture_api_records_one_equivalent_run_and_prompt_for_every_mode(
+async def test_capture_api_returns_prompt_evidence_set_id_for_every_mode(
     monkeypatch, search_mode
 ):
     query = "PRIVATE-QUERY-CAPTURE-SENTINEL"
@@ -1123,6 +1123,10 @@ async def test_capture_api_records_one_equivalent_run_and_prompt_for_every_mode(
     assert captured.citation_builder is repository.builders[0]
     assert len(captured.citation_builder.evidence_runs) == 1
     assert len(captured.citation_builder.prompt_evidence_sets) == 1
+    assert (
+        captured.prompt_evidence_set_id
+        == captured.citation_builder.prompt_evidence_sets[-1].prompt_set_id
+    )
     assert len(captured.citation_builder.evidence_run_payloads) == 1
     assert len(captured.citation_builder.evidence_snapshot_payloads) == 1
     run_payload = captured.citation_builder.evidence_run_payloads[0]
@@ -1145,11 +1149,43 @@ async def test_capture_api_records_one_equivalent_run_and_prompt_for_every_mode(
         assert sentinel not in rendered_logs
 
 
-def test_local_rag_context_result_is_frozen():
-    result = cre.LocalRagContextResult(context=None, citation_builder=None)
+@pytest.mark.asyncio
+async def test_pipeline_prompt_evidence_set_id_uses_record_method_return(
+    monkeypatch,
+):
+    authoritative_prompt_set_id = "prompt-set-authoritative-pipeline-return"
+    original_record = CitationTraceBuilder.record_prompt_evidence_set
 
+    def _record_with_authoritative_return(self, **kwargs):
+        original_record(self, **kwargs)
+        return authoritative_prompt_set_id
+
+    monkeypatch.setattr(
+        CitationTraceBuilder,
+        "record_prompt_evidence_set",
+        _record_with_authoritative_return,
+    )
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository)
+    _patch_pipeline(monkeypatch, [_ranked_result()], "legacy")
+
+    captured = await cre.get_rag_context_capture_for_chat(app, "query")
+
+    assert captured.prompt_evidence_set_id == authoritative_prompt_set_id
+    assert (
+        captured.citation_builder.prompt_evidence_sets[-1].prompt_set_id
+        != authoritative_prompt_set_id
+    )
+
+
+def test_local_rag_context_result_prompt_evidence_set_id_defaults_none_and_is_frozen():
+    result = cre.LocalRagContextResult(None, None)
+
+    assert result.prompt_evidence_set_id is None
     with pytest.raises(FrozenInstanceError):
         result.context = "changed"
+    with pytest.raises(FrozenInstanceError):
+        result.prompt_evidence_set_id = "prompt-set-changed"
 
 
 @pytest.mark.asyncio
@@ -1193,6 +1229,10 @@ async def test_console_staged_local_evidence_records_exact_prompt_capture():
 
     assert captured.context == f"[S1] MEDIA — {title}\n{snippet}"
     assert captured.citation_builder is repository.builders[0]
+    assert (
+        captured.prompt_evidence_set_id
+        == captured.citation_builder.prompt_evidence_sets[-1].prompt_set_id
+    )
     run_payload = captured.citation_builder.evidence_run_payloads[0]
     assert run_payload.raw_query is None
     assert run_payload.query_fingerprint is not None
@@ -1211,7 +1251,123 @@ async def test_console_staged_local_evidence_records_exact_prompt_capture():
 
 
 @pytest.mark.asyncio
-async def test_console_staged_local_evidence_without_repository_keeps_context():
+async def test_console_prompt_evidence_set_id_uses_record_method_return(monkeypatch):
+    authoritative_prompt_set_id = "prompt-set-authoritative-console-return"
+    original_record = CitationTraceBuilder.record_prompt_evidence_set
+
+    def _record_with_authoritative_return(self, **kwargs):
+        original_record(self, **kwargs)
+        return authoritative_prompt_set_id
+
+    monkeypatch.setattr(
+        CitationTraceBuilder,
+        "record_prompt_evidence_set",
+        _record_with_authoritative_return,
+    )
+    title = "Console staged source"
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title=title,
+        payload={
+            "evidence_bundle": EvidenceBundle(
+                bundle_id="bundle-direct-return",
+                query="query",
+                references=(
+                    EvidenceReference(
+                        evidence_id="S1",
+                        source_id="m1",
+                        source_type="media",
+                        title=title,
+                        snippet="body",
+                        authority_label="local",
+                        source_owner="local",
+                        score=0.5,
+                    ),
+                ),
+            ).to_payload(),
+        },
+        status="staged",
+    )
+    repository = _CaptureRepository()
+
+    captured = await cre.capture_console_staged_evidence_for_chat(
+        _CaptureApp(repository=repository),
+        launch,
+        user_message="ordinary prompt",
+    )
+
+    assert captured.prompt_evidence_set_id == authoritative_prompt_set_id
+    assert (
+        captured.citation_builder.prompt_evidence_sets[-1].prompt_set_id
+        != authoritative_prompt_set_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_prompt_evidence_recording_failure_returns_no_capture(
+    monkeypatch,
+):
+    query = "CONSOLE_PRIVATE_PROMPT_FAILURE_QUERY_SENTINEL"
+    title = "CONSOLE_PRIVATE_PROMPT_FAILURE_TITLE_SENTINEL"
+    content = "CONSOLE_PRIVATE_PROMPT_FAILURE_CONTENT_SENTINEL"
+    failure = "CONSOLE_PRIVATE_PROMPT_FAILURE_EXCEPTION_SENTINEL"
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title=title,
+        payload={
+            "evidence_bundle": EvidenceBundle(
+                bundle_id="bundle-record-failure",
+                query=query,
+                references=(
+                    EvidenceReference(
+                        evidence_id="S1",
+                        source_id="m1",
+                        source_type="media",
+                        title=title,
+                        snippet=content,
+                        authority_label="local",
+                        source_owner="local",
+                        score=0.5,
+                    ),
+                ),
+            ).to_payload(),
+        },
+        status="staged",
+    )
+
+    def _raise_recording_failure(*_args, **_kwargs):
+        raise RuntimeError(failure)
+
+    monkeypatch.setattr(
+        CitationTraceBuilder,
+        "record_prompt_evidence_set",
+        _raise_recording_failure,
+    )
+    captured_logs = []
+    sink_id = loguru_logger.add(
+        captured_logs.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        captured = await cre.capture_console_staged_evidence_for_chat(
+            _CaptureApp(repository=_CaptureRepository()),
+            launch,
+            user_message="ordinary prompt",
+        )
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert captured == cre.LocalRagContextResult(None, None)
+    assert captured.prompt_evidence_set_id is None
+    rendered_logs = "".join(str(message) for message in captured_logs)
+    assert "reason=canonical_capture_failure" in rendered_logs
+    for sentinel in (query, title, content, failure):
+        assert sentinel not in rendered_logs
+
+
+@pytest.mark.asyncio
+async def test_console_without_repository_returns_no_prompt_id_and_keeps_context():
     title = "Legacy staged source"
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
@@ -1247,10 +1403,13 @@ async def test_console_staged_local_evidence_without_repository_keeps_context():
         context="[S1] MEDIA — Legacy staged source\nlegacy body",
         citation_builder=None,
     )
+    assert captured.prompt_evidence_set_id is None
 
 
 @pytest.mark.asyncio
-async def test_absent_repository_preserves_legacy_pipeline_bytes(monkeypatch):
+async def test_absent_repository_returns_no_prompt_id_and_preserves_pipeline_bytes(
+    monkeypatch,
+):
     app = _CaptureApp()
     raw_context = "LEGACY\x00PIPELINE\nBYTES"
     _patch_pipeline(monkeypatch, [_ranked_result()], raw_context)
@@ -1262,6 +1421,7 @@ async def test_absent_repository_preserves_legacy_pipeline_bytes(monkeypatch):
         context=raw_context,
         citation_builder=None,
     )
+    assert captured.prompt_evidence_set_id is None
     assert isinstance(legacy, str)
     assert legacy == raw_context
 
@@ -1308,6 +1468,7 @@ async def test_real_repository_prerequisite_states_preserve_legacy_pipeline_byte
             context=raw_context,
             citation_builder=None,
         )
+        assert captured.prompt_evidence_set_id is None
         assert isinstance(legacy, str)
         assert legacy == raw_context
     finally:
@@ -1315,7 +1476,7 @@ async def test_real_repository_prerequisite_states_preserve_legacy_pipeline_byte
 
 
 @pytest.mark.asyncio
-async def test_empty_retrieval_records_only_the_empty_run(monkeypatch):
+async def test_empty_retrieval_records_run_but_returns_no_prompt_id(monkeypatch):
     repository = _CaptureRepository()
     app = _CaptureApp(repository=repository)
     _patch_pipeline(monkeypatch, [], "")
@@ -1324,9 +1485,52 @@ async def test_empty_retrieval_records_only_the_empty_run(monkeypatch):
 
     assert captured.context is None
     assert captured.citation_builder is repository.builders[0]
+    assert captured.prompt_evidence_set_id is None
     assert len(captured.citation_builder.evidence_runs) == 1
     assert captured.citation_builder.evidence_run_payloads[0].candidates == ()
     assert captured.citation_builder.prompt_evidence_sets == ()
+
+
+@pytest.mark.asyncio
+async def test_prompt_authority_failure_returns_no_context_builder_or_prompt_id(
+    monkeypatch,
+):
+    query = "PRIVATE-PROMPT-AUTHORITY-QUERY-SENTINEL"
+    title = "PRIVATE-PROMPT-AUTHORITY-TITLE-SENTINEL"
+    content = "PRIVATE-PROMPT-AUTHORITY-CONTENT-SENTINEL"
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository)
+    _patch_pipeline(
+        monkeypatch,
+        [_ranked_result(title=title, content=content)],
+        "legacy",
+    )
+
+    async def _fail_authority(*_args, **_kwargs):
+        return cre._PromptAuthorizationResult((), False)
+
+    monkeypatch.setattr(
+        cre,
+        "_authorize_local_results_for_prompt",
+        _fail_authority,
+    )
+    captured_logs = []
+    sink_id = loguru_logger.add(
+        captured_logs.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        captured = await cre.get_rag_context_capture_for_chat(app, query)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert captured == cre.LocalRagContextResult(None, None)
+    assert captured.prompt_evidence_set_id is None
+    rendered_logs = "".join(str(message) for message in captured_logs)
+    assert "reason=prompt_authority_failure" in rendered_logs
+    for sentinel in (query, title, content):
+        assert sentinel not in rendered_logs
 
 
 @pytest.mark.asyncio
@@ -1357,6 +1561,7 @@ async def test_pipeline_exception_returns_no_context_or_builder_and_sanitizes_lo
         context=None,
         citation_builder=None,
     )
+    assert captured.prompt_evidence_set_id is None
     rendered_logs = "".join(str(message) for message in captured_logs)
     assert query not in rendered_logs
     assert failure not in rendered_logs
@@ -1450,7 +1655,7 @@ async def test_off_selection_source_is_excluded_before_authorization_and_capture
 
 
 @pytest.mark.asyncio
-async def test_validation_failure_discards_context_and_partial_builder_without_logging(
+async def test_prompt_evidence_set_recording_failure_discards_context_and_builder(
     monkeypatch, tmp_path
 ):
     sentinel = "PRIVATE-VALIDATION-FAILURE-SENTINEL"
@@ -1492,6 +1697,7 @@ async def test_validation_failure_discards_context_and_partial_builder_without_l
             context=None,
             citation_builder=None,
         )
+        assert captured.prompt_evidence_set_id is None
         connection = db.get_connection()
         for table in ("rag_evidence_runs", "rag_evidence_snapshots"):
             assert (
