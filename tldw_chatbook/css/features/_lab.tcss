@@ -1,0 +1,32 @@
+/* Lab destination (Models | Speech | Evals).
+ *
+ * These rules MUST live app-tier, not in LabModeStrip.DEFAULT_CSS: the
+ * bundle's global `.is-active` rule (border: round) outranks DEFAULT_CSS
+ * regardless of specificity, so a widget-tier override silently loses and
+ * the active chip's label is clipped by the one-row strip. Mirrors
+ * `.personas-mode-chip.is-active` and `#mcp-mode-strip Button.mcp-mode-chip`.
+ */
+
+#lab-mode-strip Button.lab-mode-chip {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0 1;
+    border: none;
+}
+
+#lab-mode-strip .lab-mode-chip.is-active {
+    border: none;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+#lab-mode-strip .lab-mode-chip.is-active:focus,
+#lab-mode-strip .lab-mode-chip.is-active:hover:focus {
+    outline: none;
+    border: none;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}

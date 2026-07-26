@@ -224,3 +224,57 @@ async def test_lab_route_and_mode_strip_navigate_the_real_shell(
                 "is-active"
             )
             assert app.screen.query_one("#nav-lab", Button).has_class("is-active")
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
+
+
+class _BundledStripHarness(App[None]):
+    """Mount the strip with the production stylesheet.
+
+    The bundle is required: the bug under test lives in the bundle's global
+    `.is-active` rule, which beats LabModeStrip.DEFAULT_CSS. A harness
+    without CSS_PATH passes vacuously.
+    """
+
+    CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+    def __init__(self, active_route: str) -> None:
+        super().__init__()
+        self._active_route = active_route
+
+    def compose(self):
+        yield LabModeStrip(active_route=self._active_route, id="lab-mode-strip")
+
+
+def _has_border(widget) -> bool:
+    """True when any edge declares a border style."""
+    border = widget.styles.border
+    return any(
+        edge[0] for edge in (border.top, border.right, border.bottom, border.left)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("route", "active_chip"), [
+    ("llm", "lab-mode-models"),
+    ("stts", "lab-mode-speech"),
+    ("evals", "lab-mode-evals"),
+])
+async def test_active_mode_chip_has_no_border_so_its_label_renders(route, active_chip):
+    """The active chip must not gain the bundle's global `.is-active` border.
+
+    The strip is one row tall. A bordered chip becomes a three-row box, so
+    only its top border renders and the mode label disappears entirely --
+    leaving no way to see which Lab mode is active.
+    """
+    app = _BundledStripHarness(route)
+    async with app.run_test(size=(80, 6)) as pilot:
+        await pilot.pause()
+        chip = app.query_one(f"#{active_chip}")
+
+        assert "is-active" in chip.classes
+        assert not _has_border(chip), (
+            f"{active_chip} has a border; its label is clipped by the 1-row strip"
+        )
