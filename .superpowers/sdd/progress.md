@@ -371,3 +371,11 @@ OPEN QUESTION for final review: a full run (--continue-on-collection-errors) gav
   to the tail so the failure list was lost and could NOT be attributed. Task 12's
   importers are all green in targeted runs (785 Agents/Tools/Utils + 82 Chat bridge).
   MUST re-run once at end of branch with `-rf --tb=line` and full capture.
+Task 13: complete (commit 63eb693c3, review clean). ToolExecutor/ToolResultCache/
+  get_tool_executor/reload_tool_executor deleted; code_audit_tool.py and orphaned
+  file_operation_hooks.py deleted; Tool Settings nav section removed whole (reviewer
+  verified 7 nav buttons <-> 7 ContentSwitcher views, no dangling ids/CSS/handlers).
+  DateTimeTool/CalculatorTool kept. `from .base import Tool` re-export KEPT -- 4 TEST
+  files still import Tool from tool_executor incl. one pinning class identity.
+  6 chat_api_key failures confirmed PRE-EXISTING by git-stash bisection (these are part
+  of the earlier unattributed 74).
