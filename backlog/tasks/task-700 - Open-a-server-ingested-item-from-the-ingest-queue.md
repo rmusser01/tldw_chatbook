@@ -1,11 +1,11 @@
 ---
 id: TASK-700
 title: Open a server-ingested item from the ingest queue
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-26 13:58'
-updated_date: '2026-07-26 19:11'
+updated_date: '2026-07-26 22:00'
 labels:
   - library
   - ingest
