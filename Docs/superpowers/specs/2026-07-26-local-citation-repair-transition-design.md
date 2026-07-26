@@ -323,6 +323,25 @@ Provider failure, agent failure/cancellation, empty output, and synthesized
 fallback copy keep their existing terminal behavior and never dispatch citation
 repair.
 
+Synthesized fallback identity is out-of-band, never inferred by comparing body
+text. The outer response path creates one request-scoped
+`ConsoleProviderStreamSignals` value containing only a thread-safe
+`synthetic_fallback_emitted` event. The contract lives beside the gateway
+contracts in `console_provider_gateway.py`. The optional signal is passed
+unchanged through direct `stream_chat` calls and, for agent runs, through
+`ConsoleAgentBridge` and its streaming model adapter to the same gateway call.
+Existing callers may omit it.
+
+The gateway sets the event only in the exact normalization branches where the
+gateway itself emits fallback copy; it sets the event before yielding that
+copy. It does not mark genuine provider content, even when genuine content is
+byte-for-byte equal to a fallback string. The gateway's yielded chunk types and
+text remain unchanged. If any synthesized fallback was emitted, the selection
+coordinator bypasses citation repair conservatively and completes through the
+existing path. The signal contains no answer text, evidence, exception,
+provider credential, or mutable controller state; it is neither serialized nor
+logged.
+
 When repair is required, the coordinator first publishes
 `CHECKING_CITATIONS` and the safe checking presentation, then yields to the
 event loop once before provider dispatch. It rechecks message/session ownership
@@ -504,6 +523,11 @@ evidence, source identity, locator, prompt, exception text, or traceback.
   same async selection seam before any completion or agent-run anchoring
 - empty provider output, agent failure/cancellation, and synthesized fallback
   copy never dispatch repair
+- direct and agent gateway calls propagate the same request-scoped fallback
+  signal; synthesized copy marks it before yield while genuine provider text
+  equal to the fallback string leaves it unset
+- omitting the optional signal preserves existing gateway output types and
+  behavior, and the signal never carries governed text
 - repair remains active and defers persistence when no builder is available
 - one repair maximum even when repaired output remains invalid
 - checking state is published before an event-loop yield, remains stoppable and
