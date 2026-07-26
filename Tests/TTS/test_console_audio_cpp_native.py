@@ -647,6 +647,178 @@ async def test_console_cancellation_joins_blocking_artifact_worker(
 
 
 @pytest.mark.asyncio
+async def test_console_cancellation_wins_over_joined_artifact_worker_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tasks_before = asyncio.all_tasks()
+    cancel_reason = "PRIVATE_CANCEL_REASON"
+    io_failure = "PRIVATE_IO_FAILURE"
+    entered = threading.Event()
+    release = threading.Event()
+    worker_exited = threading.Event()
+    fallback_used = threading.Event()
+    file_exit_calls = 0
+    timeline: list[str] = []
+    metric_calls: list[tuple[str, str, float | int, dict[str, Any]]] = []
+    log_messages: list[str] = []
+    response = _Response(_RecordingStream(_WAV_CHUNKS[:1], timeline))
+    handler = _Handler()
+    handler._tts_service = _DefaultService(response)
+    original_open = Path.open
+
+    class SuccessfulTempManager(_RecordingTempManager):
+        def create_temp_file(
+            self,
+            content: str | bytes,
+            suffix: str = "",
+            prefix: str = "tmp",
+            dir: str | None = None,
+        ) -> str:
+            del dir
+            path = self.directory / f"{prefix}{len(self.paths)}{suffix}"
+            payload = content.encode() if isinstance(content, str) else content
+            with original_open(path, "wb") as artifact:
+                artifact.write(payload)
+                artifact.flush()
+            path.chmod(0o600)
+            self.paths.append(path)
+            self.suffixes.append(suffix)
+            return str(path)
+
+    class FailingWriteFile:
+        def __init__(self, wrapped: Any) -> None:
+            self._wrapped = wrapped
+
+        def __enter__(self) -> FailingWriteFile:
+            self._wrapped.__enter__()
+            return self
+
+        def __exit__(self, *exc_info: object) -> object:
+            nonlocal file_exit_calls
+            file_exit_calls += 1
+            return self._wrapped.__exit__(*exc_info)
+
+        def write(self, content: bytes) -> int:
+            del content
+            entered.set()
+            try:
+                assert release.wait(timeout=1.0)
+                raise OSError(io_failure)
+            finally:
+                worker_exited.set()
+
+        def flush(self) -> None:
+            self._wrapped.flush()
+
+    def blocking_open(path: Path, *args: object, **kwargs: object) -> Any:
+        wrapped = original_open(path, *args, **kwargs)
+        if path.parent == tmp_path and path.name.startswith("tts_audio_"):
+            return FailingWriteFile(wrapped)
+        return wrapped
+
+    def unblock_synchronous_regression() -> None:
+        assert entered.wait(timeout=1.0)
+        if not release.wait(timeout=0.2):
+            fallback_used.set()
+            release.set()
+
+    deleted: list[Path] = []
+
+    def delete(path: str | Path) -> bool:
+        candidate = Path(path)
+        deleted.append(candidate)
+        candidate.unlink()
+        return True
+
+    def capture_counter(
+        name: str,
+        value: int = 1,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        metric_calls.append((name, "counter", value, dict(labels or {})))
+
+    def capture_histogram(
+        name: str,
+        value: float,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        metric_calls.append((name, "histogram", value, dict(labels or {})))
+
+    temp_manager = SuccessfulTempManager(tmp_path)
+    handler._temp_manager = temp_manager
+    monkeypatch.setattr(Path, "open", blocking_open)
+    monkeypatch.setattr(tts_events_module, "secure_delete_file", delete)
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_counter",
+        capture_counter,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_histogram",
+        capture_histogram,
+    )
+    sink_id = tts_events_module.logger.add(
+        log_messages.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    watchdog = threading.Thread(target=unblock_synchronous_regression)
+    watchdog.start()
+    generation = asyncio.create_task(
+        handler._generate_tts(
+            "Character response",
+            "console-native-worker-error-cancel",
+            None,
+        )
+    )
+
+    async def wait_for_thread_entry() -> None:
+        while not entered.is_set():
+            await asyncio.sleep(0)
+
+    try:
+        await asyncio.wait_for(wait_for_thread_entry(), timeout=1.0)
+        generation.cancel(cancel_reason)
+        await asyncio.sleep(0)
+        assert not generation.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError) as cancellation:
+            await generation
+    finally:
+        release.set()
+        watchdog.join(timeout=1.0)
+        tts_events_module.logger.remove(sink_id)
+
+    assert cancellation.value.args == (cancel_reason,)
+    assert not watchdog.is_alive()
+    assert not fallback_used.is_set()
+    assert worker_exited.is_set()
+    assert file_exit_calls == 1
+    assert response.close_calls == 1
+    assert response.byte_stream.close_calls == 1
+    assert len(temp_manager.paths) == 1
+    assert deleted == temp_manager.paths
+    assert not temp_manager.paths[0].exists()
+    assert handler._audio_files == {}
+    assert handler._artifact_cleanup_retry == set()
+    assert not any(
+        isinstance(message, (TTSCompleteEvent, TTSStreamingEvent))
+        for message in handler.messages
+    )
+    assert asyncio.all_tasks() - tasks_before == set()
+    assert len(metric_calls) == 2
+    for _name, _kind, _value, labels in metric_calls:
+        assert labels == {
+            "provider_id": "audio_cpp",
+            "resolution_source": "global",
+            "outcome_code": "cancelled",
+        }
+    rendered = repr(metric_calls) + "\n".join(log_messages) + repr(handler.messages)
+    for private_value in (cancel_reason, io_failure, str(temp_manager.paths[0])):
+        assert private_value not in rendered
+
+
+@pytest.mark.asyncio
 async def test_console_secure_delete_keeps_event_loop_responsive(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

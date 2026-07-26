@@ -569,20 +569,29 @@ class TTSEventHandler:
         try:
             return await asyncio.shield(worker)
         except asyncio.CancelledError:
+            worker_error: BaseException | None = None
             while not worker.done():
                 try:
                     await asyncio.shield(worker)
                 except asyncio.CancelledError:
                     continue
-            try:
-                result = worker.result()
-            except BaseException:
+                except BaseException as error:
+                    worker_error = error
+                    break
+            if worker_error is None:
+                try:
+                    result = worker.result()
+                except BaseException as error:
+                    worker_error = error
+                else:
+                    if on_cancelled_result is not None:
+                        on_cancelled_result(result)
+            if worker_error is not None:
                 logger.warning(
                     "TTS artifact I/O did not complete while cancellation was pending"
                 )
-            else:
-                if on_cancelled_result is not None:
-                    on_cancelled_result(result)
+            # Outside this already-cancelled branch, process-control
+            # BaseExceptions still propagate from the initial await above.
             raise
 
     def _create_tts_artifact(self, audio_format: str) -> Path:
