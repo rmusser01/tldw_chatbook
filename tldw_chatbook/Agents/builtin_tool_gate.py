@@ -21,6 +21,7 @@ from tldw_chatbook.MCP.permission_store import (
     BUILTIN_TOOL_SERVER_KEY,
     EffectiveToolState,
     GatedToolRef,
+    _DEFAULT_PROFILE_ID,
     _as_mapping,
     resolve_builtin_state,
 )
@@ -296,14 +297,14 @@ def _stored_builtin_tool_names(payload: dict) -> set[str]:
 
     Args:
         payload: A loaded permission-store payload; tolerates a malformed
-            shape (e.g. a hand-edited file) at every nesting level via
-            ``_as_mapping``.
+            shape (e.g. a hand-edited file) at every nesting level below the
+            top-level mapping via ``_as_mapping``.
 
     Returns:
         The set of tool names with a ``tools`` entry under
         ``profiles.default.servers[BUILTIN_TOOL_SERVER_KEY]``.
     """
-    profile = _as_mapping(_as_mapping(payload.get("profiles")).get("default"))
+    profile = _as_mapping(_as_mapping(payload.get("profiles")).get(_DEFAULT_PROFILE_ID))
     servers = _as_mapping(profile.get("servers"))
     server_entry = _as_mapping(servers.get(BUILTIN_TOOL_SERVER_KEY))
     tools = _as_mapping(server_entry.get("tools"))
