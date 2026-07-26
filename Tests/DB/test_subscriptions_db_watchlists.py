@@ -74,3 +74,43 @@ def test_schema_migration_is_idempotent(db):
     db._ensure_watchlists_schema()
     db._ensure_watchlists_schema()
     assert "watchlists" in _tables(db)
+
+
+def test_run_table_owned_by_db_with_batch_id(db):
+    # No service call needed — SubscriptionsDB owns this table now.
+    assert "local_watchlist_runs" in _tables(db)
+    assert "batch_id" in _columns(db, "local_watchlist_runs")
+
+
+def test_batch_id_added_to_preexisting_run_table(tmp_path):
+    import sqlite3
+
+    # A database created before batch_id existed, with the old table shape.
+    path = tmp_path / "legacy.db"
+    legacy_conn = sqlite3.connect(path)
+    legacy_conn.executescript("""
+        CREATE TABLE local_watchlist_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id INTEGER NOT NULL,
+            job_id INTEGER,
+            status TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            stats_json TEXT,
+            error_msg TEXT,
+            log_text TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+    """)
+    legacy_conn.commit()
+    legacy_conn.close()
+
+    migrated = SubscriptionsDB(str(path), client_id="test")
+    assert "batch_id" in _columns(migrated, "local_watchlist_runs")
+
+
+def test_lazy_run_schema_helper_is_gone():
+    from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
+
+    assert not hasattr(LocalWatchlistsService, "_ensure_run_schema")

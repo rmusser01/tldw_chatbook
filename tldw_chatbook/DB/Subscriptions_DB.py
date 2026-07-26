@@ -267,7 +267,26 @@ class SubscriptionsDB(BaseDB):
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
-            
+
+            -- Local watchlist run history. Owned here rather than created
+            -- lazily by LocalWatchlistsService, so one place owns schema and
+            -- additive migrations can ALTER it unconditionally.
+            CREATE TABLE IF NOT EXISTS local_watchlist_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id INTEGER NOT NULL,
+                job_id INTEGER,
+                batch_id TEXT,
+                status TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                stats_json TEXT,
+                error_msg TEXT,
+                log_text TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (source_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+            );
+
             -- Create indices
             CREATE INDEX IF NOT EXISTS idx_subscriptions_priority_active ON subscriptions(priority DESC, is_active, is_paused);
             CREATE INDEX IF NOT EXISTS idx_subscriptions_tags ON subscriptions(tags);
@@ -475,6 +494,18 @@ class SubscriptionsDB(BaseDB):
                 applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # local_watchlist_runs is guaranteed to exist: BaseDB.__init__ runs
+        # _initialize_schema (base_db.py:76), which creates it and then calls
+        # this method. Only the column needs checking, for databases created
+        # before batch_id existed.
+        run_cols = {row[1] for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")}
+        if "batch_id" not in run_cols:
+            cursor.execute("ALTER TABLE local_watchlist_runs ADD COLUMN batch_id TEXT")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_local_watchlist_runs_batch "
+            "ON local_watchlist_runs(batch_id)"
+        )
         conn.commit()
 
     @property
