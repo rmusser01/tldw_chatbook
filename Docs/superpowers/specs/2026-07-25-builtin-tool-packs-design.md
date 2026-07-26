@@ -22,13 +22,20 @@ comes from user-installed skills or user-configured MCP servers. An out-of-the-b
 agent therefore cannot read a file, search the user's own corpus, fetch a page, or
 take any action against the substantial subsystems this application already owns.
 
-Meanwhile `Tools/tool_executor.py` (System A) holds working `read_file`,
-`list_directory`, `write_file`, `rag_search`, `create_note`, `search_notes`,
-`update_note`, and `web_search` implementations that **nothing executes** — TASK-545
-described them as reachable from the deprecated legacy chat path, but that path has
-since been deleted (§4.7). TASK-545 established that System A and the agent runtime
-(System B) are disjoint systems, and that the resolution is to port System A's tools
-into System B and gate them there.
+Meanwhile `Tools/` holds working `read_file`, `list_directory`, `write_file`,
+`rag_search`, `create_note`, `search_notes`, `update_note`, and `web_search`
+implementations. The `ToolExecutor` that once dispatched them has no callers left
+(§4.7), but the picture is **not** simply "System A is unreachable":
+
+- **`read_file` and `list_directory` are already wired into the agent runtime.**
+  TASK-584 registers them inside `BuiltinToolProvider.__init__` behind
+  `[tools] read_file_enabled` / `list_directory_enabled`, which default to `False`.
+  They are reachable today by a user who sets those flags.
+- The remaining implementations (`write_file`, note tools, `rag_search`, `web_search`)
+  have no path into the runtime at all.
+
+So the port is partly done, and Phase 1's real work is smaller than a from-scratch port
+(§7.1).
 
 This spec covers that port and what comes after it.
 
@@ -39,7 +46,9 @@ load-bearing for a decision below.
 
 | Fact | Location |
 |---|---|
-| `BuiltinToolProvider` holds only `CalculatorTool` and `DateTimeTool`, and takes no dependencies | `Agents/tool_catalog.py` |
+| `BuiltinToolProvider.__init__(gate=None)` holds `CalculatorTool` + `DateTimeTool`, **plus** `ReadFileTool`/`ListDirectoryTool` when their `[tools]` flags are set (TASK-584); it takes no *service* dependencies | `Agents/tool_catalog.py:187-219` |
+| `get_cli_setting(section, key, default)` resolves `[tools]` correctly in its 3-arg form; TASK-584's gates and `_resolve_sandbox_config` both use it | `config.py:3965`, `tool_catalog.py:207`, `file_operation_tools.py` |
+| TASK-547's defect is confined to `get_tool_executor()`'s 2-arg `get_cli_setting("tools", {})`, which mis-slots `{}`. The `[tools]` **section itself is reachable** | `Tools/tool_executor.py`, TASK-547 |
 | The permission gate exists and is wired unconditionally; namespace `agent:builtin` | `Agents/builtin_tool_gate.py`, `MCP/permission_store.py` |
 | `HIGH_RISK_TAGS = {"mutates", "process"}`, consumed by both the MCP and built-in resolvers | `MCP/permission_store.py:69,637,706` |
 | `DIRECT_DISCLOSE_THRESHOLD = 8`; above it the model must use `find_tools`/`load_tools` | `Agents/agent_models.py:48` |
@@ -184,16 +193,32 @@ Pack enablement lives under a new config section. Two known traps must be avoide
 - Dotted-section lookups have silently failed before (`chat.images`). The new keys
   require an **unmocked** integration test that reads them exactly as the app does.
 
-**TASK-547 is resolved by deletion, not repair.** `[tools]`'s only live consumers are
-System A's file tools (`file_sandbox_root`, §4.6) and `UI/Tools_Settings_Window.py`'s
-per-tool enable/disable switches — and System A executes nothing (§4.7). Making the
-section reachable would restore configurability to a system that cannot run. The new
-pack config section owns the sandbox root instead; `[tools]` and the tool switches are
-removed.
+**`[tools]` is live and must be migrated, not deleted.** An earlier draft of this spec
+called the section dead and resolved TASK-547 by deleting it. That was wrong.
+`get_cli_setting`'s 3-arg form resolves `[tools]` correctly, and three consumers use it
+that way:
 
-This also bounds the surfaces answering "what can the agent do." Without the deletion
-there would be four: the dead Tools settings switches, TASK-656's permissions matrix,
-pack enablement, and TASK-659's agent settings screen. Phase 1 removes the first.
+- `BuiltinToolProvider`'s `read_file_enabled` / `list_directory_enabled` gates (TASK-584)
+- `file_operation_tools._resolve_sandbox_config`'s `file_sandbox_root`
+- `UI/Tools_Settings_Window.py`'s switches
+
+Only `get_tool_executor()`'s 2-arg call is broken, and that function is being removed
+with System A (§4.7) — so **TASK-547 closes when the executor is deleted**, its defect
+having no surviving caller.
+
+Migration rules for Phase 1:
+
+- The three live keys move to the new pack config section, with the `[tools]` names
+  honored as a **deprecated fallback** so a user who already enabled `read_file_enabled`
+  is not silently switched off. Log once when the fallback fires.
+- `read_file_enabled`/`list_directory_enabled` become pack-level enablement; a per-tool
+  flag and a pack flag governing the same tool is one control too many.
+- **The default posture stays disabled.** TASK-584 deliberately shipped these off, and
+  changing that default is a separate, explicit decision — not a side effect of
+  restructuring config.
+- `Tools_Settings_Window`'s switches are removed with the executor, bounding the
+  surfaces that answer "what can the agent do" to three: TASK-656's permissions matrix,
+  pack enablement, and TASK-659's agent settings screen.
 
 Phase 1 owns the config **keys and defaults**. TASK-659's agent settings screen owns
 **rendering** them. They must not grow competing surfaces.
@@ -218,19 +243,25 @@ idempotency (content-hash duplicate-skip) rather than a job-handle protocol.
 
 ### 4.6 Filesystem root policy
 
-System A's file tools confine every read, write and listing to a sandbox root —
-`<user data dir>/tool_sandbox` by default, overridable via `[tools]
-file_sandbox_root` (`file_operation_tools._tool_sandbox_root`). Porting those tools
-without restating the policy would silently widen them from *a scratch directory* to
-*the entire filesystem*. That is a privilege escalation, and it must be a decision, not
-a side effect of a port.
+The file tools confine every read, write and listing to a sandbox root —
+`<user data dir>/tool_sandbox` by default, overridable via `[tools] file_sandbox_root`
+(`file_operation_tools._tool_sandbox_root`). That override **works today**; the 3-arg
+`get_cli_setting` call is correct.
+
+This policy is already in force for `read_file`/`list_directory` via TASK-584. Widening
+it — or letting new tools like `glob_files`/`grep_files` skip it — would be a privilege
+escalation from *a scratch directory* to *the entire filesystem*, and must be a
+decision rather than a side effect of restructuring.
 
 Policy for ported and new file tools:
 
-1. **Workspace-rooted by default.** File tools operate under the active workspace root,
-   plus any additional roots the user configures. This is what makes the tools useful —
-   a general agent confined to a scratch directory cannot do the work — while keeping
-   the reachable surface something the user chose.
+1. **Workspace-rooted by default — a deliberate widening that needs sign-off.** File
+   tools operate under the active workspace root plus any additional roots the user
+   configures. This is what makes the tools useful; a general agent confined to
+   `<user data dir>/tool_sandbox` cannot do the work. But it **changes the shipped
+   default** established by TASK-584, so it is called out as its own decision rather
+   than folded into the restructuring. Keeping `tool_sandbox` as the default and
+   requiring users to add roots is the conservative alternative.
 2. **Credential and application-state paths are refused regardless of root.** `~/.ssh`,
    `~/.aws`, `~/.gnupg`, keyring stores, `~/.config/tldw_cli/config.toml`, the SQLite
    DBs, and `mcp_permissions.json` are denied even when a configured root would
@@ -250,7 +281,12 @@ resolution is that they share one denylist for the paths that matter (rule 2) an
 only in default reach — which is honest, because the shell is `ask`-gated per call and
 `read_file` is not.
 
-### 4.7 System A is already dead
+### 4.7 The ToolExecutor is dead; its tools are not
+
+**Scope note:** what follows applies to `ToolExecutor` — the dispatcher — not to the
+tool implementations in `Tools/*.py`. Two of those (`ReadFileTool`,
+`ListDirectoryTool`) are already reachable from the agent runtime via TASK-584 (§1),
+and all of them are the porting source for Phases 1–3.
 
 TASK-545's description states System A is reached from the legacy chat path via
 `Event_Handlers/worker_events.py` and `chat_streaming_events.py`. **That is no longer
@@ -502,12 +538,18 @@ if `max_steps` drops below the derived minimum, and validates the new numbers.
 - `BuiltinToolServices` frozen dataclass and its injection at
   `_compose_run_registry_and_allowed`
 - Pack-enablement config keys and defaults, with an unmocked read test (§4.3)
-- TASK-547 closed by **removing** `[tools]` and the `Tools_Settings_Window` switches
-  (§4.3, §4.7); the sandbox root moves to the pack config section
+- Migration of the three live `[tools]` keys into the pack section, with the old names
+  honored as a deprecated fallback and the disabled-by-default posture preserved (§4.3)
 - The §4.6 filesystem root policy, implemented as a **shared path-denylist module** that
   Phase 4's `run_command` reuses verbatim (§8.4) rather than reimplementing
-- `files` pack, **read-only subset**: `read_file`, `list_directory`, `glob_files`,
-  `grep_files`
+- `files` pack, **read-only subset**: `read_file` and `list_directory` **migrated** from
+  TASK-584's ad-hoc `__init__` gating into the pack, plus new `glob_files`, `grep_files`
+
+**Phase 1 is smaller than a port.** `read_file` and `list_directory` already work behind
+`[tools]` flags; the task is moving them into the pack seam without changing behavior or
+default posture, then adding two tools beside them. `Tools_Settings_Window`'s switches
+and `ToolExecutor` are removed here, which closes TASK-547 by removing its only broken
+caller.
 
 The `find()` upgrade moves **out** of Phase 1. With `DIRECT_DISCLOSE_THRESHOLD` at 16
 (§6.1), a one-to-three-pack user never reaches `find_tools` at all, so improving it
@@ -658,6 +700,7 @@ reserved non-synced scope or a dedicated table is required.
   than merge it.
 - **TASK-659** (agent settings screen) renders the config keys Phase 1 defines, and
   already documents the budget constants §6.6 changes.
-- **TASK-547** (dead `[tools]` config) is closed in Phase 1 by deletion rather than
-  repair (§4.3). Its defect — a config section no reader can reach — is also the trap
-  the new pack section must not reproduce.
+- **TASK-547** is closed in Phase 1 by removing `get_tool_executor()`, its only broken
+  caller (§4.3). The `[tools]` section itself is live and migrates rather than
+  disappearing; TASK-584's `read_file_enabled`/`list_directory_enabled` are honored as a
+  deprecated fallback.
