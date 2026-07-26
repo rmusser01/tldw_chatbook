@@ -89,3 +89,42 @@ def test_ordinary_file_next_to_a_sensitive_db_is_still_allowed():
 
     sibling = app_config.get_chachanotes_db_path().parent / "notes.md"
     assert not is_sensitive_path(sibling)
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_db_sidecar_files_are_refused(suffix):
+    """Six of this app's DBs run WAL mode, which writes ``-wal``/``-shm``
+    sidecars next to the ``.db`` file (``-journal`` under the default
+    rollback-journal mode). Each carries the same class of recent data as
+    the database itself, so exact-equality matching on the ``.db`` path
+    alone left them unreached -- ``chachanotes.db-wal`` is not equal to
+    ``chachanotes.db``. Under a sandbox root widened to contain the user
+    data directory (the exact misconfiguration the DB denial guards
+    against), an unfixed ``read_file`` could still recover recent rows from
+    the sidecar even though the ``.db`` path itself was refused.
+    """
+    from tldw_chatbook import config as app_config
+
+    db_path = app_config.get_chachanotes_db_path()
+    sidecar = db_path.with_name(db_path.name + suffix)
+    assert is_sensitive_path(sidecar)
+
+
+def test_db_sidecar_matching_is_exact_not_a_loose_prefix(tmp_path, monkeypatch):
+    """A file that merely *starts with* a DB's name is a different file.
+
+    ``chachanotes.db.backup-2026`` and ``chachanotes.db2`` both begin with
+    ``chachanotes.db`` but are not one of the three sidecar names this
+    module constructs, and must stay allowed. Over-denying them would be
+    harmless in itself, but it would signal the match is a loose prefix
+    rather than the exact sidecar-name construction the design calls for.
+    """
+    from tldw_chatbook import config as app_config
+
+    db_path = app_config.get_chachanotes_db_path()
+
+    lookalike_backup = db_path.with_name(db_path.name + ".backup-2026")
+    lookalike_numbered = db_path.with_name(db_path.name + "2")
+
+    assert not is_sensitive_path(lookalike_backup)
+    assert not is_sensitive_path(lookalike_numbered)

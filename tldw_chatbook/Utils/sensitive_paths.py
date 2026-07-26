@@ -74,6 +74,20 @@ _DB_PATH_ACCESSOR_NAMES = (
     "get_scheduled_tasks_db_path",
 )
 
+#: Suffixes SQLite appends to a database's own filename for its sidecar
+#: files: ``-wal``/``-shm`` under ``PRAGMA journal_mode=WAL`` (six of this
+#: app's databases run in WAL mode) and ``-journal`` under the default
+#: rollback-journal mode. Each sidecar holds the same class of recent data
+#: as the database itself, so refusing only the ``.db`` path leaves them
+#: readable the moment a sandbox root is widened to contain the user data
+#: directory -- exactly the misconfiguration the DB denial exists to guard
+#: against. Matching is exact-equality against a name built from each
+#: enumerated DB's own filename (see ``_db_sidecar_paths``), never a loose
+#: prefix: a file that merely *starts with* a DB's name (e.g.
+#: ``chachanotes.db.backup-2026`` or ``chachanotes.db2``) is a different
+#: file and is not matched by this.
+_DB_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+
 
 def _resolved(path_str: str) -> Path | None:
     try:
@@ -114,12 +128,33 @@ def _sensitive_db_paths() -> tuple[Path, ...]:
     return tuple(resolved)
 
 
+def _db_sidecar_paths(db_path: Path) -> tuple[Path, ...]:
+    """Build the WAL/SHM/rollback-journal sidecar paths for one DB path.
+
+    Args:
+        db_path: A resolved path to one of this app's SQLite databases, as
+            returned by ``_sensitive_db_paths()``.
+
+    Returns:
+        One path per entry in ``_DB_SIDECAR_SUFFIXES``, each formed by
+        appending the suffix to ``db_path``'s own filename -- e.g.
+        ``chachanotes.db`` -> ``chachanotes.db-wal``. Built from an explicit
+        name construction, not a prefix, so callers must compare by exact
+        equality: appending is not the same as matching anything that
+        merely starts with the DB's name.
+    """
+    return tuple(db_path.with_name(db_path.name + suffix) for suffix in _DB_SIDECAR_SUFFIXES)
+
+
 def is_sensitive_path(candidate: Path) -> bool:
     """Whether ``candidate`` is a credential, gate-state, or app-database path.
 
     Comparison is by RESOLVED ancestry, never by string prefix, so
     ``~/.sshfoo`` is not mistaken for ``~/.ssh`` and a symlink cannot
-    smuggle a path past the check.
+    smuggle a path past the check. Each enumerated database's WAL/SHM/
+    rollback-journal sidecar files are refused by the same exact-equality
+    rule (see ``_db_sidecar_paths``), since they carry the same class of
+    recent data as the database itself.
 
     This function only decides the question; it enforces nothing by
     itself. Callers -- currently ``ReadFileTool.execute``,
@@ -145,7 +180,11 @@ def is_sensitive_path(candidate: Path) -> bool:
 
     for db_path in _sensitive_db_paths():
         target = _resolved(str(db_path))
-        if target is not None and resolved == target:
+        if target is None:
+            continue
+        if resolved == target:
+            return True
+        if resolved in _db_sidecar_paths(target):
             return True
 
     for entry in _SENSITIVE_DIRS:

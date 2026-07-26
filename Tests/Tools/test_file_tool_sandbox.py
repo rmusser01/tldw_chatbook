@@ -169,3 +169,30 @@ def test_read_file_refuses_this_apps_own_sqlite_db(monkeypatch):
 
     assert "error" in result
     assert "marker" not in str(result)
+
+
+def test_read_file_refuses_wal_sidecar_of_this_apps_own_sqlite_db(monkeypatch):
+    """The gap this task closes: WAL mode writes ``<name>.db-wal`` next to
+    the database, carrying the same class of recent data, but exact-path
+    equality on the ``.db`` file alone never reached it. Under the exact
+    misconfiguration the DB denial exists to guard against -- a sandbox
+    root widened to contain the user data directory -- ``read_file`` could
+    still recover recent rows from the sidecar even though the ``.db`` path
+    itself was refused. This is the tool-level observable property; the
+    unit test on ``is_sensitive_path`` alone would not have caught the
+    original gap because it never exercises the sandboxed ``execute()``
+    boundary.
+    """
+    from tldw_chatbook import config as app_config
+
+    db_path = app_config.get_chachanotes_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    wal_path = db_path.with_name(db_path.name + "-wal")
+    wal_path.write_text("recent-uncommitted-row-marker")
+
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: db_path.parent.resolve())
+
+    result = asyncio.run(fot.ReadFileTool().execute(file_path=wal_path.name))
+
+    assert "error" in result
+    assert "recent-uncommitted-row-marker" not in str(result)
