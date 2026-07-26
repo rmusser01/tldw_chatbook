@@ -183,17 +183,17 @@ user-owned audio.cpp listener at `http://127.0.0.1:8080`:
 - the same listener identity and healthy response were present before and
   after UAT, and application shutdown took no action on the external process.
 
-After rebase, all 23 patches were range-diff `=` identical. A second live run
-was unavailable: `/opt/homebrew/bin/audiocpp_server` from `audio-cpp 0.4`
-remained installed, but no process or listener existed and the health request
-failed. Chatbook did not launch it. The pre-rebase run is therefore the live UAT
-evidence; patch identity and automated results are not represented as a second
-live run.
+After the final rebase onto `origin/dev` `892011407`, all 25 pre-evidence
+commits were range-diff `=` patch-identical. A second live run was unavailable:
+`/opt/homebrew/bin/audiocpp_server` from `audio-cpp 0.4` remained installed,
+but no process or listener existed and the health request failed. Chatbook did
+not launch it. The pre-rebase run is therefore the live UAT evidence; patch
+identity and automated results are not represented as a second live run.
 
 ### Fresh post-rebase verification
 
-- Focused Slice 1 suite: 300 passed, 1 warning in 76.00 seconds.
-- Broad TTS/STTS suite: 1,008 passed, 14 skipped, 1 warning in 282.86 seconds.
+- Focused Slice 1 suite: 300 passed, 1 warning in 76.44 seconds.
+- Broad TTS/STTS suite: 1,008 passed, 14 skipped, 1 warning in 332.03 seconds.
 - Static gates: primary Ruff passed; config Ruff passed with only the two known
   `F841` findings ignored; task-scoped Ruff format passed across 73 files;
   compileall passed; focused mypy passed across seven files; and
