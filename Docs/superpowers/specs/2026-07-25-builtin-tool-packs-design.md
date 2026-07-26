@@ -182,11 +182,16 @@ Pack enablement lives under a new config section. Two known traps must be avoide
 - Dotted-section lookups have silently failed before (`chat.images`). The new keys
   require an **unmocked** integration test that reads them exactly as the app does.
 
-**TASK-547 is in scope for Phase 1, not merely a cautionary tale.** `[tools]
-file_sandbox_root` is the setting that governs the filesystem root in §4.6, read by
-`file_operation_tools._resolve_sandbox_config()`. While that section is unreachable the
-root silently pins to its default and no user can move it — fail-safe, but it means the
-policy in §4.6 is unconfigurable until 547 is fixed.
+**TASK-547 is resolved by deletion, not repair.** `[tools]`'s only live consumers are
+System A's file tools (`file_sandbox_root`, §4.6) and `UI/Tools_Settings_Window.py`'s
+per-tool enable/disable switches — and System A executes nothing (§4.7). Making the
+section reachable would restore configurability to a system that cannot run. The new
+pack config section owns the sandbox root instead; `[tools]` and the tool switches are
+removed.
+
+This also bounds the surfaces answering "what can the agent do." Without the deletion
+there would be four: the dead Tools settings switches, TASK-656's permissions matrix,
+pack enablement, and TASK-659's agent settings screen. Phase 1 removes the first.
 
 Phase 1 owns the config **keys and defaults**. TASK-659's agent settings screen owns
 **rendering** them. They must not grow competing surfaces.
@@ -242,6 +247,32 @@ sandbox-confined `read_file` beside an unconfined shell is security theatre. The
 resolution is that they share one denylist for the paths that matter (rule 2) and differ
 only in default reach — which is honest, because the shell is `ask`-gated per call and
 `read_file` is not.
+
+### 4.7 System A is already dead
+
+TASK-545's description states System A is reached from the legacy chat path via
+`Event_Handlers/worker_events.py` and `chat_streaming_events.py`. **That is no longer
+true.** `chat_streaming_events.py` was deleted by the TASK-577 campaign,
+`worker_events.py` holds zero tool-executor references, and a sweep of
+`tldw_chatbook/**.py` finds no caller of `get_tool_executor`, `execute_tool_call`, or
+`execute_tool_calls` outside `Tools/` itself and `UI/Tools_Settings_Window.py` — which
+only *lists* tools behind enable/disable switches.
+
+Two consequences:
+
+1. **TASK-545 P3 collapses.** Its criterion "no tool anywhere executes ungated" is
+   already satisfied, because System A cannot execute at all. P3 reduces from "port,
+   gate, or remove" to removing dead code: `Tools/tool_executor.py`'s registry and
+   registration block, the `Tools_Settings_Window` switches, and `[tools]`. The tool
+   *implementations* (`file_operation_tools.py`, `note_management_tools.py`,
+   `rag_search_tool.py`, `web_search_tool.py`) are the porting source for Phases 1–3
+   and outlive the executor.
+2. **The `Tool` ABC survives the removal.** `Agents/builtin_tool_gate.py` imports `Tool`
+   from `Tools.tool_executor`, and `risk_tags` lives on it. Removal must relocate the
+   ABC rather than delete the module wholesale.
+
+This is recorded here because TASK-545's own text predates the deletion campaign and
+will otherwise send an implementer looking for callers that no longer exist.
 
 ## 5. The catalog
 
@@ -363,9 +394,18 @@ turning a two-turn tax into the default experience. Raising the threshold to 16 
 modest pack set is disclosed directly and only genuinely large catalogs — many packs,
 or packs plus a large MCP surface — pay for progressive disclosure.
 
-This trades prompt tokens for round trips. It is the right trade: the schemas are sent
-once per turn either way once loaded, whereas the find/load round trips are pure
-overhead repeated every message.
+This genuinely trades prompt tokens for round trips, and the trade is only favourable
+because of how Console runs are distributed. Direct-disclosing 16 schemas costs roughly
+2.4k tokens **every turn**, where progressive disclosure leaves the model carrying only
+the three or four schemas it actually loaded. Over a 30-turn run direct disclosure is
+the more expensive option.
+
+It wins because **most Console messages are short.** On a one-to-three-turn message —
+the common case by a wide margin — two round trips spent on `find_tools`/`load_tools`
+before any real work is most of the run, and that overhead repeats on every message. The
+long run where progressive disclosure pays off is the exception, and it is exactly the
+run that can afford the tokens. If telemetry later shows long runs dominating, the
+threshold is a single constant to lower.
 
 **Tests:** a run with a full pack set can load past the old ceiling and still invoke the
 last-loaded tool; a run with a 14-tool catalog discloses directly and issues no
@@ -555,7 +595,7 @@ reserved non-synced scope or a dedicated table is required.
 - **Connection churn.** Tools run on per-call daemon threads while DB connections are
   `threading.local` with an idle reaper assuming long-lived threads. Each DB-touching
   call opens and orphans a connection. Negligible at two calls per run; measurable at
-  thirty. Filed as a follow-up, not Phase 0.
+  thirty. **To be filed** as a follow-up task before Phase 2 — no task exists yet.
 - **Denylist evasion.** Stated plainly in §8.4. The sandbox track is the answer.
 - **Per-machine catalog variance.** Mitigated by logging the resolved pack set (§4.1),
   not eliminated.
@@ -566,8 +606,11 @@ reserved non-synced scope or a dedicated table is required.
   for DB behavior.
 - Phase 0 gets dedicated tests per §6.1–6.6.
 - Config keys get an **unmocked** integration test reading them as the app does (§4.3).
-- One live end-to-end run per pack driving a tool through allow / ask / deny, per
-  TASK-545's existing acceptance criteria.
+- One live end-to-end run per pack. Note that **Phase 1 has no allow/ask/deny to
+  drive** — its tools are read-only and untagged, so every one resolves to the `allow`
+  floor. Phase 1's live gate covers pack resolution, disclosure, and invocation;
+  TASK-545's allow/ask/deny criterion is exercised from Phase 2, where the first
+  `mutates`-tagged tools ship.
 
 ## 11. Coordination
 
