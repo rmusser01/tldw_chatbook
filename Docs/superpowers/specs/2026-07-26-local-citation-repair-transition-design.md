@@ -133,9 +133,10 @@ A pure decision function examines the exact unrendered answer with the
 Markdown-aware canonical marker scanner. Outside fenced code, inline code, and
 escaped literals, a citation-like token is the exact bracket form matched by
 `\[S[0-9,\t ]+\]`. A token is well formed only when its full text matches
-`\[S[1-9][0-9]*\]`. Therefore `[S0]`, `[S01]`, `[S1,S2]`, and comma/ASCII-
-whitespace variants are malformed. A well-formed positive ordinal absent from
-the contract is unknown. Both malformed and unknown tokens are invalid.
+`\[S[1-9][0-9]*\]`. Therefore `[S0]`, `[S01]`, comma-grouped forms such as
+`[S1,S2]`, and TAB-or-U+0020-SPACE variants are malformed. A well-formed
+positive ordinal absent from the contract is unknown. Both malformed and
+unknown tokens are invalid.
 
 It returns one of:
 
