@@ -1,6 +1,6 @@
 # Character TTS Generation Profiles with Native audio.cpp Console Speech — Design
 
-**Status:** approved by the user on 2026-07-25; independent spec review approved on 2026-07-25 after three passes
+**Status:** design approved by the user on 2026-07-25; independent spec review completed after three passes; review amendments incorporated and awaiting final written-spec review
 **Date:** 2026-07-25
 **Related design:** [audio.cpp TTS Adapter Registry](2026-07-23-audio-cpp-tts-adapter-registry-design.md)
 **Existing ADR:** [ADR-023 — TTS Adapter Registry and audio.cpp Runtime Boundary](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
@@ -51,6 +51,12 @@ This design treats that control result as proof that the adapter and external
 server contract work. The immediate gap is application routing and settings
 state, followed by durable per-character profile ownership.
 
+Before Slice 1 UAT, Chatbook records the installed external server build and
+revalidates the current Homebrew/release contract for `/health`, `/v1/models`,
+`/v1/audio/voices`, and a complete-WAV `/v1/audio/speech` response. Upstream
+streaming capability does not expand this release: Chatbook continues to request
+and consume one complete WAV through the asynchronous response interface.
+
 ## Design principles
 
 - Keep one app-owned TTS service and one adapter registry.
@@ -93,6 +99,8 @@ state, followed by durable per-character profile ownership.
 - More than one configured audio.cpp instance.
 - Profiles that execute through legacy adapters.
 - Server-side profile storage or synchronization.
+- Server-side character-card import/export or a new server conversation
+  transport built solely for TTS.
 - Voice cloning or voice-reference uploads.
 - Migration of audiobook `CharacterVoiceWidget` data.
 - Group-roleplay speaker attribution.
@@ -125,9 +133,12 @@ Model and voice modes are explicit:
 
 The persisted `[app_tts]` keys are `default_model_mode` and
 `default_voice_mode`, alongside the existing `default_model` and
-`default_voice` exact-value keys. When a dynamic mode is saved, its stale exact
-key is removed. Empty strings are accepted only by the backward-compatibility
-reader and are never written as exact values.
+`default_voice` exact-value keys. The mode keys are authoritative. While the
+legacy compatibility reader remains, exact values are dual-written to their
+existing `[tts_settings]` aliases. When a dynamic mode is saved, both its
+`[app_tts]` exact key and its legacy alias are removed in the same locked,
+atomic configuration mutation. Empty strings are accepted only by the
+backward-compatibility reader and are never written as exact values.
 
 An `exact` mode requires a non-empty corresponding identifier. A
 `first_available` model is resolved once at request admission. A
@@ -176,26 +187,38 @@ three-part identity:
 CharacterRef = (source, authority_id, character_id)
 ```
 
-- a local character is `("local", "local", <local-character-id>)`;
+- a local character is
+  `("local", <persisted-local-database-authority-id>, <local-character-id>)`;
 - a server character is
   `("server", <persisted-server-authority-id>, <server-character-id>)`.
 
-`authority_id` is an opaque stable identity supplied by the existing active
-server profile/runtime context. It is not a display name and is never inferred
-from whichever server happens to be active later.
+The local authority is the existing durable `local_authority_id` singleton
+owned by the character database. A literal `"local"`, database path, or current
+process identity is not sufficient because the profile database may survive a
+character-database switch or restore.
+
+The server authority is an opaque stable scope supplied by the source-aware
+runtime. It incorporates the durable server profile and the stable
+authenticated principal or tenant when the same server can expose different
+character namespaces. It is not a display name, normalized origin, or whichever
+server happens to be active later, and it must remain stable across ordinary
+credential rotation. If the runtime cannot establish the required stable
+server authority, Chatbook fails closed rather than creating or resolving that
+assignment.
 
 `authority_id` and `character_id` are non-empty canonical text identifiers of
 at most 256 characters. The source-aware character layer supplies the
 canonical representation; profile code does not parse, renumber, or derive it
 from a display label.
 
-A server-backed conversation records its authority when the conversation is
-launched. Existing conversations without that provenance cannot receive or use
-a server-character assignment until they are reopened or explicitly repaired.
+A server-backed conversation records its full authority scope when the
+conversation is launched. Existing conversations without that provenance
+cannot receive or use a server-character assignment until they are reopened or
+explicitly repaired.
 
-Only assistant messages authored by the selected roleplay character carry a
-`CharacterRef`. User, system, tool, persona-only, and generic assistant messages
-do not inherit a character assignment.
+Speech admission resolves a `CharacterRef` only for assistant messages authored
+by the selected roleplay character. User, system, tool, persona-only, and
+generic assistant messages do not inherit a character assignment.
 
 ## Architecture and ownership
 
@@ -257,9 +280,16 @@ global preference snapshot into either:
 - an immutable resolved request selection; or
 - a structured, user-actionable resolution failure.
 
-It performs one joined repository read for an assigned character. It does not
-fetch health from the database, call a concrete adapter, mutate assignments, or
-silently fall back.
+For a persisted message, authorship is resolved from the message's persisted
+conversation/session identity. For an unsaved in-memory message, the Console
+supplies an immutable, app-issued authorship snapshot created with the message.
+`TTSRequestEvent` is not allowed to supply an arbitrary `CharacterRef` as
+authority. Generic or ad-hoc callers therefore resolve through global
+preferences.
+
+After authorship resolution, the resolver performs one joined repository read
+for an assigned character. It does not fetch health from the database, call a
+concrete adapter, mutate assignments, or silently fall back.
 
 ### Dependency flow
 
@@ -344,19 +374,24 @@ names fail with a conflict. Display spelling remains user-controlled.
   evaluated against the current native registry.
 
 Assignment lifecycle belongs to the assignment slice rather than portability.
-After an authoritative local or server character deletion succeeds, its delete
-flow attempts assignment removal and reports cleanup failure without undoing
-the character deletion. The profile library also lists assignment targets by
-`active`, `unverified`, or `missing` status. Automatic and bulk cleanup offers
-**Remove missing assignments** only for authoritatively `missing` targets and
-never removes an `unverified` assignment.
+A restorable local or server soft deletion marks the target `inactive` and
+preserves its assignment. Restoring the same authoritative character makes the
+target `active` again without changing the assignment. After a confirmed
+permanent deletion succeeds, the delete flow attempts assignment removal and
+reports cleanup failure without undoing the character deletion.
+
+The profile library lists assignment targets by `active`, `inactive`,
+`unverified`, or `missing` status. Automatic and bulk cleanup offers
+**Remove missing assignments** only for authoritatively and permanently
+`missing` targets. It never removes an `inactive` or `unverified` assignment.
 
 Separately, every listed assignment has an always-reachable
 **Detach assignment** action. It identifies the exact source, authority, and
 character, requires explicit confirmation, and may detach an `active`,
-`unverified`, or `missing` target. This user-initiated operation is not
-automatic cleanup and does not delete or modify the character. It guarantees a
-permanently unreachable server cannot lock a shared profile forever.
+`inactive`, `unverified`, or `missing` target. This user-initiated operation is
+not automatic cleanup and does not delete or modify the character. It works
+without contacting the character authority and guarantees a permanently
+unreachable server cannot lock a shared profile forever.
 
 Database corruption, unsupported schema versions, failed migrations, and
 unavailable paths produce a profile-store failure. They do not cause Chatbook
@@ -364,11 +399,23 @@ to discard or recreate the database automatically.
 
 ### Backup and restore
 
-The profile database participates in the application's **Backup All** flow with
-the same consistent-snapshot expectations as other local stores. Restore is an
-explicit operation that validates the database version and integrity before
-replacement. An unsupported or corrupt backup fails without replacing the
-current profile store.
+The profile database participates in the application's **Backup All** flow.
+Its backup uses SQLite's online backup mechanism so a concurrent profile write
+cannot produce a torn copy. This guarantee applies per database; Backup All is
+not a cross-database atomic snapshot, and this slice does not refactor the
+legacy backup implementation for unrelated stores.
+
+Restore is explicit and quiesces and closes the profile repository before
+replacement. Chatbook validates the candidate database version and integrity,
+creates a pre-restore backup of the current store, atomically replaces the
+file, reopens and rebinds the repository, and invalidates profile-related
+service and UI state. Validation or replacement failure leaves the current
+store in place. Reopen failure reports the profile store unavailable rather
+than creating a fresh database.
+
+Assignments restored beside a different character database or server authority
+retain their full `CharacterRef` and become `unverified` or `missing` according
+to authoritative checks. They are never rebound by bare character ID.
 
 ## Global settings save and publication
 
@@ -376,15 +423,30 @@ Saving TTS settings is one ordered operation:
 
 1. validate the complete proposed configuration, including explicit model and
    voice modes;
-2. atomically replace the configuration file;
-3. publish a new immutable `TTSPreferencesSnapshot` to the running app;
-4. perform targeted adapter-registry reconfiguration for affected providers.
+2. atomically replace the configuration file, including all required exact-key
+   sets and dynamic-mode deletions across `[app_tts]` and legacy aliases;
+3. enter an application publication barrier and mark affected provider slots
+   as reconfiguring so they admit no new requests;
+4. install each affected provider's saved configuration, or mark its slot
+   unavailable if reconfiguration fails;
+5. publish the new immutable `TTSPreferencesSnapshot` while the barrier and
+   provider gates remain held;
+6. release the gates.
 
 If validation or file replacement fails, neither the in-memory snapshot nor the
 registry changes. If file replacement succeeds but provider reconfiguration
 fails, the saved snapshot remains authoritative and the provider is reported
 unavailable with **Retry/Reconnect** recovery. The app must not continue using
 an old adapter configuration or silently restore an old selection.
+
+Any unexpected failure after the gates are acquired leaves affected provider
+slots unavailable until retry or restart; cleanup never releases a usable slot
+against a mismatched preference snapshot.
+
+Requests admitted before the publication barrier continue with their already
+frozen old snapshot and adapter. Requests admitted after it is released see the
+new coherent snapshot and provider slot. No request is admitted while new
+preferences are paired with an old adapter or vice versa.
 
 This sequence fixes the stale-settings UAT defect. Textual sentinel objects are
 interpreted as selection modes and are never serialized as empty exact values.
@@ -406,10 +468,22 @@ interpreted as selection modes and are never serialized as empty exact values.
 7. A newly generated character-authored roleplay response exposes **Speak**.
    Clicking it uses the assigned profile and plays the complete WAV.
 
-Saving a result captures the requested provider, exact model, submitted voice,
-requested format, speed, validated options, and profile revision. Actual
-response format, content type, and sample rate remain artifact metadata and are
-not silently substituted into the reusable request profile.
+Each successful generated-audio artifact contains a text-free immutable
+generation-selection snapshot with the requested provider, exact model,
+submitted voice, requested format, speed, validated options, and provider
+configuration revision used at admission. Actual response provider, model,
+format, content type, sample rate, and other response metadata remain separate
+artifact fields and are not silently substituted into the reusable request
+profile.
+
+**Save result as profile** reads only that immutable selection snapshot. It
+does not reread mutable Playground controls. Before creation, the profile
+service confirms that the provider configuration revision is still current and
+revalidates the exact selection against current native profile rules. A
+configuration change or newly invalid selection requires the user to
+regenerate or repair rather than saving ambiguous provenance. A newly created
+profile starts at revision 1; no profile revision exists in the preview
+artifact.
 
 ### STTS profile library
 
@@ -462,15 +536,24 @@ events remain the UI contract.
 
 For a character-authored assistant message:
 
-1. Build its persisted `CharacterRef`.
-2. Read assignment and profile together.
-3. If a valid assignment exists, freeze the exact profile UUID, revision, and
+1. Resolve trusted authorship from the persisted message and conversation, or
+   from the app-issued in-memory authorship snapshot.
+2. Build its authority-scoped `CharacterRef`.
+3. Read assignment and profile together.
+4. If a valid assignment exists, freeze the exact profile UUID, revision, and
    generation fields.
-4. If no assignment exists, resolve the current global preference snapshot.
-5. If an assignment references an unavailable or invalid profile, fail closed.
+5. If no assignment exists, resolve the current global preference snapshot.
+6. If an assignment references an unavailable or invalid profile, fail closed.
    Do not try global preferences.
 
 For a message without `CharacterRef`, resolve only global preferences.
+
+A persisted message ID is a lookup handle, not proof of authorship. The
+resolver verifies that the message is an assistant response belonging to the
+resolved conversation character. `TTSRequestEvent` does not accept a
+caller-chosen `CharacterRef`. For a server-backed roleplay, this path is enabled
+only when the existing Console session supplies durable server authority
+provenance; this feature does not create a new server conversation transport.
 
 When the profile store itself is unavailable, every message carrying a
 `CharacterRef` fails closed because Chatbook cannot establish that no assignment
@@ -542,26 +625,42 @@ voice, or global preferences after an assigned profile has been selected.
 
 ### Assignment status
 
-An assignment's character target has one of three states:
+An assignment's character target has one of four states:
 
 - `active`: the current authoritative character source confirms the character;
-- `unverified`: a server character cannot currently be checked because its
-  authority is unavailable or unreachable;
-- `missing`: the authoritative source confirms deletion or not-found.
+- `inactive`: the authoritative source confirms a restorable soft deletion;
+- `unverified`: the character cannot currently be checked because its authority
+  is not active, unavailable, unreachable, or does not provide an authoritative
+  not-found contract;
+- `missing`: the authoritative source confirms permanent deletion or a
+  contractually authoritative permanent not-found result.
 
 Only `missing` assignments are eligible for automatic or bulk cleanup.
-`unverified` assignments are preserved by those flows. Switching active
-servers does not make assignments from another authority missing.
+`inactive` and `unverified` assignments are preserved by those flows. A 401,
+403, timeout, network failure, or ambiguous privacy-preserving 404 is
+`unverified`, never `missing`. Switching active servers does not make
+assignments from another authority missing.
+
+Target verification is lazy, cached for a bounded interval, page-bounded, and
+performed only against the currently matching authority. The profile library
+does not perform a background full sweep or probe characters belonging to
+non-current server authorities; those targets remain `unverified`. A confirmed
+**Detach assignment** remains available offline for every status.
 
 Profile availability is separate from target status. A profile may be locally
 present but unavailable because its provider is unconfigured, not native, its
 model is missing, or its request fields no longer validate.
 
+Provider reconfiguration invalidates cached profile availability. Exact IDs are
+revalidated on the next display or request; cached health or catalog results
+never remain authoritative across a provider configuration revision.
+
 Authoritative character deletion cleanup and the profile-side
 **Remove missing assignments** action ship with assignment support. The
 restriction to `missing` applies to automatic and bulk cleanup only; a confirmed
-**Detach assignment** remains available for every status. Portability does not
-own assignment garbage collection.
+**Detach assignment** remains available for every status. Soft delete and
+restore transitions preserve the assignment. Portability does not own
+assignment garbage collection.
 
 ### Structured failures
 
@@ -582,6 +681,12 @@ UI-neutral recovery actions. UI messages never include raw upstream bodies,
 exception representations, character text, credentials, or local paths.
 
 ## Character-card portability
+
+Slice 4 integrates only with the application's existing local character-card
+import and export surfaces. It does not add server-side card persistence,
+server profile synchronization, or a cross-store server transaction. A
+server-character assignment remains local Chatbook state and is not written
+back to the server's character card.
 
 ### Export is explicit and non-mutating
 
@@ -687,7 +792,8 @@ validated options; display name and UUID are compared separately.
 - If neither UUID nor normalized name collides, create the profile with the
   portable UUID and display name.
 
-Import never silently changes an existing profile or assignment.
+Import never silently changes an existing profile, character assignment, or
+pre-existing character.
 
 ### Cross-database ordering
 
@@ -697,13 +803,26 @@ transaction:
 
 1. parse and structurally validate the character and optional attachment
    without writes, then separately evaluate current profile availability;
-2. persist the character without the TTS attachment;
-3. in one profile-database transaction, create/reuse the profile and:
+2. persist the character without the TTS attachment and return a structured
+   outcome distinguishing a newly created character from a reused
+   duplicate/conflict;
+3. if the character is new, resolve any profile collision prompt and, in one
+   profile-database transaction, create/reuse the profile and:
    - create the assignment when the profile is currently valid and available;
-   - leave it unassigned when the profile requires repair.
+   - leave it unassigned when the profile requires repair;
+4. if persistence reused an existing character, leave its current assignment
+   untouched unless the user explicitly confirms **Apply imported TTS to
+   existing character**. Only after that confirmation does Chatbook resolve
+   profile collisions and atomically create/reuse the profile. It replaces or
+   creates the exact assignment only when the profile is currently valid and
+   available; otherwise the imported profile remains visible for repair and the
+   existing assignment remains untouched.
 
-If step 3 fails, the character remains successfully imported but unassigned.
-The UI reports partial success and offers profile repair. No partial profile or
+Canceling a profile collision prompt or declining the existing-character
+confirmation performs no profile or assignment write. If the profile
+transaction fails, a newly created character remains successfully imported but
+unassigned, while a reused character retains its previous assignment. The UI
+reports partial success and offers profile repair. No partial profile or
 assignment survives the failed profile transaction.
 
 ## Delivery slices
@@ -715,10 +834,13 @@ implementation plan only after this written design is approved.
 ### Slice 1 — Native external audio.cpp Console TTS
 
 - Add typed global preference modes and backward-compatible blank-value reads.
-- Publish saved preferences immediately in the running app.
+- Atomically remove canonical and legacy stale exact values for dynamic modes.
+- Publish saved preferences and targeted provider reconfiguration behind one
+  admission barrier.
 - Route Console audio.cpp **Speak** through native `TTSService.synthesize()`.
 - Preserve the async response interface and existing complete-WAV autoplay.
 - Keep legacy global speech working through the temporary bridge.
+- Revalidate the installed audio.cpp endpoint and complete-WAV contract.
 - Prove the external user-owned server lifecycle is untouched.
 
 This slice independently fixes the first-time-user UAT failure.
@@ -732,25 +854,31 @@ This slice independently fixes the first-time-user UAT failure.
   concurrency, backup, and restore.
 - Add bounded STTS list/search, save-from-preview, edit, duplicate, preview,
   export, delete, availability, and repair flows.
+- Extend successful preview artifacts with immutable requested-selection and
+  provider-configuration provenance.
 - Support native audio.cpp execution only.
 
 This slice delivers reusable local profiles before character assignment.
 
 ### Slice 3 — Character assignment and roleplay speech
 
-- Persist server conversation authority provenance.
-- Add canonical `CharacterRef` assignment behavior.
+- Use durable local-database and server-principal authority provenance.
+- Add canonical `CharacterRef` assignment behavior and trusted Console
+  authorship resolution.
 - Add character-editor controls and resolver integration.
 - Apply assigned profiles to character-authored Console roleplay messages.
 - Add fail-closed recovery and the explicit one-message global override.
-- Add post-delete cleanup attempts, assignment-target status, missing-only
+- Preserve assignments through soft delete/restore; add permanent-delete
+  cleanup attempts, bounded assignment-target verification, missing-only
   automatic/bulk cleanup, and confirmed profile-side detach for every status.
 
 ### Slice 4 — Optional character-card portability
 
 - Add transient explicit export with a sanitized Chatbook extension.
 - Add hostile import validation and collision prompts.
-- Add cross-database import compensation.
+- Add structured created-versus-reused character outcomes and cross-database
+  import compensation.
+- Limit portability integration to existing local card surfaces.
 - Preserve ordinary card import/export behavior.
 
 Managed audio.cpp launch and supervision remains a separate future task and is
@@ -766,7 +894,9 @@ not part of any slice here.
 - optimistic update conflicts;
 - assignment foreign key and delete restriction;
 - bounded pagination and assignment counts;
-- backup and explicit restore validation;
+- online backup during a concurrent write;
+- restore validation, open-repository quiescence/rebind, pre-restore recovery
+  copy, and character-authority mismatch behavior;
 - joined assignment/profile read returns one immutable revision snapshot.
 
 ### Resolution matrix
@@ -780,13 +910,19 @@ Cover:
 - profile-store failure for an apparently unassigned `CharacterRef`;
 - generic message using global preferences;
 - missing server authority;
-- active, unverified, and missing targets;
+- active, inactive, unverified, and missing targets;
+- soft delete followed by restore preserves the assignment;
+- permanent deletion alone triggers automatic cleanup;
+- 401, 403, timeout, ambiguous 404, non-current authority, and network failure
+  remain unverified;
 - exact versus first-available model;
 - exact versus server-default voice;
 - global legacy provider with no assignment.
 
-Use two server authorities containing the same character ID to prove assignments
-cannot collide or follow the currently active server.
+Use two local database authorities containing the same character ID, and two
+authenticated principals on the same server profile containing the same
+character ID, to prove assignments cannot collide or follow the currently
+active authority.
 
 ### Settings and runtime tests
 
@@ -794,12 +930,20 @@ cannot collide or follow the currently active server.
   rewrite;
 - Textual sentinel values never persist as empty exact selections;
 - dynamic mode saves write `default_model_mode` and `default_voice_mode` and
-  remove stale exact-value keys, while exact modes round-trip their required
-  model and voice identifiers;
+  atomically remove both canonical and legacy stale exact-value keys, while
+  exact modes dual-write and round-trip their required model and voice
+  identifiers;
 - successful save updates the next request without restart;
 - validation/file-replacement failure publishes nothing;
 - post-save reconfiguration failure leaves saved preferences authoritative and
   reports the provider unavailable;
+- concurrent request admission never observes new preferences with an old
+  adapter or old preferences with a new adapter;
+- preview profile creation preserves requested model, voice, format, speed, and
+  options even after controls are changed;
+- response-model provenance remains distinct from the requested profile model;
+- provider configuration change after preview requires regeneration rather
+  than saving stale provenance;
 - profile edit after request admission does not change the in-flight request;
 - exact assigned speech performs one joined profile read and zero
   profile-layer catalog preflights;
@@ -809,6 +953,8 @@ cannot collide or follow the currently active server.
 - audio.cpp rejects every speed other than exactly `1.0`;
 - complete WAV validation, bounded consumption, playback, cancellation, and
   cleanup;
+- installed audio.cpp build passes health, model, voice, and complete-WAV speech
+  compatibility checks without Chatbook process management;
 - no automatic synthesis POST retry;
 - no adapter, model, voice, global, or legacy fallback after assigned
   resolution;
@@ -820,12 +966,17 @@ cannot collide or follow the currently active server.
 - profile list, search, edit, duplicate, conflicts, availability, repair,
   export, and protected deletion;
 - character assignment, removal, repair, and shared-profile warnings;
-- authoritative character deletion cleanup, missing-target removal, and
-  preservation of unverified assignments;
+- soft-delete/restore preservation, permanent character deletion cleanup,
+  missing-target removal, and preservation of inactive and unverified
+  assignments;
 - temporary server unavailability never auto-detaches an assignment, while a
   confirmed profile-library action can detach that exact unverified assignment;
 - Console **Speak**, progress, autoplay, explicit override, and errors;
+- persisted and app-issued authorship resolution rejects spoofed or mismatched
+  character references and leaves generic assistants on global preferences;
 - server-character authority missing and same-ID/different-authority cases;
+- paginated profile views perform bounded, cached verification only against the
+  matching active authority;
 - import/export confirmation and collision prompts.
 
 ### Portability and security tests
@@ -846,8 +997,16 @@ cannot collide or follow the currently active server.
   newly generated;
 - collision outcomes require explicit choice and never mutate an existing
   profile;
+- duplicate-name character persistence returns a reused outcome and never
+  changes that character's assignment without explicit confirmation;
+- a confirmed but currently unavailable imported profile leaves a reused
+  character's existing assignment untouched and exposes the profile for repair;
+- canceling a collision or existing-character confirmation creates no profile
+  and changes no assignment;
 - simulated failure after character persistence leaves it imported and
-  unassigned with no partial profile transaction;
+  unassigned with no partial profile transaction, while a reused character
+  retains its prior assignment;
+- Slice 4 performs no server-side card persistence or synchronization;
 - logs, events, exports, and metrics exclude text, authority, credentials,
   origins, and filesystem paths.
 
@@ -867,7 +1026,7 @@ user-started external audio.cpp server:
 2. discover the exact Supertonic model and voice;
 3. generate and play a preview;
 4. save the successful result as a profile;
-5. assign it to a character;
+5. assign it to a local roleplay character;
 6. use a deterministic local LLM-compatible fixture to generate a new
    character-authored roleplay response through the real Console flow;
 7. click **Speak** and validate provider/model/voice provenance, a complete
@@ -882,7 +1041,11 @@ flow.
 
 - Profile list/search is bounded and paginated.
 - Store work that may exceed the UI budget runs off the Textual event loop.
-- Assigned request admission uses one joined profile lookup.
+- Persisted assigned request admission uses one bounded
+  message/conversation-authorship lookup followed by one joined profile lookup;
+  an app-issued in-memory authorship snapshot avoids the first lookup.
+- Assignment target verification is not part of synthesis admission and adds no
+  character-server network request to the speech path.
 - Exact assigned requests add no profile-layer catalog network call.
 - Metrics contain only provider ID, resolution source (`assigned`, `global`, or
   `explicit_override`), safe outcome code, and latency.
@@ -922,6 +1085,8 @@ facilities.
   Console **Speak** without restarting Chatbook.
 - Blank legacy audio.cpp defaults have explicit compatible semantics and are
   never treated as unavailable exact identifiers.
+- A successful settings save admits no request against a mixed old/new
+  preference and adapter configuration.
 - Console speech uses the native adapter and plays a complete validated WAV
   while preserving the asynchronous response contract.
 - A user can save a successful STTS audio.cpp preview as a named reusable
@@ -929,6 +1094,8 @@ facilities.
 - Every first-release audio.cpp global selection and profile uses WAV, speed
   exactly `1.0`, and no arbitrary options.
 - A user can assign one profile to a local or authority-scoped server character.
+- Assignments remain scoped across local database changes and authenticated
+  principals sharing one server, and survive character soft delete/restore.
 - Manual speech for a character-authored response uses the assigned immutable
   profile revision.
 - An unavailable assigned profile produces an actionable error with no silent
@@ -939,6 +1106,10 @@ facilities.
   logs, metrics, or exports.
 - Ordinary character-card export remains free of TTS profile data; explicit
   inclusion uses the sanitized, hostile-input-safe portability contract.
+- Import never changes an existing character assignment without explicit
+  confirmation.
+- Backup uses a consistent per-profile-database SQLite snapshot, and failed
+  restore validation does not replace the current profile store.
 - Existing unassigned legacy-provider speech continues through the temporary
   bridge.
 - Chatbook never manages the external audio.cpp process in this feature.
