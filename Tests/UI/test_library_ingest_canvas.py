@@ -732,3 +732,50 @@ async def test_recent_ingests_section_renders_when_queue_empty():
     async with app.run_test() as pilot:
         assert pilot.app.query_one("#library-ingest-recent", Collapsible)
         assert len(pilot.app.query("#library-ingest-queue-empty")) == 1
+
+
+@pytest.mark.asyncio
+async def test_mounting_option_panels_posts_no_option_changes():
+    """Mounting a type-group panel must not look like a user edit.
+
+    Textual's ``Select`` posts ``Changed`` as soon as it mounts, and an
+    ``Input`` does the same for a non-empty ``value=``. Bubbling those as
+    ``OptionValueChanged`` made the screen recompose, which remounted the
+    select, which posted again -- an unbounded recompose cycle that pinned
+    the UI at 100% CPU for every pdf/audio/ebook pre-flight (task-660).
+
+    Every type group is mounted at once: ``pdf``, ``audio_video`` and
+    ``ebook`` each carry a select and so each reproduced the freeze on its
+    own, while ``generic`` (the one group with no select) is the reason
+    plain text was the only content type that ever worked.
+    """
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={
+                "pdf": ["/tmp/a.pdf"],
+                "audio_video": ["/tmp/a.mp3"],
+                "ebook": ["/tmp/a.epub"],
+                "generic": ["/tmp/a.txt"],
+            },
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=4,
+        ),
+    )
+    app = _MessageRecordingHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.pause()
+
+    assert app.option_changes == [], (
+        "mounting option panels emitted "
+        f"{[(e.group, e.name, e.value) for e in app.option_changes]}"
+    )
