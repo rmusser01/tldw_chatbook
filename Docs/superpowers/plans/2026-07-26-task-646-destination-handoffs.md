@@ -444,11 +444,9 @@ Add `on_mount()`:
 
 ```python
 def on_mount(self) -> None:
+    super().on_mount()
     self.call_after_refresh(self._consume_pending_session_target)
 ```
-
-`BaseAppScreen`/Textual `Screen` do not define `on_mount()`, so this lifecycle hook
-must not call a nonexistent superclass method.
 
 The consumer claims `ACP_SESSION_TARGET`, reconstructs current ID with `acp_session_record_id(state.session_id)`, and compares complete strings. On exact match, query the current row and detail pane, preserve the row's selected presentation, call `detail.scroll_visible(animate=False)`, notify `"Opened the current ACP session details."`, and acknowledge.
 
