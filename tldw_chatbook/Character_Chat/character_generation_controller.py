@@ -26,7 +26,10 @@ from .character_generation import (
     parse_whole_character_response,
 )
 
-MessageRunner = Callable[[list[dict[str, str]]], Awaitable[str]]
+#: Called with each incremental chunk of accumulated text as it arrives, so the
+#: UI can show progress during a long generation instead of a blank preview.
+ChunkCallback = Callable[[str], None]
+MessageRunner = Callable[..., Awaitable[str]]
 
 _FENCE = re.compile(r"^```(?:[a-zA-Z]*)?\s*(.*?)\s*```$", re.DOTALL)
 
@@ -65,8 +68,9 @@ def build_gateway_runner(
     """Build a runner that sends through the Console provider gateway.
 
     Generation deliberately reuses Console's own provider path so the author
-    configures exactly one provider. The reply is streamed by the gateway but
-    presented to the author as a finished field, so chunks are accumulated.
+    configures exactly one provider. Chunks are accumulated into the final
+    reply and, when ``on_chunk`` is supplied, relayed as they arrive so the UI
+    can fill the preview live instead of sitting blank for the whole request.
 
     Args:
         gateway_factory: Returns the ``ConsoleProviderGateway`` to send with.
@@ -77,7 +81,9 @@ def build_gateway_runner(
         An async runner suitable for ``CharacterGenerationController``.
     """
 
-    async def _run(messages: list[dict[str, str]]) -> str:
+    async def _run(
+        messages: list[dict[str, str]], on_chunk: ChunkCallback | None = None
+    ) -> str:
         gateway = gateway_factory()
         resolution = await gateway.resolve_for_send(selection_factory())
         if not getattr(resolution, "ready", False):
@@ -91,6 +97,8 @@ def build_gateway_runner(
         async for chunk in gateway.stream_chat(resolution, messages):
             if isinstance(chunk, str):
                 chunks.append(chunk)
+                if on_chunk is not None:
+                    on_chunk(chunk)
         return "".join(chunks)
 
     return _run
@@ -109,13 +117,19 @@ class CharacterGenerationController:
         """
         self._runner = runner
 
-    async def _run(self, messages: list[dict[str, str]]) -> str:
+    async def _run(
+        self,
+        messages: list[dict[str, str]],
+        on_chunk: ChunkCallback | None = None,
+    ) -> str:
         if self._runner is None:
             raise CharacterGenerationError(
                 "character generation has no provider runner configured"
             )
         try:
-            return await self._runner(messages)
+            if on_chunk is None:
+                return await self._runner(messages)
+            return await self._runner(messages, on_chunk=on_chunk)
         except CharacterGenerationError:
             raise
         except Exception as exc:  # provider/transport failures
@@ -131,6 +145,7 @@ class CharacterGenerationController:
         *,
         context_mode: CharacterFieldContextMode = "whole_character",
         instruction: str | None = None,
+        on_chunk: ChunkCallback | None = None,
     ) -> str:
         """Generate finished text for one character field.
 
@@ -139,6 +154,8 @@ class CharacterGenerationController:
             record: The character record being edited.
             context_mode: How much of the character to show the model.
             instruction: Optional extra steer from the author.
+            on_chunk: Optional callback receiving the accumulated text so far
+                on every provider chunk, so the preview can fill in live.
 
         Returns:
             Cleaned field text, ready to preview.
@@ -150,7 +167,19 @@ class CharacterGenerationController:
         messages = build_field_generation_messages(
             field, record, context_mode=context_mode, instruction=instruction
         )
-        reply = await self._run(messages)
+        if on_chunk is None:
+            reply = await self._run(messages)
+        else:
+            # Report the accumulated text, not the raw fragment: the preview
+            # renders a whole field, and partial text is only useful as the
+            # growing field it is becoming.
+            accumulated: list[str] = []
+
+            def _relay(chunk: str) -> None:
+                accumulated.append(chunk)
+                on_chunk("".join(accumulated))
+
+            reply = await self._run(messages, _relay)
         text = _strip_wrapping(reply or "", GENERATABLE_FIELDS[field])
         if not text:
             # Never hand back "" -- accepting it would silently blank a field

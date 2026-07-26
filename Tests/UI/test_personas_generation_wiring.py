@@ -36,10 +36,15 @@ class _FakeController:
         self.field_calls: list[tuple[str, str]] = []
         self.whole_calls: list[str] = []
 
-    async def generate_field(self, field, record, *, context_mode, instruction=None):
+    async def generate_field(
+        self, field, record, *, context_mode, instruction=None, on_chunk=None
+    ):
         self.field_calls.append((field, context_mode))
         if self.error is not None:
             raise self.error
+        if on_chunk is not None:
+            # Mirror the real controller: partial text is relayed as it arrives.
+            on_chunk(self.result)
         return self.result
 
     async def generate_whole_character(self, concept):
@@ -122,7 +127,7 @@ async def test_generate_sends_the_live_editor_values_not_the_saved_record(
 
     class _CapturingController(_FakeController):
         async def generate_field(
-            self, field, record, *, context_mode, instruction=None
+            self, field, record, *, context_mode, instruction=None, on_chunk=None
         ):
             captured.update(dict(record))
             return "text"

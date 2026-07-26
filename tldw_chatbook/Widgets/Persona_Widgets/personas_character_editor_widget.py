@@ -907,6 +907,27 @@ class PersonasCharacterEditorWidget(Container):
         ).update(text)
         self.query_one("#personas-char-editor-generate-preview").display = True
 
+    def update_generation_preview(self, field: str, text: str) -> None:
+        """Replace the preview text for an in-flight generation.
+
+        Unlike ``show_generation_preview`` this is safe to call many times per
+        second while streaming: it only rewrites the text, leaving the pending
+        field and the panel's visibility alone, and ignores chunks that arrive
+        for a field the author has already moved on from.
+
+        Args:
+            field: Field the streaming text belongs to.
+            text: Accumulated text so far.
+        """
+        if self._pending_generation_field != field:
+            return
+        try:
+            self.query_one(
+                "#personas-char-editor-generate-preview-text", Static
+            ).update(text)
+        except Exception:
+            return
+
     def clear_generation_preview(self) -> None:
         """Hide the preview and forget the pending field."""
         self._pending_generation_field = None

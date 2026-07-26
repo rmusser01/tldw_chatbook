@@ -26,8 +26,15 @@ import re
 from typing import Any, Iterable, Literal, Mapping
 
 from ..Internal_Prompts import get_internal_prompt
+from ..Utils.input_validation import validate_text_input
 
 CharacterFieldContextMode = Literal["whole_character", "field_and_description"]
+
+#: Upper bound on the author's concept line. The concept crosses a boundary
+#: into provider-bound logic, so it goes through the shared
+#: ``input_validation`` check rather than a bespoke one. Generous enough that a
+#: real one-or-two-line concept never trips it.
+CONCEPT_MAX_CHARS = 2000
 
 #: Character-card fields the editor can generate, mapped to the human label
 #: used in the instruction ("Write the first message for this character").
@@ -64,6 +71,33 @@ WHOLE_CHARACTER_KEYS: tuple[str, ...] = (
     "first_message",
 )
 
+#: Record keys that carry the same field under more than one name. Character
+#: cards use SillyTavern's ``first_mes``, and the editor's ``get_character_data``
+#: only mirrors it to ``first_message`` when that key already exists -- which it
+#: does not for a new character. Reading one name alone silently dropped the
+#: author's existing opener from the prompt.
+_FIELD_READ_ALIASES: dict[str, tuple[str, ...]] = {
+    "first_message": ("first_message", "first_mes"),
+}
+
+
+def _read_field(record: Mapping[str, Any], field: str) -> str:
+    """Return a record field's text, honoring known key aliases.
+
+    Args:
+        record: Character record, in either card or editor key vocabulary.
+        field: Canonical field key.
+
+    Returns:
+        The first non-empty aliased value as trimmed text, else "".
+    """
+    for key in _FIELD_READ_ALIASES.get(field, (field,)):
+        text = _clean(record.get(key))
+        if text:
+            return text
+    return ""
+
+
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
 
 
@@ -82,7 +116,7 @@ def _labelled_context(record: Mapping[str, Any], fields: Iterable[str]) -> list[
     """Return ``Label: value`` lines for the populated fields among ``fields``."""
     lines: list[str] = []
     for key in fields:
-        text = _clean(record.get(key))
+        text = _read_field(record, key)
         if not text:
             continue
         label = GENERATABLE_FIELDS.get(key, key).capitalize()
@@ -136,7 +170,7 @@ def build_field_generation_messages(
         parts.append("Character so far:")
         parts.extend(context_lines)
 
-    current = _clean(record.get(field))
+    current = _read_field(record, field)
     if current:
         parts.append("")
         parts.append(f"Current {label} (rewrite it, do not simply repeat it):")
@@ -163,12 +197,17 @@ def build_whole_character_messages(concept: str) -> list[dict[str, str]]:
         A ``[system, user]`` message list ready for the provider gateway.
 
     Raises:
-        CharacterGenerationError: If ``concept`` is blank.
+        CharacterGenerationError: If ``concept`` is blank, over
+            ``CONCEPT_MAX_CHARS``, or rejected by ``validate_text_input``.
     """
     text = _clean(concept)
     if not text:
         raise CharacterGenerationError(
             "a character concept is required to generate a character"
+        )
+    if not validate_text_input(text, max_length=CONCEPT_MAX_CHARS, allow_html=False):
+        raise CharacterGenerationError(
+            f"the concept must be plain text under {CONCEPT_MAX_CHARS} characters"
         )
     return [
         {"role": "system", "content": get_internal_prompt("character.generate_whole")},
@@ -219,7 +258,13 @@ def parse_whole_character_response(text: str) -> dict[str, str]:
         value = payload[key]
         if value is None or isinstance(value, (list, dict)):
             continue
-        parsed[key] = str(value).strip()
+        text = str(value).strip()
+        if not text:
+            # A blank value is not a field. Keeping it made an all-empty reply
+            # look like a successful generation that then filled nothing, and
+            # the UI reported the misleading "every field already has content".
+            continue
+        parsed[key] = text
     if not parsed:
         raise CharacterGenerationError(
             "the model returned no recognizable character fields"

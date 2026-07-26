@@ -4444,11 +4444,17 @@ class PersonasScreen(BaseAppScreen):
         record = editor.get_character_data()
         controller = self._character_generation_controller()
         editor.set_generation_busy(field, True)
+        # Show the text as it arrives: a long generation otherwise leaves the
+        # preview blank behind a disabled button with nothing to read.
+        editor.show_generation_preview(field, "")
         try:
             text = await controller.generate_field(
                 field,
                 record,
                 context_mode=editor.generation_context_mode,
+                on_chunk=lambda partial: editor.update_generation_preview(
+                    field, partial
+                ),
             )
         except CharacterGenerationError as exc:
             editor.clear_generation_preview()

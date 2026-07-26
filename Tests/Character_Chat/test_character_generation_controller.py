@@ -176,3 +176,59 @@ async def test_gateway_runner_reports_an_unready_provider():
         await runner([{"role": "user", "content": "x"}])
 
     assert "Add an API key" in str(excinfo.value)
+
+
+async def test_generate_field_streams_partial_text_as_it_arrives():
+    """Long generations must show progress, not just a disabled button.
+
+    The preview is the surface the author watches; buffering the whole reply
+    left it blank for the entire request.
+    """
+    from tldw_chatbook.Character_Chat.character_generation_controller import (
+        CharacterGenerationController,
+    )
+
+    async def _runner(messages, on_chunk=None):
+        for chunk in ("A guarded ", "archivist ", "of drowned books."):
+            if on_chunk is not None:
+                on_chunk(chunk)
+        return "A guarded archivist of drowned books."
+
+    seen: list[str] = []
+    controller = CharacterGenerationController(runner=_runner)
+
+    text = await controller.generate_field(
+        "description",
+        {"name": "Seraphina"},
+        context_mode="whole_character",
+        on_chunk=seen.append,
+    )
+
+    assert seen == ["A guarded ", "A guarded archivist ", "A guarded archivist of drowned books."]
+    assert text == "A guarded archivist of drowned books."
+
+
+async def test_gateway_runner_reports_chunks_as_they_stream():
+    from tldw_chatbook.Character_Chat.character_generation_controller import (
+        build_gateway_runner,
+    )
+
+    class _Resolution:
+        ready = True
+        visible_copy = ""
+
+    class _Gateway:
+        async def resolve_for_send(self, selection):
+            return _Resolution()
+
+        async def stream_chat(self, resolution, messages):
+            for chunk in ("one ", "two"):
+                yield chunk
+
+    seen: list[str] = []
+    runner = build_gateway_runner(
+        gateway_factory=lambda: _Gateway(), selection_factory=lambda: object()
+    )
+
+    assert await runner([{"role": "user", "content": "x"}], on_chunk=seen.append) == "one two"
+    assert seen == ["one ", "two"]

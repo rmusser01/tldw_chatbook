@@ -146,3 +146,72 @@ def test_parse_whole_character_response_coerces_scalars_to_text():
     parsed = parse_whole_character_response('{"name": "Seraphina", "scenario": 42}')
 
     assert parsed["scenario"] == "42"
+
+
+# --- Review findings on #919 -------------------------------------------------
+
+
+def test_field_generation_reads_the_legacy_first_mes_key():
+    """The editor emits `first_mes`; the current value must still reach the prompt.
+
+    `get_character_data()` always writes `first_mes` and only mirrors it to
+    `first_message` when that key already exists -- which it does not for a new
+    character. Reading only `first_message` silently dropped the author's
+    existing opener from regeneration prompts.
+    """
+    record = {"name": "S", "first_mes": "*The lantern flickers.* You came."}
+
+    messages = build_field_generation_messages(
+        "first_message", record, context_mode="whole_character"
+    )
+
+    body = "\n".join(str(m["content"]) for m in messages)
+    assert "The lantern flickers" in body
+
+
+def test_whole_character_context_includes_legacy_first_mes():
+    """The same alias must apply when first message is context, not target."""
+    record = {"name": "S", "first_mes": "*The lantern flickers.* You came."}
+
+    messages = build_field_generation_messages(
+        "scenario", record, context_mode="whole_character"
+    )
+
+    body = "\n".join(str(m["content"]) for m in messages)
+    assert "The lantern flickers" in body
+
+
+def test_parse_whole_character_response_rejects_all_blank_values():
+    """A reply of empty strings is not a character.
+
+    Accepting it produced a "successful" generation that filled nothing, and
+    the UI then reported the misleading "every field already has content".
+    """
+    with pytest.raises(CharacterGenerationError):
+        parse_whole_character_response('{"name": "", "description": "   "}')
+
+
+def test_parse_whole_character_response_drops_blank_values_but_keeps_real_ones():
+    parsed = parse_whole_character_response(
+        '{"name": "Seraphina", "description": "", "scenario": "The stacks flood."}'
+    )
+
+    assert parsed == {"name": "Seraphina", "scenario": "The stacks flood."}
+
+
+def test_whole_character_rejects_an_oversized_concept():
+    """The concept crosses into provider-bound logic, so it is bounded here.
+
+    Uses the shared `input_validation` boundary rather than a bespoke check.
+    """
+    with pytest.raises(CharacterGenerationError):
+        build_whole_character_messages("x" * 100_000)
+
+
+def test_whole_character_accepts_a_normal_concept():
+    """The bound must not get in a real author's way."""
+    messages = build_whole_character_messages(
+        "a drowned-library archivist who bargains in secrets, weary but kind"
+    )
+
+    assert len(messages) == 2
