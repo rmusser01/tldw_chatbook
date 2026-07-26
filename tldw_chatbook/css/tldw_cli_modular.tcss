@@ -4547,6 +4547,12 @@ ConsoleSystemPromptModal {
     color: $ds-text-muted;
 }
 
+/* TASK-716: pressable-but-blocked Library source actions render dim; the
+   press handler explains the block instead of a dead disabled button. */
+.library-source-action-blocked {
+    color: $ds-text-muted;
+}
+
 /* TASK-717: conversation rows whose record is proven missing render dim and
    inert instead of impersonating openable chats. */
 .console-workspace-conversation-row-broken {

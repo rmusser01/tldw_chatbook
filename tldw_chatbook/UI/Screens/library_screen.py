@@ -3443,15 +3443,20 @@ class LibraryScreen(BaseAppScreen):
                     tooltip="Open Library Import/Export to add workspace-eligible sources.",
                 )
             )
-        widgets.append(
-            Button(
-                "Use in Console",
-                id="library-use-in-console",
-                classes="library-source-action",
-                disabled=handoff_disabled,
-                tooltip=handoff_tooltip,
-            )
+        # TASK-716: a disabled Button never emits Pressed, which made the
+        # press handler's explanatory warning (the whole reason the action
+        # is blocked) unreachable - the control read as dead. Keep the
+        # button pressable and let the handler explain the block inline;
+        # the blocked class carries the dimmed styling.
+        use_in_console = Button(
+            "Use in Console",
+            id="library-use-in-console",
+            classes="library-source-action",
+            tooltip=handoff_tooltip,
         )
+        if handoff_disabled:
+            use_in_console.add_class("library-source-action-blocked")
+        widgets.append(use_in_console)
         widgets.append(
             Static(
                 "Server sync WIP · local only",
@@ -15132,6 +15137,11 @@ class LibraryScreen(BaseAppScreen):
             return
 
         self._invalidate_library_workspace_depth_state()
+        # TASK-716: the whole-screen recompose replaces the rail and resets
+        # its scroll to the top, hiding the Details disclosure (and the
+        # updated Active row) the user was just working in. Preserve the
+        # rail's scroll offset across the rebuild.
+        self._preserve_library_rail_scroll()
         self.refresh(recompose=True)
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
@@ -15142,6 +15152,38 @@ class LibraryScreen(BaseAppScreen):
                 "Console now targets it.",
                 severity="information",
             )
+
+    def _preserve_library_rail_scroll(self) -> None:
+        """Restore the rail's scroll offset after the next recompose.
+
+        TASK-716: ``refresh(recompose=True)`` replaces the ``#library-rail``
+        widget, so its scroll position resets to the top and the user loses
+        the spot (typically the bottom-of-rail Workspace group) they were
+        acting in. Capture the offset now and re-apply it to the freshly
+        mounted rail after the rebuild settles.
+        """
+        try:
+            scroll_y = float(self.query_one("#library-rail").scroll_y)
+        except Exception:
+            return
+        if scroll_y <= 0:
+            return
+
+        def _restore() -> None:
+            try:
+                rail = self.query_one("#library-rail")
+            except Exception:
+                return
+            # force=True: the freshly recomposed rail may not have computed
+            # its scroll bounds yet, and an unforced scroll_to clamps to 0.
+            rail.scroll_to(y=scroll_y, animate=False, force=True)
+
+        def _after_recompose() -> None:
+            # Two refresh hops: the first lands after the recompose is
+            # scheduled, the second after the new rail exists and laid out.
+            self.call_after_refresh(_restore)
+
+        self.call_after_refresh(_after_recompose)
 
     def _open_study_section(self, initial_section: str = "dashboard") -> None:
         open_study_screen = getattr(self.app_instance, "open_study_screen", None)
