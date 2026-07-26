@@ -123,6 +123,12 @@ Model and voice modes are explicit:
 - voice mode is `exact` or `server_default`;
 - exact model and voice identifiers are stored in separate nullable fields.
 
+The persisted `[app_tts]` keys are `default_model_mode` and
+`default_voice_mode`, alongside the existing `default_model` and
+`default_voice` exact-value keys. When a dynamic mode is saved, its stale exact
+key is removed. Empty strings are accepted only by the backward-compatibility
+reader and are never written as exact values.
+
 An `exact` mode requires a non-empty corresponding identifier. A
 `first_available` model is resolved once at request admission. A
 `server_default` voice is sent as `None`.
@@ -341,10 +347,16 @@ Assignment lifecycle belongs to the assignment slice rather than portability.
 After an authoritative local or server character deletion succeeds, its delete
 flow attempts assignment removal and reports cleanup failure without undoing
 the character deletion. The profile library also lists assignment targets by
-`active`, `unverified`, or `missing` status and provides an explicit
-**Remove missing assignment** action. This recovery surface prevents a stale
-assignment from permanently blocking profile deletion. It never removes an
-`unverified` assignment.
+`active`, `unverified`, or `missing` status. Automatic and bulk cleanup offers
+**Remove missing assignments** only for authoritatively `missing` targets and
+never removes an `unverified` assignment.
+
+Separately, every listed assignment has an always-reachable
+**Detach assignment** action. It identifies the exact source, authority, and
+character, requires explicit confirmation, and may detach an `active`,
+`unverified`, or `missing` target. This user-initiated operation is not
+automatic cleanup and does not delete or modify the character. It guarantees a
+permanently unreachable server cannot lock a shared profile forever.
 
 Database corruption, unsupported schema versions, failed migrations, and
 unavailable paths produce a profile-store failure. They do not cause Chatbook
@@ -537,17 +549,19 @@ An assignment's character target has one of three states:
   authority is unavailable or unreachable;
 - `missing`: the authoritative source confirms deletion or not-found.
 
-Only `missing` assignments are eligible for cleanup. `unverified` assignments
-are preserved. Switching active servers does not make assignments from another
-authority missing.
+Only `missing` assignments are eligible for automatic or bulk cleanup.
+`unverified` assignments are preserved by those flows. Switching active
+servers does not make assignments from another authority missing.
 
 Profile availability is separate from target status. A profile may be locally
 present but unavailable because its provider is unconfigured, not native, its
 model is missing, or its request fields no longer validate.
 
 Authoritative character deletion cleanup and the profile-side
-**Remove missing assignment** recovery action ship with assignment support.
-Portability does not own assignment garbage collection.
+**Remove missing assignments** action ship with assignment support. The
+restriction to `missing` applies to automatic and bulk cleanup only; a confirmed
+**Detach assignment** remains available for every status. Portability does not
+own assignment garbage collection.
 
 ### Structured failures
 
@@ -729,8 +743,8 @@ This slice delivers reusable local profiles before character assignment.
 - Add character-editor controls and resolver integration.
 - Apply assigned profiles to character-authored Console roleplay messages.
 - Add fail-closed recovery and the explicit one-message global override.
-- Add post-delete cleanup attempts, assignment-target status, and the explicit
-  profile-side removal action for authoritatively missing characters.
+- Add post-delete cleanup attempts, assignment-target status, missing-only
+  automatic/bulk cleanup, and confirmed profile-side detach for every status.
 
 ### Slice 4 — Optional character-card portability
 
@@ -805,6 +819,8 @@ cannot collide or follow the currently active server.
 - character assignment, removal, repair, and shared-profile warnings;
 - authoritative character deletion cleanup, missing-target removal, and
   preservation of unverified assignments;
+- temporary server unavailability never auto-detaches an assignment, while a
+  confirmed profile-library action can detach that exact unverified assignment;
 - Console **Speak**, progress, autoplay, explicit override, and errors;
 - server-character authority missing and same-ID/different-authority cases;
 - import/export confirmation and collision prompts.
