@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the Watchlists screen's placeholder three-column shell with a Console-styled workbench — two collapsible rails around a vertically-stacked, independently collapsible centre — leaving the panes themselves as stubs for Phase C.
+**Goal:** Move the Watchlists screen's existing, working panes into a Console-styled workbench — two collapsible rails around a vertically-stacked, independently collapsible centre — without changing what any pane does.
+
+**Corrected 2026-07-26.** This plan originally said the screen was placeholder scaffolding to be replaced with stubs. That came from a stale screenshot; the screen has six working panes and 16 tests. Tasks 1-4 were unaffected and are complete. Task 5 was rewritten from "replace" to "re-host". See the spec's "Starting point — corrected" section.
 
 **Architecture:** A pure state machine (`region_layout.py`) owns collapse/solo/restore across five regions and is unit-testable with no Textual pilot. A purpose-built container (`watchlists_workbench.py`) renders it, because the shared `DestinationWorkbench` is a fixed equal-width `Horizontal` with no collapse, resize, or stacking. The screen shell becomes thin routing over those two, with Console handoff extracted to its own module.
 
@@ -12,7 +14,7 @@
 
 - Spec: `Docs/superpowers/specs/2026-07-25-watchlists-console-rebuild-design.md`. Every requirement below traces to it.
 - **No data-layer changes.** Phase A (PR #917) owns `SubscriptionsDB`, `item_persist.py`, and `watchlist_bundle_service.py`. Do not modify them.
-- **Panes stay stubs.** Phase B builds the container and the collapse behaviour. Real tables, the tree, and the reader are Phase C/D. A stub renders its title and a placeholder line — nothing more.
+- **Existing panes are preserved, not replaced.** Phase B changes the container, not the contents. `OverviewPane`, `SourcesPane`, `RunsPane`, `ItemsPane`, `RulesPane`, `NotificationsPane`, the navigator and the inspector all keep working and keep their stable selectors. Only the `CONTENT` region is a stub, because its reader is Phase D.
 - The screen class name, route (`watchlists_collections`), and existing stable widget selectors are preserved so Console handoffs and route tests keep passing.
 - `DestinationModeStrip` and the `$ds-*` token set are reused. `DestinationWorkbench` is **not** — verified: fixed `width: 1fr` panes composed once from a frozen tuple, no collapse, no stacking.
 - Reuse Console's vocabulary: `ConsoleRailHandle` (`Widgets/Console/console_rail_handle.py`) is the model for a collapsed rail's focusable handle.
@@ -829,67 +831,225 @@ git commit -m "refactor(watchlists): extract Console handoff from the screen she
 
 ---
 
-### Task 5: Rewrite the shell over the workbench
+### Task 5: Re-host the existing panes inside the workbench
 
 **Files:**
+- Modify: `tldw_chatbook/UI/Watchlists_Modules/watchlists_workbench.py`
 - Modify: `tldw_chatbook/UI/Screens/watchlists_collections_screen.py`
-- Test: `Tests/UI/test_watchlists_destination_shell.py`
+- Test: `Tests/Watchlists/test_watchlists_workbench.py`, `Tests/UI/test_watchlists_destination_shell.py`
 
 **Interfaces:**
-- Consumes: `RegionLayout`, `Region` (Task 1); `load_region_layout`, `save_region_layout` (Task 2); `WatchlistsWorkbench`, `RegionToggled` (Task 3); `WatchlistsConsoleHandoff` (Task 4).
-- Produces: the rebuilt screen. Phase C mounts real panes into the workbench's regions.
+- Consumes: `RegionLayout`, `Region`, `CENTRE_REGIONS` (Task 1); `load_region_layout`, `save_region_layout` (Task 2); `WatchlistsWorkbench`, `RegionToggled` (Task 3).
+- Produces: `WatchlistsWorkbench(layout, content=None, **kwargs)` where `content: Mapping[Region, Widget] | None` supplies real widgets per region, falling back to the existing stub placeholders for any region omitted. The rebuilt screen wires its panes through it.
 
-**What changes:** `compose_content` yields the `DestinationModeStrip`, a tab strip, and the `WatchlistsWorkbench` instead of the three placeholder columns. Collapse bindings are added. The section-navigator rail is replaced by centre tabs.
+**This task was rewritten on 2026-07-26.** Its original form said "replace the three placeholder columns with the workbench." That was based on a stale screenshot: the screen is not scaffolding. It mounts `OverviewPane`, `SourcesPane`, `RunsPane`, `ItemsPane`, `RulesPane`, `NotificationsPane`, a navigator, a backend selector and an inspector, and 16 tests depend on them. A literal execution would have deleted working features and broken 11 of those 16.
 
-**What must not change:** the class name `WatchlistsCollectionsScreen`, the route `watchlists_collections`, the existing recovery-state behaviour, and every stable widget selector the existing tests assert on. Console handoffs and route tests must keep passing.
+**The job is re-hosting, not replacing.** Every existing pane keeps working and keeps its stable selectors; what changes is the container around them, which becomes collapsible.
 
-- [ ] **Step 1: Write the failing test**
+Region mapping for this phase — deliberately conservative, so Phase C can evolve pane contents without also fighting the container:
 
-Append to `Tests/UI/test_watchlists_destination_shell.py`, following the fixture style already in that file:
+| Region | Hosts today | Phase C/D |
+|---|---|---|
+| `LEFT_RAIL` | the existing `WatchlistsNavigator` | becomes the watchlist tree |
+| `FEEDS` | the existing sources-list column | feeds table |
+| `ITEMS` | the existing detail column (Overview/Sources/Runs/Items/Rules/Notifications panes) | items table |
+| `CONTENT` | collapsed by default, stub placeholder | the reader |
+| `RIGHT_RAIL` | the existing inspector column | breadcrumb-stack Inspector |
+
+- [ ] **Step 1: Record the baseline**
+
+Run each of these separately, in the foreground, and record the exact counts:
+
+```
+pytest Tests/UI/test_watchlists_destination_shell.py -v
+pytest Tests/UI/test_destination_shells.py -v
+pytest Tests/UI/test_console_live_work_handoffs.py -v
+```
+
+All three are guards. Every test passing now must still pass at the end. **Do not edit any of them to accommodate your change** — if one fails, fix the change.
+
+- [ ] **Step 2: Write the failing test for the content seam**
+
+Append to `Tests/Watchlists/test_watchlists_workbench.py`:
 
 ```python
 @pytest.mark.asyncio
-async def test_workbench_replaces_the_placeholder_columns(watchlists_app):
-    async with watchlists_app.run_test() as pilot:
-        await pilot.pause()
-        screen = watchlists_app.screen
-        assert screen.query("#wl-workbench"), "the workbench container should be mounted"
-        # The literal placeholder labels from the old shell are gone.
-        text = " ".join(str(node.renderable) for node in screen.query(Static))
-        assert "Column 1: Watchlist List" not in text
-        assert "Column 3: Status Inspector" not in text
+async def test_supplied_content_replaces_the_stub_placeholder():
+    from textual.widgets import Label
+
+    real = Label("real feeds table", id="my-real-feeds")
+
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(), content={Region.FEEDS: real}, id="wl-workbench"
+            )
+
+    app = _App()
+    async with app.run_test():
+        assert app.query("#my-real-feeds"), "supplied content should be mounted"
+        # The stub placeholder for that region must be gone.
+        placeholders = [
+            str(node.renderable) for node in app.query(".watchlists-region-placeholder")
+        ]
+        assert not any("Feeds table arrives" in text for text in placeholders)
 
 
 @pytest.mark.asyncio
-async def test_z_collapses_the_focused_region_and_persists(watchlists_app, monkeypatch):
-    saved = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
-        lambda layout: saved.append(layout),
-    )
-    async with watchlists_app.run_test() as pilot:
-        await pilot.pause()
-        screen = watchlists_app.screen
-        screen.focused_region = Region.CONTENT
-        await pilot.press("z")
-        await pilot.pause()
-        assert screen.region_layout.is_collapsed(Region.CONTENT)
-        assert saved, "collapse state must persist across visits"
+async def test_regions_without_supplied_content_keep_their_stubs():
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(RegionLayout(), content={}, id="wl-workbench")
 
+    app = _App()
+    async with app.run_test():
+        assert app.query(".watchlists-region-placeholder")
+```
 
+- [ ] **Step 3: Run to verify it fails**
+
+Run: `source .venv/bin/activate && pytest Tests/Watchlists/test_watchlists_workbench.py -v`
+Expected: FAIL — `WatchlistsWorkbench.__init__` does not accept `content`.
+
+- [ ] **Step 4: Add the content seam to the workbench**
+
+In `watchlists_workbench.py`, accept the mapping and prefer it over the stub:
+
+```python
+    def __init__(
+        self,
+        layout: RegionLayout,
+        content: Mapping[Region, Widget] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.add_class("watchlists-workbench")
+        self._content: dict[Region, Widget] = dict(content or {})
+        self.set_reactive(WatchlistsWorkbench.region_layout, layout)
+```
+
+and in `_region_widget`, after the collapsed-header branch:
+
+```python
+        supplied = self._content.get(region)
+        body = Vertical(
+            Static(REGION_TITLES[region], classes="watchlists-region-title"),
+            supplied
+            if supplied is not None
+            else Static(
+                REGION_PLACEHOLDERS[region], classes="watchlists-region-placeholder"
+            ),
+            id=f"wl-region-{region.value}",
+            classes=f"watchlists-region watchlists-region-{region.value}",
+        )
+        body.can_focus = True
+        return body
+```
+
+Add `from collections.abc import Mapping` to the imports.
+
+**A widget instance can only be mounted once.** Because the reactive is `recompose=True`, a recompose re-runs `compose` and would try to re-mount the same supplied instances. Verify empirically whether Textual tolerates that on this version; if it does not, the screen must hand the workbench freshly-constructed widgets on each recompose, or the workbench must hold factories (`Callable[[], Widget]`) rather than instances. **Report which you found and why** — do not silently pick one.
+
+- [ ] **Step 5: Run to verify it passes**
+
+Run: `source .venv/bin/activate && pytest Tests/Watchlists/test_watchlists_workbench.py -v`
+Expected: PASS, all tests including the six from Task 3.
+
+- [ ] **Step 6: Wire the screen through the workbench**
+
+In `watchlists_collections_screen.py`, add the imports and reactive state:
+
+```python
+from ..Watchlists_Modules.region_layout import CENTRE_REGIONS, Region, RegionLayout
+from ..Watchlists_Modules.region_layout_store import load_region_layout, save_region_layout
+from ..Watchlists_Modules.watchlists_workbench import RegionToggled, WatchlistsWorkbench
+```
+
+```python
+    region_layout = reactive(RegionLayout())
+    focused_region = reactive(Region.FEEDS)
+```
+
+Extend `BINDINGS`, keeping every existing entry:
+
+```python
+        ("z", "toggle_region", "Collapse"),
+        ("Z", "solo_region", "Solo"),
+        ("left_square_bracket", "toggle_left_rail", "Left rail"),
+        ("right_square_bracket", "toggle_right_rail", "Right rail"),
+```
+
+In `on_mount`, before first render: `self.region_layout = load_region_layout()`.
+
+In `compose_content`, keep everything above the columns exactly as it is — the destination header, the backend `Select`, the recovery-state rendering. Replace only the three-column container with a `WatchlistsWorkbench` whose `content` maps each region to the widget that column previously held, per the table above. The navigator, each pane, and the inspector keep their existing ids so the guard tests still find them.
+
+`CONTENT` gets no entry in the mapping and starts collapsed, since its reader is Phase D.
+
+- [ ] **Step 7: Add the actions and focus tracking**
+
+```python
+    def _apply_layout(self, layout: RegionLayout) -> None:
+        """Set the layout, push it to the workbench, and persist it."""
+        self.region_layout = layout
+        try:
+            # The workbench reactive is `region_layout`, NOT `layout` —
+            # Widget.layout is an existing read-only Textual property.
+            self.query_one(WatchlistsWorkbench).region_layout = layout
+        except Exception:
+            logger.debug("Workbench not mounted yet; layout applies on compose.")
+        save_region_layout(layout)
+
+    def action_toggle_region(self) -> None:
+        self._apply_layout(self.region_layout.toggle(self.focused_region))
+
+    def action_solo_region(self) -> None:
+        if self.focused_region not in CENTRE_REGIONS:
+            self.notify("Solo applies to the Feeds, Items, or Content panes.")
+            return
+        self._apply_layout(self.region_layout.solo(self.focused_region))
+
+    def action_toggle_left_rail(self) -> None:
+        self._apply_layout(self.region_layout.toggle(Region.LEFT_RAIL))
+
+    def action_toggle_right_rail(self) -> None:
+        self._apply_layout(self.region_layout.toggle(Region.RIGHT_RAIL))
+
+    @on(RegionToggled)
+    def _on_region_toggled(self, event: RegionToggled) -> None:
+        event.stop()
+        self._apply_layout(self.region_layout.toggle(event.region))
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        """Keep `focused_region` in step with whatever actually holds focus."""
+        node = event.widget
+        while node is not None:
+            node_id = getattr(node, "id", None) or ""
+            for prefix in ("wl-region-", "wl-header-"):
+                if node_id.startswith(prefix):
+                    try:
+                        self.focused_region = Region(node_id[len(prefix):])
+                    except ValueError:
+                        pass
+                    return
+            node = node.parent
+```
+
+Add `from textual import events`. Without this handler `z` always collapses whichever region the reactive defaulted to, regardless of where the user is.
+
+- [ ] **Step 8: Add the shell tests**
+
+Append to `Tests/UI/test_watchlists_destination_shell.py` — these are *additions*; do not modify the existing 16:
+
+```python
 @pytest.mark.asyncio
-async def test_shift_z_solos_and_restores(watchlists_app):
+async def test_existing_panes_survive_the_workbench_rehost(watchlists_app):
     async with watchlists_app.run_test() as pilot:
         await pilot.pause()
         screen = watchlists_app.screen
-        screen.focused_region = Region.ITEMS
-        await pilot.press("Z")
-        await pilot.pause()
-        assert screen.region_layout.is_collapsed(Region.FEEDS)
-        assert screen.region_layout.is_collapsed(Region.CONTENT)
-        await pilot.press("Z")
-        await pilot.pause()
-        assert screen.region_layout.collapsed == frozenset()
+        assert screen.query("#wl-workbench")
+        # The panes that existed before must still be mounted, not replaced.
+        assert screen.query("#watchlists-navigator")
+        assert screen.query("#watchlists-sources-pane")
 
 
 @pytest.mark.asyncio
@@ -906,15 +1066,20 @@ async def test_bracket_keys_toggle_the_rails(watchlists_app):
 
 
 @pytest.mark.asyncio
-async def test_clicking_a_collapsed_header_expands_it(watchlists_app):
+async def test_collapsing_a_region_persists(watchlists_app, monkeypatch):
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: saved.append(layout),
+    )
     async with watchlists_app.run_test() as pilot:
         await pilot.pause()
         screen = watchlists_app.screen
-        screen.region_layout = RegionLayout(collapsed=frozenset({Region.FEEDS}))
+        screen.focused_region = Region.ITEMS
+        await pilot.press("z")
         await pilot.pause()
-        await pilot.click("#wl-header-feeds")
-        await pilot.pause()
-        assert not screen.region_layout.is_collapsed(Region.FEEDS)
+        assert screen.region_layout.is_collapsed(Region.ITEMS)
+        assert saved
 
 
 @pytest.mark.asyncio
@@ -922,151 +1087,35 @@ async def test_route_and_class_name_are_unchanged(watchlists_app):
     async with watchlists_app.run_test():
         screen = watchlists_app.screen
         assert type(screen).__name__ == "WatchlistsCollectionsScreen"
-        # BaseAppScreen stores the route as `screen_name` (base_app_screen.py:23),
-        # not `route_name` — the screen passes "watchlists_collections" to super().
+        # BaseAppScreen stores the route as `screen_name` (base_app_screen.py:23).
         assert screen.screen_name == "watchlists_collections"
 ```
 
-These tests need `from textual.widgets import Static`, plus `Region` and `RegionLayout` from `tldw_chatbook.UI.Watchlists_Modules.region_layout`. Add them to the file's existing import block rather than a second one.
+These need `Region` and `RegionLayout` imported from `tldw_chatbook.UI.Watchlists_Modules.region_layout`. Reuse the file's existing app fixture rather than adding a second harness.
 
-If the existing file has no `watchlists_app` fixture, reuse whatever fixture its current tests use and adapt these accordingly — do not invent a second app harness alongside an existing one.
+- [ ] **Step 9: Verify the guards are untouched and still green**
 
-- [ ] **Step 2: Run test to verify it fails**
+Run each separately, in the foreground:
 
-Run: `source .venv/bin/activate && pytest Tests/UI/test_watchlists_destination_shell.py -v`
-Expected: the six new tests FAIL (no `#wl-workbench`, no `region_layout` attribute); the pre-existing tests still pass.
-
-- [ ] **Step 3: Add layout state and bindings to the screen**
-
-In `WatchlistsCollectionsScreen`, add the imports and reactive state:
-
-```python
-from ..Watchlists_Modules.region_layout import CENTRE_REGIONS, Region, RegionLayout
-from ..Watchlists_Modules.region_layout_store import load_region_layout, save_region_layout
-from ..Watchlists_Modules.watchlists_workbench import RegionToggled, WatchlistsWorkbench
+```
+pytest Tests/UI/test_watchlists_destination_shell.py -v
+pytest Tests/UI/test_destination_shells.py -v
+pytest Tests/UI/test_console_live_work_handoffs.py -v
+pytest Tests/Watchlists -v
 ```
 
-```python
-    region_layout = reactive(RegionLayout())
-    focused_region = reactive(Region.FEEDS)
-```
+Expected: every test that passed in Step 1 still passes, plus your additions. Confirm with `git diff --stat` that you changed no existing test body.
 
-Extend `BINDINGS` with the collapse keys, keeping the existing entries:
+`Tests/Watchlists/test_watchlists_navigator.py` **keeps passing** — the navigator survives this task, so unlike the original plan there is nothing to delete.
 
-```python
-        ("z", "toggle_region", "Collapse"),
-        ("Z", "solo_region", "Solo"),
-        ("left_square_bracket", "toggle_left_rail", "Left rail"),
-        ("right_square_bracket", "toggle_right_rail", "Right rail"),
-```
-
-Load persisted state in `on_mount`, before the first render:
-
-```python
-        self.region_layout = load_region_layout()
-```
-
-- [ ] **Step 4: Implement the actions**
-
-```python
-    def _apply_layout(self, layout: RegionLayout) -> None:
-        """Set the layout, push it to the workbench, and persist it."""
-        self.region_layout = layout
-        try:
-            # The workbench's reactive is `region_layout`, NOT `layout` —
-            # `Widget.layout` is an existing read-only Textual property the
-            # compositor calls .arrange() on every render, so shadowing it
-            # breaks rendering outright. Verified empirically in Task 3.
-            self.query_one(WatchlistsWorkbench).region_layout = layout
-        except Exception:
-            logger.debug("Workbench not mounted yet; layout will apply on compose.")
-        save_region_layout(layout)
-
-    def action_toggle_region(self) -> None:
-        """Collapse or expand whichever region currently has focus."""
-        self._apply_layout(self.region_layout.toggle(self.focused_region))
-
-    def action_solo_region(self) -> None:
-        """Isolate the focused centre pane; press again to restore."""
-        if self.focused_region not in CENTRE_REGIONS:
-            self.notify("Solo applies to the Feeds, Items, or Content panes.")
-            return
-        self._apply_layout(self.region_layout.solo(self.focused_region))
-
-    def action_toggle_left_rail(self) -> None:
-        self._apply_layout(self.region_layout.toggle(Region.LEFT_RAIL))
-
-    def action_toggle_right_rail(self) -> None:
-        self._apply_layout(self.region_layout.toggle(Region.RIGHT_RAIL))
-
-    @on(RegionToggled)
-    def _on_region_toggled(self, event: RegionToggled) -> None:
-        event.stop()
-        self._apply_layout(self.region_layout.toggle(event.region))
-```
-
-**Track focus, or `z` is a lie.** `focused_region` must follow real focus, otherwise every `z` collapses whichever region the reactive happened to default to. Walk up from the focused widget to find its owning region:
-
-```python
-    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        """Keep `focused_region` in step with whatever actually holds focus."""
-        node = event.widget
-        while node is not None:
-            node_id = getattr(node, "id", None) or ""
-            for prefix in ("wl-region-", "wl-header-"):
-                if node_id.startswith(prefix):
-                    try:
-                        self.focused_region = Region(node_id[len(prefix):])
-                    except ValueError:
-                        pass
-                    return
-            node = node.parent
-```
-
-Add `from textual import events` to the imports. Both prefixes are handled so that focusing a *collapsed* region's header targets that region — otherwise `z` on a collapsed header would expand some other region.
-
-Add this test alongside the others in Step 1:
-
-```python
-@pytest.mark.asyncio
-async def test_focus_drives_which_region_z_collapses(watchlists_app):
-    async with watchlists_app.run_test() as pilot:
-        await pilot.pause()
-        screen = watchlists_app.screen
-        screen.query_one("#wl-region-items").focus()
-        await pilot.pause()
-        assert screen.focused_region == Region.ITEMS
-        await pilot.press("z")
-        await pilot.pause()
-        assert screen.region_layout.is_collapsed(Region.ITEMS)
-        assert not screen.region_layout.is_collapsed(Region.FEEDS)
-```
-
-If `#wl-region-items` is not focusable as composed, give the region bodies `can_focus = True` in `WatchlistsWorkbench._compose_region` rather than weakening this test — a region the keyboard cannot reach cannot be collapsed by keyboard either.
-
-- [ ] **Step 5: Replace the three placeholder columns in `compose_content`**
-
-Replace the three-column body (the `Column 1: Watchlist List` / `Column 2: …` / `Column 3: Status Inspector` containers) with the workbench, keeping the destination header, the backend selector, and the recovery-state rendering exactly as they are:
-
-```python
-            yield WatchlistsWorkbench(self.region_layout, id="wl-workbench")
-```
-
-Delete the now-unused `WatchlistsNavigator` import and its section-rail composition — section switching becomes centre tabs in Phase C/E. Leave the `_SECTION_DETAIL_TITLE` mapping and `active_section` reactive in place; Phase E's tabs consume them.
-
-- [ ] **Step 6: Run the tests**
-
-Run: `source .venv/bin/activate && pytest Tests/UI/test_watchlists_destination_shell.py -v`
-Expected: PASS, including every pre-existing test.
-
-Then, one at a time: `pytest Tests/Watchlists -v`, then `pytest Tests/UI -v`.
-Expected: no new failures. `Tests/Watchlists/test_watchlists_navigator.py::test_navigator_has_all_section_buttons` fails on this branch already — it asserts on the section rail this task removes, so it becomes legitimately obsolete. Delete that test file if the navigator is gone, and say so in your report rather than leaving a test asserting on deleted UI.
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add tldw_chatbook/UI/Screens/watchlists_collections_screen.py Tests/UI/test_watchlists_destination_shell.py
-git commit -m "feat(watchlists): rebuild the screen shell over the collapsible workbench"
+git add tldw_chatbook/UI/Watchlists_Modules/watchlists_workbench.py \
+        tldw_chatbook/UI/Screens/watchlists_collections_screen.py \
+        Tests/Watchlists/test_watchlists_workbench.py \
+        Tests/UI/test_watchlists_destination_shell.py
+git commit -m "feat(watchlists): re-host the existing panes in the collapsible workbench"
 ```
 
 ---
@@ -1076,7 +1125,7 @@ git commit -m "feat(watchlists): rebuild the screen shell over the collapsible w
 - [ ] All five tasks committed.
 - [ ] `pytest Tests/Watchlists` and `pytest Tests/UI` pass with no new failures.
 - [ ] No data-layer file modified: `git diff --stat origin/dev -- tldw_chatbook/DB tldw_chatbook/Subscriptions` is empty.
-- [ ] The literal strings `Column 1: Watchlist List` and `Column 3: Status Inspector` no longer appear anywhere in the repo.
+- [ ] Every pane that worked before still works: the three guard files pass with no existing test body modified.
 - [ ] Collapse state survives a screen revisit and an app restart.
 - [ ] Every collapsed region can be re-expanded by keyboard alone.
 - [ ] Phase C plan written against merged Phase B code.
