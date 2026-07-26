@@ -332,6 +332,7 @@ from tldw_chatbook.config import (
     get_chachanotes_db_lazy,
 )
 from .UI.Navigation.main_navigation import NavigateToScreen
+from .UI.Navigation.screen_state_store import RuntimeIdentity, ScreenStateStore
 from .UI.Navigation.screen_registry import resolve_screen_target
 from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
@@ -480,10 +481,8 @@ from tldw_chatbook.Evaluations_Interop import (  # noqa: E402
     ServerEvaluationsService,
 )
 from tldw_chatbook.runtime_policy.bootstrap import (  # noqa: E402
-    add_runtime_policy_snapshot,
     build_runtime_api_client,
     load_runtime_policy_for_app,
-    reconcile_saved_screen_state,
     set_authoritative_runtime_source,
 )
 from tldw_chatbook.runtime_policy.server_capabilities import (  # noqa: E402
@@ -3054,6 +3053,7 @@ class TldwCli(
             self.acp_runtime_process_manager.session_state()
         )
         load_runtime_policy_for_app(self)
+        self.screen_state_store = ScreenStateStore()
         self.service_policy_enforcer = (
             ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
         )
@@ -5586,8 +5586,8 @@ class TldwCli(
         presenting a stale frame, and every subsequent click is hit-tested
         into the dead tree and silently swallowed: a total, exception-free
         UI freeze (root-caused 2026-07-11). UX continuity across visits is
-        the job of ``_screen_states`` (``save_state``/``restore_state``),
-        not instance reuse.
+        owned by ``ScreenStateStore`` through each screen's
+        ``save_state``/``restore_state`` boundary, not instance reuse.
         """
         return screen_class(self)
 
@@ -5628,6 +5628,10 @@ class TldwCli(
             return TAB_HOME
         return getattr(self, "_initial_tab_value", TAB_CHAT)
 
+    def _current_runtime_identity(self) -> RuntimeIdentity:
+        """Return the screen-snapshot scope from authoritative runtime state."""
+        return RuntimeIdentity.from_state(self.runtime_policy.state)
+
     @on(NavigateToScreen)
     async def handle_screen_navigation(self, message: NavigateToScreen) -> None:
         """Handle navigation to a different screen using switch_screen for better performance."""
@@ -5657,13 +5661,13 @@ class TldwCli(
                         "screen's pending-work flush"
                     )
                     return
-            except Exception as e:
+            except Exception as exc:
                 # The outgoing instance may be the only place pending edits
                 # still exist, so a failed flush must abort the transition.
-                logger.opt(exception=True).error(
-                    "Error flushing outgoing screen "
-                    f"{getattr(current_screen, 'screen_name', type(current_screen).__name__)!r} "
-                    f"before navigating to {screen_name!r}: {e}"
+                logger.warning(
+                    "Screen flush failed (route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
                 )
                 try:
                     self.notify(
@@ -5674,46 +5678,68 @@ class TldwCli(
                     pass
                 return
 
-        # Save state of current screen before switching
-        if current_screen and hasattr(current_screen, "save_state"):
+        runtime_identity = self._current_runtime_identity()
+        outgoing_key = str(self.current_tab or "").strip()
+        if not outgoing_key:
+            outgoing_screen_name = getattr(current_screen, "screen_name", None)
+            if isinstance(outgoing_screen_name, str) and outgoing_screen_name.strip():
+                (
+                    _outgoing_screen_name,
+                    resolved_outgoing_key,
+                    outgoing_screen_class,
+                ) = self._resolve_screen_navigation_target(outgoing_screen_name.strip())
+                if outgoing_screen_class is not None:
+                    outgoing_key = resolved_outgoing_key
+
+        save_state = getattr(current_screen, "save_state", None)
+        if outgoing_key and callable(save_state):
             try:
-                state = current_screen.save_state()
-                if isinstance(state, dict):
-                    state = add_runtime_policy_snapshot(
-                        state, self.runtime_policy.state
+                state = save_state()
+                if isinstance(state, Mapping):
+                    self.screen_state_store.save(
+                        outgoing_key,
+                        state,
+                        runtime_identity,
                     )
-                # Store state in a dictionary keyed by screen name
-                if not hasattr(self, "_screen_states"):
-                    self._screen_states = {}
-                if hasattr(current_screen, "screen_name"):
-                    self._screen_states[current_screen.screen_name] = state
                     logger.debug(
-                        f"Saved state for screen: {current_screen.screen_name}"
+                        "Saved screen snapshot for canonical route: {}",
+                        outgoing_key,
                     )
-            except Exception as e:
-                logger.error(f"Error saving screen state: {e}")
+                else:
+                    logger.warning(
+                        "Screen snapshot save skipped (route={}, reason=non_mapping).",
+                        outgoing_key,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Screen snapshot save failed (route={}, exception_category={}).",
+                    outgoing_key,
+                    type(exc).__name__,
+                )
 
         if screen_class:
             new_screen = self._create_navigation_screen(screen_name, screen_class)
 
-            # Restore state if available
-            if hasattr(self, "_screen_states") and screen_name in self._screen_states:
-                if hasattr(new_screen, "restore_state"):
-                    try:
-                        restored_state = reconcile_saved_screen_state(
-                            self._screen_states[screen_name],
-                            self.runtime_policy.state,
-                        )
-                        if restored_state is None:
-                            self._screen_states.pop(screen_name, None)
-                            logger.info(
-                                f"Dropped saved state for screen due to runtime policy mismatch: {screen_name}"
-                            )
-                        else:
-                            new_screen.restore_state(restored_state)
-                            logger.debug(f"Restored state for screen: {screen_name}")
-                    except Exception as e:
-                        logger.error(f"Error restoring screen state: {e}")
+            restored_state = self.screen_state_store.restore(
+                current_tab_value,
+                runtime_identity,
+            )
+            restore_state = getattr(new_screen, "restore_state", None)
+            if restored_state is not None and callable(restore_state):
+                try:
+                    restore_state(restored_state)
+                    logger.debug(
+                        "Restored screen snapshot for canonical route: {}",
+                        current_tab_value,
+                    )
+                except Exception as exc:
+                    self.screen_state_store.discard(current_tab_value)
+                    logger.warning(
+                        "Screen snapshot restore failed "
+                        "(route={}, exception_category={}).",
+                        current_tab_value,
+                        type(exc).__name__,
+                    )
 
             navigation_context = getattr(message, "screen_context", {}) or {}
             if not navigation_context:
@@ -5725,9 +5751,12 @@ class TldwCli(
                     result = new_screen.apply_navigation_context(navigation_context)
                     if inspect.isawaitable(result):
                         await result
-                except Exception as e:
-                    logger.error(
-                        f"Error applying navigation context for {screen_name}: {e}"
+                except Exception as exc:
+                    logger.warning(
+                        "Navigation context application failed "
+                        "(route={}, exception_category={}).",
+                        current_tab_value,
+                        type(exc).__name__,
                     )
 
             # Use switch_screen to replace the current screen

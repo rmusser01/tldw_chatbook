@@ -288,53 +288,6 @@ def set_authoritative_runtime_source(
     return updated_state
 
 
-def add_runtime_policy_snapshot(
-    saved_screen_state: dict[str, Any], state: RuntimeSourceState
-) -> dict[str, Any]:
-    snapshot_state = dict(saved_screen_state)
-    snapshot_state["runtime_policy_snapshot"] = runtime_policy_snapshot_from_state(
-        state
-    )
-    return snapshot_state
-
-
-def reconcile_saved_screen_state(
-    saved_screen_state: dict[str, Any] | None,
-    authoritative_state: RuntimeSourceState,
-) -> dict[str, Any] | None:
-    if not isinstance(saved_screen_state, dict):
-        return None
-
-    restored_state = dict(saved_screen_state)
-    snapshot = restored_state.pop("runtime_policy_snapshot", None)
-    if not isinstance(snapshot, dict):
-        return restored_state
-
-    snapshot_source = snapshot.get("active_source")
-    if (
-        snapshot_source in _VALID_RUNTIME_SOURCES
-        and snapshot_source != authoritative_state.active_source
-    ):
-        return None
-
-    if authoritative_state.active_source != "server":
-        return restored_state
-
-    authoritative_server_id = authoritative_state.active_server_id
-    snapshot_server_id = snapshot.get("active_server_id")
-    if authoritative_server_id and snapshot_server_id != authoritative_server_id:
-        return None
-
-    return restored_state
-
-
-def runtime_policy_snapshot_from_state(state: RuntimeSourceState) -> dict[str, Any]:
-    return {
-        "active_source": state.active_source,
-        "active_server_id": state.active_server_id,
-    }
-
-
 def derive_configured_server_binding(
     app_config: Mapping[str, Any] | None,
 ) -> ConfiguredServerBinding:
