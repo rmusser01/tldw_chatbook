@@ -74,7 +74,7 @@ def test_reference_image_refused_for_legacy_backends(rv, backend):
     ]
 
 
-@pytest.mark.parametrize("backend", ["fal", "gemini", "fireworks"])
+@pytest.mark.parametrize("backend", ["fal", "gemini"])
 def test_reference_image_accepted_for_new_backends(rv, backend):
     ok = {"backend": backend, "prompt": "cat", "extra_params": {}, "reference_image": _ref()}
     assert rv.validate_image_generation_request(ok) == []

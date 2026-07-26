@@ -1,10 +1,18 @@
 # fal.ai / Gemini / Fireworks Image Backends Implementation Plan
 
+> **2026-07-26: Fireworks DROPPED** — vendor deprecated image generation
+> 2026-06-10 (changelog; endpoints 401); user-approved. Program ships fal +
+> gemini. Task 5 (Fireworks adapter) is marked DROPPED below; its commit was
+> implemented then reset away. Task 7's rows/probe/live-test items become
+> fal+gemini only — eight backends total, not nine. The rest of this plan is
+> kept as-written for historical context; fireworks-specific items are
+> annotated rather than deleted or rewritten.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Three new image-generation backends (`fal`, `gemini`, `fireworks`) on the established adapter contract, plus the engine-level reference-image seam, wired through config, listing, registry, and the Settings page.
+**Goal:** Three new image-generation backends (`fal`, `gemini`, `fireworks`) on the established adapter contract, plus the engine-level reference-image seam, wired through config, listing, registry, and the Settings page. *(2026-07-26: fireworks dropped — see note at top of doc; goal is now two new backends, fal + gemini.)*
 
-**Architecture:** One adapter file per service; everything else is rows in existing tables (`_SECRETS`/`_NON_SECRET`, registry lazy-map, `BACKEND_IDS`/`FIELD_SCHEMA`, probe dispatch). One new guarded HTTP helper (`fetch_bytes_via_post`) for Fireworks' bytes-returning POST. Reference images open the dormant `ResolvedReferenceImage` seam with per-backend capability flags and fail-loudly choke-point validation. Spec: `Docs/superpowers/specs/2026-07-26-imagegen-fal-gemini-fireworks-design.md` — read it before any task.
+**Architecture:** One adapter file per service; everything else is rows in existing tables (`_SECRETS`/`_NON_SECRET`, registry lazy-map, `BACKEND_IDS`/`FIELD_SCHEMA`, probe dispatch). One new guarded HTTP helper (`fetch_bytes_via_post`) for Fireworks' bytes-returning POST. Reference images open the dormant `ResolvedReferenceImage` seam with per-backend capability flags and fail-loudly choke-point validation. Spec: `Docs/superpowers/specs/2026-07-26-imagegen-fal-gemini-fireworks-design.md` — read it before any task. *(`fetch_bytes_via_post` shipped in Task 1 before the drop decision and remains in the codebase, unused by any adapter now.)*
 
 **Tech Stack:** Python 3.11+, httpx (sync, via the package's guarded helpers), pytest with fake clients.
 
@@ -17,8 +25,8 @@
 - 404/400-model-unknown errors name the attempted model id and the config key (`[image_generation.<backend>] default_model`) — the task-620 pattern; copy `openrouter_image_adapter.py`'s enrichment shape.
 - Negative prompt is appended to the prompt text (openrouter precedent), never dropped.
 - `ImageGenResult.resolved_model`/`resolved_seed` only where the backend genuinely reports them — never fabricate.
-- Defaults (exact): fal base `https://queue.fal.run`, model `fal-ai/flux/schnell`, poll 2s, timeout 120; gemini base `https://generativelanguage.googleapis.com/v1beta`, model `gemini-2.5-flash-image`, timeout 120; fireworks base `https://api.fireworks.ai/inference/v1/workflows/accounts/fireworks/models`, model `flux-1-schnell-fp8`, timeout 120.
-- Env precedence: `FAL_KEY`; `GEMINI_API_KEY` then `GOOGLE_API_KEY`; `FIREWORKS_API_KEY`. Keyring ids: `fal`, `gemini`, `fireworks`.
+- Defaults (exact): fal base `https://queue.fal.run`, model `fal-ai/flux/schnell`, poll 2s, timeout 120; gemini base `https://generativelanguage.googleapis.com/v1beta`, model `gemini-2.5-flash-image`, timeout 120; fireworks base `https://api.fireworks.ai/inference/v1/workflows/accounts/fireworks/models`, model `flux-1-schnell-fp8`, timeout 120. *(fireworks defaults were implemented in Task 2 then removed when the backend was dropped.)*
+- Env precedence: `FAL_KEY`; `GEMINI_API_KEY` then `GOOGLE_API_KEY`; `FIREWORKS_API_KEY`. Keyring ids: `fal`, `gemini`, `fireworks`. *(fireworks env var/keyring id removed with the backend.)*
 - Reference images: bytes-in-memory only (`ResolvedReferenceImage.content`), mime allowlist `{image/png, image/jpeg, image/webp}`, cap `IMAGE_GEN_REFERENCE_MAX_BYTES = 10 * 1024 * 1024`, unsupported-backend requests REFUSED at the `run_generation` choke point.
 - Where the spec says "implementer verifies from the API reference" (fal image_size field, gemini responseModalities requirement, fireworks body field names + image-input route, fireworks/fal probe endpoints): verify against the LIVE vendor docs via WebFetch during the task, record the verified shape + doc URL in your report, and pin it in a test. Do not guess from training data (task-620 lesson).
 - Tests FOREGROUND only (background pytest notifications never reach subagents). venv: `source /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/activate`; run from the worktree. TDD red-then-green per behavior. `ruff check` touched files; `python -c "import tldw_chatbook.app"` clean. Explicit-path staging.
@@ -71,6 +79,8 @@ def test_fetch_bytes_via_post_respects_explicit_zero_timeout(monkeypatch, hc):
 
 ### Task 2: Config + listing rows for the three backends
 
+*(2026-07-26: implemented for all three as written below, then the fireworks rows/constants/dataclass fields/listing dispatch were surgically removed in a follow-up commit when the backend was dropped — see decision note at top of doc. fal + gemini rows are unaffected and remain exactly as specified.)*
+
 **Files:**
 - Modify: `tldw_chatbook/Image_Generation/config.py` (defaults constants ~line 40s; `_SECRETS` ~:64; `_NON_SECRET` ~:76; `ImageGenerationConfig` fields ~:190s; builder ~:380s), `tldw_chatbook/Image_Generation/listing.py`, `tldw_chatbook/config.py` (shipped default-TOML example block for `[image_generation]` — add commented sections for the three)
 - Test: `Tests/Image_Generation/test_config_loader.py`, `Tests/Image_Generation/test_listing.py` (or the file that tests is_configured — find it)
@@ -93,7 +103,7 @@ def test_fetch_bytes_via_post_respects_explicit_zero_timeout(monkeypatch, hc):
 
 **Interfaces:**
 - Consumes: `ResolvedReferenceImage` (capabilities.py:17 — `content: bytes | None`, `mime_type`, `bytes_len`).
-- Produces: `REFERENCE_IMAGE_CAPABLE_BACKENDS: frozenset[str] = frozenset({"fal", "gemini", "fireworks"})` (in capabilities.py); `IMAGE_GEN_REFERENCE_MAX_BYTES = 10 * 1024 * 1024` and `REFERENCE_IMAGE_ALLOWED_MIMES = frozenset({"image/png", "image/jpeg", "image/webp"})` (in request_validation.py); `build_request(..., reference_image: ResolvedReferenceImage | None = None)`; validator issues (exact user-facing strings): `"backend '<id>' does not support reference images"`, `"reference image mime '<mime>' is not supported (png/jpeg/webp)"`, `"reference image exceeds the 10MB limit"`, `"reference image has no content bytes"`.
+- Produces: `REFERENCE_IMAGE_CAPABLE_BACKENDS: frozenset[str] = frozenset({"fal", "gemini", "fireworks"})` (in capabilities.py); `IMAGE_GEN_REFERENCE_MAX_BYTES = 10 * 1024 * 1024` and `REFERENCE_IMAGE_ALLOWED_MIMES = frozenset({"image/png", "image/jpeg", "image/webp"})` (in request_validation.py); `build_request(..., reference_image: ResolvedReferenceImage | None = None)`; validator issues (exact user-facing strings): `"backend '<id>' does not support reference images"`, `"reference image mime '<mime>' is not supported (png/jpeg/webp)"`, `"reference image exceeds the 10MB limit"`, `"reference image has no content bytes"`. *(2026-07-26: `fireworks` removed from `REFERENCE_IMAGE_CAPABLE_BACKENDS` when the backend was dropped — the frozenset is now `{"fal", "gemini"}`.)*
 
 - [ ] **Step 1: Failing tests**: refusal for each of the six legacy backend ids with a reference set; acceptance for the three new ids (validator passes; adapter not reached); mime matrix (webp ok, image/gif refused); oversize (10MB+1) refused; `content=None` refused; `build_request(reference_image=...)` threads to `ImageGenRequest.reference_image`.
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement** — capability set + validator checks (only when `request.reference_image is not None`), keeping every existing validation behavior untouched. **Step 4:** validator + worker files green; full `Tests/Image_Generation/ -q` green.
@@ -126,7 +136,9 @@ Behavior (spec §gemini, all pinned by tests):
 
 ---
 
-### Task 5: Fireworks adapter
+### Task 5: Fireworks adapter — **DROPPED 2026-07-26**
+
+> Vendor deprecated image generation 2026-06-10 (changelog; endpoints 401); user-approved. The adapter commit was implemented then reset away — no `fireworks_image_adapter.py`, no `"fireworks"` registry row, no `test_fireworks_adapter.py` exist on the branch. The task body below is kept as-written for historical context only; do not implement it.
 
 **Files:**
 - Create: `tldw_chatbook/Image_Generation/adapters/fireworks_image_adapter.py`
@@ -173,6 +185,8 @@ Behavior (spec §fal):
 
 ### Task 7: Settings rows, probes, live tests
 
+> *2026-07-26 update: fireworks dropped — this task now adds `fal`+`gemini` only. `BACKEND_IDS` → **eight**, not nine (existing six + `fal` + `gemini`); no fireworks label/schema rows/probe branch/live-test entry. The task body below is kept as originally planned (three backends) for historical context; treat every "three"/"nine" below as "two"/"eight" and drop every fireworks-specific bullet.*
+
 **Files:**
 - Modify: `tldw_chatbook/UI/Screens/settings_image_gen_defaults.py` (`BACKEND_IDS` → nine, canonical order: existing six then `fal`, `gemini`, `fireworks`; `BACKEND_LABELS` += `"fal": "fal.ai"`, `"gemini": "Gemini (AI Studio)"`, `"fireworks": "Fireworks"`; `FIELD_SCHEMA` rows per backend: `base_url`[url], `default_model`[text], `timeout_seconds`[int,min 1], `api_key`[secret]; probe dispatch for the three), `Tests/Image_Generation/test_live_backends.py` (three opt-in live suites)
 - Test: `Tests/UI/test_settings_image_gen_defaults.py` (extend), `Tests/UI/test_settings_image_gen_panel.py` (update any nine-backend-count assertions honestly)
@@ -190,4 +204,4 @@ Behavior (spec §fal):
 
 ## Post-plan (controller)
 
-Final whole-branch review (most capable model; secret-lifecycle + spec audit + the fal self-built-URL property end-to-end), then live UAT with the user's three keys (Settings probe + Console `/generate-image :backend` per backend + one nano-banana reference-image edit), then PR per the finishing flow. Backlog task filing for the program + follow-ups at PR time, IDs swept across all refs at assignment.
+Final whole-branch review (most capable model; secret-lifecycle + spec audit + the fal self-built-URL property end-to-end), then live UAT with the user's three keys (Settings probe + Console `/generate-image :backend` per backend + one nano-banana reference-image edit), then PR per the finishing flow. Backlog task filing for the program + follow-ups at PR time, IDs swept across all refs at assignment. *(2026-07-26: "three keys"/"per backend" now means fal + gemini only — see decision note at top of doc.)*

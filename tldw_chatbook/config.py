@@ -2843,8 +2843,8 @@ timeout_seconds = 180
 allowed_extra_params = []
 api_key = "<API_KEY_HERE>"
 
-# fal.ai, Gemini, and Fireworks backends -- uncomment and add
-# enabled_backends/default_backend above to use.
+# fal.ai and Gemini backends -- uncomment and add enabled_backends/
+# default_backend above to use.
 # [image_generation.fal]
 # base_url = "https://queue.fal.run"
 # default_model = "fal-ai/flux/schnell"
@@ -2857,12 +2857,6 @@ api_key = "<API_KEY_HERE>"
 # default_model = "gemini-2.5-flash-image"
 # timeout_seconds = 120
 # api_key = "<API_KEY_HERE>"          # or set GEMINI_API_KEY / GOOGLE_API_KEY
-
-# [image_generation.fireworks]
-# base_url = "https://api.fireworks.ai/inference/v1/workflows/accounts/fireworks/models"
-# default_model = "flux-1-schnell-fp8"
-# timeout_seconds = 120
-# api_key = "<API_KEY_HERE>"          # or set FIREWORKS_API_KEY
 
 # User-defined `/generate-image` @style templates, layered over the 13
 # built-ins (Media_Creation/generation_templates.py). A user template with

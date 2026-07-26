@@ -33,10 +33,12 @@ def test_disabled_backends_excluded(monkeypatch):
     assert "novita" not in names and "swarmui" in names
 
 
-# --- task-2 (fal/Gemini/Fireworks image backends): _is_*_configured --------
+# --- task-2 (fal/Gemini image backends): _is_*_configured ------------------
+# Fireworks was dropped 2026-07-26 -- vendor deprecated image generation
+# (see the design spec/plan docs' 2026-07-26 decision notes).
 #
-# These three backends have no adapter registered yet (adapters land in a
-# later task), so they never appear via list_image_models_for_catalog()'s
+# These backends have no adapter registered yet (adapters land in a later
+# task), so they never appear via list_image_models_for_catalog()'s
 # registry-driven enumeration here -- exercise the dispatch helpers directly,
 # same shape as the sibling _is_openrouter_configured/etc. functions.
 
@@ -82,20 +84,3 @@ def test_is_gemini_configured_false_when_key_missing(monkeypatch):
     monkeypatch.setattr(c, "_read_image_generation_toml", lambda: {}, raising=False)
     cfg = c.get_image_generation_config(reload=True)
     assert L._is_gemini_configured(cfg, True) is False
-
-
-def test_is_fireworks_configured_true_when_key_present(monkeypatch):
-    from tldw_chatbook.Image_Generation import config as c, listing as L
-    monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
-    monkeypatch.setattr(c, "_read_image_generation_toml",
-                        lambda: {"fireworks": {"api_key": "fake-fireworks-key"}}, raising=False)
-    cfg = c.get_image_generation_config(reload=True)
-    assert L._is_fireworks_configured(cfg, True) is True
-
-
-def test_is_fireworks_configured_false_when_key_missing(monkeypatch):
-    from tldw_chatbook.Image_Generation import config as c, listing as L
-    monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
-    monkeypatch.setattr(c, "_read_image_generation_toml", lambda: {}, raising=False)
-    cfg = c.get_image_generation_config(reload=True)
-    assert L._is_fireworks_configured(cfg, True) is False

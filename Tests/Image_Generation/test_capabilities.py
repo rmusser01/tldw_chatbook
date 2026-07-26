@@ -3,11 +3,11 @@ import pytest
 
 def test_reference_image_capable_backends_frozenset():
     from tldw_chatbook.Image_Generation.capabilities import REFERENCE_IMAGE_CAPABLE_BACKENDS
-    assert REFERENCE_IMAGE_CAPABLE_BACKENDS == frozenset({"fal", "gemini", "fireworks"})
+    assert REFERENCE_IMAGE_CAPABLE_BACKENDS == frozenset({"fal", "gemini"})
     assert isinstance(REFERENCE_IMAGE_CAPABLE_BACKENDS, frozenset)
 
 
-@pytest.mark.parametrize("backend", ["fal", "gemini", "fireworks"])
+@pytest.mark.parametrize("backend", ["fal", "gemini"])
 def test_resolve_backend_reference_image_capability_new_backends_supported(backend):
     from tldw_chatbook.Image_Generation.capabilities import resolve_backend_reference_image_capability
     capability = resolve_backend_reference_image_capability(backend)
@@ -41,12 +41,11 @@ def test_resolve_backend_reference_image_capability_case_insensitive():
 
 
 def test_resolve_reference_image_capability_new_backends_ignore_model():
-    # fal/gemini/fireworks have no per-model gating -- any model (or None)
-    # is accepted once the backend itself is in the capable set.
+    # fal/gemini have no per-model gating -- any model (or None) is accepted
+    # once the backend itself is in the capable set.
     from tldw_chatbook.Image_Generation.capabilities import resolve_reference_image_capability
     assert resolve_reference_image_capability("fal", "any-model").supported is True
     assert resolve_reference_image_capability("gemini", None).supported is True
-    assert resolve_reference_image_capability("fireworks", "").supported is True
 
 
 def test_resolve_reference_image_capability_modelstudio_dormant_map_unchanged():

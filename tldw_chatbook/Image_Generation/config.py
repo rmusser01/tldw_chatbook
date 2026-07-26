@@ -66,9 +66,6 @@ DEFAULT_FAL_IMAGE_TIMEOUT_SECONDS = 120
 DEFAULT_GEMINI_IMAGE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
 DEFAULT_GEMINI_IMAGE_TIMEOUT_SECONDS = 120
-DEFAULT_FIREWORKS_IMAGE_BASE_URL = "https://api.fireworks.ai/inference/v1/workflows/accounts/fireworks/models"
-DEFAULT_FIREWORKS_IMAGE_MODEL = "flux-1-schnell-fp8"
-DEFAULT_FIREWORKS_IMAGE_TIMEOUT_SECONDS = 120
 
 # Secret fields: backend -> (flat_field_name, [env vars in precedence
 # order], keyring_backend_id, nested [image_generation.<backend>] TOML
@@ -90,7 +87,6 @@ _SECRETS = {
     "modelstudio": ("modelstudio_image_api_key",  ["DASHSCOPE_API_KEY", "QWEN_API_KEY"],   "modelstudio", "api_key"),
     "fal":         ("fal_image_api_key",          ["FAL_KEY"],                             "fal",         "api_key"),
     "gemini":      ("gemini_image_api_key",       ["GEMINI_API_KEY", "GOOGLE_API_KEY"],    "gemini",      "api_key"),
-    "fireworks":   ("fireworks_image_api_key",    ["FIREWORKS_API_KEY"],                   "fireworks",   "api_key"),
 }
 # Non-secret nested keys: (backend, toml_key) -> flat_field_name
 # NOTE: `reference_image_supported_models` is intentionally NOT mapped here —
@@ -140,9 +136,6 @@ _NON_SECRET = {
     ("gemini", "base_url"):           "gemini_image_base_url",
     ("gemini", "default_model"):      "gemini_image_default_model",
     ("gemini", "timeout_seconds"):    "gemini_image_timeout_seconds",
-    ("fireworks", "base_url"):        "fireworks_image_base_url",
-    ("fireworks", "default_model"):   "fireworks_image_default_model",
-    ("fireworks", "timeout_seconds"): "fireworks_image_timeout_seconds",
 }
 _GLOBAL_KEYS = [
     "default_backend", "enabled_backends", "max_width", "max_height",
@@ -338,10 +331,6 @@ class ImageGenerationConfig:
     gemini_image_api_key: str | None
     gemini_image_default_model: str | None
     gemini_image_timeout_seconds: int
-    fireworks_image_base_url: str | None
-    fireworks_image_api_key: str | None
-    fireworks_image_default_model: str | None
-    fireworks_image_timeout_seconds: int
     reference_image_supported_models: dict[str, list[str]] = field(default_factory=dict)
     # backend id -> "env:<VAR>" | "config" | "keyring" | "missing" (task-1,
     # Settings ▸ Image Gen plan). Purely additive/read-only metadata about
@@ -595,15 +584,6 @@ def get_image_generation_config(*, reload: bool = False) -> ImageGenerationConfi
         gemini_image_timeout_seconds=_coerce_int(
             section.get("gemini_image_timeout_seconds"),
             DEFAULT_GEMINI_IMAGE_TIMEOUT_SECONDS,
-        ),
-        fireworks_image_base_url=_get_config_value(section, "fireworks_image_base_url")
-        or DEFAULT_FIREWORKS_IMAGE_BASE_URL,
-        fireworks_image_api_key=_get_config_value(section, "fireworks_image_api_key"),
-        fireworks_image_default_model=_get_config_value(section, "fireworks_image_default_model")
-        or DEFAULT_FIREWORKS_IMAGE_MODEL,
-        fireworks_image_timeout_seconds=_coerce_int(
-            section.get("fireworks_image_timeout_seconds"),
-            DEFAULT_FIREWORKS_IMAGE_TIMEOUT_SECONDS,
         ),
         reference_image_supported_models=_parse_mapping_of_lists(section.get("reference_image_supported_models")),
         key_sources=key_sources,

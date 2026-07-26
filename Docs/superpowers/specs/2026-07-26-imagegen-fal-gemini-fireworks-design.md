@@ -1,9 +1,17 @@
 # Image-gen backends: fal.ai, Gemini (AI Studio), Fireworks — design
 
+> **2026-07-26: Fireworks DROPPED** — vendor deprecated image generation
+> 2026-06-10 (changelog; endpoints 401); user-approved. Program ships fal +
+> gemini. The rest of this document is kept as-written for historical
+> context (it was the approved design at the time); sections that are now
+> Fireworks-only are annotated below rather than deleted or rewritten.
+
 Date: 2026-07-26. Status: approved pending user review.
 Adds three backends to `tldw_chatbook/Image_Generation/` on the established adapter contract. API shapes verified against live vendor docs 2026-07-26 (the task-620 stale-model lesson): fal queue API at `queue.fal.run` with `Authorization: Key`; Gemini `generateContent` with `x-goog-api-key` returning base64 `inlineData` (Imagen is deprecated, shutdown 2026-08-17 — not used); Fireworks workflows `text_to_image` returning raw bytes with Bearer auth.
 
 ## Decisions (user-approved)
+
+> *2026-07-26 update: Fireworks entries below are historical — the backend was dropped (see note at top of doc). Live scope is fal + gemini only.*
 
 - Backend ids: `fal`, `gemini`, `fireworks`. Labels: "fal.ai", "Gemini (AI Studio)", "Fireworks".
 - Defaults: fal `fal-ai/flux/schnell`; gemini `gemini-2.5-flash-image` (nano-banana); fireworks `flux-1-schnell-fp8`.
@@ -14,10 +22,10 @@ Adds three backends to `tldw_chatbook/Image_Generation/` on the established adap
 
 One adapter file per service under `Image_Generation/adapters/` implementing the existing base contract (`generate(request) -> ImageGenResult`, sync/blocking, worker-driven). Everything else is table rows:
 - Registry lazy-map entry per backend.
-- `Image_Generation/config.py`: defaults constants, `ImageGenerationConfig` fields, `_SECRETS` rows (`fal`: `fal_image_api_key`, env `["FAL_KEY"]`, keyring `fal`; `gemini`: `gemini_image_api_key`, env `["GEMINI_API_KEY", "GOOGLE_API_KEY"]` (order = precedence, the modelstudio two-var pattern), keyring `gemini`; `fireworks`: `fireworks_image_api_key`, env `["FIREWORKS_API_KEY"]`, keyring `fireworks`), `_NON_SECRET` rows (`base_url`, `default_model`, `timeout_seconds` each; fal also `poll_interval_seconds`), `key_sources` picks the new rows up automatically.
-- Defaults: fal base `https://queue.fal.run`, poll interval 2s, timeout 120s; gemini base `https://generativelanguage.googleapis.com/v1beta`, timeout 120s; fireworks base `https://api.fireworks.ai/inference/v1/workflows/accounts/fireworks/models`, timeout 120s.
+- `Image_Generation/config.py`: defaults constants, `ImageGenerationConfig` fields, `_SECRETS` rows (`fal`: `fal_image_api_key`, env `["FAL_KEY"]`, keyring `fal`; `gemini`: `gemini_image_api_key`, env `["GEMINI_API_KEY", "GOOGLE_API_KEY"]` (order = precedence, the modelstudio two-var pattern), keyring `gemini`; `fireworks`: `fireworks_image_api_key`, env `["FIREWORKS_API_KEY"]`, keyring `fireworks`), `_NON_SECRET` rows (`base_url`, `default_model`, `timeout_seconds` each; fal also `poll_interval_seconds`), `key_sources` picks the new rows up automatically. *(2026-07-26: the fireworks `_SECRETS`/`_NON_SECRET` rows and dataclass fields were implemented then removed when the backend was dropped — see decision note.)*
+- Defaults: fal base `https://queue.fal.run`, poll interval 2s, timeout 120s; gemini base `https://generativelanguage.googleapis.com/v1beta`, timeout 120s; fireworks base `https://api.fireworks.ai/inference/v1/workflows/accounts/fireworks/models`, timeout 120s. *(fireworks defaults removed with the backend.)*
 - `listing.py`: is_configured per backend (key present; same non-critical-exception envelope as siblings).
-- Settings (`settings_image_gen_defaults.py`): `BACKEND_IDS` += 3 (canonical order: existing six, then `fal`, `gemini`, `fireworks`), `BACKEND_LABELS`, `FIELD_SCHEMA` rows mirroring openrouter's (`base_url`[url], `default_model`[text], `timeout_seconds`[int,min 1], `api_key`[secret]); probe table below. The panel, draft/save, key UX, and drift test pick the rows up with no panel code changes (that is the point of the schema-driven design; any test asserting six backends updates honestly to nine).
+- Settings (`settings_image_gen_defaults.py`): `BACKEND_IDS` += 3 (canonical order: existing six, then `fal`, `gemini`, `fireworks`), `BACKEND_LABELS`, `FIELD_SCHEMA` rows mirroring openrouter's (`base_url`[url], `default_model`[text], `timeout_seconds`[int,min 1], `api_key`[secret]); probe table below. The panel, draft/save, key UX, and drift test pick the rows up with no panel code changes (that is the point of the schema-driven design; any test asserting six backends updates honestly to nine). *(2026-07-26: Task 7 (not yet implemented as of the Fireworks-drop decision) now adds only `fal`+`gemini` — `BACKEND_IDS` += 2, eight backends total, not nine.)*
 
 ## Adapters
 
@@ -33,47 +41,49 @@ One adapter file per service under `Image_Generation/adapters/` implementing the
 3. Response: iterate ALL `candidates[].content.parts[]`; first `inlineData` part wins → base64-decode with its `mimeType`. **No-image responses are a first-class error path**: safety blocks / text-only answers (`promptFeedback.blockReason`, `finishReason` SAFETY etc.) map to a clear sanitized error naming only the reason CATEGORY (never response text, never the prompt) — no index crashes on missing parts.
 4. Response size: the base64 image arrives inside the JSON body (~3MB+ at 1024²). OpenRouter already receives base64 data-URLs through the same guarded `fetch_json` path, so this works today — the implementer CONFIRMS no byte-cap in the guarded path truncates image-sized JSON rather than assuming (and raises a clear error if a cap is hit).
 
-**fireworks (`fireworks_image_adapter.py`)** — single call, bytes back:
+**fireworks (`fireworks_image_adapter.py`)** — single call, bytes back — **DROPPED 2026-07-26** (see decision note at top of doc; the adapter commit was implemented then reset away when the backend was dropped, and this section is kept for historical context only):
 1. `POST {base}/{model}/text_to_image`, `Authorization: Bearer {api_key}`, `Content-Type: application/json`, `Accept` derived from `ImageGenRequest.format` (`png`→`image/png`, `jpeg`→`image/jpeg`; pinned by test); body maps `prompt`/`negative_prompt`/`width`/`height`/`steps`/`cfg_scale`/`seed` directly (implementer verifies current field names from the API reference).
 2. Response is RAW IMAGE BYTES on success; error responses arrive as JSON on the same endpoint — the adapter distinguishes by status + content-type and surfaces sanitized errors (never raw response bodies; a 404 gets the task-620 enriched message naming the attempted model id and `[image_generation.fireworks] default_model`).
 
 **Shared requirements (all three):**
-- **Model-id shape validation before URL construction** — NEW attack surface unique to these adapters: the model id becomes part of the URL path (existing six carry it in the JSON body). Charset allowlists per backend: gemini/fireworks `[A-Za-z0-9._-]+`; fal additionally allows `/` (path-shaped ids) but rejects `..` segments, leading/trailing `/`, and any of `?#%\s`. Violations raise the adapter's config-error type naming the offending id.
+- **Model-id shape validation before URL construction** — NEW attack surface unique to these adapters: the model id becomes part of the URL path (existing six carry it in the JSON body). Charset allowlists per backend: gemini/fireworks `[A-Za-z0-9._-]+`; fal additionally allows `/` (path-shaped ids) but rejects `..` segments, leading/trailing `/`, and any of `?#%\s`. Violations raise the adapter's config-error type naming the offending id. *(fireworks dropped 2026-07-26 — only gemini's allowlist applies going forward.)*
 - All HTTP through the package's guarded helpers; the task-620 enriched not-found messaging pattern applied per backend (404/400-model-unknown names the model id + config key).
 - `api_key` never logged, never in error text; negative prompt appended not dropped; `ImageGenResult` populated per contract (resolved_model only where genuinely reported — do not fabricate).
 
 ## http_client addition
 
-`fetch_bytes_via_post(url, *, headers, json, timeout, trusted_origins) -> tuple[bytes, str]` (bytes + content-type): fireworks' shape (POST returning bytes) fits neither `fetch_json` (JSON-only) nor `fetch_image_bytes` (GET-shaped). Same discipline as both: egress `check_url_or_raise` with trusted_origins pre-request, no auto-redirects, per-hop revalidation with `same_origin`-gated credential stripping on any redirect, explicit timeout honoring `timeout=0`, size-bounded read. Unit-tested with the same fake-client matrix as the existing helpers (incl. the cross-origin cred-strip and redirect-to-private cases).
+`fetch_bytes_via_post(url, *, headers, json, timeout, trusted_origins) -> tuple[bytes, str]` (bytes + content-type): fireworks' shape (POST returning bytes) fits neither `fetch_json` (JSON-only) nor `fetch_image_bytes` (GET-shaped). Same discipline as both: egress `check_url_or_raise` with trusted_origins pre-request, no auto-redirects, per-hop revalidation with `same_origin`-gated credential stripping on any redirect, explicit timeout honoring `timeout=0`, size-bounded read. Unit-tested with the same fake-client matrix as the existing helpers (incl. the cross-origin cred-strip and redirect-to-private cases). *(2026-07-26: the helper (Task 1) shipped and stays in the codebase — it was fireworks' original motivation but is generic and harmless to keep; it is simply unused by any adapter now that fireworks is dropped.)*
 
 ## Settings probes
 
 - gemini: `GET {base}/models` with `x-goog-api-key` → 2xx `Reachable` / 401,403 `Auth failed` / other mapping — full auth-verified probe (cheap list endpoint exists).
-- fireworks: implementer checks for the OpenAI-compat `GET .../inference/v1/models` with Bearer on the api.fireworks.ai host; if confirmed cheap+authed, full probe; else reachability-only → `Reachable (auth unverified)`.
+- fireworks: implementer checks for the OpenAI-compat `GET .../inference/v1/models` with Bearer on the api.fireworks.ai host; if confirmed cheap+authed, full probe; else reachability-only → `Reachable (auth unverified)`. *(dropped 2026-07-26 — never implemented.)*
 - fal: reachability-only on the configured base (no confirmed cheap authed endpoint) → `Reachable (auth unverified)`.
 - All through the existing probe module's closed badge set and sanitization; no new badge strings.
 
 ## Testing
 
-- Per-adapter unit suites (`Tests/Image_Generation/test_{fal,gemini,fireworks}_adapter.py`) with fake clients patched on the real module: payload shape incl. auth-header placement (gemini: header-not-query pinned), model-id validation matrix (incl. fal `..` rejection), response parsing (gemini all-parts iteration + no-image/safety mapping; fireworks bytes-vs-JSON-error branch; fal poll lifecycle with SELF-BUILT URL assertion — the fake asserts the poll URL was constructed from config base + request_id, NOT taken from the response's status_url), error sanitization, egress trust threading (self-built trusted; extracted enforced).
+- Per-adapter unit suites (`Tests/Image_Generation/test_{fal,gemini,fireworks}_adapter.py`) with fake clients patched on the real module: payload shape incl. auth-header placement (gemini: header-not-query pinned), model-id validation matrix (incl. fal `..` rejection), response parsing (gemini all-parts iteration + no-image/safety mapping; fireworks bytes-vs-JSON-error branch; fal poll lifecycle with SELF-BUILT URL assertion — the fake asserts the poll URL was constructed from config base + request_id, NOT taken from the response's status_url), error sanitization, egress trust threading (self-built trusted; extracted enforced). *(2026-07-26: no `test_fireworks_adapter.py` exists — the adapter commit was reset away before merge.)*
 - `fetch_bytes_via_post` helper suite as above.
 - Config loader: new `_SECRETS`/`_NON_SECRET` rows, key_sources for the gemini two-var precedence.
-- Settings: the existing drift test must pass unmodified (it validates schema-vs-loader automatically); backend-count-sensitive tests updated to nine; probe tests for the two/three new probe branches.
-- Opt-in live tests per backend in `test_live_backends.py` style (`TLDW_LIVE_FAL_API_KEY` etc., markers integration/optional/slow).
-- Live UAT (post merge-readiness, user keys): per backend — Settings probe, then Console `/generate-image :backend <prompt>` end-to-end with card verification; the OpenRouter UAT recipe.
+- Settings: the existing drift test must pass unmodified (it validates schema-vs-loader automatically); backend-count-sensitive tests updated to nine; probe tests for the two/three new probe branches. *(2026-07-26: eight backends total, not nine — see Architecture section note.)*
+- Opt-in live tests per backend in `test_live_backends.py` style (`TLDW_LIVE_FAL_API_KEY` etc., markers integration/optional/slow). *(fireworks live-test entry dropped with the backend.)*
+- Live UAT (post merge-readiness, user keys): per backend — Settings probe, then Console `/generate-image :backend <prompt>` end-to-end with card verification; the OpenRouter UAT recipe. *(fireworks UAT case dropped with the backend.)*
 
 ## Reference images (engine seam — user-approved scope addition)
 
+> *2026-07-26 update: implemented for fal + gemini only — `REFERENCE_IMAGE_CAPABLE_BACKENDS` is `frozenset({"fal", "gemini"})` (fireworks removed post-drop).*
+
 The P1 port left a dormant seam that this program opens at the ENGINE level for the three new backends (Console attach UX is a follow-up spec — engine first, surface second):
 - `ImageGenRequest.reference_image: ResolvedReferenceImage | None` already exists (`capabilities.py`: bytes `content`, `mime_type`, dims) — the request shape needs no change. `worker.build_request` gains an optional `reference_image` param that populates it.
-- **Per-backend capability flags**: `supports_reference_image` — True for `fal`, `gemini`, `fireworks`; False for the existing six (modelstudio's dormant per-model map stays dormant; per-model gating remains v2). Exposed via the existing `resolve_backend_reference_image_capability` seam so callers can query it.
+- **Per-backend capability flags**: `supports_reference_image` — True for `fal`, `gemini`, `fireworks`; False for the existing six (modelstudio's dormant per-model map stays dormant; per-model gating remains v2). Exposed via the existing `resolve_backend_reference_image_capability` seam so callers can query it. *(fireworks entry removed 2026-07-26.)*
 - **Fail loudly, never silently ignore**: `run_generation`'s validation choke point rejects a request carrying a reference image for a backend whose flag is False ("backend X does not support reference images") — the silent no-op contract of the dormant seam ends with this program.
 - **Validation at the choke point**: mime allowlist (png/jpeg/webp), size cap `IMAGE_GEN_REFERENCE_MAX_BYTES = 10 * 1024 * 1024`, non-empty content bytes required (file_id/temp_path variants are NOT accepted by the engine — bytes-in-memory only, preserving the P1 no-media-DB-coupling decision).
 - **Per-adapter encoding**:
   - gemini: an `inlineData` part (`{inline_data: {mime_type, data: <b64>}}`) alongside the text part — nano-banana's native editing input.
   - fal: `image_url` field as a base64 data URI (`data:{mime};base64,...`) — fal accepts data URIs, avoiding any fal-storage upload scope. When a reference is present the model is used as-is (choosing an image-capable fal model is the caller's job; a model that ignores image_url is vendor behavior, not adapter error).
-  - fireworks: implementer verifies the current image-input field/route from the API reference (Kontext-family workflows; possibly a distinct `image_to_image`/kontext endpoint) — if the configured model's workflow does not accept an image input the adapter surfaces the vendor error sanitized; if a distinct route exists the adapter selects it when a reference is present.
-- **Tests**: per-adapter encoding shape (gemini part structure; fal data-URI; fireworks field/route selection); choke-point refusal for unsupported backends (all six legacy ids); mime/size validation matrix; capability-flag exposure.
+  - fireworks: implementer verifies the current image-input field/route from the API reference (Kontext-family workflows; possibly a distinct `image_to_image`/kontext endpoint) — if the configured model's workflow does not accept an image input the adapter surfaces the vendor error sanitized; if a distinct route exists the adapter selects it when a reference is present. *(dropped 2026-07-26 — never implemented.)*
+- **Tests**: per-adapter encoding shape (gemini part structure; fal data-URI; fireworks field/route selection); choke-point refusal for unsupported backends (all six legacy ids); mime/size validation matrix; capability-flag exposure. *(fireworks encoding-shape test never existed; the choke-point/mime/size/capability tests cover fal+gemini.)*
 - **Live UAT addition**: one nano-banana edit case (tiny reference image + edit instruction) alongside the text-to-image cases.
 
 ## Non-goals

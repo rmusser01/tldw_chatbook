@@ -180,7 +180,7 @@ def test_key_sources_missing(monkeypatch):
     assert cfg.key_sources["openrouter"] == "missing"
     assert set(cfg.key_sources) == {
         "stable_diffusion_cpp", "swarmui", "openrouter", "novita", "together", "modelstudio",
-        "fal", "gemini", "fireworks",
+        "fal", "gemini",
     }
 
 
@@ -336,11 +336,14 @@ def test_other_backends_config_key_unaffected_by_swarmui_fix(monkeypatch):
     assert cfg.openrouter_image_api_key == "fake-openrouter-key"
 
 
-# --- task-2 (fal/Gemini/Fireworks image backends) ---------------------------
+# --- task-2 (fal/Gemini image backends) --------------------------------
+# Fireworks was dropped 2026-07-26 -- vendor deprecated image generation
+# (see Docs/superpowers/specs/2026-07-26-imagegen-fal-gemini-fireworks-design.md
+# and the sibling plan doc for the decision note).
 
 
 def _delenv_new_backend_vars(monkeypatch):
-    for var in ("FAL_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "FIREWORKS_API_KEY"):
+    for var in ("FAL_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -432,42 +435,3 @@ def test_gemini_env_fallback_to_google_api_key(monkeypatch):
     cfg = _load_config_with_section(monkeypatch, {})
     assert cfg.gemini_image_api_key == "fake-google-key"
     assert cfg.key_sources["gemini"] == "env:GOOGLE_API_KEY"
-
-
-def test_fireworks_defaults_when_unset(monkeypatch):
-    from tldw_chatbook.Image_Generation import config as c
-    _delenv_new_backend_vars(monkeypatch)
-    cfg = _load_config_with_section(monkeypatch, {})
-    assert cfg.fireworks_image_base_url == c.DEFAULT_FIREWORKS_IMAGE_BASE_URL == (
-        "https://api.fireworks.ai/inference/v1/workflows/accounts/fireworks/models"
-    )
-    assert cfg.fireworks_image_default_model == c.DEFAULT_FIREWORKS_IMAGE_MODEL == "flux-1-schnell-fp8"
-    assert cfg.fireworks_image_timeout_seconds == c.DEFAULT_FIREWORKS_IMAGE_TIMEOUT_SECONDS == 120
-    assert cfg.fireworks_image_api_key in (None, "")
-    assert cfg.key_sources["fireworks"] == "missing"
-
-
-def test_fireworks_nested_toml_round_trip(monkeypatch):
-    _delenv_new_backend_vars(monkeypatch)
-    fake = {
-        "fireworks": {
-            "base_url": "https://api.example.fireworks.ai/v1",
-            "api_key": "fake-fireworks-key",
-            "default_model": "flux-other-model",
-            "timeout_seconds": 60,
-        }
-    }
-    cfg = _load_config_with_section(monkeypatch, fake)
-    assert cfg.fireworks_image_base_url == "https://api.example.fireworks.ai/v1"
-    assert cfg.fireworks_image_api_key == "fake-fireworks-key"
-    assert cfg.fireworks_image_default_model == "flux-other-model"
-    assert cfg.fireworks_image_timeout_seconds == 60
-    assert cfg.key_sources["fireworks"] == "config"
-
-
-def test_fireworks_env_key_precedence(monkeypatch):
-    _delenv_new_backend_vars(monkeypatch)
-    monkeypatch.setenv("FIREWORKS_API_KEY", "fake-fireworks-env-key")
-    cfg = _load_config_with_section(monkeypatch, {"fireworks": {"api_key": "fake-fireworks-config-key"}})
-    assert cfg.fireworks_image_api_key == "fake-fireworks-env-key"
-    assert cfg.key_sources["fireworks"] == "env:FIREWORKS_API_KEY"

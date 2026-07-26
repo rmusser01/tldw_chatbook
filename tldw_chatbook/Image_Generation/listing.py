@@ -100,13 +100,6 @@ def _is_gemini_configured(cfg, enabled: bool) -> bool:
     return bool(api_key)
 
 
-def _is_fireworks_configured(cfg, enabled: bool) -> bool:
-    if not enabled:
-        return False
-    api_key = (getattr(cfg, "fireworks_image_api_key", None) or os.getenv("FIREWORKS_API_KEY") or "").strip()
-    return bool(api_key)
-
-
 def _resolve_supported_formats(name: str) -> list[str] | None:
     registry = get_registry()
     try:
@@ -184,13 +177,6 @@ def list_image_models_for_catalog() -> list[dict[str, Any]]:
             except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS as exc:
                 logger.debug("Image backend config check failed for {}: {}", name, exc)
                 is_configured = False
-        if name == "fireworks":
-            try:
-                is_configured = _is_fireworks_configured(cfg, enabled)
-            except _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS as exc:
-                logger.debug("Image backend config check failed for {}: {}", name, exc)
-                is_configured = False
-
         entry: dict[str, Any] = {
             "provider": "image",
             "id": f"image/{name}",

@@ -27,7 +27,7 @@ _DEFAULT_REFERENCE_IMAGE_SUPPORT: dict[str, set[str]] = {
 #: this set and does not grant capability through the functions below for
 #: any backend outside it. Extending reference-image support to another
 #: backend means adding its id here, not repurposing the per-model map.
-REFERENCE_IMAGE_CAPABLE_BACKENDS: frozenset[str] = frozenset({"fal", "gemini", "fireworks"})
+REFERENCE_IMAGE_CAPABLE_BACKENDS: frozenset[str] = frozenset({"fal", "gemini"})
 
 
 @dataclass(frozen=True)
@@ -142,7 +142,7 @@ def resolve_reference_image_capability(
 ) -> ReferenceImageCapability:
     """Resolve whether a backend/model pair supports reference-image input.
 
-    Backends in ``REFERENCE_IMAGE_CAPABLE_BACKENDS`` (fal/Gemini/Fireworks)
+    Backends in ``REFERENCE_IMAGE_CAPABLE_BACKENDS`` (fal/Gemini)
     support reference images unconditionally -- these adapters have no
     per-model restriction, so ``model`` is not consulted for them. Backends
     outside that set fall back to the dormant per-model
