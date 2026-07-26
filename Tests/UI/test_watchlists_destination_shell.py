@@ -1,10 +1,15 @@
 """Tests for the new watchlists screen shell structure."""
 
+import asyncio
+import itertools
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Select
+from textual.widgets import Button, Input, Select
+
+from textual.widgets import DataTable
 
 from Tests.UI.test_destination_shells import DestinationHarness
 from Tests.UI.test_screen_navigation import _build_test_app
@@ -12,8 +17,12 @@ from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
+from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
+from tldw_chatbook.UI.Watchlists_Modules.rules_pane import RulesPane
 from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
+from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 
 
 class WatchlistsContextHarness(App):
@@ -529,3 +538,547 @@ async def test_watchlists_notifications_section_reads_real_client_inbox():
                 break
 
         assert app.client_notifications_db.get_notification(inserted["id"])["is_read"]
+
+
+# --- Task 5: re-hosting the existing panes inside the collapsible workbench ---
+#
+# The file has no `watchlists_app` fixture (none existed before this task), so
+# these reuse the same `DestinationHarness` + `_build_test_app()` pattern the
+# rest of this file already uses, rather than inventing a second harness.
+
+
+@pytest.mark.asyncio
+async def test_existing_panes_survive_the_workbench_rehost():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert screen.query("#wl-workbench"), "the workbench container should be mounted"
+        # The panes that existed before must still be mounted, not replaced.
+        assert screen.query("#watchlists-navigator")
+        # Default active_section is "overview", so OverviewPane is what's there
+        # to start; switch to Sources (as the pre-existing navigator test does)
+        # to confirm SourcesPane also still renders inside the re-hosted ITEMS
+        # region rather than being dropped.
+        assert screen.query("#watchlists-overview-pane")
+        screen.query_one("#nav-sources", Button).press()
+        await pilot.pause()
+        assert screen.query("#watchlists-sources-pane")
+
+
+@pytest.mark.asyncio
+async def test_bracket_keys_toggle_the_rails():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        await pilot.press("[")
+        await pilot.pause()
+        assert screen.region_layout.is_collapsed(Region.LEFT_RAIL)
+        await pilot.press("]")
+        await pilot.pause()
+        assert screen.region_layout.is_collapsed(Region.RIGHT_RAIL)
+
+
+@pytest.mark.asyncio
+async def test_collapsing_a_region_persists(monkeypatch):
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: saved.append(layout),
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.focused_region = Region.ITEMS
+        await pilot.press("z")
+        await pilot.pause()
+        assert screen.region_layout.is_collapsed(Region.ITEMS)
+        assert saved
+        assert Region.ITEMS in saved[-1].collapsed
+
+
+@pytest.mark.asyncio
+async def test_route_and_class_name_are_unchanged():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert type(screen).__name__ == "WatchlistsCollectionsScreen"
+        # BaseAppScreen stores the route as `screen_name` (base_app_screen.py:23),
+        # not `route_name` — the screen passes "watchlists_collections" to super().
+        assert screen.screen_name == "watchlists_collections"
+
+
+@pytest.mark.asyncio
+async def test_focus_drives_which_region_z_collapses():
+    """`z` is a lie unless focus tracking actually works: without
+    `on_descendant_focus`, every `z` press collapses whatever `focused_region`
+    defaults to, regardless of where the user actually is."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.query_one("#wl-region-items").focus()
+        await pilot.pause()
+        assert screen.focused_region == Region.ITEMS
+        await pilot.press("z")
+        await pilot.pause()
+        assert screen.region_layout.is_collapsed(Region.ITEMS)
+        assert not screen.region_layout.is_collapsed(Region.FEEDS)
+
+
+@pytest.mark.asyncio
+async def test_persisted_layout_is_applied_on_mount(monkeypatch):
+    """`on_mount` must push the loaded layout into the already-mounted
+    workbench, not just this screen's own `region_layout` attribute — compose
+    always runs before Mount, so the workbench was already built with the
+    reactive's default value by the time `on_mount` fires."""
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.load_region_layout",
+        lambda: RegionLayout(collapsed=frozenset({Region.RIGHT_RAIL})),
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert screen.region_layout.is_collapsed(Region.RIGHT_RAIL)
+        assert screen.query("#wl-header-right_rail")
+        assert not screen.query("#watchlists-inspector-pane")
+
+
+# --- PR #926 review, Bug 2: `_apply_layout` used to call `save_region_layout`
+# (a synchronous whole-file config read-modify-write) unconditionally and on
+# the UI thread, including from `on_mount` when nothing had changed. The
+# three tests below cover the fix's two halves: skip the write when the
+# layout is unchanged from what is already persisted, and move any real
+# write off the UI thread via `run_worker(thread=True)`.
+
+
+@pytest.mark.asyncio
+async def test_mounting_with_a_persisted_layout_performs_no_write(monkeypatch):
+    """`on_mount` re-applies whatever `load_region_layout` just returned so
+    the mounted workbench reflects it (see
+    `test_persisted_layout_is_applied_on_mount` above) — but that layout is
+    by definition already on disk, so doing so must not itself schedule a
+    config write."""
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.load_region_layout",
+        lambda: RegionLayout(collapsed=frozenset({Region.RIGHT_RAIL})),
+    )
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: saved.append(layout),
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert saved == []
+
+
+@pytest.mark.asyncio
+async def test_a_real_toggle_performs_exactly_one_write(monkeypatch):
+    """A single genuine layout change schedules exactly one write, and it
+    lands off the UI thread (a plain `run_worker(..., thread=True)` call
+    completes here without the test itself spinning up any thread)."""
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: saved.append(layout),
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        saved.clear()  # `on_mount`'s own (no-op) apply may have run above.
+
+        screen = host.screen_stack[-1]
+        screen.focused_region = Region.ITEMS
+        await pilot.press("z")
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(saved) == 1
+        assert Region.ITEMS in saved[0].collapsed
+
+
+@pytest.mark.asyncio
+async def test_a_burst_of_toggles_persists_only_the_final_state(monkeypatch):
+    """A rapid burst of toggles must not interleave writes out of order —
+    once every worker has drained, the persisted value must match the
+    layout the screen actually ended up with, not some intermediate state
+    from earlier in the burst."""
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: saved.append(layout),
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        saved.clear()  # `on_mount`'s own (no-op) apply may have run above.
+
+        screen = host.screen_stack[-1]
+        screen.focused_region = Region.ITEMS
+        # Fire off several toggles back-to-back with no pause in between, so
+        # scheduling for all of them races ahead of any one write completing.
+        await pilot.press("z")
+        await pilot.press("[")
+        await pilot.press("z")
+        await pilot.press("]")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        final_layout = screen.region_layout
+        assert saved, "a real change occurred, so at least one write must have happened"
+        assert saved[-1].collapsed == final_layout.collapsed_for_persistence()
+
+
+# --- Fix round 1, Finding 1: a bracket press must not destroy a half-typed
+# create-source form. `region_layout` is `recompose=True`, so ANY region
+# toggle — including one on a rail with nothing to do with Sources — rebuilds
+# the whole workbench and constructs a fresh SourcesPane. The draft is lifted
+# to screen state (`_source_create_draft`/`_source_create_form_open`) the
+# same way selected_source/selected_run/active_section already survive pane
+# rebuilds; see CreateFormDraftChanged/CreateFormVisibilityChanged in
+# sources_pane.py.
+
+
+@pytest.mark.asyncio
+async def test_bracket_toggle_preserves_in_progress_create_form_draft():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen.query_one("#nav-sources", Button).press()
+        await pilot.pause()
+        screen.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+        assert screen.query("#sources-create-name"), "the create form should be open"
+
+        # Matches the direct-assignment style Tests/Watchlists/
+        # test_watchlists_sources_pane.py already uses to simulate typing:
+        # Input.value is a reactive whose own watcher posts Input.Changed
+        # regardless of whether the change came from a keystroke or a direct
+        # attribute assignment, so this exercises the same code path a real
+        # keystroke would.
+        screen.query_one("#sources-create-name", Input).value = "Draft Name"
+        await pilot.pause()
+        screen.query_one("#sources-create-url", Input).value = "https://draft.example"
+        await pilot.pause()
+
+        name_before = screen.query_one("#sources-create-name", Input).value
+        url_before = screen.query_one("#sources-create-url", Input).value
+        assert name_before == "Draft Name"
+        assert url_before == "https://draft.example"
+
+        # Toggle a rail that has nothing to do with Sources. This rebuilds
+        # the whole workbench, including the SourcesPane living in ITEMS.
+        await pilot.press("[")
+        await pilot.pause()
+
+        assert screen.query(
+            "#sources-create-name"
+        ), "the create form must still be open after an unrelated toggle"
+        name_after = screen.query_one("#sources-create-name", Input).value
+        url_after = screen.query_one("#sources-create-url", Input).value
+        assert name_after == "Draft Name", "typed Name text must survive the rebuild"
+        assert url_after == "https://draft.example", "typed URL text must survive the rebuild"
+
+
+@pytest.mark.asyncio
+async def test_submitting_the_create_form_clears_the_draft():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen.query_one("#nav-sources", Button).press()
+        await pilot.pause()
+        screen.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        screen.query_one("#sources-create-name", Input).value = "Draft Name"
+        await pilot.pause()
+        screen.query_one("#sources-create-url", Input).value = "https://draft.example"
+        await pilot.pause()
+
+        screen.query_one("#sources-create-submit", Button).press()
+        await pilot.pause()
+
+        assert screen._source_create_draft == {"name": "", "url": "", "tags": ""}
+        assert screen._source_create_form_open is False
+
+        # Re-toggle a rail: the rebuilt pane must not resurrect the old draft.
+        await pilot.press("[")
+        await pilot.press("[")
+        await pilot.pause()
+        assert not screen.query(
+            "#sources-create-name"
+        ), "the form should stay closed, not reopen with stale text"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_create_form_clears_the_draft():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen.query_one("#nav-sources", Button).press()
+        await pilot.pause()
+        screen.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        screen.query_one("#sources-create-name", Input).value = "Draft Name"
+        await pilot.pause()
+
+        screen.query_one("#sources-create-cancel", Button).press()
+        await pilot.pause()
+
+        assert screen._source_create_draft == {"name": "", "url": "", "tags": ""}
+        assert screen._source_create_form_open is False
+
+
+# --- Fix round 2 (final whole-branch review): Findings 2, 3, 4. `_build_
+# detail_pane`/`_build_inspector_pane` construct a brand new pane on EVERY
+# workbench rebuild, not just a section switch -- any region collapse/solo/
+# rail toggle recomposes the whole `WatchlistsWorkbench` (`region_layout` is
+# `recompose=True`). RunsPane/NotificationsPane/OverviewPane were already
+# seeded from screen state; Sources/Items/Rules and the Inspector were not,
+# and an in-progress Rules edit had no screen-state mirror at all (unlike the
+# Sources create-form draft fixed in round 1).
+
+
+async def _wait_for_table_rows(pilot, table_id: str, screen, expected: int) -> DataTable:
+    table = screen.query_one(table_id, DataTable)
+    for _ in range(30):
+        if table.row_count >= expected:
+            break
+        await pilot.pause()
+        table = screen.query_one(table_id, DataTable)
+    return table
+
+
+@pytest.mark.asyncio
+async def test_bracket_toggle_preserves_loaded_sources_items_and_rules_tables():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen._controller.list_sources = AsyncMock(
+            return_value=[{"id": "s1", "name": "Feed One", "source_type": "rss"}]
+        )
+        screen._controller.list_items = AsyncMock(
+            return_value=[{"id": "i1", "title": "Item One", "source_name": "Feed One"}]
+        )
+        screen._controller.list_alert_rules = AsyncMock(
+            return_value=[{"id": "r1", "name": "Rule One", "condition_type": "no_items"}]
+        )
+
+        for section, table_id in (
+            ("sources", "#sources-table"),
+            ("items", "#items-table"),
+            ("rules", "#rules-table"),
+        ):
+            screen.query_one(f"#nav-{section}", Button).press()
+            await pilot.pause()
+
+            table = await _wait_for_table_rows(pilot, table_id, screen, 1)
+            assert table.row_count == 1, f"{section} table never loaded its one row"
+
+            await pilot.press("[")
+            await pilot.pause()
+
+            table_after_toggle = screen.query_one(table_id, DataTable)
+            assert table_after_toggle.row_count == 1, (
+                f"{section} table was emptied by an unrelated left-rail toggle"
+            )
+
+            # Re-expand so the next section's nav button (in the left rail)
+            # is reachable again.
+            await pilot.press("[")
+            await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_bracket_toggle_preserves_inspector_selection():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen._controller.list_sources = AsyncMock(
+            return_value=[{"id": "s1", "name": "Feed One", "source_type": "rss"}]
+        )
+
+        screen.query_one("#nav-sources", Button).press()
+        await pilot.pause()
+        await _wait_for_table_rows(pilot, "#sources-table", screen, 1)
+
+        sources_pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        sources_pane.select_source_by_id("s1")
+        await pilot.pause()
+
+        assert screen.selected_entity is not None
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        assert inspector.selected_entity == screen.selected_entity
+
+        await pilot.press("[")
+        await pilot.pause()
+
+        rebuilt_inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        assert rebuilt_inspector is not inspector, "the inspector should have been rebuilt"
+        assert rebuilt_inspector.selected_entity == screen.selected_entity, (
+            "the rebuilt inspector lost the screen's selection"
+        )
+        # The empty state ("Select a source...") must NOT be showing, since a
+        # real selection is still in effect after the rebuild.
+        assert not rebuilt_inspector.query("#inspector-empty-state")
+
+
+@pytest.mark.asyncio
+async def test_bracket_toggle_preserves_in_progress_rule_edit():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        rule = {
+            "id": "r1",
+            "name": "Rule One",
+            "condition_type": "no_items",
+            "severity": "warning",
+            "enabled": True,
+        }
+        screen._controller.list_alert_rules = AsyncMock(return_value=[rule])
+
+        screen.query_one("#nav-rules", Button).press()
+        await pilot.pause()
+        await _wait_for_table_rows(pilot, "#rules-table", screen, 1)
+
+        rules_pane = screen.query_one("#watchlists-rules-pane", RulesPane)
+        rules_pane.edit_rule(rule)
+        await pilot.pause()
+
+        assert screen.query("#rules-create-name"), "the edit form should be open"
+        assert screen._rule_form_open is True
+        assert screen._rule_form_editing == rule
+
+        # Toggle a rail that has nothing to do with Rules. This rebuilds the
+        # whole workbench, including the RulesPane living in ITEMS.
+        await pilot.press("[")
+        await pilot.pause()
+
+        assert screen.query(
+            "#rules-create-name"
+        ), "the rule edit form must still be open after an unrelated toggle"
+        name_input = screen.query_one("#rules-create-name", Input)
+        assert name_input.value == "Rule One", (
+            "the form must still be pre-filled for the SAME rule being edited"
+        )
+
+
+@pytest.mark.asyncio
+async def test_saving_a_rule_edit_does_not_leave_a_phantom_form_open():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        rule = {
+            "id": "r1",
+            "name": "Rule One",
+            "condition_type": "no_items",
+            "severity": "warning",
+            "enabled": True,
+        }
+        screen._controller.list_alert_rules = AsyncMock(return_value=[rule])
+        # A fast-completing mocked save is exactly the case that lets the
+        # screen's overview-data-triggered recompose win the race against
+        # RulesPane's own RuleFormVisibilityChanged message still bubbling
+        # up to the screen (see `handle_save_rule_requested`).
+        screen._controller.save_alert_rule = AsyncMock(return_value=dict(rule))
+        # `overview_data` is a `recompose=True` reactive that only rebuilds
+        # the screen when the *value* actually changes; the real
+        # `get_overview_data()` return value is otherwise byte-for-byte
+        # identical before and after this mocked save (nothing in the
+        # backing store actually changed), which would mask the race this
+        # test targets. Returning a distinct dict on every call reproduces
+        # the real-world case where a save legitimately changes a count
+        # (e.g. `active_alert_rules`), which is what triggers the recompose.
+        overview_call_count = itertools.count(1)
+
+        async def _fake_overview_data(**_kwargs: Any) -> dict[str, Any]:
+            return {
+                "total_sources": 0,
+                "active_sources": 0,
+                "sources_in_error": 0,
+                "total_items": 0,
+                "new_items": 0,
+                "latest_run_status": "unavailable",
+                "failed_runs": [],
+                "active_alert_rules": next(overview_call_count),
+            }
+
+        screen._controller.get_overview_data = _fake_overview_data
+
+        screen.query_one("#nav-rules", Button).press()
+        await pilot.pause()
+        await _wait_for_table_rows(pilot, "#rules-table", screen, 1)
+
+        rules_pane = screen.query_one("#watchlists-rules-pane", RulesPane)
+        rules_pane.edit_rule(rule)
+        await pilot.pause()
+
+        assert screen.query("#rules-create-name"), "the edit form should be open"
+
+        screen.query_one("#rules-create-submit", Button).press()
+
+        # Drive enough ticks for the save worker to finish and its
+        # overview-data refresh to trigger the screen-level recompose.
+        rebuilt_rules_pane = rules_pane
+        for _ in range(30):
+            await asyncio.sleep(0.02)
+            await pilot.pause()
+            rebuilt_rules_pane = screen.query_one("#watchlists-rules-pane", RulesPane)
+            if rebuilt_rules_pane is not rules_pane:
+                break
+
+        assert rebuilt_rules_pane is not rules_pane, (
+            "the recompose triggered by the save should have rebuilt the pane"
+        )
+        assert rebuilt_rules_pane.show_rule_form is False, (
+            "the rule edit form must be closed after a successful save, not "
+            "reopened pre-filled with the just-submitted rule"
+        )
+        assert not screen.query("#rules-create-name"), (
+            "no rule edit form fields should remain in the DOM after a "
+            "successful save"
+        )
