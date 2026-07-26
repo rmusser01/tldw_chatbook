@@ -47,7 +47,9 @@ from tldw_chatbook.UI.Screens import (
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
+from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
+from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
 from tldw_chatbook.Widgets.destination_workbench import (
     DestinationWorkbench,
     WorkbenchPane,
@@ -259,6 +261,69 @@ def _visible_workbench_pane_titles(screen, workbench: str) -> list[str]:
 
 def _visible_button_labels(screen) -> set[str]:
     return {str(button.label) for button in screen.query(Button) if button.display}
+
+
+def _composited_rows(container) -> list[str]:
+    """`container`'s own row-span exactly as the compositor painted it.
+
+    `Widget.render_line()` is NOT ground truth for what is actually visible:
+    it returns a widget's own strip at whatever size the widget computed for
+    ITSELF (e.g. `width: auto` sizes to fit the label), which can be wider
+    than the space its container/viewport actually has -- Textual does not
+    clamp an overflowing child down to its parent's box before rendering it.
+    Verified empirically while writing this test: with the pre-fix 28-wide
+    rail (no `width: 100%`/`text-wrap: wrap`), `Button.render_line(0)`
+    happily returned the FULL, untruncated label even though the button's
+    own `.region` (x=210, width=37) already ran 12 columns past the rail's
+    right edge at x=235 -- a `render_line`-based assertion would have passed
+    against the very CSS this test exists to catch, the same false-negative
+    shape the task brief warned a bare-`App` unit test would produce, just
+    one layer further down. The COMPOSITOR (`Screen._compositor`) is what
+    actually clips overlapping/overflowing widgets down to what a real
+    terminal shows; `render_strips()` returns that final, already-clipped
+    output, confirmed against a live capture reproducing the exact
+    truncated strings from the task brief ("Stage Watchlists Cont", "Open
+    current Watchlis", "Console follow unavai") before the CSS fix, and
+    their full, wrapped text after it.
+    """
+    strips = container.screen._compositor.render_strips()
+    region = container.region
+    rows = []
+    for y in range(region.y, region.y + region.height):
+        if 0 <= y < len(strips):
+            row_text = "".join(segment.text for segment in strips[y])
+            rows.append(row_text[region.x : region.x + region.width])
+    return rows
+
+
+_BORDER_GLYPHS = "─│┌┐└┘╭╮╯╰═║╔╗╚╝├┤┬┴┼"
+
+
+def _assert_label_intact_on_screen(container, label: str, *, context: str) -> None:
+    """Assert `label` appears whole (possibly wrapped, never clipped) in the
+    compositor's actual painted output for `container`.
+
+    Border-drawing glyphs are stripped before joining rows: the label is
+    read back by squeezing whitespace and concatenating rows in order (a
+    wrapped label reads correctly this way since Textual wraps at word
+    boundaries without reordering), and a literal border character
+    surviving between two words a wrap split apart -- e.g. "Context ││ in"
+    from the panel's own frame sitting inside the column slice -- would
+    otherwise break a substring match that has nothing to do with clipping.
+    """
+    rows = _composited_rows(container)
+    cleaned_rows = [
+        "".join(ch for ch in row if ch not in _BORDER_GLYPHS) for row in rows
+    ]
+    combined = " ".join(" ".join(row.split()) for row in cleaned_rows if row.strip())
+    assert "…" not in combined, (
+        f"{context}: composited output shows an ellipsis (clipped text): {combined!r}"
+    )
+    normalized = " ".join(label.split())
+    assert normalized in combined, (
+        f"{context}: {label!r} does not appear intact on screen -- composited "
+        f"rail reads {combined!r}"
+    )
 
 
 def _mark_console_onboarding_complete(app) -> None:
@@ -1122,6 +1187,60 @@ async def test_watchlists_items_region_is_taller_than_feeds_region_when_expanded
             f"ITEMS should be taller than FEEDS once FEEDS is content-fit: "
             f"feeds={feeds.region} items={items.region}"
         )
+
+
+@pytest.mark.parametrize("size", [(235, 52), (160, 42)])
+@pytest.mark.asyncio
+async def test_watchlists_right_rail_does_not_clip_action_labels(size):
+    """Task 5, defect 1: at the pre-fix 28-wide rail (26 usable columns),
+    every action label on the right rail truncated -- measured live at
+    235x52 as "Stage Watchlists Cont", "Open current Watchlis", "Console
+    follow unavai". Reproduced here byte-for-byte against the unfixed CSS
+    while writing this test (see `_composited_rows`'s docstring for why a
+    per-widget assertion is not enough to catch it), then confirmed fixed.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        right_rail = screen.query_one("#wl-region-right_rail")
+        context = f"watchlists right rail at {size}"
+        for label in (
+            "Stage Watchlists Context in Console",
+            "Open current Watchlists",
+            "Console follow unavailable",
+        ):
+            _assert_label_intact_on_screen(right_rail, label, context=context)
+
+        # Also drive the entity Inspector itself through every action set
+        # it can show, including the new watchlist-level (scope-only) one,
+        # so a future action label long enough to threaten wrapping is
+        # caught here too, not just the console-handoff buttons above it.
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+
+        inspector.selected_entity = {
+            "id": "source-1",
+            "name": "AI News RSS",
+            "source_type": "rss",
+            "url": "http://example.com/feed",
+        }
+        await pilot.pause()
+        for label in ("Preview", "Check now", "Stage in Console", "Delete"):
+            _assert_label_intact_on_screen(
+                right_rail, label, context=f"{context} (source actions)"
+            )
+
+        inspector.selected_entity = None
+        inspector.scope = TreeScope(kind="watchlist", watchlist_id=1)
+        await pilot.pause()
+        for label in ("Check now", "Delete"):
+            _assert_label_intact_on_screen(
+                right_rail, label, context=f"{context} (watchlist-scope actions)"
+            )
 
 
 @pytest.mark.parametrize(

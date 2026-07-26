@@ -3,13 +3,14 @@
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import DestinationHarness, StaticWatchlistsScopeService
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
-from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
+from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import BreadcrumbScopeSelected, InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
+from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
 
 
 def _app_with_watchlists(watch_items):
@@ -140,3 +141,115 @@ async def test_inspector_delete_button_posts_delete_requested():
             and (msg.entity or {}).get("id") == "source-1"
             for msg in captured
         )
+
+
+# -- Task 5: breadcrumb stack -------------------------------------------------
+#
+# `scope`/`breadcrumb_labels` are set directly on the mounted `InspectorPane`
+# rather than via the tree (`TreeScopeChanged` -> `screen.selected_scope`):
+# the screen does not yet push its `selected_scope` into the Inspector (that
+# wiring, like `WatchlistBundleService`'s in Task 1, is deliberately left for
+# a later task -- this one only has to build the pane's own capability). This
+# still fully exercises the reactive contract Task 7 (or a follow-up) will
+# drive from the tree.
+
+
+@pytest.mark.asyncio
+async def test_breadcrumb_shows_each_selected_level():
+    app = _app_with_watchlists([])
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+
+        inspector.scope = TreeScope(kind="source", watchlist_id=1, source_id=10)
+        inspector.breadcrumb_labels = ["Morning AI Brief", "ArXiv: AI"]
+        await pilot.pause()
+
+        texts = [str(s.renderable) for s in inspector.query(Static)]
+        texts += [str(b.label) for b in inspector.query(Button)]
+        combined = " ".join(texts)
+        assert "Morning AI Brief" in combined
+        assert "ArXiv: AI" in combined
+
+        # The shallower level (watchlist) collapses to one clickable
+        # breadcrumb line; the deepest (source) is full detail, not a
+        # breadcrumb button of its own.
+        assert inspector.query_one("#inspector-breadcrumb-0", Button)
+        assert not inspector.query("#inspector-breadcrumb-1")
+
+
+@pytest.mark.asyncio
+async def test_actions_belong_to_the_deepest_level():
+    app = _app_with_watchlists([])
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+
+        inspector.scope = TreeScope(kind="watchlist", watchlist_id=1)
+        await pilot.pause()
+
+        assert inspector.query_one("#inspector-check-now-button", Button)
+        assert inspector.query_one("#inspector-delete-button", Button)
+        assert not inspector.query("#inspector-mark-reviewed-button"), (
+            "an item action must not show while a watchlist is the deepest selection"
+        )
+        assert not inspector.query("#inspector-ingest-button")
+        assert not inspector.query("#inspector-ignore-button")
+        assert not inspector.query("#inspector-preview-button")
+
+
+@pytest.mark.asyncio
+async def test_selected_entity_is_deeper_than_scope():
+    """A row picked within a pane (an item, here) is one level deeper than
+    the tree scope that got the user there: the scope's own levels collapse
+    to breadcrumbs, and the entity becomes the expanded deepest level with
+    ITS actions -- never the scope's."""
+    app = _app_with_watchlists([])
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+
+        inspector.scope = TreeScope(kind="source", watchlist_id=1, source_id=10)
+        inspector.breadcrumb_labels = ["Morning AI Brief", "ArXiv: AI"]
+        inspector.selected_entity = {"item_id": "item-1", "title": "RAG Evaluation"}
+        await pilot.pause()
+
+        # Both scope levels are now ancestors (collapsed breadcrumbs) --
+        # the item selected within the source is deeper than the source
+        # itself.
+        assert inspector.query_one("#inspector-breadcrumb-0", Button)
+        assert inspector.query_one("#inspector-breadcrumb-1", Button)
+        assert inspector.query_one("#inspector-mark-reviewed-button", Button)
+        assert not inspector.query("#inspector-check-now-button")
+
+
+@pytest.mark.asyncio
+async def test_clicking_breadcrumb_requests_scope_promotion():
+    app = _app_with_watchlists([])
+    host = DestinationHarness(app, "watchlists_collections")
+    captured = []
+
+    def capture_message(message):
+        captured.append(message)
+
+    async with host.run_test(size=(180, 50), message_hook=capture_message) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+
+        inspector.scope = TreeScope(kind="source", watchlist_id=1, source_id=10)
+        inspector.breadcrumb_labels = ["Morning AI Brief", "ArXiv: AI"]
+        await pilot.pause()
+
+        inspector.query_one("#inspector-breadcrumb-0", Button).press()
+        await pilot.pause()
+
+        promoted = [m for m in captured if isinstance(m, BreadcrumbScopeSelected)]
+        assert promoted, "clicking the shallower breadcrumb should request promotion"
+        assert promoted[0].scope == TreeScope(kind="watchlist", watchlist_id=1)

@@ -46,12 +46,30 @@
     min-height: 0;
 }
 
-.watchlists-region-left_rail,
-.watchlists-region-right_rail {
+.watchlists-region-left_rail {
     width: 28;
     min-width: 0;
     height: 100%;
     border: round $ds-grid-line;
+}
+
+/* Widened from 28 (Task 5): at 26 usable columns every Inspector action
+ * label truncated -- "Stage Watchlists Cont", "Open current Watchlis",
+ * "Console follow unavai" -- measured live at 235x52. 34 fits the longest
+ * label ("Stage Watchlists Context in Console") close to on one line; the
+ * `Button` rule below wraps as a fallback for whatever still does not fit,
+ * rather than clipping it.
+ */
+.watchlists-region-right_rail {
+    width: 34;
+    min-width: 0;
+    height: 100%;
+    border: round $ds-grid-line;
+}
+
+.watchlists-region-right_rail Button {
+    width: 100%;
+    text-wrap: wrap;
 }
 
 .watchlists-centre {
