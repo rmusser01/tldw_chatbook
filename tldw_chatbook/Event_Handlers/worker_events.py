@@ -416,14 +416,18 @@ def chat_wrapper_function(
             },
         )
 
-        # To ensure consistent error handling through StreamDone for the UI:
-        app_instance.post_message(
-            StreamDone(
-                full_text="", error=f"Chat wrapper error: {str(e)}", response_data=None
+        if streaming:
+            # Legacy streaming contract: report the failure through the (now unhandled)
+            # StreamDone event and return the sentinel.
+            app_instance.post_message(
+                StreamDone(
+                    full_text="", error=f"Chat wrapper error: {str(e)}", response_data=None
+                )
             )
-        )
-        return "STREAMING_HANDLED_BY_EVENTS"  # Signal that this path also used an event to report error
-        # Alternative for WorkerState.ERROR: raise e
+            return "STREAMING_HANDLED_BY_EVENTS"  # Exit the worker function
+        # task-634: non-streaming callers consume the return value directly -- a swallowed
+        # exception rendered the sentinel as the response. Propagate instead.
+        raise
 
 
 #

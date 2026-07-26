@@ -9,6 +9,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Collapsible, Label, Select, Static
 
 from tldw_chatbook.Event_Handlers.media_events import (
+    MediaAnalysisRequestEvent,
     MediaAnalysisSaveEvent,
     MediaReadingHighlightCreateEvent,
     MediaReadingHighlightDeleteEvent,
@@ -1363,3 +1364,135 @@ async def test_media_viewer_analysis_actions_explain_disabled_and_available_stat
         assert "Select a saved analysis version before deleting it" in str(
             delete_button.tooltip
         )
+
+
+@pytest.mark.asyncio
+async def test_media_analysis_llm_failure_surfaces_error_not_sentinel():
+    """task-634: a failing LLM call during media analysis must notify an error
+    and reset the analysis display -- it must never render the internal
+    "STREAMING_HANDLED_BY_EVENTS" sentinel or claim success."""
+    window, app = _build_media_window()
+    app.chat_wrapper = Mock(side_effect=RuntimeError("LLM exploded"))
+    app.app_config = {"api_settings": {}}
+    window._record_for_event = Mock(
+        return_value={
+            "title": "Doc",
+            "content": "some content",
+            "author": "Someone",
+            "type": "article",
+        }
+    )
+
+    analysis_display = AsyncMock()
+
+    def _query_one(selector, expect_type=None):
+        if selector == "#analysis-display":
+            return analysis_display
+        raise AssertionError(f"Unexpected selector: {selector}")
+
+    window.viewer_panel = Mock()
+    window.viewer_panel.query_one = Mock(side_effect=_query_one)
+    window.viewer_panel.all_analyses = []
+    # Simulate a prior successful analysis still parked on the viewer panel --
+    # the failure path must not leave this stale content actionable.
+    window.viewer_panel.current_analysis = "Stale prior analysis"
+
+    captured = {}
+
+    def _run_worker(coro, exclusive=True):
+        captured["coro"] = coro
+
+    window.run_worker = _run_worker
+
+    event = MediaAnalysisRequestEvent(
+        media_id="local:media:1",
+        provider="Local",
+        model="test-model",
+        system_prompt="",
+        user_prompt="Summarize this",
+        type_slug="article",
+    )
+
+    window.handle_analysis_request(event)
+    await captured["coro"]
+
+    notified_messages = [call.args[0] for call in app.notify.call_args_list]
+    assert any("Error" in message for message in notified_messages)
+    assert not any(
+        "Analysis generated successfully" in message for message in notified_messages
+    )
+    assert not any(
+        "STREAMING_HANDLED_BY_EVENTS" in message for message in notified_messages
+    )
+
+    analysis_display.update.assert_awaited()
+    updated_text = analysis_display.update.await_args.args[0]
+    assert "STREAMING_HANDLED_BY_EVENTS" not in updated_text
+    assert "failed" in updated_text.lower()
+
+    # task-634 Qodo follow-up: the stale current_analysis pointer must be
+    # cleared and button states refreshed so Save/Edit can't act on a prior
+    # successful analysis while the panel is showing a failure message.
+    assert window.viewer_panel.current_analysis is None
+    window.viewer_panel._update_analysis_button_states.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_media_analysis_missing_response_text_clears_stale_analysis_state():
+    """task-634 Qodo follow-up: the "no valid response text" branch (LLM
+    returns a response but no extractable text) must reset the same way as
+    the outer-exception branch -- clearing the stale current_analysis
+    pointer and refreshing button states, not just the display text."""
+    window, app = _build_media_window()
+    # Response has no usable text under any of the extraction branches.
+    app.chat_wrapper = Mock(return_value={"unexpected": "shape"})
+    app.app_config = {"api_settings": {}}
+    window._record_for_event = Mock(
+        return_value={
+            "title": "Doc",
+            "content": "some content",
+            "author": "Someone",
+            "type": "article",
+        }
+    )
+
+    analysis_display = AsyncMock()
+
+    def _query_one(selector, expect_type=None):
+        if selector == "#analysis-display":
+            return analysis_display
+        raise AssertionError(f"Unexpected selector: {selector}")
+
+    window.viewer_panel = Mock()
+    window.viewer_panel.query_one = Mock(side_effect=_query_one)
+    window.viewer_panel.all_analyses = []
+    window.viewer_panel.current_analysis = "Stale prior analysis"
+
+    captured = {}
+
+    def _run_worker(coro, exclusive=True):
+        captured["coro"] = coro
+
+    window.run_worker = _run_worker
+
+    event = MediaAnalysisRequestEvent(
+        media_id="local:media:2",
+        provider="Local",
+        model="test-model",
+        system_prompt="",
+        user_prompt="Summarize this",
+        type_slug="article",
+    )
+
+    window.handle_analysis_request(event)
+    await captured["coro"]
+
+    notified_messages = [call.args[0] for call in app.notify.call_args_list]
+    assert any("Failed to generate analysis" in message for message in notified_messages)
+
+    analysis_display.update.assert_awaited()
+    updated_text = analysis_display.update.await_args.args[0]
+    assert "failed" in updated_text.lower()
+
+    assert window.viewer_panel.current_analysis is None
+    window.viewer_panel._update_analysis_button_states.assert_called()
