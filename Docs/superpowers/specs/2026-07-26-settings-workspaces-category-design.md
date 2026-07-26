@@ -191,7 +191,16 @@ records (a) superseding the Stage-5 read-only boundary — Settings now owns
 workspace lifecycle + folder bindings, with Console/Library keeping quick
 actions; (b) folder semantics: file-tool access roots, read-only default,
 call-time existence validation, run-bound workspace resolution, Default
-stays tool-less.
+stays tool-less; (c) **deliberate divergence from Codex prior art**: OpenAI
+Codex's `workspace-write` sandbox allows reads anywhere and confines only
+writes (workspace + `sandbox_workspace_write.writable_roots`) — tldw
+confines *reads* to the sandbox + bound folders as well, because the
+existing sandbox already does and the app is privacy-first; do not "fix"
+this to match Codex; (d) **external-runtime export surface**: canonical
+folder locators are the roots handed to external agent runtimes (the shape
+Codex's app-server takes as `runtimeWorkspaceRoots` at thread/turn start),
+so the future ACP/app-server handoff consumes bindings as-is — no separate
+roots model.
 
 ## 9. Out of scope
 
