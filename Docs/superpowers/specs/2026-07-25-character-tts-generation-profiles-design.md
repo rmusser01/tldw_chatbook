@@ -97,6 +97,7 @@ state, followed by durable per-character profile ownership.
 - Migration of audiobook `CharacterVoiceWidget` data.
 - Group-roleplay speaker attribution.
 - Arbitrary, unvalidated provider option dictionaries.
+- Standalone profile import.
 - Provider fallback, model fallback, or voice fallback after a request is
   admitted.
 - Packaging or redistributing audio.cpp or its models.
@@ -126,6 +127,10 @@ An `exact` mode requires a non-empty corresponding identifier. A
 `first_available` model is resolved once at request admission. A
 `server_default` voice is sent as `None`.
 
+Provider-specific constraints apply to global preferences as well as profiles.
+When audio.cpp is selected, the settings UI and validator lock format to `wav`
+and speed to exactly `1.0`, consistent with ADR-023.
+
 For backward compatibility, existing blank audio.cpp model and voice values are
 read as `first_available` and `server_default`. Startup does not rewrite the
 configuration file. The next successful settings save persists explicit modes.
@@ -152,9 +157,9 @@ declared server-default behavior; it does not mean "pick any voice."
 
 The first release executes profiles only when `provider_id == "audio_cpp"`.
 The schema remains provider-neutral so a future native adapter can define its
-own profile-safe option schema without a database redesign. audio.cpp accepts
-only `wav` and an empty options object in this release; arbitrary options are
-rejected.
+own profile-safe option schema without a database redesign. Consistent with
+ADR-023, audio.cpp accepts only `wav`, speed exactly `1.0`, and an empty options
+object in this release; arbitrary options and other speeds are rejected.
 
 ### Character reference
 
@@ -230,7 +235,8 @@ The service owns profile-domain validation and workflows:
 - assign, replace, and remove character assignments;
 - validate a profile against current native provider capabilities;
 - calculate profile availability and repair guidance;
-- prepare and consume standalone or character-card export payloads;
+- prepare standalone and character-card export payloads;
+- consume the optional profile attachment during character-card import;
 - apply import collision policy;
 - expose structured profile-domain errors.
 
@@ -331,6 +337,15 @@ names fail with a conflict. Display spelling remains user-controlled.
 - Provider health and catalog presence are never persisted as truth. They are
   evaluated against the current native registry.
 
+Assignment lifecycle belongs to the assignment slice rather than portability.
+After an authoritative local or server character deletion succeeds, its delete
+flow attempts assignment removal and reports cleanup failure without undoing
+the character deletion. The profile library also lists assignment targets by
+`active`, `unverified`, or `missing` status and provides an explicit
+**Remove missing assignment** action. This recovery surface prevents a stale
+assignment from permanently blocking profile deletion. It never removes an
+`unverified` assignment.
+
 Database corruption, unsupported schema versions, failed migrations, and
 unavailable paths produce a profile-store failure. They do not cause Chatbook
 to discard or recreate the database automatically.
@@ -400,8 +415,8 @@ STTS provides the shared profile-management surface:
 The profile editor discovers valid values from native catalogs. New audio.cpp
 profiles and new assignments can be saved only when their exact provider,
 model, format, and voice semantics validate against the current native
-catalog. An imported or previously valid profile that becomes unavailable
-remains visible with a repair action.
+catalog and their speed is exactly `1.0`. An imported or previously valid
+profile that becomes unavailable remains visible with a repair action.
 
 The editor clearly warns that editing a shared profile changes future speech
 for all assigned characters and shows the assignment count. It uses optimistic
@@ -445,11 +460,12 @@ For a character-authored assistant message:
 
 For a message without `CharacterRef`, resolve only global preferences.
 
-When the profile store itself is unavailable, assigned character speech fails
-closed. The error UI may offer **Use global for this message**, an explicit
+When the profile store itself is unavailable, every message carrying a
+`CharacterRef` fails closed because Chatbook cannot establish that no assignment
+exists. The error UI may offer **Use global for this message**, an explicit
 one-shot override. That override does not create, remove, or modify an
-assignment and is recorded as `explicit_override` resolution. Generic messages
-continue to use global preferences.
+assignment and is recorded as `explicit_override` resolution. Messages without
+a `CharacterRef` continue to use global preferences.
 
 ### Exact assigned profile
 
@@ -529,6 +545,10 @@ Profile availability is separate from target status. A profile may be locally
 present but unavailable because its provider is unconfigured, not native, its
 model is missing, or its request fields no longer validate.
 
+Authoritative character deletion cleanup and the profile-side
+**Remove missing assignment** recovery action ship with assignment support.
+Portability does not own assignment garbage collection.
+
 ### Structured failures
 
 Profile-domain failures are distinct from adapter `TTSOperationError` values:
@@ -572,6 +592,22 @@ The portable payload contains only:
 - speed;
 - validated profile-safe options.
 
+The version-1 wire shape is exact:
+
+```json
+{
+  "schema_version": 1,
+  "profile_id": "00000000-0000-4000-8000-000000000000",
+  "name": "Character voice",
+  "provider_id": "audio_cpp",
+  "model_id": "supertonic-3",
+  "voice_id": "M1",
+  "response_format": "wav",
+  "speed": 1.0,
+  "options": {}
+}
+```
+
 It excludes character authority, provider origin, credentials, binary/config
 paths, health, assignment count, timestamps, input text, and local profile
 revision.
@@ -581,7 +617,8 @@ explicit TTS export fails rather than overwriting or ambiguously merging it.
 Unrelated extension namespaces are preserved.
 
 Standalone profile export uses the same sanitized profile payload without a
-character card.
+character card. Standalone profile import is not part of this design; only an
+attachment arriving through character-card import is consumed.
 
 ### Import treats the extension as hostile
 
@@ -600,22 +637,41 @@ Validation is exact and bounded:
 - attachment encoded size no greater than 16 KiB and no more than four
   container levels;
 - provider-specific allowlist;
-- empty options for first-release audio.cpp profiles.
+- `wav`, speed exactly `1.0`, and empty options for first-release audio.cpp
+  profiles.
 
 An unknown attachment version or provider skips only the TTS attachment with a
 warning; the character can still import. Malformed known payloads also leave
 the imported character unassigned and report a clear warning rather than
 executing or persisting untrusted values.
 
+Structural validity and current runtime availability are separate. A
+structurally valid audio.cpp attachment whose provider is unconfigured or
+unreachable, or whose model/voice cannot currently be validated, is imported as
+a visible unavailable profile after collision resolution but is not assigned.
+The character import reports partial success and directs the user to repair and
+validate the profile before making an explicit assignment.
+
 ### Collision policy
 
-The portable UUID is a correlation hint, not authority:
+The portable UUID is a correlation hint, not authority. The generation tuple
+used for collision comparison is provider, model, voice, format, speed, and
+validated options; display name and UUID are compared separately.
 
-- if an existing local profile has the same UUID and identical portable
-  generation fields, prompt for **Reuse existing** or **Import copy**;
-- if the UUID or normalized name collides but the generation fields differ,
-  create a new UUID and collision-safe display name after user confirmation;
-- if no match exists, create a new profile.
+- If an existing local profile has the same UUID and the same generation
+  tuple, prompt for **Reuse existing** or **Import copy**. A copy receives a new
+  local UUID and, if necessary, a collision-safe display name.
+- If an existing local profile has the same UUID but a different generation
+  tuple, import is allowed only as a confirmed copy with a new local UUID and,
+  if necessary, a collision-safe display name.
+- If only the normalized name collides and the generation tuple is the same,
+  prompt for **Reuse existing** or **Import copy**. A copy keeps the
+  collision-free portable UUID and receives a collision-safe display name.
+- If only the normalized name collides and the generation tuple differs,
+  require confirmation, keep the collision-free portable UUID, and create a
+  collision-safe display name.
+- If neither UUID nor normalized name collides, create the profile with the
+  portable UUID and display name.
 
 Import never silently changes an existing profile or assignment.
 
@@ -625,10 +681,12 @@ Character-card and profile data live in different stores, so import uses
 compensating behavior rather than pretending to provide a cross-database
 transaction:
 
-1. parse and validate the character and optional attachment without writes;
+1. parse and structurally validate the character and optional attachment
+   without writes, then separately evaluate current profile availability;
 2. persist the character without the TTS attachment;
-3. in one profile-database transaction, create/reuse the profile and create the
-   assignment.
+3. in one profile-database transaction, create/reuse the profile and:
+   - create the assignment when the profile is currently valid and available;
+   - leave it unassigned when the profile requires repair.
 
 If step 3 fails, the character remains successfully imported but unassigned.
 The UI reports partial success and offers profile repair. No partial profile or
@@ -671,12 +729,14 @@ This slice delivers reusable local profiles before character assignment.
 - Add character-editor controls and resolver integration.
 - Apply assigned profiles to character-authored Console roleplay messages.
 - Add fail-closed recovery and the explicit one-message global override.
+- Add post-delete cleanup attempts, assignment-target status, and the explicit
+  profile-side removal action for authoritatively missing characters.
 
 ### Slice 4 — Optional character-card portability
 
 - Add transient explicit export with a sanitized Chatbook extension.
 - Add hostile import validation and collision prompts.
-- Add cross-database compensation and detached-assignment cleanup.
+- Add cross-database import compensation.
 - Preserve ordinary card import/export behavior.
 
 Managed audio.cpp launch and supervision remains a separate future task and is
@@ -703,6 +763,7 @@ Cover:
 - unassigned character using global preferences;
 - broken or unavailable assignment failing closed;
 - profile-store failure and explicit one-message override;
+- profile-store failure for an apparently unassigned `CharacterRef`;
 - generic message using global preferences;
 - missing server authority;
 - active, unverified, and missing targets;
@@ -728,6 +789,7 @@ cannot collide or follow the currently active server.
 - first-available global selection freezes one model and never selects a
   second;
 - exact voice is sent unchanged;
+- audio.cpp rejects every speed other than exactly `1.0`;
 - complete WAV validation, bounded consumption, playback, cancellation, and
   cleanup;
 - no automatic synthesis POST retry;
@@ -741,6 +803,8 @@ cannot collide or follow the currently active server.
 - profile list, search, edit, duplicate, conflicts, availability, repair,
   export, and protected deletion;
 - character assignment, removal, repair, and shared-profile warnings;
+- authoritative character deletion cleanup, missing-target removal, and
+  preservation of unverified assignments;
 - Console **Speak**, progress, autoplay, explicit override, and errors;
 - server-character authority missing and same-ID/different-authority cases;
 - import/export confirmation and collision prompts.
@@ -752,10 +816,17 @@ cannot collide or follow the currently active server.
 - unrelated extensions survive export/import;
 - malformed existing Chatbook namespace fails explicit export;
 - unknown versions/providers skip the attachment while importing the character;
+- a structurally valid but currently unavailable audio.cpp profile imports
+  visibly but remains unassigned pending repair;
 - reject unknown fields, oversized identifiers/payloads, deep JSON, invalid
-  UUIDs, non-finite speed, unsupported formats, and audio.cpp options;
-- UUID/name collision outcomes require explicit choice and never mutate an
-  existing profile;
+  UUIDs, non-finite or non-`1.0` audio.cpp speed, unsupported formats, and
+  audio.cpp options;
+- every UUID/name collision combination follows the explicit matrix, including
+  the different-UUID/same-name/same-generation case;
+- a collision-free import adopts the portable UUID; any required copy UUID is
+  newly generated;
+- collision outcomes require explicit choice and never mutate an existing
+  profile;
 - simulated failure after character persistence leaves it imported and
   unassigned with no partial profile transaction;
 - logs, events, exports, and metrics exclude text, authority, credentials,
@@ -836,6 +907,8 @@ facilities.
   while preserving the asynchronous response contract.
 - A user can save a successful STTS audio.cpp preview as a named reusable
   profile and manage it in a shared library.
+- Every first-release audio.cpp global selection and profile uses WAV, speed
+  exactly `1.0`, and no arbitrary options.
 - A user can assign one profile to a local or authority-scoped server character.
 - Manual speech for a character-authored response uses the assigned immutable
   profile revision.
