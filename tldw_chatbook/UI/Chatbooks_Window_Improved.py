@@ -193,12 +193,22 @@ class EmptyStateWidget(Container):
 class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
     """Enhanced Chatbooks management interface.
 
-    ``chatbooks`` below is a ``recompose=True`` reactive; ``RecomposeCaptureGuard``
-    (task-637) keeps a stale mouse capture from leaking app-wide when that
-    recompose fires. This class is a ``Screen`` subclass but is embedded as a
-    plain child widget of ``ChatbooksScreen`` (a ``BaseAppScreen``, see
+    This class is a ``Screen`` subclass but is embedded as a plain child
+    widget of ``ChatbooksScreen`` (a ``BaseAppScreen``, see
     ``UI/Screens/chatbooks_screen.py``), not pushed via the screen stack --
-    it never inherited ``BaseAppScreen``'s task-627 guard.
+    it never inherited ``BaseAppScreen``'s task-627 guard. It still inherits
+    ``RecomposeCaptureGuard`` (task-637) defensively: ``compose()`` is
+    static (it never reads ``self.chatbooks``/``view_mode``/``search_query``),
+    so none of this widget's own reactives are declared ``recompose=True``
+    -- ``_update_content()`` does the DOM rebuild imperatively from the
+    watchers instead (task-671; a ``recompose=True`` ``chatbooks`` reactive
+    used to schedule a deferred ``Widget.recompose()`` that tore the whole
+    subtree back down to ``compose()``'s empty skeleton one tick after
+    ``_update_content()`` had just populated it -- silently erasing any
+    non-empty chatbooks list). The guard mixin is kept because
+    ``Widget.refresh(recompose=True)`` can still be invoked directly (see
+    ``Tests/UI/test_chatbooks_screen_server_actions.py``'s task-637
+    regression coverage) and other recompose reactives may be added later.
     """
 
     GRID_VIEW_TOOLTIP = "Show chatbooks as visual cards."
@@ -359,8 +369,12 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
     }
     """
 
-    # Reactive properties
-    chatbooks = reactive([], recompose=True)
+    # Reactive properties. None of these are `recompose=True`: `compose()`
+    # is static and doesn't read any of them, so the watchers below rebuild
+    # `#chatbooks-container` imperatively via `_update_content()` instead
+    # (task-671; see the class docstring for why `recompose=True` on
+    # `chatbooks` was actively harmful here).
+    chatbooks = reactive([])
     view_mode = reactive("grid")
     search_query = reactive("")
 
@@ -500,15 +514,21 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
             )
 
             if self.view_mode == "grid":
-                # Grid view
+                # Grid view. `container` is already attached (it comes from
+                # `query_one`), so mount the (still-unattached) grid into it
+                # FIRST -- only then is the grid itself attached and safe to
+                # mount cards into. `Widget.mount()` raises `MountError`
+                # synchronously when called on a widget that isn't attached
+                # yet (task-671).
                 grid = Grid(classes="chatbooks-grid")
+                container.mount(grid)
                 for cb_data in filtered:
                     card = ChatbookCard(cb_data)
                     grid.mount(card)
-                container.mount(grid)
             else:
-                # List view
+                # List view -- same attach-before-populate ordering as above.
                 list_view = ListView(classes="chatbooks-list")
+                container.mount(list_view)
                 for cb_data in filtered:
                     item = ListItem(
                         Static(
@@ -516,7 +536,6 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
                         )
                     )
                     list_view.mount(item)
-                container.mount(list_view)
 
     def _filter_chatbooks(self) -> List[Dict[str, Any]]:
         """Filter chatbooks based on search query."""

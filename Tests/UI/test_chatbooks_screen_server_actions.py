@@ -1,9 +1,11 @@
 import pytest
 
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Input, Static
+from textual.containers import Grid
+from textual.widgets import Button, Input, ListView, Static
 
 from tldw_chatbook.UI.Chatbooks_Window_Improved import (
+    ChatbookCard,
     ChatbooksWindowImproved,
     EmptyStateWidget,
 )
@@ -107,6 +109,108 @@ async def test_chatbooks_view_toggles_explain_grid_and_list_modes(monkeypatch):
 
         assert str(grid_button.tooltip) == "Show chatbooks as visual cards."
         assert str(list_button.tooltip) == "Show chatbooks as a dense text list."
+
+
+def _sample_chatbooks(count: int = 2):
+    return [
+        {
+            "name": f"Chatbook {i}",
+            "description": f"Sample chatbook number {i}",
+            "size_mb": 1.5 * i,
+            "created_at": "2026-01-0%d" % (i + 1),
+            "statistics": {"conversations": i, "notes": i, "characters": i},
+            "tags": ["sample"],
+        }
+        for i in range(1, count + 1)
+    ]
+
+
+# -- task-671: _update_content() used to mount a local Grid/ListView's
+# children (`grid.mount(card)` / `list_view.mount(item)`) BEFORE the Grid/
+# ListView itself was mounted into the already-attached `#chatbooks-
+# container`. `Widget.mount()` raises `MountError` synchronously whenever
+# `not self.is_attached`, so any non-empty `chatbooks` list crashed the
+# `watch_chatbooks` -> `_update_content()` path; only the empty-state branch
+# (which mounts a single `EmptyStateWidget` directly into the attached
+# container) avoided it. Regression coverage for both the grid and list
+# render paths.
+
+
+@pytest.mark.asyncio
+async def test_update_content_renders_multiple_chatbooks_grid_view_without_mount_error(
+    monkeypatch,
+):
+    async def no_refresh(self):
+        self.chatbooks = []
+
+    monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
+
+    class ChatbooksWindowApp(App):
+        def compose(self) -> ComposeResult:
+            yield ChatbooksWindowImproved(self)
+
+    app = ChatbooksWindowApp()
+    async with app.run_test() as pilot:
+        window = app.query_one(ChatbooksWindowImproved)
+        assert window.view_mode == "grid"
+
+        # This assignment used to raise MountError synchronously (inside the
+        # `watch_chatbooks` -> `_update_content()` call chain) before the
+        # fix.
+        window.chatbooks = _sample_chatbooks(2)
+
+        cards = window.query(ChatbookCard)
+        assert len(cards) == 2
+
+        # Cards are attached synchronously by `mount()`, but each card's own
+        # `compose()` (its title/description children) only runs once the
+        # message pump processes the queued mount -- pump once before
+        # inspecting their content.
+        await pilot.pause()
+        rendered_names = {
+            str(card.query_one(".chatbook-card-title", Static).render())
+            for card in cards
+        }
+        assert rendered_names == {"Chatbook 1", "Chatbook 2"}
+
+        # The `chatbooks` reactive is declared `recompose=True`; make sure
+        # the cards survive the deferred recompose tick and aren't wiped
+        # back out to an empty container.
+        await pilot.pause()
+        await pilot.pause()
+        cards_after_recompose = window.query(ChatbookCard)
+        assert len(cards_after_recompose) == 2, (
+            "cards were wiped out by the deferred recompose() teardown -- "
+            f"found {len(cards_after_recompose)} ChatbookCard widgets after "
+            "pumping the message loop"
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_content_renders_multiple_chatbooks_list_view_without_mount_error(
+    monkeypatch,
+):
+    async def no_refresh(self):
+        self.chatbooks = []
+
+    monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
+
+    class ChatbooksWindowApp(App):
+        def compose(self) -> ComposeResult:
+            yield ChatbooksWindowImproved(self)
+
+    app = ChatbooksWindowApp()
+    async with app.run_test() as pilot:
+        window = app.query_one(ChatbooksWindowImproved)
+        window.view_mode = "list"
+        await pilot.pause()
+
+        # This assignment used to raise MountError synchronously via
+        # `list_view.mount(item)` before `list_view` was itself mounted.
+        window.chatbooks = _sample_chatbooks(3)
+
+        list_view = window.query_one(ListView)
+        assert len(list_view.children) == 3
 
 
 @pytest.mark.asyncio
