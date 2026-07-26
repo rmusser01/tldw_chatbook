@@ -37,6 +37,7 @@ from ...Widgets.Study.quiz_session_widget import (
 )
 from .notes_scope_models import WorkspaceSubview
 from .study_scope_models import (
+    STUDY_INITIAL_SECTIONS,
     STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
     STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
     STUDY_MATERIAL_TITLES_LIMIT,
@@ -92,7 +93,7 @@ class StudyScreen(BaseAppScreen):
         "course": "Create course outlines and study sequences.",
         "learning_map": "Open the learning map for relationships across study material.",
     }
-    _VALID_INITIAL_SECTIONS = frozenset({"dashboard", *_SECTION_TO_VIEW.keys()})
+    _VALID_INITIAL_SECTIONS = STUDY_INITIAL_SECTIONS
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "study", **kwargs)

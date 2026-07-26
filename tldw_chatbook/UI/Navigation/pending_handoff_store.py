@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import copy
 from dataclasses import dataclass, field
 from enum import StrEnum
 import threading
 from typing import Any, Generic, TypeVar
 
+from ...ACP_Interop.runtime_session import ACP_SESSION_RECORD_PREFIX
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
+from ..Screens.study_scope_models import (
+    STUDY_INITIAL_SECTIONS,
+    StudyScopeContext,
+)
+
+
+ARTIFACT_CHATBOOK_RECORD_PREFIX = "local:chatbook:"
 
 
 class HandoffChannel(StrEnum):
@@ -18,6 +27,10 @@ class HandoffChannel(StrEnum):
     CHAT = "chat"
     CONSOLE_LIVE_WORK = "console_live_work"
     CONSOLE_PROMPT_INSERT = "console_prompt_insert"
+    STUDY_SCOPE = "study_scope"
+    STUDY_INITIAL_SECTION = "study_initial_section"
+    ARTIFACT_CHATBOOK_TARGET = "artifact_chatbook_target"
+    ACP_SESSION_TARGET = "acp_session_target"
 
 
 class HandoffValueError(ValueError):
@@ -158,4 +171,37 @@ class PendingHandoffStore:
             if not value.strip():
                 raise ValueError("Console prompt must be non-empty text")
             return value
+        if channel is HandoffChannel.STUDY_SCOPE:
+            if not isinstance(value, StudyScopeContext):
+                raise TypeError("Study scope must be a StudyScopeContext")
+            return copy.deepcopy(value)
+        if channel is HandoffChannel.STUDY_INITIAL_SECTION:
+            if not isinstance(value, str):
+                raise TypeError("Study section must be text")
+            normalized = value.strip()
+            if normalized not in STUDY_INITIAL_SECTIONS:
+                raise ValueError("invalid Study section")
+            return normalized
+        if channel is HandoffChannel.ARTIFACT_CHATBOOK_TARGET:
+            return PendingHandoffStore._canonical_target(
+                value,
+                prefix=ARTIFACT_CHATBOOK_RECORD_PREFIX,
+            )
+        if channel is HandoffChannel.ACP_SESSION_TARGET:
+            return PendingHandoffStore._canonical_target(
+                value,
+                prefix=ACP_SESSION_RECORD_PREFIX,
+            )
         raise ValueError("unsupported handoff channel")
+
+    @staticmethod
+    def _canonical_target(value: Any, *, prefix: str) -> str:
+        if not isinstance(value, str):
+            raise TypeError("handoff target must be text")
+        normalized = value.strip()
+        if not normalized.startswith(prefix):
+            raise ValueError("invalid handoff target prefix")
+        suffix = normalized.removeprefix(prefix).strip()
+        if not suffix:
+            raise ValueError("handoff target must include an identifier")
+        return f"{prefix}{suffix}"

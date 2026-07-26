@@ -3064,9 +3064,6 @@ class TldwCli(
             ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
         )
         self.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
-        self.pending_study_scope_context: Optional[StudyScopeContext] = None
-        self.pending_study_initial_section: Optional[str] = None
-        self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
         self.home_active_work_adapter = UnavailableHomeActiveWorkAdapter(
             runtime_policy=self.runtime_policy,
         )
@@ -3453,8 +3450,23 @@ class TldwCli(
         *,
         initial_section: Optional[str] = None,
     ) -> None:
-        self.pending_study_scope_context = scope_context
-        self.pending_study_initial_section = initial_section
+        if scope_context is None:
+            self.pending_handoffs.clear_pending(HandoffChannel.STUDY_SCOPE)
+        elif not self._stage_handoff(
+            HandoffChannel.STUDY_SCOPE,
+            scope_context,
+            recovery="Study scope could not be opened. Try again.",
+        ):
+            return
+
+        if initial_section is None:
+            self.pending_handoffs.clear_pending(HandoffChannel.STUDY_INITIAL_SECTION)
+        elif not self._stage_handoff(
+            HandoffChannel.STUDY_INITIAL_SECTION,
+            initial_section,
+            recovery="Study section could not be opened. Try again.",
+        ):
+            return
         self.post_message(NavigateToScreen(TAB_STUDY))
 
     def open_notes_workspace(
@@ -3618,12 +3630,22 @@ class TldwCli(
             return True
 
         if action.target_route == TAB_ARTIFACTS:
-            self.pending_artifacts_chatbook_target_id = action.target_id
+            if not self._stage_handoff(
+                HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
+                action.target_id,
+                recovery="Console action target could not be opened. Try again.",
+            ):
+                return False
             self.post_message(NavigateToScreen(TAB_ARTIFACTS))
             return True
 
         if action.target_route == TAB_ACP:
-            self.pending_acp_session_target_id = action.target_id
+            if not self._stage_handoff(
+                HandoffChannel.ACP_SESSION_TARGET,
+                action.target_id,
+                recovery="Console action target could not be opened. Try again.",
+            ):
+                return False
             self.post_message(NavigateToScreen(TAB_ACP))
             return True
 
