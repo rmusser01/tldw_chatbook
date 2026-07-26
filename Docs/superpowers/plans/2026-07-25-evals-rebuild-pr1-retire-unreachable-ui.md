@@ -46,7 +46,9 @@ The spec's deletion table lists two items that **this PR must not touch**. Both 
 
 That is a per-selector migration with its own risk profile. It belongs in PR 3 alongside the screen that replaces the consumers, not in a deletion PR.
 
-**2. The card hub stays.** The spec's table lists `UI/Evals/navigation/`, `evals_window_v3.py`, `UI/Evals/screens/`, `widgets/progress_dashboard.py`, and `UI/evals_window_v2.py`. That is the **live, reachable Evals screen** — `EvalsScreen.compose_content` mounts `EvalsWindowV3`. Deleting it here would leave Evals broken until PR 3 lands. It is removed in PR 3, in the same change that provides its replacement. This also means `EvalsWindowV3` in the container list (`app.py:1520`) and the `"evals-window"` entry (`app.py:2847`) both **stay** in this PR.
+**2. The card hub stays.** The spec's table lists `UI/Evals/navigation/`, `evals_window_v3.py`, `UI/Evals/screens/`, `widgets/progress_dashboard.py`, and `UI/evals_window_v2.py`. That is the **routed** Evals screen — `EvalsScreen.compose_content` mounts `EvalsWindowV3` — so it stays out of a deletion PR and is removed in PR 3, in the same change that provides its replacement. This also means `EvalsWindowV3` in the container list (`app.py:1520`) and the `"evals-window"` entry (`app.py:2847`) both **stay** in this PR.
+
+**Correction, from live verification during Task 5:** "live" here means *routed*, not *working*. On the base commit the hub renders an **empty body** inside the app shell — `DestinationHeader` and `LabModeStrip` appear and no cards do. `EvalsWindowV3` mounts correctly in isolation (`EvalNavigationScreen` plus 8 buttons), so this is a shell-integration failure consistent with the `Screen`-inside-a-`Container` architecture the spec flags. Keeping it out of PR 1 is still right — a deletion PR should not be the thing that removes a routed screen — but **PR 3 must not treat the hub as a working surface to preserve parity with.** There is no working behaviour to preserve.
 
 Revised PR 1 total: **19 files, 10,258 lines**, plus 12 dead lines in `app.py`.
 
@@ -627,13 +629,16 @@ Expected: no new failures relative to the `origin/dev` baseline. Record the pass
 
 Use the `verify` skill to drive the TUI. Confirm all of:
 
-1. The app boots to the splash and reaches Home without a traceback.
-2. `Ctrl+1`..`Ctrl+0` navigation still works (nav bindings are App-level; bare digits are not bound).
-3. The Evals destination opens and renders the **existing** card hub — six cards, `DestinationHeader`, `LabModeStrip`. This PR does not change the Evals screen, so it must look exactly as it did before.
-4. `Quick Test`, `Evaluations`, and `Results Browser` cards still open their screens; `Escape` returns to the hub.
-5. No CSS warnings about missing selectors in the log.
+1. The app boots and reaches Home without a traceback.
+2. The Evals destination opens via the Lab tab, then the `Evals` mode chip. `Ctrl+1`..`Ctrl+0` **cannot** be verified through this harness — tmux `send-keys` has no ASCII encoding for ctrl+digit. Assert those bindings in a unit test instead; never conclude they are broken from a tmux probe.
+3. **Capture the Evals screen on a second worktree checked out at the base commit, and diff the two captures.** They must be identical apart from the footer's live memory-telemetry readout.
+4. No CSS warnings about missing selectors in the log.
 
-Point 3 is the real gate: if the Evals screen changed at all, something in the deleted set was reachable after all.
+Point 3 is the real gate, and the before/after diff is the only form of it that means anything — "it looks right" is not a check.
+
+**Known pre-existing condition, confirmed on the base commit while executing this PR:** the Evals card hub renders an **empty body** inside the app shell — `DestinationHeader` and `LabModeStrip` appear, no cards. `EvalsWindowV3` mounts correctly in isolation (`EvalNavigationScreen` plus 8 buttons), so the failure is shell integration, consistent with the `Screen`-inside-a-`Container` architecture the spec flags. Do not chase it in PR 1; expect the empty body on both sides of the diff.
+
+Use the command palette with care: several destinations match the query "evals", and a fast `Down`+`Enter` selects the wrong one. Clicking the tab with an SGR mouse sequence is more reliable.
 
 - [ ] **Step 5: Confirm the CSS bundle is untouched**
 
