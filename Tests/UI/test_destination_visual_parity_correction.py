@@ -839,8 +839,19 @@ SOURCE_PREP_WORKBENCHES = {
         "markers": ("#personas-library-empty", "#personas-library-count"),
         "marker_container": "#personas-library-pane",
     },
+    # Watchlists moved from the placeholder 3-column shell onto
+    # `WatchlistsWorkbench` (rails around a VERTICALLY stacked centre — see
+    # `watchlists_workbench.py`'s docstring on why the shared
+    # `DestinationWorkbench`/3-column-ASCII contract can't express this
+    # layout). `#watchlists-list-pane` and `#watchlists-detail-pane` are now
+    # stacked one above the other inside `#wl-centre`, not side by side, so
+    # this entry is kept for the `markers`/`marker_container`/`actions` keys
+    # (still valid — those panes still exist, just not horizontally arranged)
+    # but excluded from the two horizontal-geometry parametrizations below via
+    # `SOURCE_PREP_WORKBENCHES_HORIZONTAL`, the same way "personas" above
+    # excluded itself from the retired snapshot-worker markers.
     "watchlists_collections": {
-        "workbench": "#watchlists-workbench",
+        "workbench": "#wl-workbench",
         "strip": "#watchlists-header-bar",
         "strip_max_height": 3,
         "panes": (
@@ -872,8 +883,20 @@ SOURCE_PREP_WORKBENCHES = {
     },
 }
 
+#: `SOURCE_PREP_WORKBENCHES` minus destinations that no longer lay their
+#: list/detail/inspector panes out horizontally. Watchlists' rehost onto
+#: `WatchlistsWorkbench` stacks FEEDS/ITEMS/CONTENT vertically inside a
+#: centre column by deliberate design (see `watchlists_workbench.py`), so it
+#: cannot satisfy `_assert_horizontal_panes` — that is a real, intentional
+#: geometry change, not a regression to paper over.
+SOURCE_PREP_WORKBENCHES_HORIZONTAL = {
+    route: contract
+    for route, contract in SOURCE_PREP_WORKBENCHES.items()
+    if route != "watchlists_collections"
+}
 
-@pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES.items())
+
+@pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES_HORIZONTAL.items())
 @pytest.mark.asyncio
 async def test_source_prep_destinations_use_list_detail_inspector_workbench(
     route, contract
@@ -900,7 +923,7 @@ async def test_source_prep_destinations_use_list_detail_inspector_workbench(
         )
 
 
-@pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES.items())
+@pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES_HORIZONTAL.items())
 @pytest.mark.asyncio
 async def test_source_prep_default_empty_or_unavailable_states_preserve_workbench_geometry(
     route, contract
@@ -951,14 +974,30 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         assert "Column 2:" not in visible_text
         assert "Column 3:" not in visible_text
 
-        for selector in (
-            "#watchlists-nav-list-divider",
-            "#watchlists-list-detail-divider",
-            "#watchlists-detail-inspector-divider",
+        # The Rule-divided three-column body was replaced by the collapsible
+        # WatchlistsWorkbench (rails around a vertically stacked centre; see
+        # watchlists_workbench.py) — region borders replace Rule dividers, so
+        # the old #watchlists-*-divider ids no longer exist. Assert the new
+        # structural landmarks instead: the workbench container, and each
+        # region wrapper.
+        #
+        # CONTENT's class-level default is collapsed (its reader is a Phase D
+        # stub), but `on_mount` unconditionally applies `load_region_layout()`
+        # over that default, and on a genuinely fresh config (as here) that
+        # returns "nothing collapsed" — indistinguishable from a user who
+        # explicitly re-expanded everything. So on first-ever launch CONTENT
+        # actually renders expanded, showing its honest stub placeholder;
+        # this is a disclosed, minor, accepted gap (see task-5-report.md),
+        # not a bug in this test.
+        assert screen.query_one("#wl-workbench")
+        for region_id in (
+            "wl-region-left_rail",
+            "wl-region-feeds",
+            "wl-region-items",
+            "wl-region-right_rail",
         ):
-            divider = screen.query_one(selector)
-            assert divider.has_class("destination-pane-divider")
-            assert divider.region.width == 1
+            assert screen.query_one(f"#{region_id}")
+        assert screen.query_one("#wl-region-content")
 
 
 @pytest.mark.parametrize(
@@ -1258,14 +1297,16 @@ SOURCE_PREP_LOADING_CONTRACTS = [
     # The Personas thin shell's snapshot worker (and its loading marker) was
     # retired with the workbench rebuild; loading/empty behavior is covered by
     # Tests/UI/test_personas_workbench.py.
-    (
-        "watchlists_collections",
-        wc_screen_module.WatchlistsCollectionsScreen,
-        "_refresh_local_wc_snapshot",
-        "#wc-loading-state",
-        SOURCE_PREP_WORKBENCHES["watchlists_collections"],
-        "#watchlists-list-pane",
-    ),
+    #
+    # Watchlists' loading marker (#wc-loading-state) still exists and is
+    # still checked (Tests/UI/test_destination_shells.py::
+    # test_watchlists_collections_initial_load_uses_distinct_loading_copy),
+    # but `_assert_ascii_workbench_contract` requires the list/detail/
+    # inspector panes to be laid out horizontally, which Watchlists' rehost
+    # onto the collapsible WatchlistsWorkbench deliberately no longer does
+    # (FEEDS/ITEMS/CONTENT stack vertically inside a centre column — see
+    # watchlists_workbench.py). See `SOURCE_PREP_WORKBENCHES_HORIZONTAL`
+    # above for the same exclusion applied to the two sibling tests.
     (
         "skills",
         skills_screen_module.SkillsScreen,
@@ -1890,7 +1931,7 @@ COMPACT_DESTINATION_CONTRACTS = {
     },
     "watchlists_collections": {
         "identity": "#watchlists-collections-title",
-        "workbench": "#watchlists-workbench",
+        "workbench": "#wl-workbench",
         "object": "#watchlists-list-pane",
         "detail": "#watchlists-detail-pane",
         "actions": (
@@ -2093,6 +2134,17 @@ VISIBLE_FOCUS_TARGETS = {
     "settings": {"settings-category-overview", "settings-category-providers-models"},
 }
 
+#: Tab-order search budget per destination, default 24. Watchlists needs a
+#: few more presses: `WatchlistsWorkbench`'s five regions are each
+#: individually focusable (`can_focus = True`, so `z` can target whichever
+#: one has focus — see `watchlists_workbench.py`), adding five stops on top
+#: of everything the pre-rehost tree already had. Measured empirically at 29
+#: presses to `wc-open-watchlists` with the default `_build_test_app()`
+#: empty-state fixture; 32 leaves a small margin.
+TAB_ORDER_ATTEMPTS = {
+    "watchlists_collections": 32,
+}
+
 
 @pytest.mark.parametrize("route,targets", VISIBLE_FOCUS_TARGETS.items())
 @pytest.mark.asyncio
@@ -2144,7 +2196,7 @@ async def test_tab_order_reaches_visible_primary_action(route, targets):
                 viewport_width=140,
             )
             return
-        for _ in range(24):
+        for _ in range(TAB_ORDER_ATTEMPTS.get(route, 24)):
             await pilot.press("tab")
             focused = host.focused
             if focused is not None and focused.id in enabled_targets:

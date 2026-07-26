@@ -14,12 +14,13 @@ from typing import Any
 from loguru import logger
 from rich.markup import escape as escape_markup
 from rich.text import Text
-from textual import on, work
+from textual import events, on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.reactive import reactive
-from textual.widgets import Button, Rule, Select, Static
+from textual.widget import Widget
+from textual.widgets import Button, Select, Static
 
 from ...Constants import (
     WATCHLISTS_NAV_CONTEXT_BACKEND,
@@ -59,6 +60,8 @@ from ..Watchlists_Modules.opml_dialogs import (
     OpmlImportDialog,
 )
 from ..Watchlists_Modules.overview_pane import OverviewPane
+from ..Watchlists_Modules.region_layout import CENTRE_REGIONS, Region, RegionLayout
+from ..Watchlists_Modules.region_layout_store import load_region_layout, save_region_layout
 from ..Watchlists_Modules.rules_pane import (
     RefreshRulesRequested,
     RuleSelected,
@@ -76,6 +79,7 @@ from ..Watchlists_Modules.sources_pane import (
 from ..Watchlists_Modules.watchlists_backend_controller import WatchlistsBackendController
 from ..Watchlists_Modules.watchlists_console_handoff import WatchlistsConsoleHandoff
 from ..Watchlists_Modules.watchlists_navigator import SectionSelected, WatchlistsNavigator
+from ..Watchlists_Modules.watchlists_workbench import RegionToggled, WatchlistsWorkbench
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 
 
@@ -101,6 +105,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ("d", "delete_selected", "Delete"),
         ("c", "check_now_selected", "Check now"),
         ("p", "preview_selected", "Preview"),
+        ("z", "toggle_region", "Collapse"),
+        ("Z", "solo_region", "Solo"),
+        ("left_square_bracket", "toggle_left_rail", "Left rail"),
+        ("right_square_bracket", "toggle_right_rail", "Right rail"),
     ]
 
     active_section = reactive("overview")
@@ -111,6 +119,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     selected_entity = reactive(None)
     recovery_state = reactive(None)
     overview_data = reactive({}, recompose=True)
+    # CONTENT hosts the Phase D reader stub, so it starts collapsed to avoid
+    # spending screen space on a placeholder. `on_mount` overlays whatever is
+    # actually persisted (see `region_layout_store`) on top of this default.
+    region_layout = reactive(RegionLayout(collapsed=frozenset({Region.CONTENT})))
+    focused_region = reactive(Region.FEEDS)
 
     _SECTION_DETAIL_TITLE = {
         "overview": "Overview",
@@ -150,6 +163,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     def on_mount(self) -> None:
         super().on_mount()
+        # Push the persisted layout into the already-mounted workbench, not just
+        # this screen's own reactive: `compose_content` already ran by the time
+        # `on_mount` fires (compose always precedes the Mount event), so the
+        # WatchlistsWorkbench child was built with whatever `region_layout` held
+        # at THAT moment. Without also reaching into the mounted workbench via
+        # `_apply_layout`, a persisted collapse would silently not render until
+        # some unrelated later recompose happened to pick it up.
+        self._apply_layout(load_region_layout())
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
         self._load_active_section_data()
@@ -380,13 +401,241 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             "backend": "local",
         }
 
-    @staticmethod
-    def _column_divider(divider_id: str) -> Rule:
-        return Rule(
-            line_style="heavy",
-            orientation="vertical",
-            id=divider_id,
-            classes="destination-pane-divider",
+    def _wc_attach_state(self) -> tuple[bool, str]:
+        """Whether "Stage Watchlists Context in Console" should be enabled,
+        and its tooltip — the same loading/error/empty/populated branching
+        `_build_list_pane` uses, split out so `compose_content` can get it
+        without constructing (and discarding) a pane widget just to read it.
+        """
+        if not self._wc_loaded:
+            return True, "Stage local Watchlists context after the local snapshot loads."
+        if self._wc_lookup_error:
+            recovery_state = self._wc_lookup_recovery_state
+            tooltip = (
+                recovery_state.disabled_tooltip
+                if recovery_state is not None
+                else "Watchlists services are unavailable; retry Watchlists before staging Console context."
+            )
+            return True, tooltip
+        if not self._has_local_wc_context():
+            return True, "Stage local Watchlists context once local sources exist."
+        return False, "Stage local Watchlists context in Console."
+
+    def _build_list_pane(self) -> Vertical:
+        """Build the FEEDS-region content: the Sources title plus the local
+        Watchlists snapshot used for Console staging (recovery-state rendering).
+
+        Byte-identical logic to the pre-rehost inline composition; only the
+        `yield` calls became list appends and a `Vertical(...)` return so the
+        result can be handed to `WatchlistsWorkbench` as a content factory
+        instead of being mounted directly by `compose_content`.
+
+        This is called fresh on every region rebuild (see
+        `WatchlistsWorkbench.__init__`'s docstring on why `content` holds
+        factories, not instances), so it must stay side-effect-free.
+        """
+        children: list[Widget] = [
+            Static("Sources", classes="destination-section watchlists-column-title")
+        ]
+        if not self._wc_loaded:
+            children.append(
+                Static(
+                    "Loading local Watchlists snapshot...",
+                    id="wc-loading-state",
+                )
+            )
+        elif self._wc_lookup_error:
+            recovery_state = self._wc_lookup_recovery_state
+            children.append(
+                Static(
+                    self._wc_lookup_error,
+                    id=(
+                        recovery_state.stable_selector
+                        if recovery_state is not None
+                        else "wc-service-error"
+                    ),
+                )
+            )
+        elif not self._has_local_wc_context():
+            children.append(
+                Static(
+                    "No sources yet.",
+                    id="wc-empty-state",
+                )
+            )
+            children.append(
+                Horizontal(
+                    Button(
+                        "Create source",
+                        id="wc-empty-create-source",
+                        variant="primary",
+                        tooltip="Add a new Watchlists source.",
+                    ),
+                    Button(
+                        "Import OPML",
+                        id="wc-empty-import-opml",
+                        tooltip="Import sources from an OPML file.",
+                    ),
+                    id="wc-empty-actions",
+                    classes="destination-filter-strip",
+                )
+            )
+        else:
+            children.append(
+                Static(
+                    "Local Watchlists snapshot",
+                    id="wc-snapshot-title",
+                    classes="destination-section",
+                )
+            )
+            children.append(
+                Static(
+                    self._count_label(
+                        "Watchlists",
+                        self._local_watchlist_count,
+                        self._watchlist_total_known,
+                    ),
+                    id="wc-watchlists-summary",
+                )
+            )
+            for index, record in enumerate(self._local_watchlist_records):
+                children.append(
+                    Static(
+                        Text.from_markup(escape_markup(self._record_title(record))),
+                        id=f"wc-watchlist-item-{index}",
+                    )
+                )
+        return Vertical(
+            *children,
+            id="watchlists-list-pane",
+            classes="destination-workbench-pane",
+        )
+
+    def _build_detail_pane(self) -> Vertical:
+        """Build the ITEMS-region content: the active-section-routed pane.
+
+        Called fresh on every region rebuild — see the factory note on
+        `WatchlistsWorkbench.__init__`.
+        """
+        detail_title = self._SECTION_DETAIL_TITLE.get(self.active_section, "Detail")
+        children: list[Widget] = [
+            Static(
+                detail_title,
+                classes="destination-section watchlists-column-title",
+                id="watchlists-detail-title",
+            )
+        ]
+        if self.active_section == "overview":
+            overview = OverviewPane(id="watchlists-overview-pane")
+            overview.data = self.overview_data
+            children.append(overview)
+        elif self.active_section == "sources":
+            children.append(SourcesPane(id="watchlists-sources-pane"))
+        elif self.active_section == "runs":
+            runs_pane = RunsPane(id="watchlists-runs-pane")
+            runs_pane.runs = self._loaded_runs
+            runs_pane.selected_run = self.selected_run
+            children.append(runs_pane)
+        elif self.active_section == "items":
+            children.append(ItemsPane(id="watchlists-items-pane"))
+        elif self.active_section == "rules":
+            children.append(RulesPane(id="watchlists-rules-pane"))
+        elif self.active_section == "notifications":
+            notifications_pane = NotificationsPane(id="watchlists-notifications-pane")
+            notifications_pane.notifications = self._loaded_notifications
+            notifications_pane.selected_notification = self.selected_notification
+            children.append(notifications_pane)
+        return Vertical(
+            *children,
+            id="watchlists-detail-pane",
+            classes="destination-workbench-pane",
+        )
+
+    def _build_inspector_pane(
+        self,
+        latest_console_item: Any,
+        attach_disabled: bool,
+        attach_tooltip: str,
+    ) -> Vertical:
+        """Build the RIGHT_RAIL-region content: state summaries, Console
+        actions, and the entity Inspector.
+
+        `latest_console_item`/`attach_disabled`/`attach_tooltip` are captured
+        once per `compose_content` call and passed in rather than
+        recomputed, since a factory wrapping this method (see
+        `compose_content`) is called on every region rebuild.
+        """
+        children: list[Widget] = [
+            Static(
+                "Inspector",
+                classes="destination-section watchlists-column-title",
+            ),
+            Static(
+                "State: ready"
+                if self._wc_loaded and not self._wc_lookup_error
+                else "State: unavailable",
+                id="watchlists-state-summary",
+            ),
+            Static(
+                f"Alert rules active: {self.overview_data.get('active_alert_rules', 0)}",
+                id="watchlists-alerts-summary",
+            ),
+            Static(
+                f"Latest run status: {self.overview_data.get('latest_run_status', 'unavailable')}",
+                id="watchlists-latest-run-summary",
+            ),
+            Static("Console actions", classes="destination-section"),
+            Button(
+                "Stage Watchlists Context in Console",
+                id="wc-attach-to-console",
+                disabled=attach_disabled,
+                tooltip=attach_tooltip,
+            ),
+            Button(
+                "Open current Watchlists",
+                id="wc-open-watchlists",
+                tooltip="Open the current watchlist/subscription surface.",
+            ),
+        ]
+        if latest_console_item is not None:
+            title = str(getattr(latest_console_item, "title", None) or "Untitled")
+            status = str(getattr(latest_console_item, "status", None) or "unknown")
+            children.append(
+                Static(
+                    Text.from_markup(
+                        "Console can follow latest Watchlists run: "
+                        f"{escape_markup(title)} ({escape_markup(status)})."
+                    ),
+                    id="watchlists-console-available",
+                )
+            )
+            children.append(
+                Button(
+                    Text.from_markup(f"Follow {escape_markup(title)} in Console"),
+                    id="watchlists-follow-in-console",
+                    tooltip="Open the latest active Watchlists run in Console.",
+                )
+            )
+        else:
+            children.append(
+                Static(
+                    "No active Watchlists run is available for Console follow.",
+                    id="watchlists-console-unavailable",
+                )
+            )
+            children.append(
+                Button(
+                    "Console follow unavailable",
+                    id="watchlists-follow-in-console",
+                    disabled=True,
+                    tooltip="Unavailable until Watchlists has an active run with Console context.",
+                )
+            )
+        children.append(InspectorPane(id="watchlists-entity-inspector"))
+        return Vertical(
+            *children,
+            id="watchlists-inspector-pane",
+            classes="destination-workbench-pane ds-inspector",
         )
 
     def compose_content(self) -> ComposeResult:
@@ -418,178 +667,81 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     ),
                     id="watchlists-backend-label",
                 )
-            with Horizontal(id="watchlists-workbench", classes="ds-panel destination-workbench"):
-                yield WatchlistsNavigator(id="watchlists-navigator")
-                yield self._column_divider("watchlists-nav-list-divider")
-                with Vertical(id="watchlists-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Sources", classes="destination-section watchlists-column-title")
-                    if not self._wc_loaded:
-                        yield Static(
-                            "Loading local Watchlists snapshot...",
-                            id="wc-loading-state",
-                        )
-                        attach_disabled = True
-                        attach_tooltip = "Stage local Watchlists context after the local snapshot loads."
-                    elif self._wc_lookup_error:
-                        recovery_state = self._wc_lookup_recovery_state
-                        yield Static(
-                            self._wc_lookup_error,
-                            id=(
-                                recovery_state.stable_selector
-                                if recovery_state is not None
-                                else "wc-service-error"
-                            ),
-                        )
-                        attach_disabled = True
-                        attach_tooltip = (
-                            recovery_state.disabled_tooltip
-                            if recovery_state is not None
-                            else "Watchlists services are unavailable; retry Watchlists before staging Console context."
-                        )
-                    elif not self._has_local_wc_context():
-                        yield Static(
-                            "No sources yet.",
-                            id="wc-empty-state",
-                        )
-                        with Horizontal(id="wc-empty-actions", classes="destination-filter-strip"):
-                            yield Button(
-                                "Create source",
-                                id="wc-empty-create-source",
-                                variant="primary",
-                                tooltip="Add a new Watchlists source.",
-                            )
-                            yield Button(
-                                "Import OPML",
-                                id="wc-empty-import-opml",
-                                tooltip="Import sources from an OPML file.",
-                            )
-                        attach_disabled = True
-                        attach_tooltip = "Stage local Watchlists context once local sources exist."
-                    else:
-                        yield Static(
-                            "Local Watchlists snapshot",
-                            id="wc-snapshot-title",
-                            classes="destination-section",
-                        )
-                        yield Static(
-                            self._count_label(
-                                "Watchlists",
-                                self._local_watchlist_count,
-                                self._watchlist_total_known,
-                            ),
-                            id="wc-watchlists-summary",
-                        )
-                        for index, record in enumerate(self._local_watchlist_records):
-                            yield Static(
-                                Text.from_markup(
-                                    escape_markup(self._record_title(record))
-                                ),
-                                id=f"wc-watchlist-item-{index}",
-                            )
-                        attach_disabled = False
-                        attach_tooltip = "Stage local Watchlists context in Console."
-                yield self._column_divider("watchlists-list-detail-divider")
-                with Vertical(id="watchlists-detail-pane", classes="destination-workbench-pane"):
-                    detail_title = self._SECTION_DETAIL_TITLE.get(
-                        self.active_section, "Detail"
-                    )
-                    yield Static(
-                        detail_title,
-                        classes="destination-section watchlists-column-title",
-                        id="watchlists-detail-title",
-                    )
-                    if self.active_section == "overview":
-                        overview = OverviewPane(id="watchlists-overview-pane")
-                        overview.data = self.overview_data
-                        yield overview
-                    elif self.active_section == "sources":
-                        yield SourcesPane(id="watchlists-sources-pane")
-                    elif self.active_section == "runs":
-                        runs_pane = RunsPane(id="watchlists-runs-pane")
-                        runs_pane.runs = self._loaded_runs
-                        runs_pane.selected_run = self.selected_run
-                        yield runs_pane
-                    elif self.active_section == "items":
-                        yield ItemsPane(id="watchlists-items-pane")
-                    elif self.active_section == "rules":
-                        yield RulesPane(id="watchlists-rules-pane")
-                    elif self.active_section == "notifications":
-                        notifications_pane = NotificationsPane(
-                            id="watchlists-notifications-pane"
-                        )
-                        notifications_pane.notifications = self._loaded_notifications
-                        notifications_pane.selected_notification = (
-                            self.selected_notification
-                        )
-                        yield notifications_pane
-                yield self._column_divider("watchlists-detail-inspector-divider")
-                with Vertical(
-                    id="watchlists-inspector-pane",
-                    classes="destination-workbench-pane ds-inspector",
-                ):
-                    yield Static(
-                        "Inspector",
-                        classes="destination-section watchlists-column-title",
-                    )
-                    yield Static(
-                        "State: ready"
-                        if self._wc_loaded and not self._wc_lookup_error
-                        else "State: unavailable",
-                        id="watchlists-state-summary",
-                    )
-                    yield Static(
-                        f"Alert rules active: {self.overview_data.get('active_alert_rules', 0)}",
-                        id="watchlists-alerts-summary",
-                    )
-                    yield Static(
-                        f"Latest run status: {self.overview_data.get('latest_run_status', 'unavailable')}",
-                        id="watchlists-latest-run-summary",
-                    )
-                    yield Static("Console actions", classes="destination-section")
-                    yield Button(
-                        "Stage Watchlists Context in Console",
-                        id="wc-attach-to-console",
-                        disabled=attach_disabled,
-                        tooltip=attach_tooltip,
-                    )
-                    yield Button(
-                        "Open current Watchlists",
-                        id="wc-open-watchlists",
-                        tooltip="Open the current watchlist/subscription surface.",
-                    )
-                    if latest_console_item is not None:
-                        title = str(
-                            getattr(latest_console_item, "title", None) or "Untitled"
-                        )
-                        status = str(
-                            getattr(latest_console_item, "status", None) or "unknown"
-                        )
-                        yield Static(
-                            Text.from_markup(
-                                "Console can follow latest Watchlists run: "
-                                f"{escape_markup(title)} ({escape_markup(status)})."
-                            ),
-                            id="watchlists-console-available",
-                        )
-                        yield Button(
-                            Text.from_markup(
-                                f"Follow {escape_markup(title)} in Console"
-                            ),
-                            id="watchlists-follow-in-console",
-                            tooltip="Open the latest active Watchlists run in Console.",
-                        )
-                    else:
-                        yield Static(
-                            "No active Watchlists run is available for Console follow.",
-                            id="watchlists-console-unavailable",
-                        )
-                        yield Button(
-                            "Console follow unavailable",
-                            id="watchlists-follow-in-console",
-                            disabled=True,
-                            tooltip="Unavailable until Watchlists has an active run with Console context.",
-                        )
-                    yield InspectorPane(id="watchlists-entity-inspector")
+            attach_disabled, attach_tooltip = self._wc_attach_state()
+            yield WatchlistsWorkbench(
+                self.region_layout,
+                content={
+                    # Factories, not instances: `region_layout` is
+                    # `recompose=True`, so any collapse/solo/rail toggle
+                    # rebuilds every region, not just the one that changed.
+                    # A pre-built container's constructor-supplied children
+                    # only mount on its FIRST mount; the same instance
+                    # remounted a second time comes back childless (verified
+                    # empirically — see `WatchlistsWorkbench.__init__`).
+                    Region.LEFT_RAIL: lambda: WatchlistsNavigator(id="watchlists-navigator"),
+                    Region.FEEDS: self._build_list_pane,
+                    Region.ITEMS: self._build_detail_pane,
+                    Region.RIGHT_RAIL: lambda: self._build_inspector_pane(
+                        latest_console_item, attach_disabled, attach_tooltip
+                    ),
+                },
+                id="wl-workbench",
+            )
+
+    def _apply_layout(self, layout: RegionLayout) -> None:
+        """Set the layout, push it to the workbench, and persist it."""
+        self.region_layout = layout
+        try:
+            # The workbench reactive is `region_layout`, NOT `layout` —
+            # `Widget.layout` is an existing read-only Textual property the
+            # compositor calls `.arrange()` on every render, so shadowing it
+            # breaks rendering outright. Verified empirically in Task 3.
+            self.query_one(WatchlistsWorkbench).region_layout = layout
+        except Exception:
+            logger.debug("Workbench not mounted yet; layout applies on compose.")
+        save_region_layout(layout)
+
+    def action_toggle_region(self) -> None:
+        """Collapse or expand whichever region currently has focus."""
+        self._apply_layout(self.region_layout.toggle(self.focused_region))
+
+    def action_solo_region(self) -> None:
+        """Isolate the focused centre pane; press again to restore."""
+        if self.focused_region not in CENTRE_REGIONS:
+            self.notify("Solo applies to the Feeds, Items, or Content panes.")
+            return
+        self._apply_layout(self.region_layout.solo(self.focused_region))
+
+    def action_toggle_left_rail(self) -> None:
+        self._apply_layout(self.region_layout.toggle(Region.LEFT_RAIL))
+
+    def action_toggle_right_rail(self) -> None:
+        self._apply_layout(self.region_layout.toggle(Region.RIGHT_RAIL))
+
+    @on(RegionToggled)
+    def _on_region_toggled(self, event: RegionToggled) -> None:
+        event.stop()
+        self._apply_layout(self.region_layout.toggle(event.region))
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        """Keep `focused_region` in step with whatever actually holds focus.
+
+        Without this, `z` always collapses whichever region `focused_region`
+        happened to default to, regardless of where the user actually is.
+        Both id prefixes are checked so that focusing a *collapsed* region's
+        header targets that region rather than expanding some other one.
+        """
+        node = event.widget
+        while node is not None:
+            node_id = getattr(node, "id", None) or ""
+            for prefix in ("wl-region-", "wl-header-"):
+                if node_id.startswith(prefix):
+                    try:
+                        self.focused_region = Region(node_id[len(prefix):])
+                    except ValueError:
+                        pass
+                    return
+            node = node.parent
 
     def watch_active_section(self) -> None:
         if self.active_section == "overview":

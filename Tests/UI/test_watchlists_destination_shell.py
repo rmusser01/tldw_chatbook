@@ -13,6 +13,7 @@ from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
+from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
 from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
 
 
@@ -529,3 +530,117 @@ async def test_watchlists_notifications_section_reads_real_client_inbox():
                 break
 
         assert app.client_notifications_db.get_notification(inserted["id"])["is_read"]
+
+
+# --- Task 5: re-hosting the existing panes inside the collapsible workbench ---
+#
+# The file has no `watchlists_app` fixture (none existed before this task), so
+# these reuse the same `DestinationHarness` + `_build_test_app()` pattern the
+# rest of this file already uses, rather than inventing a second harness.
+
+
+@pytest.mark.asyncio
+async def test_existing_panes_survive_the_workbench_rehost():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert screen.query("#wl-workbench"), "the workbench container should be mounted"
+        # The panes that existed before must still be mounted, not replaced.
+        assert screen.query("#watchlists-navigator")
+        # Default active_section is "overview", so OverviewPane is what's there
+        # to start; switch to Sources (as the pre-existing navigator test does)
+        # to confirm SourcesPane also still renders inside the re-hosted ITEMS
+        # region rather than being dropped.
+        assert screen.query("#watchlists-overview-pane")
+        screen.query_one("#nav-sources", Button).press()
+        await pilot.pause()
+        assert screen.query("#watchlists-sources-pane")
+
+
+@pytest.mark.asyncio
+async def test_bracket_keys_toggle_the_rails():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        await pilot.press("[")
+        await pilot.pause()
+        assert screen.region_layout.is_collapsed(Region.LEFT_RAIL)
+        await pilot.press("]")
+        await pilot.pause()
+        assert screen.region_layout.is_collapsed(Region.RIGHT_RAIL)
+
+
+@pytest.mark.asyncio
+async def test_collapsing_a_region_persists(monkeypatch):
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: saved.append(layout),
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.focused_region = Region.ITEMS
+        await pilot.press("z")
+        await pilot.pause()
+        assert screen.region_layout.is_collapsed(Region.ITEMS)
+        assert saved
+        assert Region.ITEMS in saved[-1].collapsed
+
+
+@pytest.mark.asyncio
+async def test_route_and_class_name_are_unchanged():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert type(screen).__name__ == "WatchlistsCollectionsScreen"
+        # BaseAppScreen stores the route as `screen_name` (base_app_screen.py:23),
+        # not `route_name` — the screen passes "watchlists_collections" to super().
+        assert screen.screen_name == "watchlists_collections"
+
+
+@pytest.mark.asyncio
+async def test_focus_drives_which_region_z_collapses():
+    """`z` is a lie unless focus tracking actually works: without
+    `on_descendant_focus`, every `z` press collapses whatever `focused_region`
+    defaults to, regardless of where the user actually is."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.query_one("#wl-region-items").focus()
+        await pilot.pause()
+        assert screen.focused_region == Region.ITEMS
+        await pilot.press("z")
+        await pilot.pause()
+        assert screen.region_layout.is_collapsed(Region.ITEMS)
+        assert not screen.region_layout.is_collapsed(Region.FEEDS)
+
+
+@pytest.mark.asyncio
+async def test_persisted_layout_is_applied_on_mount(monkeypatch):
+    """`on_mount` must push the loaded layout into the already-mounted
+    workbench, not just this screen's own `region_layout` attribute — compose
+    always runs before Mount, so the workbench was already built with the
+    reactive's default value by the time `on_mount` fires."""
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.load_region_layout",
+        lambda: RegionLayout(collapsed=frozenset({Region.RIGHT_RAIL})),
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert screen.region_layout.is_collapsed(Region.RIGHT_RAIL)
+        assert screen.query("#wl-header-right_rail")
+        assert not screen.query("#watchlists-inspector-pane")

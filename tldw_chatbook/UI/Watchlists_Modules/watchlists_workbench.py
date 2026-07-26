@@ -9,6 +9,7 @@ then; generalising ahead of a second consumer is not worth it.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from textual.app import ComposeResult
@@ -65,9 +66,41 @@ class WatchlistsWorkbench(Horizontal):
 
     region_layout: reactive[RegionLayout] = reactive(RegionLayout(), recompose=True)
 
-    def __init__(self, layout: RegionLayout, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        layout: RegionLayout,
+        content: Mapping[Region, Callable[[], Widget]] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Args:
+            layout: Initial collapse/solo state.
+            content: Per-region **factories**, not widget instances —
+                ``region_layout`` is ``recompose=True``, so *any* collapse/
+                solo/rail toggle fully unmounts and rebuilds every region,
+                not just the one that changed (that blast radius is
+                inherited from the reactive design, not introduced here).
+                Passing already-constructed instances was tried first and
+                verified broken empirically: a container widget's
+                constructor-supplied children (e.g. ``Vertical(Static(...),
+                Static(...))``) are consumed on that widget's *first* mount
+                only. Once such an instance has been unmounted (as part of
+                a recompose) and the *same* instance is handed back to
+                `compose()` again, it remounts with zero children — its
+                grandchildren do not come back. A leaf widget with no
+                children of its own (e.g. a bare ``Label``) happens to
+                survive remounting, and a widget with an *overridden*
+                ``compose()`` (which regenerates its children from scratch
+                every call) also survives — which is exactly why this was
+                easy to miss with a single-recompose test. A factory
+                sidesteps the whole class of bug by handing back a brand
+                new instance on every region rebuild, matching how
+                ``WatchlistsNavigator`` (an overridden-``compose()``
+                widget) already behaves.
+        """
         super().__init__(**kwargs)
         self.add_class("watchlists-workbench")
+        self._content: dict[Region, Callable[[], Widget]] = dict(content or {})
         self.set_reactive(WatchlistsWorkbench.region_layout, layout)
 
     def compose(self) -> ComposeResult:
@@ -99,9 +132,15 @@ class WatchlistsWorkbench(Horizontal):
             header.tooltip = f"Expand {REGION_TITLES[region]}"
             return header
 
+        factory = self._content.get(region)
+        supplied = factory() if factory is not None else None
         body = Vertical(
             Static(REGION_TITLES[region], classes="watchlists-region-title"),
-            Static(REGION_PLACEHOLDERS[region], classes="watchlists-region-placeholder"),
+            supplied
+            if supplied is not None
+            else Static(
+                REGION_PLACEHOLDERS[region], classes="watchlists-region-placeholder"
+            ),
             id=f"wl-region-{region.value}",
             classes=f"watchlists-region watchlists-region-{region.value}",
         )

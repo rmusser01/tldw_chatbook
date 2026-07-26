@@ -81,3 +81,86 @@ async def test_every_centre_region_may_be_collapsed_at_once():
         # The rails survive, so the screen is never empty.
         assert app.query("#wl-region-left_rail")
         assert app.query("#wl-region-right_rail")
+
+
+@pytest.mark.asyncio
+async def test_supplied_content_replaces_the_stub_placeholder():
+    from textual.widgets import Label
+
+    # `content` holds FACTORIES, not instances — see the empirical finding
+    # documented on `WatchlistsWorkbench.__init__` and
+    # `test_supplied_content_with_nested_children_survives_recompose` below.
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(),
+                content={Region.FEEDS: lambda: Label("real feeds table", id="my-real-feeds")},
+                id="wl-workbench",
+            )
+
+    app = _App()
+    async with app.run_test():
+        assert app.query("#my-real-feeds"), "supplied content should be mounted"
+        # The stub placeholder for that region must be gone.
+        placeholders = [
+            str(node.renderable) for node in app.query(".watchlists-region-placeholder")
+        ]
+        assert not any("Feeds table arrives" in text for text in placeholders)
+
+
+@pytest.mark.asyncio
+async def test_regions_without_supplied_content_keep_their_stubs():
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(RegionLayout(), content={}, id="wl-workbench")
+
+    app = _App()
+    async with app.run_test():
+        assert app.query(".watchlists-region-placeholder")
+
+
+@pytest.mark.asyncio
+async def test_supplied_content_with_nested_children_survives_recompose():
+    """Regression test for an empirically-found bug: passing an already-
+    constructed CONTAINER widget (with its own constructor-supplied children,
+    e.g. `Vertical(Static(...), Static(...))`) as `content` works on the
+    FIRST render, but its grandchildren vanish after ANY subsequent
+    recompose — `region_layout` is `recompose=True`, so toggling even an
+    unrelated region unmounts and rebuilds every region. A widget's
+    constructor-supplied children are only mounted on that instance's first
+    mount; the same instance remounted a second time comes back childless.
+    `content` must therefore hold factories that build a fresh instance on
+    every call, not pre-built instances — this test would fail against the
+    pre-fix, instance-based implementation.
+    """
+    from textual.containers import Vertical as _Vertical
+    from textual.widgets import Static as _Static
+
+    def build_nested():
+        return _Vertical(
+            _Static("outer-title", id="outer-title"),
+            _Static("inner-content", id="inner-content"),
+            id="my-nested-pane",
+        )
+
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(), content={Region.FEEDS: build_nested}, id="wl-workbench"
+            )
+
+    app = _App()
+    async with app.run_test() as pilot:
+        assert app.query("#inner-content")
+
+        workbench = app.query_one(WatchlistsWorkbench)
+        # Toggle an UNRELATED region. Because the reactive recomposes the
+        # whole workbench, this rebuilds FEEDS too, even though FEEDS itself
+        # was never toggled.
+        workbench.region_layout = RegionLayout(collapsed=frozenset({Region.LEFT_RAIL}))
+        await pilot.pause()
+
+        assert app.query("#my-nested-pane"), "the region body should still be rebuilt"
+        assert app.query(
+            "#inner-content"
+        ), "nested content must survive an unrelated region's recompose"
