@@ -157,12 +157,14 @@ must not appear in immutable trace JSON, logs, exceptions, or diagnostics.
 
 Before constructing the attempt, the builder uses the existing Markdown-aware
 marker-span helper with `max_count=1` only as a bounded eligibility guard. If
-the exact body contains any eligible marker under the selected prompt set's
-namespace, recording fails atomically with a fixed reason code. TASK-553.14
-does not construct occurrence records, infer evidence mappings, or weaken the
-model invariant that a retained body's eligible markers must be represented
-exactly. Workstream 13 removes this temporary restriction by adding canonical
-occurrence parsing.
+the helper returns a non-empty result, recording fails atomically with a fixed
+reason code. The existing helper raises `ValueError` when it encounters a
+second eligible marker beyond `max_count=1`; that overflow is caught and
+translated to the same fixed `occurrence_mapping_unavailable` denial. This task
+does not change the shared helper's semantics. TASK-553.14 does not construct
+occurrence records, infer evidence mappings, or weaken the model invariant that
+a retained body's eligible markers must be represented exactly. Workstream 13
+removes this temporary restriction by adding canonical occurrence parsing.
 
 The answer payload participates in both its per-payload byte cap and the
 aggregate governed-payload cap. Validation constructs all prospective objects
@@ -229,10 +231,12 @@ Callbacks live only in a bounded transient store map keyed by native message ID;
 they are not serialized into message or session models and cannot transfer to a
 replacement, retry, regenerated variant, or runtime-written assistant row.
 
-The controller also clears any still-registered finalizer in an outer
-`finally` around the complete dispatch lifecycle. This cleanup covers
-`CancelledError`, session closure, and failures before provider or agent
-terminal handling begins. Clearing an already consumed or session-removed
+The controller also invokes one idempotent store cleanup operation in an outer
+`finally` around the complete dispatch lifecycle. That operation clears both
+the still-registered finalizer and its paired terminal-deferral flag; it does
+not discard the store's ordinary pending-persistence bookkeeping. This cleanup
+covers `CancelledError`, session closure, and failures before provider or agent
+terminal handling begins. Cleaning an already consumed or session-removed
 entry is a no-op.
 
 ### Exact-body callback
@@ -374,8 +378,8 @@ without overstating structural or semantic trust.
 
 - UI materialization does not persist a terminal-deferred assistant early
 - placeholder creation installs finalizer and deferral atomically
-- outer dispatch cleanup clears unconsumed finalizers on cancellation and
-  pre-terminal failure
+- outer dispatch cleanup clears unconsumed finalizers and terminal deferrals on
+  cancellation and pre-terminal failure
 - exact materialized body reaches the callback once
 - stable native message ID reaches sealed, marker-rejected, fallback, and retry
   `create_message` calls
