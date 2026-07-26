@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -92,3 +93,69 @@ async def test_zero_bindings_parity_with_sandbox(bound_workspace) -> None:
         read = await ReadFileTool().execute(file_path=str(inside))
     assert listed.get("error") is None
     assert read.get("error") is None
+
+
+@pytest.mark.asyncio
+async def test_recursive_listing_descends_into_bound_folder(bound_workspace) -> None:
+    """Pins the containment_root fix: recursion must not cap at depth 0 for
+    a directory that resolves into a bound workspace folder rather than the
+    sandbox (pre-fix, `_is_within(item, sandbox_root)` was hardcoded and
+    every child of a workspace folder failed it, silently stopping descent).
+    """
+    ro_folder = bound_workspace["ro"]
+    deep_dir = ro_folder / "sub" / "deeper"
+    deep_dir.mkdir(parents=True)
+    deep_file = deep_dir / "file.txt"
+    deep_file.write_text("nested")
+
+    with wfr.run_workspace("ws-a"):
+        result = await ListDirectoryTool().execute(
+            directory_path=str(ro_folder), recursive=True, max_depth=5
+        )
+
+    assert result.get("error") is None
+    deep_entries = [e for e in result["entries"] if e["name"] == "file.txt"]
+    assert deep_entries, f"expected file.txt to be listed, got: {result['entries']}"
+    assert deep_entries[0]["depth"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_symlink_inside_bound_folder_cannot_escape(
+    bound_workspace, tmp_path
+) -> None:
+    """A symlink planted inside a bound folder must not let a recursive
+    listing (or a direct listing of the link itself) reach outside every
+    allowed root.
+    """
+    ro_folder = bound_workspace["ro"]
+    legit_file = ro_folder / "other.txt"
+    legit_file.write_text("legit")
+
+    target_dir = tmp_path / "loot"
+    target_dir.mkdir()
+    marker = target_dir / "secret.txt"
+    marker.write_text("marker")
+
+    link = ro_folder / "link"
+    os.symlink(target_dir, link)
+
+    with wfr.run_workspace("ws-a"):
+        result = await ListDirectoryTool().execute(
+            directory_path=str(ro_folder), recursive=True, max_depth=5
+        )
+        direct_link_result = await ListDirectoryTool().execute(
+            directory_path=str(link)
+        )
+
+    # (a) Nothing from inside the symlink target leaks into the recursive
+    # listing, but legitimate sibling content is still present.
+    assert result.get("error") is None
+    names = {e["name"] for e in result["entries"]}
+    paths = {e["path"] for e in result["entries"]}
+    assert "secret.txt" not in names
+    assert not any("loot" in p for p in paths)
+    assert "other.txt" in names
+
+    # (b) Listing the symlink directly is denied outright — the resolved
+    # target sits outside every allowed root.
+    assert direct_link_result.get("error")
