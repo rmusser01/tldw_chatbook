@@ -338,9 +338,14 @@ git add -A && git commit -m "fix(library): <or> docs: resolve the .library-colle
       def _display_label(self) -> str      # override point
       def _display_badge(self) -> str      # override point
   ```
-  Task 5 subclasses this. The Lab frame (PR2) constructs it directly.
+  Task 4 subclasses this. The Lab frame (PR2) constructs it directly.
 
-**Background.** `ConsoleRailHandle` already has six consumers — `chat_screen`, `home_screen`, `library_screen`, `personas_screen`, `Widgets/Home/home_rail`, `Widgets/Library/library_rail` — while living in a Console-private namespace and importing `CONSOLE_RAIL_INSPECTOR_LABEL` from `tldw_chatbook.Chat.console_rail_state`. The base extracted here carries no Chat import and no Console vocabulary; Console's specifics move to the subclass in Task 5.
+**Background.** `ConsoleRailHandle` already has six consumers — `chat_screen`, `home_screen`, `library_screen`, `personas_screen`, `Widgets/Home/home_rail`, `Widgets/Library/library_rail` — while living in a Console-private namespace and importing `CONSOLE_RAIL_INSPECTOR_LABEL` from `tldw_chatbook.Chat.console_rail_state`. The base extracted here carries no Chat import and no Console vocabulary; Console's specifics move to the subclass in Task 4.
+
+**Expect transitional duplication.** This task adds a `compose()` body closely matching the one still
+living in `console_rail_handle.py`; Task 4 deletes that original and reduces `ConsoleRailHandle` to a
+subclass. The overlap exists only between Tasks 3 and 4 and is inherent to a two-step extract. Do not
+try to resolve it inside Task 3 by editing the Console file — that is Task 4's diff.
 
 The `.console-rail-handle*` class names are kept deliberately, so the CSS bundle sees no diff. The TCSS contains no type selectors for these widgets — only class selectors — so renaming the Python types is invisible to CSS.
 
