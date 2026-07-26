@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
 from ...DB.Evals_DB import EvalsDB
-from ...Evals.word_bench.storage import BENCH_TYPE
+from ...Evals.word_bench.models import PreflightResult
+from ...Evals.word_bench.storage import BENCH_TYPE, load_grid
 
 SelectionKind = Literal["none", "bench", "classic", "dataset", "run_group"]
 
@@ -52,6 +53,14 @@ class EvalsViewModel:
 
     def __init__(self, db: Optional[EvalsDB]) -> None:
         self._db = db
+
+    @property
+    def db(self) -> Optional[EvalsDB]:
+        """The wrapped handle, for read-only widgets (``bench_editor.py``,
+        ``inspector.py``) that need calls this view model doesn't itself
+        expose (``load_bench``, ``get_model``) -- rather than each widget
+        resolving its own second handle from ``app_instance``."""
+        return self._db
 
     def _all_tasks(self) -> list[dict[str, Any]]:
         if self._db is None:
@@ -135,3 +144,47 @@ class EvalsViewModel:
             if group.get("id") == run_group_id:
                 return group
         return None
+
+    def latest_run_group_for_bench(self, bench_id: str) -> Optional[dict[str, Any]]:
+        """The bench's most recent run group, or ``None`` if it has never
+        run. ``run_groups()`` is already newest-group-first (see its own
+        docstring), so the first match is the latest."""
+        for group in self.run_groups():
+            if group.get("task_id") == bench_id:
+                return group
+        return None
+
+    def preflight_for_bench(self, bench_id: str) -> dict[str, PreflightResult]:
+        """Per-target readiness from the bench's most recent run snapshot.
+
+        Reads ``word_bench.storage.load_grid``'s stored verdicts rather
+        than re-running preflight: a fresh preflight call from a render
+        path would fire network requests on every selection change and
+        could disagree with the verdict the run itself used (see
+        ``runner.RunOutcome``'s own docstring). A bench that has never run
+        has no snapshot, so this degrades to ``{}`` -- callers render an
+        un-preflighted state for every target rather than treating an
+        empty mapping as "all blocked".
+        """
+        if self._db is None:
+            return {}
+        group = self.latest_run_group_for_bench(bench_id)
+        if group is None:
+            return {}
+        try:
+            grid = load_grid(self._db, group["id"])
+        except ValueError:
+            # The run group vanished between listing it and loading it
+            # (e.g. concurrent deletion) -- render un-preflighted rather
+            # than raising out of a compose().
+            return {}
+        return grid.get("preflight", {})
+
+    def runs_for_task(self, task_id: str) -> list[dict[str, Any]]:
+        """A task's run history, newest first -- used by the classic-task
+        read-only detail pane. Unlike ``run_groups()`` this returns every
+        run row, not one row per group: classic tasks have no run-group
+        concept (word bench is the only bench type that groups runs)."""
+        if self._db is None:
+            return []
+        return self._db.list_runs(task_id=task_id, limit=_LIST_LIMIT)

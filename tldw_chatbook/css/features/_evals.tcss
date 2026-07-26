@@ -87,3 +87,42 @@
     margin: 1 0 0 0;
     width: 100%;
 }
+
+/* Task 4 (bench editor + readiness inspector). Status colour lives here,
+   in app-tier CSS, never in bench_editor.py/inspector.py's own widget
+   CSS -- `.ds-status-badge { color: $ds-text-primary }`
+   (components/_agentic_terminal.tcss) outranks any widget DEFAULT_CSS
+   regardless of specificity, so a per-status colour has to win the same
+   way: an app-tier rule combining `.ds-status-badge` with one of these
+   modifier classes. Tests assert the label text, never these colours --
+   see Tests/UI/test_evals_bench_editor.py. */
+.evals-status-ready {
+    color: $ds-status-ready;
+}
+
+.evals-status-unavailable {
+    color: $ds-status-warning;
+}
+
+.evals-status-blocked {
+    color: $ds-status-blocked;
+}
+
+.evals-status-unchecked {
+    color: $ds-text-muted;
+}
+
+.evals-bench-target-row {
+    height: auto;
+    padding: 0 1;
+}
+
+.evals-classic-run-row {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+}
+
+#evals-inspector-bench .ds-recovery-callout {
+    margin: 0 0 1 0;
+}

@@ -30,7 +30,9 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from ...DB.Evals_DB import EvalsDB
+from ..Evals.bench_editor import BenchEditor, ClassicTaskDetail
 from ..Evals.evals_state import EvalsSelection, EvalsViewModel, SelectionKind
+from ..Evals.inspector import EvalsInspector
 from ..Evals.library_rail import RAIL_SECTIONS, LibraryRail
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Workbench.workbench_state import WorkbenchHeaderState
@@ -146,28 +148,7 @@ class EvalsScreen(BaseAppScreen):
                     id="evals-detail-missing",
                 )
                 return
-            config_data = bench.get("config_data") or {}
-            yield Static(
-                str(bench.get("name") or "Untitled bench"),
-                id="evals-detail-bench-name",
-                classes="evals-pane-heading",
-            )
-            description = bench.get("description")
-            if description:
-                yield Static(str(description), id="evals-detail-bench-description")
-            yield Static(
-                f"Prompt mode: {config_data.get('prompt_mode', 'unknown')}",
-                id="evals-detail-bench-prompt-mode",
-            )
-            yield Static(
-                f"Top-K: {config_data.get('top_k', 'unknown')}",
-                id="evals-detail-bench-top-k",
-            )
-            target_count = len(config_data.get("target_ids") or ())
-            yield Static(
-                f"Targets: {target_count}",
-                id="evals-detail-bench-targets",
-            )
+            yield BenchEditor(self._view_model, selection.id, id="evals-bench-editor")
             return
 
         if selection.kind == "classic":
@@ -182,15 +163,7 @@ class EvalsScreen(BaseAppScreen):
                     id="evals-detail-missing",
                 )
                 return
-            yield Static(
-                str(task.get("name") or "Untitled task"),
-                id="evals-detail-classic-name",
-                classes="evals-pane-heading",
-            )
-            yield Static(
-                f"Task type: {task.get('task_type', 'unknown')}",
-                id="evals-detail-classic-type",
-            )
+            yield ClassicTaskDetail(self._view_model, task, id="evals-classic-detail")
             return
 
         if selection.kind == "dataset":
@@ -249,6 +222,26 @@ class EvalsScreen(BaseAppScreen):
 
     def _compose_inspector_pane(self) -> ComposeResult:
         yield Static("Inspector", classes="destination-section evals-pane-title")
+        selection = self._selection
+
+        if selection.kind == "bench":
+            bench = (
+                self._view_model.bench_by_id(selection.id) if selection.id else None
+            )
+            if bench is not None:
+                yield EvalsInspector(
+                    self._view_model, selection.id, id="evals-inspector-bench"
+                )
+
+        if selection.kind == "classic":
+            # Classic tasks are read-only in this workbench (see the design
+            # spec's "Classic tasks" section and BenchEditor's
+            # `ClassicTaskDetail`, which carries the deferral sentence) --
+            # no run control is rendered here at all, not even a disabled
+            # one; `_primary_action_state()` is never consulted for this
+            # kind.
+            return
+
         label, disabled, tooltip = self._primary_action_state()
         yield Button(
             label,
@@ -294,13 +287,10 @@ class EvalsScreen(BaseAppScreen):
                 "that lands with the results grid in a later PR.",
             )
 
-        if selection.kind == "classic":
-            return (
-                "Run Task",
-                True,
-                "Running classic evaluation tasks is not available in this "
-                "workbench yet.",
-            )
+        # No "classic" branch: `_compose_inspector_pane` never calls this
+        # function for a classic-task selection at all -- classic tasks
+        # are read-only (see `ClassicTaskDetail`'s deferral sentence) and
+        # get no run control, not even a disabled one.
 
         if selection.kind == "dataset":
             return (

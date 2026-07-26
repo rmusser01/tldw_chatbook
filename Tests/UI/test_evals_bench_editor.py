@@ -1,0 +1,433 @@
+"""Bench editor and readiness inspector (PR 3a, Task 4).
+
+Selecting a word bench renders its metadata and target table in the detail
+pane, and per-target readiness plus a call/time estimate in the inspector.
+Readiness always comes from the bench's most recent run snapshot
+(``word_bench.storage.load_grid``'s ``preflight`` mapping) -- never
+re-computed here, so these tests build that snapshot directly with
+``create_run_group(..., preflight=...)`` rather than running anything.
+
+Selecting a classic (non-word-bench) task renders a read-only detail with
+run history and a fixed deferral sentence, and carries no run control.
+
+Mirrors ``test_evals_screen.py``'s harness (bundled CSS, a fake
+``app_instance`` exposing ``evaluation_orchestrator.db``) rather than
+inventing a second one -- see that file's own module docstring for why the
+real stylesheet is loaded.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from textual.app import App
+
+import tldw_chatbook
+from tldw_chatbook.DB.Evals_DB import EvalsDB
+from tldw_chatbook.Evals.word_bench.models import BenchConfig, PreflightResult, Snippet, Target
+from tldw_chatbook.Evals.word_bench.storage import create_run_group, save_bench
+from tldw_chatbook.UI.Evals import bench_editor as bench_editor_module
+from tldw_chatbook.UI.Evals import inspector as inspector_module
+from tldw_chatbook.UI.Evals.bench_editor import CLASSIC_TASK_DEFERRAL_SENTENCE
+from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
+
+_BUNDLED_CSS_PATH = str(
+    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+)
+
+
+class _FakeOrchestrator:
+    def __init__(self, db: EvalsDB) -> None:
+        self.db = db
+
+
+class _FakeAppInstance:
+    def __init__(self, db: EvalsDB) -> None:
+        self.evaluation_orchestrator = _FakeOrchestrator(db)
+        self.notifications: list[tuple[str, str]] = []
+
+    def notify(self, message: str, *, severity: str = "information", **kwargs) -> None:
+        self.notifications.append((message, severity))
+
+
+class EvalsHarness(App):
+    CSS_PATH = _BUNDLED_CSS_PATH
+
+    def __init__(self, app_instance: _FakeAppInstance) -> None:
+        super().__init__()
+        self.app_instance = app_instance
+
+    async def on_mount(self) -> None:
+        await self.push_screen(EvalsScreen(self.app_instance))
+
+
+@pytest.fixture
+def evals_db() -> EvalsDB:
+    return EvalsDB(db_path=":memory:", client_id="test")
+
+
+@pytest.fixture
+def evals_app(evals_db: EvalsDB) -> EvalsHarness:
+    return EvalsHarness(_FakeAppInstance(evals_db))
+
+
+def _make_model(db: EvalsDB, name: str, *, provider: str = "llama_cpp", model_id: str = "m") -> str:
+    return db.create_model(name=name, provider=provider, model_id=model_id)
+
+
+@pytest.fixture
+def bench_with_mixed_readiness(evals_db: EvalsDB) -> tuple[str, dict[str, str]]:
+    """One bench, one run group, three local targets covering the three
+    readable labels plus the warned-but-Ready case -- see the design
+    spec's Preflight table
+    (``Docs/superpowers/specs/2026-07-25-evals-console-rebuild-design.md``).
+    """
+    ready_id = _make_model(evals_db, "ready-target")
+    warned_id = _make_model(evals_db, "warned-target")
+    blocked_id = _make_model(evals_db, "blocked-target")
+    dataset_id = evals_db.create_dataset(
+        name="loaded-nouns",
+        format="custom",
+        source_path="inline:loaded-nouns",
+        metadata={"sample_count": 12},
+    )
+    config = BenchConfig(
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(ready_id, warned_id, blocked_id),
+        probes=(" Sure", " I"),
+    )
+    task_id = save_bench(evals_db, config)
+    targets = [
+        Target(id=ready_id, name="ready-target", provider="llama_cpp", model_id="m"),
+        Target(id=warned_id, name="warned-target", provider="llama_cpp", model_id="m"),
+        Target(id=blocked_id, name="blocked-target", provider="llama_cpp", model_id="m"),
+    ]
+    snippets = [Snippet(id="s1", text="The protestors were", group="neutral")]
+    preflight = {
+        ready_id: PreflightResult(state="ok", k_returned=20, canary="pass"),
+        warned_id: PreflightResult(state="ok", k_returned=20, canary="degenerate"),
+        blocked_id: PreflightResult(
+            state="no_logprobs",
+            k_returned=None,
+            canary="unchecked",
+            detail="provider does not return logprobs",
+        ),
+    }
+    create_run_group(evals_db, task_id, config, targets, snippets, preflight=preflight)
+    return task_id, {"ready": ready_id, "warned": warned_id, "blocked": blocked_id}
+
+
+@pytest.fixture
+def never_run_bench(evals_db: EvalsDB) -> str:
+    """A bench with no run group at all -- there is no snapshot to read
+    readiness from, so every target must render un-preflighted."""
+    target_id = _make_model(evals_db, "solo-target")
+    dataset_id = evals_db.create_dataset(
+        name="probes-mix",
+        format="custom",
+        source_path="inline:probes-mix",
+        metadata={"sample_count": 6},
+    )
+    config = BenchConfig(
+        name="never-run bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(target_id,),
+    )
+    return save_bench(evals_db, config)
+
+
+@pytest.fixture
+def paid_target_bench(evals_db: EvalsDB) -> str:
+    target_id = _make_model(
+        evals_db, "gpt-target", provider="openai", model_id="gpt-3.5-turbo-instruct"
+    )
+    dataset_id = evals_db.create_dataset(
+        name="openers-8",
+        format="custom",
+        source_path="inline:openers-8",
+        metadata={"sample_count": 8},
+    )
+    config = BenchConfig(
+        name="paid bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(target_id,),
+    )
+    return save_bench(evals_db, config)
+
+
+@pytest.fixture
+def classic_task_with_runs(evals_db: EvalsDB) -> str:
+    """A pre-existing (non-word-bench) eval_tasks row with one completed
+    run, mirroring the design spec's 'mmlu-subset' example."""
+    dataset_id = evals_db.create_dataset(
+        name="mmlu-500", format="custom", source_path="inline:mmlu-500"
+    )
+    task_id = evals_db.create_task(
+        name="mmlu-subset",
+        task_type="question_answer",
+        config_format="custom",
+        config_data={},
+        dataset_id=dataset_id,
+    )
+    model_id = _make_model(evals_db, "gpt-4o-mini", provider="openai", model_id="gpt-4o-mini")
+    run_id = evals_db.create_run(name="mmlu run", task_id=task_id, model_id=model_id)
+    evals_db.update_run_status(run_id, "completed")
+    return task_id
+
+
+def _target_status_text(screen, target_id: str) -> str:
+    widget = screen.query_one(f"#evals-inspector-target-{target_id}")
+    text = widget.renderable
+    return text.plain if hasattr(text, "plain") else str(text)
+
+
+# ---------------------------------------------------------------------------
+# Detail pane: bench metadata + target table
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bench_detail_pane_shows_metadata_and_target_table(
+    evals_app, bench_with_mixed_readiness
+):
+    task_id, target_ids = bench_with_mixed_readiness
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        name = screen.query_one("#evals-detail-bench-name")
+        assert "loaded-nouns v1" in str(name.renderable)
+
+        dataset_line = screen.query_one("#evals-detail-bench-dataset")
+        assert "loaded-nouns" in str(dataset_line.renderable)
+
+        mode_line = screen.query_one("#evals-detail-bench-prompt-mode")
+        assert "raw" in str(mode_line.renderable)
+
+        top_k_line = screen.query_one("#evals-detail-bench-top-k")
+        assert "20" in str(top_k_line.renderable)
+
+        probes_line = screen.query_one("#evals-detail-bench-probes")
+        assert "Sure" in str(probes_line.renderable)
+
+        for target_id in target_ids.values():
+            row = screen.query_one(f"#evals-bench-target-{target_id}")
+            assert row.region.width > 0
+            assert row.region.height > 0
+
+
+# ---------------------------------------------------------------------------
+# Requirement 1: readable status text, never colour
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ready_target_renders_the_readable_label_ready(
+    evals_app, bench_with_mixed_readiness
+):
+    task_id, target_ids = bench_with_mixed_readiness
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        status_text = _target_status_text(evals_app.screen, target_ids["ready"])
+        assert "Ready" in status_text
+        # No callout for a clean pass -- see the design spec's Preflight
+        # table: only "—" (nothing) is prescribed for the sane case.
+        assert not evals_app.screen.query(
+            f"#evals-inspector-target-callout-{target_ids['ready']}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Requirement 2: warned target is Ready + a callout naming target & canary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_warned_target_renders_ready_plus_a_recovery_callout(
+    evals_app, bench_with_mixed_readiness
+):
+    task_id, target_ids = bench_with_mixed_readiness
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        status_text = _target_status_text(screen, target_ids["warned"])
+        assert status_text.strip().endswith("Ready") or "Ready" in status_text
+        assert "Blocked" not in status_text
+        assert "Unavailable" not in status_text
+
+        callout = screen.query_one(
+            f"#evals-inspector-target-callout-{target_ids['warned']}"
+        )
+        assert "ds-recovery-callout" in callout.classes
+        callout_text = str(callout.renderable)
+        assert "warned-target" in callout_text
+        assert "degenerate" in callout_text
+        assert callout.region.width > 0
+        assert callout.region.height > 0
+
+
+# ---------------------------------------------------------------------------
+# Requirement 3: Blocked renders owner/problem/next-action callout
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_blocked_target_renders_owner_problem_and_next_action(
+    evals_app, bench_with_mixed_readiness
+):
+    task_id, target_ids = bench_with_mixed_readiness
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        status_text = _target_status_text(screen, target_ids["blocked"])
+        assert "Blocked" in status_text
+
+        callout = screen.query_one(
+            f"#evals-inspector-target-callout-{target_ids['blocked']}"
+        )
+        assert "ds-recovery-callout" in callout.classes
+        callout_text = str(callout.renderable)
+        assert "blocked-target" in callout_text
+        assert "Owner:" in callout_text
+        assert "Problem:" in callout_text
+        assert "Next:" in callout_text
+
+
+# ---------------------------------------------------------------------------
+# Un-preflighted state: a bench that has never run
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_never_run_bench_renders_unpreflighted_state(evals_app, never_run_bench):
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=never_run_bench)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        targets = screen.query(".evals-status-unchecked")
+        assert list(targets), "expected an un-preflighted status row"
+        text = str(targets[0].renderable)
+        assert "Ready" not in text
+        assert "Blocked" not in text
+        assert "Unavailable" not in text
+
+        # No recovery callout is warranted for "we haven't checked yet".
+        assert not screen.query(".ds-recovery-callout")
+
+
+@pytest.mark.asyncio
+async def test_bench_editor_and_inspector_never_import_the_runner_or_capture_client():
+    """Preflighting on render would fire network calls on every selection
+    change and could report a verdict no run ever used -- pin that neither
+    new module can reach the provider at all, not just that today's
+    compose() happens not to call it."""
+    for module in (bench_editor_module, inspector_module):
+        source = Path(module.__file__).read_text()
+        assert "capture_client" not in source
+        assert "WordBenchRunner" not in source
+        assert "CaptureClientLike" not in source
+
+
+# ---------------------------------------------------------------------------
+# Requirement 5: estimate shows call count + time; cost only for paid
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_estimate_shows_call_count_and_time_and_no_cost_for_local_targets(
+    evals_app, bench_with_mixed_readiness
+):
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        calls_line = screen.query_one("#evals-inspector-estimate-calls")
+        calls_text = str(calls_line.renderable)
+        # 1 snippet * 3 targets = 3 calls (see the fixture).
+        assert "3" in calls_text
+        assert any(char.isdigit() for char in calls_text)
+
+        cost_line = screen.query_one("#evals-inspector-estimate-cost")
+        assert "local" in str(cost_line.renderable)
+        assert "no cost" in str(cost_line.renderable)
+
+
+@pytest.mark.asyncio
+async def test_estimate_cost_line_is_not_no_cost_for_a_paid_target(
+    evals_app, paid_target_bench
+):
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=paid_target_bench)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        cost_line = screen.query_one("#evals-inspector-estimate-cost")
+        cost_text = str(cost_line.renderable)
+        assert "no cost" not in cost_text
+
+
+# ---------------------------------------------------------------------------
+# Requirement 4: classic tasks are read-only, no run control
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_classic_task_detail_shows_run_history_and_deferral_sentence(
+    evals_app, classic_task_with_runs
+):
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="classic", id=classic_task_with_runs)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        name = screen.query_one("#evals-detail-classic-name")
+        assert "mmlu-subset" in str(name.renderable)
+
+        run_row = screen.query_one("#evals-detail-classic-run-0")
+        run_text = str(run_row.renderable)
+        assert "gpt-4o-mini" in run_text
+        assert "completed" in run_text
+
+        deferral = screen.query_one("#evals-detail-classic-deferral")
+        assert str(deferral.renderable).strip() == CLASSIC_TASK_DEFERRAL_SENTENCE
+
+
+@pytest.mark.asyncio
+async def test_classic_task_selection_has_no_run_control(evals_app, classic_task_with_runs):
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="classic", id=classic_task_with_runs)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        assert not screen.query("#evals-primary-action")
+        inspector_pane = screen.query_one("#evals-inspector-pane")
+        assert not inspector_pane.query("Button"), (
+            "classic-task selection must render no run control at all in "
+            "the inspector pane, not merely a disabled one"
+        )
