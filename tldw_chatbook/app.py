@@ -8658,60 +8658,6 @@ class TldwCli(
         #     except Exception as e:
         #         self.loguru_logger.error(f"Error updating MediaWindow view: {e}", exc_info=True)
 
-    def show_ingest_view(self, view_id_to_show: Optional[str]):
-        """
-        Shows the specified ingest view within the ingest-content-pane and hides others.
-        If view_id_to_show is None, hides all ingest views.
-        """
-        # Rebuilt ingest UI manages its own tabs; skip legacy show/hide
-        if "USE_REBUILT_INGEST" in globals() and USE_REBUILT_INGEST:
-            return
-        self.log.debug(f"Attempting to show ingest view: {view_id_to_show}")
-        try:
-            ingest_content_pane = self.query_one("#ingest-content-pane")
-            if view_id_to_show:
-                ingest_content_pane.display = True
-        except QueryError:
-            return
-        for view_id in self.ALL_INGEST_VIEW_IDS:
-            try:
-                view_container = self.query_one(f"#{view_id}")
-                is_target = view_id == view_id_to_show
-                view_container.display = is_target
-                if is_target:
-                    if view_id == "ingest-view-local-video":
-                        self._initialize_video_models()
-                    elif view_id == "ingest-view-local-audio":
-                        self._initialize_audio_models()
-            except QueryError:
-                continue
-
-    def _initialize_video_models(self) -> None:
-        """Initialize models for the video ingestion window."""
-        try:
-            from .UI.MediaIngestWindowRebuilt import (
-                MediaIngestWindowRebuilt as MediaIngestWindow,
-            )
-
-            self.query_one("#ingest-window", MediaIngestWindow)
-            # New ingest window doesn't need model initialization
-            self.log.debug("New ingest window loaded")
-        except Exception as e:
-            self.log.debug(f"Could not initialize video models: {e}")
-
-    def _initialize_audio_models(self) -> None:
-        """Initialize models for the audio ingestion window."""
-        try:
-            from .UI.MediaIngestWindowRebuilt import (
-                MediaIngestWindowRebuilt as MediaIngestWindow,
-            )
-
-            self.query_one("#ingest-window", MediaIngestWindow)
-            # New ingest window doesn't need model initialization
-            self.log.debug("New ingest window loaded")
-        except Exception as e:
-            self.log.debug(f"Could not initialize audio models: {e}")
-
     #######################################################################
     # --- Notes UI Event Handlers (Chat Tab Sidebar) ---
     #######################################################################
@@ -9340,14 +9286,6 @@ class TldwCli(
 
         if select_id == "conv-char-character-select" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_character_select_changed(self, event.value)
-        elif select_id == "tldw-api-auth-method" and current_active_tab == TAB_INGEST:
-            await ingest_events.handle_tldw_api_auth_method_changed(
-                self, str(event.value)
-            )
-        elif select_id == "tldw-api-media-type" and current_active_tab == TAB_INGEST:
-            await ingest_events.handle_tldw_api_media_type_changed(
-                self, str(event.value)
-            )
         # Notes sort select is handled inside the Library screen, not here.
         elif select_id == "chat-rag-preset" and current_active_tab == TAB_CHAT:
             await self.handle_rag_preset_changed(event)

@@ -11,7 +11,6 @@ from .media_search_panel import (
     MediaBrowseSubviewChangedEvent,
 )
 from .media_list_panel import MediaListPanel, MediaItemSelectedEvent
-from .media_ingestion_source_panel import MediaIngestionSourcePanel
 from .media_viewer_panel import MediaViewerPanel
 
 __all__ = [
@@ -21,6 +20,5 @@ __all__ = [
     "MediaBrowseSubviewChangedEvent",
     "MediaListPanel",
     "MediaItemSelectedEvent",
-    "MediaIngestionSourcePanel",
     "MediaViewerPanel",
 ]
