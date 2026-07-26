@@ -176,8 +176,18 @@ grid reopened later still explains why a column is empty."
 ### Task 2: Retire the card hub
 
 **Files:**
-- Delete: `tldw_chatbook/UI/Evals/navigation/`, `tldw_chatbook/UI/Evals/screens/`, `tldw_chatbook/UI/Evals/widgets/`, `tldw_chatbook/UI/Evals/evals_window_v3.py`, `tldw_chatbook/UI/Evals/README.md`, `tldw_chatbook/UI/evals_window_v2.py`
+- Delete (production): `tldw_chatbook/UI/Evals/navigation/`, `tldw_chatbook/UI/Evals/screens/`, `tldw_chatbook/UI/Evals/widgets/`, `tldw_chatbook/UI/Evals/evals_window_v3.py`, `tldw_chatbook/UI/Evals/README.md`, `tldw_chatbook/UI/evals_window_v2.py`
+- Delete (tests of the hub): `Tests/UI/test_evals_window_unit.py`, `test_evaluation_browser_screen.py`, `test_evals_screen_shell.py`, `test_evals_window_v2.py`, `test_evals_window_integration.py`, `test_evals_window_v2_integration.py`, `test_evals_window_ui.py`, `test_evals_window_performance.py` (~1,016 lines, 23 tests)
 - Modify: `Tests/UI/test_evals_deletion_guard.py`, `Tests/UI/test_non_obscuring_focus_contract.py`, `tldw_chatbook/UI/Screens/evals_screen.py`, `tldw_chatbook/app.py`
+
+**Why those 8 test files go, and what must survive them.** All 23 tests import hub modules directly and cannot outlive their subject. But they are also a cautionary tale worth reading before deleting: `test_evals_screen_shell.py` asserts the hub renders six `.nav-card-button`s — **and it passes**, because it drives a minimal `EvalsScreenHost` app rather than the real shell. The hub mounts fine in isolation and renders an empty body in the actual application. That gap is exactly why a blank Evals screen shipped and the suite stayed green.
+
+Two genuine properties are buried in there and must not be lost. Port them into Task 3's `Tests/UI/test_evals_screen.py` rather than deleting them outright:
+
+- **The screen must not push a child screen on mount** — `app.screen` stays the `EvalsScreen` and `len(app.screen_stack) == 2`. This guards the original dead-end bug, where the destination pushed a screen over itself and hid the shell chrome.
+- **Escape must not pop the shell screen.**
+
+Task 3's `test_workbench_body_is_not_empty` is what closes the gap the old harness left open.
 
 **Interfaces:**
 - Produces: the guard's tuples grow from 19 to 25 entries. Task 3 replaces `evals_screen.py`'s body; this task only reduces it to a stub that renders the header and strip with an empty panel.
@@ -193,7 +203,12 @@ for m in eval_nav_screen nav_bar breadcrumbs quick_test evaluation_browser progr
 done
 ```
 
-Expected: only `evals_window_v3` and `evals_window_v2` print hits, from `UI/Screens/evals_screen.py` and `UI/Evals/__init__.py`. Anything else — **stop and report BLOCKED**.
+Expected hits, and nothing else:
+
+- `evals_window_v3` / `evals_window_v2` from `UI/Screens/evals_screen.py` and `UI/Evals/__init__.py`
+- any of the eight hub test files listed above, which are deleted in this same task
+
+A hit from **production code outside `UI/Evals/`**, or from a test file not on that list — **stop and report BLOCKED**. Do not delete it and do not fix up the caller.
 
 - [ ] **Step 2: Extend the deletion guard**
 
@@ -210,13 +225,17 @@ Append these six paths to `REMOVED_MODULES` and their stems to `REMOVED_STEMS` i
 
 Run it and confirm the six new path cases **fail** (files still exist) while the stem cases pass.
 
-- [ ] **Step 3: Reduce the screen to a stub and delete the hub**
+- [ ] **Step 3: Reduce the screen to a stub, delete the hub, and delete its tests**
 
 Replace `evals_screen.py`'s body so it renders the `DestinationHeader`, `LabModeStrip`, and an empty `.ds-panel` — and **remove the `escape` and `1`-`6` bindings**, which existed only for the hub. Then:
 
 ```bash
 git rm -r tldw_chatbook/UI/Evals/navigation tldw_chatbook/UI/Evals/screens tldw_chatbook/UI/Evals/widgets
 git rm tldw_chatbook/UI/Evals/evals_window_v3.py tldw_chatbook/UI/Evals/README.md tldw_chatbook/UI/evals_window_v2.py
+git rm Tests/UI/test_evals_window_unit.py Tests/UI/test_evaluation_browser_screen.py \
+       Tests/UI/test_evals_screen_shell.py Tests/UI/test_evals_window_v2.py \
+       Tests/UI/test_evals_window_integration.py Tests/UI/test_evals_window_v2_integration.py \
+       Tests/UI/test_evals_window_ui.py Tests/UI/test_evals_window_performance.py
 ```
 
 Also remove `EvalsWindowV3` from `app.py`'s container list and the `"evals-window"` entry from its window-id list. Re-resolve both by symbol — line numbers drift.
@@ -334,6 +353,29 @@ async def test_primary_action_is_disabled_with_a_reason_when_nothing_is_selected
         action = evals_app.screen.query_one("#evals-primary-action")
         assert action.disabled is True
         assert action.tooltip, "a disabled primary action must say why"
+
+
+@pytest.mark.asyncio
+async def test_screen_does_not_push_a_child_screen_on_mount(evals_app):
+    """Ported from the retired test_evals_screen_shell.py.
+
+    The destination used to push a Screen over itself on mount, hiding the
+    shell chrome and stranding users on a placeholder after Escape.
+    """
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        assert isinstance(evals_app.screen, EvalsScreen)
+        assert len(evals_app.screen_stack) == 2
+
+
+@pytest.mark.asyncio
+async def test_escape_does_not_pop_the_shell_screen(evals_app):
+    """Ported from the retired test_evals_screen_shell.py."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(evals_app.screen, EvalsScreen)
 
 
 @pytest.mark.asyncio
