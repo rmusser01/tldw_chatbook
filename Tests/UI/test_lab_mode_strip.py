@@ -33,6 +33,23 @@ _LAB_SCREENS = (
     ("evals", "EvalsScreen", "tldw_chatbook.UI.Screens.evals_screen", "lab-mode-evals"),
 )
 
+# Subset of _LAB_SCREENS whose compose_content() is still the flat pattern
+# (DestinationHeader/LabModeStrip yielded directly, callable via
+# list(screen.compose_content()) with no running app). "evals" is excluded
+# here (PR3a Task 3): it now wraps its content in
+# with Vertical(id="evals-shell"): ..., a three-pane workbench shell, and
+# entering that context manager requires an active Textual app --
+# test_lab_screen_composes_mode_strip_under_destination_header below would
+# raise NoActiveAppError for it. See
+# test_evals_composes_mode_strip_under_destination_header_via_real_app for
+# the equivalent coverage through a real running app. The other three
+# async tests below (_StripHarness-based, or exercising the real shell)
+# still parametrize/exercise all of _LAB_SCREENS including evals -- they
+# never call compose_content() directly.
+_LAB_SCREENS_FLAT_COMPOSE = tuple(
+    entry for entry in _LAB_SCREENS if entry[0] != "evals"
+)
+
 
 class _StripHarness(App[None]):
     """Bare harness mounting only the strip; records navigation requests."""
@@ -50,7 +67,9 @@ class _StripHarness(App[None]):
         self.navigated.append(message.screen_name)
 
 
-@pytest.mark.parametrize(("route", "class_name", "module", "active_chip"), _LAB_SCREENS)
+@pytest.mark.parametrize(
+    ("route", "class_name", "module", "active_chip"), _LAB_SCREENS_FLAT_COMPOSE
+)
 def test_lab_screen_composes_mode_strip_under_destination_header(
     route, class_name, module, active_chip
 ):
@@ -64,6 +83,41 @@ def test_lab_screen_composes_mode_strip_under_destination_header(
     assert isinstance(strip, LabModeStrip), route
     assert strip.id == "lab-mode-strip"
     assert strip.active_route == route
+
+
+@pytest.mark.asyncio
+async def test_evals_composes_mode_strip_under_destination_header_via_real_app():
+    """Equivalent of test_lab_screen_composes_mode_strip_under_destination_header
+    for Evals, whose compose_content() now wraps content in
+    with Vertical(id="evals-shell"): ... (see _LAB_SCREENS_FLAT_COMPOSE's
+    comment) and so cannot be driven via a bare list(compose_content())
+    call outside a running app."""
+    from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
+
+    class _EvalsHarness(App[None]):
+        def __init__(self, app_instance):
+            super().__init__()
+            self._app_instance = app_instance
+
+        async def on_mount(self) -> None:
+            await self.push_screen(EvalsScreen(self._app_instance))
+
+    app_instance = _build_test_app()
+    app = _EvalsHarness(app_instance)
+
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_stack[-1]
+
+        header = screen.query_one("#evals-destination-header", DestinationHeader)
+        strip = screen.query_one("#lab-mode-strip", LabModeStrip)
+        assert strip.active_route == "evals"
+        # DestinationHeader precedes the mode strip in document order --
+        # the same structural contract the flat-pattern screens assert via
+        # widgets[0]/widgets[1] above.
+        header_index = list(screen.walk_children()).index(header)
+        strip_index = list(screen.walk_children()).index(strip)
+        assert header_index < strip_index
 
 
 @pytest.mark.asyncio

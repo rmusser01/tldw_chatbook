@@ -69,6 +69,11 @@ CSS_MODULES = [
     # tldw_chatbook/**/*.py) -- T169 dropped the stale entry rather than
     # restoring a file nothing needs.
     "features/_evaluation_unified.tcss",
+    # PR3a Task 3: the new Console-styled three-pane Evals workbench's own
+    # rail/pane rules. Distinct from _evaluation_unified.tcss above (the
+    # retired card hub's legacy dashboard CSS, PR 3b's concern) -- no
+    # selector overlap between the two files.
+    "features/_evals.tcss",
     "features/_metrics.tcss",
     "features/_embeddings.tcss",
     "features/_splash.tcss",
