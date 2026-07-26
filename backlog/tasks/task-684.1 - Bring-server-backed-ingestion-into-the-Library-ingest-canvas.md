@@ -4,7 +4,7 @@ title: Bring server-backed ingestion into the Library ingest canvas
 status: To Do
 assignee: []
 created_date: '2026-07-26 04:33'
-updated_date: '2026-07-26 13:07'
+updated_date: '2026-07-26 14:00'
 labels:
   - ingest
   - consolidation
@@ -20,10 +20,10 @@ Server Sources is the only way to start a server-backed ingest, and it lives in 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A server-backed ingest can be started from the Library ingest canvas
-- [ ] #2 The canvas shows which backend an ingest will run on and lets the user choose when both are available
-- [ ] #3 The Local-only quiet line no longer appears when a server backend is configured
-- [ ] #4 Starting a server ingest with no server configured explains what to configure
+- [x] #1 A server-backed ingest can be started from the Library ingest canvas
+- [x] #2 The canvas shows which backend an ingest will run on and lets the user choose when both are available
+- [x] #3 The Local-only quiet line no longer appears when a server backend is configured
+- [x] #4 Starting a server ingest with no server configured explains what to configure
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -39,17 +39,18 @@ Server Sources is the only way to start a server-backed ingest, and it lives in 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Slices 1 (mapping) and 2 (routing) landed, and the mapping is now LIVE-VERIFIED against a real tldw server on :8000. The UI slice (backend selector in the canvas) is the remainder.
+Routes a Library ingest to the server when the user opts in, reusing the whole existing canvas (source picking, per-type options, preflight, queue) rather than a second UI.
 
-THREE DEFECTS FOUND ONLY BY LIVE CONTACT -- all invisible to 930 passing tests:
+Shape: a pure mapping layer (Library/server_ingest_request.py) turns a source + option snapshot into the kwargs ServerMediaReadingService.submit_ingest_jobs already takes, so the request shape is testable with no UI, no I/O and no server. app.py routes on the resolved backend; the canvas renders which backend will run and offers the switch only when the server one is genuinely usable.
 
-1. media_type mapping was wrong. The server accepts ONLY video/audio/document/pdf/ebook. It rejects 'plaintext', which this mapping sent for .txt/.md -- the commonest case -- so every plain-text server ingest would have failed validation. The value came from the legacy ingest window's own form dispatch in tldw_api_events.py, which describes that window's form, not this endpoint's contract. Crucially the accepted set is NOT in the server's OpenAPI spec: media_type is typed as a bare string and the set is enforced by a runtime validator, so submitting was the only way to learn it. Now a named constant with a guard test.
+Three things only a live server could have told us:
+- The jobs API accepts exactly video|audio|document|pdf|ebook. Its OpenAPI types media_type as a bare string, so the real set is enforced by a runtime validator. An earlier mapping sent 'plaintext' (inferred from the retired window's form dispatch) and every plain-text server ingest would have failed validation.
+- cancel_media_ingest_jobs_batch is keyword-only. It was being called positionally, and the fake took a positional parameter because it had been written to match that wrong call -- so the test validated the bug.
+- Runtime policy declares media.ingestion_jobs.launch.server as required_source='server', so the service refuses the launch in local mode. The feature was unusable as first built: the switch was offered, the user could pick it, and every submission failed with 'requires server mode'. The opt-in is now necessary but not sufficient -- both the resolver and the canvas apply the gate, and an unmet precondition falls back to a local ingest (the file stays where it is) while the canvas explains why.
 
-2. MediaIngestJobListResponse silently discarded pagination. It declared only batch_id/jobs with extra='ignore', so the has_more/next_offset the server really sends were dropped -- meaning the poller's pagination read a field that could never exist on the typed model. The unit test passed only because it used a dict. Fields now declared; confirmed arriving live (has_more=False, limit=10, offset=0).
+That last point settles a design tension. Ingest is deliberately NOT driven by the Library's browse scope: switching scope to *look* at server media must never upload a file. But policy is the authority on server actions needing server mode, so both layers now apply the same gate and the canvas cannot claim one thing while submit does another. A test asserting the opposite invariant (that a server target stays named even when unusable) was rewritten, since the mismatch it guarded against can no longer occur.
 
-3. cancel_media_ingest_jobs_batch is KEYWORD-ONLY and was being called positionally, which raises TypeError. The unit test missed it because the fake service had a positional parameter -- the fake was written to match the wrong call, so it validated the bug. Both fixed; the corrected fake now fails if the call regresses. Lesson: a fake shaped by your own assumption tests nothing.
+Also fixed from looking at the actual screen: the switch rendered above the status line, reading as a contradiction top-to-bottom ('Import on the server' directly above 'Imports run on this machine'). State now precedes action, pinned by a test.
 
-VERIFIED END-TO-END against the live server: submit (document accepted, batch + job id issued) -> local row with origin=server and ids attached -> pending_remote_batches returns the batch -> cancel accepted (success=True cancelled=1) -> server reports 'cancelled' -> reconciler maps it to local cancelled with the reason carried through -> stop condition clears.
-
-STILL INFERRED, NOT CONFIRMED: the 'completed', 'running' and 'failed' status spellings. The server had not picked the job up before it was cancelled, so only 'queued' and 'cancelled' were observed live. Both mapped correctly.
+Files: Library/server_ingest_request.py (new), app.py (_resolve_ingest_backend/_submit_server_ingest_job/_send_server_ingest_job), Library/library_ingest_state.py (backend + gating copy), UI/Screens/library_screen.py (backend switch).
 <!-- SECTION:NOTES:END -->

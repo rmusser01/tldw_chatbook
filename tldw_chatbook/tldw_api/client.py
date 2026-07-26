@@ -5559,12 +5559,24 @@ class TLDWAPIClient:
         return MediaIngestJobStatus.model_validate(response)
 
     async def list_media_ingest_jobs(
-        self, batch_id: str, *, limit: int = 100
+        self, batch_id: str, *, limit: int = 100, offset: int = 0
     ) -> MediaIngestJobListResponse:
+        """List a batch's ingest jobs, one page at a time.
+
+        Args:
+            batch_id: The submission batch to read.
+            limit: Page size. The endpoint caps this at 500.
+            offset: Row offset of the page to read. The endpoint caps this at
+                10000. Walk pages with the response's ``next_offset`` while
+                ``has_more`` is set, rather than assuming a page size.
+
+        Returns:
+            One page of job statuses plus its pagination fields.
+        """
         response = await self._request(
             "GET",
             "/api/v1/media/ingest/jobs",
-            params={"batch_id": batch_id, "limit": limit},
+            params={"batch_id": batch_id, "limit": limit, "offset": offset},
         )
         return MediaIngestJobListResponse.model_validate(response)
 

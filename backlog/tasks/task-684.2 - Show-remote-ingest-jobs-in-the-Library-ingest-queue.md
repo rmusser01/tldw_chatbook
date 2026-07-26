@@ -4,7 +4,7 @@ title: Show remote ingest jobs in the Library ingest queue
 status: To Do
 assignee: []
 created_date: '2026-07-26 04:33'
-updated_date: '2026-07-26 05:45'
+updated_date: '2026-07-26 14:01'
 labels:
   - ingest
   - consolidation
@@ -20,10 +20,10 @@ Remote ingest jobs are monitored in a separate window from local ones, so a user
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Remote jobs appear in the same queue as local ones
-- [ ] #2 A queue row makes clear whether the job is running locally or on a server
-- [ ] #3 Remote job state changes are reflected without leaving the screen
-- [ ] #4 Queue actions behave sensibly for remote jobs or are hidden for them
+- [x] #1 Remote jobs appear in the same queue as local ones
+- [x] #2 A queue row makes clear whether the job is running locally or on a server
+- [x] #3 Remote job state changes are reflected without leaving the screen
+- [x] #4 Queue actions behave sensibly for remote jobs or are hidden for them
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,15 +43,21 @@ Slices A (schema v3), B (row origin) and C (cancelled lifecycle) are DONE. Remai
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Slices A and B landed; polling and cancel remain.
+Server-submitted jobs now live in the same ingest queue as local ones, labelled by origin, updated by a poller that folds server statuses back into the local registry.
 
-SLICE A (schema v3, commit 95700cf93) -- the thing 684.1's routing was blocked on. ingest_jobs gains origin ('local'/'server'), remote_job_id and batch_id; LibraryIngestJob carries them; submit() takes origin; new attach_remote() records the ids the server only issues after accepting a submission (deliberately not a state transition -- attaching ids does not move a job through its lifecycle). The state CHECK now admits 'cancelled', which SQLite can only do by rebuilding the table, so it is done once now rather than forcing a second rebuild when cancel arrives. The rebuild copies by explicit column list so a future column cannot silently shift position.
+Shape: schema v3 adds origin/remote_job_id/batch_id and admits the server's 'cancelled' state (table rebuild -- a CHECK constraint change). The decision layer (Library/server_ingest_reconcile.py) is Textual-free and tested against a real registry, so the whole fold-back is exercised without an app, a worker or a server; the worker only fetches and hands over. Two properties it owns: a settled job is never rewritten (polling repeats, so reconciling a terminal status twice must not re-stamp the finish time), and an unrecognised status moves nothing.
 
-Verified beyond synthetic fixtures: seeded a copy of the REAL live v2 database (~/.local/share/tldw_cli/default_user) with a realistic spread -- a done job with JSON ingest_options and a content_hash, a permanent failure with error_detail, a superseded queued job with progress -- then migrated it with the production class. Version went to 3, all 12 compared columns across every row were preserved exactly, new columns defaulted to local/None, and the relaxed CHECK accepted a cancelled/server row. Original untouched.
+FOUR defects that unit tests structurally could not catch, all found by contact with a live server:
 
-DELIBERATE RESTRAINT: the IngestJobState.CANCELLED member, its queue-row rendering and the cancel action are NOT in slice A. Only the CHECK is forward-looking, because relaxing it later would need another table rebuild. The enum and its consumers land together in the slice that can exercise them.
+1. Pagination was dead in production. The poller asked for successive offsets, but neither the client nor ServerMediaReadingService accepted an 'offset' -- so every real call raised TypeError and fell into a one-page fallback. The endpoint documents offset (max 10000) and returns has_more/next_offset, so paging was always supported; only our client failed to expose it. My fake declared offset because I wrote it to match my own call site, which is exactly how the keyword-only cancel bug hid too: a fake can agree with a wrong assumption, a real signature cannot. Guarded now by a contract test asserting the REAL class accepts what the poller sends.
 
-SLICE B (queue row origin) -- once both backends share one queue, 'done - notes.txt' cannot say which machine did the work. Rows carry origin and server ones get a ' - on server' suffix; local stays unannotated as the common case. The row builder returns from five state branches, so it was renamed and wrapped: the marker is stamped in exactly one place and a new state cannot ship without it. A test asserts the marker in all five states, and both new behaviours were mutation-checked.
+2. The broad 'except TypeError' around that call is what made it invisible -- it cannot distinguish 'no such parameter' from 'the callable raised TypeError internally', so a genuine bug read as a missing feature and degraded silently. Replaced with an explicit signature check (_accepts_keyword), which also treats an unreadable signature and **kwargs as support rather than downgrading real services.
 
-REMAINING: poll remote state on a worker via list_media_ingest_jobs/get_media_ingest_job and marshal onto the UI thread the way the parse-pool coordinator does; then the cancel action (cancel_media_ingest_jobs_batch) together with the CANCELLED enum member, its row rendering, the terminal-state sets in clear_finished, and _COUNTS_LINE_ORDER.
+3. WORST: MediaIngestJobStatus.result was typed ReadingImportResponse -- the *reading-list* import result (source/imported/updated/skipped), a different domain reused by mistake. A media ingest reports {status, media_id, media_uuid, error, warnings, db_message}, so validation failed with four missing fields on every COMPLETED job. Only a finished job triggers it, and the poller treats a raised list call as transient: it logged at debug and retried forever, so jobs would have sat 'queued' in the UI indefinitely while the poller churned. Now typed as the free-form object the endpoint documents, pinned by a regression test holding a verbatim live payload.
+
+4. The docstring on mark_remote_done claimed the server's response 'carries only counts, no media id' -- false, and derived from that same mistyping. Corrected. The behaviour is unchanged and still right for a better reason: the id addresses a row in the SERVER's library while media_id locally means a row in this machine's, so storing it would point 'Open in Library' at a wrong or absent local row. Opening a server-ingested item needs a server-aware affordance (filed as task-688).
+
+Live-verified end to end after the fixes: submit -> queued -> completed -> DONE. The status vocabulary can only be learned this way, since the endpoint types status as a bare string with no enum; 'queued', 'completed' and 'cancelled' are now confirmed on the wire, 'running' and 'failed' are still only mapped, not observed.
+
+Files: DB/Library_Ingest_Jobs_DB.py (v3), Library/library_ingest_jobs.py, Library/server_ingest_status.py + server_ingest_reconcile.py (new), app.py (poller/_reconcile_remote_batch/_accepts_keyword), tldw_api/client.py + media_reading_schemas.py, Media/server_media_reading_service.py.
 <!-- SECTION:NOTES:END -->

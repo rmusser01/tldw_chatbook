@@ -702,14 +702,23 @@ class LibraryIngestJobRegistry:
         """Finish a ``server``-origin job that has no local media row.
 
         ``mark_done`` requires a ``media_id`` because a *local* completion that
-        wrote nothing is a bug (task-677). A server completion genuinely has no
-        local row -- the server's own response carries only counts, no media id
-        -- so it needs its own terminal path rather than weakening that
-        invariant for everyone.
+        wrote nothing is a bug (task-677). A server completion has no row in
+        *this* machine's media DB, so it needs its own terminal path rather than
+        weakening that invariant for everyone.
 
         The resulting job has ``media_id`` unset, so the queue row's "Open in
         Library" stays withheld: the content lives in the server's library, not
         this machine's.
+
+        Note that a completed job's ``result`` *does* carry a ``media_id``
+        (confirmed live: ``{"status": "Success", "media_id": 1125, ...}``) -- an
+        earlier version of this docstring claimed the response held only counts,
+        which came from ``MediaIngestJobStatus.result`` being mistyped as the
+        reading-list import model. It is deliberately still not stored here:
+        that id addresses a row in the *server's* library, and ``media_id`` on a
+        job means a row in the local one. Conflating them would point "Open in
+        Library" at a wrong or absent local row. Opening a server-ingested item
+        needs a server-aware affordance instead (task-688).
 
         Args:
             job_id: The job to finish.

@@ -2295,6 +2295,93 @@ async def test_remote_poll_follows_pagination(tmp_path: Path) -> None:
     assert 1 in service.offsets, "the poller never asked for the second page"
 
 
+def test_the_real_service_accepts_the_offset_the_poller_sends() -> None:
+    """Pin the poller's paging against the REAL service, not a fake.
+
+    ``test_remote_poll_follows_pagination`` passed while pagination was dead in
+    production: its fake declared ``offset`` because I wrote it to match my call
+    site, but ``ServerMediaReadingService.list_media_ingest_jobs`` took only
+    ``limit``. Every real call raised ``TypeError`` and fell into a one-page
+    fallback, so the poller never read past page one.
+
+    A fake can agree with a wrong assumption; the real signature cannot. Same
+    failure mode as the keyword-only ``cancel`` call whose fake took it
+    positionally (task-684.2).
+    """
+    from tldw_chatbook.app import _accepts_keyword
+    from tldw_chatbook.Media.server_media_reading_service import (
+        ServerMediaReadingService,
+    )
+
+    for method_name in ("list_media_ingest_jobs", "list_ingest_jobs"):
+        method = getattr(ServerMediaReadingService, method_name)
+        assert _accepts_keyword(method, "offset"), (
+            f"{method_name} takes no offset, so the poller cannot page"
+        )
+
+
+def test_accepts_keyword_does_not_mistake_an_internal_typeerror_for_absence() -> None:
+    """The signature check must not be fooled the way ``except TypeError`` was.
+
+    Catching ``TypeError`` around the call conflated "no such parameter" with
+    "the callable raised TypeError internally", silently degrading a real bug
+    into a missing feature.
+    """
+    from tldw_chatbook.app import _accepts_keyword
+
+    async def raises_internally(batch_id: str, *, offset: int = 0):
+        raise TypeError("something inside blew up")
+
+    assert _accepts_keyword(raises_internally, "offset") is True
+
+    async def no_offset(batch_id: str, *, limit: int = 100):
+        return {}
+
+    assert _accepts_keyword(no_offset, "offset") is False
+
+    async def takes_kwargs(batch_id: str, **kwargs):
+        return {}
+
+    assert _accepts_keyword(takes_kwargs, "offset") is True
+
+
+@pytest.mark.asyncio
+async def test_a_service_without_offset_reads_one_page_instead_of_looping(
+    tmp_path: Path,
+) -> None:
+    """An offset-less service must stop, not re-read page one to the cap.
+
+    ``has_more`` stays true on a first page, so continuing the loop without a
+    way to advance would re-fetch the same page ``REMOTE_INGEST_MAX_PAGES``
+    times per pass, every pass.
+    """
+    class _UnpagedService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100):
+            self.calls += 1
+            return {
+                "batch_id": batch_id,
+                "jobs": [{"id": 11, "status": "completed"}],
+                "has_more": True,
+                "next_offset": 1,
+            }
+
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    service = _UnpagedService()
+    app.server_media_reading_service = service
+
+    async with app.run_test():
+        _queued_server_job(app, remote_job_id="11")
+        await app._reconcile_remote_batch(service, "batch-1")
+
+    assert service.calls == 1, (
+        f"re-read page one {service.calls} times with no way to advance"
+    )
+    assert {j.state for j in app.library_ingest_jobs.jobs()} == {IngestJobState.DONE}
+
+
 @pytest.mark.asyncio
 async def test_opting_in_without_server_mode_still_ingests_locally(
     tmp_path: Path,

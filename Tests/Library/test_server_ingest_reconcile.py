@@ -257,3 +257,53 @@ def test_pending_batches_deduplicates_and_keeps_submission_order():
         registry.attach_remote(job.job_id, remote_job_id=str(index), batch_id=batch)
 
     assert pending_remote_batches(registry) == ("batch-2", "batch-1")
+
+
+def test_a_real_model_from_a_live_server_settles_the_job():
+    """End-to-end on real data: the actual model, the actual registry.
+
+    Every other test here feeds ``SimpleNamespace`` or a dict. Those exercise
+    ``_field``'s two branches but cannot show that a genuine
+    ``MediaIngestJobStatus`` -- as parsed from a live response -- carries the
+    fields this layer reads under the names it reads them by.
+
+    That mattered: ``result`` was typed as the reading-list import model, so a
+    *completed* job's response did not validate at all. The poller logged the
+    ``ValidationError`` as transient and retried, so this layer was never even
+    reached and the job would have stayed "queued" in the UI indefinitely.
+
+    Payload captured verbatim from a live server (2026-07-26), including the
+    integer ``id`` -- remote ids are stored as strings, so the lookup depends on
+    both sides normalising the same way.
+    """
+    from tldw_chatbook.tldw_api.media_reading_schemas import MediaIngestJobStatus
+
+    status = MediaIngestJobStatus.model_validate(
+        {
+            "id": 281,
+            "uuid": "aacbb0d9-111e-43d1-9a2a-3d57fcf97596",
+            "status": "completed",
+            "job_type": "media_ingest_item",
+            "progress_percent": 100.0,
+            "progress_message": "completed",
+            "result": {
+                "status": "Success",
+                "media_id": 1125,
+                "media_uuid": "bee6d9a0-931f-4c11-a87a-07ddebc66443",
+                "error": None,
+                "warnings": None,
+                "db_message": "Media 'gettysburg' already exists.",
+            },
+            "media_type": "document",
+            "source": "gettysburg.txt",
+            "source_kind": "file",
+            "batch_id": "1516ae79-58fd-46e8-834c-52c5a40bfbd8",
+        }
+    )
+
+    registry = LibraryIngestJobRegistry()
+    # The server issues an int id; the registry stores it as a string.
+    _server_job(registry, remote_job_id="281", source="gettysburg.txt")
+
+    assert reconcile_remote_ingest_jobs(registry, [status]) == 1
+    assert registry.jobs()[0].state is IngestJobState.DONE

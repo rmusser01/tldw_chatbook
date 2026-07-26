@@ -631,7 +631,13 @@ class MediaIngestJobStatus(BaseModel):
     cancellation_reason: str | None = None
     progress_percent: float | None = None
     progress_message: str | None = None
-    result: ReadingImportResponse | None = None
+    #: The worker's own result payload, free-form per the endpoint's schema. A
+    #: media ingest reports ``{"status", "media_id", "media_uuid", "error",
+    #: "warnings", "db_message"}``; other job types report their own shapes.
+    #: Deliberately untyped: this was ``ReadingImportResponse`` -- the
+    #: reading-list import result -- and validation failed on every *completed*
+    #: job, which no fixture caught because the fakes matched the wrong model.
+    result: dict[str, Any] | None = None
     error_message: str | None = None
     media_type: str | None = None
     source: str | None = None

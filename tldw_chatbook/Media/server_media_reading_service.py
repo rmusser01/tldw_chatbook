@@ -1438,14 +1438,18 @@ class ServerMediaReadingService:
     async def get_media_ingest_job(self, job_id: Any) -> Any:
         return await self.get_ingest_job(job_id)
 
-    async def list_ingest_jobs(self, batch_id: str, *, limit: int = 100) -> Any:
+    async def list_ingest_jobs(
+        self, batch_id: str, *, limit: int = 100, offset: int = 0
+    ) -> Any:
         self._enforce(self._ingestion_job_action_id("list"))
         return await self._require_client().list_media_ingest_jobs(
-            batch_id, limit=limit
+            batch_id, limit=limit, offset=offset
         )
 
-    async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100) -> Any:
-        return await self.list_ingest_jobs(batch_id, limit=limit)
+    async def list_media_ingest_jobs(
+        self, batch_id: str, *, limit: int = 100, offset: int = 0
+    ) -> Any:
+        return await self.list_ingest_jobs(batch_id, limit=limit, offset=offset)
 
     def stream_ingest_job_events(
         self, *, batch_id: str | None = None, after_id: int = 0

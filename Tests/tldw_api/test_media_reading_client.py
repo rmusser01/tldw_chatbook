@@ -2168,6 +2168,7 @@ async def test_media_ingest_job_routes_wire_form_payload_and_status_controls(
     assert mocked.await_args_list[2].kwargs["params"] == {
         "batch_id": "batch-1",
         "limit": 10,
+        "offset": 0,
     }
     assert mocked.await_args_list[3].args[:2] == (
         "DELETE",

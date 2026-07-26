@@ -21,7 +21,7 @@ class FakeIngestJobsClient:
         self.calls.append(("get_media_ingest_job", job_id))
         return {"id": job_id, "status": "queued"}
 
-    async def list_media_ingest_jobs(self, batch_id, limit=100):
+    async def list_media_ingest_jobs(self, batch_id, limit=100, offset=0):
         self.calls.append(("list_media_ingest_jobs", batch_id, limit))
         return {"batch_id": batch_id, "jobs": []}
 
