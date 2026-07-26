@@ -77,14 +77,3 @@ class Tool(ABC):
             Dictionary with the result or error
         """
         pass
-
-    def to_openai_format(self) -> dict:
-        """Convert tool to OpenAI function format."""
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": self.parameters,
-            },
-        }

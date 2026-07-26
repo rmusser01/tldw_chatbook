@@ -293,3 +293,171 @@ async def test_glob_files_resolves_sensitive_context_once_per_call(sandbox, monk
 
     assert len(calls) == 1, "sensitive-path set must be resolved once per call, not per candidate"
     assert len(result["matches"]) >= 50
+
+
+# ---------------------------------------------------------------------------
+# Qodo review, PR #936, findings 1+2 (CRITICAL): `glob_files`/`grep_files`
+# filtered candidates with `is_within()` only, which applies the credential/
+# app-state denylist but NOT the hidden-component rule
+# `Utils.path_validation.validate_path` enforces for `read_file`/`write_file`.
+# Live repro pre-fix: `read_file('.env')` was refused ("Access to hidden
+# files/directories is not allowed") while `grep_files('API_KEY',
+# glob='**/.env')` returned the secret line -- an exploitable inconsistency
+# even though `.env` is not on the `Utils/sensitive_paths.py` denylist (nor
+# does it need to be; the hidden-component rule alone is what `read_file`
+# relies on). These pin the fix: a dotfile/dotdir inside the sandbox must be
+# invisible to `glob_files` and unreadable by `grep_files`, mirroring
+# `read_file`'s refusal.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_glob_files_hides_a_dotfile_in_the_sandbox(sandbox):
+    from tldw_chatbook.Agents.builtin_packs.files import GlobFiles
+
+    (sandbox / ".env").write_text("API_KEY=supersecret123\n")
+
+    result = await GlobFiles().execute(pattern="**/*")
+
+    assert ".env" not in {Path(p).name for p in result["matches"]}
+
+
+@pytest.mark.asyncio
+async def test_glob_files_hides_a_file_under_a_dotted_directory(sandbox):
+    """The hidden-component rule applies to any dotted ancestor, not just a
+    dotted leaf name -- e.g. a secret sitting inside `.git/`.
+    """
+    from tldw_chatbook.Agents.builtin_packs.files import GlobFiles
+
+    (sandbox / ".git").mkdir()
+    (sandbox / ".git" / "config").write_text("[core]\n")
+
+    result = await GlobFiles().execute(pattern="**/*")
+
+    assert "config" not in {Path(p).name for p in result["matches"]}
+
+
+@pytest.mark.asyncio
+async def test_grep_files_cannot_read_a_dotfile_in_the_sandbox(sandbox):
+    """Reproduces the exact live finding: `grep_files('API_KEY',
+    glob='**/.env')` must no longer surface the secret line.
+    """
+    from tldw_chatbook.Agents.builtin_packs.files import GrepFiles
+
+    (sandbox / ".env").write_text("API_KEY=supersecret123\n")
+
+    result = await GrepFiles().execute(pattern="API_KEY", glob="**/.env")
+
+    assert result["matches"] == []
+
+
+@pytest.mark.asyncio
+async def test_grep_files_cannot_read_a_dotfile_via_a_broad_glob(sandbox):
+    """Same as above, but via the tool's own default glob (`**/*`) rather
+    than a glob that names the dotfile explicitly -- the broader, more
+    realistic case an LLM would actually issue.
+
+    Uses a unique token rather than ``API_KEY``: the isolated test HOME's
+    own generated ``config.toml`` legitimately contains the substring
+    ``API_KEY`` (as ``OPENAI_API_KEY``) in a real, non-hidden file the
+    sandbox also happens to contain, which would make a broad-glob search
+    for ``API_KEY`` alone match regardless of this fix.
+    """
+    from tldw_chatbook.Agents.builtin_packs.files import GrepFiles
+
+    (sandbox / ".env").write_text("SUPER_UNIQUE_SECRET_TOKEN_4f8a1c\n")
+
+    result = await GrepFiles().execute(pattern="SUPER_UNIQUE_SECRET_TOKEN_4f8a1c")
+
+    assert result["matches"] == []
+
+
+# ---------------------------------------------------------------------------
+# Qodo review, PR #936, finding 6 (Important): `_rejects_traversal()` only
+# checked `pattern.startswith("/")`, missing Windows drive-letter (`C:\...`)
+# and UNC (`\\server\share\...`) absolute forms -- an OS-dependent gap
+# (`is_within` still guards every candidate regardless, so this was a
+# cost/consistency issue, not an escape).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_glob_files_refuses_windows_drive_letter_pattern(sandbox):
+    from tldw_chatbook.Agents.builtin_packs.files import GlobFiles
+
+    result = await GlobFiles().execute(pattern="C:\\Windows\\System32\\*")
+
+    assert "error" in result
+    assert "matches" not in result
+
+
+@pytest.mark.asyncio
+async def test_glob_files_refuses_windows_unc_pattern(sandbox):
+    from tldw_chatbook.Agents.builtin_packs.files import GlobFiles
+
+    result = await GlobFiles().execute(pattern="\\\\server\\share\\*")
+
+    assert "error" in result
+    assert "matches" not in result
+
+
+@pytest.mark.asyncio
+async def test_grep_files_refuses_windows_drive_letter_glob(sandbox):
+    from tldw_chatbook.Agents.builtin_packs.files import GrepFiles
+
+    result = await GrepFiles().execute(pattern="DEBUG", glob="C:\\Windows\\System32\\*")
+
+    assert "error" in result
+    assert "matches" not in result
+
+
+@pytest.mark.asyncio
+async def test_grep_files_refuses_windows_unc_glob(sandbox):
+    from tldw_chatbook.Agents.builtin_packs.files import GrepFiles
+
+    result = await GrepFiles().execute(pattern="DEBUG", glob="\\\\server\\share\\*")
+
+    assert "error" in result
+    assert "matches" not in result
+
+
+def test_rejects_traversal_recognizes_windows_absolute_forms():
+    """Direct unit test of the helper itself, independent of the tools."""
+    from tldw_chatbook.Agents.builtin_packs.files import _rejects_traversal
+
+    assert _rejects_traversal("C:\\Users\\x\\file.txt") is True
+    assert _rejects_traversal("\\\\server\\share\\file.txt") is True
+    assert _rejects_traversal("relative/path.txt") is False
+
+
+# ---------------------------------------------------------------------------
+# Qodo review, PR #936, finding 5 (Important): `grep_files` read a whole
+# file into memory via `read_text()` + `splitlines()`. Now streamed line by
+# line, with a per-file byte cap (`_MAX_GREP_FILE_BYTES`) bounding the worst
+# case for a single pathological file with no newline characters.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_grep_files_skips_a_file_over_the_size_cap(sandbox, monkeypatch):
+    import tldw_chatbook.Agents.builtin_packs.files as files_mod
+
+    monkeypatch.setattr(files_mod, "_MAX_GREP_FILE_BYTES", 10)
+    (sandbox / "big.py").write_text("DEBUG = True\n" * 5)
+
+    result = await files_mod.GrepFiles().execute(pattern="DEBUG", glob="big.py")
+
+    assert result["matches"] == []
+
+
+@pytest.mark.asyncio
+async def test_grep_files_still_matches_within_the_size_cap(sandbox, monkeypatch):
+    import tldw_chatbook.Agents.builtin_packs.files as files_mod
+
+    monkeypatch.setattr(files_mod, "_MAX_GREP_FILE_BYTES", 10_000)
+    (sandbox / "small.py").write_text("DEBUG = True\n")
+
+    result = await files_mod.GrepFiles().execute(pattern="DEBUG", glob="small.py")
+
+    assert len(result["matches"]) == 1
+    assert result["matches"][0]["line"] == "DEBUG = True"
