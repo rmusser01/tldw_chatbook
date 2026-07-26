@@ -16,6 +16,8 @@ from typing import Any, Dict, List
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+
+from ...Character_Chat.character_generation import GENERATABLE_FIELDS
 from textual.timer import Timer
 from textual.widgets import Button, DataTable, Input, Label, Static, TextArea
 
@@ -36,6 +38,30 @@ from .personas_pane_messages import (
     CharacterSaveRequested,
     EditorContentChanged,
 )
+
+
+#: Contract field key -> this editor's TextArea id suffix. Keeping the map
+#: here (rather than assuming the ids match) lets the generation contract name
+#: fields in card vocabulary while the widget keeps its existing ids.
+GENERATION_FIELD_SUFFIXES: dict[str, str] = {
+    "description": "description",
+    "personality": "personality",
+    "scenario": "scenario",
+    "first_message": "first-message",
+    "system_prompt": "system-prompt",
+    "post_history_instructions": "post-history",
+    "creator_notes": "creator-notes",
+}
+
+#: Label shown on the context-mode toggle for each mode. The active mode stays
+#: on screen rather than hiding in a per-field menu: the author is choosing how
+#: much of the character the model sees, which is worth seeing at a glance.
+GENERATE_BUTTON_LABEL = "Generate"
+
+_CONTEXT_MODE_LABELS = {
+    "whole_character": "Context: whole character",
+    "field_and_description": "Context: field + description",
+}
 
 
 class PersonasCharacterEditorWidget(Container):
@@ -96,6 +122,41 @@ class PersonasCharacterEditorWidget(Container):
     PersonasCharacterEditorWidget #personas-char-editor-advanced-toggle {
         width: auto;
         min-width: 0;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+    }
+
+    /* The generation toolbar and preview are `height: auto` so their children
+       are inside the parent's clip region. A fixed-height container leaves the
+       buttons laid out below the clip: they compute a region, render, and are
+       simply not hittable by the mouse. */
+    PersonasCharacterEditorWidget #personas-char-editor-generate-toolbar {
+        height: auto;
+        width: 100%;
+    }
+
+    PersonasCharacterEditorWidget #personas-char-editor-generate-preview {
+        height: auto;
+        width: 100%;
+        padding: 0 1;
+    }
+
+    PersonasCharacterEditorWidget #personas-char-editor-generate-preview-text {
+        height: auto;
+        width: 100%;
+        text-wrap: wrap;
+    }
+
+    PersonasCharacterEditorWidget .ds-field-label-row {
+        height: auto;
+        width: 100%;
+    }
+
+    PersonasCharacterEditorWidget .personas-generate-button {
+        width: auto;
+        min-width: 10;
         height: 1;
         min-height: 1;
         padding: 0 1;
@@ -292,26 +353,105 @@ class PersonasCharacterEditorWidget(Container):
         # interacted with it. Set True on a genuine field edit, an avatar
         # action, a greeting mutation, or a Save click; reset on every load.
         self._user_touched: bool = False
+        #: Which field the visible preview belongs to, or None when idle.
+        self._pending_generation_field: str | None = None
+        self._generation_context_mode: str = "whole_character"
 
     def compose(self) -> ComposeResult:
         yield Static("Character Editor", classes="destination-section")
         with VerticalScroll(id="personas-char-editor-body"):
+            with Horizontal(id="personas-char-editor-generate-toolbar"):
+                context_toggle = Button(
+                    _CONTEXT_MODE_LABELS["whole_character"],
+                    id="personas-char-editor-generate-context",
+                    classes="console-action-subdued",
+                )
+                context_toggle.tooltip = (
+                    "How much of the character the model sees when generating "
+                    "a single field"
+                )
+                yield context_toggle
+                whole = Button(
+                    "Generate whole character\u2026",
+                    id="personas-char-editor-generate-whole",
+                    classes="console-action-secondary",
+                )
+                whole.tooltip = "Draft every empty field from a short concept"
+                yield whole
+            # Preview lives ABOVE the fields and is always in view: generated
+            # text is proposed, never written over the author's own words until
+            # they accept it.
+            with Vertical(id="personas-char-editor-generate-preview"):
+                yield Static("", id="personas-char-editor-generate-preview-title")
+                yield Static(
+                    "",
+                    id="personas-char-editor-generate-preview-text",
+                    markup=False,
+                )
+                with Horizontal(classes="ds-toolbar"):
+                    yield Button(
+                        "Accept",
+                        id="personas-char-editor-generate-accept",
+                        classes="console-action-secondary",
+                    )
+                    yield Button(
+                        "Regenerate",
+                        id="personas-char-editor-generate-regenerate",
+                        classes="console-action-subdued",
+                    )
+                    yield Button(
+                        "Discard",
+                        id="personas-char-editor-generate-discard",
+                        classes="console-action-subdued",
+                    )
             with Vertical(classes="ds-field-row"):
                 yield Label("Name")
                 yield Input(
                     id="personas-char-editor-name", placeholder="Character name"
                 )
             with Vertical(classes="ds-field-row"):
-                yield Label("First message")
+                with Horizontal(classes="ds-field-label-row"):
+                    yield Label("First message")
+                    gen = Button(
+                        GENERATE_BUTTON_LABEL,
+                        id="personas-char-editor-generate-first-message",
+                        classes="console-action-subdued personas-generate-button",
+                    )
+                    gen.tooltip = "Generate this field with the Console's model"
+                    yield gen
                 yield TextArea(id="personas-char-editor-first-message")
             with Vertical(classes="ds-field-row"):
-                yield Label("Description")
+                with Horizontal(classes="ds-field-label-row"):
+                    yield Label("Description")
+                    gen = Button(
+                        GENERATE_BUTTON_LABEL,
+                        id="personas-char-editor-generate-description",
+                        classes="console-action-subdued personas-generate-button",
+                    )
+                    gen.tooltip = "Generate this field with the Console's model"
+                    yield gen
                 yield TextArea(id="personas-char-editor-description")
             with Vertical(classes="ds-field-row"):
-                yield Label("Personality")
+                with Horizontal(classes="ds-field-label-row"):
+                    yield Label("Personality")
+                    gen = Button(
+                        GENERATE_BUTTON_LABEL,
+                        id="personas-char-editor-generate-personality",
+                        classes="console-action-subdued personas-generate-button",
+                    )
+                    gen.tooltip = "Generate this field with the Console's model"
+                    yield gen
                 yield TextArea(id="personas-char-editor-personality")
             with Vertical(classes="ds-field-row"):
-                yield Label("System prompt")
+                with Horizontal(classes="ds-field-label-row"):
+                    yield Label("System prompt")
+                    gen = Button(
+                        GENERATE_BUTTON_LABEL,
+                        id="personas-char-editor-generate-system-prompt",
+                        classes="console-action-subdued personas-generate-button",
+                    )
+                    gen.tooltip = "Generate this field with the Console's model"
+                    yield gen
                 yield TextArea(id="personas-char-editor-system-prompt")
             yield Button(
                 "Advanced ▸",
@@ -326,13 +466,37 @@ class PersonasCharacterEditorWidget(Container):
                 # rather than sandwiching the DataTable+toolbar list editor
                 # between unrelated one-line Inputs (Roleplay P3b Task 5).
                 with Vertical(classes="ds-field-row"):
-                    yield Label("Scenario")
+                    with Horizontal(classes="ds-field-label-row"):
+                        yield Label("Scenario")
+                        gen = Button(
+                            GENERATE_BUTTON_LABEL,
+                            id="personas-char-editor-generate-scenario",
+                            classes="console-action-subdued personas-generate-button",
+                        )
+                        gen.tooltip = "Generate this field with the Console's model"
+                        yield gen
                     yield TextArea(id="personas-char-editor-scenario")
                 with Vertical(classes="ds-field-row"):
-                    yield Label("Post-history instructions")
+                    with Horizontal(classes="ds-field-label-row"):
+                        yield Label("Post-history instructions")
+                        gen = Button(
+                            GENERATE_BUTTON_LABEL,
+                            id="personas-char-editor-generate-post-history",
+                            classes="console-action-subdued personas-generate-button",
+                        )
+                        gen.tooltip = "Generate this field with the Console's model"
+                        yield gen
                     yield TextArea(id="personas-char-editor-post-history")
                 with Vertical(classes="ds-field-row"):
-                    yield Label("Creator notes")
+                    with Horizontal(classes="ds-field-label-row"):
+                        yield Label("Creator notes")
+                        gen = Button(
+                            GENERATE_BUTTON_LABEL,
+                            id="personas-char-editor-generate-creator-notes",
+                            classes="console-action-subdued personas-generate-button",
+                        )
+                        gen.tooltip = "Generate this field with the Console's model"
+                        yield gen
                     yield TextArea(id="personas-char-editor-creator-notes")
                 with Vertical(classes="ds-field-row"):
                     yield Label("Alternate greetings")
@@ -487,6 +651,13 @@ class PersonasCharacterEditorWidget(Container):
     def _input(self, suffix: str) -> Input:
         return self.query_one(f"#personas-char-editor-{suffix}", Input)
 
+    def on_mount(self) -> None:
+        """Hide the generation preview until a generation actually arrives."""
+        try:
+            self.query_one("#personas-char-editor-generate-preview").display = False
+        except Exception:
+            pass
+
     def _area(self, suffix: str) -> TextArea:
         return self.query_one(f"#personas-char-editor-{suffix}", TextArea)
 
@@ -606,6 +777,142 @@ class PersonasCharacterEditorWidget(Container):
         """
         data = self._character_data.get("image")
         return data if isinstance(data, (bytes, bytearray)) else None
+
+    # --- LLM-assisted generation -------------------------------------------------
+
+    @staticmethod
+    def generate_button_id(field: str) -> str | None:
+        """Return the Generate button id for a contract field key.
+
+        Args:
+            field: Contract field key (e.g. ``"first_message"``).
+
+        Returns:
+            The button's DOM id, or ``None`` when the field is not generatable.
+        """
+        suffix = GENERATION_FIELD_SUFFIXES.get(field)
+        return f"personas-char-editor-generate-{suffix}" if suffix else None
+
+    @staticmethod
+    def field_for_generate_button(button_id: str) -> str | None:
+        """Return the contract field key a Generate button belongs to.
+
+        Args:
+            button_id: DOM id of the pressed button.
+
+        Returns:
+            The field key, or ``None`` when the id is not a field-generate
+            button (the toolbar and preview buttons share the id prefix).
+        """
+        prefix = "personas-char-editor-generate-"
+        if not button_id.startswith(prefix):
+            return None
+        suffix = button_id[len(prefix) :]
+        for field, field_suffix in GENERATION_FIELD_SUFFIXES.items():
+            if field_suffix == suffix:
+                return field
+        return None
+
+    def set_generation_busy(self, field: str, busy: bool) -> None:
+        """Disable a field's Generate button while its request is in flight.
+
+        Args:
+            field: Contract field key being generated.
+            busy: Whether a request is running.
+        """
+        button_id = self.generate_button_id(field)
+        if not button_id:
+            return
+        try:
+            button = self.query_one(f"#{button_id}", Button)
+        except Exception:
+            return
+        button.disabled = busy
+        button.label = "Generating…" if busy else GENERATE_BUTTON_LABEL
+
+    @property
+    def generation_context_mode(self) -> str:
+        """Active context mode for single-field generation."""
+        return self._generation_context_mode
+
+    @property
+    def pending_generation_field(self) -> str | None:
+        """Field key the visible preview belongs to, or None when idle."""
+        return self._pending_generation_field
+
+    @property
+    def generation_preview_text(self) -> str:
+        """Text currently shown in the generation preview."""
+        try:
+            return str(
+                self.query_one(
+                    "#personas-char-editor-generate-preview-text", Static
+                ).renderable
+            )
+        except Exception:
+            return ""
+
+    def show_generation_preview(self, field: str, text: str) -> None:
+        """Show generated text as a proposal for ``field``.
+
+        The field itself is deliberately NOT written: a roleplay author may
+        have spent real time on the existing text, so a generation is offered
+        and only applied on Accept.
+
+        Args:
+            field: Contract field key the text was generated for.
+            text: Generated field text.
+        """
+        if field not in GENERATION_FIELD_SUFFIXES:
+            return
+        self._pending_generation_field = field
+        label = GENERATABLE_FIELDS.get(field, field)
+        self.query_one(
+            "#personas-char-editor-generate-preview-title", Static
+        ).update(f"Generated {label} - review before applying")
+        self.query_one(
+            "#personas-char-editor-generate-preview-text", Static
+        ).update(text)
+        self.query_one("#personas-char-editor-generate-preview").display = True
+
+    def clear_generation_preview(self) -> None:
+        """Hide the preview and forget the pending field."""
+        self._pending_generation_field = None
+        try:
+            self.query_one(
+                "#personas-char-editor-generate-preview-text", Static
+            ).update("")
+            self.query_one("#personas-char-editor-generate-preview").display = False
+        except Exception:
+            return
+
+    @on(Button.Pressed, "#personas-char-editor-generate-context")
+    def _cycle_generation_context(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._generation_context_mode = (
+            "field_and_description"
+            if self._generation_context_mode == "whole_character"
+            else "whole_character"
+        )
+        event.button.label = _CONTEXT_MODE_LABELS[self._generation_context_mode]
+
+    @on(Button.Pressed, "#personas-char-editor-generate-accept")
+    def _accept_generation(self, event: Button.Pressed) -> None:
+        event.stop()
+        field = self._pending_generation_field
+        if field is None:
+            return
+        suffix = GENERATION_FIELD_SUFFIXES[field]
+        self._area(suffix).text = self.generation_preview_text
+        # An accepted generation is an edit like any other, so Save must not be
+        # skippable afterwards.
+        self._user_touched = True
+        self.clear_generation_preview()
+
+    @on(Button.Pressed, "#personas-char-editor-generate-discard")
+    def _discard_generation(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.clear_generation_preview()
 
     def set_avatar_thumbnail(self, renderable: object | None) -> None:
         """Mount a prepared avatar renderable, or clear to the text status.

@@ -179,6 +179,11 @@ from ..Persona_Modules.personas_conversations_controller import (
     _CONVERSATION_VIEW_ID,
     PersonasConversationsController,
 )
+from ...Character_Chat.character_generation import CharacterGenerationError
+from ...Character_Chat.character_generation_controller import (
+    CharacterGenerationController,
+    build_gateway_runner,
+)
 from ..Persona_Modules.personas_preview_controller import PersonasPreviewController
 
 
@@ -4396,6 +4401,96 @@ class PersonasScreen(BaseAppScreen):
             return
         self._notify("Avatar staged. Save the character to persist it.", "information")
         await self._render_character_editor_avatar()
+
+    # --- LLM-assisted character generation ---------------------------------------
+
+    def _character_generation_controller(self) -> CharacterGenerationController:
+        """Return the controller used to generate character text.
+
+        Generation goes through the Console provider gateway, so it uses
+        whatever provider and model Console is already configured with; the
+        author never configures a second one. Tests substitute
+        ``_generation_controller_override``.
+        """
+        override = getattr(self, "_generation_controller_override", None)
+        if override is not None:
+            return override
+        runner = build_gateway_runner(
+            gateway_factory=self.preview.ensure_gateway,
+            selection_factory=lambda: PersonasPreviewController._selection_from_defaults(
+                getattr(self.app_instance, "app_config", {}) or {}, "chat_defaults"
+            ),
+        )
+        return CharacterGenerationController(runner=runner)
+
+    def _editor_or_none(self) -> "PersonasCharacterEditorWidget | None":
+        try:
+            return self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return None
+
+    async def _run_field_generation(self, field: str) -> None:
+        """Generate one field and offer the result as a preview.
+
+        The field itself is never written here: the editor shows the result and
+        the author accepts or discards it.
+        """
+        editor = self._editor_or_none()
+        if editor is None:
+            return
+        # Live editor values, not the saved record: an author generating a
+        # personality right after typing a description expects that description
+        # to inform it.
+        record = editor.get_character_data()
+        controller = self._character_generation_controller()
+        editor.set_generation_busy(field, True)
+        try:
+            text = await controller.generate_field(
+                field,
+                record,
+                context_mode=editor.generation_context_mode,
+            )
+        except CharacterGenerationError as exc:
+            editor.clear_generation_preview()
+            self._notify(f"Could not generate: {exc}", "error")
+            return
+        except Exception as exc:  # defensive: never leave the button stuck
+            logger.opt(exception=True).warning("Character field generation failed.")
+            editor.clear_generation_preview()
+            self._notify(f"Could not generate: {exc}", "error")
+            return
+        finally:
+            editor.set_generation_busy(field, False)
+        editor.show_generation_preview(field, text)
+
+    @on(Button.Pressed, ".personas-generate-button")
+    def _generate_field_pressed(self, event: Button.Pressed) -> None:
+        """Start a generation for the field whose button was pressed."""
+        event.stop()
+        field = PersonasCharacterEditorWidget.field_for_generate_button(
+            str(event.button.id or "")
+        )
+        if field is None:
+            return
+        self.run_worker(
+            self._run_field_generation(field),
+            group="character-generation",
+            exclusive=True,
+        )
+
+    @on(Button.Pressed, "#personas-char-editor-generate-regenerate")
+    def _regenerate_pressed(self, event: Button.Pressed) -> None:
+        """Re-run the generation for the field currently being previewed."""
+        event.stop()
+        editor = self._editor_or_none()
+        field = editor.pending_generation_field if editor is not None else None
+        if field is None:
+            return
+        self.run_worker(
+            self._run_field_generation(field),
+            group="character-generation",
+            exclusive=True,
+        )
 
     async def _render_inspector_avatar(self) -> None:
         """Decode and mount the selected character's Inspector portrait.
