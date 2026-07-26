@@ -1541,6 +1541,22 @@ class SettingsScreen(BaseAppScreen):
         #: dropped rather than clobbering an unrelated, freshly (re)opened
         #: panel's badge or in-flight state.
         self._image_gen_probe_session: int = 0
+        #: Qodo PR #901 fix 3: `_image_gen_raw_section()`'s merged
+        #: `[image_generation]` baseline, cached for the duration of one
+        #: category "session" -- reached from every keystroke's staging
+        #: handler (`Input.Changed` et al.), and `SettingsConfigAdapter
+        #: ().load()` deepcopies the ENTIRE merged app config, making a
+        #: fresh call per keystroke needlessly expensive. Invalidated
+        #: (`None`) at exactly the three moments the on-disk truth can
+        #: change: entering IMAGE_GENERATION (`_select_category`, so a
+        #: stale cache from a PRIOR visit -- e.g. after an Advanced
+        #: Config hand-edit in between -- is never reused), and after a
+        #: successful Save or Revert (`_apply_image_gen_save_result` /
+        #: `_handle_image_gen_revert`). `None` also means "not yet
+        #: populated this session" -- lazily filled on first access, so
+        #: merely opening the category (never editing anything) never
+        #: triggers a load at all.
+        self._image_gen_raw_section_cache: Mapping[str, object] | None = None
         self._navigation_provider: str | None = None
         self._navigation_model: str | None = None
         self._navigation_field: str | None = None
@@ -2813,8 +2829,15 @@ class SettingsScreen(BaseAppScreen):
     # its own "original" (never a spurious diff), while a genuinely toggled
     # one always differs.
     def _image_gen_raw_section(self) -> Mapping[str, object]:
-        raw = SettingsConfigAdapter().load().get("image_generation")
-        return raw if isinstance(raw, Mapping) else {}
+        # Qodo PR #901 fix 3: cached per category session -- see
+        # `_image_gen_raw_section_cache`'s docstring at its `__init__`
+        # declaration for the exact three invalidation points.
+        if self._image_gen_raw_section_cache is None:
+            raw = SettingsConfigAdapter().load().get("image_generation")
+            self._image_gen_raw_section_cache = (
+                raw if isinstance(raw, Mapping) else {}
+            )
+        return self._image_gen_raw_section_cache
 
     def _image_gen_overlay_values(self) -> dict[str, object]:
         draft = self._settings_drafts.get(SettingsCategoryId.IMAGE_GENERATION)
@@ -2977,6 +3000,11 @@ class SettingsScreen(BaseAppScreen):
         if value is None:
             self._image_gen_unstage("default_backend")
             self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
+            # Qodo PR #901 fix 1: clearing the Select to blank must clear
+            # every row's "★ Default" marker too -- left unrefreshed, the
+            # OLD default's marker keeps showing, now inconsistent with
+            # the Select itself showing nothing selected.
+            self._refresh_image_gen_default_markers("")
             return
         original = self._image_gen_raw_section().get("default_backend")
         self._image_gen_stage("default_backend", original, value)
@@ -3198,7 +3226,16 @@ class SettingsScreen(BaseAppScreen):
         try:
             badge = image_gen_probe_backend(backend_id, form_values, secret).badge
         except Exception as exc:  # noqa: BLE001 - any escape must degrade safely
-            logger.debug(f"Image Gen probe for {backend_id!r} raised: {exc}")
+            # Qodo PR #901 fix 2: this probe builds Authorization headers
+            # from a pasted-or-effective secret -- the spec's keys-never-
+            # enter-logs contract forbids logging the raw exception text
+            # (it could echo a header, URL, or secret embedded in some
+            # library's error message). Log only the exception TYPE name
+            # and the backend id, never str(exc).
+            logger.debug(
+                f"Image Gen probe for {backend_id!r} raised "
+                f"{type(exc).__name__}"
+            )
             badge = "Unreachable: probe error"
         finally:
             self.app.call_from_thread(
@@ -3269,6 +3306,10 @@ class SettingsScreen(BaseAppScreen):
             self.app.notify(message, severity="error")
             return
         self._settings_drafts.pop(SettingsCategoryId.IMAGE_GENERATION, None)
+        # Qodo PR #901 fix 3: the save just changed the on-disk truth --
+        # invalidate the cached raw-section baseline (see
+        # `_image_gen_raw_section_cache`'s docstring).
+        self._image_gen_raw_section_cache = None
         message = "Image Gen defaults saved."
         if warnings:
             message = f"{message} {' '.join(warnings)}"
@@ -3292,6 +3333,13 @@ class SettingsScreen(BaseAppScreen):
 
     async def _handle_image_gen_revert(self) -> None:
         self._settings_drafts.pop(SettingsCategoryId.IMAGE_GENERATION, None)
+        # Qodo PR #901 fix 3: revert is the third of the exactly-three
+        # invalidation points (see `_image_gen_raw_section_cache`'s
+        # docstring) -- the file itself doesn't change on revert, but
+        # this keeps the cache's lifetime scoped strictly to "since the
+        # last time the draft was known-consistent with disk" rather
+        # than silently spanning across a discard-and-restart edit.
+        self._image_gen_raw_section_cache = None
         try:
             panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
         except QueryError:
@@ -11021,6 +11069,13 @@ class SettingsScreen(BaseAppScreen):
             self._queue_sync_rows_refresh()
         if category_value == SettingsCategoryId.LIBRARY_RAG.value:
             self._refresh_library_rag_index_status()
+        if category_value == SettingsCategoryId.IMAGE_GENERATION.value:
+            # Qodo PR #901 fix 3: entering the category invalidates the
+            # cached raw-section baseline (see `_image_gen_raw_section_
+            # cache`'s docstring) -- a PRIOR visit's cache must never
+            # survive into a new one (e.g. an Advanced Config hand-edit
+            # to [image_generation] made while away).
+            self._image_gen_raw_section_cache = None
         if restore_focus:
             self.call_after_refresh(self._focus_category, category_value)
 

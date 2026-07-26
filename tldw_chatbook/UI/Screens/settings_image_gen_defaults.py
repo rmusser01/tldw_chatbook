@@ -24,8 +24,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
-
 import httpx
 from loguru import logger
 
@@ -46,6 +44,7 @@ from tldw_chatbook.Image_Generation.listing import (
     _is_together_configured,
 )
 from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise, origin_set
+from tldw_chatbook.Utils.input_validation import validate_url
 
 
 BACKEND_IDS: tuple[str, ...] = (
@@ -332,6 +331,17 @@ def canonical_backend_order(backend_ids: Any) -> list[str]:
     sides first spuriously diffs whenever the file happens to list the
     same backends in a different order, causing an unnecessary rewrite on
     every save and a rail dirty marker that never clears on its own.
+
+    Args:
+        backend_ids: An iterable (or ``None``/falsy) of backend id
+            strings, in whatever order the caller has them -- typically a
+            raw config's ``enabled_backends`` list, in file order.
+            Duplicates and unrecognized ids (not in ``BACKEND_IDS``) are
+            tolerated and simply have no effect on the result.
+
+    Returns:
+        A new list containing only the recognized ids from
+        ``backend_ids``, deduplicated, ordered to match ``BACKEND_IDS``.
     """
     ids = set(backend_ids or ())
     return [backend_id for backend_id in BACKEND_IDS if backend_id in ids]
@@ -525,6 +535,12 @@ def _is_valid_numeric(value: Any, *, kind: type) -> bool:
 def validate_draft(draft: ImageGenDraftValues) -> tuple[list[str], list[str]]:
     """Validate a draft before it can be saved.
 
+    Args:
+        draft: The pending Settings > Image Gen edits to validate --
+            only the fields actually touched this session are checked
+            (untouched scalars are ``None`` and skipped; see
+            ``ImageGenDraftValues``'s docstring).
+
     Returns:
         ``(errors, warnings)``. ``errors`` block the save: the default
         backend must be enabled, backend "int"-kind fields (timeout_seconds)
@@ -573,8 +589,19 @@ def validate_draft(draft: ImageGenDraftValues) -> tuple[list[str], list[str]]:
                         f"{backend_label} {spec.label} must be at least {int(spec.min_value)}."
                     )
             elif spec.kind == "url":
-                parsed_url = urlparse(str(raw_value).strip())
-                if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+                # Qodo PR #901 fix 5: adopt the shared
+                # `input_validation.validate_url` (already used by
+                # settings_endpoint_probe.py for this same http(s)+host
+                # contract) instead of the ad-hoc urlparse check that used
+                # to live here. Its semantics are a strict superset of
+                # what the ad-hoc check did -- same http/https scheme set
+                # and required host, PLUS it rejects whitespace,
+                # backslashes (a parser-discrepancy SSRF vector),
+                # embedded credentials, and malformed hosts -- it's pure
+                # string parsing with no network side effects, and it
+                # returns a plain bool that slots straight into this
+                # inline error collection (never raises).
+                if not validate_url(str(raw_value).strip()):
                     errors.append(f"{backend_label} {spec.label} must be a valid http(s) URL.")
 
     for key, label, minimum in _GLOBAL_INT_FIELD_SPECS:

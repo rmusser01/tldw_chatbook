@@ -15,8 +15,9 @@ import threading
 import tomllib
 
 import pytest
-from textual.widgets import Button, Checkbox, Input, Static
+from textual.widgets import Button, Checkbox, Input, Select, Static
 
+import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -985,12 +986,15 @@ base_url = "http://localhost:7801"
 
 @pytest.mark.asyncio
 async def test_probe_escaped_exception_renders_probe_error_badge(
-    scratch_config, monkeypatch
+    scratch_config, monkeypatch, caplog
 ):
     """Any exception `probe_backend` fails to catch itself must degrade to
     the closed-set "Unreachable: probe error" badge -- never propagate
-    exception text into the badge or a notify(), and buttons must still
-    re-enable via the worker's `finally`."""
+    exception text into the badge, a notify(), OR the debug log (Qodo PR
+    #901 fix 2: this probe path constructs Authorization headers from a
+    pasted-or-effective secret, so the spec's keys-never-enter-logs
+    contract applies here too) -- and buttons must still re-enable via
+    the worker's `finally`."""
     scratch_config(
         """
 [image_generation]
@@ -1009,21 +1013,28 @@ base_url = "http://localhost:7801"
 
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
-    async with host.run_test(size=(190, 55)) as pilot:
-        screen = _active_destination_screen(host)
-        await _open_image_gen(pilot)
-        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+    with caplog.at_level("DEBUG", logger="tldw_chatbook.UI.Screens.settings_screen"):
+        async with host.run_test(size=(190, 55)) as pilot:
+            screen = _active_destination_screen(host)
+            await _open_image_gen(pilot)
+            panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
 
-        screen.query_one("#settings-imagegen-test-swarmui", Button).press()
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
+            screen.query_one("#settings-imagegen-test-swarmui", Button).press()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
 
-        badge = panel.query_one("#settings-imagegen-status-swarmui", Static)
-        assert str(badge.renderable) == "Unreachable: probe error"
-        assert "leaked-exception-text-must-never-render" not in _visible_text(screen)
-        assert not screen.query_one(
-            "#settings-imagegen-test-swarmui", Button
-        ).disabled
+            badge = panel.query_one("#settings-imagegen-status-swarmui", Static)
+            assert str(badge.renderable) == "Unreachable: probe error"
+            assert "leaked-exception-text-must-never-render" not in _visible_text(
+                screen
+            )
+            assert not screen.query_one(
+                "#settings-imagegen-test-swarmui", Button
+            ).disabled
+
+    assert "leaked-exception-text-must-never-render" not in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert "swarmui" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -1256,4 +1267,181 @@ enabled_backends = ["openrouter", "swarmui"]
         widget, _offset = screen.screen.get_widget_at(*save_btn.region.center)
         assert widget is save_btn, (
             f"@ {size}: Save button not reachable/clickable via scroll"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Qodo review of PR #901: stale default marker on Select clear, cached
+# raw-section baseline.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_clearing_default_backend_select_clears_all_row_markers(
+    scratch_config,
+):
+    """Fix 1: clearing the default-backend Select to Select.NULL must
+    clear every row's "★ Default" marker too -- left unrefreshed, the OLD
+    default's marker kept showing, inconsistent with the Select itself
+    now showing nothing selected."""
+    scratch_config(
+        """
+[image_generation]
+default_backend = "openrouter"
+enabled_backends = ["openrouter"]
+"""
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        default_marker = panel.query_one(
+            "#settings-imagegen-default-marker-openrouter", Static
+        )
+        assert "Default" in str(default_marker.renderable)
+
+        select = panel.query_one(
+            "#settings-imagegen-default_backend", Select
+        )
+        select.value = Select.NULL
+        await pilot.pause()
+
+        for backend_id in (
+            "stable_diffusion_cpp",
+            "swarmui",
+            "openrouter",
+            "novita",
+            "together",
+            "modelstudio",
+        ):
+            marker = panel.query_one(
+                f"#settings-imagegen-default-marker-{backend_id}", Static
+            )
+            assert str(marker.renderable) == "", (
+                f"{backend_id}'s default marker should be cleared, got "
+                f"{marker.renderable!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_raw_section_cache_reused_and_invalidated_at_exactly_three_points(
+    scratch_config, monkeypatch
+):
+    """Fix 3: `_image_gen_raw_section()` must load the merged config ONCE
+    per category session (lazily, on first access), never once per
+    keystroke -- `SettingsConfigAdapter().load()` deepcopies the entire
+    merged app config, and every `Input.Changed` staging handler reaches
+    it for the "original" comparison value. Also verifies the cache is
+    invalidated at exactly the three moments the on-disk truth can
+    change: entering the category, after a successful Save, and after
+    Revert -- via direct cache-state inspection (rather than counting
+    load() calls through those specific transitions), since a field
+    whose value happens to already be non-empty at (re)compose time fires
+    its own spurious `Input.Changed` on mount (Task 5's established,
+    verified behavior) and would otherwise confound a call-count
+    assertion right at those same transitions.
+    """
+    scratch_config(
+        """
+[image_generation]
+default_backend = "openrouter"
+enabled_backends = ["openrouter"]
+"""
+    )
+    load_calls: list[int] = []
+    original_load = settings_screen_module.SettingsConfigAdapter.load
+
+    def counting_load(self, *args, **kwargs):
+        load_calls.append(1)
+        return original_load(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        settings_screen_module.SettingsConfigAdapter, "load", counting_load
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_image_gen(pilot)
+        assert screen._image_gen_raw_section_cache is None, (
+            "opening the category must not itself trigger a load -- "
+            "populated lazily, on the first REAL edit"
+        )
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+
+        model_input = panel.query_one(
+            "#settings-imagegen-field-openrouter-default_model", Input
+        )
+        load_calls.clear()
+
+        for value in ("o", "op", "ope", "open", "openr", "openro"):
+            model_input.value = value
+            await pilot.pause()
+
+        assert len(load_calls) == 1, (
+            f"expected exactly 1 SettingsConfigAdapter.load() call across "
+            f"6 keystrokes, got {len(load_calls)}"
+        )
+
+        # A DIFFERENT field in the same session must still reuse the cache
+        # -- this isn't a per-field cache, it's per category session.
+        timeout_input = panel.query_one(
+            "#settings-imagegen-field-openrouter-timeout_seconds", Input
+        )
+        timeout_input.value = "45"
+        await pilot.pause()
+        assert len(load_calls) == 1
+
+        # Save is the second invalidation point. A post-save `recompose()`
+        # legitimately repopulates the cache right away whenever a field's
+        # newly-saved value is non-empty (that field's fresh `Input(value=
+        # ...)` refires `Changed` on mount -- Task 5's established, verified
+        # behavior), so asserting the cache stays `None` after Save doesn't
+        # hold. Instead, poison the cache with a sentinel immediately before
+        # the click: `_image_gen_raw_section()`'s lazy check is `if ... is
+        # None`, so a non-None sentinel would be returned as-is (leaking
+        # straight through) if the invalidation line were missing --
+        # asserting the sentinel is gone afterwards pins the invalidation
+        # line itself, independent of whatever happens to repopulate it.
+        sentinel = {"__sentinel__": True}
+        screen._image_gen_raw_section_cache = sentinel
+        await pilot.click("#settings-imagegen-save")
+        await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
+        assert screen._image_gen_raw_section_cache != sentinel, (
+            "a successful Save must invalidate the cache"
+        )
+
+        # Stage a fresh edit, then Revert -- the third invalidation point,
+        # verified the same sentinel way.
+        panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        model_input = panel.query_one(
+            "#settings-imagegen-field-openrouter-default_model", Input
+        )
+        model_input.value = "yet-another-model"
+        await pilot.pause()
+        screen._image_gen_raw_section_cache = sentinel
+        await pilot.click("#settings-imagegen-revert")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._image_gen_raw_section_cache != sentinel, (
+            "Revert must invalidate the cache"
+        )
+
+        # Leaving and re-entering the category is the first invalidation
+        # point -- must never linger warm from the visit above. Poisoned
+        # the same sentinel way, right before the re-entry: by now the
+        # saved config has non-empty per-backend field values, so the
+        # panel's post-entry recompose would legitimately repopulate a
+        # correctly-cleared cache via mount refire, the same as Save/
+        # Revert above -- the sentinel isolates the entry invalidation
+        # line itself from that noise.
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen._image_gen_raw_section_cache = sentinel
+        await _open_image_gen(pilot)
+        assert screen._image_gen_raw_section_cache != sentinel, (
+            "re-entering the category must invalidate the cache"
         )
