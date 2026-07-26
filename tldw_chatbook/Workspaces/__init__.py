@@ -41,12 +41,13 @@ from .models import (
     WorkspaceSyncStatus,
     WorkspaceTransferPolicy,
 )
-from .registry_service import LocalWorkspaceRegistryService
+from .registry_service import BindingNotFound, LocalWorkspaceRegistryService
 
 __all__ = [
     "CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT",
     "CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT",
     "CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT",
+    "BindingNotFound",
     "ConsoleConversationBrowserGroup",
     "ConsoleConversationBrowserInputRow",
     "ConsoleConversationBrowserRow",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import json
+from pathlib import Path
 import sqlite3
 from uuid import uuid4
 
@@ -41,6 +42,14 @@ class WorkspaceNotFound(WorkspaceRegistryServiceError):
 
 class DuplicateWorkspace(WorkspaceRegistryServiceError):
     """Raised when a workspace id already exists."""
+
+
+class BindingNotFound(WorkspaceRegistryServiceError):
+    """Raised when a runtime binding id does not exist."""
+
+    def __init__(self, binding_id: str) -> None:
+        super().__init__(f"Runtime binding not found: {binding_id}")
+        self.binding_id = binding_id
 
 
 class LocalWorkspaceRegistryService:
@@ -617,6 +626,138 @@ class LocalWorkspaceRegistryService:
         if stored is None:
             raise WorkspaceRegistryServiceError("Runtime binding save failed.")
         return stored
+
+    def add_folder_binding(
+        self,
+        workspace_id: str,
+        path: str | Path,
+        *,
+        allow_write: bool = False,
+    ) -> WorkspaceRuntimeBinding:
+        """Bind a folder as a file-tool access root (spec §2).
+
+        Read-only by default; canonical (resolved) locator; denies the
+        filesystem root, the home directory itself, non-directories, and
+        duplicate/nested roots within the same workspace. Default-workspace
+        and unknown-workspace rejection is delegated to
+        ``save_runtime_binding``.
+        """
+        candidate = Path(path).expanduser()
+        try:
+            resolved = candidate.resolve()
+        except OSError as exc:
+            raise WorkspaceRegistryServiceError(
+                f"Folder path could not be resolved: {candidate}"
+            ) from exc
+        if not resolved.is_dir():
+            raise WorkspaceRegistryServiceError(
+                f"Folder does not exist or is not a directory: {resolved}"
+            )
+        if resolved == Path(resolved.anchor):
+            raise WorkspaceRegistryServiceError(
+                "The filesystem root cannot be bound to a workspace."
+            )
+        if resolved == Path.home().resolve():
+            raise WorkspaceRegistryServiceError(
+                "Your home directory itself cannot be bound; choose a "
+                "project folder inside it."
+            )
+        for existing in self.list_folder_bindings(workspace_id):
+            existing_path = Path(existing.locator)
+            if resolved == existing_path:
+                raise WorkspaceRegistryServiceError(
+                    f"{resolved} is already bound to this workspace."
+                )
+            if existing_path in resolved.parents:
+                raise WorkspaceRegistryServiceError(
+                    f"{resolved} is inside the already-bound folder "
+                    f"{existing_path}."
+                )
+            if resolved in existing_path.parents:
+                raise WorkspaceRegistryServiceError(
+                    f"The already-bound folder {existing_path} is inside "
+                    f"{resolved}; remove it first."
+                )
+        binding = WorkspaceRuntimeBinding(
+            workspace_id=workspace_id,
+            binding_id=f"folder-{uuid4().hex[:12]}",
+            binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM,
+            label=resolved.name or str(resolved),
+            locator=str(resolved),
+            status=RuntimeBindingStatus.READY,
+            metadata={"access": "rw" if allow_write else "ro"},
+        )
+        return self.save_runtime_binding(binding)
+
+    def list_folder_bindings(
+        self, workspace_id: str
+    ) -> tuple[WorkspaceRuntimeBinding, ...]:
+        """Local-filesystem bindings with status recomputed from disk."""
+        bindings = self.list_runtime_bindings(workspace_id)
+        # Filter to only local-filesystem bindings
+        filtered = [
+            b
+            for b in bindings
+            if str(b.binding_kind)
+            in ("local-filesystem", str(RuntimeBindingKind.LOCAL_FILESYSTEM))
+        ]
+        refreshed: list[WorkspaceRuntimeBinding] = []
+        for binding in filtered:
+            actual = (
+                RuntimeBindingStatus.READY
+                if Path(binding.locator).is_dir()
+                else RuntimeBindingStatus.MISSING
+            )
+            refreshed.append(
+                WorkspaceRuntimeBinding(
+                    workspace_id=binding.workspace_id,
+                    binding_id=binding.binding_id,
+                    binding_kind=binding.binding_kind,
+                    label=binding.label,
+                    locator=binding.locator,
+                    status=actual,
+                    metadata=binding.metadata,
+                    created_at=binding.created_at,
+                    updated_at=binding.updated_at,
+                )
+            )
+        return tuple(refreshed)
+
+    def remove_runtime_binding(self, binding_id: str) -> None:
+        """Delete a runtime binding row (spec §2)."""
+        safe_binding_id = _normalize_required_text(binding_id, "binding_id")
+        try:
+            with self.db.transaction() as conn:
+                cursor = conn.execute(
+                    "DELETE FROM workspace_runtime_bindings WHERE binding_id = ?",
+                    (safe_binding_id,),
+                )
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if cursor.rowcount == 0:
+            raise BindingNotFound(safe_binding_id)
+
+    def set_folder_binding_access(
+        self, binding_id: str, *, allow_write: bool
+    ) -> WorkspaceRuntimeBinding:
+        """Flip a folder binding's ro/rw access flag (spec §4 toggle)."""
+        existing = self.get_runtime_binding(binding_id)
+        if existing is None:
+            raise BindingNotFound(binding_id)
+        metadata = dict(existing.metadata)
+        metadata["access"] = "rw" if allow_write else "ro"
+        return self.save_runtime_binding(
+            WorkspaceRuntimeBinding(
+                workspace_id=existing.workspace_id,
+                binding_id=existing.binding_id,
+                binding_kind=existing.binding_kind,
+                label=existing.label,
+                locator=existing.locator,
+                status=existing.status,
+                metadata=metadata,
+                created_at=existing.created_at,
+            )
+        )
 
     def get_runtime_binding(self, binding_id: str) -> WorkspaceRuntimeBinding | None:
         """Return one runtime binding if it exists."""
