@@ -9,7 +9,68 @@ from loguru import logger
 
 from . import Tool
 from ..Notes.Notes_Library import NotesInteropService
-from ..config import USER_DB_BASE_DIR
+from ..config import get_chachanotes_db_path, load_settings
+
+
+def _notes_db_base_dir():
+    """Return the base directory for the notes DB.
+
+    Mirrors the app's own ``NotesInteropService`` wiring in ``app.py``
+    (``get_chachanotes_db_path().parent``). Replaces an earlier
+    ``from ..config import USER_DB_BASE_DIR``, which named a symbol that
+    exists only inside ``config.py``'s ``CONFIG_TOML_CONTENT`` string
+    literal -- never as a module-level binding -- so this module could
+    not be imported at all.
+
+    Deferred to call time rather than computed at module scope, matching
+    ``file_operation_tools._tool_sandbox_root``. `get_chachanotes_db_path`
+    reaches `get_user_data_dir`, which **mkdirs**; at import scope that
+    made merely importing this module create a directory, and made an
+    unwritable ``$HOME``/``[paths] data_dir`` raise during import. The
+    registration loop in `tool_catalog` catches that and skips the tool,
+    so the failure would surface as "create_note is missing" rather than
+    as a normal error from an actual call.
+    """
+    return get_chachanotes_db_path().parent
+
+
+#: Matches config.py's own `default_users_name_fallback`, so an
+#: unconfigured user sees no change from the previously hardcoded value.
+_DEFAULT_USER_ID = "default_user"
+
+
+def _resolve_user_id() -> str:
+    """Return the id notes should be attributed to.
+
+    This is an ATTRIBUTION value, not a visibility partition: the
+    ``notes`` table has no user column, and ``NotesInteropService.add_note``
+    documents that "the user_id will be used as the client_id" -- the
+    column sync and conflict resolution key off. Notes written under the
+    wrong id are still visible; they are misattributed.
+
+    Reads ``load_settings()["USERS_NAME"]`` -- the SAME source
+    ``app.notes_user_id`` comes from (``app.py:3140``). Deliberately not
+    ``get_cli_setting("general", "users_name", ...)``: the real value is
+    ``os.getenv("USERS_NAME", <toml value>)`` resolved inside
+    ``load_settings`` (``config.py:826``), so a direct TOML read would
+    diverge from the app whenever the env var is set and stamp a third
+    distinct client_id.
+
+    Resolved per call rather than at construction time: a
+    ``BuiltinToolProvider`` is built from four sites, two of which have no
+    app access, and the tool classes take no constructor arguments. Note
+    this means a mid-session change to ``users_name`` takes effect here
+    while ``app.notes_user_id`` (bound once at init) keeps the old value.
+
+    Returns:
+        The configured user id, or ``"default_user"`` if settings cannot
+        be read.
+    """
+    try:
+        return load_settings().get("USERS_NAME") or _DEFAULT_USER_ID
+    except Exception as e:  # noqa: BLE001 — a tool must not crash on config
+        logger.warning(f"Could not resolve USERS_NAME, using default: {e}")
+        return _DEFAULT_USER_ID
 
 
 class CreateNoteTool(Tool):
@@ -34,6 +95,11 @@ class CreateNoteTool(Tool):
             "required": ["title", "content"],
         }
 
+    @property
+    def risk_tags(self) -> tuple[str, ...]:
+        """Inserts a note row into the user's database."""
+        return ("mutates",)
+
     async def execute(self, **kwargs) -> Dict[str, Any]:
         """
         Create a new note.
@@ -54,19 +120,16 @@ class CreateNoteTool(Tool):
             return {"error": "No content provided"}
 
         try:
-            # Get the notes service - use default user for now
-            # In a real implementation, this would use the actual user context
             from ..config import chachanotes_db
 
             notes_service = NotesInteropService(
-                base_db_directory=USER_DB_BASE_DIR,
+                base_db_directory=_notes_db_base_dir(),
                 api_client_id="tool_executor",
                 global_db_to_use=chachanotes_db,
             )
 
-            # Create the note
             note_id = notes_service.add_note(
-                user_id="default_user",  # Would be actual user in production
+                user_id=_resolve_user_id(),
                 title=title,
                 content=content,
             )
@@ -136,7 +199,7 @@ class SearchNotesTool(Tool):
             from ..config import chachanotes_db
 
             notes_service = NotesInteropService(
-                base_db_directory=USER_DB_BASE_DIR,
+                base_db_directory=_notes_db_base_dir(),
                 api_client_id="tool_executor",
                 global_db_to_use=chachanotes_db,
             )
@@ -207,6 +270,11 @@ class UpdateNoteTool(Tool):
             "required": ["note_id"],
         }
 
+    @property
+    def risk_tags(self) -> tuple[str, ...]:
+        """Mutates an existing note the user owns."""
+        return ("mutates",)
+
     async def execute(self, **kwargs) -> Dict[str, Any]:
         """
         Update a note.
@@ -232,18 +300,19 @@ class UpdateNoteTool(Tool):
             return {"error": "No updates provided (need title or content)"}
 
         try:
-            # Get the notes service
             from ..config import chachanotes_db
 
             notes_service = NotesInteropService(
-                base_db_directory=USER_DB_BASE_DIR,
+                base_db_directory=_notes_db_base_dir(),
                 api_client_id="tool_executor",
                 global_db_to_use=chachanotes_db,
             )
 
+            user_id = _resolve_user_id()
+
             # First, get the current note to check it exists
             current_note = notes_service.get_note_by_id(
-                user_id="default_user", note_id=note_id
+                user_id=user_id, note_id=note_id
             )
 
             if not current_note:
@@ -258,7 +327,7 @@ class UpdateNoteTool(Tool):
 
             # Update the note
             success = notes_service.update_note(
-                user_id="default_user",
+                user_id=user_id,
                 note_id=note_id,
                 update_data=update_data,
                 expected_version=expected_version,

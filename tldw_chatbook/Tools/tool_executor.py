@@ -43,14 +43,18 @@ class Tool(ABC):
         """Risk classes for the permission gate, e.g. ``("mutates",)``.
 
         Concrete with an empty default so every existing subclass keeps
-        working unchanged. The vocabulary is the permission store's
-        ``HIGH_RISK_TAGS`` (``mutates``/``process``) -- a tool tagged with
-        one of those has an INHERITED ``allow`` floored to ``ask`` by
-        ``resolve_builtin_state``. Read-only tools leave this empty.
+        working unchanged. For tools reached through the agent runtime
+        the vocabulary is the permission store's
+        ``BUILTIN_HIGH_RISK_TAGS`` (``mutates``/``process``/``reads``) --
+        a tool tagged with one of those has an INHERITED ``allow``
+        floored to ``ask`` by ``resolve_builtin_state``. MCP tools are
+        resolved against the narrower ``HIGH_RISK_TAGS`` instead.
+        Tools with no elevated risk leave this empty.
 
         Returns:
-            A tuple of risk tag strings drawn from ``HIGH_RISK_TAGS``;
-            empty for a tool with no elevated risk.
+            A tuple of risk tag strings drawn from
+            ``BUILTIN_HIGH_RISK_TAGS``; empty for a tool with no
+            elevated risk.
         """
         return ()
 
