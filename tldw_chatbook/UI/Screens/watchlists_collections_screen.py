@@ -70,6 +70,8 @@ from ..Watchlists_Modules.rules_pane import (
 )
 from ..Watchlists_Modules.runs_pane import CancelRunRequested, RerunRunRequested, RunsPane, RunSelected
 from ..Watchlists_Modules.sources_pane import (
+    CreateFormDraftChanged,
+    CreateFormVisibilityChanged,
     CreateSourceRequested,
     ExportOpmlRequested,
     ImportOpmlRequested,
@@ -151,6 +153,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._loaded_runs: list[dict[str, Any]] = []
         self._loaded_notifications: list[dict[str, Any]] = []
         self._applying_navigation_context = False
+        # Mirrors SourcesPane's create-form state (Finding 1, fix round 1):
+        # `region_layout` is `recompose=True`, so any collapse/solo/rail
+        # toggle rebuilds the whole workbench, constructing a brand new
+        # SourcesPane. Without holding the draft here — the same way
+        # selected_source/selected_run/active_section already survive pane
+        # rebuilds — a half-typed create form would be silently destroyed by
+        # a keybinding that has nothing to do with Sources.
+        self._source_create_form_open = False
+        self._source_create_draft: dict[str, str] = {"name": "", "url": "", "tags": ""}
         self._controller = WatchlistsBackendController(
             app_instance=app_instance,
             scope_service=getattr(app_instance, "watchlist_scope_service", None),
@@ -530,7 +541,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             overview.data = self.overview_data
             children.append(overview)
         elif self.active_section == "sources":
-            children.append(SourcesPane(id="watchlists-sources-pane"))
+            sources_pane = SourcesPane(id="watchlists-sources-pane")
+            # Seed the create-form draft so it survives this pane being
+            # reconstructed (see the note on `_source_create_draft` in
+            # __init__ and CreateFormDraftChanged/CreateFormVisibilityChanged
+            # in sources_pane.py).
+            sources_pane.show_create_form = self._source_create_form_open
+            sources_pane.create_draft_name = self._source_create_draft["name"]
+            sources_pane.create_draft_url = self._source_create_draft["url"]
+            sources_pane.create_draft_tags = self._source_create_draft["tags"]
+            children.append(sources_pane)
         elif self.active_section == "runs":
             runs_pane = RunsPane(id="watchlists-runs-pane")
             runs_pane.runs = self._loaded_runs
@@ -864,6 +884,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.selected_source = event.source
         self.selected_entity = event.source
 
+    @on(CreateFormDraftChanged)
+    def handle_source_create_draft_changed(self, event: CreateFormDraftChanged) -> None:
+        event.stop()
+        self._source_create_draft = {
+            "name": event.name,
+            "url": event.url,
+            "tags": event.tags,
+        }
+
+    @on(CreateFormVisibilityChanged)
+    def handle_source_create_visibility_changed(
+        self, event: CreateFormVisibilityChanged
+    ) -> None:
+        event.stop()
+        self._source_create_form_open = event.is_open
+
     @on(RunSelected)
     def handle_run_selected(self, event: RunSelected) -> None:
         event.stop()
@@ -873,6 +909,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(CreateSourceRequested)
     def handle_create_source_requested(self, event: CreateSourceRequested) -> None:
         event.stop()
+        # Clear synchronously here, in the same handler, rather than relying
+        # solely on the pane's own CreateFormVisibilityChanged/
+        # CreateFormDraftChanged messages: `_create_source` below can finish
+        # its own snapshot refresh and trigger a full-screen recompose fast
+        # enough to win the race against those two separately-posted
+        # messages still being processed, which would seed the freshly
+        # rebuilt SourcesPane with the stale (pre-submit) draft. Clearing
+        # here guarantees the screen's mirrored state is already correct
+        # before `run_worker` even starts the async chain that can recompose.
+        self._source_create_form_open = False
+        self._source_create_draft = {"name": "", "url": "", "tags": ""}
         self.run_worker(self._create_source(event.payload), exclusive=True)
 
     async def _create_source(self, payload: dict[str, Any]) -> None:

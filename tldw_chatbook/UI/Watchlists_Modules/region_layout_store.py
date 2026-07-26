@@ -24,10 +24,33 @@ logger = logger.bind(module="WatchlistsRegionLayoutStore")
 _SECTION = "watchlists"
 _KEY = "collapsed_regions"
 
+#: What to show before anyone has ever touched collapse state. CONTENT's
+#: reader is a Phase D stub, so it starts collapsed rather than spending a
+#: third of the centre column on "Reader arrives in the next slice." on
+#: every first launch. This is deliberately NOT the same value as
+#: `RegionLayout()` (nothing collapsed) — see the None-vs-`[]` handling in
+#: `load_region_layout` below for why the distinction matters.
+_FIRST_RUN_DEFAULT = RegionLayout(collapsed=frozenset({Region.CONTENT}))
+
 
 def load_region_layout() -> RegionLayout:
-    """Read collapse state from config, defaulting to everything expanded."""
-    raw = get_cli_setting(_SECTION, _KEY, [])
+    """Read collapse state from config.
+
+    Distinguishes "the key has never been saved" from "the key was saved as
+    an empty list": `get_cli_setting` returns its `default` argument only
+    when the key is absent from config, so passing `None` — not `[]` — lets
+    a genuinely-unset key be told apart from a user who explicitly
+    re-expanded everything and had that saved. Collapsing that distinction
+    (as an earlier version of this function did, defaulting to `[]`) means
+    every session of every user who has never specifically touched CONTENT
+    gets the placeholder stub forever, not just on a true first run — and a
+    heuristic that treats "empty" as "apply the first-run default" would
+    permanently strand a user who deliberately keeps CONTENT expanded, since
+    saving that exact choice looks identical to never having saved anything.
+    """
+    raw = get_cli_setting(_SECTION, _KEY, None)
+    if raw is None:
+        return _FIRST_RUN_DEFAULT
     if isinstance(raw, str):
         raw = [raw]
     if not isinstance(raw, Sequence):

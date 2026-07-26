@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Select
+from textual.widgets import Button, Input, Select
 
 from Tests.UI.test_destination_shells import DestinationHarness
 from Tests.UI.test_screen_navigation import _build_test_app
@@ -644,3 +644,113 @@ async def test_persisted_layout_is_applied_on_mount(monkeypatch):
         assert screen.region_layout.is_collapsed(Region.RIGHT_RAIL)
         assert screen.query("#wl-header-right_rail")
         assert not screen.query("#watchlists-inspector-pane")
+
+
+# --- Fix round 1, Finding 1: a bracket press must not destroy a half-typed
+# create-source form. `region_layout` is `recompose=True`, so ANY region
+# toggle — including one on a rail with nothing to do with Sources — rebuilds
+# the whole workbench and constructs a fresh SourcesPane. The draft is lifted
+# to screen state (`_source_create_draft`/`_source_create_form_open`) the
+# same way selected_source/selected_run/active_section already survive pane
+# rebuilds; see CreateFormDraftChanged/CreateFormVisibilityChanged in
+# sources_pane.py.
+
+
+@pytest.mark.asyncio
+async def test_bracket_toggle_preserves_in_progress_create_form_draft():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen.query_one("#nav-sources", Button).press()
+        await pilot.pause()
+        screen.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+        assert screen.query("#sources-create-name"), "the create form should be open"
+
+        # Matches the direct-assignment style Tests/Watchlists/
+        # test_watchlists_sources_pane.py already uses to simulate typing:
+        # Input.value is a reactive whose own watcher posts Input.Changed
+        # regardless of whether the change came from a keystroke or a direct
+        # attribute assignment, so this exercises the same code path a real
+        # keystroke would.
+        screen.query_one("#sources-create-name", Input).value = "Draft Name"
+        await pilot.pause()
+        screen.query_one("#sources-create-url", Input).value = "https://draft.example"
+        await pilot.pause()
+
+        name_before = screen.query_one("#sources-create-name", Input).value
+        url_before = screen.query_one("#sources-create-url", Input).value
+        assert name_before == "Draft Name"
+        assert url_before == "https://draft.example"
+
+        # Toggle a rail that has nothing to do with Sources. This rebuilds
+        # the whole workbench, including the SourcesPane living in ITEMS.
+        await pilot.press("[")
+        await pilot.pause()
+
+        assert screen.query(
+            "#sources-create-name"
+        ), "the create form must still be open after an unrelated toggle"
+        name_after = screen.query_one("#sources-create-name", Input).value
+        url_after = screen.query_one("#sources-create-url", Input).value
+        assert name_after == "Draft Name", "typed Name text must survive the rebuild"
+        assert url_after == "https://draft.example", "typed URL text must survive the rebuild"
+
+
+@pytest.mark.asyncio
+async def test_submitting_the_create_form_clears_the_draft():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen.query_one("#nav-sources", Button).press()
+        await pilot.pause()
+        screen.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        screen.query_one("#sources-create-name", Input).value = "Draft Name"
+        await pilot.pause()
+        screen.query_one("#sources-create-url", Input).value = "https://draft.example"
+        await pilot.pause()
+
+        screen.query_one("#sources-create-submit", Button).press()
+        await pilot.pause()
+
+        assert screen._source_create_draft == {"name": "", "url": "", "tags": ""}
+        assert screen._source_create_form_open is False
+
+        # Re-toggle a rail: the rebuilt pane must not resurrect the old draft.
+        await pilot.press("[")
+        await pilot.press("[")
+        await pilot.pause()
+        assert not screen.query(
+            "#sources-create-name"
+        ), "the form should stay closed, not reopen with stale text"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_create_form_clears_the_draft():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen.query_one("#nav-sources", Button).press()
+        await pilot.pause()
+        screen.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        screen.query_one("#sources-create-name", Input).value = "Draft Name"
+        await pilot.pause()
+
+        screen.query_one("#sources-create-cancel", Button).press()
+        await pilot.pause()
+
+        assert screen._source_create_draft == {"name": "", "url": "", "tags": ""}
+        assert screen._source_create_form_open is False

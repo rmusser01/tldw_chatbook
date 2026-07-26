@@ -47,6 +47,7 @@ from tldw_chatbook.UI.Screens import (
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
+from tldw_chatbook.UI.Watchlists_Modules.region_layout import RegionLayout
 from tldw_chatbook.Widgets.destination_workbench import (
     DestinationWorkbench,
     WorkbenchPane,
@@ -981,14 +982,13 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         # structural landmarks instead: the workbench container, and each
         # region wrapper.
         #
-        # CONTENT's class-level default is collapsed (its reader is a Phase D
-        # stub), but `on_mount` unconditionally applies `load_region_layout()`
-        # over that default, and on a genuinely fresh config (as here) that
-        # returns "nothing collapsed" — indistinguishable from a user who
-        # explicitly re-expanded everything. So on first-ever launch CONTENT
-        # actually renders expanded, showing its honest stub placeholder;
-        # this is a disclosed, minor, accepted gap (see task-5-report.md),
-        # not a bug in this test.
+        # CONTENT starts collapsed on a genuinely fresh config (as here): its
+        # reader is a Phase D stub, and `region_layout_store.load_region_layout`
+        # distinguishes a never-saved key (`None`, applies the first-run
+        # default with CONTENT collapsed) from an explicitly-saved empty
+        # layout (`[]`, honored exactly) — see that module for why the two
+        # can't be collapsed into one. So the header, not the body, is
+        # asserted here.
         assert screen.query_one("#wl-workbench")
         for region_id in (
             "wl-region-left_rail",
@@ -997,7 +997,54 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
             "wl-region-right_rail",
         ):
             assert screen.query_one(f"#{region_id}")
-        assert screen.query_one("#wl-region-content")
+        assert screen.query_one("#wl-header-content")
+        assert not screen.query("#wl-region-content")
+
+
+@pytest.mark.asyncio
+async def test_watchlists_centre_regions_stack_vertically_in_order():
+    """Vertical-geometry replacement for the horizontal contract Watchlists
+    was excluded from (see `SOURCE_PREP_WORKBENCHES_HORIZONTAL` above): its
+    rehost onto `WatchlistsWorkbench` stacks FEEDS/ITEMS/CONTENT vertically
+    inside the centre column by deliberate design, so `_assert_horizontal_panes`
+    (which asserts `left.region.x < right.region.x`) can never apply — but
+    that must not mean Watchlists has zero automated geometry coverage.
+    """
+    app = _build_test_app()
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        # Force every region open so all three centre regions have real
+        # geometry to compare — independent of whatever CONTENT's first-run
+        # collapse default happens to be (region_layout_store.load_region_layout).
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+
+        feeds = screen.query_one("#wl-region-feeds")
+        items = screen.query_one("#wl-region-items")
+        content = screen.query_one("#wl-region-content")
+
+        assert feeds.region.y < items.region.y < content.region.y, (
+            f"centre regions are not stacked top-to-bottom: "
+            f"feeds={feeds.region} items={items.region} content={content.region}"
+        )
+        for selector, pane in (
+            ("#wl-region-feeds", feeds),
+            ("#wl-region-items", items),
+            ("#wl-region-content", content),
+        ):
+            assert pane.region.width > 0, f"{selector} has no width"
+            assert pane.region.height > 0, f"{selector} has no height"
+            _assert_visible_in_viewport(pane, height=42, context=selector)
+
+        # No two centre regions may overlap.
+        for top, bottom in ((feeds, items), (items, content)):
+            assert top.region.y + top.region.height <= bottom.region.y, (
+                f"centre regions overlap: {top.region} vs {bottom.region}"
+            )
 
 
 @pytest.mark.parametrize(

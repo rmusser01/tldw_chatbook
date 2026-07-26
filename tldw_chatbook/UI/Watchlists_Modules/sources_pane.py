@@ -38,6 +38,36 @@ class ExportOpmlRequested(Message):
     """Posted when the user requests an OPML export."""
 
 
+class CreateFormDraftChanged(Message):
+    """Posted whenever a create-form free-text field changes.
+
+    `SourcesPane` lives inside a `WatchlistsWorkbench` region, and that
+    workbench's `region_layout` reactive is `recompose=True` — collapsing or
+    expanding *any* region (including one unrelated to Sources, e.g. `[` on
+    the left rail) rebuilds the whole workbench and constructs a brand new
+    `SourcesPane`. Without this message the screen has no way to know what
+    was typed, so the draft would be silently lost on the next such rebuild.
+    The owning screen mirrors this into its own state and seeds it back into
+    the freshly-constructed pane.
+    """
+
+    def __init__(self, name: str, url: str, tags: str) -> None:
+        self.name = name
+        self.url = url
+        self.tags = tags
+        super().__init__()
+
+
+class CreateFormVisibilityChanged(Message):
+    """Posted whenever the create form opens or closes, for the same reason
+    `CreateFormDraftChanged` exists: `show_create_form` is pane-local state
+    that would otherwise reset to its class default on every rebuild."""
+
+    def __init__(self, is_open: bool) -> None:
+        self.is_open = is_open
+        super().__init__()
+
+
 class SourcesPane(RecomposeCaptureGuard, Vertical):
     """Source list, search/filter, and create form for watchlists."""
 
@@ -50,6 +80,13 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     tags_filter = reactive("", recompose=True)
     show_create_form = reactive(False, recompose=True)
     show_filter_editor = reactive(False, recompose=True)
+    # Seed values for the create form's free-text inputs. No `recompose=True`:
+    # these only need to be read once per `compose()` call (to seed the
+    # Input's `value=`), which already happens whenever `show_create_form` (or
+    # anything else) triggers a rebuild — see `CreateFormDraftChanged`.
+    create_draft_name = reactive("")
+    create_draft_url = reactive("")
+    create_draft_tags = reactive("")
 
     _TYPE_OPTIONS = [
         ("All", "all"),
@@ -124,8 +161,12 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
 
         if self.show_create_form:
             with Grid(id="sources-create-form"):
-                yield Input(placeholder="Name", id="sources-create-name")
-                yield Input(placeholder="URL", id="sources-create-url")
+                yield Input(
+                    placeholder="Name", id="sources-create-name", value=self.create_draft_name
+                )
+                yield Input(
+                    placeholder="URL", id="sources-create-url", value=self.create_draft_url
+                )
                 yield Select(
                     [(label, value) for label, value in self._TYPE_OPTIONS if value != "all"],
                     value="rss",
@@ -137,7 +178,11 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     Switch(value=True, id="sources-create-active"),
                     classes="sources-create-active-row",
                 )
-                yield Input(placeholder="Tags (comma separated)", id="sources-create-tags")
+                yield Input(
+                    placeholder="Tags (comma separated)",
+                    id="sources-create-tags",
+                    value=self.create_draft_tags,
+                )
                 yield Button("Create", id="sources-create-submit", variant="success")
                 yield Button("Cancel", id="sources-create-cancel", variant="default")
 
@@ -190,7 +235,36 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             self.search_query = event.value
         elif event.input.id == "sources-tags-filter":
             self.tags_filter = event.value
+        elif event.input.id == "sources-create-name":
+            self.create_draft_name = event.value
+            self._post_create_draft_changed()
+        elif event.input.id == "sources-create-url":
+            self.create_draft_url = event.value
+            self._post_create_draft_changed()
+        elif event.input.id == "sources-create-tags":
+            self.create_draft_tags = event.value
+            self._post_create_draft_changed()
         event.stop()
+
+    def _post_create_draft_changed(self) -> None:
+        self.post_message(
+            CreateFormDraftChanged(
+                name=self.create_draft_name,
+                url=self.create_draft_url,
+                tags=self.create_draft_tags,
+            )
+        )
+
+    def _clear_create_draft(self) -> None:
+        """Reset the draft, e.g. after a successful submit or Cancel."""
+        self.create_draft_name = ""
+        self.create_draft_url = ""
+        self.create_draft_tags = ""
+        self._post_create_draft_changed()
+
+    def watch_show_create_form(self, is_open: bool) -> None:
+        if self.is_mounted:
+            self.post_message(CreateFormVisibilityChanged(is_open))
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "sources-type-select":
@@ -209,6 +283,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             self.show_filter_editor = not self.show_filter_editor
         elif button_id == "sources-create-cancel":
             self.show_create_form = False
+            self._clear_create_draft()
         elif button_id == "sources-create-submit":
             self._submit_create_form()
         elif button_id == "sources-preview-button" and self.selected_source is not None:
@@ -259,6 +334,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             )
         )
         self.show_create_form = False
+        self._clear_create_draft()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()

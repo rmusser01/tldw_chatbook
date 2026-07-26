@@ -26,9 +26,28 @@ def test_round_trips_collapsed_regions(monkeypatch):
     assert loaded.collapsed == frozenset({Region.CONTENT, Region.RIGHT_RAIL})
 
 
-def test_load_defaults_to_everything_expanded(monkeypatch):
+def test_load_applies_first_run_default_when_key_was_never_saved(monkeypatch):
+    """`get_cli_setting` returns its `default` argument only when the key is
+    absent — i.e. this is a genuine "never saved" case, not merely "saved as
+    empty." That must apply the first-run default (CONTENT collapsed), not
+    `RegionLayout()`. See `load_region_layout`'s docstring for why the two
+    cases cannot be collapsed into one."""
     monkeypatch.setattr(
         region_layout_store, "get_cli_setting", lambda section, key, default=None: default
+    )
+    loaded = region_layout_store.load_region_layout()
+    assert loaded == RegionLayout(collapsed=frozenset({Region.CONTENT}))
+    assert loaded != RegionLayout()
+
+
+def test_load_honors_an_explicit_empty_layout_as_everything_expanded(monkeypatch):
+    """A key that was explicitly SAVED as `[]` (the user re-expanded
+    everything, including CONTENT, and that was persisted) must be honored
+    exactly — not silently overridden back to the first-run default, or a
+    user's deliberate choice to keep CONTENT expanded could never survive a
+    restart."""
+    monkeypatch.setattr(
+        region_layout_store, "get_cli_setting", lambda section, key, default=None: []
     )
     assert region_layout_store.load_region_layout() == RegionLayout()
 
