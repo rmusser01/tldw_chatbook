@@ -244,17 +244,29 @@ async def _wait_for_library_shell(screen, pilot, *, attempts=120, timeout=15.0):
     ``attempts`` is kept as a floor so a caller that deliberately passes a small
     number still gets at least that many polls.
     """
-    deadline = time.monotonic() + timeout
+    # One effective budget, so the reported deadline is the real one. ``attempts``
+    # only raises the floor for a caller that wants more polls than the timeout
+    # would allow; it never extends the wait past its own stated bound, which the
+    # first version did by keeping the loop alive on ``polls < attempts``.
+    budget = max(timeout, attempts * 0.02)
+    deadline = time.monotonic() + budget
     polls = 0
-    while polls < attempts or time.monotonic() < deadline:
+    while True:
+        # Condition FIRST, deadline second -- mirroring ``_wait_for_condition``.
+        # Checking the deadline in the loop header instead means a ``pilot.pause``
+        # that overshoots it exits without re-testing, so a shell that finished
+        # loading *during* that pause is reported as never loaded: a false
+        # timeout, and exactly the class of flake this helper exists to avoid.
         if getattr(screen, "_library_loaded", False) and screen.query("#library-rail"):
             await pilot.pause()
             await pilot.pause()
             return
+        if time.monotonic() >= deadline:
+            break
         await pilot.pause(0.02)
         polls += 1
     raise AssertionError(
-        f"Library shell never loaded within {timeout}s ({polls} polls). "
+        f"Library shell never loaded within {budget:.1f}s ({polls} polls). "
         f"Visible text: {_visible_text(screen)}"
     )
 
@@ -262,17 +274,20 @@ async def _wait_for_library_shell(screen, pilot, *, attempts=120, timeout=15.0):
 async def _wait_for_selector(screen, pilot, selector, *, attempts=120, timeout=15.0):
     """Await ``selector`` mounting. Wall-clock bounded -- see
     ``_wait_for_library_shell`` for why a pause count is not a time budget."""
-    deadline = time.monotonic() + timeout
+    budget = max(timeout, attempts * 0.02)
+    deadline = time.monotonic() + budget
     polls = 0
-    while polls < attempts or time.monotonic() < deadline:
+    while True:
         matches = list(screen.query(selector))
         if matches:
             await pilot.pause()
             return matches[0]
+        if time.monotonic() >= deadline:
+            break
         await pilot.pause(0.02)
         polls += 1
     raise AssertionError(
-        f"{selector} never mounted within {timeout}s ({polls} polls). "
+        f"{selector} never mounted within {budget:.1f}s ({polls} polls). "
         f"Visible text: {_visible_text(screen)}"
     )
 
@@ -11531,3 +11546,32 @@ async def test_the_wait_helpers_still_fail_on_something_that_never_appears():
 
     assert "never mounted within 1.0s" in str(excinfo.value)
     assert elapsed < 10.0, f"took {elapsed:.1f}s -- the budget was not respected"
+
+
+@pytest.mark.asyncio
+async def test_a_condition_met_during_the_last_pause_is_not_a_timeout():
+    """A pause that overshoots the deadline must not cause a false timeout.
+
+    The first version of these helpers tested the deadline in the loop HEADER, so
+    a ``pilot.pause`` running past it exited without re-checking -- reporting
+    "never mounted" for a widget that appeared during that very pause. That is a
+    false timeout, and precisely the class of flake the helpers exist to avoid;
+    ``_wait_for_condition`` already checked its predicate before enforcing its
+    deadline for the same reason.
+
+    Simulated with an already-elapsed budget: the target exists, so the helper
+    must return it rather than raise, because the condition is tested first.
+    """
+    app = _build_test_app()
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        # timeout=0 and attempts=0 leave no budget at all: a header-checked
+        # deadline would raise immediately even though #library-rail is mounted.
+        found = await _wait_for_selector(
+            screen, pilot, "#library-rail", attempts=0, timeout=0.0
+        )
+
+    assert found is not None, "an already-satisfied condition must not time out"
