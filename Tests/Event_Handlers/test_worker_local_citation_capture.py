@@ -46,12 +46,12 @@ def test_streaming_worker_keeps_builder_local_and_logs_no_request_or_answer_cont
 ):
     app = _app()
     builder = _RequestBuilder()
-    builder_ref = weakref.ref(builder)
     media_content = {"evidence": "WORKER_EVIDENCE_SNAPSHOT_SENTINEL_TASK_553_13"}
     selected_parts = ["evidence"]
     answer = "STREAMING_ANSWER_SENTINEL_TASK_553_13"
     reasoning = "STREAMING_REASONING_SENTINEL_TASK_553_13"
     observed = {}
+    builder_alive_during_stream = []
 
     def fake_core_chat_function(**kwargs):
         observed.update(kwargs)
@@ -60,7 +60,8 @@ def test_streaming_worker_keeps_builder_local_and_logs_no_request_or_answer_cont
         assert kwargs["selected_parts"] is selected_parts
 
         def stream():
-            assert builder_ref() is not None
+            builder_alive_during_stream.append(builder_ref() is not None)
+            assert builder_alive_during_stream[-1]
             yield "data: " + json.dumps(
                 {
                     "choices": [
@@ -76,7 +77,8 @@ def test_streaming_worker_keeps_builder_local_and_logs_no_request_or_answer_cont
                     ]
                 }
             )
-            assert builder_ref() is not None
+            builder_alive_during_stream.append(builder_ref() is not None)
+            assert builder_alive_during_stream[-1]
             yield "data: [DONE]"
 
         return stream()
@@ -91,16 +93,24 @@ def test_streaming_worker_keeps_builder_local_and_logs_no_request_or_answer_cont
     kwargs = _request_kwargs(builder, streaming=True)
     kwargs["media_content"] = media_content
     kwargs["selected_parts"] = selected_parts
+    builder_box = [kwargs.pop("citation_trace_builder")]
+    assert "citation_trace_builder" not in kwargs
+    builder_ref = weakref.ref(builder_box[0])
     del builder
 
     try:
-        result = worker_events.chat_wrapper_function(app, **kwargs)
+        result = worker_events.chat_wrapper_function(
+            app,
+            citation_trace_builder=builder_box.pop(),
+            **kwargs,
+        )
     finally:
         loguru_logger.remove(sink_id)
 
+    assert builder_alive_during_stream == [True, True]
     assert result == "STREAMING_HANDLED_BY_EVENTS"
+    assert builder_box == []
     assert "citation_trace_builder" not in observed
-    del kwargs
     gc.collect()
     assert builder_ref() is None
     rendered_logs = "".join(str(message) for message in captured_logs)
@@ -114,18 +124,25 @@ def test_streaming_worker_keeps_builder_local_and_logs_no_request_or_answer_cont
         assert sentinel not in rendered_logs
 
 
-def test_non_streaming_worker_removes_builder_without_changing_rag_seam(
+def test_non_streaming_worker_keeps_builder_local_without_changing_rag_seam(
     monkeypatch,
 ):
     app = _app()
     builder = _RequestBuilder()
+    builder_ref = weakref.ref(builder)
     media_content = {"evidence": "NONSTREAM_EVIDENCE_SENTINEL_TASK_553_13"}
     selected_parts = ["evidence"]
     answer = "NONSTREAM_ANSWER_SENTINEL_TASK_553_13"
     observed = {}
+    builder_alive_in_core = []
 
     def fake_core_chat_function(**kwargs):
+        builder_alive_in_core.append(builder_ref() is not None)
+        assert builder_alive_in_core[-1]
         observed.update(kwargs)
+        assert "citation_trace_builder" not in kwargs
+        assert kwargs["media_content"] is media_content
+        assert kwargs["selected_parts"] is selected_parts
         return answer
 
     monkeypatch.setattr(worker_events, "core_chat_function", fake_core_chat_function)
@@ -138,16 +155,27 @@ def test_non_streaming_worker_removes_builder_without_changing_rag_seam(
     kwargs = _request_kwargs(builder, streaming=False)
     kwargs["media_content"] = media_content
     kwargs["selected_parts"] = selected_parts
+    builder_box = [kwargs.pop("citation_trace_builder")]
+    assert "citation_trace_builder" not in kwargs
+    del builder
 
     try:
-        result = worker_events.chat_wrapper_function(app, **kwargs)
+        result = worker_events.chat_wrapper_function(
+            app,
+            citation_trace_builder=builder_box.pop(),
+            **kwargs,
+        )
     finally:
         loguru_logger.remove(sink_id)
 
+    assert builder_alive_in_core == [True]
     assert result == answer
+    assert builder_box == []
     assert "citation_trace_builder" not in observed
     assert observed["media_content"] is media_content
     assert observed["selected_parts"] is selected_parts
+    gc.collect()
+    assert builder_ref() is None
     rendered_logs = "".join(str(message) for message in captured_logs)
     for sentinel in (
         "WORKER_QUERY_SENTINEL_TASK_553_13",
