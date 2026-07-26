@@ -25,6 +25,22 @@ sources):
   which splits an endpoint id into ``owner``/``alias``/``path`` and uses
   only ``owner/alias`` to build the queue status/result base URL --
   exactly the two-segment rule this adapter's ``_app_id`` implements.
+- fal's endpoint grammar also has two "app namespace" prefixes --
+  ``workflows/`` and ``comfy/`` -- that shift the owner/app segments one
+  position to the right. Re-verified 2026-07-25 against the same SDK file
+  (https://github.com/fal-ai/fal/blob/main/projects/fal_client/src/fal_client/client.py):
+  ``APP_NAMESPACES = ["workflows", "comfy"]`` (line 718);
+  ``AppId.from_endpoint_id`` (lines 743-761) special-cases
+  ``parts[0] in APP_NAMESPACES`` to parse ``owner=parts[1]``,
+  ``alias=parts[2]``, ``path="/".join(parts[3:])``, ``namespace=parts[0]``;
+  and the queue URL builders (e.g. lines 1439-1440) prepend
+  ``f"{namespace}/"`` before ``owner/alias`` when a namespace is present.
+  So for a namespaced path the kept prefix is THREE segments
+  (``namespace/owner/alias``), not two -- ``_app_id`` below implements this
+  exactly: ``workflows/fal-ai/some-flow`` (3 segments) is kept whole,
+  ``workflows/owner/app/variant`` (4 segments) drops only the trailing
+  ``variant``, and a plain (non-namespaced) path keeps the original
+  two-segment rule unchanged.
 
 Because the polling/result URLs are self-built from validated inputs
 (never taken from the API response), a submit response's own
@@ -74,6 +90,11 @@ _MODEL_PATH_CHARSET_RE = re.compile(r"^[A-Za-z0-9._\-/]+$")
 # path above.
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9-]+$")
 
+# fal's "app namespace" prefixes (see module docstring for the verified
+# source): a path starting with one of these shifts owner/alias one segment
+# to the right, so `_app_id` must keep three segments instead of two.
+_APP_NAMESPACES = frozenset({"workflows", "comfy"})
+
 
 def _validate_model_path(path: str) -> str:
     """Validate a fal model path's charset and segment shape, returning it stripped.
@@ -110,24 +131,39 @@ def _validate_model_path(path: str) -> str:
 
 
 def _app_id(model_path: str) -> str:
-    """Derive fal's queue "app id" (owner/app) from an already-validated model path.
+    """Derive fal's queue "app id" from an already-validated model path.
 
-    Only the first two ``/``-segments are used -- any further segments (a
-    model variant, e.g. ``schnell`` in ``fal-ai/flux/schnell``) are dropped.
-    See the module docstring for how this was verified against fal's own
-    client SDK.
+    For a plain path, only the first two ``/``-segments are used -- any
+    further segments (a model variant, e.g. ``schnell`` in
+    ``fal-ai/flux/schnell``) are dropped. When the path starts with one of
+    fal's namespace prefixes (``workflows/``, ``comfy/`` -- see
+    ``_APP_NAMESPACES`` and the module docstring for how this was verified
+    against fal's own client SDK), the owner/alias segments are shifted one
+    position to the right, so the first THREE segments are kept instead
+    (``namespace/owner/alias``); any segments after that are dropped the
+    same way.
 
     Args:
         model_path: An already ``_validate_model_path``-validated path.
 
     Returns:
-        The first two segments joined by ``/`` (e.g. ``"fal-ai/flux"``).
+        The first two segments joined by ``/`` (e.g. ``"fal-ai/flux"``), or
+        the first three when ``model_path`` starts with an app-namespace
+        prefix (e.g. ``"workflows/owner/app"``).
 
     Raises:
         ImageBackendUnavailableError: If ``model_path`` has fewer than two
-            ``/``-segments.
+            ``/``-segments (fewer than three when namespaced).
     """
     segments = model_path.split("/")
+    if segments[0] in _APP_NAMESPACES:
+        if len(segments) < 3:
+            raise ImageBackendUnavailableError(
+                f"invalid fal model path {model_path!r} -- a {segments[0]!r}-namespaced "
+                "path needs at least three path segments (e.g. "
+                f"'{segments[0]}/owner/app') -- check [image_generation.fal] default_model"
+            )
+        return "/".join(segments[:3])
     if len(segments) < 2:
         raise ImageBackendUnavailableError(
             f"invalid fal model path {model_path!r} -- expected at least two "
@@ -291,6 +327,16 @@ class FalImageAdapter:
                 raise ImageGenerationError(
                     f"model {model_path!r} was rejected by fal (404) -- check "
                     "[image_generation.fal] default_model"
+                ) from exc
+            # task-686 (live-UAT observation): a bare httpx 403 doesn't say
+            # *why* -- name the CATEGORY (locked / out-of-balance account)
+            # and where to fix it, never the raw response body (it may
+            # carry account-identifying detail our sanitization rightly
+            # drops).
+            if exc.response is not None and exc.response.status_code == 403:
+                raise ImageGenerationError(
+                    "fal account locked or out of balance -- top up at "
+                    "fal.ai/dashboard/billing (403)"
                 ) from exc
             raise ImageGenerationError(f"fal submit request failed: {exc}") from exc
         except ImageGenerationError:

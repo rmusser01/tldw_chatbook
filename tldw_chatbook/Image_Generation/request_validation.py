@@ -222,10 +222,16 @@ def _validate_reference_image(
             )
         )
 
-    bytes_len = getattr(reference_image, "bytes_len", None)
-    if isinstance(bytes_len, int) and not isinstance(bytes_len, bool) and bytes_len > IMAGE_GEN_REFERENCE_MAX_BYTES:
-        issues.append(_issue("reference image exceeds the 10MB limit", "reference_image"))
-
+    # task-686 hardening: the size cap validates the ACTUAL content bytes,
+    # never the caller-supplied `bytes_len` field -- a constructor that
+    # mismatches the two (e.g. reports a small bytes_len while content is
+    # genuinely oversized) must not bypass the cap. `content == b""` is
+    # refused the same way as `content is None`: both mean "no usable
+    # content bytes", and can't simultaneously be "oversized", so these are
+    # mutually exclusive states of one field (unlike the backend/mime checks
+    # above, which remain independent of each other and of this one).
     content = getattr(reference_image, "content", None)
-    if content is None:
+    if content is None or content == b"":
         issues.append(_issue("reference image has no content bytes", "reference_image"))
+    elif len(content) > IMAGE_GEN_REFERENCE_MAX_BYTES:
+        issues.append(_issue("reference image exceeds the 10MB limit", "reference_image"))

@@ -645,6 +645,32 @@ def test_gemini_400_names_model_and_config_path(monkeypatch):
     assert "400" in message
 
 
+def test_gemini_429_names_model_and_quota_message(monkeypatch):
+    # task-686: a 429 must be enriched with a CATEGORY-level message naming
+    # the model id -- never the raw response body.
+    from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
+    m = _reset_and_import(monkeypatch)
+
+    def _raise_429(method, url, **kw):
+        request = httpx.Request(method, url)
+        response = httpx.Response(
+            429, request=request, text="quota exceeded: internal-detail-marker-42"
+        )
+        raise httpx.HTTPStatusError(
+            "Client error '429 Too Many Requests' for url '{}'".format(url), request=request, response=response
+        )
+
+    monkeypatch.setattr(m, "fetch_json", _raise_429)
+    req = _req(model="gemini-2.5-flash-image")
+    with pytest.raises(ImageGenerationError) as exc_info:
+        m.GeminiImageAdapter().generate(req)
+    message = str(exc_info.value)
+    assert "gemini-2.5-flash-image" in message
+    assert "rate limited or image quota exhausted (free-tier caps apply)" in message
+    assert "internal-detail-marker-42" not in message
+
+
 def test_gemini_non_404_400_status_keeps_generic_message(monkeypatch):
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
 

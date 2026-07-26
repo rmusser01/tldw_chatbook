@@ -259,6 +259,42 @@ def test_app_id_rejects_single_segment(monkeypatch):
         m._app_id("onlyone")
 
 
+# --- task-686: fal APP_NAMESPACES grammar (workflows/, comfy/ prefixes) ----
+# Verified 2026-07-25 against fal_client's AppId.from_endpoint_id -- see the
+# module docstring for the exact source lines. A namespaced path keeps
+# THREE segments (namespace/owner/alias), not two.
+
+
+def test_app_id_namespaced_workflows_three_segments_kept_whole(monkeypatch):
+    m = _reset_and_import(monkeypatch)
+    assert m._app_id("workflows/fal-ai/some-flow") == "workflows/fal-ai/some-flow"
+
+
+def test_app_id_namespaced_comfy_three_segments_kept_whole(monkeypatch):
+    m = _reset_and_import(monkeypatch)
+    assert m._app_id("comfy/fal-ai/some-flow") == "comfy/fal-ai/some-flow"
+
+
+def test_app_id_namespaced_drops_fourth_segment(monkeypatch):
+    m = _reset_and_import(monkeypatch)
+    assert m._app_id("workflows/owner/app/variant") == "workflows/owner/app"
+
+
+def test_app_id_namespaced_rejects_too_few_segments(monkeypatch):
+    m = _reset_and_import(monkeypatch)
+    from tldw_chatbook.Image_Generation.exceptions import ImageBackendUnavailableError
+
+    with pytest.raises(ImageBackendUnavailableError):
+        m._app_id("workflows/owner")
+
+
+def test_app_id_plain_path_unchanged_by_namespace_handling(monkeypatch):
+    # Cross-check: plain (non-namespaced) paths must keep the pre-existing
+    # two-segment rule -- the namespace handling must not regress this shape.
+    m = _reset_and_import(monkeypatch)
+    assert m._app_id("fal-ai/flux/schnell") == "fal-ai/flux"
+
+
 def test_fal_polls_two_segment_app_id_url_for_three_segment_model(monkeypatch):
     m = _reset_and_import(monkeypatch)
     _patch_no_op_sleep(monkeypatch, m)
@@ -281,6 +317,35 @@ def test_fal_polls_two_segment_app_id_url_for_three_segment_model(monkeypatch):
         assert url == "https://queue.fal.run/fal-ai/flux/requests/req-xyz/status"
     result_calls = [c for c in calls if c["method"].upper() == "GET" and not c["url"].endswith("/status")]
     assert result_calls[0]["url"] == "https://queue.fal.run/fal-ai/flux/requests/req-xyz"
+
+
+def test_fal_polls_namespaced_three_segment_app_id_for_four_segment_model(monkeypatch):
+    # task-686: a namespaced model path with a trailing variant segment
+    # (workflows/owner/app/variant) must poll using the 3-segment app id
+    # (workflows/owner/app), dropping only the variant -- mirrors
+    # test_fal_polls_two_segment_app_id_url_for_three_segment_model above
+    # for the plain (non-namespaced) shape.
+    m = _reset_and_import(monkeypatch)
+    _patch_no_op_sleep(monkeypatch, m)
+
+    calls = []
+    fake = _make_fake_fetch_json(
+        calls,
+        submit_response=_submit_response(request_id="req-xyz"),
+        statuses=("COMPLETED",),
+    )
+    monkeypatch.setattr(m, "fetch_json", fake)
+    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+
+    req = _req(model="workflows/owner/app/variant")
+    m.FalImageAdapter().generate(req)
+
+    poll_urls = [c["url"] for c in calls if c["url"].endswith("/status")]
+    assert poll_urls
+    for url in poll_urls:
+        assert url == "https://queue.fal.run/workflows/owner/app/requests/req-xyz/status"
+    result_calls = [c for c in calls if c["method"].upper() == "GET" and not c["url"].endswith("/status")]
+    assert result_calls[0]["url"] == "https://queue.fal.run/workflows/owner/app/requests/req-xyz"
 
 
 def test_fal_single_segment_model_refused_before_network(monkeypatch):
@@ -315,6 +380,29 @@ def test_fal_matching_status_url_polls_fine(monkeypatch):
     monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
 
     req = _req(model="fal-ai/flux/schnell")
+    res = m.FalImageAdapter().generate(req)
+    assert res.bytes_len > 0
+    poll_calls = [c for c in calls if c["url"].endswith("/status")]
+    assert len(poll_calls) == 1
+    assert poll_calls[0]["url"] == expected_status_url
+
+
+def test_fal_namespaced_matching_status_url_polls_fine(monkeypatch):
+    # task-686: the cross-check property must keep working for the
+    # namespaced app-id shape too, not just the plain owner/app shape.
+    m = _reset_and_import(monkeypatch)
+    _patch_no_op_sleep(monkeypatch, m)
+
+    expected_status_url = "https://queue.fal.run/workflows/fal-ai/some-flow/requests/req-1/status"
+    calls = []
+    fake = _make_fake_fetch_json(
+        calls,
+        submit_response=_submit_response(request_id="req-1", status_url=expected_status_url),
+    )
+    monkeypatch.setattr(m, "fetch_json", fake)
+    monkeypatch.setattr(m, "fetch_image_bytes", lambda *a, **kw: (_image_bytes_png(), "image/png"))
+
+    req = _req(model="workflows/fal-ai/some-flow")
     res = m.FalImageAdapter().generate(req)
     assert res.bytes_len > 0
     poll_calls = [c for c in calls if c["url"].endswith("/status")]
@@ -618,6 +706,32 @@ def test_fal_404_names_model_path_and_config_key(monkeypatch):
     assert "fal-ai/nonexistent/model" in message
     assert "[image_generation.fal] default_model" in message
     assert "404" in message
+
+
+def test_fal_403_names_balance_message(monkeypatch):
+    # task-686: a 403 must be enriched with a CATEGORY-level message
+    # (locked/out-of-balance) -- never the raw response body.
+    from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
+    m = _reset_and_import(monkeypatch)
+
+    def _raise_403(method, url, **kw):
+        request = httpx.Request(method, url)
+        response = httpx.Response(
+            403, request=request, text="Forbidden: account internal-balance-detail-99 locked"
+        )
+        raise httpx.HTTPStatusError(
+            "Client error '403 Forbidden' for url '{}'".format(url), request=request, response=response
+        )
+
+    monkeypatch.setattr(m, "fetch_json", _raise_403)
+    req = _req(model="fal-ai/flux/schnell")
+    with pytest.raises(ImageGenerationError) as exc_info:
+        m.FalImageAdapter().generate(req)
+    message = str(exc_info.value)
+    assert "fal account locked or out of balance" in message
+    assert "fal.ai/dashboard/billing" in message
+    assert "internal-balance-detail-99" not in message
 
 
 def test_fal_non_404_status_keeps_generic_message(monkeypatch):
