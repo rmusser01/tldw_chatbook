@@ -15,6 +15,7 @@ from tldw_chatbook.TTS.playground_types import (
     STTSGeneratedAudio,
     STTSPlaygroundRequest,
 )
+from tldw_chatbook.TTS.preferences import TTSConfigMutation, TTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import (
     TTSService,
     bind_tts_service,
@@ -34,6 +35,8 @@ __all__ = [
     "TTSModelInfo",
     "TTSOperationCode",
     "TTSOperationError",
+    "TTSConfigMutation",
+    "TTSPreferencesSnapshot",
     "TTSProgress",
     "TTSProviderCatalog",
     "TTSProviderDescriptor",
