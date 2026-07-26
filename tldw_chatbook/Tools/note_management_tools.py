@@ -11,12 +11,28 @@ from . import Tool
 from ..Notes.Notes_Library import NotesInteropService
 from ..config import get_chachanotes_db_path, load_settings
 
-# Base directory for the notes DB, mirroring the app's own NotesInteropService
-# wiring in app.py (`get_chachanotes_db_path().parent`). The previous
-# `from ..config import USER_DB_BASE_DIR` imported a name that only exists
-# inside the CONFIG_TOML_CONTENT string literal, not as a real module-level
-# constant, so this module could never actually be imported.
-USER_DB_BASE_DIR = get_chachanotes_db_path().parent
+
+def _notes_db_base_dir():
+    """Return the base directory for the notes DB.
+
+    Mirrors the app's own ``NotesInteropService`` wiring in ``app.py``
+    (``get_chachanotes_db_path().parent``). Replaces an earlier
+    ``from ..config import USER_DB_BASE_DIR``, which named a symbol that
+    exists only inside ``config.py``'s ``CONFIG_TOML_CONTENT`` string
+    literal -- never as a module-level binding -- so this module could
+    not be imported at all.
+
+    Deferred to call time rather than computed at module scope, matching
+    ``file_operation_tools._tool_sandbox_root``. `get_chachanotes_db_path`
+    reaches `get_user_data_dir`, which **mkdirs**; at import scope that
+    made merely importing this module create a directory, and made an
+    unwritable ``$HOME``/``[paths] data_dir`` raise during import. The
+    registration loop in `tool_catalog` catches that and skips the tool,
+    so the failure would surface as "create_note is missing" rather than
+    as a normal error from an actual call.
+    """
+    return get_chachanotes_db_path().parent
+
 
 #: Matches config.py's own `default_users_name_fallback`, so an
 #: unconfigured user sees no change from the previously hardcoded value.
@@ -107,7 +123,7 @@ class CreateNoteTool(Tool):
             from ..config import chachanotes_db
 
             notes_service = NotesInteropService(
-                base_db_directory=USER_DB_BASE_DIR,
+                base_db_directory=_notes_db_base_dir(),
                 api_client_id="tool_executor",
                 global_db_to_use=chachanotes_db,
             )
@@ -183,7 +199,7 @@ class SearchNotesTool(Tool):
             from ..config import chachanotes_db
 
             notes_service = NotesInteropService(
-                base_db_directory=USER_DB_BASE_DIR,
+                base_db_directory=_notes_db_base_dir(),
                 api_client_id="tool_executor",
                 global_db_to_use=chachanotes_db,
             )
@@ -287,7 +303,7 @@ class UpdateNoteTool(Tool):
             from ..config import chachanotes_db
 
             notes_service = NotesInteropService(
-                base_db_directory=USER_DB_BASE_DIR,
+                base_db_directory=_notes_db_base_dir(),
                 api_client_id="tool_executor",
                 global_db_to_use=chachanotes_db,
             )

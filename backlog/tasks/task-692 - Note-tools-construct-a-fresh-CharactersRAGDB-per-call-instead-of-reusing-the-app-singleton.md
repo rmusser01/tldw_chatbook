@@ -21,7 +21,8 @@ priority: low
 <!-- SECTION:DESCRIPTION:BEGIN -->
 create_note/search_notes/update_note (Tools/note_management_tools.py) each construct a brand-new NotesInteropService/CharactersRAGDB per invocation instead of reusing the app's existing singleton DB connection. This pays a full DB-open and schema-check cost on every single tool call. Pre-existing behavior, but TASK-545 P2 newly puts it on an agent-driven path (the worker thread that runs LLM tool calls), where it can now be exercised many times in a single run. Identified in the design spec for TASK-545 P2 (Docs/superpowers/specs/2026-07-25-port-mutating-tools-design.md, 'Known limitations carried, not fixed'), which explicitly deferred it to keep that phase scoped to porting the tool behind the permission gate.
 
-Related seam in the same file (found by TASK-545 P2's whole-branch review): `USER_DB_BASE_DIR = get_chachanotes_db_path().parent` is now evaluated at MODULE IMPORT time, and `get_chachanotes_db_path()` reaches `get_user_data_dir()`, which performs a `mkdir(parents=True, exist_ok=True)`. So merely importing this module creates a directory. On a read-only `$HOME` or a non-writable `[paths] data_dir` the import raises, and `BuiltinToolProvider`'s registration loop turns that into "create_note/update_note absent" (now logged, but still absent). The sibling convention in `file_operation_tools.py` (`_tool_sandbox_root`) defers this to call time; fixing both together is natural.
+The related import-time seam in this file (`USER_DB_BASE_DIR` computed at module scope, reaching `get_user_data_dir()`'s `mkdir`) was flagged by both the whole-branch review and Qodo on PR #921 and is **already fixed there** — `_notes_db_base_dir()` now defers to call time, matching `file_operation_tools._tool_sandbox_root`. What remains here is only the per-call `CharactersRAGDB` construction.
+
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

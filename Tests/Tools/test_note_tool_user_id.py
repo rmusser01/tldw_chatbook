@@ -101,3 +101,46 @@ def test_resolver_falls_back_when_settings_are_unavailable(monkeypatch):
 
     monkeypatch.setattr(nmt, "load_settings", boom)
     assert nmt._resolve_user_id() == "default_user"
+
+
+# -- Importing the module must not touch the filesystem ----------------------
+
+
+def test_importing_the_module_does_not_resolve_the_db_path(monkeypatch):
+    """Qodo/whole-branch finding: this was computed at module scope.
+
+    `get_chachanotes_db_path()` reaches `get_user_data_dir()`, which
+    `mkdir`s. Evaluating that at import scope meant merely importing this
+    module created a directory, and an unwritable $HOME made the import
+    RAISE -- which `tool_catalog`'s registration loop turns into
+    "create_note is silently missing" rather than a normal tool error.
+    """
+    import importlib
+
+    import tldw_chatbook.config as config_module
+
+    def landmine():
+        raise AssertionError("get_chachanotes_db_path() called at import time")
+
+    monkeypatch.setattr(config_module, "get_chachanotes_db_path", landmine)
+    # Reload with the landmine installed: the import itself must not call it.
+    importlib.reload(nmt)
+
+    # ...but it must still be reachable lazily, per call.
+    monkeypatch.setattr(nmt, "get_chachanotes_db_path", lambda: __import__(
+        "pathlib").Path("/tmp/x/db.sqlite"))
+    assert str(nmt._notes_db_base_dir()) == "/tmp/x"
+
+
+def test_an_unwritable_data_dir_does_not_break_the_import(monkeypatch):
+    """The failure mode that made this a bug rather than a style nit."""
+    import importlib
+
+    import tldw_chatbook.config as config_module
+
+    def boom():
+        raise PermissionError("read-only file system")
+
+    monkeypatch.setattr(config_module, "get_chachanotes_db_path", boom)
+    importlib.reload(nmt)  # must not raise
+    assert nmt.CreateNoteTool().name == "create_note"
