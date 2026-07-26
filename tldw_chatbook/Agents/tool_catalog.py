@@ -212,8 +212,8 @@ class BuiltinToolProvider:
             for cls in pack_tool_classes(packs):
                 tool = cls(services=services)
                 self._tools[tool.name] = tool
-        except Exception:  # noqa: BLE001 — an unavailable pack is just absent
-            logger.warning("Built-in pack resolution failed; packs unavailable")
+        except Exception as exc:  # noqa: BLE001 — an unavailable pack is just absent
+            logger.warning(f"Built-in pack resolution failed; packs unavailable: {exc}")
         # `None` means "build the real gate on first use" -- NOT "ungated".
         # Every construction site (console_agent_bridge's default registry
         # and its per-run registry) passes nothing today, so an ungated

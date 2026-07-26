@@ -11,6 +11,14 @@ Back-compat: TASK-584 shipped per-tool ``[tools] read_file_enabled`` /
 fallback so an existing user is never silently switched off, but an
 explicit ``enabled_packs`` list always wins -- including an explicitly
 empty one, which means "no packs" rather than "fall back".
+
+``BuiltinToolProvider`` -- and therefore this module's ``enabled_packs()``
+-- is rebuilt fresh every agent turn (see
+``console_agent_bridge``'s per-run builder docstring), so the legacy-flag
+deprecation warning uses the same once-per-process log idiom as
+``Internal_Prompts.resolver`` (see ``_warn_once`` there): without it, a
+user still on the legacy flags would get the warning on every single turn
+for the life of a conversation.
 """
 
 from __future__ import annotations
@@ -24,6 +32,31 @@ from tldw_chatbook.config import get_cli_setting
 _LEGACY_FILE_FLAGS = ("read_file_enabled", "list_directory_enabled")
 
 _MISSING = object()
+
+#: Dedup keys already warned about (see `_warn_once`). Mirrors
+#: `Internal_Prompts.resolver._warned_ids`; tests clear this directly the
+#: same way that module's tests clear its set (see `cli_setting` in
+#: `Tests/Agents/test_builtin_pack_config.py`), so one test's fallback
+#: warning can never suppress another test's assertion that it fired.
+_warned_ids: set[str] = set()
+
+
+def _warn_once(key: str, message: str, **kwargs: object) -> None:
+    """Log ``message`` once per ``key`` per process.
+
+    Same idiom as ``Internal_Prompts.resolver._warn_once``: a per-run
+    provider that calls the guarded path every turn must not re-log a
+    warning that already ran the first time.
+
+    Args:
+        key: Dedup key; ``message`` logs at most once per key per process.
+        message: The loguru-style message, with ``{name}`` placeholders.
+        **kwargs: Values for ``message``'s placeholders.
+    """
+    if key in _warned_ids:
+        return
+    _warned_ids.add(key)
+    logger.warning(message, **kwargs)
 
 
 def enabled_packs() -> frozenset[str]:
@@ -45,7 +78,8 @@ def enabled_packs() -> frozenset[str]:
         return frozenset(str(name) for name in configured)
 
     if any(get_cli_setting("tools", flag, False) for flag in _LEGACY_FILE_FLAGS):
-        logger.warning(
+        _warn_once(
+            "legacy_tools_flags",
             "[tools] {flags} are deprecated; set [agent_tools] enabled_packs = "
             '["files"] instead. Enabling the files pack for now.',
             flags=", ".join(_LEGACY_FILE_FLAGS),

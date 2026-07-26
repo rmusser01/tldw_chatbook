@@ -3,7 +3,13 @@ import pytest
 
 @pytest.fixture
 def cli_setting(monkeypatch):
-    """Drive get_cli_setting the way the app really reads it."""
+    """Drive get_cli_setting the way the app really reads it.
+
+    Also clears the module's once-per-process warning guard before and
+    after each test (mirroring `Internal_Prompts.conftest.scratch_config`'s
+    handling of `resolver._warned_ids`), so an earlier test's fallback
+    warning can never suppress a later test's assertion that it fired.
+    """
     values = {}
     import tldw_chatbook.Agents.builtin_pack_config as mod
 
@@ -11,7 +17,9 @@ def cli_setting(monkeypatch):
         return values.get((section, key), default)
 
     monkeypatch.setattr(mod, "get_cli_setting", fake)
-    return values
+    mod._warned_ids.clear()
+    yield values
+    mod._warned_ids.clear()
 
 
 def test_defaults_to_no_packs_enabled(cli_setting):
@@ -34,6 +42,36 @@ def test_legacy_tools_flags_enable_the_files_pack(cli_setting):
 
     cli_setting[("tools", "read_file_enabled")] = True
     assert enabled_packs() == frozenset({"files"})
+
+
+def test_legacy_flags_warn_once_across_calls(cli_setting):
+    """BuiltinToolProvider (and enabled_packs()) rebuilds every agent turn.
+
+    A user still on the legacy [tools] flags must get the deprecation
+    warning once per process, not once per turn -- see
+    builtin_pack_config's module docstring.
+    """
+    from loguru import logger
+
+    from tldw_chatbook.Agents.builtin_pack_config import enabled_packs
+
+    cli_setting[("tools", "read_file_enabled")] = True
+
+    # Direct loguru sink capture (not caplog -- loguru doesn't propagate to
+    # stdlib logging in this repo; see test_agent_runtime_review_hook.py).
+    records = []
+    sink_id = logger.add(lambda m: records.append(m), level="WARNING")
+    try:
+        assert enabled_packs() == frozenset({"files"})
+        assert enabled_packs() == frozenset({"files"})
+    finally:
+        logger.remove(sink_id)
+
+    warnings = [r for r in records if "deprecated" in r.record["message"]]
+    assert len(warnings) == 1, (
+        f"Expected exactly one deprecation warning across two calls, got: "
+        f"{[r.record['message'] for r in records]}"
+    )
 
 
 def test_explicit_pack_list_wins_over_legacy_flags(cli_setting):
