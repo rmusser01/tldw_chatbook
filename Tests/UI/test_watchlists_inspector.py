@@ -10,7 +10,7 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import BreadcrumbScopeSelected, InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
-from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
+from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
 
 
 def _app_with_watchlists(watch_items):
@@ -253,3 +253,70 @@ async def test_clicking_breadcrumb_requests_scope_promotion():
         promoted = [m for m in captured if isinstance(m, BreadcrumbScopeSelected)]
         assert promoted, "clicking the shallower breadcrumb should request promotion"
         assert promoted[0].scope == TreeScope(kind="watchlist", watchlist_id=1)
+
+
+# -- Task 5, fix round 1: wire scope/breadcrumb_labels to the live tree ------
+#
+# Unlike the tests above (which drive `InspectorPane` directly), these two
+# go through the real path a user's tree click takes: `TreeScopeChanged`
+# reaches the SCREEN, not the pane, so this is what proves the wiring the
+# coordinator asked for -- as opposed to the pane's own already-tested
+# capability to render whatever `scope`/`breadcrumb_labels` it is given.
+
+
+@pytest.mark.asyncio
+async def test_tree_scope_reaching_screen_populates_inspector_breadcrumb():
+    app = _app_with_watchlists([])
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        # Seeds the same data `_load_tree_data` would have loaded, so the
+        # breadcrumb shows the real watchlist name rather than the
+        # `Watchlist {id}` fallback `_resolve_breadcrumb_labels` uses when
+        # no matching row is found.
+        screen._tree_watchlists = [{"id": 7, "name": "Morning AI Brief"}]
+
+        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7)))
+        await pilot.pause()
+
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        assert inspector.scope == TreeScope(kind="watchlist", watchlist_id=7)
+        assert inspector.breadcrumb_labels == ["Morning AI Brief"]
+
+        texts = [str(s.renderable) for s in inspector.query(Static)]
+        texts += [str(b.label) for b in inspector.query(Button)]
+        assert "Morning AI Brief" in " ".join(texts)
+
+
+@pytest.mark.asyncio
+async def test_inspector_breadcrumb_survives_a_left_rail_toggle():
+    """`[` toggles the LEFT rail, not the right rail the Inspector lives in
+    -- but `region_layout` is screen-level `recompose=True`, so ANY region
+    toggle rebuilds the whole workbench, constructing a brand new
+    `InspectorPane` via `_build_inspector_pane`'s factory (see
+    `test_scope_survives_a_region_toggle` in the guard file, which proves
+    the same thing for `screen.selected_scope` alone). Without seeding the
+    fresh pane from screen state, the breadcrumb would go blank on any
+    rail/region toggle -- unrelated to the tree selection it just lost.
+    """
+    app = _app_with_watchlists([])
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen._tree_watchlists = [{"id": 7, "name": "Morning AI Brief"}]
+        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7)))
+        await pilot.pause()
+
+        await pilot.press("[")
+        await pilot.pause()
+
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        assert inspector.scope == TreeScope(kind="watchlist", watchlist_id=7), (
+            "the Inspector rebuilt by the rail toggle must be re-seeded from "
+            "screen state, not start back at its class default"
+        )
+        assert inspector.breadcrumb_labels == ["Morning AI Brief"]

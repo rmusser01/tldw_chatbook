@@ -180,6 +180,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # never one per node -- see that method's docstring.
         self._tree_watchlists: list[dict[str, Any]] = []
         self._tree_counts: dict[int, dict[str, int]] = {}
+        # Breadcrumb display names for `selected_scope` (Task 5 fix round 1):
+        # resolved once in `_on_tree_scope_changed`, not on every Inspector
+        # render, and held here for the same reason `selected_scope` itself
+        # is screen-held -- `_build_inspector_pane` re-seeds a brand new
+        # `InspectorPane` on every workbench rebuild, and a fresh pane's own
+        # reactive would otherwise start back at its class default.
+        self._breadcrumb_labels: list[str] = []
         self._applying_navigation_context = False
         # Mirrors SourcesPane's create-form state (Finding 1, fix round 1):
         # `region_layout` is `recompose=True`, so any collapse/solo/rail
@@ -348,6 +355,52 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._tree_watchlists, self._tree_counts = [], {}
         if self.is_mounted:
             self.refresh(recompose=True)
+
+    def _resolve_breadcrumb_labels(self, scope: TreeScope) -> list[str]:
+        """Display names for `scope`'s ancestor chain, for the Inspector.
+
+        Called once from `_on_tree_scope_changed` -- a discrete, user-driven
+        event -- never from a render path, so this is not a query-per-render:
+        the watchlist name costs nothing (`_tree_watchlists` is already
+        loaded by `_load_tree_data`), and a source name costs exactly the one
+        `list_source_rows` JOIN the tree itself already uses to expand a
+        watchlist, only when the scope actually names a source.
+        """
+        if scope.kind not in ("watchlist", "source") or scope.watchlist_id is None:
+            return []
+
+        labels = [
+            next(
+                (
+                    str(watchlist.get("name"))
+                    for watchlist in self._tree_watchlists
+                    if int(watchlist.get("id", -1)) == int(scope.watchlist_id)
+                ),
+                f"Watchlist {scope.watchlist_id}",
+            )
+        ]
+
+        if scope.kind == "source" and scope.source_id is not None:
+            source_label = f"Source {scope.source_id}"
+            service = self._watchlist_bundle_service()
+            if service is not None:
+                try:
+                    rows = service.list_source_rows(scope.watchlist_id)
+                    source_label = next(
+                        (
+                            str(row.get("name"))
+                            for row in rows
+                            if int(row.get("id", -1)) == int(scope.source_id)
+                        ),
+                        source_label,
+                    )
+                except Exception:
+                    logger.opt(exception=True).debug(
+                        "Failed to resolve breadcrumb source name."
+                    )
+            labels.append(source_label)
+
+        return labels
 
     def _apply_local_wc_snapshot(
         self,
@@ -800,8 +853,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `watch_selected_entity` only pushes on change, so a rebuild alone
         # never re-syncs it. That left `d`/`c`/`p` silently operating on a
         # selection the user could no longer see.
+        #
+        # `scope`/`breadcrumb_labels` get the identical treatment (Task 5 fix
+        # round 1) and for the identical reason: a `[`/`]`/`z`/`Z` toggle
+        # rebuilds this factory from scratch, and `watch_selected_scope`
+        # alone would leave a freshly-built Inspector's breadcrumb blank
+        # until the next tree click.
         inspector = InspectorPane(id="watchlists-entity-inspector")
         inspector.selected_entity = self.selected_entity
+        inspector.scope = self.selected_scope
+        inspector.breadcrumb_labels = self._breadcrumb_labels
         children.append(inspector)
         return Vertical(
             *children,
@@ -961,9 +1022,33 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         the create-form draft do: the workbench's `region_layout` is
         `recompose=True`, so a bare rail toggle rebuilds a brand new
         `WatchlistTree` that would otherwise lose the selection.
+
+        `_breadcrumb_labels` is resolved here too (Task 5 fix round 1) --
+        before `selected_scope` is assigned, so `watch_selected_scope`
+        (fired by that assignment) pushes both into the mounted Inspector
+        together, and `_build_inspector_pane` re-seeds both from the same
+        screen state on the next workbench rebuild.
         """
         event.stop()
+        self._breadcrumb_labels = self._resolve_breadcrumb_labels(event.scope)
         self.selected_scope = event.scope
+
+    def watch_selected_scope(self) -> None:
+        """Push scope + resolved labels into the live Inspector, if mounted.
+
+        Mirrors `watch_selected_entity` immediately below it: this only
+        covers the "selection changed without a workbench rebuild" case --
+        `_build_inspector_pane` covers the rebuild case by seeding a
+        freshly-constructed `InspectorPane` from this same screen state.
+        """
+        if not self.is_mounted:
+            return
+        try:
+            inspector = self.query_one("#watchlists-entity-inspector", InspectorPane)
+            inspector.scope = self.selected_scope
+            inspector.breadcrumb_labels = self._breadcrumb_labels
+        except Exception:
+            pass
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Keep `focused_region` in step with whatever actually holds focus.
