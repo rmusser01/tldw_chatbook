@@ -128,6 +128,22 @@ Each pack module exports:
 - `REQUIRES: tuple[str, ...]` — optional-dependency feature names checked through
   `optional_deps.py`
 
+**Tool metadata must be readable without instantiation.** `name`, `description`,
+`parameters`, and `risk_tags` are class-level and require neither a constructed
+instance nor injected services. This is not stylistic: TASK-656's permissions
+enumeration builds a bare `BuiltinToolProvider()` and calls `tool_ref(tool)` to resolve
+each row's state. If pack tools can only be described once constructed with live
+services, that enumeration degrades to listing `calculator`/`datetime` and rendering
+every pack tool with a stored decision as an empty-description orphan. Enumeration must
+read the **pack registry**, not a constructed provider.
+
+Correspondingly, TASK-656's `orphaned` flag needs splitting into two states:
+
+- *removed* — a stored decision for a tool no release provides any more; invite the user
+  to clear it
+- *pack disabled* — the tool exists and its decision is still meaningful; show it, allow
+  pre-configuration before the pack is enabled, and do not invite clearing
+
 A pack whose dependencies are unmet is **absent from the catalog**, never a tool that
 fails at invoke time. The model must not spend turns discovering a tool is broken.
 
@@ -166,6 +182,12 @@ Pack enablement lives under a new config section. Two known traps must be avoide
 - Dotted-section lookups have silently failed before (`chat.images`). The new keys
   require an **unmocked** integration test that reads them exactly as the app does.
 
+**TASK-547 is in scope for Phase 1, not merely a cautionary tale.** `[tools]
+file_sandbox_root` is the setting that governs the filesystem root in §4.6, read by
+`file_operation_tools._resolve_sandbox_config()`. While that section is unreachable the
+root silently pins to its default and no user can move it — fail-safe, but it means the
+policy in §4.6 is unconfigurable until 547 is fixed.
+
 Phase 1 owns the config **keys and defaults**. TASK-659's agent settings screen owns
 **rendering** them. They must not grow competing surfaces.
 
@@ -186,6 +208,40 @@ Unchanged contract: tools return `ToolResult` and never raise;
 `BuiltinToolProvider.invoke` already wraps. Long-running mutators rely on backing-store
 idempotency (content-hash duplicate-skip) rather than a job-handle protocol.
 `run_command` is the sole exception and is handled in §8.4.
+
+### 4.6 Filesystem root policy
+
+System A's file tools confine every read, write and listing to a sandbox root —
+`<user data dir>/tool_sandbox` by default, overridable via `[tools]
+file_sandbox_root` (`file_operation_tools._tool_sandbox_root`). Porting those tools
+without restating the policy would silently widen them from *a scratch directory* to
+*the entire filesystem*. That is a privilege escalation, and it must be a decision, not
+a side effect of a port.
+
+Policy for ported and new file tools:
+
+1. **Workspace-rooted by default.** File tools operate under the active workspace root,
+   plus any additional roots the user configures. This is what makes the tools useful —
+   a general agent confined to a scratch directory cannot do the work — while keeping
+   the reachable surface something the user chose.
+2. **Credential and application-state paths are refused regardless of root.** `~/.ssh`,
+   `~/.aws`, `~/.gnupg`, keyring stores, `~/.config/tldw_cli/config.toml`, the SQLite
+   DBs, and `mcp_permissions.json` are denied even when a configured root would
+   otherwise contain them. This mirrors §8.4's shell denylist, and for the same reason:
+   `read_file` is untagged and therefore silent, so an unconfined read is a
+   zero-prompt path from a credential file into a persisted transcript that may be sent
+   to any provider.
+3. **Reads outside the root are refused, not prompted.** An `ask` on every stray path
+   trains reflexive approval; the user widens the root deliberately instead.
+4. All resolution uses `Utils/path_validation.validate_path` and the existing
+   `_is_within` containment check against fully-resolved paths, so symlink escapes are
+   rejected.
+
+The incoherence to avoid: `run_command` has no root confinement by nature, so a
+sandbox-confined `read_file` beside an unconfined shell is security theatre. The
+resolution is that they share one denylist for the paths that matter (rule 2) and differ
+only in default reach — which is honest, because the shell is `ask`-gated per call and
+`read_file` is not.
 
 ## 5. The catalog
 
@@ -380,10 +436,15 @@ if `max_steps` drops below the derived minimum, and validates the new numbers.
 - `BuiltinToolServices` frozen dataclass and its injection at
   `_compose_run_registry_and_allowed`
 - Pack-enablement config keys and defaults, with an unmocked read test (§4.3)
-- Upgraded `ToolCatalogRegistry.find()` — beyond substring matching over name and
-  one-line description, so cross-pack discovery works
+- TASK-547's `[tools]` reachability fix, since it governs §4.6's root (§4.3)
+- The §4.6 filesystem root policy, shared with §8.4's denylist
 - `files` pack, **read-only subset**: `read_file`, `list_directory`, `glob_files`,
   `grep_files`
+
+The `find()` upgrade moves **out** of Phase 1. With `DIRECT_DISCLOSE_THRESHOLD` at 16
+(§6.1), a one-to-three-pack user never reaches `find_tools` at all, so improving it
+buys nothing until catalogs actually grow. It returns when a phase pushes a realistic
+enabled set past the threshold — Phase 5 (`library`) is the likely trigger.
 
 ### 7.2 Why read-only
 
@@ -510,11 +571,20 @@ reserved non-synced scope or a dedicated table is required.
 
 ## 11. Coordination
 
-- **TASK-656** (`agent:builtin` permissions UI) gates Phase 2. An existing worktree
-  branch `feat/builtin-permissions-ui` implements it but its commits are labeled
-  `[TASK-627]` — the dedup round-2 merge (#904) renumbered that work to TASK-656, and
-  `task-627` on dev is now an unrelated Settings/RAG bug. The branch is 57 commits
-  behind dev and needs both a rebase and corrected task references.
+- **TASK-656** (`agent:builtin` permissions UI) gates Phase 2 and is **in progress in
+  parallel** on branch `feat/builtin-permissions-ui`. Two coordination points:
+  - Its enumerator constructs a bare `BuiltinToolProvider()`; §4.1 records the
+    class-level-metadata requirement and the `orphaned` split that keeps it working
+    once packs exist. Designing for that now is far cheaper than retrofitting.
+  - §6.4's name-shadowing surface belongs in whatever permissions view 656 builds
+    rather than a second, competing MCP-workbench affordance.
+
+  The branch's commits are labeled `[TASK-627]`, but the dedup round-2 merge (#904)
+  renumbered that work to TASK-656 — on dev, `task-627` is now an unrelated Settings/RAG
+  mouse-capture bug. Because the branch is 57 commits behind dev, its `backlog/tasks/`
+  still holds the *old* task-627 file; rebasing will otherwise reintroduce a duplicate
+  ID. The rebase must delete that file (its content already lives at task-656) rather
+  than merge it.
 - **TASK-659** (agent settings screen) renders the config keys Phase 1 defines, and
   already documents the budget constants §6.6 changes.
 - **TASK-547** (dead `[tools]` config) is the defect §4.3 must not repeat.
