@@ -43,7 +43,7 @@ from ....Chat.chat_handoff_messages import (
     build_handoff_policy_blocking_message,
 )
 from ....Chat.chat_handoff_models import ChatHandoffPayload
-from ....Utils.optional_deps import DEPENDENCIES_AVAILABLE
+from ....Utils.optional_deps import DEPENDENCIES_AVAILABLE, lazy_embeddings_rag_available
 from ....RAG_Search.ingestion_indexing import (
     ITEM_TYPE_CONVERSATION,
     ITEM_TYPE_MEDIA,
@@ -551,8 +551,13 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
             if isawaitable(result):
                 await result
 
-        # Check if embeddings/RAG dependencies are available
-        if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+        # Check if embeddings/RAG dependencies are available. Routed through
+        # the lazy-ensure seam (task-638) rather than reading the raw flag:
+        # under the default lazy dependency-checking mode nothing else calls
+        # check_embeddings_rag_deps() before this runs, so the raw flag
+        # would stay stuck at its pristine False default and show this
+        # banner even when the packages are genuinely importable.
+        if not lazy_embeddings_rag_available():
             from ....Utils.widget_helpers import alert_embeddings_not_available
             recovery_state = self._missing_embeddings_recovery_state()
             # Show alert after a short delay to ensure UI is ready
@@ -929,7 +934,7 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         missing, a run is already in flight, or no source database backs the
         selected content type -- it never pretends to index.
         """
-        if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+        if not lazy_embeddings_rag_available():
             self.app_instance.notify(
                 f"Indexing did not run: {INDEXING_UNAVAILABLE_MESSAGE}",
                 severity="warning",

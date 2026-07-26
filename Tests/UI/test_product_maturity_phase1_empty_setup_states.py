@@ -30,6 +30,7 @@ from Tests.UI.test_destination_shells import (
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Views.RAGSearch import search_rag_window as search_rag_module
+from tldw_chatbook.Utils import optional_deps as optional_deps_module
 from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow
 
 
@@ -236,6 +237,16 @@ async def test_optional_dependency_missing_state_exposes_owner_and_setup_action(
     monkeypatch.setattr(search_rag_module, "get_user_data_dir", lambda: tmp_path)
     monkeypatch.setitem(
         search_rag_module.DEPENDENCIES_AVAILABLE, "embeddings_rag", False
+    )
+    # task-638: the window routes this check through
+    # lazy_embeddings_rag_available(), which re-probes for real whenever the
+    # registry flag reads False rather than trusting a stale negative. On a
+    # dev machine where the embeddings_rag extras really are installed,
+    # merely poking the flag above is not enough -- the re-probe would
+    # silently flip it back to True. Patching the underlying checker too
+    # simulates a genuine "already probed, found missing" determination.
+    monkeypatch.setattr(
+        optional_deps_module, "check_embeddings_rag_deps", lambda: False
     )
     monkeypatch.setattr(
         "tldw_chatbook.Utils.widget_helpers.alert_embeddings_not_available",

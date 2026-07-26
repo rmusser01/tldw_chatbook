@@ -29,10 +29,19 @@ from tldw_chatbook.Utils import optional_deps
 from tldw_chatbook.Utils.optional_deps import (
     DEPENDENCIES_AVAILABLE,
     embeddings_rag_deps_installed,
+    lazy_embeddings_rag_available,
     reset_dependency_checks,
 )
 
-pytestmark = pytest.mark.skipif(
+# task-638: this used to be a module-wide `pytestmark`, which also skipped
+# `test_manually_forced_unavailable_is_still_honored` and
+# `test_registry_starts_pristine_false_before_any_lazy_check` -- neither of
+# those constructs anything real, so neither needs the embeddings_rag extras
+# installed to mean something. Skipping them too silently dropped their
+# coverage on no-extras (CI) environments. Only the tests that actually
+# construct an EmbeddingFactory/RAG service and assert on genuine success
+# need this guard; it is applied to each of those individually below instead.
+_NEEDS_REAL_EXTRAS = pytest.mark.skipif(
     not embeddings_rag_deps_installed(),
     reason=(
         "These tests specifically prove the lazy-check gate resolves to "
@@ -64,6 +73,7 @@ def test_registry_starts_pristine_false_before_any_lazy_check():
     assert DEPENDENCIES_AVAILABLE.get("embeddings_rag", False) is False
 
 
+@_NEEDS_REAL_EXTRAS
 def test_embedding_factory_construction_succeeds_on_first_use_without_eager_check():
     """The UAT-reported symptom, isolated to the EmbeddingFactory gate.
 
@@ -84,6 +94,7 @@ def test_embedding_factory_construction_succeeds_on_first_use_without_eager_chec
     assert DEPENDENCIES_AVAILABLE.get("embeddings_rag", False) is True
 
 
+@_NEEDS_REAL_EXTRAS
 def test_create_rag_service_succeeds_for_backfill_without_a_prior_eager_check(
     monkeypatch,
 ):
@@ -145,5 +156,45 @@ def test_manually_forced_unavailable_is_still_honored():
     try:
         with pytest.raises(ImportError, match="embeddings/RAG dependencies"):
             EmbeddingFactory({"models": {}})
+    finally:
+        optional_deps.check_embeddings_rag_deps = original_check
+
+
+# task-638: ``EmbeddingFactory`` was the first caller wired to the lazy
+# re-probe, but it was not the only raw ``DEPENDENCIES_AVAILABLE`` reader --
+# ``tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py`` had two of its
+# own (the missing-deps banner on mount, and the Start Indexing guard), which
+# showed a false "unavailable" state to users who genuinely had the extras
+# installed. The fix lifts the gate into a public, shared seam --
+# ``lazy_embeddings_rag_available()`` -- that both Embeddings_Lib and
+# search_rag_window now call instead of duplicating the re-probe logic. These
+# tests exercise that shared seam directly.
+
+
+@_NEEDS_REAL_EXTRAS
+def test_lazy_embeddings_rag_available_resolves_true_on_first_use_without_eager_check():
+    """The shared seam itself must resolve True from a pristine registry.
+
+    Mirrors ``test_embedding_factory_construction_succeeds_on_first_use_without_eager_check``
+    but calls ``lazy_embeddings_rag_available()`` directly, independent of
+    any particular caller.
+    """
+    assert DEPENDENCIES_AVAILABLE.get("embeddings_rag", False) is False
+    assert lazy_embeddings_rag_available() is True
+    assert DEPENDENCIES_AVAILABLE.get("embeddings_rag", False) is True
+
+
+def test_lazy_embeddings_rag_available_honors_manually_forced_unavailable():
+    """The shared seam must not override a genuine False determination.
+
+    Same invariant as ``test_manually_forced_unavailable_is_still_honored``,
+    checked directly against the seam so every caller (not just
+    EmbeddingFactory) inherits it.
+    """
+    original_check = optional_deps.check_embeddings_rag_deps
+    optional_deps.DEPENDENCIES_AVAILABLE["embeddings_rag"] = False
+    optional_deps.check_embeddings_rag_deps = lambda: False
+    try:
+        assert lazy_embeddings_rag_available() is False
     finally:
         optional_deps.check_embeddings_rag_deps = original_check

@@ -9,6 +9,7 @@ from tldw_chatbook.Audio.transcription_history import TranscriptionEntry
 from tldw_chatbook.UI.STTS_Window import STTSWindow
 from tldw_chatbook.UI.Views.RAGSearch import search_rag_window as search_rag_module
 from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow
+from tldw_chatbook.Utils import optional_deps as optional_deps_module
 from tldw_chatbook.Widgets.template_selector import (
     TemplatePreviewWidget,
     TemplateSelectorDialog,
@@ -64,6 +65,16 @@ async def test_search_rag_missing_embeddings_dependency_exposes_phase_five_recov
     monkeypatch.setattr(search_rag_module, "get_user_data_dir", lambda: tmp_path)
     monkeypatch.setitem(
         search_rag_module.DEPENDENCIES_AVAILABLE, "embeddings_rag", False
+    )
+    # task-638: the window now routes this check through
+    # lazy_embeddings_rag_available(), which re-probes for real whenever the
+    # registry flag reads False rather than trusting a stale negative. On a
+    # dev machine where the embeddings_rag extras really are installed,
+    # merely poking the flag above is not enough -- the re-probe would
+    # silently flip it back to True. Patching the underlying checker too
+    # simulates a genuine "already probed, found missing" determination.
+    monkeypatch.setattr(
+        optional_deps_module, "check_embeddings_rag_deps", lambda: False
     )
     monkeypatch.setattr(
         "tldw_chatbook.Utils.widget_helpers.alert_embeddings_not_available",
