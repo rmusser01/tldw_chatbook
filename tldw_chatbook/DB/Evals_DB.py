@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 # Database Schema Version
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class EvalsDBError(Exception):
@@ -209,6 +209,7 @@ class EvalsDB:
                 total_samples INTEGER,
                 completed_samples INTEGER DEFAULT 0,
                 config_overrides TEXT, -- JSON overrides for task config
+                run_group_id TEXT,
                 error_message TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
@@ -260,6 +261,7 @@ class EvalsDB:
         conn.execute("CREATE INDEX idx_eval_runs_status ON eval_runs (status)")
         conn.execute("CREATE INDEX idx_eval_runs_task ON eval_runs (task_id)")
         conn.execute("CREATE INDEX idx_eval_runs_model ON eval_runs (model_id)")
+        conn.execute("CREATE INDEX idx_eval_runs_group ON eval_runs (run_group_id)")
         conn.execute("CREATE INDEX idx_eval_results_run ON eval_results (run_id)")
         conn.execute(
             "CREATE INDEX idx_eval_run_metrics_run ON eval_run_metrics (run_id)"
@@ -516,6 +518,17 @@ class EvalsDB:
                     VALUES ('delete', old.rowid, old.id, old.name, old.description);
                 END
             """)
+
+        if current_version < 4 and SCHEMA_VERSION >= 4:
+            logger.info("Migrating to version 4: Adding eval_runs.run_group_id")
+
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(eval_runs)")}
+            if "run_group_id" not in existing:
+                conn.execute("ALTER TABLE eval_runs ADD COLUMN run_group_id TEXT")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_eval_runs_group "
+                "ON eval_runs (run_group_id)"
+            )
 
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -1245,6 +1258,8 @@ class EvalsDB:
                 "end_time",
                 "metrics_summary",
                 "config_overrides",
+                "run_group_id",
+                "total_samples",
             ]
             fields_to_update = []
             values = []
