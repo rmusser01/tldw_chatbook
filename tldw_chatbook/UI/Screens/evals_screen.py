@@ -3,10 +3,8 @@
 from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.containers import Vertical
 
-from ..Evals.evals_window_v3 import EvalsWindowV3
-from ..Evals.navigation import EvalNavigationScreen, NavigateToEvalScreen
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Workbench.workbench_widgets import DestinationHeader
@@ -19,29 +17,19 @@ if TYPE_CHECKING:
 class EvalsScreen(BaseAppScreen):
     """Evals destination seat hosting the evaluation workbench in the shell.
 
-    The evaluation hub used to be pushed as a separate screen on mount, which
-    hid the shell chrome, left its card navigation unhandled, and stranded
-    users on a permanent "Loading Evaluation Lab..." placeholder when they
-    pressed Escape. The workbench now renders inline: the destination nav,
-    status line, and footer stay visible, card navigation works through
-    EvalsWindowV3, and Escape walks the workbench's own back stack.
+    The evaluation hub used to be pushed as a separate Textual `Screen` inside
+    a `Container`, which is not a supported way to mount a `Screen` and left
+    the body empty in the real app shell (confirmed by before/after capture).
+    This is a stub -- header and mode strip only, empty workbench panel -- so
+    the destination stays reachable while the real three-pane workbench is
+    built on top of it.
     """
-
-    BINDINGS = [
-        Binding("escape", "evals_back", "Back", show=False),
-        Binding("1", "evals_open('quick_test')", "Quick Test", show=False),
-        Binding("2", "evals_open('comparison')", "Comparison", show=False),
-        Binding("3", "evals_open('batch_eval')", "Batch Eval", show=False),
-        Binding("4", "evals_open('results')", "Results", show=False),
-        Binding("5", "evals_open('tasks')", "Tasks", show=False),
-        Binding("6", "evals_open('models')", "Models", show=False),
-    ]
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "evals", **kwargs)
 
     def compose_content(self) -> ComposeResult:
-        """Compose the Evals seat: identity header plus the inline workbench."""
+        """Compose the Evals seat: identity header plus an empty workbench panel."""
         yield DestinationHeader(
             WorkbenchHeaderState(
                 title="Evals",
@@ -51,24 +39,7 @@ class EvalsScreen(BaseAppScreen):
             id="evals-destination-header",
         )
         yield LabModeStrip(active_route="evals", id="lab-mode-strip")
-        yield EvalsWindowV3(self.app_instance, id="evals-window")
-
-    def action_evals_back(self) -> None:
-        """Walk the evaluation workbench back stack, if it has one."""
-        window = self.query_one(EvalsWindowV3)
-        if window.screen_stack:
-            window.go_back()
-
-    def action_evals_open(self, screen_id: str) -> None:
-        """Open an evaluation workflow by number shortcut from the hub.
-
-        Only active while the navigation hub is current, mirroring the "Press
-        [n]" hints on its cards. Text inputs consume digit keys first, so
-        forms inside workflows are unaffected.
-        """
-        window = self.query_one(EvalsWindowV3)
-        if isinstance(window.current_screen, EvalNavigationScreen):
-            window.handle_navigation(NavigateToEvalScreen(screen_id))
+        yield Vertical(id="evals-workbench", classes="ds-panel destination-workbench")
 
     def save_state(self):
         """Save evals screen state."""

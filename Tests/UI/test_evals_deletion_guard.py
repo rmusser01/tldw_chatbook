@@ -18,7 +18,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 
-#: Repo-relative paths removed by PR 1. Task 3 extends this tuple.
+#: Repo-relative paths removed by PR 1. PR 3a task 2 extended this tuple with
+#: the card hub it retired (19 -> 25 entries).
 REMOVED_MODULES: tuple[str, ...] = (
     "tldw_chatbook/UI/ResultsDashboardWindow.py",
     "tldw_chatbook/UI/ModelManagementWindow.py",
@@ -39,6 +40,12 @@ REMOVED_MODULES: tuple[str, ...] = (
     "tldw_chatbook/Widgets/Evals/eval_additional_dialogs.py",
     "tldw_chatbook/Widgets/Evals/eval_dialogs.py",
     "tldw_chatbook/Widgets/Evals/sample_browser_dialog.py",
+    "tldw_chatbook/UI/Evals/evals_window_v3.py",
+    "tldw_chatbook/UI/evals_window_v2.py",
+    "tldw_chatbook/UI/Evals/navigation/eval_nav_screen.py",
+    "tldw_chatbook/UI/Evals/navigation/nav_bar.py",
+    "tldw_chatbook/UI/Evals/screens/quick_test.py",
+    "tldw_chatbook/UI/Evals/widgets/progress_dashboard.py",
 )
 
 #: Module basenames that must not appear in any import statement.
@@ -62,6 +69,12 @@ REMOVED_STEMS: tuple[str, ...] = (
     "eval_additional_dialogs",
     "eval_dialogs",
     "sample_browser_dialog",
+    "evals_window_v3",
+    "evals_window_v2",
+    "eval_nav_screen",
+    "nav_bar",
+    "quick_test",
+    "progress_dashboard",
 )
 
 

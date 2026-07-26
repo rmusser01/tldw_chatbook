@@ -32,7 +32,6 @@ NEW_INGEST = ROOT / "tldw_chatbook/css/features/_new_ingest.tcss"
 UNIFIED_SIDEBAR = ROOT / "tldw_chatbook/css/components/_unified_sidebar.tcss"
 WIZARDS = ROOT / "tldw_chatbook/css/features/_wizards.tcss"
 EVALUATION_UNIFIED = ROOT / "tldw_chatbook/css/features/_evaluation_unified.tcss"
-EVAL_NAV_SCREEN = ROOT / "tldw_chatbook/UI/Evals/navigation/eval_nav_screen.py"
 EMBEDDINGS = ROOT / "tldw_chatbook/css/features/_embeddings.tcss"
 INGEST = ROOT / "tldw_chatbook/css/features/_ingest.tcss"
 TOOLS_SETTINGS = ROOT / "tldw_chatbook/css/features/_tools-settings.tcss"
@@ -1638,26 +1637,6 @@ def test_chatbooks_search_input_focus_uses_stable_thin_contracts():
     inline_focus = css_block(inline_text, ".search-input:focus")
     assert_stable_solid_border_geometry(inline_base, inline_focus)
     assert_thin_inline_input_focus(inline_focus)
-
-
-def test_evals_navigation_card_focus_is_non_obscuring_and_ordered_after_type_borders():
-    text = EVAL_NAV_SCREEN.read_text(encoding="utf-8")
-    focus = css_block(text, ".nav-card:focus")
-    assert_custom_widget_focus_contract(focus)
-    assert css_blocks(text, ".nav-card.quick-test") == []
-    assert css_blocks(text, ".nav-card.batch") == []
-
-    for selector in (".nav-card.quick_test", ".nav-card.batch_eval"):
-        assert css_blocks(text, selector)
-        assert text.index(selector) < text.index(".nav-card:focus")
-
-    for selector in (
-        ".nav-card:focus .card-icon",
-        ".nav-card:focus .card-title",
-        ".nav-card:focus .card-description",
-        ".nav-card:focus .card-shortcut",
-    ):
-        assert css_blocks(text, selector) == []
 
 
 def test_tamagotchi_focus_uses_non_obscuring_custom_widget_contract():

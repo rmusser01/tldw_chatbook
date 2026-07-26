@@ -1531,11 +1531,10 @@ class PlaceholderWindow(Container):
                 child.remove()
 
             # Create the actual window
-            # EvalsLab, EvalsWindow and EvalsWindowV3 are Containers that take app_instance as keyword argument
+            # EvalsLab and EvalsWindow are Containers that take app_instance as keyword argument
             if self.window_class.__name__ in [
                 "EvalsLab",
                 "EvalsWindow",
-                "EvalsWindowV3",
             ]:
                 self._actual_window = self.window_class(
                     app_instance=self.app_instance,
@@ -3361,7 +3360,6 @@ class TldwCli(
         "search-window",
         "logs-window",
         "stats-window",
-        "evals-window",
         "coding-window",
         "stts-window",
         "study-window",
