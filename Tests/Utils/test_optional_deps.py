@@ -241,7 +241,7 @@ def test_embeddings_lib_graceful_failure(monkeypatch):
 
     # Clear optional dependency availability to simulate missing deps. A
     # bare `DEPENDENCIES_AVAILABLE["embeddings_rag"] = False` is not enough
-    # on its own (task-628): EmbeddingFactory now runs the real dependency
+    # on its own (task-657): EmbeddingFactory now runs the real dependency
     # probe itself on a False reading (a genuine "first use", since nothing
     # else in the app calls it under the default lazy-checking mode), so a
     # merely-stale flag with the real packages present would get silently

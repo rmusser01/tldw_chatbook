@@ -139,7 +139,7 @@ def _embeddings_rag_available() -> bool:
     ``DEPENDENCIES_AVAILABLE["embeddings_rag"]`` starts False and, under the
     default lazy dependency-checking mode (optional_deps.py), is only ever
     populated by ``check_embeddings_rag_deps()`` -- a function nothing in the
-    app calls automatically before this constructor runs (task-628). Without
+    app calls automatically before this constructor runs (task-657). Without
     this, the flag stays at its pristine False default for the app's entire
     lifetime even when the packages are genuinely importable, so
     EmbeddingFactory refuses every construction with a misleading
@@ -748,7 +748,7 @@ class EmbeddingFactory:
     ) -> None:
         # Check if embeddings/RAG dependencies are available (lazily checking
         # for real on first use if nothing has populated the registry yet --
-        # see _embeddings_rag_available, task-628).
+        # see _embeddings_rag_available, task-657).
         if not _embeddings_rag_available():
             raise ImportError(
                 "EmbeddingFactory requires embeddings/RAG dependencies. "

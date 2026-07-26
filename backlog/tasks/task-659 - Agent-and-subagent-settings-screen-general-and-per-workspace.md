@@ -1,5 +1,5 @@
 ---
-id: TASK-635
+id: TASK-659
 title: Agent and sub-agent settings screen (general and per-workspace)
 status: To Do
 assignee: []
@@ -22,7 +22,7 @@ Today the only user-facing agent knob is `[console] agent_runtime` (a bool, defa
 - `RunBudget.max_total_tokens` (0 = unlimited) — a spend ceiling nobody can set
 - `RunBudget.max_tool_call_seconds` (300.0) — the per-tool-call timeout
 
-These are not academic. Sub-agents inherit the parent's turn and step budget (`clamp_child_budget` clamps only wall-clock), so raising the round cap to 20 moved the worst case to `20 * (1 + max_subagents)` = **60 provider turns for a single message**, with no way for an operator to see or lower that. Tool permissions have a comparable gap: TASK-545/P1 ships built-in tool gating under the `agent:builtin` namespace with no UI at all, and TASK-627 covers surfacing that.
+These are not academic. Sub-agents inherit the parent's turn and step budget (`clamp_child_budget` clamps only wall-clock), so raising the round cap to 20 moved the worst case to `20 * (1 + max_subagents)` = **60 provider turns for a single message**, with no way for an operator to see or lower that. Tool permissions have a comparable gap: TASK-545/P1 ships built-in tool gating under the `agent:builtin` namespace with no UI at all, and TASK-656 covers surfacing that.
 
 Users also work in distinct workspaces (`DB/Workspace_DB.py`, "local workspace operating contexts"), where appropriate agent behavior differs — an exploratory research workspace wants long runs and many sub-agents; a workspace touching real files wants tight caps and stricter tool permissions. A single global setting cannot express that.
 
@@ -44,4 +44,4 @@ This task adds a settings surface for agent and sub-agent behavior, with per-wor
 
 ## Notes
 
-Complements TASK-627 (surfacing `agent:builtin` tool permissions in a UI). These two should almost certainly share one screen — permissions and behavior are the same operator question — so whichever ships second should extend the first rather than adding a parallel surface.
+Complements TASK-656 (surfacing `agent:builtin` tool permissions in a UI). These two should almost certainly share one screen — permissions and behavior are the same operator question — so whichever ships second should extend the first rather than adding a parallel surface.

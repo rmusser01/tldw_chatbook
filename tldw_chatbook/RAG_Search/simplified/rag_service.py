@@ -1517,7 +1517,7 @@ async def create_and_index(
     return service, results
 
 
-# NOTE (task-625): a `create_rag_service(embedding_model=None, vector_store=
+# NOTE (task-655): a `create_rag_service(embedding_model=None, vector_store=
 # "chroma", persist_dir=None, **kwargs)` convenience function used to live
 # here. `simplified/__init__.py` never imported it -- it only imports the
 # same-named `rag_factory.create_rag_service(profile_name="hybrid_basic",

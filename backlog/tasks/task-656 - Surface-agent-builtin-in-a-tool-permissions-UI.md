@@ -1,5 +1,5 @@
 ---
-id: TASK-627
+id: TASK-656
 title: Surface agent:builtin in a tool permissions UI
 status: To Do
 assignee: []

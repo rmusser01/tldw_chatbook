@@ -1,6 +1,6 @@
-"""Regression coverage for task-628: lazy embeddings_rag dependency check.
+"""Regression coverage for task-657: lazy embeddings_rag dependency check.
 
-Live UAT (see backlog/tasks/task-628) found that on the default lazy
+Live UAT (see backlog/tasks/task-657) found that on the default lazy
 dependency-checking configuration, ``DEPENDENCIES_AVAILABLE["embeddings_rag"]``
 never gets populated -- ``ensure_dependencies_checked()`` /
 ``check_embeddings_rag_deps()`` have no call site anywhere the app actually
