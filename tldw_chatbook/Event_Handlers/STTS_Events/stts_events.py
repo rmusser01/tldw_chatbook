@@ -24,6 +24,7 @@ from tldw_chatbook.TTS import (
     OpenAISpeechRequest,
     STTSGeneratedAudio,
     STTSPlaygroundRequest,
+    TTSPreferencesSnapshot,
     TTSRequest,
     get_tts_service,
 )
@@ -283,9 +284,15 @@ class STTSPlaygroundGenerateEvent(Message):
 class STTSSettingsSaveEvent(Message):
     """Event when TTS settings are saved"""
 
-    def __init__(self, settings: Dict[str, Any]):
+    def __init__(
+        self,
+        settings: Mapping[str, Any],
+        *,
+        preferences: TTSPreferencesSnapshot | None = None,
+    ) -> None:
         super().__init__()
-        self.settings = deepcopy(settings)
+        self.settings = deepcopy(dict(settings))
+        self.preferences = preferences
 
 
 class STTSProviderConfigurationChanged(Message):

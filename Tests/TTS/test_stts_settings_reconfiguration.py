@@ -5,7 +5,7 @@ import tomllib
 from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock, call
 
@@ -27,6 +27,7 @@ from tldw_chatbook.TTS.legacy_bridge import (
     legacy_provider_config,
     legacy_provider_specs,
 )
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 
 
@@ -91,6 +92,39 @@ PROVIDER_SETTING_KEYS = {
         "HIGGS_REPETITION_PENALTY",
     ),
 }
+
+
+def test_settings_save_event_copies_mapping_and_carries_preferences() -> None:
+    preferences = TTSPreferencesSnapshot(
+        provider_id="audio_cpp",
+        model_mode="first_available",
+        model_id=None,
+        voice_mode="server_default",
+        voice_id=None,
+        response_format="wav",
+        speed=1.0,
+    )
+    provider_settings = {
+        "audio_cpp": {
+            "mode": "external",
+            "base_url": "http://127.0.0.1:8080",
+        }
+    }
+
+    event = STTSSettingsSaveEvent(
+        MappingProxyType(provider_settings),
+        preferences=preferences,
+    )
+    provider_settings["audio_cpp"]["base_url"] = "http://mutated.invalid"
+
+    assert event.settings["audio_cpp"]["base_url"] == "http://127.0.0.1:8080"
+    assert event.preferences is preferences
+
+
+def test_settings_save_event_defaults_to_provider_settings_only() -> None:
+    event = STTSSettingsSaveEvent({"audio_cpp": AudioCppConfig().to_mapping()})
+
+    assert event.preferences is None
 
 
 @pytest.mark.asyncio
