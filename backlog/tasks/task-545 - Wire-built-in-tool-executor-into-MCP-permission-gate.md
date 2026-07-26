@@ -1,10 +1,10 @@
 ---
 id: TASK-545
 title: Wire built-in tool executor into MCP permission gate
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-24 12:00'
-updated_date: '2026-07-25'
+updated_date: '2026-07-26'
 labels: [tools, security, agents]
 dependencies: [TASK-331]
 priority: medium
@@ -19,9 +19,9 @@ priority: medium
 
 - **P1 — the gate seam (done, this pass).** Built on branch `feat/builtin-tool-permission-gate`: a concrete `Tool.risk_tags` property (default `()`, vocabulary = existing `HIGH_RISK_TAGS`); `resolve_builtin_state` in `MCP/permission_store.py`, a sibling of `resolve_effective_state` (not a modification of it) under a namespace deliberately distinct from the built-in MCP *server*'s own live key — `server_key = "agent:builtin"`, never `builtin:tldw_chatbook` (`MCP/readiness.py` `BUILTIN_SERVER_KEY`) — with precedence tool override → server default → built-in `allow` floor, no definition-hash comparison, and the existing risk-flooring pass unchanged; `Agents/builtin_tool_gate.py`'s `BuiltinToolGate` (one permission-store load per turn, fail-closed on a missing service, never raises); enforcement inside `BuiltinToolProvider.invoke` as defense-in-depth; a run-level `build_tool_review_hook` wired **unconditionally** (previously the review hook existed only when MCP was configured, so a user with zero MCP servers had no gate at all); and per-row `options` on `ChatApprovalCard` so built-in rows can be narrowed (excluding only `always_allow`, the sole persistent write) without lying about what a bulk action will do. Session-scoped decisions only — nothing persists under `agent:builtin` in P1. No tool is ported or tagged yet, so this phase changes no behavior for `calculator`/`datetime` (both untagged, both still executing silently) **except one deliberate change**: the kill switch is now global (spec §7), so a user with the MCP kill switch on now has built-in tool calls refused where they previously executed — this is intentional and is what the "kill switch blocks built-in tools" acceptance criterion pins.
 - **P2 — port the tools (done, this pass).** **Rescoped again 2026-07-25 — see `Docs/superpowers/specs/2026-07-25-port-mutating-tools-design.md`.** Moved `write_file`, `create_note`, `update_note` into `BuiltinToolProvider` (tagged `("mutates",)`) and tagged the already-registered `read_file`/`list_directory` (`("reads",)`, closing a live silent-read gap: enabling either previously ran with no prompt at all). `rag_search`, `web_search`, `search_notes`, `code_audit` are explicitly **out of scope** for this pass per that spec — not implemented, not tagged, not gated. ~~Blocked on the child-run approval routing follow-up~~ — **UNBLOCKED 2026-07-25 by TASK-628** (`BuiltinToolGate.stamp_scope` + `_combine_state_scopes`), which fixed the nested-sub-agent stamp clobber and proved a child's gated call resolves through the shared approval route rather than failing closed. ~~Blocked on the persistent-decision UI prerequisite~~ — **UNBLOCKED 2026-07-25 by TASK-627** (`agent:builtin` Permissions-mode section + `HASH_FREE_SERVER_KEYS`), which made a persistent allow/deny for a built-in tool visible and reversible in-app. Live end-to-end coverage (real tools, not the synthetic P1 test double) lives in `Tests/Agents/test_builtin_gate_live_tools.py`.
-- **P3 — config and the legacy path (not started).** Fix the dead `[tools]` config (TASK-547) and decide System A's fate (port its remaining behavior, gate it in place, or remove `Tools/tool_executor.py` entirely) so no tool anywhere ever executes ungated.
+- **P3 — config and the legacy path (done, this pass).** Fixed the dead `[tools]` config (TASK-547) by deleting its only broken call site along with the rest of System A's execution machinery, rather than repairing it in place — `get_tool_executor()`, `ToolExecutor`, and `ToolResultCache` had zero production callers, so there was nothing to port or gate. Kept the `Tool` ABC and its two built-in tools (System B's tools still derive from that ABC, so `Tools/tool_executor.py` could not be deleted outright). Repaired the Settings screen's `[tools]` save path so it actually controls `BuiltinToolProvider` (System B), the one system left. See `## P3 Implementation Notes` below.
 
-TASK-331's sandbox fix made the fs tools functional-within-a-sandbox; this task's P1+P2 are the intended protection layer on top of that. This task stays open (not Done) until P2 and P3 both land — see the unchecked criteria below.
+TASK-331's sandbox fix made the fs tools functional-within-a-sandbox; this task's P1+P2+P3 are the intended protection layer on top of that. All three phases are complete.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -50,9 +50,9 @@ P2 — port the tools (complete; rescoped 2026-07-25, see `Docs/superpowers/spec
 - [x] The child-run approval routing follow-up is resolved before any mutating tool ships gated (no unreviewable nested-subagent execution path) — TASK-628, Done 2026-07-25
 - [x] A UI surface exists that can list and reverse a persistent allow/deny for a built-in tool before P2 offers persistent decisions for any mutating tool — TASK-627, Done 2026-07-25
 
-P3 — config and legacy path (not started):
-- [ ] TASK-547's dead `[tools]` config is fixed and reachable
-- [ ] System A's (`Tools/tool_executor.py`) fate is decided and implemented — ported, gated in place, or removed — with no tool left executing ungated in either system
+P3 — config and legacy path (complete):
+- [x] TASK-547's dead `[tools]` config is fixed and reachable
+- [x] System A's fate is decided and implemented: its execution machinery (`get_tool_executor()`, `ToolExecutor`, `ToolResultCache`) was removed — it had zero production callers, so there was nothing left to port or gate in place. The `Tool` ABC and the two built-in tools it defines were **kept** in `Tools/tool_executor.py` (deleting the file entirely was never possible — System B's `Tool` subclasses still derive from it), so the file survives, gutted rather than deleted. No tool executes ungated in either system, because there is now only one system: every built-in tool call reaches the agent runtime (System B) through `BuiltinToolProvider`, gated by P1/P2's permission seam.
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -73,4 +73,13 @@ P2 landed on branch `feat/port-mutating-tools`, split into five tasks (design sp
 
 Full affected-suite run (`Tests/Agents/ Tests/MCP/ Tests/Tools/ Tests/Library/test_library_skills_state.py`): 707 passed, 0 failed.
 
-P3 (`[tools]` config fix, System A's fate) remains open; this task is not marked Done.
+## P3 Implementation Notes
+
+P3 landed across four commits: `bea09a441`/`f8920c5a2`/`17bfc85fc` (spec + plan + review), `106c463a6` ("single source of truth for gateable built-in tools"), `8d8834732` ("Settings tools section controls the real runtime"), `6825ba6ab` ("retire System A's tool executor"), plus `2c4e16c67` (TASK-658's `[database]` fix, folded in as the same bug class was being swept) and `8d1940751`/`956c77a07` (cleanup).
+
+- **TASK-547's fix.** The broken `get_cli_setting("tools", {})` call site was deleted along with `get_tool_executor()` rather than repaired — System A had no live caller to repair the call for. The live intent ("a `[tools]` flag enables that tool") is satisfied by `BuiltinToolProvider` (System B), which already read its `[tools]` gate keys correctly from P2; P3's `106c463a6` made the list of gateable built-ins a single source of truth, and `8d8834732` repaired the Settings screen's *write* side — it previously wrote a shape that raised `KeyError: 'None'`, defaulted new tools to ON instead of OFF, listed only some tools, and configured six controls that pointed at the now-dead executor.
+- **System A's fate.** `6825ba6ab` confirmed via grep that `ToolExecutor`/`ToolResultCache`/`get_tool_executor` had zero production callers anywhere (the Console never reached System A — established back in TASK-545's original rescoping) and removed their implementations (653 lines) from `Tools/tool_executor.py`, along with the file's only `install_claude_code_hooks()` call site (see TASK-702, now filed, for what that leaves unreferenced). The `Tool` ABC and its two concrete built-ins stayed, because System B's tool classes still derive from that ABC — the file could be gutted but not deleted.
+- **Config bug-class sweep.** Per the P3 spec, doing this work surfaced the same `get_cli_setting` bare-section-silent-default defect four more times in unrelated subsystems (splash screen ×2, web server, TTS OpenAI backend ×3). None were fixed inline; each is filed as its own task (TASK-699/700/701) plus a task for the bug class itself (TASK-703), rather than papered over here.
+- **Verification.** Full affected-suite run (`Tests/Agents/ Tests/MCP/ Tests/Tools/ Tests/UI/ Tests/Local_Ingestion/ Tests/Library/test_library_skills_state.py`) passed; `python -c "import tldw_chatbook.app"` succeeds; `BuiltinToolProvider().list_catalog()` with no `[tools]` keys set yields exactly `calculator`/`get_current_datetime`; grep for `get_tool_executor|reload_tool_executor|ToolResultCache` in `tldw_chatbook/` returns nothing outside the two historical comments in `tool_catalog.py`.
+
+TASK-545 is now closed: P1, P2, and P3 all complete.
