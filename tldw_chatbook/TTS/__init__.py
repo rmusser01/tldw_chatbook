@@ -17,7 +17,6 @@ from tldw_chatbook.TTS.playground_types import (
 )
 from tldw_chatbook.TTS.preferences import TTSConfigMutation, TTSPreferencesSnapshot
 from tldw_chatbook.TTS.profile_errors import (
-    ProfileError,
     ProfileRepositoryError,
     ProfileValidationError,
 )
@@ -49,7 +48,6 @@ __all__ = [
     "CharacterRef",
     "CharacterTTSAssignment",
     "ProfileBackupReceipt",
-    "ProfileError",
     "ProfileRepositoryError",
     "ProfileRepositoryState",
     "ProfileRestoreReceipt",

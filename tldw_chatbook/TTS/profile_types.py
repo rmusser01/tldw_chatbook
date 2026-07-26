@@ -96,7 +96,10 @@ def _validate_canonical_opaque_id(value: object, field_name: str) -> str:
 def _validate_speed(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ProfileValidationError("speed")
-    speed = float(value)
+    try:
+        speed = float(value)
+    except (OverflowError, TypeError, ValueError):
+        raise ProfileValidationError("speed") from None
     if not math.isfinite(speed) or not 0.25 <= speed <= 4.0:
         raise ProfileValidationError("speed")
     return speed
@@ -115,8 +118,6 @@ def _freeze_json_value(
     value: object,
     depth: int,
     active: set[int],
-    *,
-    allow_frozen_tuples: bool,
 ) -> JsonValue:
     if value is None or isinstance(value, (str, bool)):
         return value
@@ -126,9 +127,7 @@ def _freeze_json_value(
         if not math.isfinite(value):
             raise ProfileValidationError("options")
         return value
-    if not isinstance(value, (Mapping, list)) and not (
-        allow_frozen_tuples and isinstance(value, tuple)
-    ):
+    if not isinstance(value, (Mapping, list)):
         raise ProfileValidationError("options")
     if depth > _MAX_OPTIONS_CONTAINER_LEVELS or id(value) in active:
         raise ProfileValidationError("options")
@@ -144,7 +143,6 @@ def _freeze_json_value(
                     item,
                     depth + 1,
                     active,
-                    allow_frozen_tuples=allow_frozen_tuples,
                 )
             return MappingProxyType(frozen_mapping)
         return tuple(
@@ -152,7 +150,6 @@ def _freeze_json_value(
                 item,
                 depth + 1,
                 active,
-                allow_frozen_tuples=allow_frozen_tuples,
             )
             for item in value
         )
@@ -170,28 +167,29 @@ def _json_ready(value: JsonValue) -> object:
     return value
 
 
-def _freeze_options(
-    value: object, *, allow_frozen_tuples: bool = False
-) -> Mapping[str, JsonValue]:
+def _canonical_json_from_frozen(options: Mapping[str, JsonValue]) -> str:
+    return json.dumps(
+        _json_ready(options),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
+def _freeze_options(value: object) -> Mapping[str, JsonValue]:
     if not isinstance(value, Mapping):
         raise ProfileValidationError("options")
     frozen = _freeze_json_value(
         value,
         1,
         set(),
-        allow_frozen_tuples=allow_frozen_tuples,
     )
     if not isinstance(frozen, Mapping):
         raise ProfileValidationError("options")
     try:
-        encoded = json.dumps(
-            _json_ready(frozen),
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        ).encode("utf-8")
-    except (TypeError, ValueError, UnicodeError, OverflowError, RecursionError):
+        encoded = _canonical_json_from_frozen(frozen).encode("utf-8")
+    except Exception:
         raise ProfileValidationError("options") from None
     if len(encoded) > _MAX_OPTIONS_BYTES:
         raise ProfileValidationError("options")
@@ -201,17 +199,8 @@ def _freeze_options(
 def canonical_json_options(options: Mapping[str, JsonValue]) -> str:
     """Return validated options as a stable compact UTF-8 JSON document."""
 
-    frozen = _freeze_options(
-        options,
-        allow_frozen_tuples=isinstance(options, MappingProxyType),
-    )
-    return json.dumps(
-        _json_ready(frozen),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    )
+    frozen = _freeze_options(options)
+    return _canonical_json_from_frozen(frozen)
 
 
 def _validate_audio_cpp(
@@ -351,7 +340,7 @@ class CharacterRef:
     character_id: str
 
     def __post_init__(self) -> None:
-        if self.source not in {"local", "server"}:
+        if type(self.source) is not str or self.source not in ("local", "server"):
             raise ProfileValidationError("source")
         object.__setattr__(
             self,

@@ -11,6 +11,8 @@ from uuid import uuid4
 
 import pytest
 
+import tldw_chatbook.TTS as tts_package
+import tldw_chatbook.TTS.profile_errors as profile_errors
 from tldw_chatbook.TTS.profile_errors import (
     ProfileRepositoryError,
     ProfileValidationError,
@@ -141,6 +143,13 @@ def test_speed_rejects_values_outside_the_provider_neutral_contract(
         _draft(speed=speed)
 
 
+def test_speed_never_leaks_an_overflow_from_a_huge_integer() -> None:
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: speed$"
+    ):
+        _draft(speed=10**10000)
+
+
 @pytest.mark.parametrize("speed", [0.25, 4, 1])
 def test_speed_is_float_in_the_inclusive_provider_neutral_range(
     speed: float | int,
@@ -209,6 +218,14 @@ def test_character_ref_rejects_noncanonical_or_unbounded_identity(
         CharacterRef(**values)
 
 
+@pytest.mark.parametrize("source", [[], {}])
+def test_character_ref_never_leaks_unhashable_source_errors(source: object) -> None:
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: source$"
+    ):
+        CharacterRef(source=source, authority_id="main", character_id="card")  # type: ignore[arg-type]
+
+
 def test_options_are_canonical_json_and_are_defensively_frozen() -> None:
     source = {"z": [1, {"name": "Café"}], "a": True}
     draft = _draft(options=source)
@@ -216,7 +233,10 @@ def test_options_are_canonical_json_and_are_defensively_frozen() -> None:
 
     assert isinstance(draft.options, MappingProxyType)
     assert draft.options["z"] == (1, MappingProxyType({"name": "Café"}))
-    assert canonical_json_options(draft.options) == '{"a":true,"z":[1,{"name":"Café"}]}'
+    assert (
+        canonical_json_options({"z": [1, {"name": "Café"}], "a": True})
+        == '{"a":true,"z":[1,{"name":"Café"}]}'
+    )
     with pytest.raises(TypeError):
         draft.options["a"] = False  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
@@ -240,6 +260,13 @@ def test_canonical_options_validator_rejects_caller_tuple_input() -> None:
         canonical_json_options({"bad": (1,)})
 
 
+def test_canonical_options_validator_rejects_caller_mappingproxy_tuple_input() -> None:
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: options$"
+    ):
+        canonical_json_options(MappingProxyType({"bad": (1,)}))
+
+
 def test_options_never_leak_a_caller_mapping_exception() -> None:
     class ExplosiveMapping(Mapping[str, object]):
         def __getitem__(self, key: str) -> object:
@@ -258,6 +285,17 @@ def test_options_never_leak_a_caller_mapping_exception() -> None:
         ProfileValidationError, match=r"^TTS profile validation failed: options$"
     ):
         _draft(options=ExplosiveMapping())
+
+
+def test_options_never_leak_a_hostile_string_key_sort_error() -> None:
+    class ExplosiveSortKey(str):
+        def __lt__(self, other: object) -> bool:
+            raise RuntimeError("secret sort failure")
+
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: options$"
+    ):
+        canonical_json_options({"safe": False, ExplosiveSortKey("bad"): True})
 
 
 def test_options_reject_excessive_nesting_and_canonical_size() -> None:
@@ -395,3 +433,8 @@ def test_safe_profile_errors_never_include_caller_values() -> None:
     assert str(repository) == "TTS profile repository failed: operation_failed"
     assert "secret-name" not in repr(validation)
     assert "secret-upstream-text" not in repr(repository)
+
+
+def test_profile_error_base_cannot_be_constructed_with_arbitrary_payloads() -> None:
+    assert not hasattr(tts_package, "ProfileError")
+    assert not hasattr(profile_errors, "ProfileError")

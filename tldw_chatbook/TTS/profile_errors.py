@@ -50,7 +50,7 @@ _REPOSITORY_CODES = frozenset(
 )
 
 
-class ProfileError(Exception):
+class _ProfileError(Exception):
     """Base class for errors whose public detail is deliberately bounded."""
 
     __slots__ = ("code",)
@@ -62,7 +62,7 @@ class ProfileError(Exception):
         super().__init__(message)
 
 
-class ProfileValidationError(ProfileError, ValueError):
+class ProfileValidationError(_ProfileError, ValueError):
     """A value-independent failure at the profile-domain boundary."""
 
     def __init__(self, code: str) -> None:
@@ -70,7 +70,7 @@ class ProfileValidationError(ProfileError, ValueError):
         super().__init__(safe_code, f"TTS profile validation failed: {safe_code}")
 
 
-class ProfileRepositoryError(ProfileError, RuntimeError):
+class ProfileRepositoryError(_ProfileError, RuntimeError):
     """A value-independent profile repository failure."""
 
     def __init__(self, code: str) -> None:
