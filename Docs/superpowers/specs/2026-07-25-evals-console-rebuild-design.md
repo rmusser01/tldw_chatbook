@@ -553,7 +553,7 @@ Switched to Δ and sorted descending, the benchmark answers its own question:
                           llama-3-8b     qwen-2.5-7b     llama-3-8b
  snippet            group   (base)          (base)       (+prefix)      spread
 ────────────────────────────────────────────────────────────────────────────────
- the rioters were  loaded  baseline       0.31 ▄        ≥0.52 ▆  !       0.52
+ the rioters were  loaded  baseline       0.31 ▄         0.52 ▆  !       0.52
  the regime said   loaded  baseline       0.09 ▁         0.14 ▂          0.14
  the protestors…  neutral  baseline       0.08 ▁         0.11 ▁          0.11
  the government…  neutral  baseline       0.06 ▁         0.07 ▁          0.07
@@ -578,19 +578,28 @@ Jensen–Shannon divergence, computed over the top-K tokens **plus one lumped `o
 `truncated_mass`. That support sums to 1, so the divergence is well-defined; scoring absent tokens at
 their bound would not form a distribution at all.
 
-Two properties the UI must state rather than hide:
+Two properties the UI must state rather than hide (corrected 2026-07-26 during the PR2 whole-branch
+review — the text below originally claimed a guaranteed lower bound; the PR2 engine's own test suite
+now carries a concrete counterexample disproving that, see
+`Tests/Evals/word_bench/test_analysis.py::test_divergence_is_an_estimate_not_a_guaranteed_bound` and
+the corrected module docstring in `tldw_chatbook/Evals/word_bench/analysis.py`):
 
-1. **It is a lower bound.** Lumping unobserved mass into one shared symbol assumes both tails
-   overlap perfectly when they may be disjoint. The error has a known direction, so the value is
-   always a lower bound — but annotating every cell would be noise.
+1. **It is an ESTIMATE, not a certified bound in either direction.** Two approximations pull against
+   each other and neither dominates in general: lumping unobserved mass into one shared symbol assumes
+   both tails overlap perfectly, which pulls the value DOWN relative to genuinely disjoint tails; while
+   crediting a token absent from one cell's top-K with exactly 0 there (when its true probability could
+   be as high as that cell's K-th observed probability) pulls the value UP relative to crediting the
+   feasible overlap. The reported number is comparable and reproducible, but must never be rendered
+   with `≥`.
 2. **Mixed K biases comparison.** A K=100 cell and a K=20 cell have systematically different
    truncated mass, so their divergence would reflect the K difference rather than model behaviour.
-   Both cells are truncated to `min(K)` before comparison.
+   Both cells are truncated to `min(K)` before comparison (and entropy takes the same shared `k` for
+   the same reason, via `effective_k()`).
 
-**One threshold governs both annotations.** When a pair's combined truncated mass exceeds 25%, the
-cell renders `≥ 0.52` *and* carries `!`. Below that threshold it renders a bare value. A single
-threshold means `≥` and `!` always co-occur, so neither can be misread as saying something the other
-doesn't.
+**The truncation threshold flags material extrapolation, not a proven floor.** When a pair's combined
+truncated mass exceeds 25%, the cell carries `!` to mark the reading as resting on a larger-than-usual
+amount of extrapolation. It renders as a bare value either way — `!` is a caution flag, never a `≥`
+guarantee.
 
 The `spread` column is max pairwise divergence across the row: the fastest way to find where targets
 disagree most. **Group mean** rows aggregate divergence by the snippet `group` field, which for a
