@@ -260,17 +260,17 @@ def ensure_runtime_policy_for_app(
 
 
 def set_authoritative_runtime_source(
-    app: Any, active_source: str
+    context: RuntimePolicyContext,
+    active_source: str,
+    *,
+    app_config: Mapping[str, Any] | None,
 ) -> RuntimeSourceState:
     normalized_source = str(active_source or "").strip().lower()
-    context = ensure_runtime_policy_for_app(app)
     state, revision = context.snapshot()
     if normalized_source not in _VALID_RUNTIME_SOURCES:
         return state
 
-    configured_binding = derive_configured_server_binding(
-        getattr(app, "app_config", None)
-    )
+    configured_binding = derive_configured_server_binding(app_config)
     resolved_source = normalized_source
     if resolved_source == "server" and not configured_binding.server_configured:
         resolved_source = "local"
@@ -283,9 +283,9 @@ def set_authoritative_runtime_source(
         server_configured=configured_binding.server_configured,
         last_known_server_label=configured_binding.last_known_server_label,
     )
-    if context.commit_state(updated_state, expected_revision=revision):
-        return updated_state
-    return context.snapshot()[0]
+    if not context.commit_state(updated_state, expected_revision=revision):
+        raise RuntimeError("runtime policy commit was rejected")
+    return updated_state
 
 
 def add_runtime_policy_snapshot(

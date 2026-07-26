@@ -492,28 +492,6 @@ async def test_handle_runtime_backend_changed_recomputes_workspace_scope_state()
     assert "schedule_quizzes" not in call_order
 
 
-@pytest.mark.asyncio
-async def test_app_level_callback_without_policy_forwards_without_projection_write():
-    from tldw_chatbook.app import TldwCli
-
-    forwarded = []
-
-    async def screen_callback(runtime_backend: str) -> None:
-        forwarded.append(runtime_backend)
-
-    app_like = SimpleNamespace(
-        current_runtime_backend="server",
-        runtime_backend="server",
-        screen=SimpleNamespace(handle_runtime_backend_changed=screen_callback),
-    )
-
-    await TldwCli.handle_runtime_backend_changed(app_like, "local")
-
-    assert app_like.current_runtime_backend == "server"
-    assert app_like.runtime_backend == "server"
-    assert forwarded == ["local"]
-
-
 def test_return_to_workspace_routes_to_notes_details():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(

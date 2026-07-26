@@ -23,6 +23,9 @@ PRODUCTION_ROOT = PROJECT_ROOT / "tldw_chatbook"
 APP_PATH = PRODUCTION_ROOT / "app.py"
 BOOTSTRAP_PATH = PRODUCTION_ROOT / "runtime_policy" / "bootstrap.py"
 SOURCE_STATE_PATH = PRODUCTION_ROOT / "runtime_policy" / "source_state.py"
+SCHEDULES_WORKBENCH_PATH = (
+    PRODUCTION_ROOT / "UI" / "Screens" / "scheduling" / "schedules_workbench.py"
+)
 PROJECTION_NAMES = (
     "current_runtime_backend",
     "runtime_backend",
@@ -501,6 +504,43 @@ def test_tldw_cli_constructor_invokes_runtime_loader_as_standalone_expression() 
 
     assert len(standalone_calls) == 1
     assert assigned_calls == []
+
+
+def test_schedules_calls_authoritative_runtime_source_with_context_and_config() -> None:
+    schedules_calls = [
+        node
+        for node in ast.walk(_parse(SCHEDULES_WORKBENCH_PATH))
+        if isinstance(node, ast.Call)
+        and _chain(node.func).endswith("set_authoritative_runtime_source")
+    ]
+    assert len(schedules_calls) == 1
+    schedules_call = schedules_calls[0]
+    assert _chain(schedules_call.args[0]) == "self.app_instance.runtime_policy"
+    assert {
+        keyword.arg: _chain(keyword.value)
+        for keyword in schedules_call.keywords
+        if keyword.arg is not None
+    }["app_config"] == "self.app_instance.app_config"
+
+    production_calls = [
+        (path, node)
+        for path in sorted(PRODUCTION_ROOT.rglob("*.py"))
+        for node in ast.walk(_parse(path))
+        if isinstance(node, ast.Call)
+        and _chain(node.func).endswith("set_authoritative_runtime_source")
+    ]
+    assert production_calls
+    for path, call in production_calls:
+        assert call.args, path
+        first_argument = _chain(call.args[0])
+        assert first_argument.endswith(".runtime_policy"), (
+            path,
+            first_argument,
+        )
+        app_config_keywords = [
+            keyword for keyword in call.keywords if keyword.arg == "app_config"
+        ]
+        assert len(app_config_keywords) == 1, path
 
 
 def test_runtime_source_state_store_references_are_confined_to_owner_modules() -> None:

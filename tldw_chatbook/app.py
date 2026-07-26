@@ -30,7 +30,7 @@ import sys
 import threading
 import time
 import traceback
-from typing import TYPE_CHECKING, Union, Optional, Any, Dict, List, Callable
+from typing import TYPE_CHECKING, Union, Optional, Any, Dict, List, Callable, Mapping
 from textual.widget import Widget
 
 #
@@ -4921,57 +4921,69 @@ class TldwCli(
                 notifier(decision.user_message, severity="warning")
         return decision
 
-    async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
+    async def handle_runtime_backend_changed(
+        self,
+        runtime_backend: str,
+        *,
+        app_config_override: Mapping[str, Any] | None = None,
+    ) -> bool:
         normalized_backend = str(runtime_backend or "").strip().lower()
-        if normalized_backend in {"local", "server"}:
-            if getattr(self, "runtime_policy", None) is not None:
-                previous_server_id = getattr(
-                    self.runtime_policy.state, "active_server_id", None
-                )
-                try:
-                    updated_state = set_authoritative_runtime_source(
-                        self, normalized_backend
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Runtime source change was not committed "
-                        "(exception_category={}).",
-                        type(exc).__name__,
-                    )
-                    self.notify(
-                        "Runtime source could not be changed; "
-                        "the previous source remains active.",
-                        severity="warning",
-                    )
-                    return
-                server_context_provider = getattr(self, "server_context_provider", None)
-                invalidate_for_server_switch = getattr(
-                    server_context_provider,
-                    "invalidate_for_server_switch",
-                    None,
-                )
-                if callable(invalidate_for_server_switch):
-                    invalidate_for_server_switch(
-                        previous_server_id, updated_state.active_server_id
-                    )
+        if normalized_backend not in {"local", "server"}:
+            return False
 
-        resolved_backend = normalized_backend
-        runtime_policy = getattr(self, "runtime_policy", None)
-        runtime_state = runtime_policy.state if runtime_policy is not None else None
-        if runtime_state is not None:
-            resolved_backend = (
-                str(runtime_state.active_source or normalized_backend).strip().lower()
+        previous_server_id = self.runtime_policy.state.active_server_id
+        candidate_config = (
+            app_config_override
+            if app_config_override is not None
+            else self.app_config
+        )
+        try:
+            updated_state = set_authoritative_runtime_source(
+                self.runtime_policy,
+                normalized_backend,
+                app_config=candidate_config,
             )
-        elif resolved_backend not in {"local", "server"}:
-            resolved_backend = (
-                str(getattr(self, "current_runtime_backend", "local") or "local")
-                .strip()
-                .lower()
+        except Exception as exc:
+            logger.warning(
+                "Runtime source change was not committed "
+                "(exception_category={}).",
+                type(exc).__name__,
             )
-        active_screen = getattr(self, "screen", None)
+            self.notify(
+                "Runtime source could not be changed; "
+                "the previous source remains active.",
+                severity="warning",
+            )
+            return False
+
+        if app_config_override is not None:
+            self.app_config = app_config_override
+            self.server_context_provider.rebind_app_config(
+                app_config_override,
+                previous_server_id=previous_server_id,
+                next_server_id=updated_state.active_server_id,
+            )
+        else:
+            self.server_context_provider.invalidate_for_server_switch(
+                previous_server_id,
+                updated_state.active_server_id,
+            )
+
+        resolved_backend = str(
+            self.runtime_policy.state.active_source or normalized_backend
+        ).strip().lower()
+        active_screen = self.screen
         callback = getattr(active_screen, "handle_runtime_backend_changed", None)
         if callable(callback):
-            await callback(resolved_backend)
+            try:
+                await callback(resolved_backend)
+            except Exception as exc:
+                logger.warning(
+                    "Runtime screen callback failed after runtime commit "
+                    "(exception_category={}).",
+                    type(exc).__name__,
+                )
+        return True
 
     def _init_notes_service(self, user_name_for_notes: str) -> None:
         """Initialize notes service - for parallel execution."""

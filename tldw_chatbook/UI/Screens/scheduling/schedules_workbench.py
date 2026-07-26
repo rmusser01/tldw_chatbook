@@ -527,7 +527,11 @@ class SchedulesWorkbench(BaseAppScreen):
             return
         service.set_owner(new_owner)
         runtime_source = "server" if new_owner.startswith("server:") else "local"
-        set_authoritative_runtime_source(self.app_instance, runtime_source)
+        set_authoritative_runtime_source(
+            self.app_instance.runtime_policy,
+            runtime_source,
+            app_config=self.app_instance.app_config,
+        )
         self._refresh_owner_select()
         self.run_worker(self.load_tasks, exclusive=True)
         self._refresh_conflicts_tab()

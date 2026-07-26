@@ -4,6 +4,10 @@ from datetime import datetime, timezone
 
 import pytest
 
+from tldw_chatbook.runtime_policy.bootstrap import (
+    RuntimePolicyContext,
+    set_authoritative_runtime_source,
+)
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.state.app_state import AppState
 
@@ -728,6 +732,132 @@ def test_prepare_runtime_policy_context_downgrades_server_mode_without_server_co
     assert context.state.active_server_id is None
     assert context.state.server_configured is False
     assert store.load() == context.state
+
+
+def test_authoritative_source_derives_binding_only_from_supplied_config():
+    initial_state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="https://old.example.test/api",
+        server_configured=True,
+        last_known_server_label="old.example.test",
+    )
+
+    class RecordingStore:
+        def __init__(self) -> None:
+            self.saved_states: list[RuntimeSourceState] = []
+
+        def save(self, state: RuntimeSourceState) -> None:
+            self.saved_states.append(state)
+
+    store = RecordingStore()
+    context = RuntimePolicyContext(initial_state, store)
+    supplied_config = {
+        "tldw_api": {
+            "base_url": "https://new.example.test/v1/",
+        }
+    }
+
+    updated_state = set_authoritative_runtime_source(
+        context,
+        "server",
+        app_config=supplied_config,
+    )
+
+    assert updated_state.active_source == "server"
+    assert updated_state.active_server_id == "https://new.example.test/v1"
+    assert updated_state.server_configured is True
+    assert updated_state.last_known_server_label == "new.example.test"
+    assert store.saved_states == [updated_state]
+    assert context.snapshot() == (updated_state, 1)
+
+
+def test_authoritative_source_invalid_input_returns_unchanged_without_save():
+    initial_state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="https://old.example.test/api",
+        server_configured=True,
+    )
+
+    class NeverSaveStore:
+        def save(self, state: RuntimeSourceState) -> None:
+            raise AssertionError("invalid source must not be saved")
+
+    context = RuntimePolicyContext(initial_state, NeverSaveStore())
+
+    returned_state = set_authoritative_runtime_source(
+        context,
+        "invalid-source",
+        app_config={
+            "tldw_api": {
+                "base_url": "https://unused.example.test/api",
+            }
+        },
+    )
+
+    assert returned_state is initial_state
+    assert context.snapshot() == (initial_state, 0)
+
+
+def test_authoritative_source_persistence_failure_leaves_snapshot_unchanged():
+    save_sentinel = "AUTHORITATIVE-SAVE-SENTINEL"
+    initial_state = RuntimeSourceState()
+
+    class RaisingSaveStore:
+        def save(self, state: RuntimeSourceState) -> None:
+            raise OSError(save_sentinel)
+
+    context = RuntimePolicyContext(initial_state, RaisingSaveStore())
+
+    with pytest.raises(OSError, match=save_sentinel):
+        set_authoritative_runtime_source(
+            context,
+            "server",
+            app_config={
+                "tldw_api": {
+                    "base_url": "https://candidate.example.test/api",
+                }
+            },
+        )
+
+    assert context.snapshot() == (initial_state, 0)
+
+
+def test_authoritative_source_cas_rejection_raises_bounded_error(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    initial_state = RuntimeSourceState()
+
+    class NeverSaveStore:
+        def save(self, state: RuntimeSourceState) -> None:
+            raise AssertionError("rejected CAS must not save")
+
+    context = RuntimePolicyContext(initial_state, NeverSaveStore())
+
+    def reject_commit(
+        self,
+        candidate: RuntimeSourceState,
+        *,
+        expected_revision: int,
+    ) -> bool:
+        assert self is context
+        assert candidate.active_server_id == "https://candidate.example.test/api"
+        assert expected_revision == 0
+        return False
+
+    monkeypatch.setattr(RuntimePolicyContext, "commit_state", reject_commit)
+
+    with pytest.raises(RuntimeError, match="commit was rejected"):
+        set_authoritative_runtime_source(
+            context,
+            "server",
+            app_config={
+                "tldw_api": {
+                    "base_url": "https://candidate.example.test/api",
+                }
+            },
+        )
+
+    assert context.snapshot() == (initial_state, 0)
 
 
 def test_reconcile_saved_screen_state_drops_wrong_server_snapshot_against_bootstrapped_authority(

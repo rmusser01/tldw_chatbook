@@ -4,14 +4,12 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual.app import App
 
-from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
 from tldw_chatbook.UI.MediaIngestWindowRebuilt import (
     MediaIngestWindowRebuilt,
     RemoteIngestionPanel,
     WebClipperPanel,
 )
-from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
 
 
@@ -169,27 +167,3 @@ async def test_ingest_window_refresh_backend_view_preserves_local_refresh_behavi
     ctor.assert_not_called()
     assert ingest_window.source_panel.runtime_backend == "local"
     ingest_window.source_panel.refresh_for_mode.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_app_level_runtime_backend_change_refreshes_only_media_screen_state():
-    app_like = SimpleNamespace(
-        current_runtime_backend="server",
-        runtime_backend="server",
-        media_runtime_state=MediaRuntimeState(runtime_backend="server"),
-        screen=None,
-    )
-    screen = MediaIngestScreen(app_instance=app_like)
-    screen.media_ingest_window = SimpleNamespace(
-        runtime_state=None,
-        refresh_backend_view=AsyncMock(),
-    )
-    app_like.screen = screen
-
-    await TldwCli.handle_runtime_backend_changed(app_like, "local")
-
-    assert app_like.current_runtime_backend == "server"
-    assert app_like.runtime_backend == "server"
-    assert app_like.media_runtime_state.runtime_backend == "local"
-    assert screen.media_ingest_window.runtime_state is app_like.media_runtime_state
-    screen.media_ingest_window.refresh_backend_view.assert_awaited_once()
