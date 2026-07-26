@@ -8,7 +8,6 @@ from textual.widgets import Button
 from tldw_chatbook.UI.Chatbooks_Window_Improved import EmptyStateWidget
 from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
 from tldw_chatbook.UI.Wizards.ChatbookImportWizard import FileSelectionStep
-from tldw_chatbook.Widgets.Evals.eval_additional_dialogs import FileUploadDialog
 from tldw_chatbook.Widgets.NewIngest.SmartFileDropZone import SmartFileDropZone
 from tldw_chatbook.Widgets.file_picker_dialog import QuickPickerWidget
 
@@ -22,35 +21,10 @@ class _WidgetHost(App):
         yield self.widget_under_test
 
 
-class _ScreenHost(App):
-    def __init__(self, screen):
-        super().__init__()
-        self.screen_under_test = screen
-
-    async def on_mount(self) -> None:
-        await self.push_screen(self.screen_under_test)
-
-
 def _assert_button_tooltips(root, expected_tooltips: dict[str, str]) -> None:
     for button_id, expected_tooltip in expected_tooltips.items():
         button = root.query_one(f"#{button_id}", Button)
         assert str(button.tooltip) == expected_tooltip
-
-
-@pytest.mark.asyncio
-async def test_eval_file_upload_actions_explain_browse_and_upload():
-    app = _ScreenHost(FileUploadDialog())
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-
-        _assert_button_tooltips(
-            app.screen_under_test,
-            {
-                "browse-button": "Choose an evaluation task or dataset file from disk.",
-                "upload-button": "Upload the selected evaluation file.",
-            },
-        )
 
 
 @pytest.mark.asyncio

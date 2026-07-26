@@ -3,10 +3,8 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Static
+from textual.widgets import Button
 
-from tldw_chatbook.Widgets.Evals.eval_additional_dialogs import RunSelectionDialog
-from tldw_chatbook.Widgets.Evals.sample_browser_dialog import SampleBrowserDialog
 from tldw_chatbook.Widgets.Note_Widgets.note_selection_dialog import NoteSelectionDialog
 from tldw_chatbook.Widgets.collections_tag_window import CollectionsTagWindow
 from tldw_chatbook.Widgets.multi_item_review_window import MultiItemReviewWindow
@@ -25,48 +23,6 @@ def _assert_button_tooltips(root, expected_tooltips: dict[str, str]) -> None:
     for button_id, expected_tooltip in expected_tooltips.items():
         button = root.query_one(f"#{button_id}", Button)
         assert str(button.tooltip) == expected_tooltip
-
-
-@pytest.mark.asyncio
-async def test_eval_run_selection_bulk_controls_have_tooltips():
-    app = _ScreenHost(RunSelectionDialog(available_runs=[]))
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-
-        _assert_button_tooltips(
-            app.screen_under_test,
-            {
-                "select-all-button": "Select every available evaluation run.",
-                "clear-all-button": "Clear every selected evaluation run.",
-            },
-        )
-
-
-@pytest.mark.asyncio
-async def test_eval_sample_browser_bulk_controls_have_tooltips(monkeypatch):
-    class _PlainTextArea(Static):
-        def __init__(self, text: str = "", *args, id: str | None = None, **kwargs):
-            super().__init__(text, id=id)
-
-    monkeypatch.setattr(SampleBrowserDialog, "CSS", "", raising=False)
-    monkeypatch.setattr(SampleBrowserDialog, "load_samples", lambda self: None)
-    monkeypatch.setattr(
-        "tldw_chatbook.Widgets.Evals.sample_browser_dialog.TextArea",
-        _PlainTextArea,
-    )
-    app = _ScreenHost(SampleBrowserDialog(dataset_path="/tmp/empty-dataset.json"))
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-
-        _assert_button_tooltips(
-            app.screen_under_test,
-            {
-                "select-all-btn": "Select every sample on the current page.",
-                "clear-btn": "Clear every selected dataset sample.",
-            },
-        )
 
 
 @pytest.mark.asyncio

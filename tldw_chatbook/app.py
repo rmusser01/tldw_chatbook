@@ -2920,7 +2920,6 @@ class TldwCli(
     )  # For character sidebar
     conv_char_sidebar_left_collapsed: reactive[bool] = reactive(False)
     conv_char_sidebar_right_collapsed: reactive[bool] = reactive(False)
-    evals_sidebar_collapsed: reactive[bool] = reactive(False)  # Added for Evals tab
     media_active_view: reactive[Optional[str]] = reactive(
         None
     )  # Added for Media tab navigation
@@ -8121,12 +8120,6 @@ class TldwCli(
                 f"Error toggling Conversations, Characters & Prompts left sidebar pane: {e}",
                 exc_info=True,
             )
-
-    def watch_evals_sidebar_collapsed(self, collapsed: bool) -> None:
-        """EvalsLab uses unified dashboard - no sidebar to collapse."""
-        # This method is kept for backwards compatibility but does nothing
-        # The new EvalsLab UI doesn't have a collapsible sidebar
-        pass
 
     def watch_media_active_view(
         self, old_view: Optional[str], new_view: Optional[str]

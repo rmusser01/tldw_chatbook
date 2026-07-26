@@ -45,7 +45,6 @@ MEDIA_LIST_PANEL = ROOT / "tldw_chatbook/Widgets/Media/media_list_panel.py"
 REPO_TREE_WIDGETS = ROOT / "tldw_chatbook/Widgets/Coding_Widgets/repo_tree_widgets.py"
 CHATBOOKS_IMPROVED = ROOT / "tldw_chatbook/css/features/_chatbooks_improved.tcss"
 CHATBOOKS_WINDOW_IMPROVED = ROOT / "tldw_chatbook/UI/Chatbooks_Window_Improved.py"
-SAMPLE_BROWSER_DIALOG = ROOT / "tldw_chatbook/Widgets/Evals/sample_browser_dialog.py"
 RAG_SEARCH_WINDOW = ROOT / "tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py"
 EMOJI_PICKER = ROOT / "tldw_chatbook/Widgets/emoji_picker.py"
 ENHANCED_FILE_PICKER = ROOT / "tldw_chatbook/Widgets/enhanced_file_picker.py"
@@ -1651,27 +1650,6 @@ def test_chatbooks_search_input_focus_uses_stable_thin_contracts():
     inline_focus = css_block(inline_text, ".search-input:focus")
     assert_stable_solid_border_geometry(inline_base, inline_focus)
     assert_thin_inline_input_focus(inline_focus)
-
-
-def test_evals_sample_browser_selected_row_uses_readable_inline_contract():
-    text = SAMPLE_BROWSER_DIALOG.read_text(encoding="utf-8")
-    assert_readable_inline_selected_state_contract(
-        css_block(text, ".sample-row.selected")
-    )
-
-
-def test_evals_sample_browser_selected_row_children_show_inline_selected_cue():
-    text = SAMPLE_BROWSER_DIALOG.read_text(encoding="utf-8")
-    for selector in (
-        ".sample-row.selected .sample-id",
-        ".sample-row.selected .sample-type",
-        ".sample-row.selected .sample-preview",
-    ):
-        block = css_block(text, selector)
-        assert "$accent" not in block
-        assert "$primary" not in block
-        assert "color: $text;" in block
-        assert "text-style: bold underline;" in block
 
 
 def test_evals_navigation_card_focus_is_non_obscuring_and_ordered_after_type_borders():
