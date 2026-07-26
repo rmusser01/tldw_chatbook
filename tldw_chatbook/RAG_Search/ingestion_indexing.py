@@ -285,16 +285,30 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
 
     task-640 item 1: config/profile resolution (``_configured_profile()`` +
     ``resolve_active_rag_config()``, both plain disk reads with no side
-    effects) now runs BEFORE either lock is acquired at all -- previously it
-    ran under BOTH ``_shared_service_build_lock`` and ``_shared_service_
-    lock``, needlessly widening the window builders hold the fast lock for.
-    Two racing first-touch callers may now each redundantly resolve config
-    once before queuing behind ``_shared_service_build_lock`` to build, but
-    that's cheap, and the generation check below still catches the only
-    correctness-relevant case: a reset landing between this resolution and
-    the swap discards the (now-stale) build regardless of how early its
-    config was read, so the worst case is a safe, spurious discard, never a
-    stale profile silently winning.
+    effects) now runs BEFORE ``_shared_service_build_lock`` is acquired --
+    previously it ran under BOTH ``_shared_service_build_lock`` and
+    ``_shared_service_lock``, needlessly widening the window builders hold
+    the fast lock for. Two racing first-touch callers may now each
+    redundantly resolve config once before queuing behind
+    ``_shared_service_build_lock`` to build, but that's cheap.
+
+    task-640 review (post-item-1 correctness fix): ``_shared_service_
+    generation`` MUST be captured BEFORE config is resolved, not after --
+    capturing it after resolution (the first cut of the item-1 change)
+    reopened exactly the race the generation machinery exists to close. If
+    a reset lands in the window between "config resolved" and "generation
+    captured", the capture reads the ALREADY-BUMPED post-reset value, so
+    the swap-time comparison sees "generation matches" and installs a
+    build made from the STALE, pre-reset config as the shared singleton --
+    confirmed via an adversarial repro (a getter blocked mid-resolution,
+    a concurrent reset, then resolution completing and the getter
+    proceeding). Capturing generation FIRST, under a brief hold of the
+    always-fast ``_shared_service_lock``, closes this: any reset from that
+    point forward -- including one landing during config resolution, or
+    at any point in the subsequent build -- is guaranteed to bump
+    generation PAST what was captured, so the swap-time check always
+    catches it. The captured value is threaded through to that swap-time
+    check unchanged; it is never recaptured later in this function.
 
     Args:
         profile_name: Optional profile override for the first construction.
@@ -308,6 +322,15 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
     global _shared_service
     if _shared_service is not None:
         return _shared_service
+
+    # Capture the generation BEFORE resolving config -- see the docstring's
+    # "task-640 review" paragraph above for why the order matters. This is
+    # the only lock taken before config resolution, and it's the fast one
+    # (never _shared_service_build_lock), so it adds no meaningful delay.
+    with _shared_service_lock:
+        if _shared_service is not None:
+            return _shared_service
+        generation = _shared_service_generation
 
     try:
         from .simplified import create_rag_service
@@ -334,7 +357,9 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
         with _shared_service_lock:
             if _shared_service is not None:
                 return _shared_service
-            generation = _shared_service_generation
+            # Deliberately NOT re-capturing `generation` here -- the early
+            # capture above (before config resolution) is what must be
+            # compared at swap time below.
 
         # Build OUTSIDE _shared_service_lock (but still inside
         # _shared_service_build_lock) -- see docstring above for why this

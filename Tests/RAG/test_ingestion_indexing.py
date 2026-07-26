@@ -1108,3 +1108,85 @@ class TestSharedRagServiceLockDeadlock:
             t1.join(timeout=5)
             assert not t1.is_alive()
             ingestion_indexing.reset_shared_rag_service()
+
+    def test_reset_landing_between_resolve_and_generation_capture_discards_the_build(
+        self, monkeypatch
+    ):
+        """task-640 review pinning test: a reset landing in the window
+        between "config resolved" and "generation captured" must still
+        cause the build to be discarded -- NOT installed as the shared
+        singleton.
+
+        Mirrors the reviewer's adversarial repro exactly: the getter is
+        blocked mid config-resolution (simulating the config-profile disk
+        read); a concurrent reset_shared_rag_service() lands while it's
+        still blocked there; resolution then completes (returning config
+        resolved BEFORE the reset) and the getter proceeds into the locks.
+
+        Capturing `_shared_service_generation` AFTER resolving config (the
+        bug) reads the reset's ALREADY-BUMPED value, so the swap-time
+        check sees "generation matches" and installs the stale-config
+        build. Capturing it BEFORE resolution (the fix) means the reset
+        bumps generation PAST what was already captured, so the swap-time
+        check correctly discards the build instead.
+        """
+        import tldw_chatbook.RAG_Search.simplified as simplified_pkg
+        import tldw_chatbook.RAG_Search.simplified.active_config as active_config
+
+        ingestion_indexing.reset_shared_rag_service()
+
+        resolve_entered = threading.Event()
+        resolve_may_return = threading.Event()
+
+        def _fake_resolve(**kwargs):
+            # The getter is INSIDE its pre-lock config resolution when the
+            # concurrent reset (simulating a user's profile switch) lands.
+            resolve_entered.set()
+            assert resolve_may_return.wait(timeout=5)
+            return "CONFIG_RESOLVED_BEFORE_THE_RESET"
+
+        def _fake_create(**kwargs):
+            fake = FakeRAGService()
+            fake.cfg = kwargs.get("config")
+            return fake
+
+        monkeypatch.setattr(active_config, "resolve_active_rag_config", _fake_resolve)
+        monkeypatch.setattr(simplified_pkg, "create_rag_service", _fake_create)
+
+        results = []
+        getter = threading.Thread(
+            target=lambda: results.append(ingestion_indexing.get_shared_rag_service()),
+            daemon=True,
+        )
+        getter.start()
+        try:
+            assert resolve_entered.wait(timeout=5), (
+                "getter never entered config resolution"
+            )
+
+            # The user switches profiles NOW: settings save ->
+            # set_active_profile() -> reset_shared_rag_service(). Bumps
+            # generation, clears the singleton.
+            ingestion_indexing.reset_shared_rag_service()
+
+            # Config resolution (started pre-reset) completes, returning
+            # the OLD profile's config; the getter proceeds into the locks.
+            resolve_may_return.set()
+            getter.join(timeout=5)
+            assert not getter.is_alive()
+
+            assert results == [None], (
+                "the getter returned a service built from config resolved "
+                "BEFORE the reset, instead of discarding it"
+            )
+            installed = ingestion_indexing.peek_shared_rag_service()
+            assert installed is None, (
+                "a service built from config resolved BEFORE the reset was "
+                "installed as the shared singleton -- the generation check "
+                "did not catch it because generation was captured AFTER "
+                "config resolution instead of before"
+            )
+        finally:
+            resolve_may_return.set()
+            getter.join(timeout=5)
+            ingestion_indexing.reset_shared_rag_service()

@@ -114,8 +114,12 @@ def _ensure_embeddings_imported():
         return False
 
 
-# task-640 item 4: bare, org-prefix-less HuggingFace model ids that are
-# known to 404 against the real Hub API when passed through verbatim as
+# task-640 AC#7 (the "additional finding" bundled into the same review,
+# not one of the original 6 numbered items -- see fd_protection.py's/
+# ingestion_indexing.py's "item N" comments for those; do not confuse this
+# with THEIR "item 4", which is the unrelated protect_file_descriptors()
+# lock): bare, org-prefix-less HuggingFace model ids that are known to
+# 404 against the real Hub API when passed through verbatim as
 # `model_name_or_path` -- currently just "all-MiniLM-L6-v2", the builtin
 # "hybrid_basic"/"bm25_basic"/"fast" RAG profiles' default embedding model
 # (RAG_Search/config_profiles.py), missing its "sentence-transformers/" org
@@ -393,7 +397,7 @@ class EmbeddingsServiceWrapper:
         else:
             # HuggingFace model (default)
             provider = "huggingface"
-            # task-640 item 4: canonicalize known bare model ids that 404
+            # task-640 AC#7: canonicalize known bare model ids that 404
             # against the real Hub when passed through as-is. This must
             # NEVER touch `model_name` itself -- see
             # _BARE_HF_MODEL_ID_ALIASES' docstring above for why.

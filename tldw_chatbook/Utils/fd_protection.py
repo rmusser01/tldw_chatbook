@@ -37,6 +37,24 @@ __all__ = ["protect_file_descriptors"]
 # same-thread nesting to accommodate -- if one ever appeared, a plain Lock
 # fails loudly (deadlock) rather than an RLock silently granting the inner
 # call access to a half-restored outer state.
+#
+# Known cross-feature cost of a process-wide lock (task-640 review,
+# accepted for this wave, not fixed): this is one lock shared by every
+# call site, not scoped per-feature -- `TTS/backends/chatterbox.py` wraps
+# its FULL audio-generation call (`self.model.generate(...)`, not just
+# the model-load) in `protect_file_descriptors()` at two sites, so a
+# single long Chatterbox generation can hold this lock for as long as
+# generation takes (potentially minutes for long text). For that entire
+# window, every OTHER caller -- a RAG embedding model load, a
+# transcription model load, or a concurrent Higgs/second Chatterbox
+# generation -- blocks waiting for the lock, even though none of them
+# touch the same audio model. This is a real, currently-accepted
+# regression in cross-feature concurrency versus the pre-lock behavior
+# (where at worst streams could race, but callers never serialized on
+# each other); narrowing `protect_file_descriptors()`'s callers to just
+# the actual model-load/subprocess-spawn moment (not the full generation
+# call) instead of holding the lock across unrelated, potentially slow
+# work is a follow-up, not addressed here.
 _fd_protection_lock = threading.Lock()
 
 

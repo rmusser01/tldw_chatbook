@@ -89,7 +89,7 @@ class TestEmbeddingsServiceWrapper:
 
 
 class TestBareHfModelIdNormalization:
-    """task-640 item 4: EmbeddingsServiceWrapper._build_config() must map
+    """task-640 AC#7: EmbeddingsServiceWrapper._build_config() must map
     known-broken bare HuggingFace model ids to their canonical, resolvable
     form for the underlying loader, WITHOUT ever mutating `model_name`
     itself (the exact string that round-trips as RAGConfig.embedding.model,

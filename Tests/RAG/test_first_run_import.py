@@ -837,7 +837,7 @@ def test_has_legacy_rag_config_material_false_when_the_legacy_section_is_present
 
     _write_config_toml(
         """
-[AppRAGSearchConfig]
+[AppRAGSearchConfig.rag]
 """
     )
 

@@ -119,7 +119,7 @@ def test_provenance_tolerates_non_numeric_chunk_fields():
 
 
 def test_hybrid_basic_builtin_profile_fingerprint_is_stable_across_the_hf_model_id_fix(tmp_path):
-    """task-640 item 4: the builtin "hybrid_basic" RAG profile's embedding
+    """task-640 AC#7: the builtin "hybrid_basic" RAG profile's embedding
     model id ("all-MiniLM-L6-v2", missing its "sentence-transformers/" org
     prefix) 404s against the real HF Hub. The fix normalizes that id ONLY
     at the point EmbeddingsServiceWrapper hands a model_name_or_path to the
