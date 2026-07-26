@@ -443,10 +443,35 @@ def test_raw_completions_fixture_normalizes():
     )
     assert offset == 0
     assert len(top_k) == 5
-    assert top_k[0].token == " a"
-    assert top_k[0].logprob == pytest.approx(-0.698, abs=1e-2)
-    assert top_k[0].token_id is not None, "llama.cpp supplies token ids; keep them"
-    assert top_k[0].bytes_ == (32, 97)
+    # Values read from the committed fixture, not from a separate probe --
+    # see the near-tie note below for why that distinction bites.
+    assert top_k[0].token == " much"
+    assert top_k[0].logprob == pytest.approx(-0.697, abs=1e-2)
+    assert top_k[0].token_id == 1623
+    assert top_k[0].bytes_ == (32, 109, 117, 99, 104)
+    assert top_k[1].token == " a"
+    assert top_k[1].logprob == pytest.approx(-0.792, abs=1e-2)
+
+
+def test_a_near_tie_between_the_top_two_is_visible_in_the_fixture():
+    """Rank 1 and rank 2 are within 0.1 nats of each other here.
+
+    Two identical requests to the same server, seconds apart at the same
+    neutral sampler settings, returned these two tokens in OPPOSITE order
+    (-0.698/-0.794 one time, -0.697/-0.792 the next). Magnitudes are stable;
+    which token holds rank 1 is not.
+
+    Consequence for the benchmark: a "top-1 token" reading is unstable
+    whenever the top two are within noise, and a grid rendering it would show
+    spurious differences between cells that are statistically identical.
+    Divergence is computed over the whole distribution and is unaffected --
+    which is why it, not top-1, is the load-bearing measure.
+    """
+    top_k, _ = normalize_logprobs(
+        _load("llamacpp_raw_completions.json"), want_content_token=False
+    )
+    gap = top_k[0].logprob - top_k[1].logprob
+    assert abs(gap) < 0.15, "top two are a near-tie; top-1 is not a stable reading here"
 
 
 def test_top_k_is_returned_in_descending_logprob_order():
@@ -2494,6 +2519,7 @@ snapshot after the bench is edited."
 
 ## Notes for the reviewer
 
+- **Top-1 is not a stable reading.** The committed raw fixture has its top two tokens within 0.1 nats, and two identical requests seconds apart returned them in opposite rank order. Magnitudes were stable to ~0.002; the ranking was not. Divergence over the full distribution is unaffected, which is the argument for treating it rather than top-1 as load-bearing. PR 3's Top-1 lens should mark near-ties rather than presenting a bare winner.
 - **The normalizer's fixtures are the spec's own correction.** The spec predicted two response shapes and was wrong; both llama.cpp endpoints return the same modern form. Any change to `normalizer.py` must keep the fixture tests passing, and a new provider needs a captured fixture before it is claimed as supported.
 - **`analysis.py` carries the methodology** and therefore most of the coverage. The three properties to guard are: the `other` bucket makes the support sum to 1, mixed-K cells are cut to `min(K)`, and probes have three states rather than two.
 - **`temperature` is 1.0 and must stay 1.0.** Zero collapses the distribution being measured. This is the single easiest thing to "fix" wrongly.
