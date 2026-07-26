@@ -37,6 +37,29 @@ The printed path must be inside
 main checkout or site-packages. The verified environment is Python 3.12.11,
 pytest 8.4.2, and Ruff 0.15.22.
 
+## Governing Test Boundary
+
+This section supersedes every legacy test-file reference below.
+
+- App-independent store and model contracts are tested directly in
+  `Tests/UI/test_pending_handoff_store.py`.
+- Application producers, screen consumers, mounted retry behavior, and
+  cancellation/rollback injection are tested in
+  `Tests/UI/test_pending_handoffs_full_app.py` using a normal production
+  `TldwCli()`, `app.run_test()`, and the routed production `ChatScreen`.
+- Narrow payloads, adapters, barriers, and patched method side effects may
+  control a mounted production object. They must not impersonate the app,
+  screen, or destination lifecycle.
+- Do not add, modify, run, or cite handoff evidence from
+  `Tests/UI/test_chat_first_handoffs.py`,
+  `Tests/UI/test_console_live_work_handoffs.py`,
+  `Tests/UI/test_console_command_composer.py`,
+  `Tests/UI/test_ux_audit_smoke.py`, or any other suite that uses a custom
+  `App`/`TldwCli` subclass, unbound `TldwCli` calls, `SimpleNamespace`,
+  `MagicMock`, `object.__new__(TldwCli)`, or a screen/destination harness.
+- Existing full-production-app suites may be used only after their construction
+  path is inspected and shown to satisfy this boundary.
+
 ## File Structure
 
 - Create `tldw_chatbook/UI/Navigation/pending_handoff_store.py`: channel enum, opaque claims, typed normalization/copying, and revisioned claim settlement.
@@ -45,10 +68,11 @@ pytest 8.4.2, and Ruff 0.15.22.
 - Modify `tldw_chatbook/UI/Screens/chat_screen.py`: migrate all three consumers and add exact ephemeral-tab rollback.
 - Modify `tldw_chatbook/Chat/console_live_work.py`: ensure nested launch payload reconstruction is structurally detached; do not change visible serialization.
 - Create `Tests/UI/test_pending_handoff_store.py`: protocol, copying, thread-affinity, memory-only, and privacy tests.
-- Modify `Tests/UI/test_chat_first_handoffs.py`: Chat producer/consumer settlement and rollback/cancellation tests.
-- Modify `Tests/UI/test_console_live_work_handoffs.py`: Console launch producer/transfer and mounted behavior.
-- Modify `Tests/UI/test_console_command_composer.py`: prompt success, terminal, transient, replacement, and resume behavior.
-- Modify `Tests/UI/test_ux_audit_smoke.py` and `Tests/UI/test_product_maturity_phase1_core_loop.py`: mounted smoke fixtures use the owner.
+- Create `Tests/UI/test_pending_handoffs_full_app.py`: full-production-app
+  producer/consumer settlement, mounted behavior, prompt retry, and exact Chat
+  rollback/cancellation tests.
+- Modify only full-production-app maturity coverage after inspecting its
+  construction path; otherwise replace that evidence in the new full-app suite.
 - Modify `Tests/test_application_state_ownership.py`: reject the three raw app fields and direct bypasses.
 
 ## Task 1: Implement the Revisioned Single-Slot Protocol
@@ -214,7 +238,7 @@ Change only the copy boundary in `ConsoleLiveWorkLaunch.from_values()`/`to_pendi
 Run:
 
 ```bash
-pytest Tests/UI/test_pending_handoff_store.py Tests/UI/test_console_live_work_handoffs.py -q -k "model or payload or pending_handoff_store"
+pytest Tests/UI/test_pending_handoff_store.py -q
 ```
 
 Expected: PASS.
@@ -222,7 +246,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit the protocol**
 
 ```bash
-git add tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Navigation/__init__.py tldw_chatbook/Chat/console_live_work.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_console_live_work_handoffs.py
+git add tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Navigation/__init__.py tldw_chatbook/Chat/console_live_work.py Tests/UI/test_pending_handoff_store.py Docs/superpowers/plans/2026-07-26-task-645-chat-console-handoffs.md
 git commit -m "feat(navigation): add revisioned handoff owner (task-645)"
 ```
 
@@ -231,13 +255,11 @@ git commit -m "feat(navigation): add revisioned handoff owner (task-645)"
 **Files:**
 
 - Modify: `tldw_chatbook/app.py`
-- Modify: `Tests/UI/test_chat_first_handoffs.py`
-- Modify: `Tests/UI/test_console_live_work_handoffs.py`
-- Modify: `Tests/UI/test_console_command_composer.py`
+- Create: `Tests/UI/test_pending_handoffs_full_app.py`
 
 - [ ] **Step 1: Update producer tests to require stage-before-navigation**
 
-Construct `app.pending_handoffs = PendingHandoffStore()` in app-like fixtures. Assert each producer:
+Mount a normal production `TldwCli()` and assert each producer:
 
 1. stages the correct normalized channel;
 2. posts `NavigateToScreen(TAB_CHAT)` only after successful staging;
@@ -252,7 +274,7 @@ Patch `post_message` with a side effect that claims the channel, proving the val
 Run:
 
 ```bash
-pytest Tests/UI/test_chat_first_handoffs.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_console_command_composer.py -q -k "stores_payload or producer or stage or navigate"
+pytest Tests/UI/test_pending_handoffs_full_app.py -q -k "producer or stage or navigate"
 ```
 
 Expected: FAIL while producers assign raw app attributes.
@@ -285,7 +307,7 @@ Catch only normalization/copy errors at this boundary, emit bounded recovery wit
 Run:
 
 ```bash
-pytest Tests/UI/test_chat_first_handoffs.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_console_command_composer.py -q -k "open_chat or open_console or stage_console"
+pytest Tests/UI/test_pending_handoffs_full_app.py -q -k "open_chat or open_console or stage_console"
 ```
 
 Expected: PASS.
@@ -293,7 +315,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit producer migration**
 
 ```bash
-git add tldw_chatbook/app.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_console_command_composer.py
+git add tldw_chatbook/app.py Tests/UI/test_pending_handoffs_full_app.py
 git commit -m "refactor(app): stage Chat and Console handoffs through owner (task-645)"
 ```
 
@@ -302,8 +324,7 @@ git commit -m "refactor(app): stage Chat and Console handoffs through owner (tas
 **Files:**
 
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
-- Modify: `Tests/UI/test_console_live_work_handoffs.py`
-- Modify: `Tests/UI/test_console_command_composer.py`
+- Modify: `Tests/UI/test_pending_handoffs_full_app.py`
 
 - [ ] **Step 1: Write failing settlement tests**
 
@@ -329,7 +350,7 @@ Prompt insert:
 Run:
 
 ```bash
-pytest Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_console_command_composer.py -q -k "pending or replacement or release or acknowledge or resume"
+pytest Tests/UI/test_pending_handoffs_full_app.py -q -k "console and (pending or replacement or release or acknowledge or resume)"
 ```
 
 Expected: new replacement-race cases FAIL because consumers clear raw fields.
@@ -386,7 +407,7 @@ Never log `claim`, `claim.value`, composer text, or traceback locals.
 Run:
 
 ```bash
-pytest Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_console_command_composer.py -q
+pytest Tests/UI/test_pending_handoffs_full_app.py -q -k console
 ```
 
 Expected: PASS.
@@ -394,7 +415,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit Console consumption**
 
 ```bash
-git add tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_console_command_composer.py
+git add tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_pending_handoffs_full_app.py
 git commit -m "refactor(console): settle owned handoff claims (task-645)"
 ```
 
@@ -403,8 +424,7 @@ git commit -m "refactor(console): settle owned handoff claims (task-645)"
 **Files:**
 
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
-- Modify: `Tests/UI/test_chat_first_handoffs.py`
-- Modify: `Tests/UI/test_ux_audit_smoke.py`
+- Modify: `Tests/UI/test_pending_handoffs_full_app.py`
 
 - [ ] **Step 1: Write deterministic failure/cancellation injection tests**
 
@@ -428,7 +448,7 @@ Assert cleanup never closes a pre-existing tab and always receives the exact ID 
 Run:
 
 ```bash
-pytest Tests/UI/test_chat_first_handoffs.py -q -k "cancel or rollback or cleanup or replacement or partial"
+pytest Tests/UI/test_pending_handoffs_full_app.py -q -k "chat and (cancel or rollback or cleanup or replacement or partial)"
 ```
 
 Expected: FAIL because current code retains the raw pending value and partial tab after post-creation failures.
@@ -473,7 +493,7 @@ Do not use a `finally` block that can settle a newer claim; settle only the exac
 Run:
 
 ```bash
-pytest Tests/UI/test_chat_first_handoffs.py Tests/UI/test_ux_audit_smoke.py -q
+pytest Tests/UI/test_pending_handoffs_full_app.py -q -k chat
 ```
 
 Expected: PASS.
@@ -481,7 +501,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit transactional Chat consumption**
 
 ```bash
-git add tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_ux_audit_smoke.py
+git add tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_pending_handoffs_full_app.py
 git commit -m "fix(chat): roll back failed owned handoffs (task-645)"
 ```
 
@@ -490,10 +510,8 @@ git commit -m "fix(chat): roll back failed owned handoffs (task-645)"
 **Files:**
 
 - Modify: `Tests/UI/test_pending_handoff_store.py`
-- Modify: `Tests/UI/test_chat_first_handoffs.py`
-- Modify: `Tests/UI/test_console_command_composer.py`
+- Modify: `Tests/UI/test_pending_handoffs_full_app.py`
 - Modify: `Tests/test_application_state_ownership.py`
-- Modify: `Tests/UI/test_product_maturity_phase1_core_loop.py`
 
 - [ ] **Step 1: Add log-redaction sentinels**
 
@@ -510,14 +528,16 @@ Reject production:
 
 Allow the owner module's private internals and test fixtures only.
 
-- [ ] **Step 3: Update the product-maturity smoke fixture**
+- [ ] **Step 3: Keep lifecycle evidence on the full production app**
 
-Replace its raw pending field with `PendingHandoffStore`, stage through `HandoffChannel.CHAT`, and retain the visible first-send assertions. Do not change the product behavior being tested.
+Retain the visible first-send, Console insert, and recovery assertions in
+`Tests/UI/test_pending_handoffs_full_app.py`. Do not modify a legacy maturity
+fixture that impersonates the application.
 
 - [ ] **Step 4: Run guard and sentinel tests**
 
 ```bash
-pytest Tests/UI/test_pending_handoff_store.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_console_command_composer.py Tests/UI/test_product_maturity_phase1_core_loop.py Tests/test_application_state_ownership.py -q
+pytest Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/test_application_state_ownership.py -q
 ```
 
 Expected: PASS.
@@ -525,7 +545,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit guards**
 
 ```bash
-git add Tests/UI/test_pending_handoff_store.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_console_command_composer.py Tests/UI/test_product_maturity_phase1_core_loop.py Tests/test_application_state_ownership.py
+git add Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/test_application_state_ownership.py
 git commit -m "test(handoffs): guard Chat and Console ownership (task-645)"
 ```
 
@@ -539,10 +559,10 @@ git commit -m "test(handoffs): guard Chat and Console ownership (task-645)"
 - [ ] **Step 1: Run focused and mounted verification**
 
 ```bash
-pytest Tests/UI/test_pending_handoff_store.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_console_command_composer.py Tests/UI/test_ux_audit_smoke.py Tests/UI/test_product_maturity_phase1_core_loop.py Tests/test_application_state_ownership.py -q
+pytest Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/test_application_state_ownership.py -q
 python -m compileall -q tldw_chatbook/UI/Navigation tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Chat/console_live_work.py
-python -m ruff check tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Chat/console_live_work.py tldw_chatbook/app.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_console_command_composer.py Tests/test_application_state_ownership.py
-python -m ruff format --check tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Navigation/__init__.py tldw_chatbook/Chat/console_live_work.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_console_command_composer.py Tests/test_application_state_ownership.py
+python -m ruff check tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Chat/console_live_work.py tldw_chatbook/app.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/test_application_state_ownership.py
+python -m ruff format --check tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Navigation/__init__.py tldw_chatbook/Chat/console_live_work.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/test_application_state_ownership.py
 git diff --check
 ```
 
