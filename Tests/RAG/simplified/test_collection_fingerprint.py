@@ -116,3 +116,36 @@ def test_provenance_tolerates_non_numeric_chunk_fields():
     p = collection_provenance(c)
     assert p["chunk_size"] == "not-a-number"
     assert p["chunk_overlap"] == "also-not-a-number"
+
+
+def test_hybrid_basic_builtin_profile_fingerprint_is_stable_across_the_hf_model_id_fix(tmp_path):
+    """task-640 AC#7: the builtin "hybrid_basic" RAG profile's embedding
+    model id ("all-MiniLM-L6-v2", missing its "sentence-transformers/" org
+    prefix) 404s against the real HF Hub. The fix normalizes that id ONLY
+    at the point EmbeddingsServiceWrapper hands a model_name_or_path to the
+    HF loader (RAG_Search/simplified/embeddings_wrapper.py's _build_config)
+    -- it must NEVER touch RAGConfig.embedding.model, the exact field this
+    module's fingerprint_collection() hashes.
+
+    This test proves that: fingerprint_collection() lives entirely in
+    collection_fingerprint.py, with zero import/call dependency on
+    embeddings_wrapper.py, so the pinned golden value below can only ever
+    change if _index_fields' input set or embedding.model's stored value
+    changes -- neither of which item 4 touches. The golden value was
+    computed directly from this same (unmodified) builtin profile
+    definition (RAG_Search/config_profiles.py) before the embeddings_
+    wrapper.py loader fix landed, confirming byte-for-byte stability.
+    """
+    from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager
+
+    mgr = ConfigProfileManager(profiles_dir=tmp_path / "profiles")
+    profile = mgr.get_profile("hybrid_basic")
+    assert profile is not None
+
+    # The fingerprint-determining field itself must still be the literal,
+    # unprefixed id -- proving item 4 did not "fix" it by editing the
+    # builtin profile definition (option (b)/(c) from the task, explicitly
+    # rejected as unsafe/heavy for existing installs).
+    assert profile.rag_config.embedding.model == "all-MiniLM-L6-v2"
+
+    assert fingerprint_collection(profile.rag_config) == "bf912f0fe11b"

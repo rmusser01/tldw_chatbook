@@ -114,6 +114,38 @@ def _ensure_embeddings_imported():
         return False
 
 
+# task-640 AC#7 (the "additional finding" bundled into the same review,
+# not one of the original 6 numbered items -- see fd_protection.py's/
+# ingestion_indexing.py's "item N" comments for those; do not confuse this
+# with THEIR "item 4", which is the unrelated protect_file_descriptors()
+# lock): bare, org-prefix-less HuggingFace model ids that are known to
+# 404 against the real Hub API when passed through verbatim as
+# `model_name_or_path` -- currently just "all-MiniLM-L6-v2", the builtin
+# "hybrid_basic"/"bm25_basic"/"fast" RAG profiles' default embedding model
+# (RAG_Search/config_profiles.py), missing its "sentence-transformers/" org
+# prefix (the canonical id is "sentence-transformers/all-MiniLM-L6-v2").
+# Every OTHER builtin profile's embedding.model already carries a real org
+# prefix (sentence-transformers/, BAAI/, microsoft/); this table is
+# deliberately a narrow, explicit alias map -- NOT a "no slash -> prepend
+# sentence-transformers/" heuristic, which would silently break a
+# legitimately slash-free top-level HF model id like "bert-base-uncased".
+#
+# Applied ONLY in `_build_config` below, to the `model_name_or_path` handed
+# to the underlying HuggingFace loader -- NEVER to `model_name`/`self.
+# model_name` itself, which is exactly the string that round-trips as
+# `RAGConfig.embedding.model`, the collection-fingerprint-determining field
+# (`collection_fingerprint.py`'s `_index_fields`: `("embedding.model", e.
+# model)`). Changing THAT string for an existing builtin would silently
+# re-fingerprint (and orphan) every user's collection built under the old,
+# broken-but-stable id; normalizing only the HTTP-facing id here keeps the
+# fingerprint byte-for-byte stable while still loading the CORRECT model
+# instead of silently 404-ing into the dim=768 default (see rag_service.
+# py's `_get_embedding_dimension`).
+_BARE_HF_MODEL_ID_ALIASES = {
+    "all-MiniLM-L6-v2": "sentence-transformers/all-MiniLM-L6-v2",
+}
+
+
 class EmbeddingsServiceWrapper:
     """
     Wrapper around EmbeddingFactory to provide simplified interface for RAG.
@@ -365,7 +397,11 @@ class EmbeddingsServiceWrapper:
         else:
             # HuggingFace model (default)
             provider = "huggingface"
-            model_path = model_name
+            # task-640 AC#7: canonicalize known bare model ids that 404
+            # against the real Hub when passed through as-is. This must
+            # NEVER touch `model_name` itself -- see
+            # _BARE_HF_MODEL_ID_ALIASES' docstring above for why.
+            model_path = _BARE_HF_MODEL_ID_ALIASES.get(model_name, model_name)
 
             # Build HuggingFace configuration
             model_config = {

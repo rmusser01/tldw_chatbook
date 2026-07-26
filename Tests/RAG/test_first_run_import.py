@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 import pytest
 from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager, ProfileConfig
 
@@ -745,3 +748,97 @@ def test_ensure_imported_profile_does_not_mark_when_fresh_import_pointer_write_f
     assert result2 is None  # profile already exists -- this is the healing path now
     assert ptr["v"] == ac._IMPORTED_ID
     assert ptr["marker"] is True
+
+
+# --- task-640 item 3: real on-disk config.toml integration coverage for
+# _has_legacy_rag_config_material(). Every test above exercises it only
+# against `_wire_legacy_rag_config`'s monkeypatched `get_cli_setting` fake --
+# these tests instead write a REAL config.toml to the (already test-isolated,
+# via the autouse `isolate_test_environment` fixture in Tests/conftest.py)
+# TLDW_CONFIG_PATH and call the function with NO get_cli_setting patch at
+# all, so the real tomllib-parsing path (tldw_chatbook.config.
+# load_cli_config_and_ensure_existence -> get_cli_setting) is what's under
+# test, closing the gap between the unit-level fakes and reality. ---
+
+
+def _write_config_toml(text: str) -> None:
+    """Write real TOML content to this test's isolated TLDW_CONFIG_PATH.
+
+    `isolate_test_environment` (Tests/conftest.py, autouse) already points
+    TLDW_CONFIG_PATH at a fresh, per-test tmp_path location before any test
+    body runs -- writing directly to that path (rather than introducing a
+    second override) is what makes this a real round-trip through
+    `tldw_chatbook.config`'s actual load/cache path: `_get_effective_config_
+    path()` resolves the env var, and the module-level config cache is keyed
+    by that resolved path, so each test's unique tmp_path guarantees a real
+    fresh parse rather than a stale cached config from a previous test.
+    """
+    import tldw_chatbook.config as config_module
+
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(text, encoding="utf-8")
+    # Belt-and-braces: force a reload even if some earlier-in-process code
+    # already touched this exact path (shouldn't happen given tmp_path's
+    # per-test uniqueness, but this keeps the test honest either way rather
+    # than silently passing against a stale in-memory cache).
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+
+def test_has_legacy_rag_config_material_true_against_a_real_config_toml_with_legacy_section():
+    """task-640 item 3: a real config.toml with a hand-set legacy
+    [AppRAGSearchConfig.rag.search] section (the task-635 "upgrading from
+    before the profile system existed" signal) must be detected via the
+    REAL tomllib-parsing path, no get_cli_setting monkeypatch involved."""
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        _has_legacy_rag_config_material,
+    )
+
+    _write_config_toml(
+        """
+[AppRAGSearchConfig.rag.search]
+default_top_k = 25
+score_threshold = 0.42
+"""
+    )
+
+    assert _has_legacy_rag_config_material() is True
+
+
+def test_has_legacy_rag_config_material_false_against_a_fresh_install_config_toml():
+    """task-640 item 3: a real config.toml with NO [AppRAGSearchConfig.rag]
+    section at all (the genuine fresh-install case) must resolve to False
+    via the real parsing path -- ensure_imported_profile() must leave a
+    brand-new user on the default builtin profile rather than auto-creating
+    'Imported settings' underneath them."""
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        _has_legacy_rag_config_material,
+    )
+
+    _write_config_toml(
+        """
+[rag.service]
+profile = "hybrid_basic"
+"""
+    )
+
+    assert _has_legacy_rag_config_material() is False
+
+
+def test_has_legacy_rag_config_material_false_when_the_legacy_section_is_present_but_empty():
+    """An [AppRAGSearchConfig.rag] table that exists in the TOML but has no
+    sub-keys at all (e.g. left behind by a partial hand-edit) must still
+    read as "nothing to preserve" -- matches the function's documented
+    contract (non-empty dict required), verified here against the real
+    parser rather than a hand-built fake dict."""
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        _has_legacy_rag_config_material,
+    )
+
+    _write_config_toml(
+        """
+[AppRAGSearchConfig.rag]
+"""
+    )
+
+    assert _has_legacy_rag_config_material() is False
