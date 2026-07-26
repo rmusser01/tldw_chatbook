@@ -23,6 +23,96 @@ def _make_app_like(
     )
 
 
+def test_default_policy_path_follows_effective_config_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+):
+    import tldw_chatbook.runtime_policy.bootstrap as bootstrap
+    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
+
+    config_path = tmp_path / "custom" / "config.toml"
+    config_path.parent.mkdir()
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    app = SimpleNamespace(app_config={})
+    constructed: list[RuntimeSourceStateStore] = []
+    real_store_type = RuntimeSourceStateStore
+
+    def capture_store(path, **kwargs):
+        store = real_store_type(path, **kwargs)
+        constructed.append(store)
+        return store
+
+    monkeypatch.setattr(bootstrap, "RuntimeSourceStateStore", capture_store)
+
+    bootstrap.load_runtime_policy_for_app(app)
+
+    assert constructed[0].path == config_path.parent / "runtime_policy.json"
+
+
+def test_config_override_does_not_read_fallback_or_migrate_default_runtime_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+):
+    import tldw_chatbook.config as config
+    import tldw_chatbook.runtime_policy.bootstrap as bootstrap
+    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
+
+    default_config_path = tmp_path / "default" / "config.toml"
+    default_config_path.parent.mkdir()
+    default_policy_path = default_config_path.parent / "runtime_policy.json"
+    RuntimeSourceStateStore(default_policy_path).save(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="DEFAULT-POLICY-SENTINEL",
+            server_configured=True,
+        )
+    )
+    override_config_path = tmp_path / "custom" / "config.toml"
+    override_config_path.parent.mkdir()
+    override_policy_path = override_config_path.parent / "runtime_policy.json"
+    monkeypatch.setattr(config, "DEFAULT_CONFIG_PATH", default_config_path)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(override_config_path))
+    app = SimpleNamespace(app_config={})
+
+    context = bootstrap.load_runtime_policy_for_app(app)
+
+    assert context.state == RuntimeSourceState()
+    assert not override_policy_path.exists()
+    assert RuntimeSourceStateStore(default_policy_path).load().active_server_id == (
+        "DEFAULT-POLICY-SENTINEL"
+    )
+
+
+@pytest.mark.skipif(
+    __import__("os").name != "posix",
+    reason="POSIX namespace contract",
+)
+def test_explicit_runtime_policy_path_never_gains_default_directory_authority(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+):
+    import tldw_chatbook.config as config
+    import tldw_chatbook.runtime_policy.bootstrap as bootstrap
+    from tldw_chatbook.Utils.private_paths import PrivatePathError
+
+    default_config_path = tmp_path / "default" / "config.toml"
+    explicit_policy_path = default_config_path.parent / "runtime_policy.json"
+    monkeypatch.setattr(config, "DEFAULT_CONFIG_PATH", default_config_path)
+    monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
+    app = SimpleNamespace(
+        app_config={
+            "tldw_api": {
+                "base_url": "https://explicit-path.example.test/api",
+            }
+        }
+    )
+
+    with pytest.raises(PrivatePathError):
+        bootstrap.load_runtime_policy_for_app(app, path=explicit_policy_path)
+
+    assert not explicit_policy_path.parent.exists()
+
+
 def test_app_state_round_trips_runtime_source_state():
     original = AppState(
         runtime_source=RuntimeSourceState(
@@ -246,6 +336,43 @@ def test_load_runtime_policy_for_app_derives_and_persists_authoritative_server_b
     assert store.load() == context.state
     assert app_like.current_runtime_backend == "local"
     assert app_like.runtime_backend == "local"
+
+
+def test_load_runtime_policy_for_app_commits_synchronized_state_as_revision_one():
+    from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
+
+    loaded = RuntimeSourceState(
+        active_source="server",
+        active_server_id="https://old.example.test/api",
+        server_configured=True,
+    )
+
+    class RecordingStore:
+        def __init__(self) -> None:
+            self.saved_states: list[RuntimeSourceState] = []
+
+        def load(self) -> RuntimeSourceState:
+            return loaded
+
+        def save(self, state: RuntimeSourceState) -> None:
+            self.saved_states.append(state)
+
+    store = RecordingStore()
+    app = SimpleNamespace(
+        app_config={
+            "tldw_api": {
+                "base_url": "https://new.example.test/v1",
+            }
+        }
+    )
+
+    context = load_runtime_policy_for_app(app, store=store)
+
+    state, revision = context.snapshot()
+    assert revision == 1
+    assert state.active_server_id == "https://new.example.test/v1"
+    assert store.saved_states == [state]
+    assert app.active_server_id == state.active_server_id
 
 
 def test_load_runtime_policy_for_app_supports_legacy_url_alias_and_provider_resolution(
@@ -585,11 +712,15 @@ def test_reconcile_saved_screen_state_drops_wrong_server_snapshot_against_bootst
     store = RuntimeSourceStateStore(tmp_path / "runtime_policy.json")
     app_like = _make_app_like(base_url="https://server-b.example.com/api/")
     context = load_runtime_policy_for_app(app_like, store=store)
-    context.state = RuntimeSourceState(
-        active_source="server",
-        active_server_id=context.state.active_server_id,
-        server_configured=context.state.server_configured,
-        last_known_server_label=context.state.last_known_server_label,
+    _, revision = context.snapshot()
+    assert context.commit_state(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id=context.state.active_server_id,
+            server_configured=context.state.server_configured,
+            last_known_server_label=context.state.last_known_server_label,
+        ),
+        expected_revision=revision,
     )
     saved_state = {
         "chat_state": {
@@ -718,3 +849,122 @@ async def test_handle_runtime_backend_changed_forwards_resolved_authoritative_ba
 
     assert app_like.runtime_policy.state.active_source == "local"
     assert forwarded == ["local"]
+
+
+@pytest.mark.asyncio
+async def test_handle_runtime_backend_changed_persistence_failure_keeps_prior_authority_and_projection(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
+
+    path_sentinel = "RUNTIME-PERSIST-PATH-SENTINEL-28c"
+    server_sentinel = "runtime-persist-server-sentinel-a64"
+    initial = RuntimeSourceState(
+        active_source="server",
+        active_server_id=f"https://{server_sentinel}.example/api",
+        server_configured=True,
+        last_known_server_label=f"{server_sentinel}.example",
+    )
+
+    class RaisingStore:
+        def load(self) -> RuntimeSourceState:
+            return initial
+
+        def save(self, state: RuntimeSourceState) -> None:
+            raise OSError(path_sentinel)
+
+    forwarded: list[str] = []
+    notifications: list[tuple[str, str]] = []
+
+    async def screen_callback(runtime_backend: str) -> None:
+        forwarded.append(runtime_backend)
+
+    app_like = SimpleNamespace(
+        app_config={
+            "tldw_api": {
+                "base_url": f"https://{server_sentinel}.example/api",
+            }
+        },
+        screen=SimpleNamespace(handle_runtime_backend_changed=screen_callback),
+        notify=lambda message, *, severity: notifications.append((message, severity)),
+    )
+    context = load_runtime_policy_for_app(app_like, store=RaisingStore())
+    prior_snapshot = context.snapshot()
+    prior_projection = (
+        app_like.current_runtime_backend,
+        app_like.runtime_backend,
+        app_like.active_server_id,
+    )
+    messages: list[str] = []
+    sink = app_module.logger.add(
+        lambda message: messages.append(message.record["message"]),
+        level="WARNING",
+    )
+    try:
+        await TldwCli.handle_runtime_backend_changed(app_like, "local")
+    finally:
+        app_module.logger.remove(sink)
+
+    assert context.snapshot() == prior_snapshot
+    assert (
+        app_like.current_runtime_backend,
+        app_like.runtime_backend,
+        app_like.active_server_id,
+    ) == prior_projection
+    assert forwarded == []
+    assert notifications == [
+        (
+            "Runtime source could not be changed; the previous source remains active.",
+            "warning",
+        )
+    ]
+    assert len(messages) == 1
+    assert "OSError" in messages[0]
+    assert path_sentinel not in messages[0]
+    assert server_sentinel not in messages[0]
+
+
+def test_runtime_policy_projection_writes_only_compatibility_attributes_without_app_state():
+    from tldw_chatbook.runtime_policy.bootstrap import _apply_runtime_policy_to_app
+
+    class ProjectionApp:
+        def __init__(self) -> None:
+            object.__setattr__(self, "writes", [])
+
+        def __setattr__(self, name, value) -> None:
+            self.writes.append((name, value))
+            object.__setattr__(self, name, value)
+
+    app = ProjectionApp()
+    state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="server-projection",
+        server_configured=True,
+    )
+
+    _apply_runtime_policy_to_app(app, state)
+
+    assert app.writes == [
+        ("current_runtime_backend", "server"),
+        ("runtime_backend", "server"),
+        ("active_server_id", "server-projection"),
+    ]
+
+
+def test_runtime_policy_projection_never_reads_trap_app_state_property():
+    from tldw_chatbook.runtime_policy.bootstrap import _apply_runtime_policy_to_app
+
+    class TrapApp:
+        @property
+        def app_state(self):
+            raise AssertionError("projection must not access AppState")
+
+    app = TrapApp()
+
+    _apply_runtime_policy_to_app(app, RuntimeSourceState())
+
+    assert app.current_runtime_backend == "local"
+    assert app.runtime_backend == "local"
+    assert app.active_server_id is None

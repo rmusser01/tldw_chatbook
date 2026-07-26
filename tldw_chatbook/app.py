@@ -506,7 +506,6 @@ from tldw_chatbook.runtime_policy.engine import PolicyEngine  # noqa: E402
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer  # noqa: E402
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY  # noqa: E402
 from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState  # noqa: E402
-from tldw_chatbook.state import AppState  # noqa: E402
 from tldw_chatbook.Auth_Account_Interop import (  # noqa: E402
     AuthAccountScopeService,
     ServerAuthAccountService,
@@ -3031,7 +3030,6 @@ class TldwCli(
         self.acp_runtime_session_state = (
             self.acp_runtime_process_manager.session_state()
         )
-        self.app_state = AppState()
         self.runtime_policy = load_runtime_policy_for_app(self)
         self.service_policy_enforcer = (
             ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
@@ -4904,9 +4902,22 @@ class TldwCli(
                 previous_server_id = getattr(
                     self.runtime_policy.state, "active_server_id", None
                 )
-                updated_state = set_authoritative_runtime_source(
-                    self, normalized_backend
-                )
+                try:
+                    updated_state = set_authoritative_runtime_source(
+                        self, normalized_backend
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Runtime source change was not committed "
+                        "(exception_category={}).",
+                        type(exc).__name__,
+                    )
+                    self.notify(
+                        "Runtime source could not be changed; "
+                        "the previous source remains active.",
+                        severity="warning",
+                    )
+                    return
                 server_context_provider = getattr(self, "server_context_provider", None)
                 invalidate_for_server_switch = getattr(
                     server_context_provider,
@@ -4917,9 +4928,6 @@ class TldwCli(
                     invalidate_for_server_switch(
                         previous_server_id, updated_state.active_server_id
                     )
-            else:
-                self.current_runtime_backend = normalized_backend
-                self.runtime_backend = normalized_backend
 
         resolved_backend = normalized_backend
         runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)

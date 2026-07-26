@@ -2,10 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping
+import threading
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
-from tldw_chatbook.config import DEFAULT_CONFIG_PATH, resolve_tldw_api_config
+from loguru import logger
+
+from tldw_chatbook.Utils.private_paths import lexical_path
+from tldw_chatbook.config import (
+    application_owned_config_directory,
+    get_cli_config_path,
+    resolve_tldw_api_config,
+)
 
 from .source_state import RuntimeSourceStateStore
 from .types import RuntimeSourceState
@@ -13,17 +21,63 @@ from .types import RuntimeSourceState
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import TLDWAPIClient
 
-DEFAULT_RUNTIME_POLICY_PATH = DEFAULT_CONFIG_PATH.parent / "runtime_policy.json"
 _VALID_RUNTIME_SOURCES = {"local", "server"}
 
 
-@dataclass(slots=True)
 class RuntimePolicyContext:
-    state: RuntimeSourceState
-    store: RuntimeSourceStateStore
+    __slots__ = (
+        "_owner_thread_id",
+        "_publish",
+        "_snapshot",
+        "_store",
+    )
 
-    def persist(self) -> None:
-        self.store.save(self.state)
+    def __init__(
+        self,
+        state: RuntimeSourceState,
+        store: RuntimeSourceStateStore,
+        *,
+        publish: Callable[[RuntimeSourceState], None] | None = None,
+    ) -> None:
+        self._snapshot = (state, 0)
+        self._owner_thread_id = threading.get_ident()
+        self._publish = publish
+        self._store = store
+
+    @property
+    def state(self) -> RuntimeSourceState:
+        return self._snapshot[0]
+
+    def snapshot(self) -> tuple[RuntimeSourceState, int]:
+        return self._snapshot
+
+    def commit_state(
+        self,
+        candidate: RuntimeSourceState,
+        *,
+        expected_revision: int,
+    ) -> bool:
+        self._assert_owner_thread()
+        _, current_revision = self._snapshot
+        if expected_revision != current_revision:
+            return False
+
+        self._store.save(candidate)
+        self._snapshot = (candidate, current_revision + 1)
+        if self._publish is not None:
+            try:
+                self._publish(candidate)
+            except Exception as exc:
+                logger.warning(
+                    "Runtime policy projection failed after durable commit "
+                    "(exception_category={}).",
+                    type(exc).__name__,
+                )
+        return True
+
+    def _assert_owner_thread(self) -> None:
+        if threading.get_ident() != self._owner_thread_id:
+            raise RuntimeError("runtime policy mutation requires the owner thread")
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,22 +193,38 @@ def load_runtime_policy_for_app(
     store: RuntimeSourceStateStore | None = None,
     path: str | Path | None = None,
 ) -> RuntimePolicyContext:
-    runtime_store = store or RuntimeSourceStateStore(
-        path or DEFAULT_RUNTIME_POLICY_PATH
-    )
+    if store is None:
+        effective_config_path = get_cli_config_path()
+        selected_path = (
+            lexical_path(path)
+            if path is not None
+            else lexical_path(effective_config_path.parent / "runtime_policy.json")
+        )
+        runtime_store = RuntimeSourceStateStore(
+            selected_path,
+            application_owned_directory=(
+                application_owned_config_directory(effective_config_path)
+                if path is None
+                else None
+            ),
+        )
+    else:
+        runtime_store = store
     loaded_state = runtime_store.load()
     synchronized_state = synchronize_runtime_source_state_with_app_config(
         loaded_state,
         getattr(app, "app_config", None),
     )
     context = RuntimePolicyContext(
-        state=synchronized_state,
+        state=loaded_state,
         store=runtime_store,
+        publish=lambda state: _apply_runtime_policy_to_app(app, state),
     )
-    if synchronized_state != loaded_state:
-        context.persist()
     setattr(app, "runtime_policy", context)
-    _apply_runtime_policy_to_app(app, context.state)
+    if synchronized_state != loaded_state:
+        context.commit_state(synchronized_state, expected_revision=0)
+    else:
+        _apply_runtime_policy_to_app(app, loaded_state)
     return context
 
 
@@ -175,8 +245,9 @@ def set_authoritative_runtime_source(
 ) -> RuntimeSourceState:
     normalized_source = str(active_source or "").strip().lower()
     context = ensure_runtime_policy_for_app(app)
+    state, revision = context.snapshot()
     if normalized_source not in _VALID_RUNTIME_SOURCES:
-        return context.state
+        return state
 
     configured_binding = derive_configured_server_binding(
         getattr(app, "app_config", None)
@@ -185,9 +256,7 @@ def set_authoritative_runtime_source(
     if resolved_source == "server" and not configured_binding.server_configured:
         resolved_source = "local"
 
-    base_state = _clear_server_probe_state_if_binding_changed(
-        context.state, configured_binding
-    )
+    base_state = _clear_server_probe_state_if_binding_changed(state, configured_binding)
     updated_state = replace(
         base_state,
         active_source=resolved_source,
@@ -195,10 +264,9 @@ def set_authoritative_runtime_source(
         server_configured=configured_binding.server_configured,
         last_known_server_label=configured_binding.last_known_server_label,
     )
-    context.state = updated_state
-    context.persist()
-    _apply_runtime_policy_to_app(app, updated_state)
-    return updated_state
+    if context.commit_state(updated_state, expected_revision=revision):
+        return updated_state
+    return context.snapshot()[0]
 
 
 def add_runtime_policy_snapshot(
@@ -323,10 +391,6 @@ def _apply_runtime_policy_to_app(app: Any, state: RuntimeSourceState) -> None:
     setattr(app, "current_runtime_backend", state.active_source)
     setattr(app, "runtime_backend", state.active_source)
     setattr(app, "active_server_id", state.active_server_id)
-
-    app_state = getattr(app, "app_state", None)
-    if app_state is not None:
-        app_state.runtime_source = state
 
 
 def _normalize_server_identity(raw_url: str) -> tuple[str | None, str | None]:

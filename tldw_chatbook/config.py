@@ -69,11 +69,17 @@ def get_cli_config_path() -> Path:
     return _get_effective_config_path()
 
 
-def _application_owned_config_directory(config_path: Path) -> Path | None:
+def application_owned_config_directory(config_path: Path) -> Path | None:
+    """Return the app-owned default config parent, never a custom parent."""
+
     if os.environ.get("TLDW_CONFIG_PATH"):
         return None
     default_path = lexical_path(DEFAULT_CONFIG_PATH)
-    return default_path.parent if config_path == default_path else None
+    return (
+        default_path.parent
+        if lexical_path(config_path) == default_path
+        else None
+    )
 
 
 def _report_config_path_posture(
@@ -3510,7 +3516,7 @@ def _load_cli_config_bootstrap_unlocked(
     # Start with the programmatic defaults defined in CONFIG_TOML_CONTENT
     loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
     bootstrap_succeeded = False
-    application_directory = _application_owned_config_directory(config_path)
+    application_directory = application_owned_config_directory(config_path)
     if application_directory is not None:
         directory_result = secure_private_directory(
             application_directory,
@@ -3707,7 +3713,7 @@ def _load_cli_config_bootstrap(
 def _prepare_config_parent(config_path: Path) -> Path | None:
     """Secure the default config directory or verify a custom parent."""
 
-    application_directory = _application_owned_config_directory(config_path)
+    application_directory = application_owned_config_directory(config_path)
     if application_directory is not None:
         result = secure_private_directory(
             application_directory,

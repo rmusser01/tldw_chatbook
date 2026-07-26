@@ -1,5 +1,6 @@
-"""
-Root application state container.
+"""Caller-owned serializable compatibility state containers.
+
+These legacy values are not the application's live state authority.
 """
 
 from dataclasses import dataclass, field
@@ -14,9 +15,9 @@ from .ui_state import UIState
 
 @dataclass
 class AppState:
-    """
-    Root state container for the entire application.
-    This is the single source of truth for all application state.
+    """Serializable compatibility aggregate owned by its caller.
+
+    ``TldwCli`` does not use this value as live application state.
     """
 
     # Sub-states

@@ -1,6 +1,6 @@
-"""
-State management module for tldw_chatbook application.
-Provides centralized state containers following best practices.
+"""Legacy caller-owned serialization compatibility containers.
+
+The application keeps live state with its narrow runtime and screen owners.
 """
 
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState

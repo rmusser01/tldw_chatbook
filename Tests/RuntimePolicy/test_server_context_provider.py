@@ -87,6 +87,7 @@ def _runtime_context(
     active_source: str = "server",
     active_server_id: str | None = "https://server.example.com/api",
     server_configured: bool = True,
+    runtime_store: SavingRuntimeStore | None = None,
 ) -> RuntimePolicyContext:
     return RuntimePolicyContext(
         state=RuntimeSourceState(
@@ -95,8 +96,16 @@ def _runtime_context(
             server_configured=server_configured,
             last_known_server_label="Server",
         ),
-        store=SavingRuntimeStore(),
+        store=runtime_store if runtime_store is not None else SavingRuntimeStore(),
     )
+
+
+def _commit_runtime_state(
+    runtime_context: RuntimePolicyContext,
+    state: RuntimeSourceState,
+) -> None:
+    _, revision = runtime_context.snapshot()
+    assert runtime_context.commit_state(state, expected_revision=revision)
 
 
 def _target_store(
@@ -667,11 +676,14 @@ def test_context_computes_api_key_headers_from_effective_auth_token(tmp_path):
 
 def test_context_capabilities_reflect_runtime_state_and_target_status(tmp_path):
     runtime_context = _runtime_context()
-    runtime_context.state = replace(
-        runtime_context.state,
-        server_reachability="reachable",
-        server_auth_state="authenticated",
-        last_known_server_label="Runtime Label",
+    _commit_runtime_state(
+        runtime_context,
+        replace(
+            runtime_context.state,
+            server_reachability="reachable",
+            server_auth_state="authenticated",
+            last_known_server_label="Runtime Label",
+        ),
     )
     provider = _provider(
         tmp_path,
@@ -737,13 +749,16 @@ def test_context_capabilities_update_when_active_server_runtime_state_changes(tm
     )
 
     first_context = provider.get_active_context()
-    runtime_context.state = RuntimeSourceState(
-        active_source="server",
-        active_server_id="https://backup.example.com/api",
-        server_configured=True,
-        server_reachability="unreachable",
-        server_auth_state="session_invalid",
-        last_known_server_label="Backup Runtime",
+    _commit_runtime_state(
+        runtime_context,
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="https://backup.example.com/api",
+            server_configured=True,
+            server_reachability="unreachable",
+            server_auth_state="session_invalid",
+            last_known_server_label="Backup Runtime",
+        ),
     )
     second_context = provider.get_active_context()
 
@@ -822,8 +837,9 @@ def test_build_client_raises_server_unavailable_when_runtime_state_is_unreachabl
         "https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key"
     )
     runtime_context = _runtime_context()
-    runtime_context.state = replace(
-        runtime_context.state, server_reachability="unreachable"
+    _commit_runtime_state(
+        runtime_context,
+        replace(runtime_context.state, server_reachability="unreachable"),
     )
     provider = _provider(
         tmp_path,
@@ -853,8 +869,9 @@ def test_build_client_raises_auth_required_when_runtime_state_requires_auth(tmp_
         "https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key"
     )
     runtime_context = _runtime_context()
-    runtime_context.state = replace(
-        runtime_context.state, server_auth_state="auth_required"
+    _commit_runtime_state(
+        runtime_context,
+        replace(runtime_context.state, server_auth_state="auth_required"),
     )
     provider = _provider(
         tmp_path,
@@ -884,8 +901,9 @@ def test_build_client_raises_stale_authorization_when_runtime_session_invalid(tm
         "https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key"
     )
     runtime_context = _runtime_context()
-    runtime_context.state = replace(
-        runtime_context.state, server_auth_state="session_invalid"
+    _commit_runtime_state(
+        runtime_context,
+        replace(runtime_context.state, server_auth_state="session_invalid"),
     )
     provider = _provider(
         tmp_path,
@@ -1182,9 +1200,12 @@ def test_clear_all_credentials_blocks_other_legacy_backed_profile_after_server_s
     )
 
     provider.clear_all_credentials()
-    runtime_context.state = replace(
-        runtime_context.state,
-        active_server_id="https://server.example.com/api",
+    _commit_runtime_state(
+        runtime_context,
+        replace(
+            runtime_context.state,
+            active_server_id="https://server.example.com/api",
+        ),
     )
 
     with pytest.raises(ServerCredentialsUnavailable):
@@ -1419,9 +1440,12 @@ def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activatio
         },
     )
 
-    runtime_context.state = replace(
-        runtime_context.state,
-        active_server_id="https://server.example.com/api",
+    _commit_runtime_state(
+        runtime_context,
+        replace(
+            runtime_context.state,
+            active_server_id="https://server.example.com/api",
+        ),
     )
     context = provider.get_active_context()
 
@@ -1435,9 +1459,12 @@ def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activatio
         == "legacy-bearer"
     )
 
-    runtime_context.state = replace(
-        runtime_context.state,
-        active_server_id="https://server-a.example.com/api",
+    _commit_runtime_state(
+        runtime_context,
+        replace(
+            runtime_context.state,
+            active_server_id="https://server-a.example.com/api",
+        ),
     )
     provider.clear_server_credentials("https://server.example.com/api")
 
@@ -1449,9 +1476,12 @@ def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activatio
         is None
     )
 
-    runtime_context.state = replace(
-        runtime_context.state,
-        active_server_id="https://server.example.com/api",
+    _commit_runtime_state(
+        runtime_context,
+        replace(
+            runtime_context.state,
+            active_server_id="https://server.example.com/api",
+        ),
     )
 
     with pytest.raises(ServerCredentialsUnavailable):
@@ -1588,9 +1618,12 @@ async def test_switching_active_server_rebuilds_client_with_new_profile_and_clos
     first_client = provider.build_client()
     opened_http_client = await first_client._get_client()
 
-    runtime_context.state = replace(
-        runtime_context.state,
-        active_server_id="https://backup.example.com/api",
+    _commit_runtime_state(
+        runtime_context,
+        replace(
+            runtime_context.state,
+            active_server_id="https://backup.example.com/api",
+        ),
     )
     second_client = provider.build_client()
     await provider.close_cached_client()
@@ -1748,7 +1781,8 @@ def test_mismatched_runtime_active_server_and_only_legacy_config_raises(tmp_path
 def test_runtime_state_remains_authoritative_and_unmutated_during_context_resolution(
     tmp_path,
 ):
-    runtime_context = _runtime_context()
+    runtime_store = SavingRuntimeStore()
+    runtime_context = _runtime_context(runtime_store=runtime_store)
     original_state = runtime_context.state
     provider = _provider(
         tmp_path,
@@ -1775,4 +1809,4 @@ def test_runtime_state_remains_authoritative_and_unmutated_during_context_resolu
     assert context.active_server_id == original_state.active_server_id
     assert context.base_url == "https://server.example.com/api"
     assert runtime_context.state == original_state
-    assert runtime_context.store.saved_states == []
+    assert runtime_store.saved_states == []

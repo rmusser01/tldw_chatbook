@@ -43,8 +43,6 @@ class MediaIngestScreen(BaseAppScreen):
         """Refresh the rebuilt ingest window when the active media backend changes."""
         normalized_backend = str(runtime_backend or "").strip().lower()
         if normalized_backend in {"local", "server"}:
-            self.app_instance.current_runtime_backend = normalized_backend
-            self.app_instance.runtime_backend = normalized_backend
             self.media_runtime_state.reset_for_backend(normalized_backend)
 
         ingest_window = self.media_ingest_window

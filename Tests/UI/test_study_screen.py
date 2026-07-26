@@ -480,7 +480,7 @@ async def test_handle_runtime_backend_changed_recomputes_workspace_scope_state()
 
     await screen.handle_runtime_backend_changed("local")
 
-    assert app_instance.current_runtime_backend == "local"
+    assert app_instance.current_runtime_backend == "server"
     assert screen.current_scope.scope_type == StudyScopeType.WORKSPACE
     assert screen.current_scope.backend == "local"
     assert screen.current_scope.workspace_scope_available is False
@@ -493,7 +493,7 @@ async def test_handle_runtime_backend_changed_recomputes_workspace_scope_state()
 
 
 @pytest.mark.asyncio
-async def test_app_level_runtime_backend_callback_updates_backend_and_forwards():
+async def test_app_level_callback_without_policy_forwards_without_projection_write():
     from tldw_chatbook.app import TldwCli
 
     forwarded = []
@@ -509,8 +509,8 @@ async def test_app_level_runtime_backend_callback_updates_backend_and_forwards()
 
     await TldwCli.handle_runtime_backend_changed(app_like, "local")
 
-    assert app_like.current_runtime_backend == "local"
-    assert app_like.runtime_backend == "local"
+    assert app_like.current_runtime_backend == "server"
+    assert app_like.runtime_backend == "server"
     assert forwarded == ["local"]
 
 

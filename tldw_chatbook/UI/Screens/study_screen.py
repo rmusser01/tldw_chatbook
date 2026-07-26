@@ -312,8 +312,18 @@ class StudyScreen(BaseAppScreen):
                 break
         return tuple(cleaned)
 
-    def _derive_scope_state(self, scope_context: StudyScopeContext) -> StudyScopeState:
-        backend = self._runtime_backend()
+    def _derive_scope_state(
+        self,
+        scope_context: StudyScopeContext,
+        *,
+        runtime_backend: str | None = None,
+    ) -> StudyScopeState:
+        normalized_backend = str(runtime_backend or "").strip().lower()
+        backend = (
+            normalized_backend
+            if normalized_backend in {"local", "server"}
+            else self._runtime_backend()
+        )
         workspace_scope_available = backend == "server"
         error_message: Optional[str] = None
 
@@ -1132,8 +1142,12 @@ class StudyScreen(BaseAppScreen):
         *,
         study_window: Any,
         force_controller_notify: bool = False,
+        runtime_backend: str | None = None,
     ) -> None:
-        next_state = self._derive_scope_state(scope_context)
+        next_state = self._derive_scope_state(
+            scope_context,
+            runtime_backend=runtime_backend,
+        )
         previous_key = self._effective_scope_key
         next_key = self._scope_key(next_state)
 
@@ -1166,11 +1180,13 @@ class StudyScreen(BaseAppScreen):
         *,
         study_window: Any,
         force_controller_notify: bool = False,
+        runtime_backend: str | None = None,
     ) -> None:
         await self._apply_scope_context(
             scope_context,
             study_window=study_window,
             force_controller_notify=force_controller_notify,
+            runtime_backend=runtime_backend,
         )
         sync_scope_banner = getattr(study_window, "_sync_scope_banner", None)
         if callable(sync_scope_banner):
@@ -1234,11 +1250,11 @@ class StudyScreen(BaseAppScreen):
 
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
         normalized_backend = str(runtime_backend or "").strip().lower()
-        if normalized_backend in {"local", "server"}:
-            self.app_instance.current_runtime_backend = normalized_backend
         study_window = self.query_one(StudyWindow)
         await self._apply_scope_context_and_refresh(
-            self._current_scope_context(), study_window=study_window
+            self._current_scope_context(),
+            study_window=study_window,
+            runtime_backend=normalized_backend,
         )
 
     def save_state(self) -> dict[str, Any]:

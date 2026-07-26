@@ -172,7 +172,7 @@ async def test_ingest_window_refresh_backend_view_preserves_local_refresh_behavi
 
 
 @pytest.mark.asyncio
-async def test_app_level_runtime_backend_change_refreshes_media_ingest_screen_window():
+async def test_app_level_runtime_backend_change_refreshes_only_media_screen_state():
     app_like = SimpleNamespace(
         current_runtime_backend="server",
         runtime_backend="server",
@@ -188,8 +188,8 @@ async def test_app_level_runtime_backend_change_refreshes_media_ingest_screen_wi
 
     await TldwCli.handle_runtime_backend_changed(app_like, "local")
 
-    assert app_like.current_runtime_backend == "local"
-    assert app_like.runtime_backend == "local"
+    assert app_like.current_runtime_backend == "server"
+    assert app_like.runtime_backend == "server"
     assert app_like.media_runtime_state.runtime_backend == "local"
     assert screen.media_ingest_window.runtime_state is app_like.media_runtime_state
     screen.media_ingest_window.refresh_backend_view.assert_awaited_once()
