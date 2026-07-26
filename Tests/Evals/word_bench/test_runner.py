@@ -89,7 +89,9 @@ async def test_progress_reports_group_level_totals(db, config, targets, snippets
     await runner.run(config, targets, snippets, task_id,
                      progress=lambda done, total: seen.append((done, total)))
 
-    assert seen[-1] == (4, 4), "progress is over the whole grid, not per run"
+    assert seen == [(1, 4), (2, 4), (3, 4), (4, 4)], (
+        "progress must be reported once per cell, not just once at the end"
+    )
 
 
 @pytest.mark.asyncio
