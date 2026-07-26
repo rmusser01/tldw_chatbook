@@ -169,11 +169,12 @@ Two consequences of putting output under the file-tool sandbox root:
 
 - **You can open it.** It is a stable, documented location, not an OS temp directory the
   system sweeps.
-- **The agent can read it back if you let it.** `read_file` and `list_directory` are
-  confined to that same sandbox root and are surfaced to the agent loop, but remain behind
-  their existing `[tools]` gates (`read_file_enabled`, `list_directory_enabled`), which
-  default to **disabled**. Leave them off and output is yours alone; turn them on and a
-  skill can chain steps across runs.
+- **It sits where the file tools already look.** `read_file` and `list_directory`
+  (`Tools/file_operation_tools.py`) are confined to that same sandbox root, so output is
+  reachable by the tooling the app already has rather than needing a new read surface.
+  Whether those tools are exposed to the agent loop — and they remain behind their
+  existing `[tools]` gates, which default to **disabled** — is a separate decision from
+  retention; today the listing below is what the agent gets.
 
 Retention is bounded by **run count**: the 20 most recent run directories are kept and
 older ones pruned right after each run. A run that produces nothing keeps no directory at
