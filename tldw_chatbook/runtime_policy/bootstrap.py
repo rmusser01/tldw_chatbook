@@ -187,9 +187,10 @@ def build_server_chatbook_service(
     return ServerChatbookService(client, policy_enforcer=policy_enforcer)
 
 
-def load_runtime_policy_for_app(
-    app: Any,
+def _prepare_runtime_policy_context(
     *,
+    app_config: Mapping[str, Any] | None,
+    publish: Callable[[RuntimeSourceState], None],
     store: RuntimeSourceStateStore | None = None,
     path: str | Path | None = None,
 ) -> RuntimePolicyContext:
@@ -213,18 +214,36 @@ def load_runtime_policy_for_app(
     loaded_state = runtime_store.load()
     synchronized_state = synchronize_runtime_source_state_with_app_config(
         loaded_state,
-        getattr(app, "app_config", None),
+        app_config,
     )
     context = RuntimePolicyContext(
         state=loaded_state,
         store=runtime_store,
-        publish=lambda state: _apply_runtime_policy_to_app(app, state),
+        publish=publish,
     )
-    setattr(app, "runtime_policy", context)
     if synchronized_state != loaded_state:
         context.commit_state(synchronized_state, expected_revision=0)
     else:
-        _apply_runtime_policy_to_app(app, loaded_state)
+        publish(loaded_state)
+    return context
+
+
+def load_runtime_policy_for_app(
+    app: Any,
+    *,
+    store: RuntimeSourceStateStore | None = None,
+    path: str | Path | None = None,
+) -> RuntimePolicyContext:
+    if isinstance(getattr(app, "runtime_policy", None), RuntimePolicyContext):
+        raise RuntimeError("runtime policy context is already installed")
+
+    context = _prepare_runtime_policy_context(
+        app_config=getattr(app, "app_config", None),
+        publish=lambda state: _apply_runtime_policy_to_app(app, state),
+        store=store,
+        path=path,
+    )
+    setattr(app, "runtime_policy", context)
     return context
 
 
