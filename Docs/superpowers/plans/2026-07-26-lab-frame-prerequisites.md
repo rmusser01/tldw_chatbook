@@ -19,6 +19,35 @@
 - Keep the existing `.console-rail-*` CSS class names. Renaming them is a deliberate deferral; PR1 must produce a **zero-diff** bundle.
 - Textual 8.2.7 has no `App.export_text()`. Assert rendered styling via `widget.styles`, not by scraping text.
 - Every test must be **mutation-checked**: revert the fix, confirm the test goes red, restore.
+- Run pytest from the worktree with `PYTHONPATH=$(pwd)` so imports cannot silently resolve to the main checkout's editable install.
+
+## Known baseline failures — do NOT try to fix these
+
+Measured on this worktree at `origin/dev` + docs only, before any code change:
+
+```
+Tests/UI/test_lab_mode_strip.py, test_console_rail_sections.py, test_console_rail_title.py,
+test_console_persistent_rails.py, test_console_agent_rail.py,
+test_console_workspace_context_rail.py, test_home_triage_rail.py
+    -> 1 failed, 168 passed
+```
+
+The one failure is **pre-existing and unrelated to this work**:
+
+`test_console_persistent_rails.py::test_generated_console_stylesheet_includes_rail_rules`
+asserts *globally* over the entire stylesheet that `"border: thick $ds-action-focus;"` appears
+nowhere (line 278). Unrelated RAG-settings work (`e619c4d81`, `ffc5959cb`) later added exactly that
+declaration to `.settings-rag-profile-modal` and `.settings-library-rag-starter-panel`
+(`components/_agentic_terminal.tcss:4029` and `:4066`). It is an over-broad Console rail test
+tripped by Settings, not a Console regression.
+
+**Your job is to keep this at exactly 1 failure.** If the count rises, you broke something. Do not
+"fix" this test, do not weaken its assertion, and do not remove the Settings rules — that is a
+separate concern with its own owner. Note that PR0 also writes to the bundle; its rules use
+`border: none` and must not trip this assertion.
+
+`Tests/UI/test_library_shell.py` additionally carries 4 recorded baseline failures. Confirm the
+count is unchanged rather than expecting zero.
 
 ---
 
