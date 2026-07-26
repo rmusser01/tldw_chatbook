@@ -346,6 +346,11 @@ class IngestQueueRow:
     #: widget layer can style or filter by backend without reaching past
     #: this state object into the registry.
     origin: str = "local"
+    #: Whether this row offers Cancel. Server-only and in-flight-only:
+    #: ``cancel_media_ingest_jobs_batch`` addresses a batch on the server,
+    #: and the local pipeline has no cancel seam at all, so offering it
+    #: anywhere else would be dead bait.
+    can_cancel: bool = False
     source_path: str = ""
     progress: dict[str, Any] | None = None
     error_detail: dict[str, Any] | None = None
@@ -654,6 +659,14 @@ def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
 #: row carrying a backend tag.
 _SERVER_ROW_SUFFIX = " · on server"
 
+#: States a row can no longer be acted on to stop. Mirrors the registry's
+#: own terminal set; kept local rather than importing a private name.
+_TERMINAL_ROW_STATES = (
+    IngestJobState.DONE,
+    IngestJobState.FAILED,
+    IngestJobState.CANCELLED,
+)
+
 
 def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
     """Build a queue row, then stamp where the job runs.
@@ -673,8 +686,14 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
     """
     row = _build_queue_row_for_state(job, now=now)
     if job.origin == "local":
-        return replace(row, origin=job.origin)
-    return replace(row, origin=job.origin, line=f"{row.line}{_SERVER_ROW_SUFFIX}")
+        return replace(row, origin=job.origin, can_cancel=False)
+    can_cancel = bool(job.batch_id) and job.state not in _TERMINAL_ROW_STATES
+    return replace(
+        row,
+        origin=job.origin,
+        can_cancel=can_cancel,
+        line=f"{row.line}{_SERVER_ROW_SUFFIX}",
+    )
 
 def build_library_ingest_state(
     jobs: Sequence[LibraryIngestJob],

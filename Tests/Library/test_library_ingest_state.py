@@ -1023,3 +1023,65 @@ def test_cancelled_counts_line_segment_is_rendered():
 
     assert "1 cancelled" in line
     assert "1 done" in line
+
+
+# --- cancel affordance (task-684.2) -----------------------------------------
+
+
+def test_a_running_server_job_can_be_cancelled():
+    """Only a server job offers Cancel: the local pipeline has no cancel seam.
+
+    ``cancel_media_ingest_jobs_batch`` exists on the server service; there is no
+    local equivalent, so offering Cancel on a local job would be dead bait.
+    """
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/a.mp3",
+        state=IngestJobState.PARSING,
+        origin="server",
+        batch_id="batch-1",
+        remote_job_id="11",
+    )
+
+    assert _row_for(job).can_cancel is True
+
+
+def test_a_running_local_job_offers_no_cancel():
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/a.txt",
+        state=IngestJobState.PARSING,
+    )
+
+    assert _row_for(job).can_cancel is False
+
+
+def test_a_settled_server_job_offers_no_cancel():
+    """There is nothing left to stop once the server has finished."""
+    for state in (
+        IngestJobState.DONE,
+        IngestJobState.FAILED,
+        IngestJobState.CANCELLED,
+    ):
+        job = LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/a.mp3",
+            state=state,
+            origin="server",
+            batch_id="batch-1",
+            remote_job_id="11",
+            error="boom" if state is IngestJobState.FAILED else "",
+        )
+        assert _row_for(job).can_cancel is False, f"{state.value} offered Cancel"
+
+
+def test_a_server_job_without_a_batch_offers_no_cancel():
+    """Cancel goes by batch id; without one there is nothing to address."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/a.mp3",
+        state=IngestJobState.QUEUED,
+        origin="server",
+    )
+
+    assert _row_for(job).can_cancel is False

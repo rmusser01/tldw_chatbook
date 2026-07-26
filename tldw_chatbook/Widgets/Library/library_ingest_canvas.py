@@ -364,6 +364,7 @@ class LibraryIngestCanvas(VerticalScroll):
                 row.can_open
                 or row.can_retry
                 or row.can_dismiss
+                or row.can_cancel
                 or bool(row.error_detail)
             )
             if has_actions:
@@ -438,6 +439,16 @@ class LibraryIngestCanvas(VerticalScroll):
                             id=f"library-ingest-retry-{row.job_id}",
                             classes=(
                                 "library-canvas-action library-ingest-retry "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if row.can_cancel:
+                        yield Button(
+                            "Cancel",
+                            id=f"library-ingest-cancel-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-cancel "
                                 "library-ingest-row-action"
                             ),
                             compact=True,

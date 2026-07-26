@@ -1854,3 +1854,85 @@ async def test_remote_poll_without_a_server_service_is_a_noop(tmp_path: Path) ->
         await pilot.pause(_POLL_INTERVAL)
 
         assert app.library_ingest_jobs.jobs()[0].state == IngestJobState.QUEUED
+
+
+@pytest.mark.asyncio
+async def test_cancel_remote_batch_asks_the_server_and_resumes_polling(
+    tmp_path: Path,
+) -> None:
+    """Cancelling asks the server; the local job is NOT pre-emptively marked.
+
+    The request is asynchronous and may be refused, so the queue must not claim
+    an outcome the server has not confirmed. The poller records the real state.
+    """
+    cancelled_batches: list[str] = []
+
+    class _CancellableService:
+        async def cancel_media_ingest_jobs_batch(self, batch_id: str):
+            cancelled_batches.append(batch_id)
+            return {"batch_id": batch_id, "cancelled": 1}
+
+        async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100):
+            return {
+                "batch_id": batch_id,
+                "jobs": [{"id": 11, "status": "cancelled",
+                          "cancellation_reason": "user asked"}],
+            }
+
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+    app.server_media_reading_service = _CancellableService()
+
+    async with app.run_test() as pilot:
+        job = _queued_server_job(app, remote_job_id="11")
+        app.cancel_remote_ingest_batch("batch-1")
+
+        # The request alone must not move the local job.
+        await pilot.pause(_POLL_INTERVAL)
+        assert cancelled_batches == ["batch-1"]
+
+        for _ in range(_POLL_ATTEMPTS):
+            if app.library_ingest_jobs.jobs()[0].state == IngestJobState.CANCELLED:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        else:
+            raise AssertionError("the poller never recorded the cancellation")
+
+        assert "user asked" in app.library_ingest_jobs.jobs()[0].error
+
+
+@pytest.mark.asyncio
+async def test_cancel_remote_batch_without_a_server_seam_is_quiet(
+    tmp_path: Path,
+) -> None:
+    """No server backend means no cancel request, and no crash."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.server_media_reading_service = None
+
+    async with app.run_test() as pilot:
+        _queued_server_job(app, remote_job_id="11")
+        app.cancel_remote_ingest_batch("batch-1")
+        await pilot.pause(_POLL_INTERVAL)
+
+        assert app.library_ingest_jobs.jobs()[0].state == IngestJobState.QUEUED
+
+
+@pytest.mark.asyncio
+async def test_cancel_remote_batch_ignores_an_empty_batch_id(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    class _Service:
+        async def cancel_media_ingest_jobs_batch(self, batch_id: str):
+            calls.append(batch_id)
+
+        async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100):
+            return {"batch_id": batch_id, "jobs": []}
+
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.server_media_reading_service = _Service()
+
+    async with app.run_test() as pilot:
+        app.cancel_remote_ingest_batch("")
+        await pilot.pause(_POLL_INTERVAL)
+
+    assert calls == []

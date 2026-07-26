@@ -2583,6 +2583,42 @@ class LibraryIngestQueueMixin:
     #: server's back.
     REMOTE_INGEST_POLL_SECONDS: float = 5.0
 
+    def cancel_remote_ingest_batch(self, batch_id: str) -> None:
+        """Ask the server to cancel every job in ``batch_id``.
+
+        UI-thread entry point. Deliberately does *not* mark the local jobs
+        cancelled: the request is asynchronous and may be refused, so the queue
+        must not claim an outcome the server has not confirmed. The poller
+        records the real state when the server reports it -- which is also why
+        polling is (re)started here, so a batch cancelled while nothing was
+        being watched still gets its outcome.
+        """
+        if not batch_id:
+            return
+        self._request_remote_ingest_cancel(batch_id)
+        self.poll_remote_ingest_jobs()
+
+    @work(group="library_ingest_remote_cancel")
+    async def _request_remote_ingest_cancel(self, batch_id: str) -> None:
+        """Send the cancel request. Async for the same reason the poller is."""
+        service = getattr(self, "server_media_reading_service", None)
+        cancel = getattr(service, "cancel_media_ingest_jobs_batch", None)
+        if not callable(cancel):
+            logger.debug(
+                "Remote ingest cancel requested but no server seam is available."
+            )
+            return
+        try:
+            await cancel(batch_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to cancel remote ingest batch {batch_id!r}."
+            )
+            self.notify(
+                "Could not reach the server to cancel that ingest.",
+                severity="warning",
+            )
+
     def poll_remote_ingest_jobs(self) -> None:
         """Start watching server-origin ingest jobs, if any are outstanding.
 

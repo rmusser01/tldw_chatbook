@@ -12184,6 +12184,43 @@ class LibraryScreen(BaseAppScreen):
             retry(job_id)
         self.refresh(recompose=True)
 
+    @on(Button.Pressed, ".library-ingest-cancel")
+    def handle_library_ingest_cancel(self, event: Button.Pressed) -> None:
+        """Ask the server to stop an in-flight ingest batch.
+
+        Only server rows offer this: cancellation addresses a *batch* on the
+        server, and the local pipeline has no cancel seam at all. The local job
+        is not marked cancelled here -- the request is asynchronous, and the
+        poller records the real outcome when the server reports it, so the queue
+        never claims something the server has not actually done.
+
+        A quiet no-op when the registry, the job, its batch id or the server
+        seam is missing, matching every other seam-absent path in this screen.
+
+        Args:
+            event: Button press event emitted by a row's "Cancel" action.
+        """
+        event.stop()
+        job_id = self._ingest_job_id_from_button(
+            event.button.id, "library-ingest-cancel-"
+        )
+        if job_id is None:
+            return
+        registry = self._library_ingest_registry()
+        get_job = getattr(registry, "get_job", None)
+        job = get_job(job_id) if callable(get_job) else None
+        if job is None or not getattr(job, "batch_id", None):
+            return
+        request_cancel = getattr(
+            self.app_instance, "cancel_remote_ingest_batch", None
+        )
+        if not callable(request_cancel):
+            self._notify_library_ingest_warning(
+                "Cancelling a server ingest is unavailable in this runtime."
+            )
+            return
+        request_cancel(job.batch_id)
+
     @on(Button.Pressed, ".library-ingest-dismiss")
     def handle_library_ingest_dismiss(self, event: Button.Pressed) -> None:
         """Dismiss a failed ingest job row (L3b AB wave, B2).
