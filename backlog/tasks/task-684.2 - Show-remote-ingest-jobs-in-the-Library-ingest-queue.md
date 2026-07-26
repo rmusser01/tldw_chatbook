@@ -1,10 +1,10 @@
 ---
 id: TASK-684.2
 title: Show remote ingest jobs in the Library ingest queue
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-26 04:33'
-updated_date: '2026-07-26 14:01'
+updated_date: '2026-07-26 15:35'
 labels:
   - ingest
   - consolidation

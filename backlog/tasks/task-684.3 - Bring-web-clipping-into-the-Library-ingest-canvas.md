@@ -1,11 +1,11 @@
 ---
 id: TASK-684.3
 title: Bring web clipping into the Library ingest canvas
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-26 04:33'
-updated_date: '2026-07-26 14:45'
+updated_date: '2026-07-26 15:35'
 labels:
   - ingest
   - consolidation
