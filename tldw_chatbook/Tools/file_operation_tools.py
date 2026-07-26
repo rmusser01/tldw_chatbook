@@ -24,12 +24,15 @@ def _resolve_sandbox_config() -> str:
 def is_within(candidate: Path, root: Path) -> bool:
     """Return whether ``candidate`` resolves inside ``root`` and is not sensitive.
 
-    Sole caller is ``ListDirectoryTool``'s recursive-descent guard, which uses
-    it to decide whether a recursive listing may descend into a given
-    subdirectory. It does not by itself cover a tool's own top-level target:
-    ``ReadFileTool``, ``WriteFileTool`` and ``ListDirectoryTool`` each call
-    ``Utils.sensitive_paths.is_sensitive_path`` directly on their target
-    before touching the filesystem, independently of this function.
+    Callers include ``ListDirectoryTool``'s recursive-descent guard, which
+    uses it to decide whether a recursive listing may descend into a given
+    subdirectory, and ``Agents/builtin_packs/files.py``'s ``GlobFiles`` and
+    ``GrepFiles``, which consult it directly on every candidate path before
+    returning or reading it. It does not by itself cover a tool's own
+    top-level target: ``ReadFileTool``, ``WriteFileTool`` and
+    ``ListDirectoryTool`` each call ``Utils.sensitive_paths.is_sensitive_path``
+    directly on their target before touching the filesystem, independently
+    of this function.
 
     Args:
         candidate: Path to test.

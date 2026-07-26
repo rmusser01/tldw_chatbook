@@ -320,3 +320,21 @@ Task 9: complete (commits ad75cbaeb + 2eb4aa51c, review clean after 1 fix pass)
    tool is one control too many") sanctions it, but it widens an existing user's
    deliberate config during what is framed as a compatibility migration. Reviewer's
    unsoftened read: needs owner sign-off. Batching with the Task 13 question.
+Task 10: complete (commits 89c850f0b + 5cb7f8dec + c4ebdb3e7, review clean after 2 fix passes)
+  - CRITICAL caught by review, root cause a FALSE PLAN ASSUMPTION: the plan hooked the
+    denylist into is_within(), but read_file/write_file resolve via validate_path() and
+    never call is_within at all (its only caller was ListDirectoryTool's recursive-descent
+    guard). The denylist was dead code for the tool that motivated it. Fixed by checking
+    in each tool's execute() -- deliberately NOT in validate_path(), which has ~40
+    first-party call sites that legitimately validate the app's own config/DB paths.
+  - DB coverage: per-file denial of the 11 get_*_db_path() accessors, NOT directory-wide,
+    because the default tool_sandbox root is a SIBLING of the DBs inside get_user_data_dir()
+    -- a blanket deny would have broken the shipped default.
+  - 2nd pass: WAL/SHM/journal sidecars were unprotected (<db>-wal != <db> under exact
+    matching) and hold the same recent data. Now denied via _DB_SIDECAR_SUFFIXES.
+  - _sensitive_db_paths() intentionally UNCACHED so it cannot stale across the suite's
+    TLDW_CONFIG_PATH switches. Costs ~11 accessor calls per tool call (recorded Minor).
+  - Sub-minor noted for a future hardening pass: _db_sidecar_paths builds names via
+    with_name() without re-resolving, so a symlinked sidecar would not match.
+  - LESSON: "wire X into helper H" is worthless unless you verify H is on the target's
+    call path. Reviewers must trace the real execute() path end to end.

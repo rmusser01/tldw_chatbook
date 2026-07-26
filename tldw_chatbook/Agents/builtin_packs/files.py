@@ -124,8 +124,22 @@ class GlobFiles(Tool):
             candidates = root.glob(pattern)
         except (ValueError, NotImplementedError) as exc:
             return {"error": f"invalid pattern: {exc}"}
-        matches = []
-        for examined, path in enumerate(candidates, start=1):
+        matches: list[str] = []
+        examined = 0
+        while True:
+            # `Path.glob()` validates lazily: a malformed pattern (e.g.
+            # "**foo/*") doesn't raise at construction above, it raises on
+            # the first `next()` here. Only the `next()` call is inside
+            # this try -- `path.is_file()`/`is_within()` below run outside
+            # it, so a ValueError from the loop body is never misreported
+            # as an invalid pattern.
+            try:
+                path = next(candidates)
+            except StopIteration:
+                break
+            except (ValueError, NotImplementedError) as exc:
+                return {"error": f"invalid pattern: {exc}"}
+            examined += 1
             if len(matches) >= _MAX_MATCHES or examined > _MAX_CANDIDATES:
                 break
             if path.is_file() and is_within(path, root):
@@ -202,7 +216,20 @@ class GrepFiles(Tool):
         matches: list[dict] = []
         # Deliberately NOT sorted(candidates): materialising and sorting the
         # generator defeats _MAX_CANDIDATES on a broad pattern.
-        for examined, path in enumerate(candidates, start=1):
+        examined = 0
+        while True:
+            # As in GlobFiles: `Path.glob()` validates lazily, so a bad
+            # pattern raises here, on `next()`, not at the call above. Only
+            # `next()` is inside this try -- the body below (is_file,
+            # is_within, read_text, regex.search) runs outside it, so a
+            # ValueError raised there is never misreported as a bad glob.
+            try:
+                path = next(candidates)
+            except StopIteration:
+                break
+            except (ValueError, NotImplementedError) as exc:
+                return {"error": f"invalid glob: {exc}"}
+            examined += 1
             if len(matches) >= _MAX_MATCHES or examined > _MAX_CANDIDATES:
                 break
             if not path.is_file() or not is_within(path, root):

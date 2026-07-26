@@ -132,3 +132,70 @@ async def test_grep_files_refuses_parent_traversal(sandbox):
     result = await GrepFiles().execute(pattern="DEBUG", glob="../**/*.py")
 
     assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_glob_files_reports_a_syntactically_invalid_pattern(sandbox):
+    """`Path.glob()` validates lazily -- the invalid `**` here doesn't raise
+    at construction, only on the first `next()` inside iteration. This is
+    not a traversal pattern, so it must reach that iteration to reproduce
+    the bug; a naive fix that only wraps the construction call still lets
+    this raise uncaught.
+    """
+    from tldw_chatbook.Agents.builtin_packs.files import GlobFiles
+
+    result = await GlobFiles().execute(pattern="**foo/*")
+
+    assert "error" in result
+    assert "matches" not in result
+
+
+@pytest.mark.asyncio
+async def test_grep_files_reports_a_syntactically_invalid_glob(sandbox):
+    """Same lazy-validation trap as above, via the `glob` narrowing param."""
+    from tldw_chatbook.Agents.builtin_packs.files import GrepFiles
+
+    result = await GrepFiles().execute(pattern="DEBUG", glob="**foo/*")
+
+    assert "error" in result
+    assert "matches" not in result
+
+
+@pytest.mark.asyncio
+async def test_glob_files_bounds_examined_candidates(sandbox, monkeypatch):
+    """Exercise `_MAX_CANDIDATES` for real, rather than short-circuiting on
+    the up-front traversal refusal like every other bound-adjacent test.
+
+    Shrinks the module's `_MAX_CANDIDATES` and builds a tree with more
+    entries than that, then asserts the walk is actually cut off -- not
+    just that the (much larger) `_MAX_MATCHES` cap alone would explain the
+    result.
+    """
+    import tldw_chatbook.Agents.builtin_packs.files as files_mod
+
+    monkeypatch.setattr(files_mod, "_MAX_CANDIDATES", 5)
+    monkeypatch.setattr(files_mod, "_MAX_MATCHES", 1_000)
+    for i in range(20):
+        (sandbox / f"extra{i}.py").write_text("x = 1\n")
+
+    result = await files_mod.GlobFiles().execute(pattern="**/*.py")
+
+    assert len(result["matches"]) <= 5
+
+
+@pytest.mark.asyncio
+async def test_grep_files_bounds_examined_candidates(sandbox, monkeypatch):
+    """Same as above for `GrepFiles`, whose loop also enforces
+    `_MAX_CANDIDATES` on files *examined*, independent of `_MAX_MATCHES`
+    (matched lines).
+    """
+    import tldw_chatbook.Agents.builtin_packs.files as files_mod
+
+    monkeypatch.setattr(files_mod, "_MAX_CANDIDATES", 5)
+    monkeypatch.setattr(files_mod, "_MAX_MATCHES", 1_000)
+    for i in range(20):
+        (sandbox / f"extra{i}.py").write_text("DEBUG = True\n")
+
+    result = await files_mod.GrepFiles().execute(pattern="DEBUG", glob="**/*.py")
+
+    assert len(result["matches"]) <= 5
