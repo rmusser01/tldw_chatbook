@@ -30,6 +30,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from ...DB.Evals_DB import EvalsDB
+from ...Evals.word_bench.models import PreflightResult
 from ..Evals.bench_editor import BenchEditor, ClassicTaskDetail
 from ..Evals.evals_state import EvalsSelection, EvalsViewModel, SelectionKind
 from ..Evals.inspector import EvalsInspector
@@ -127,17 +128,33 @@ class EvalsScreen(BaseAppScreen):
                     id="evals-library-pane",
                     classes="destination-workbench-pane",
                 )
+                # Resolved once per selection/recompose and threaded into
+                # BOTH panes below -- BenchEditor and EvalsInspector each
+                # independently calling `EvalsViewModel.preflight_for_bench`
+                # read the bench's run-group snapshot twice on one render
+                # (see I2 in the PR 3a fix report).
+                preflight = self._preflight_for_selection()
                 with Vertical(
                     id="evals-detail-pane", classes="destination-workbench-pane"
                 ):
-                    yield from self._compose_detail_pane()
+                    yield from self._compose_detail_pane(preflight)
                 with Vertical(
                     id="evals-inspector-pane",
                     classes="destination-workbench-pane ds-inspector",
                 ):
-                    yield from self._compose_inspector_pane()
+                    yield from self._compose_inspector_pane(preflight)
 
-    def _compose_detail_pane(self) -> ComposeResult:
+    def _preflight_for_selection(self) -> dict[str, PreflightResult]:
+        """The current selection's readiness map, or ``{}`` for every
+        selection kind but ``"bench"`` (no other kind's panes read it)."""
+        selection = self._selection
+        if selection.kind != "bench" or not selection.id:
+            return {}
+        return self._view_model.preflight_for_bench(selection.id)
+
+    def _compose_detail_pane(
+        self, preflight: dict[str, PreflightResult]
+    ) -> ComposeResult:
         selection = self._selection
         yield Static("Detail", classes="destination-section evals-pane-title")
 
@@ -149,7 +166,9 @@ class EvalsScreen(BaseAppScreen):
                     id="evals-detail-missing",
                 )
                 return
-            yield BenchEditor(self._view_model, selection.id, id="evals-bench-editor")
+            yield BenchEditor(
+                self._view_model, selection.id, preflight, id="evals-bench-editor"
+            )
             return
 
         if selection.kind == "classic":
@@ -211,7 +230,9 @@ class EvalsScreen(BaseAppScreen):
             id="evals-detail-empty",
         )
 
-    def _compose_inspector_pane(self) -> ComposeResult:
+    def _compose_inspector_pane(
+        self, preflight: dict[str, PreflightResult]
+    ) -> ComposeResult:
         yield Static("Inspector", classes="destination-section evals-pane-title")
         selection = self._selection
 
@@ -221,7 +242,10 @@ class EvalsScreen(BaseAppScreen):
             )
             if bench is not None:
                 yield EvalsInspector(
-                    self._view_model, selection.id, id="evals-inspector-bench"
+                    self._view_model,
+                    selection.id,
+                    preflight,
+                    id="evals-inspector-bench",
                 )
 
         if selection.kind == "classic":

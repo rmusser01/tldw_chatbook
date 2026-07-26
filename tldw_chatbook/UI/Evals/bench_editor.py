@@ -6,10 +6,15 @@ inline ``Static`` fields it used to yield directly (Task 3's placeholder
 bench/classic branches) -- see that module's own docstring for why no
 ``Screen`` subclass is mounted anywhere here.
 
-Readiness renders from ``word_bench.storage.load_grid``'s stored
+Readiness renders from ``word_bench.storage.load_run_preflight``'s stored
 ``preflight`` mapping (via ``EvalsViewModel.preflight_for_bench``), never
-recomputed here. Neither this module nor ``inspector.py`` imports the HTTP
-capture client or the runner that drives it -- a source-scan test in
+recomputed here. That map is resolved ONCE per selection by
+``evals_screen.py`` and passed into ``BenchEditor`` as a constructor
+argument -- see ``BenchEditor.__init__`` -- rather than this widget calling
+``preflight_for_bench`` itself, so a bench selection does not read the same
+run-group snapshot twice (once for this pane, once for ``inspector.py``'s).
+Neither this module nor ``inspector.py`` imports the HTTP capture client or
+the runner that drives it -- a source-scan test in
 ``Tests/UI/test_evals_bench_editor.py`` pins that neither module can reach
 a provider at all, not just that today's ``compose()`` happens not to
 call one.
@@ -17,12 +22,13 @@ call one.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
+from ...Evals.word_bench.models import PreflightResult
 from ...Evals.word_bench.storage import load_bench
 from .evals_state import EvalsViewModel
 
@@ -52,10 +58,28 @@ class BenchEditor(Vertical):
     the target table (name/provider + readiness, resolved at render time
     from ``eval_models``)."""
 
-    def __init__(self, view_model: EvalsViewModel, bench_id: str, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        view_model: EvalsViewModel,
+        bench_id: str,
+        preflight: Optional[dict[str, PreflightResult]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """``preflight`` is the bench's readiness map, resolved ONCE by
+        ``EvalsScreen`` per selection (see its ``_preflight_for_selection``)
+        and passed in here rather than this widget calling
+        ``EvalsViewModel.preflight_for_bench`` itself -- ``EvalsInspector``
+        needs the identical map for the same selection, and each pane
+        calling it independently read the bench's run-group snapshot twice
+        on one render (see I2 in the PR 3a fix report). ``None`` (the
+        default) falls back to resolving it locally, so a widget
+        constructed directly -- as this module's own tests do -- still
+        works without a caller threading the map through.
+        """
         super().__init__(**kwargs)
         self._view_model = view_model
         self._bench_id = bench_id
+        self._preflight = preflight
 
     def compose(self) -> ComposeResult:
         db = self._view_model.db
@@ -97,7 +121,11 @@ class BenchEditor(Vertical):
         )
         yield Static(f"Probes: {probes_text}", id="evals-detail-bench-probes")
 
-        preflight = self._view_model.preflight_for_bench(self._bench_id)
+        preflight = (
+            self._preflight
+            if self._preflight is not None
+            else self._view_model.preflight_for_bench(self._bench_id)
+        )
         yield Static(
             f"Targets ({len(config.target_ids)})",
             classes="destination-section evals-pane-title",

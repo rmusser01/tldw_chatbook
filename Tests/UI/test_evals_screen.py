@@ -8,11 +8,13 @@ from pathlib import Path
 
 import pytest
 from textual.app import App
+from textual.widget import Widget
 
 import tldw_chatbook
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.word_bench.models import BenchConfig
 from tldw_chatbook.Evals.word_bench.storage import save_bench
+from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 
 #: The real bundled stylesheet (mirrors HomeHarness in test_home_screen.py
@@ -182,6 +184,124 @@ async def test_workbench_panes_and_their_descendants_have_a_real_rendered_region
         inspector_descendant = screen.query_one("#evals-primary-action")
         assert inspector_descendant.region.width > 0
         assert inspector_descendant.region.height > 0
+
+
+@pytest.mark.asyncio
+async def test_workbench_height_matches_available_body_height(evals_app):
+    """C1 regression: `#evals-workbench` carries classes `"ds-panel
+    destination-workbench"`. `.destination-workbench { height: 1fr }`
+    (layout/_panes.tcss) and `.ds-panel { height: auto; min-height: 3 }`
+    (components/_agentic_terminal.tcss) are equal specificity (one class
+    each), and `_agentic_terminal.tcss` sits later in the build manifest --
+    so `auto` used to win, collapsing the workbench to a fixed ~11 rows
+    regardless of terminal size (measured 11 of 35 available rows at
+    160x45 during the PR 3a review). Fixed by an id-level `#evals-workbench`
+    rule (mirroring the eight sibling destinations that already carry one)
+    at the SAME position in the cascade as those siblings, so it outranks
+    both classes by specificity rather than by manifest-order luck.
+
+    Asserted against the space actually available below the workbench
+    (screen height minus everything already laid out above it), not a
+    hardcoded row count, so this survives a header/mode-strip height
+    change without going stale.
+    """
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = evals_app.screen
+        workbench = screen.query_one("#evals-workbench")
+        available = screen.size.height - workbench.region.y
+        unused = available - workbench.region.height
+        assert 0 <= unused <= 2, (
+            f"workbench height {workbench.region.height} leaves {unused} "
+            f"rows unused out of {available} available at the bottom of "
+            f"the screen"
+        )
+        # The historical collapse was a small FIXED height regardless of
+        # terminal size -- guard against a regression back to that shape,
+        # not just against this one screen size happening to work out.
+        assert workbench.region.height > 20, (
+            f"workbench height {workbench.region.height} looks like the "
+            "historical fixed small collapse, not a real 1fr height"
+        )
+
+
+@pytest.mark.asyncio
+async def test_every_pane_descendant_stays_within_its_pane(evals_app, seeded_bench):
+    """The upgrade over a bare `region.width > 0` check (which proves "laid
+    out", not "visible"): C1's collapse laid every workbench child out at a
+    real, non-zero region that nonetheless sat OUTSIDE its pane's clip
+    rectangle -- e.g. `#evals-import-snippets` at y=18 against a detail
+    pane clipped to y<18, where `pilot.click` never reached its handler
+    (see `test_import_button_stays_in_its_pane_and_pilot_click_opens_the_
+    picker` below for that specific case). This asserts full containment
+    for every rendered descendant of all three panes with a bench
+    selected, which exercises the richest content (library rail rows, the
+    bench editor's target table, the inspector's readiness list and
+    primary action button)."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = evals_app.screen
+        screen.select(kind="bench", id=seeded_bench)
+        await pilot.pause()
+
+        checked = 0
+        for pane_id in (
+            "#evals-library-pane",
+            "#evals-detail-pane",
+            "#evals-inspector-pane",
+        ):
+            pane = screen.query_one(pane_id)
+            for descendant in pane.walk_children(Widget):
+                if descendant.region.width == 0 or descendant.region.height == 0:
+                    continue  # not actually rendered (e.g. a collapsed rail section)
+                assert pane.region.contains_region(descendant.region), (
+                    f"{descendant!r} at {descendant.region} escapes "
+                    f"{pane_id}'s clip region {pane.region}"
+                )
+                checked += 1
+        assert checked > 0, "no descendants were actually checked"
+
+        # Library-pane descendant, named explicitly: the other two panes
+        # already had one before this fix (`#evals-detail-empty`,
+        # `#evals-primary-action`, in the test above) -- the rail's own
+        # containment was only ever incidental, never separately pinned.
+        rail_row = screen.query_one("#evals-rail-row-benches-0")
+        library_pane = screen.query_one("#evals-library-pane")
+        assert library_pane.region.contains_region(rail_row.region)
+
+
+@pytest.mark.asyncio
+async def test_import_button_stays_in_its_pane_and_pilot_click_opens_the_picker(
+    evals_app, evals_db
+):
+    """C1's most concrete symptom: `#evals-import-snippets` -- the snippet
+    editor's only control -- used to lay out at a real, non-zero region
+    that sat outside `#evals-detail-pane`'s clip rectangle, so `pilot.click`
+    never fired its handler. Driven through `pilot.click` deliberately,
+    never by calling `_open_import_dialog`/`_handle_import_file_selected`
+    directly -- calling the callback would still pass even with the pane
+    collapsed, which is exactly how this defect shipped undetected."""
+    dataset_id = evals_db.create_dataset(
+        name="click-target", format="custom", source_path="inline:click-target"
+    )
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        pane = screen.query_one("#evals-detail-pane")
+        button = screen.query_one("#evals-import-snippets")
+        assert pane.region.contains_region(button.region), (
+            f"import button {button.region} escapes detail pane {pane.region}"
+        )
+
+        stack_depth_before = len(evals_app.screen_stack)
+        await pilot.click("#evals-import-snippets")
+        await pilot.pause()
+
+        assert len(evals_app.screen_stack) == stack_depth_before + 1
+        assert isinstance(evals_app.screen, FileOpen)
 
 
 @pytest.mark.asyncio

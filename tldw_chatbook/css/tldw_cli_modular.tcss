@@ -4898,7 +4898,8 @@ ConsoleSystemPromptModal {
 #mcp-workbench,
 #acp-workbench,
 #skills-workbench,
-#settings-workbench {
+#settings-workbench,
+#evals-workbench {
     height: 1fr;
     /* Must stay below the worst-case available height at small terminal
        sizes, otherwise content overflows and the footer status bar
@@ -4952,7 +4953,10 @@ ConsoleSystemPromptModal {
 #workflows-inspector-pane,
 #acp-list-pane,
 #acp-detail-pane,
-#acp-inspector-pane {
+#acp-inspector-pane,
+#evals-library-pane,
+#evals-detail-pane,
+#evals-inspector-pane {
     height: 100%;
     min-height: 0;
     border: solid $ds-grid-line;
@@ -11661,6 +11665,31 @@ Button:disabled {
     min-height: 0;
 }
 
+/* I4: panes never scrolled. Vertical's own DEFAULT_CSS is
+   `overflow: hidden hidden`, so content taller than a pane's bounded
+   height (post-C1, a real bounded height rather than a fixed 11-row
+   collapse) was simply clipped with no way to reach the hidden rows --
+   in an editor whose entire job is reviewing a list (snippets, targets,
+   run history). Scrolled at the narrowest level that isolates a LIST BODY
+   from a sibling control that must stay reachable without scrolling past
+   it (`#evals-import-snippets`, `#evals-primary-action`); the two
+   detail-content widgets with no separate list body to isolate
+   (`ClassicTaskDetail`, `EvalsInspector` -- the latter's readiness list
+   and estimate share one flow) scroll as a whole instead. */
+#evals-library-pane {
+    overflow-y: auto;
+}
+
+#evals-snippet-table,
+#evals-bench-target-table {
+    overflow-y: auto;
+}
+
+#evals-inspector-bench,
+#evals-classic-detail {
+    overflow-y: auto;
+}
+
 .evals-rail-section-header {
     height: 1;
     min-height: 1;
@@ -11716,6 +11745,17 @@ Button:disabled {
 
 .evals-rail-empty-copy {
     color: $ds-text-muted;
+    padding: 0 1;
+}
+
+/* I3: the labelled subgroup separating classic (non-word-bench) tasks from
+   word benches under the Benches section -- see library_rail.py's
+   CLASSIC_SUBGROUP_LABEL. Inert (a Static, never a Button); styled like
+   the empty-copy line above it, never like a selectable row. */
+.evals-rail-classic-separator {
+    color: $ds-text-muted;
+    height: 1;
+    min-height: 1;
     padding: 0 1;
 }
 

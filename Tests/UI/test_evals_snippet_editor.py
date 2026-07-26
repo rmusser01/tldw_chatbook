@@ -48,6 +48,7 @@ from tldw_chatbook.UI.Evals.snippet_editor import (
     SnippetEditor,
     count_warnings,
     find_exact_duplicate_labels,
+    import_snippets_into_dataset,
     normalize_snippet_whitespace,
     parse_csv_snippets,
     parse_json_snippets,
@@ -249,6 +250,61 @@ def test_parse_json_snippets_rejects_non_list_non_object_payload():
         parse_json_snippets("42")
 
 
+def test_parse_json_snippets_replaces_an_illegal_id_with_a_fresh_uuid():
+    """C2 crash shape 1: `_compose_row` interpolates a snippet's `id`
+    directly into Textual widget ids (`evals-snippet-text-<id>` etc); an id
+    containing a space is not a legal Textual identifier, so an unvalidated
+    JSON export used to reach `_compose_row` unmodified and raise
+    `BadIdentifier` at mount time -- well after the (still-successful) DB
+    write, leaving the dataset permanently un-openable. Validated at parse
+    time now, same fallback a missing id already got."""
+    content = json.dumps([{"id": "bad id", "text": "The protestors were"}])
+    snippets = parse_json_snippets(content)
+    assert snippets[0]["id"] != "bad id"
+    uuid.UUID(snippets[0]["id"])  # does not raise
+
+
+def test_parse_json_snippets_skips_entries_missing_text_or_not_an_object():
+    """JSON/CSV per-entry policy asymmetry, settled: both now skip an
+    individual bad entry rather than aborting the whole import, mirroring
+    `parse_csv_snippets`'s existing blank-row tolerance -- a large,
+    otherwise-valid export must not be rejected wholesale over one bad
+    entry. Only a structurally invalid payload (not a list/`{"snippets":
+    [...]}`  at all, see the rejection test above) still raises."""
+    content = json.dumps(
+        [
+            {"text": "kept one"},
+            {"text": ""},
+            {"no_text_field": True},
+            "not even an object",
+            {"text": "kept two"},
+        ]
+    )
+    snippets = parse_json_snippets(content)
+    assert [s["text"] for s in snippets] == ["kept one", "kept two"]
+
+
+def test_import_snippets_into_dataset_dedups_colliding_ids(evals_db):
+    """C2 crash shape 2: re-importing the same export twice -- the
+    round-trip `parse_json_snippets`'s own docstring advertises -- used to
+    append a snippet whose id already existed in the dataset, so the next
+    compose() tried to mount two rows sharing one widget id (`MountError`).
+    A second import now mints a fresh id for the collision instead."""
+    dataset_id = _make_dataset(evals_db, "dedupe-target", [])
+    exported = [
+        {"id": "fixed-id", "text": "The protestors were", "group": None, "note": None}
+    ]
+    first = import_snippets_into_dataset(evals_db, dataset_id, exported)
+    assert [s["id"] for s in first] == ["fixed-id"]
+
+    second = import_snippets_into_dataset(evals_db, dataset_id, exported)
+    ids = [s["id"] for s in second]
+    assert len(ids) == len(set(ids)), "duplicate snippet ids after re-import"
+    assert ids[0] == "fixed-id"  # the original row's id is untouched
+    assert ids[1] != "fixed-id"  # the re-imported row got a fresh id
+    uuid.UUID(ids[1])
+
+
 # ---------------------------------------------------------------------------
 # Widget: rendering, region, and "genuinely visible" assertions
 # ---------------------------------------------------------------------------
@@ -375,7 +431,12 @@ async def test_minimal_pair_snippets_render_with_no_duplicate_warning(evals_app,
         warnings_line = str(
             screen.query_one("#evals-snippet-warnings-summary").renderable
         )
-        assert "No warnings" in warnings_line or "0 warnings" in warnings_line
+        # The `or "0 warnings"` branch was unreachable: `compose()` renders
+        # `"No warnings"` for a zero count, never `"0 warnings"` (see
+        # `SnippetEditor.compose`'s `if total_warnings else "No warnings"`)
+        # -- a bug that started rendering "0 warnings" instead would still
+        # have passed this assertion.
+        assert warnings_line == "No warnings", warnings_line
 
 
 @pytest.mark.asyncio
@@ -401,7 +462,69 @@ async def test_exact_duplicate_after_normalization_is_flagged_on_screen(
         warnings_line = str(
             screen.query_one("#evals-snippet-warnings-summary").renderable
         )
-        assert "2" in warnings_line
+        # Exact count: 1 trailing-whitespace warning + 1 exact-duplicate
+        # warning = 2 (see count_warnings' additive footer). A bare "2" in
+        # warnings_line" would also pass for "12 warnings" -- anchored to
+        # the full rendered token instead.
+        assert warnings_line == "2 warnings", warnings_line
+
+
+@pytest.mark.asyncio
+async def test_snippet_table_scrolls_to_reveal_rows_and_import_button_stays_pinned(
+    evals_app, evals_db
+):
+    """I4: panes (and the widgets inside them) never scrolled --
+    `Vertical`'s own ``DEFAULT_CSS`` is ``overflow: hidden hidden``, so a
+    dataset with more snippets than fit the pane's bounded height (real,
+    post-C1) had permanently unreachable rows in an editor whose entire
+    job is reviewing a snippet set. ``#evals-snippet-table`` now scrolls
+    independently, and -- since it is the ONLY thing that scrolls, not the
+    whole ``SnippetEditor`` -- ``#evals-import-snippets`` (a sibling
+    AFTER it, never a descendant of it) never moves and needs no scrolling
+    to reach, at any scroll position."""
+    snippets = [_snip(f"snippet number {i}") for i in range(60)]
+    dataset_id = _make_dataset(evals_db, "long-set", snippets)
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        table = screen.query_one("#evals-snippet-table")
+        assert str(table.styles.overflow_y) == "auto"
+        assert table.virtual_size.height > table.size.height, (
+            "60 rows should overflow the table's bounded height -- if "
+            "not, this test isn't actually exercising the overflow case"
+        )
+
+        import_button = screen.query_one("#evals-import-snippets")
+        button_y_before = import_button.region.y
+        assert button_y_before > 0
+
+        last_row_text = screen.query_one(f"#evals-snippet-text-{snippets[-1]['id']}")
+        pane = screen.query_one("#evals-detail-pane")
+        assert not pane.region.contains_region(last_row_text.region), (
+            "the last row should start out-of-view -- otherwise this test "
+            "isn't proving scrolling was necessary to reach it"
+        )
+
+        table.scroll_end(animate=False)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert table.scroll_offset.y > 0, "the table did not actually scroll"
+        last_row_text_after = screen.query_one(
+            f"#evals-snippet-text-{snippets[-1]['id']}"
+        )
+        assert pane.region.contains_region(last_row_text_after.region), (
+            "the last row is still unreachable after scrolling to the end"
+        )
+
+        # The Import button is OUTSIDE the scrolling region -- its own
+        # position must not have moved just because the table scrolled.
+        import_button_after = screen.query_one("#evals-import-snippets")
+        assert import_button_after.region.y == button_y_before
 
 
 @pytest.mark.asyncio
@@ -518,6 +641,89 @@ async def test_json_import_round_trips_id_group_and_note(evals_app, evals_db, tm
 
 
 @pytest.mark.asyncio
+async def test_json_import_with_illegal_id_does_not_crash_and_dataset_stays_openable(
+    evals_app, evals_db, tmp_path
+):
+    """End-to-end C2 crash shape 1, through the real mount path (pure-logic
+    coverage is in `test_parse_json_snippets_replaces_an_illegal_id_with_a_
+    fresh_uuid` above). Before the fix, this raised `BadIdentifier` out of
+    `_compose_row`'s `Horizontal(id=f"evals-snippet-row-{snippet_id}")`
+    during the post-import `refresh(recompose=True)`, and the write had
+    already landed -- so a SECOND selection of the same dataset (the
+    "every later selection crashes again" symptom) is the real regression
+    check here, not just the import itself surviving."""
+    dataset_id = _make_dataset(evals_db, "illegal-id-target", [])
+    json_path = tmp_path / "bad_id.json"
+    json_path.write_text(
+        json.dumps([{"id": "bad id", "text": "The protestors were"}]), encoding="utf-8"
+    )
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
+        editor._handle_import_file_selected(json_path)
+        await pilot.pause()
+
+        # Re-select the dataset, exactly like a user reopening it after
+        # import -- must not crash the detail pane a second time.
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        editor_again = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
+        assert editor_again.region.width > 0
+        assert editor_again.region.height > 0
+
+    stored = evals_db.get_dataset(dataset_id)
+    samples = stored["metadata"][RESERVED_LOCAL_DATASET_SAMPLES_KEY]
+    assert len(samples) == 1
+    uuid.UUID(samples[0]["id"])  # the illegal id was replaced, not stored verbatim
+
+
+@pytest.mark.asyncio
+async def test_json_import_of_the_same_export_twice_does_not_crash(
+    evals_app, evals_db, tmp_path
+):
+    """End-to-end C2 crash shape 2, through the real mount path: importing
+    the same JSON export twice used to append a second snippet sharing the
+    first's `id`, and the next `_compose_row` recompose tried to mount two
+    rows with the same widget id -- `MountError`, again leaving the
+    dataset permanently un-openable afterward."""
+    dataset_id = _make_dataset(evals_db, "reimport-target", [])
+    json_path = tmp_path / "export.json"
+    json_path.write_text(
+        json.dumps(
+            [{"id": "stable-id", "text": "The protestors were", "group": "neutral"}]
+        ),
+        encoding="utf-8",
+    )
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
+        editor._handle_import_file_selected(json_path)
+        await pilot.pause()
+        # Re-importing the SAME export -- the round-trip case.
+        editor._handle_import_file_selected(json_path)
+        await pilot.pause()
+
+        # Selecting the dataset again is the real regression check (see
+        # the illegal-id test above for why): the historical crash left
+        # every later selection broken too, not just the import itself.
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        editor_again = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
+        assert editor_again.region.width > 0
+        assert editor_again.region.height > 0
+
+    stored = evals_db.get_dataset(dataset_id)
+    samples = stored["metadata"][RESERVED_LOCAL_DATASET_SAMPLES_KEY]
+    ids = [s["id"] for s in samples]
+    assert len(samples) == 2
+    assert len(set(ids)) == 2, "duplicate snippet ids after re-importing the same export"
+
+
+@pytest.mark.asyncio
 async def test_csv_import_without_text_column_notifies_error_and_does_not_persist(
     evals_app, evals_db, tmp_path
 ):
@@ -532,6 +738,47 @@ async def test_csv_import_without_text_column_notifies_error_and_does_not_persis
         editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
         editor._handle_import_file_selected(csv_path)
         await pilot.pause()
+
+    assert any(
+        severity == "error" for _message, severity in evals_app.app_instance.notifications
+    )
+    stored = evals_db.get_dataset(dataset_id)
+    assert stored["metadata"].get("sample_count", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_non_utf8_import_file_notifies_error_instead_of_crashing(
+    evals_app, evals_db, tmp_path
+):
+    """I1: `read_text(encoding="utf-8")` was wrapped in `except OSError`
+    only, but a decode failure raises `UnicodeDecodeError` -- a `ValueError`
+    subclass, not an `OSError`. A Latin-1/cp1252 CSV (the most likely
+    non-UTF-8 file a real user picks -- it's what Excel exports by default)
+    used to propagate straight out of this `push_screen` callback and crash
+    the app rather than producing the same notification an unreadable path
+    already gets."""
+    dataset_id = _make_dataset(evals_db, "cp1252-target", [])
+    csv_path = tmp_path / "excel_export.csv"
+    # "café" encoded as cp1252/Latin-1 -- 0xE9 for 'é' is not valid UTF-8
+    # on its own, so decoding this file as UTF-8 raises UnicodeDecodeError.
+    csv_path.write_bytes("text,group\nA caf\xe9 opened,neutral\n".encode("cp1252"))
+
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
+        editor._handle_import_file_selected(csv_path)
+        await pilot.pause()
+
+        # The app must still be alive and the screen still responsive --
+        # the crash this guards against propagates out of the callback and
+        # takes the whole app down with it.
+        assert isinstance(evals_app.screen, type(evals_app.screen))
+        editor_still_here = evals_app.screen.query_one(
+            "#evals-snippet-editor", SnippetEditor
+        )
+        assert editor_still_here.region.width > 0
 
     assert any(
         severity == "error" for _message, severity in evals_app.app_instance.notifications

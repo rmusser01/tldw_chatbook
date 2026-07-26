@@ -16,7 +16,7 @@ from typing import Any, Literal, Optional
 
 from ...DB.Evals_DB import EvalsDB
 from ...Evals.word_bench.models import PreflightResult
-from ...Evals.word_bench.storage import BENCH_TYPE, load_grid
+from ...Evals.word_bench.storage import BENCH_TYPE, load_run_preflight
 
 SelectionKind = Literal["none", "bench", "classic", "dataset", "run_group"]
 
@@ -157,14 +157,23 @@ class EvalsViewModel:
     def preflight_for_bench(self, bench_id: str) -> dict[str, PreflightResult]:
         """Per-target readiness from the bench's most recent run snapshot.
 
-        Reads ``word_bench.storage.load_grid``'s stored verdicts rather
-        than re-running preflight: a fresh preflight call from a render
-        path would fire network requests on every selection change and
-        could disagree with the verdict the run itself used (see
+        Reads ``word_bench.storage.load_run_preflight``'s stored verdicts
+        rather than re-running preflight: a fresh preflight call from a
+        render path would fire network requests on every selection change
+        and could disagree with the verdict the run itself used (see
         ``runner.RunOutcome``'s own docstring). A bench that has never run
         has no snapshot, so this degrades to ``{}`` -- callers render an
         un-preflighted state for every target rather than treating an
         empty mapping as "all blocked".
+
+        Uses ``load_run_preflight``, not ``load_grid``: the latter also
+        pages and JSON-decodes every ``eval_results`` row for every run in
+        the group just to reach this same snapshot field, discarding
+        everything else it read. This method itself is also resolved once
+        per selection by ``EvalsScreen`` (see its ``_preflight_for_
+        selection``) and threaded into both the bench editor and the
+        readiness inspector, rather than each pane calling this a second
+        time on the same render.
         """
         if self._db is None:
             return {}
@@ -172,13 +181,12 @@ class EvalsViewModel:
         if group is None:
             return {}
         try:
-            grid = load_grid(self._db, group["id"])
+            return load_run_preflight(self._db, group["id"])
         except ValueError:
             # The run group vanished between listing it and loading it
             # (e.g. concurrent deletion) -- render un-preflighted rather
             # than raising out of a compose().
             return {}
-        return grid.get("preflight", {})
 
     def runs_for_task(self, task_id: str) -> list[dict[str, Any]]:
         """A task's run history, newest first -- used by the classic-task

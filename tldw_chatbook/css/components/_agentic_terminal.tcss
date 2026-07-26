@@ -3498,7 +3498,8 @@ ConsoleSystemPromptModal {
 #mcp-workbench,
 #acp-workbench,
 #skills-workbench,
-#settings-workbench {
+#settings-workbench,
+#evals-workbench {
     height: 1fr;
     /* Must stay below the worst-case available height at small terminal
        sizes, otherwise content overflows and the footer status bar
@@ -3552,7 +3553,10 @@ ConsoleSystemPromptModal {
 #workflows-inspector-pane,
 #acp-list-pane,
 #acp-detail-pane,
-#acp-inspector-pane {
+#acp-inspector-pane,
+#evals-library-pane,
+#evals-detail-pane,
+#evals-inspector-pane {
     height: 100%;
     min-height: 0;
     border: solid $ds-grid-line;

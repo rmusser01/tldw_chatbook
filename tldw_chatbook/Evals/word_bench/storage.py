@@ -254,6 +254,67 @@ def _cell_from_payload(payload: dict[str, Any]) -> CellCapture | CellError:
 _RESULTS_PAGE_SIZE = 1000
 
 
+def _load_run_group_snapshot(
+    db: EvalsDB, run_group_id: str
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """The run group's own runs list and its stored config snapshot (every
+    run in a group shares one, written once by ``create_run_group``),
+    without touching ``eval_results`` at all. Shared by ``load_grid`` and
+    ``load_run_preflight`` so the two never disagree about which run's
+    snapshot is authoritative.
+
+    Raises:
+        ValueError: If no runs share this run_group_id.
+    """
+    # Filtered in SQL (via idx_eval_runs_group) rather than fetched in a
+    # fixed-size page and filtered in Python: list_runs is newest-first with
+    # a LIMIT, so once the table holds more rows than that limit, an older
+    # run group would otherwise become unreachable and read as nonexistent.
+    runs = db.list_runs(run_group_id=run_group_id, limit=10_000)
+    if not runs:
+        raise ValueError(f"no runs found for run group {run_group_id!r}")
+    overrides = runs[0].get("config_overrides") or {}
+    snapshot = overrides.get("snapshot", {})
+    return runs, snapshot
+
+
+def _preflight_from_snapshot(snapshot: dict[str, Any]) -> dict[str, PreflightResult]:
+    return {
+        target_id: PreflightResult(
+            state=result["state"],
+            k_returned=result.get("k_returned"),
+            canary=result.get("canary", "unchecked"),
+            detail=result.get("detail", ""),
+            checked_at=result.get("checked_at", ""),
+        )
+        for target_id, result in (snapshot.get("preflight") or {}).items()
+    }
+
+
+def load_run_preflight(db: EvalsDB, run_group_id: str) -> dict[str, PreflightResult]:
+    """Per-target readiness from a run group's stored snapshot, without the
+    ``eval_results`` paging ``load_grid`` does for its cells.
+
+    The bench editor and readiness inspector only ever need this handful of
+    entries (``snapshot["preflight"]``) -- rendered once per bench
+    selection, on the render path -- never the grid itself. Calling
+    ``load_grid`` there paged every ``eval_results`` row for every run in
+    the group and JSON-decoded each top-K payload just to discard all of it
+    and keep ``grid["preflight"]``; this is the same read ``load_grid``
+    makes internally, factored out so the readiness path can take it alone.
+
+    Returns:
+        ``{target_id: PreflightResult}``, defaulting to ``{}`` for run
+        groups written before the preflight key existed (same contract as
+        ``load_grid``'s ``"preflight"`` entry).
+
+    Raises:
+        ValueError: If no runs share this run_group_id.
+    """
+    _runs, snapshot = _load_run_group_snapshot(db, run_group_id)
+    return _preflight_from_snapshot(snapshot)
+
+
 def load_grid(
     db: EvalsDB, run_group_id: str, *, page_size: int = _RESULTS_PAGE_SIZE
 ) -> dict[str, Any]:
@@ -275,29 +336,14 @@ def load_grid(
         ``preflight`` defaults to ``{}`` for run groups written before this
         key existed, rather than raising on the missing key.
 
+        Readiness-only callers should use ``load_run_preflight`` instead --
+        it reads the same snapshot without paging ``eval_results``.
+
     Raises:
         ValueError: If no runs share this run_group_id.
     """
-    # Filtered in SQL (via idx_eval_runs_group) rather than fetched in a
-    # fixed-size page and filtered in Python: list_runs is newest-first with
-    # a LIMIT, so once the table holds more rows than that limit, an older
-    # run group would otherwise become unreachable and read as nonexistent.
-    runs = db.list_runs(run_group_id=run_group_id, limit=10_000)
-    if not runs:
-        raise ValueError(f"no runs found for run group {run_group_id!r}")
-
-    overrides = runs[0].get("config_overrides") or {}
-    snapshot = overrides.get("snapshot", {})
-    preflight = {
-        target_id: PreflightResult(
-            state=result["state"],
-            k_returned=result.get("k_returned"),
-            canary=result.get("canary", "unchecked"),
-            detail=result.get("detail", ""),
-            checked_at=result.get("checked_at", ""),
-        )
-        for target_id, result in (snapshot.get("preflight") or {}).items()
-    }
+    runs, snapshot = _load_run_group_snapshot(db, run_group_id)
+    preflight = _preflight_from_snapshot(snapshot)
 
     cells: dict[tuple[str, str], CellCapture | CellError] = {}
     for run in runs:

@@ -4,10 +4,14 @@ call/time estimate for a selected word bench.
 Mounted by ``evals_screen.py``'s ``_compose_inspector_pane`` above the
 existing ``#evals-primary-action`` button (unchanged from Task 3 -- this
 widget only adds content, it does not own the run control). Readiness
-renders from ``EvalsViewModel.preflight_for_bench``, which itself reads a
-stored run snapshot (``word_bench.storage.load_grid``) and never calls a
-provider -- see ``bench_editor.py``'s module docstring for the shared
-"never imports the runner" guarantee both widgets carry.
+renders from a ``preflight`` map (``word_bench.storage.load_run_preflight``,
+via ``EvalsViewModel.preflight_for_bench``) resolved ONCE per selection by
+``evals_screen.py`` and passed into ``__init__`` -- see this class's own
+``__init__`` and ``bench_editor.py``'s identical parameter -- rather than
+this widget resolving it itself, so a bench selection does not read the
+same run-group snapshot twice. Never calls a provider -- see
+``bench_editor.py``'s module docstring for the shared "never imports the
+runner" guarantee both widgets carry.
 
 Per the design contract, ``.ds-status-badge`` colour lives in app-tier CSS
 (``css/features/_evals.tcss``), never in this widget's own CSS -- there is
@@ -111,10 +115,25 @@ class EvalsInspector(Vertical):
     clean Ready) and an Estimate (call count, time, and cost for paid
     targets only)."""
 
-    def __init__(self, view_model: EvalsViewModel, bench_id: str, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        view_model: EvalsViewModel,
+        bench_id: str,
+        preflight: Optional[dict[str, PreflightResult]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """``preflight`` is resolved ONCE by ``EvalsScreen`` per selection
+        and threaded into both this widget and ``BenchEditor`` -- see
+        ``BenchEditor.__init__``'s identical parameter for why (I2 in the
+        PR 3a fix report: each pane calling
+        ``EvalsViewModel.preflight_for_bench`` independently read the
+        bench's run-group snapshot twice on one render). ``None`` falls
+        back to resolving it locally, for a widget constructed directly.
+        """
         super().__init__(**kwargs)
         self._view_model = view_model
         self._bench_id = bench_id
+        self._preflight = preflight
 
     def compose(self) -> ComposeResult:
         db = self._view_model.db
@@ -125,7 +144,11 @@ class EvalsInspector(Vertical):
         except Exception:
             return
 
-        preflight = self._view_model.preflight_for_bench(self._bench_id)
+        preflight = (
+            self._preflight
+            if self._preflight is not None
+            else self._view_model.preflight_for_bench(self._bench_id)
+        )
 
         yield Static("Readiness", classes="destination-section evals-pane-title")
         if not config.target_ids:
@@ -173,7 +196,20 @@ class EvalsInspector(Vertical):
             markup=False,
         )
 
-        if providers and any(not _is_local_provider(provider) for provider in providers):
+        unresolved_target_count = len(config.target_ids) - len(providers)
+        if unresolved_target_count > 0:
+            # A deleted target contributes no provider to `providers` at
+            # all (see the loop above) -- a bench whose targets have ALL
+            # been deleted used to fall through to the `else` below and
+            # claim "local · no cost", which is a claim about money this
+            # code has no basis for: the deleted target's provider (paid or
+            # local) is simply unknown, not confirmed local. Any
+            # unresolvable target makes the whole cost line unknown, not
+            # just the deleted target's own row.
+            cost_text = (
+                "cost unknown -- one or more targets could not be resolved"
+            )
+        elif providers and any(not _is_local_provider(provider) for provider in providers):
             cost_text = (
                 "One or more targets are paid providers; this workbench does not "
                 "estimate cost yet."

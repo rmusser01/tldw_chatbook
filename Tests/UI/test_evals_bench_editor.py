@@ -30,6 +30,7 @@ from tldw_chatbook.Evals.word_bench.storage import create_run_group, save_bench
 from tldw_chatbook.UI.Evals import bench_editor as bench_editor_module
 from tldw_chatbook.UI.Evals import inspector as inspector_module
 from tldw_chatbook.UI.Evals.bench_editor import CLASSIC_TASK_DEFERRAL_SENTENCE
+from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 
 _BUNDLED_CSS_PATH = str(
@@ -164,6 +165,50 @@ def paid_target_bench(evals_db: EvalsDB) -> str:
 
 
 @pytest.fixture
+def bench_with_all_targets_deleted(evals_db: EvalsDB) -> str:
+    """A bench whose only target id no longer resolves to a real
+    ``eval_models`` row -- simulating every target having been deleted
+    after the bench was configured (mirrors how ``bench_editor.py`` already
+    renders a "deleted target" row for exactly this case)."""
+    dataset_id = evals_db.create_dataset(
+        name="orphaned-targets",
+        format="custom",
+        source_path="inline:orphaned-targets",
+        metadata={"sample_count": 4},
+    )
+    config = BenchConfig(
+        name="orphaned bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=("target-that-no-longer-exists",),
+    )
+    return save_bench(evals_db, config)
+
+
+@pytest.fixture
+def bench_with_one_deleted_and_one_live_local_target(evals_db: EvalsDB) -> str:
+    """One resolvable local target plus one deleted target -- "any target
+    unresolvable" must still read as unknown cost, not "local · no cost"
+    just because the resolvable target happens to be local."""
+    live_id = _make_model(evals_db, "still-here")
+    dataset_id = evals_db.create_dataset(
+        name="mixed-targets",
+        format="custom",
+        source_path="inline:mixed-targets",
+        metadata={"sample_count": 4},
+    )
+    config = BenchConfig(
+        name="mixed bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(live_id, "target-that-no-longer-exists"),
+    )
+    return save_bench(evals_db, config)
+
+
+@pytest.fixture
 def classic_task_with_runs(evals_db: EvalsDB) -> str:
     """A pre-existing (non-word-bench) eval_tasks row with one completed
     run, mirroring the design spec's 'mmlu-subset' example."""
@@ -273,7 +318,12 @@ async def test_warned_target_renders_ready_plus_a_recovery_callout(
         screen = evals_app.screen
 
         status_text = _target_status_text(screen, target_ids["warned"])
-        assert status_text.strip().endswith("Ready") or "Ready" in status_text
+        # The `or "Ready" in status_text` fallback made the strong
+        # `endswith` clause inert (it always passes when the endswith
+        # clause does, and would ALSO pass for a status_text that merely
+        # mentions "Ready" somewhere without actually being the rendered
+        # label) -- dropped.
+        assert status_text.strip().endswith("Ready"), status_text
         assert "Blocked" not in status_text
         assert "Unavailable" not in status_text
 
@@ -339,12 +389,50 @@ async def test_never_run_bench_renders_unpreflighted_state(evals_app, never_run_
         targets = screen.query(".evals-status-unchecked")
         assert list(targets), "expected an un-preflighted status row"
         text = str(targets[0].renderable)
+        # Positive assertion first -- the three negative checks below would
+        # all pass for an empty (or any unrelated) label just as readily as
+        # for the correct one; "Not yet checked" is the actual rendered
+        # text (see inspector.py's `_target_status_text`/`status_text`
+        # fallback for a `None` preflight result).
+        assert "Not yet checked" in text, text
         assert "Ready" not in text
         assert "Blocked" not in text
         assert "Unavailable" not in text
 
         # No recovery callout is warranted for "we haven't checked yet".
         assert not screen.query(".ds-recovery-callout")
+
+
+@pytest.mark.asyncio
+async def test_preflight_is_resolved_once_per_bench_selection_not_twice(
+    evals_app, bench_with_mixed_readiness, monkeypatch
+):
+    """I2: BenchEditor and EvalsInspector each used to call
+    ``EvalsViewModel.preflight_for_bench`` independently from their own
+    ``compose()``, so selecting a bench read (and, before the ``load_grid``
+    -> ``load_run_preflight`` fix, fully paged) the bench's run-group
+    snapshot twice on one render. ``evals_screen.py`` now resolves it once
+    per selection and threads the same map into both widgets'
+    constructors -- proven here by counting real calls through a
+    monkeypatched wrapper, not by reading the source."""
+    task_id, _ = bench_with_mixed_readiness
+
+    call_count = 0
+    original = EvalsViewModel.preflight_for_bench
+
+    def _counting(self, bench_id):
+        nonlocal call_count
+        call_count += 1
+        return original(self, bench_id)
+
+    monkeypatch.setattr(EvalsViewModel, "preflight_for_bench", _counting)
+
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+
+    assert call_count == 1, f"expected exactly one preflight resolution, got {call_count}"
 
 
 @pytest.mark.asyncio
@@ -412,6 +500,49 @@ async def test_estimate_cost_line_is_not_no_cost_for_a_paid_target(
         assert "no cost" not in cost_text
 
 
+@pytest.mark.asyncio
+async def test_estimate_cost_is_unknown_when_all_targets_are_unresolvable(
+    evals_app, bench_with_all_targets_deleted
+):
+    """A bench whose targets have all been deleted contributes no
+    providers at all -- `providers` (built only from resolved targets) was
+    empty, so the estimate fell through to `else: "local · no cost"` -- a
+    wrong claim about money for a provider that was never actually
+    resolved as local."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=bench_with_all_targets_deleted)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        cost_line = screen.query_one("#evals-inspector-estimate-cost")
+        cost_text = str(cost_line.renderable)
+        assert "no cost" not in cost_text
+        assert "unknown" in cost_text
+
+
+@pytest.mark.asyncio
+async def test_estimate_cost_is_unknown_when_any_target_is_unresolvable(
+    evals_app, bench_with_one_deleted_and_one_live_local_target
+):
+    """"Any target unresolvable" -- not "every target unresolvable" -- is
+    the bar: one resolvable LOCAL target must not make the cost line read
+    "local · no cost" while a sibling target's provider is genuinely
+    unknown."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(
+            kind="bench", id=bench_with_one_deleted_and_one_live_local_target
+        )
+        await pilot.pause()
+        screen = evals_app.screen
+
+        cost_line = screen.query_one("#evals-inspector-estimate-cost")
+        cost_text = str(cost_line.renderable)
+        assert "no cost" not in cost_text
+        assert "unknown" in cost_text
+
+
 # ---------------------------------------------------------------------------
 # Requirement 4: classic tasks are read-only, no run control
 # ---------------------------------------------------------------------------
@@ -444,6 +575,52 @@ async def test_classic_task_detail_shows_run_history_and_deferral_sentence(
         for classic_widget in (name, run_row, deferral):
             assert classic_widget.region.width > 0
             assert classic_widget.region.height > 0
+
+
+@pytest.mark.asyncio
+async def test_classic_task_subgroup_is_reachable_by_clicking_its_rail_row(
+    evals_app, classic_task_with_runs
+):
+    """I3: the design spec requires classic tasks to "appear in a labelled
+    subgroup under Benches" -- the rail used to render only
+    ``view_model.benches()``, filtering classic rows out entirely, so
+    ``ClassicTaskDetail``, ``classic_tasks()``, and ``classic_task_by_id()``
+    were all dead code reachable only by a test calling
+    ``screen.select(kind="classic", ...)`` directly (see both existing
+    classic-task tests above) -- never by a real user action. Driven here
+    by an actual rail click instead."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        screen = evals_app.screen
+
+        separators = screen.query(".evals-rail-classic-separator")
+        assert list(separators), "no labelled classic subgroup rendered under Benches"
+
+        await pilot.click("#evals-rail-row-benches-classic-0")
+        await pilot.pause()
+
+        name = screen.query_one("#evals-detail-classic-name")
+        assert "mmlu-subset" in str(name.renderable)
+        assert name.region.width > 0
+        assert name.region.height > 0
+
+
+@pytest.mark.asyncio
+async def test_benches_section_header_counts_word_benches_and_classic_tasks_together(
+    evals_app, bench_with_mixed_readiness, classic_task_with_runs
+):
+    """The design mockup's own worked example counts word benches and
+    classic tasks together under one "BENCHES (N)" header (2 word benches +
+    2 classic tasks -> "BENCHES (4)") -- the header names how many rows
+    are under it, not how many word benches exist."""
+    task_id, _ = bench_with_mixed_readiness
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        labels = [
+            str(w.renderable)
+            for w in evals_app.screen.query(".evals-rail-section-label")
+        ]
+        assert "Benches (2)" in " ".join(labels)
 
 
 @pytest.mark.asyncio

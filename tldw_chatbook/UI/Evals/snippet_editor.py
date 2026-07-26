@@ -226,13 +226,35 @@ def import_snippets_into_dataset(
     ``inline:<name>`` convention rather than a second storage path. Returns
     the full, post-import snippet list so a caller can re-render without a
     second database round trip.
+
+    De-duplicates ids against every id already in the dataset (and against
+    earlier entries in this same batch) before appending, minting a fresh
+    UUID for any collision -- this is what makes re-importing the same
+    export twice (the round-trip ``parse_json_snippets``'s own docstring
+    advertises: an id is preserved verbatim when present) safe rather than
+    a ``MountError`` from ``_compose_row`` mounting two rows with the same
+    widget id. A minted-fresh-id re-import is not silently dropped: its
+    text is identical to the row it re-imports, so ``find_exact_duplicate_
+    labels`` (text-based, not id-based) flags it as an exact duplicate the
+    same way any other repeated snippet would be -- the user sees it, rather
+    than the import silently doing nothing.
     """
     dataset = db.get_dataset(dataset_id)
     if dataset is None:
         raise ValueError(f"Dataset '{dataset_id}' was not found.")
     metadata = dict(dataset.get("metadata") or {})
     existing = dataset_snippets(dataset)
-    combined = existing + [dict(snippet) for snippet in new_snippets]
+    seen_ids = {str(snippet.get("id")) for snippet in existing}
+    deduped_new: list[dict[str, Any]] = []
+    for snippet in new_snippets:
+        snippet = dict(snippet)
+        snippet_id = str(snippet.get("id") or "")
+        if not snippet_id or snippet_id in seen_ids:
+            snippet_id = str(uuid.uuid4())
+            snippet["id"] = snippet_id
+        seen_ids.add(snippet_id)
+        deduped_new.append(snippet)
+    combined = existing + deduped_new
     metadata[RESERVED_LOCAL_DATASET_SAMPLES_KEY] = combined
     metadata["sample_count"] = len(combined)
     metadata["inline_samples"] = True
@@ -299,13 +321,53 @@ def parse_csv_snippets(content: str) -> list[dict[str, Any]]:
     return snippets
 
 
+#: Snippet ids are interpolated as a SUFFIX of Textual widget ids
+#: (``evals-snippet-text-<id>``, ``evals-snippet-meta-<id>`` -- see
+#: ``_compose_row``), never as the whole identifier: the literal prefix
+#: always supplies the first character. Textual's own identifier grammar
+#: (``textual.css.tokenize.IDENTIFIER``, ``[a-zA-Z_-][a-zA-Z0-9_-]*``)
+#: restricts only the FIRST character of the full string to a
+#: non-digit -- a restriction the literal prefix already satisfies, so it
+#: must not be re-applied to the id fragment alone. A tighter regex here
+#: (requiring the id itself to start with a letter) would reject the
+#: majority of real ``uuid.uuid4()`` values, which start with a digit
+#: about 10 times in 16 -- confirmed the hard way: an earlier version of
+#: this pattern broke the "preserve an existing id verbatim" round-trip
+#: for most legitimate UUIDs. Every character (not just the first) must
+#: still be a legal identifier character -- e.g. a space is not -- so this
+#: is not simply "any non-empty string".
+_SNIPPET_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _sanitize_snippet_id(raw_id: Any) -> str:
+    """``raw_id`` if it is already a legal widget-id string, else a fresh
+    UUID -- the same fallback a missing ``id`` already gets. An id that
+    fails this check is not a usable identity (it cannot become a widget
+    id), so minting a replacement is preferable to round-tripping a value
+    that will crash the next compose()."""
+    if isinstance(raw_id, str) and _SNIPPET_ID_RE.match(raw_id):
+        return raw_id
+    return str(uuid.uuid4())
+
+
 def parse_json_snippets(content: str) -> list[dict[str, Any]]:
     """A JSON list of snippet objects, or an object with a ``"snippets"``
-    list, for round-tripping an exported set. Each entry requires
-    non-empty ``text``; an existing ``id`` is preserved verbatim (so
-    re-importing a genuine export does not mint new identities for
-    snippets that already have stable ones), and a missing/blank ``id``
-    gets a fresh UUID, same as the other two import shapes.
+    list, for round-tripping an exported set.
+
+    An existing ``id`` is preserved verbatim when it is a legal widget-id
+    string (so re-importing a genuine export does not mint new identities
+    for snippets that already have stable ones); a missing, blank, or
+    invalid ``id`` gets a fresh UUID, same as the other two import shapes
+    (see ``_sanitize_snippet_id``).
+
+    **Per-entry policy matches ``parse_csv_snippets``**: an entry that
+    isn't an object, or whose ``text`` is missing/blank, is skipped rather
+    than aborting the whole import -- the same tolerance
+    ``parse_csv_snippets`` already gives a CSV's blank rows. A large,
+    otherwise-valid export must not be rejected wholesale over one bad
+    entry. Only a structurally invalid payload (unparseable JSON, or a
+    shape that isn't a list/``{"snippets": [...]}``) raises -- that is a
+    "this is not the expected file" signal, not a single skippable row.
     """
     try:
         parsed = json.loads(content)
@@ -323,14 +385,11 @@ def parse_json_snippets(content: str) -> list[dict[str, Any]]:
     snippets: list[dict[str, Any]] = []
     for entry in parsed:
         if not isinstance(entry, Mapping):
-            raise ValueError("Each JSON snippet entry must be an object.")
+            continue
         text = entry.get("text")
         if not isinstance(text, str) or text == "":
-            raise ValueError("Each JSON snippet entry requires non-empty 'text'.")
-        raw_id = entry.get("id")
-        snippet_id = (
-            raw_id if isinstance(raw_id, str) and raw_id.strip() else str(uuid.uuid4())
-        )
+            continue
+        snippet_id = _sanitize_snippet_id(entry.get("id"))
         group = entry.get("group")
         group = group if isinstance(group, str) and group != "" else None
         note = entry.get("note")
@@ -429,8 +488,14 @@ class SnippetEditor(Vertical):
         dup_label = duplicate_labels.get(snippet_id)
         flags = ", ".join(label for label in (ws_label, dup_label) if label) or "—"
 
+        # Index-based, not snippet_id-based, as a second line of defence
+        # beyond the parse/import-time id validation (see
+        # `_sanitize_snippet_id`/`import_snippets_into_dataset`): nothing
+        # looks this row id up by snippet id, and an index is always a
+        # legal, unique widget id regardless of what a snippet's own id
+        # turns out to be.
         with Horizontal(
-            id=f"evals-snippet-row-{snippet_id}", classes="evals-snippet-row"
+            id=f"evals-snippet-row-{index}", classes="evals-snippet-row"
         ):
             yield Static(f"{index + 1}.", classes="evals-snippet-index", markup=False)
             yield Static(
@@ -493,7 +558,14 @@ class SnippetEditor(Vertical):
         file_path = Path(path)
         try:
             content = file_path.read_text(encoding="utf-8")
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
+            # UnicodeDecodeError is a ValueError, not an OSError -- a file
+            # that can be opened but isn't valid UTF-8 (e.g. a CSV Excel
+            # exported as cp1252/Latin-1, the most likely non-UTF-8 file a
+            # user actually picks) used to propagate straight out of this
+            # push_screen callback and crash the app instead of producing
+            # the same "could not read" notification an unreadable path
+            # already gets.
             self._notify(f"Could not read {file_path.name}: {exc}", severity="error")
             return
 
