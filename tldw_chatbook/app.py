@@ -474,6 +474,9 @@ from tldw_chatbook.Subscriptions import (  # noqa: E402
     ServerWatchlistsService,
     WatchlistScopeService,
 )
+from tldw_chatbook.Subscriptions.fts_backfill import (  # noqa: E402
+    backfill_subscription_items_fts,
+)
 from tldw_chatbook.Translation_Interop import (  # noqa: E402
     ServerTranslationService,
     TranslationScopeService,
@@ -5475,6 +5478,30 @@ class TldwCli(
         )
         self.local_watchlists_service.notification_app = self
 
+    def _backfill_subscription_items_fts(self) -> None:
+        """Worker body: index subscription_items rows that predate the FTS
+        index (task-688). Started from ``on_mount`` via
+        ``run_worker(thread=True)`` so a large backlog never blocks app
+        startup or screen mount. Builds its own ``SubscriptionsDB`` instance
+        rather than reusing one built on another thread, since SQLite
+        connections in this codebase are thread-local and not shared.
+        """
+        db = None
+        try:
+            db = SubscriptionsDB(get_subscriptions_db_path(), CLI_APP_CLIENT_ID)
+            backfill_subscription_items_fts(db)
+        except Exception:
+            logger.opt(exception=True).error(
+                "Subscription items FTS backfill failed; some pre-existing "
+                "items may remain unsearchable until the app is restarted."
+            )
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+
     def _wire_server_parity_state_repositories(self) -> None:
         try:
             self.server_parity_state = build_server_parity_state_repositories(
@@ -7489,6 +7516,18 @@ class TldwCli(
             self._refresh_model_catalogs(),
             exclusive=True,
             group="model-catalog-refresh",
+        )
+
+        # task-688: index subscription_items rows scraped before the FTS5
+        # index existed, so search covers a user's whole back catalogue
+        # without any action on their part. thread=True because this does
+        # blocking sqlite work; never blocks startup or screen mount since
+        # run_worker only schedules it.
+        self.run_worker(
+            self._backfill_subscription_items_fts,
+            thread=True,
+            exclusive=True,
+            group="subscriptions-fts-backfill",
         )
 
     def _init_model_catalog_disk_store(self) -> "ModelCatalogDiskStore | None":
