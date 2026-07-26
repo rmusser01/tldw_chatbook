@@ -16,7 +16,6 @@ from typing import Optional, Union
 from loguru import logger
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
-from .collection_fingerprint import fingerprint_collection
 from .config import RAGConfig, _normalized_type_setting, validate_chroma_persist_directory
 from ..config_profiles import get_profile_manager, ProfileConfig, _slugify
 from ..ingestion_indexing import reset_shared_rag_service
@@ -51,6 +50,48 @@ def _active_profile_id() -> str:
     except Exception as e:
         logger.debug(f"Could not read active profile pointer: {e}")
     return DEFAULT_PROFILE
+
+
+def _first_run_import_done() -> bool:
+    """The durable first-run-import marker: [rag.service].first_run_import_done.
+
+    True once ensure_imported_profile() has deliberately activated
+    ``imported_settings`` — either by completing a fresh import or by healing
+    a half-done one (see ``_mark_first_run_import_done``, called at both
+    sites). This is the proof `ensure_imported_profile`'s healing branch uses
+    to tell "the pointer was never successfully settled" apart from "the
+    pointer is settled, whatever it currently names" -- unlike comparing
+    config *contents*, it can never be fooled by a customization it doesn't
+    happen to check for (task-639 review: the prior fingerprint + allow-list
+    heuristic missed several Settings-screen-editable fields, e.g.
+    ``search.hybrid_alpha``, and could delete a genuinely customized
+    profile).
+    """
+    try:
+        svc = get_cli_setting("rag", "service", {}) or {}
+        if isinstance(svc, dict):
+            return bool(svc.get("first_run_import_done"))
+    except Exception as e:
+        logger.debug(f"Could not read first_run_import_done marker: {e}")
+    return False
+
+
+def _mark_first_run_import_done() -> None:
+    """Persist [rag.service].first_run_import_done = True.
+
+    Called at both places ``ensure_imported_profile`` activates
+    ``imported_settings`` (a fresh import, and healing a half-done run) so
+    that, from then on, the pointer is never second-guessed again -- even if
+    the user later switches to a different profile, or back to the default
+    builtin itself. Best-effort: a failure here is logged and swallowed, same
+    as the rest of ``ensure_imported_profile`` -- it must never block RAG
+    service creation. A failed write just means the next call may re-evaluate
+    the healing branch once more, which is safe (idempotent), not corrupting.
+    """
+    try:
+        save_setting_to_cli_config("rag.service", "first_run_import_done", True)
+    except Exception as e:
+        logger.debug(f"Could not persist first_run_import_done marker: {e}")
 
 
 def _apply_env_overrides(config: RAGConfig,
@@ -308,63 +349,6 @@ def _merge_legacy_query_time_keys(config: RAGConfig) -> dict:
     return legacy
 
 
-#: Every SearchConfig field a legacy import can ever hand-set (task-495) --
-#: the full set _merge_legacy_query_time_keys() may setattr() onto a
-#: snapshot's `.search`. Used by _is_pre635_damage_artifact() to prove an
-#: existing "Imported settings" profile carries none of them.
-_LEGACY_MERGED_SEARCH_FIELDS = _LEGACY_SEARCH_KEYS + _LEGACY_PROCESSOR_KEYS
-
-
-def _is_pre635_damage_artifact(mgr, imported: ProfileConfig) -> bool:
-    """True when `imported` (the "Imported settings" profile) is provably
-    indistinguishable from the default builtin profile -- i.e. it can only be
-    a snapshot the pre-635 always-import bug took of a fresh install that had
-    nothing to import, not a genuine legacy upgrade or later customization
-    (task-639 AC #2).
-
-    Two independent conditions must BOTH hold, or this returns False (never
-    guesses):
-
-    - Index fingerprint identity: `fingerprint_collection(imported.rag_config)
-      == fingerprint_collection(default.rag_config)`. This is exactly the set
-      of fields SP1 keys a vector collection under, so identity here proves
-      reverting the pointer changes zero observable indexing behavior -- the
-      active collection stays the same collection either way.
-    - No hand-set query-time/reranking difference: none of the
-      `_LEGACY_MERGED_SEARCH_FIELDS` differ from the default's, and no
-      `reranking_config` was fabricated. These fields are NOT part of the
-      fingerprint, so a real customization here (task-495 legacy merge, or a
-      later hand-edit in the Settings screen) would otherwise be silently
-      discarded by treating fingerprint identity alone as proof.
-
-    Deliberately does NOT compare `embedding.device`: `resolve_active_rag_
-    config()`'s env-overlay layer concretizes an "auto" device into a real
-    "cpu"/"cuda"/"mps" value (see `_apply_env_overrides`), so an untouched
-    fresh-install snapshot legitimately differs from the default profile's
-    own stored "auto" on that one field. `device` is not a
-    `fingerprint_collection` input, so this has no bearing on the check.
-
-    Args:
-        mgr: The profile manager to resolve the default builtin profile from.
-        imported: The existing "Imported settings" profile to evaluate.
-
-    Returns:
-        True only when reverting `imported` to the default builtin pointer
-        (and discarding the profile) is provably lossless.
-    """
-    default = mgr.get_profile(DEFAULT_PROFILE)
-    if default is None:
-        return False  # nothing to prove equivalence against
-    if fingerprint_collection(imported.rag_config) != fingerprint_collection(default.rag_config):
-        return False
-    if imported.reranking_config is not None:
-        return False
-    for key in _LEGACY_MERGED_SEARCH_FIELDS:
-        if getattr(imported.rag_config.search, key, None) != getattr(default.rag_config.search, key, None):
-            return False
-    return True
-
-
 def ensure_imported_profile() -> Optional[str]:
     """On first run, capture the currently-resolved RAG config into a writable
     'Imported settings' profile and set it active -- but ONLY for a user
@@ -399,40 +383,62 @@ def ensure_imported_profile() -> Optional[str]:
     established convention this mirrors). Without this, a legacy user with
     reranking enabled would silently end up with it OFF after import.
 
-    Self-healing (narrowed, task-639): existence of the profile is not enough
-    to consider first-run import "done" -- if a previous run persisted the
-    profile but failed before (or otherwise never got to) activating it, that
-    leaves it created-but-never-active forever with no retry. So every call
-    also checks the active pointer, and (re)activates the imported profile
-    ONLY when the pointer still names the default builtin (``DEFAULT_PROFILE``
-    == ``hybrid_basic``) -- i.e. the pointer was never successfully written by
-    *anyone* yet, which is the one condition a genuine half-done first run and
-    "no one has ever written this pointer" share. A pointer naming ANY other
-    profile (builtin or user, including one the user switched to and then
-    later switched away from Imported settings) is left completely alone: the
-    prior behavior treated "pointer != imported_settings" as proof of a
-    half-done run, which cannot distinguish that from a user who deliberately
-    activated a different profile after import completed, and silently flipped
-    them back to Imported settings on their next launch. This healing path
-    runs regardless of ``_has_legacy_rag_config_material()`` -- once the
-    profile exists, healing its activation is not a fresh-install concern.
+    Self-healing (task-639, marker-based): existence of the profile is not
+    enough to consider first-run import "done" -- if a previous run persisted
+    the profile but failed before (or otherwise never got to) activating it,
+    that leaves it created-but-never-active forever with no retry. The guard
+    used to be "the active pointer differs from imported_settings", which
+    cannot distinguish that half-done state from a user who deliberately
+    activated a different profile afterward -- it silently flipped a
+    deliberate switch back to Imported settings on the user's next launch. A
+    second attempt compared the profile's *contents* against the default
+    builtin (fingerprint + an allow-listed field set) to prove "nothing to
+    lose", but that heuristic could itself be fooled: the Settings screen
+    lets a user hand-tune fields the allow-list never checked (e.g.
+    ``search.hybrid_alpha``, `default_search_mode`, `citation_style`,
+    `embedding.batch_size`, ...), so a real customization outside that list
+    passed the "provably safe" check and got permanently deleted.
 
-    Damage cleanup (task-639 AC #2): the pre-635 bug ran this unconditionally,
-    so a fresh install that touched RAG before that fix shipped got "Imported
-    settings" created AND activated even though it had nothing legacy to
-    import -- its snapshot is, by construction, just a copy of the default
-    builtin. When the pointer is ALREADY imported_settings and the profile is
-    provably indistinguishable from the default builtin (see
-    ``_is_pre635_damage_artifact``: identical index fingerprint, no hand-set
-    query-time/reranking difference), that is treated as proof the activation
-    was the pre-635 bug rather than a real choice, and it is reverted: the
-    profile is deleted (not just repointed -- leaving it on disk would let the
-    healing branch above re-activate it on the very next call, since the
-    pointer would then again read as the default) and the pointer is set back
-    to ``DEFAULT_PROFILE``. Anything that cannot be proven this way (a real
-    hand-set difference, a different fingerprint, or a fabricated
-    ``reranking_config``) is left untouched -- when it can't tell a genuine
-    import/choice apart from damage, it does not guess.
+    The fix is a durable marker instead of a content guess:
+    ``[rag.service].first_run_import_done`` (``_first_run_import_done`` /
+    ``_mark_first_run_import_done``), written every time this function
+    deliberately activates ``imported_settings`` (both the fresh-import path
+    below and the healing branch here). Once set, the pointer is NEVER
+    second-guessed again, no matter what it currently names -- including the
+    user switching back to the default builtin itself, which the pointer-only
+    approach could not tell apart from "never written". While the marker is
+    still absent (a config from before this function ever set it -- either a
+    genuine half-done first run, or a pre-existing "Imported settings"
+    activation from before the marker existed, task-639 AC #2), exactly one
+    thing happens:
+
+    - Pointer still names the default builtin (``DEFAULT_PROFILE`` ==
+      ``hybrid_basic``, i.e. it was never successfully written by anyone) --
+      this is the one condition a genuine half-done first run and "the
+      marker predates this profile" share, so the healing here always
+      completes the activation and sets the marker.
+    - Pointer already names anything else (``imported_settings`` from a
+      pre-635/pre-marker activation, or a different profile entirely) -- the
+      pointer is left completely untouched (never deleted, never repointed)
+      and the marker is simply set, adopting whatever is already active as
+      confirmed going forward. Deliberately does NOT delete the profile even
+      when it happens to look identical to the default: unlike a marker, no
+      finite content comparison can prove a Settings-screen customization is
+      absent, so guessing "safe to delete" risks real, irreversible data
+      loss -- doing nothing here has no such risk and reaches the same
+      settled state (the marker stops any further automatic handling).
+
+    One inherent, bounded gap: for a config that predates the marker (an
+    existing pointer that happens to already read as the default builtin,
+    with no marker yet) there is no way to tell "never completed" apart from
+    "the user deliberately switched back to the default sometime before this
+    code shipped" -- this can only occur once, on the first run under
+    marker-aware code, since the marker is written at every activation site
+    from then on and this ambiguity can never arise again afterward.
+
+    This healing path runs regardless of ``_has_legacy_rag_config_material()``
+    -- once the profile exists, healing its activation is not a fresh-install
+    concern.
 
     Exception-safe: any failure here must never block RAG service creation, so
     every error is caught and logged, returning None (as if already imported /
@@ -441,29 +447,25 @@ def ensure_imported_profile() -> Optional[str]:
     Returns:
         The new profile's id (``"imported_settings"``) on the run that
         creates and activates it; ``None`` when it already existed (no-op,
-        after healing the active pointer if needed), when there is no
-        genuine legacy material to import (fresh install), or when import
+        after healing the active pointer / marker if needed), when there is
+        no genuine legacy material to import (fresh install), or when import
         failed (logged, swallowed).
     """
     try:
         mgr = _manager()
         existing = mgr.get_profile(_IMPORTED_ID)
         if existing is not None:
-            pointer = _active_profile_id()
-            if pointer == DEFAULT_PROFILE:
-                # The pointer was never successfully written by anyone --
-                # heal a half-done first run (task-639: narrowed from
-                # "!= _IMPORTED_ID" so a deliberate later switch to a
-                # different profile is never undone).
-                set_active_profile(_IMPORTED_ID)
-            elif pointer == _IMPORTED_ID and _is_pre635_damage_artifact(mgr, existing):
-                # task-639 AC #2: provably a pre-635 always-import-bug
-                # artifact on what would now be a fresh install -- revert.
-                # Delete first: leaving the profile on disk would let the
-                # branch above re-activate it next call (pointer now reads
-                # as the default).
-                mgr.delete_profile(_IMPORTED_ID)
-                set_active_profile(DEFAULT_PROFILE)
+            if not _first_run_import_done():
+                if _active_profile_id() == DEFAULT_PROFILE:
+                    # Never successfully written by anyone -- heal a
+                    # half-done first run.
+                    set_active_profile(_IMPORTED_ID)
+                # else: pointer already names imported_settings (a
+                # pre-marker activation, possibly pre-635 damage) or some
+                # other profile entirely -- leave it exactly as-is (never
+                # delete, never repoint; see docstring for why) and just
+                # adopt it as settled.
+                _mark_first_run_import_done()
             return None
         if not _has_legacy_rag_config_material():
             # task-635: nothing legacy to preserve continuity for -- leave a
@@ -493,6 +495,7 @@ def ensure_imported_profile() -> Optional[str]:
                 profile.reranking_config.top_k_to_rerank = int(reranker_top_k)
         mgr.save_profile(profile)
         set_active_profile(_IMPORTED_ID)
+        _mark_first_run_import_done()
         return _IMPORTED_ID
     except Exception as e:
         logger.warning(f"ensure_imported_profile: first-run import failed, continuing without it: {e}")

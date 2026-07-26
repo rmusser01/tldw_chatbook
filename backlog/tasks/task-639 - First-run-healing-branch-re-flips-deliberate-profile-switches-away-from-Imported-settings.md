@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-25 21:54'
-updated_date: '2026-07-26 00:34'
+updated_date: '2026-07-26 00:58'
 labels:
   - followup
   - uat
@@ -106,6 +106,79 @@ non-reflip (RED before the fix, GREEN after), half-done-first-run still heals
 fingerprint mismatch, fabricated reranking_config) proving the cleanup never
 guesses. Tests/RAG/test_first_run_import.py: 22 passed (16 baseline + 6 new).
 Tests/RAG/: 574 passed, 8 skipped (baseline 568/8 + 6 new).
+
+Files: tldw_chatbook/RAG_Search/simplified/active_config.py,
+Tests/RAG/test_first_run_import.py.
+
+--- Review round 2 (Critical, reviewer-reproduced) ---
+
+Finding: _is_pre635_damage_artifact()'s "no hand-set difference" allow-list
+(_LEGACY_SEARCH_KEYS + _LEGACY_PROCESSOR_KEYS) did not cover every field the
+Settings screen editor (apply_defaults_to_profile,
+settings_rag_profile_adapter.py:150-167) can hand-tune -- e.g.
+search.hybrid_alpha (default 0.7), default_search_mode, citation_style,
+snippet_max_chars, max_context_size, fts_top_k, vector_top_k,
+embedding.batch_size. None of those are index-determining (fingerprint
+still matched the default) and none were in the allow-list, so a profile
+customized in ONLY one of those fields still looked "provably safe" and was
+PERMANENTLY DELETED. Reproduced with a RED test
+(test_ensure_imported_profile_never_deletes_settings_screen_customization)
+confirmed failing against the round-1 code before applying the fix below.
+
+Decision: replaced the content-comparison heuristic entirely with a durable
+marker, [rag.service].first_run_import_done (_first_run_import_done /
+_mark_first_run_import_done), written at BOTH places
+ensure_imported_profile() ever deliberately activates imported_settings (the
+fresh-import path and the half-done-first-run healing path). Once set, the
+pointer is never re-evaluated again, regardless of what it names -- this
+also closes the previously-disclosed "switch back to the default builtin"
+gap from round 1, since the marker (not the pointer's current value) is now
+the source of truth for "was this deliberate".
+
+For a config whose imported_settings pointer/profile predates the marker
+(marker absent, existing profile, pointer != DEFAULT_PROFILE): chose
+reviewer's option (b) -- NEVER delete. The marker is simply set and both the
+profile and pointer are left completely untouched. Rationale: no finite
+content check can prove "no customization exists" (that's exactly what broke
+in round 1), so a compare-and-maybe-delete strategy can always be defeated by
+some field nobody thought to check; leaving it as-is is unconditionally safe
+(zero risk of destroying real user data) and reaches the same practical
+end-state (the flapping stops, the pointer is confirmed and never
+reconsidered again). Only the true half-done case (existing profile, no
+marker, pointer STILL the default builtin -- i.e. never successfully written
+by anyone) completes the activation, matching AC#1's own framing of that
+condition.
+
+_LEGACY_MERGED_SEARCH_FIELDS and _is_pre635_damage_artifact() were removed
+entirely (no longer needed -- nothing compares content anymore); the
+`fingerprint_collection` import in active_config.py was removed along with
+it (dead post-removal).
+
+Tests: replaced the 3 round-1 "does_not_delete_*" negative tests and the
+delete-based "heals_pre635_damage_artifact" test (now factually wrong) with:
+test_ensure_imported_profile_never_deletes_settings_screen_customization
+(the reviewer's repro, RED-then-GREEN),
+test_ensure_imported_profile_adopts_preexisting_imported_pointer_without_deleting,
+test_ensure_imported_profile_marker_present_never_touches_pointer_even_back_to_default,
+test_fresh_user_leaves_marker_unset. Added marker assertions to the 3
+existing tests that activate imported_settings
+(test_first_run_creates_imported_profile_and_sets_active,
+test_ensure_imported_profile_heals_half_done_first_run,
+test_ensure_imported_profile_swallows_save_failure). Updated the shared
+_wire() fixture's save_setting_to_cli_config fake to route by `key` (profile
+vs first_run_import_done) into separate ptr["v"]/ptr["marker"] slots instead
+of one shared value, so the two writes can no longer silently clobber each
+other in tests.
+
+Gates: Tests/RAG/test_first_run_import.py: 22 passed. Tests/RAG/: 574 passed,
+8 skipped (same totals as round 1 -- test count is unchanged, only which
+scenarios are covered).
+
+Known accepted gap (unchanged from round 1, now narrower): a config that
+predates the marker AND whose pointer happens to already read as the default
+builtin is still indistinguishable from "never completed" -- this can only
+occur once, on the first marker-aware run, since the marker is written at
+every activation site from then on.
 
 Files: tldw_chatbook/RAG_Search/simplified/active_config.py,
 Tests/RAG/test_first_run_import.py.
