@@ -1,5 +1,5 @@
 ---
-id: TASK-699
+id: TASK-715
 title: '[splash_screen] config section is ignored by get_cli_setting'
 status: To Do
 assignee: []

@@ -1,5 +1,5 @@
 ---
-id: TASK-703
+id: TASK-719
 title: Guard the get_cli_setting bare-section silent-default bug class
 status: To Do
 assignee: []
@@ -16,7 +16,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-`get_cli_setting(section, key=None, default=None)` silently returns `default` whenever it's called with a bare section name and either a non-string second positional argument (mistaken for `key`) or no key at all. This one shape of defect has now been found six separate times across five subsystems: TASK-547 (`Tools/tool_executor.py`, `[tools]` — deleted, not fixed, as System A was removed in TASK-545 P3), TASK-658 (`local_file_ingestion.py`, `[database]`), TASK-699 (`splash_screen.py` and `settings_splash_screen_viewer.py`, `[splash_screen]`, two instances), TASK-700 (`serve.py`, `[web_server]`), and TASK-701 (`TTS/backends/openai.py`, three instances with no key at all). Every one of these was a silent, non-crashing no-op: the caller always got the hardcoded default and never knew the real config section was never consulted.
+`get_cli_setting(section, key=None, default=None)` silently returns `default` whenever it's called with a bare section name and either a non-string second positional argument (mistaken for `key`) or no key at all. This one shape of defect has now been found six separate times across five subsystems: TASK-547 (`Tools/tool_executor.py`, `[tools]` — deleted, not fixed, as System A was removed in TASK-545 P3), TASK-658 (`local_file_ingestion.py`, `[database]`), TASK-715 (`splash_screen.py` and `settings_splash_screen_viewer.py`, `[splash_screen]`, two instances), TASK-716 (`serve.py`, `[web_server]`), and TASK-717 (`TTS/backends/openai.py`, three instances with no key at all). Every one of these was a silent, non-crashing no-op: the caller always got the hardcoded default and never knew the real config section was never consulted.
 
 `save_setting_to_cli_config(section, None, value)` has the same shape of defect in the opposite direction — it raises `KeyError: 'None'` rather than silently discarding data, but the root cause is the same: a caller reaching for a "write/read this whole section" call shape that the API doesn't actually support. TASK-545 P3 removed `save_setting_to_cli_config`'s only caller that hit this, but nothing in the function itself prevents the same mistake being reintroduced.
 <!-- SECTION:DESCRIPTION:END -->

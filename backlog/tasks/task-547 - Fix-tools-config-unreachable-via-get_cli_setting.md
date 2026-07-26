@@ -20,7 +20,7 @@ priority: medium
 - [x] The dead `get_cli_setting("tools", {})` call site is gone — `get_tool_executor()` and `Tools/tool_executor.py` (System A) were deleted outright in TASK-545 P3, rather than the call being repaired in place, since System A had no live caller left to repair for
 - [x] Enabling a `[tools]` flag in `config.toml` actually enables that tool on the live path: `BuiltinToolProvider` (System B, the path the agent runtime actually calls) reads its `[tools]` gate keys (`write_file_enabled`/`create_note_enabled`/`update_note_enabled`/etc.) correctly, and the Settings screen's save path was repaired to write them correctly
 - [x] Unit test confirms that setting a `[tools]` enable flag (e.g. `write_file_enabled = true`) makes `BuiltinToolProvider` register/enable that tool
-- [x] Reviewed other `get_cli_setting` calls for the same default-value-slot misuse: found four further live instances, filed as TASK-699, TASK-700, TASK-701 (three subsystems), plus the earlier TASK-658; the bug class itself is tracked by TASK-703
+- [x] Reviewed other `get_cli_setting` calls for the same default-value-slot misuse: found four further live instances, filed as TASK-715, TASK-716, TASK-717 (three subsystems), plus the earlier TASK-658; the bug class itself is tracked by TASK-719
 <!-- AC:END -->
 
 ## Implementation Notes

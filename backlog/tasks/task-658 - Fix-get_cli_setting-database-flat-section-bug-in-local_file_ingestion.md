@@ -29,8 +29,8 @@ priority: medium
 
 AC#4's repo-wide sweep (done during TASK-545 P3) found four further live instances of this bug class beyond `quick_ingest()`, none fixed inline — each filed as its own follow-up task so it gets its own fix/verification/test cycle:
 
-- TASK-699 — `Widgets/splash_screen.py` and `Widgets/settings_splash_screen_viewer.py`, `[splash_screen]` (two instances)
-- TASK-700 — `Web_Server/serve.py`, `[web_server]`
-- TASK-701 — `TTS/backends/openai.py`, three no-key calls (`openai_api`/`API`/`app_tts`) — same symptom, slightly different call shape (no key at all rather than a stray non-string second argument)
+- TASK-715 — `Widgets/splash_screen.py` and `Widgets/settings_splash_screen_viewer.py`, `[splash_screen]` (two instances)
+- TASK-716 — `Web_Server/serve.py`, `[web_server]`
+- TASK-717 — `TTS/backends/openai.py`, three no-key calls (`openai_api`/`API`/`app_tts`) — same symptom, slightly different call shape (no key at all rather than a stray non-string second argument)
 
-The underlying bug class itself (rather than each individual call site) is now tracked by TASK-703, which also covers `save_setting_to_cli_config`'s sibling defect.
+The underlying bug class itself (rather than each individual call site) is now tracked by TASK-719, which also covers `save_setting_to_cli_config`'s sibling defect.
