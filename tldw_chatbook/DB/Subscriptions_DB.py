@@ -1545,36 +1545,28 @@ class SubscriptionsDB(BaseDB):
         if existing:
             return existing["id"]
 
-        # Insert new item
-        cursor.execute(
-            """
-            INSERT INTO subscription_items
-            (subscription_id, url, title, content_hash, published_date,
-             author, categories, enclosures, extracted_data, canonical_url,
-             previous_hash, change_percentage, diff_summary, change_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                subscription_id,
-                item["url"],
-                item.get("title"),
-                item.get("content_hash"),
-                item.get("published_date"),
-                item.get("author"),
-                json.dumps(item.get("categories")) if item.get("categories") else None,
-                json.dumps(item.get("enclosures")) if item.get("enclosures") else None,
-                json.dumps(item.get("extracted_data"))
-                if item.get("extracted_data")
-                else None,
-                canonical_url,
-                item.get("previous_hash"),
-                item.get("change_percentage"),
-                item.get("diff_summary"),
-                item.get("change_type"),
-            ),
-        )
+        # Insert new item via the shared persistence path so the full
+        # column set (content, content_kind, content_format, run_id,
+        # alert_matches, ...) is written, not just the change/dedup fields
+        # this path used to carry alone. The canonical-URL dedupe guard
+        # above is kept unchanged; persist_subscription_item's own
+        # ON CONFLICT target (subscription_id, url, content_hash) is a
+        # narrower, independent dedupe rule that still applies underneath
+        # it — the two dedupe rules are deliberately not unified.
+        #
+        # Imported locally: Subscriptions/__init__.py imports
+        # LocalWatchlistsService, which imports this module, so a
+        # module-level import here would be circular.
+        from ..Subscriptions.item_persist import persist_subscription_item
 
-        return cursor.lastrowid
+        now = datetime.now(timezone.utc).isoformat()
+        return persist_subscription_item(
+            cursor.connection,
+            subscription_id,
+            {**item, "canonical_url": canonical_url},
+            run_id=None,
+            now=now,
+        )
 
     def _update_subscription_stats(
         self, subscription_id: int, stats: Dict[str, Any], had_error: bool

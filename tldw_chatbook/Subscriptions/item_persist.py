@@ -3,7 +3,9 @@
 Replaces two divergent INSERT statements that wrote disjoint column sets:
 ``Subscriptions_DB`` wrote the change/dedup fields but dropped run linkage and
 status, while ``LocalWatchlistsService`` did the reverse. Neither wrote body
-text. Every caller now routes through :func:`persist_subscription_item`.
+text. Both callers (``Subscriptions_DB._add_subscription_item`` and
+``LocalWatchlistsService._upsert_subscription_items``) now route through
+:func:`persist_subscription_item`.
 """
 
 from __future__ import annotations
@@ -41,11 +43,13 @@ def persist_subscription_item(
     item: Mapping[str, Any],
     run_id: int | None,
     now: str,
-) -> None:
+) -> int:
     """Insert or update one item, writing the full column set.
 
-    Existing ``reviewed`` and ``ignored`` statuses are preserved across
-    re-fetches; anything else resets to ``new``.
+    Existing ``reviewed``, ``ignored``, and ``ingested`` statuses are
+    preserved across re-fetches, since each reflects a deliberate user
+    action on that item. Anything else (including ``error``) resets to
+    ``new`` — a successful re-fetch should clear a prior error.
 
     Args:
         conn: An open connection inside a transaction.
@@ -54,6 +58,9 @@ def persist_subscription_item(
         run_id: Run that produced this item, if any.
         now: ISO-8601 timestamp for created_at/updated_at.
 
+    Returns:
+        The id of the inserted or updated row.
+
     Raises:
         ValueError: If content_kind and content_format are an invalid pairing.
     """
@@ -61,7 +68,7 @@ def persist_subscription_item(
     content_format = item.get("content_format")
     _validate_content_pairing(content_kind, content_format)
 
-    conn.execute(
+    cursor = conn.execute(
         """
         INSERT INTO subscription_items (
             subscription_id, url, title, content, content_kind, content_format,
@@ -89,7 +96,7 @@ def persist_subscription_item(
             diff_summary = excluded.diff_summary,
             change_type = excluded.change_type,
             status = CASE
-                WHEN subscription_items.status IN ('reviewed', 'ignored')
+                WHEN subscription_items.status IN ('reviewed', 'ignored', 'ingested')
                 THEN subscription_items.status
                 ELSE 'new'
             END,
@@ -120,3 +127,4 @@ def persist_subscription_item(
             now,
         ),
     )
+    return cursor.lastrowid

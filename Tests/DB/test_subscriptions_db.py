@@ -38,6 +38,69 @@ def test_foreign_keys_enforced_on_runtime_connection(db):
     assert db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
+def test_record_check_result_persists_full_column_set_via_unified_path(db):
+    """Regression for fix round 1, Finding 1.
+
+    ``_add_subscription_item`` (reached via ``record_check_result``, the
+    scheduled-check path used by ``WatchlistCheckHandler``) was the other
+    half of the disjoint-column bug Task 4 exists to fix: it wrote the
+    change/dedup fields but dropped body text, content_kind/content_format,
+    run_id, and alert_matches entirely. It must now route through
+    ``persist_subscription_item`` too, while its own canonical-URL dedupe
+    guard stays exactly as it was -- a second call with the same URL/hash
+    must still collapse to one row rather than adopting
+    persist_subscription_item's separate (raw-url-based) dedupe rule.
+    """
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/feed"
+    )
+
+    db.record_check_result(
+        subscription_id=source_id,
+        items=[
+            {
+                "url": "https://a.example/1",
+                "title": "RAG Evaluation",
+                "content": "retrieval quality rubric",
+                "content_kind": "article",
+                "content_format": "text",
+                "content_hash": "hash-1",
+            }
+        ],
+    )
+
+    row = db.conn.execute(
+        "SELECT content, content_kind, content_format, canonical_url "
+        "FROM subscription_items WHERE subscription_id = ?",
+        (source_id,),
+    ).fetchone()
+    assert row["content"] == "retrieval quality rubric"
+    assert row["content_kind"] == "article"
+    assert row["content_format"] == "text"
+    assert row["canonical_url"] == "https://a.example/1"
+
+    # Same URL/hash again: the canonical-URL guard in _add_subscription_item
+    # must still catch this as a duplicate and skip it entirely (no update),
+    # exactly as before this fix -- the two dedupe rules are not unified.
+    db.record_check_result(
+        subscription_id=source_id,
+        items=[
+            {
+                "url": "https://a.example/1",
+                "title": "RAG Evaluation (updated)",
+                "content": "should not overwrite",
+                "content_hash": "hash-1",
+            }
+        ],
+    )
+    rows = db.conn.execute(
+        "SELECT id, content FROM subscription_items WHERE subscription_id = ?",
+        (source_id,),
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["content"] == "retrieval quality rubric"
+
+
 def test_deleting_subscription_cascades_to_its_items(db):
     source_id = db.add_subscription(
         name="ArXiv", type="rss", source="https://a.example/feed"

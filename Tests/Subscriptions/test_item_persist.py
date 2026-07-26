@@ -51,18 +51,48 @@ def test_persists_full_column_set(db, source_id):
     assert row[9] == "content"
 
 
-def test_upsert_preserves_reviewed_status(db, source_id):
+@pytest.mark.parametrize("preserved_status", ["reviewed", "ignored", "ingested"])
+def test_upsert_preserves_status_from_user_action(db, source_id, preserved_status):
+    """Regression for fix round 1, Finding 2.
+
+    ``reviewed``, ``ignored``, and ``ingested`` are all set by a deliberate
+    user action on the item (see Event_Handlers/subscription_events.py for
+    the accept/ignore/review actions). Because execute_run re-upserts every
+    kept item on every poll, an unchanged item must not silently flip back
+    to ``new`` and resurface as unread just because a scheduled re-fetch
+    happened to touch the row.
+    """
     item = {"url": "https://a.example/1", "title": "T", "content_hash": "h", "content": "body"}
     with db.transaction() as conn:
         persist_subscription_item(conn, source_id, item, run_id=1, now="2026-07-25T00:00:00Z")
-        conn.execute("UPDATE subscription_items SET status = 'reviewed' WHERE url = ?",
-                     ("https://a.example/1",))
+        conn.execute(
+            "UPDATE subscription_items SET status = ? WHERE url = ?",
+            (preserved_status, "https://a.example/1"),
+        )
         persist_subscription_item(conn, source_id, item, run_id=2, now="2026-07-25T01:00:00Z")
 
     row = db.conn.execute(
         "SELECT status, run_id FROM subscription_items WHERE url = ?", ("https://a.example/1",)
     ).fetchone()
-    assert row[0] == "reviewed"
+    assert row[0] == preserved_status
+    assert row[1] == 2
+
+
+def test_upsert_resets_error_status_to_new(db, source_id):
+    """``error`` is not a user action -- a successful re-fetch should clear it."""
+    item = {"url": "https://a.example/1", "title": "T", "content_hash": "h", "content": "body"}
+    with db.transaction() as conn:
+        persist_subscription_item(conn, source_id, item, run_id=1, now="2026-07-25T00:00:00Z")
+        conn.execute(
+            "UPDATE subscription_items SET status = 'error' WHERE url = ?",
+            ("https://a.example/1",),
+        )
+        persist_subscription_item(conn, source_id, item, run_id=2, now="2026-07-25T01:00:00Z")
+
+    row = db.conn.execute(
+        "SELECT status, run_id FROM subscription_items WHERE url = ?", ("https://a.example/1",)
+    ).fetchone()
+    assert row[0] == "new"
     assert row[1] == 2
 
 
