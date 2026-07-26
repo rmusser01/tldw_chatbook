@@ -15,8 +15,8 @@ def _drop_ai_trigger(db):
     row that already existed in `subscription_items` before the FTS index
     was ever created on a real upgraded database. Matches the established
     pattern in Tests/DB/test_subscriptions_db_watchlists.py."""
-    db.conn.execute("DROP TRIGGER subscription_items_fts_ai")
-    db.conn.commit()
+    with db.transaction() as conn:
+        conn.execute("DROP TRIGGER subscription_items_fts_ai")
 
 
 def _insert_legacy_item(db, subscription_id, url, title, content):

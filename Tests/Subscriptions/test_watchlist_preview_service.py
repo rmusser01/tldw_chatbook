@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions.watchlist_preview_service import WatchlistPreviewService
 
 
@@ -18,6 +19,54 @@ async def test_preview_uses_run_executor_when_provided():
 
     assert result["items"][0]["url"] == "https://example.com/post"
     assert "Preview completed" in result["log_text"]
+
+
+@pytest.mark.asyncio
+async def test_preview_closes_its_database_on_success(monkeypatch):
+    """Since task-689 made the ``:memory:`` DB a real, functional connection
+    (rather than the inert, schema-less object it used to be), ``preview()``
+    must close it deterministically -- otherwise every preview call leaks a
+    thread-local sqlite3 connection and its in-memory database."""
+    closed = []
+    real_close = SubscriptionsDB.close
+
+    def spy_close(self):
+        closed.append(self)
+        real_close(self)
+
+    monkeypatch.setattr(SubscriptionsDB, "close", spy_close)
+
+    async def fake_executor(subscription):
+        return {"items": []}
+
+    svc = WatchlistPreviewService(run_executor=fake_executor)
+    await svc.preview({"source_type": "rss", "url": "https://example.com/feed"})
+
+    assert len(closed) == 1
+
+
+@pytest.mark.asyncio
+async def test_preview_closes_its_database_even_when_the_work_raises(monkeypatch):
+    """A failed preview is exactly when the resource must come back: the
+    connection must not be leaked on the exception path either."""
+    closed = []
+    real_close = SubscriptionsDB.close
+
+    def spy_close(self):
+        closed.append(self)
+        real_close(self)
+
+    monkeypatch.setattr(SubscriptionsDB, "close", spy_close)
+
+    async def raising_executor(subscription):
+        raise RuntimeError("boom")
+
+    svc = WatchlistPreviewService(run_executor=raising_executor)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await svc.preview({"source_type": "rss", "url": "https://example.com/feed"})
+
+    assert len(closed) == 1
 
 
 @pytest.mark.asyncio

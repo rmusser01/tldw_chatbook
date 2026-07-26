@@ -118,8 +118,8 @@ class SubscriptionsDB(BaseDB):
         fix (e.g. a shared-cache ``file::memory:?cache=shared`` URI plus a
         dedicated keepalive connection).
         """
-        conn = self.conn
-        conn.executescript("""
+        with self.transaction() as conn:
+            conn.executescript("""
             PRAGMA foreign_keys = ON;
             
             -- Schema version tracking
@@ -349,7 +349,6 @@ class SubscriptionsDB(BaseDB):
                 UPDATE subscription_templates SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
             END;
             """)
-        conn.commit()
         self._ensure_watchlists_schema(conn)
 
     def _ensure_watchlists_schema(self, conn=None):

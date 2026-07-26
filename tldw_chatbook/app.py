@@ -475,6 +475,7 @@ from tldw_chatbook.Subscriptions import (  # noqa: E402
     WatchlistScopeService,
 )
 from tldw_chatbook.Subscriptions.fts_backfill import (  # noqa: E402
+    FTSBackfillError,
     backfill_subscription_items_fts,
 )
 from tldw_chatbook.Translation_Interop import (  # noqa: E402
@@ -5487,20 +5488,35 @@ class TldwCli(
         connections in this codebase are thread-local and not shared.
         """
         db = None
+        db_path = get_subscriptions_db_path()
         try:
-            db = SubscriptionsDB(get_subscriptions_db_path(), CLI_APP_CLIENT_ID)
+            db = SubscriptionsDB(db_path, CLI_APP_CLIENT_ID)
             backfill_subscription_items_fts(db)
+        except FTSBackfillError as exc:
+            logger.opt(exception=True).error(
+                "Subscription items FTS backfill failed for database {} "
+                "after indexing {} row(s) this run; some pre-existing "
+                "items may remain unsearchable until the app is restarted.",
+                db_path,
+                exc.rows_indexed,
+            )
         except Exception:
             logger.opt(exception=True).error(
-                "Subscription items FTS backfill failed; some pre-existing "
-                "items may remain unsearchable until the app is restarted."
+                "Subscription items FTS backfill failed for database {}; "
+                "some pre-existing items may remain unsearchable until the "
+                "app is restarted.",
+                db_path,
             )
         finally:
             if db is not None:
                 try:
                     db.close()
                 except Exception:
-                    pass
+                    logger.opt(exception=True).warning(
+                        "Failed to close SubscriptionsDB {} after FTS "
+                        "backfill.",
+                        db_path,
+                    )
 
     def _wire_server_parity_state_repositories(self) -> None:
         try:

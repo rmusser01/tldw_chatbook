@@ -21,6 +21,24 @@ from loguru import logger
 from ..DB.Subscriptions_DB import SubscriptionsDB
 
 
+class FTSBackfillError(RuntimeError):
+    """Raised when the backfill loop fails partway through a run.
+
+    Carries ``rows_indexed`` -- how many rows this run had already indexed
+    (and committed; each chunk is its own transaction) before the failing
+    chunk -- so a caller's error log can report real progress instead of
+    just "it failed", without needing to duplicate the loop to track that
+    count itself.
+    """
+
+    def __init__(self, rows_indexed: int) -> None:
+        super().__init__(
+            f"Subscription items FTS backfill failed after indexing "
+            f"{rows_indexed} row(s) this run"
+        )
+        self.rows_indexed = rows_indexed
+
+
 def backfill_subscription_items_fts(db: SubscriptionsDB, chunk_size: int = 500) -> int:
     """Index every pre-existing ``subscription_items`` row missing from FTS.
 
@@ -42,10 +60,20 @@ def backfill_subscription_items_fts(db: SubscriptionsDB, chunk_size: int = 500) 
     Returns:
         Total number of rows indexed by this call (``0`` if there was
         nothing left to index).
+
+    Raises:
+        FTSBackfillError: If the underlying ``backfill_items_fts`` call
+            raises partway through the run. Wraps the original exception
+            (via ``raise ... from``) and records how many rows this run had
+            already indexed, so a caller logging the failure can report
+            real progress rather than a bare "it failed".
     """
     total = 0
     while True:
-        indexed = db.backfill_items_fts(chunk_size=chunk_size)
+        try:
+            indexed = db.backfill_items_fts(chunk_size=chunk_size)
+        except Exception as exc:
+            raise FTSBackfillError(total) from exc
         if indexed == 0:
             break
         total += indexed
