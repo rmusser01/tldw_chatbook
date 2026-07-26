@@ -1,10 +1,10 @@
 # Character TTS Generation Profiles with Native audio.cpp Console Speech — Design
 
-**Status:** design approved by the user on 2026-07-25; independent spec review completed after three passes; review amendments incorporated and awaiting final written-spec review
+**Status:** design approved by the user on 2026-07-25; independent spec review completed after three passes; review amendments incorporated; final written-spec review approved before Slice 2A continuation on 2026-07-26
 **Date:** 2026-07-25
 **Related design:** [audio.cpp TTS Adapter Registry](2026-07-23-audio-cpp-tts-adapter-registry-design.md)
 **Existing ADR:** [ADR-023 — TTS Adapter Registry and audio.cpp Runtime Boundary](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
-**Planned ADR:** `backlog/decisions/027-character-tts-generation-profile-ownership.md`
+**Planned ADR:** `backlog/decisions/028-character-tts-generation-profile-ownership.md`
 **Slice 1 status:** implemented and live-UAT validated; TASK-710 remains In Progress because the repository-wide DoD suite is not green and no external server was available for a post-rebase live rerun
 
 ## Goal
@@ -1062,7 +1062,7 @@ This slice independently fixes the first-time-user UAT failure.
 ### Slice 2A — Profile domain and repository lifecycle
 
 - Create and link
-  `backlog/decisions/027-character-tts-generation-profile-ownership.md`,
+  `backlog/decisions/028-character-tts-generation-profile-ownership.md`,
   extending ADR-023.
 - Add domain models, normalized-name validation, the versioned serialized
   repository, optimistic concurrency, interprocess lifecycle locking, backup,
@@ -1354,7 +1354,7 @@ integration is disabled.
   `backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md`
   before Slice 1 implementation;
 - create
-  `backlog/decisions/027-character-tts-generation-profile-ownership.md`
+  `backlog/decisions/028-character-tts-generation-profile-ownership.md`
   before Slice 2A implementation.
 
 **Reason:** Slice 1 strengthens the existing cross-module TTS service contract
@@ -1362,7 +1362,7 @@ with atomic request admission/publication, expected configuration revisions,
 and a bounded exclusive handoff state machine; those decisions amend ADR-023
 rather than waiting for profile persistence. The later profile feature
 establishes a new versioned store, data ownership and identity rules,
-fail-closed runtime semantics, and character-card import/export policy. ADR-027
+fail-closed runtime semantics, and character-card import/export policy. ADR-028
 will extend rather than duplicate the amended ADR-023.
 
 No new dependency decision is required. The implementation uses the existing
