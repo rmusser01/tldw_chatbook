@@ -104,12 +104,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         "tldw_chatbook.UI.Screens.settings_screen",
         "SettingsScreen",
     ),
-    "ingest": ScreenRoute(
-        "ingest",
-        "ingest",
-        "tldw_chatbook.UI.Screens.media_ingest_screen",
-        "MediaIngestScreen",
-    ),
     "conversation": ScreenRoute(
         "conversation",
         "conversation",
@@ -188,6 +182,14 @@ _SCREEN_ALIASES = {
     # test suite, and its trust passphrase modal is reused by the Library
     # skill editor's trust panel (Task 4).
     "skills": "library",
+    # The standalone Ingest screen is retired (task-684.4): importing now
+    # lives entirely inside Library's Import media canvas, which gained the
+    # server-backed and web-clipping paths that screen used to own
+    # (tasks 684.1-684.3). Existing startup configs / callers using the
+    # legacy "ingest" route id resolve to Library instead of erroring --
+    # mirrors the "notes"/"prompts"/"skills" aliases above, and matches the
+    # route inventory, which already declared ingest -> library.
+    "ingest": "library",
     # The orphan "research" screen registration is removed (Task 255, from
     # the 2026-07-12 RAG module audit): no shell destination or navigation
     # call ever targeted it, and the Workbench route inventory already maps

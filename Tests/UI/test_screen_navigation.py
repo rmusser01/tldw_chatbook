@@ -185,7 +185,6 @@ from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_screen import MediaScreen
 from tldw_chatbook.UI.Screens.search_screen import SearchScreen
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -1210,18 +1209,6 @@ def test_media_screen_uses_shared_runtime_state():
     assert screen.media_window.runtime_state is app.media_runtime_state
 
 
-def test_media_ingest_screen_uses_shared_runtime_state():
-    app = _build_test_app()
-    screen = MediaIngestScreen(app)
-
-    widgets = list(screen.compose_content())
-
-    assert len(widgets) == 1
-    assert screen.media_runtime_state is app.media_runtime_state
-    assert screen.media_ingest_window is widgets[0]
-    assert screen.media_ingest_window.runtime_state is app.media_runtime_state
-
-
 @pytest.mark.asyncio
 async def test_main_navigation_exposes_all_routed_primary_screens():
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
@@ -1750,3 +1737,39 @@ def test_search_screen_restore_state_stashes_pending_dict_for_on_mount():
         "mode": "hybrid",
         "active_tab": "history-tab",
     }
+
+
+def test_the_retired_ingest_route_resolves_to_library():
+    """The legacy ``ingest`` route must still land somewhere real.
+
+    The standalone Ingest screen is retired (task-684.4) now that importing
+    lives entirely in Library's Import media canvas, including the server-backed
+    and web-clipping paths it used to own. The route id is kept as an alias
+    rather than deleted, because startup configs and saved navigation state can
+    still say "ingest" -- dropping it outright would dead-end them, and
+    ``_ROUTABLE_LEGACY_ROUTES`` already treats it as a routable legacy id.
+
+    Mirrors the ``notes``/``prompts``/``skills`` retirements exactly, and matches
+    the Workbench route inventory, which already declared ingest -> library.
+    """
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+
+    ingest_name, ingest_tab, ingest_class = resolve_screen_target("ingest")
+    library_name, library_tab, library_class = resolve_screen_target("library")
+
+    assert (ingest_name, ingest_tab, ingest_class) == (
+        library_name,
+        library_tab,
+        library_class,
+    )
+    assert ingest_class is not None, "the ingest route must not dead-end"
+
+
+def test_no_route_reaches_the_retired_ingest_screen():
+    """AC#2: nothing may still resolve to the deleted screen."""
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    for route_id in screen_registry.registered_screen_route_ids():
+        route = screen_registry._SCREEN_ROUTES[route_id]
+        assert "media_ingest_screen" not in route.module_path, route_id
+        assert route.class_name != "MediaIngestScreen", route_id

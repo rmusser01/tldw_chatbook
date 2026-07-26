@@ -28,7 +28,6 @@ CODE_REPO = ROOT / "tldw_chatbook/css/features/_code_repo.tcss"
 SEARCH_RAG = ROOT / "tldw_chatbook/css/features/_search-rag.tcss"
 CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
 FEATURE_ALERTS = ROOT / "tldw_chatbook/css/features/feature_alerts.tcss"
-INGESTION_REBUILT = ROOT / "tldw_chatbook/css/features/_ingestion_rebuilt.tcss"
 NEW_INGEST = ROOT / "tldw_chatbook/css/features/_new_ingest.tcss"
 UNIFIED_SIDEBAR = ROOT / "tldw_chatbook/css/components/_unified_sidebar.tcss"
 WIZARDS = ROOT / "tldw_chatbook/css/features/_wizards.tcss"
@@ -1143,17 +1142,6 @@ def test_feature_buttons_inherit_shared_button_focus_contract_without_duplicate_
         )
         == []
     )
-
-
-def test_ingestion_rebuilt_focus_overrides_defer_to_shared_contracts():
-    text = INGESTION_REBUILT.read_text(encoding="utf-8")
-    widget_focus_selector = re.compile(r"\b(Input|TextArea|Select|Button)\b.*:focus")
-    offenders = [
-        selector
-        for selector in css_selectors(text)
-        if widget_focus_selector.search(selector)
-    ]
-    assert offenders == []
 
 
 def test_new_ingest_focus_overrides_defer_to_shared_contracts():
