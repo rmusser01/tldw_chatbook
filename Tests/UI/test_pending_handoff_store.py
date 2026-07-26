@@ -10,6 +10,7 @@ from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     HandoffChannel,
+    HandoffValueError,
     PendingHandoffStore,
 )
 
@@ -255,6 +256,37 @@ def test_claim_repr_never_contains_payload_content() -> None:
 
     assert claim is not None
     assert sentinel not in repr(claim)
+
+
+def test_normalization_failures_do_not_expose_input_values() -> None:
+    sentinel = "TASK-645-NORMALIZATION-PRIVATE-SENTINEL"
+
+    class SecretCopyFailure:
+        def __deepcopy__(self, _memo):
+            raise ValueError(sentinel)
+
+        def __repr__(self) -> str:
+            return sentinel
+
+        def __str__(self) -> str:
+            return sentinel
+
+    console_launch = _console_launch()
+    console_launch.payload["nested"]["private"] = SecretCopyFailure()
+    values = (
+        (HandoffChannel.CHAT, SecretCopyFailure()),
+        (HandoffChannel.CONSOLE_LIVE_WORK, console_launch),
+        (HandoffChannel.CONSOLE_PROMPT_INSERT, SecretCopyFailure()),
+    )
+
+    for channel, value in values:
+        store = PendingHandoffStore()
+        with pytest.raises(HandoffValueError) as caught:
+            store.stage(channel, value)
+
+        assert sentinel not in str(caught.value)
+        assert sentinel not in repr(caught.value)
+        assert store.claim(channel) is None
 
 
 def test_store_has_no_persistence_or_backing_map_api() -> None:

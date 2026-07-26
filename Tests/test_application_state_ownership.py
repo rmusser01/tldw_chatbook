@@ -29,6 +29,13 @@ SCHEDULES_WORKBENCH_PATH = (
 SCREEN_STATE_STORE_PATH = (
     PRODUCTION_ROOT / "UI" / "Navigation" / "screen_state_store.py"
 )
+HANDOFF_STORE_PATH = PRODUCTION_ROOT / "UI" / "Navigation" / "pending_handoff_store.py"
+CHAT_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen.py"
+RETIRED_HANDOFF_FIELDS = (
+    "pending_chat_handoff",
+    "pending_console_launch",
+    "pending_console_prompt_insert",
+)
 PROJECTION_NAMES = (
     "current_runtime_backend",
     "runtime_backend",
@@ -198,6 +205,49 @@ def _top_level_function(path: Path, name: str) -> ast.FunctionDef:
         for node in _parse(path).body
         if isinstance(node, ast.FunctionDef) and node.name == name
     )
+
+
+def _is_exception_category(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "__name__"
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "type"
+        and len(node.value.args) == 1
+        and isinstance(node.value.args[0], ast.Name)
+        and node.value.args[0].id == "exc"
+    )
+
+
+def _is_logger_call(node: ast.Call) -> bool:
+    return any(
+        isinstance(part, ast.Name) and part.id in {"logger", "logging"}
+        for part in ast.walk(node.func)
+    )
+
+
+def _unsafe_handoff_log_parts(node: ast.Call) -> list[str]:
+    unsafe: list[str] = []
+    safe_chains = {"claim.channel.value", "claim.revision"}
+
+    for argument in node.args:
+        chain = _chain(argument)
+        if isinstance(argument, ast.Constant):
+            continue
+        if chain in safe_chains or _is_exception_category(argument):
+            continue
+        unsafe.append(f"argument:{ast.unparse(argument)}")
+
+    for keyword in node.keywords:
+        if keyword.arg in {"exception", "exc_info"} and not (
+            isinstance(keyword.value, ast.Constant) and keyword.value.value is False
+        ):
+            unsafe.append(f"traceback:{keyword.arg}")
+        elif keyword.arg not in {"exception", "exc_info"}:
+            unsafe.append(f"keyword:{keyword.arg or '**'}")
+
+    return unsafe
 
 
 def test_tldw_cli_neither_imports_nor_instantiates_app_state() -> None:
@@ -658,3 +708,142 @@ def test_legacy_state_docs_describe_compatibility_not_live_authority() -> None:
     assert "single source of truth" not in rendered
     assert "centralized state" not in rendered
     assert "compatibility" in rendered
+
+
+def test_retired_raw_handoff_fields_are_absent_from_production() -> None:
+    violations = {
+        field: _production_occurrences(field)
+        for field in RETIRED_HANDOFF_FIELDS
+        if _production_occurrences(field)
+    }
+
+    assert violations == {}
+
+
+def test_pending_handoff_slots_are_private_to_the_owner_module() -> None:
+    relative_owner = str(HANDOFF_STORE_PATH.relative_to(PROJECT_ROOT))
+    owner_occurrences = [
+        (path, kind, scopes)
+        for path, kind, scopes, _line in _production_occurrences("_slots")
+        if path == relative_owner
+    ]
+    assert owner_occurrences == [
+        (
+            relative_owner,
+            "attribute_store",
+            ("PendingHandoffStore", "__init__"),
+        ),
+        (
+            relative_owner,
+            "attribute_load",
+            ("PendingHandoffStore", "_slot_for"),
+        ),
+    ]
+
+    external_accesses: list[tuple[str, int]] = []
+    for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
+        if path == HANDOFF_STORE_PATH:
+            continue
+        source = path.read_text(encoding="utf-8")
+        if "pending_handoffs" not in source and "PendingHandoffStore" not in source:
+            continue
+        for node in ast.walk(_parse(path)):
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr == "_slots"
+                or _constant_dynamic_name(node) == "_slots"
+            ):
+                external_accesses.append(
+                    (str(path.relative_to(PROJECT_ROOT)), node.lineno)
+                )
+
+    assert external_accesses == []
+
+
+def test_pending_handoff_owner_has_no_persistence_or_serialization_calls() -> None:
+    forbidden_calls = {
+        "asdict",
+        "dump",
+        "dumps",
+        "json",
+        "model_dump",
+        "model_dump_json",
+        "open",
+        "save",
+        "serialize",
+        "to_dict",
+        "to_json",
+        "write",
+        "write_bytes",
+        "write_text",
+    }
+    forbidden_imports = {"json", "pickle", "shelve"}
+    tree = _parse(HANDOFF_STORE_PATH)
+    calls = [
+        (_chain(node.func), node.lineno)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and _chain(node.func).rsplit(".", 1)[-1] in forbidden_calls
+    ]
+    imports: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.extend(
+                (alias.name, node.lineno)
+                for alias in node.names
+                if alias.name.split(".", 1)[0] in forbidden_imports
+            )
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.split(".", 1)[0] in forbidden_imports
+        ):
+            imports.append((node.module, node.lineno))
+
+    assert calls == []
+    assert imports == []
+
+
+def test_handoff_exception_logs_are_metadata_only() -> None:
+    app_class = _class_definition(APP_PATH, "TldwCli")
+    chat_class = _class_definition(CHAT_SCREEN_PATH, "ChatScreen")
+    methods = (
+        (APP_PATH, _method_definition(app_class, "_stage_handoff")),
+        (
+            CHAT_SCREEN_PATH,
+            _method_definition(chat_class, "_consume_pending_console_launch"),
+        ),
+        (
+            CHAT_SCREEN_PATH,
+            _method_definition(chat_class, "_consume_pending_console_prompt_insert"),
+        ),
+        (
+            CHAT_SCREEN_PATH,
+            _method_definition(chat_class, "_rollback_chat_handoff_tab"),
+        ),
+        (
+            CHAT_SCREEN_PATH,
+            _method_definition(chat_class, "_consume_pending_chat_handoff"),
+        ),
+        (
+            CHAT_SCREEN_PATH,
+            _method_definition(chat_class, "_stage_handoff_as_console_live_work"),
+        ),
+    )
+    violations: list[tuple[str, str, int, list[str]]] = []
+    for path, method in methods:
+        for node in ast.walk(method):
+            if not isinstance(node, ast.Call) or not _is_logger_call(node):
+                continue
+            unsafe = _unsafe_handoff_log_parts(node)
+            if unsafe:
+                violations.append(
+                    (
+                        str(path.relative_to(PROJECT_ROOT)),
+                        method.name,
+                        node.lineno,
+                        unsafe,
+                    )
+                )
+
+    assert violations == []

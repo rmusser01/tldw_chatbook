@@ -3523,7 +3523,7 @@ class TldwCli(
         machinery. Mirrors that method's stage-then-navigate shape, but the
         payload is a bare string and there is no tabs-enabled gate: whether
         the insert actually lands is decided by ``ChatScreen`` once it
-        consumes this field (it alone owns Console's provider/model
+        settles this claim (it alone owns Console's provider/model
         readiness state).
 
         Args:

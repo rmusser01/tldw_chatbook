@@ -8457,11 +8457,17 @@ class ChatScreen(BaseAppScreen):
             await tab_container.close_tab(tab_id)
         except Exception as exc:
             logger.warning(
-                "Chat handoff tab cleanup failed (exception_category={})",
+                "Chat handoff tab cleanup failed "
+                "(outcome=exception, exception_category={})",
                 type(exc).__name__,
             )
             return False
-        return tab_id not in tab_container.sessions
+        if tab_id in tab_container.sessions:
+            logger.warning(
+                "Chat handoff tab cleanup failed (outcome=tab_retained)"
+            )
+            return False
+        return True
 
     async def _consume_pending_chat_handoff(self) -> None:
         if self._handoff_consumption_in_progress:
@@ -8603,9 +8609,11 @@ class ChatScreen(BaseAppScreen):
                         ),
                     ),
                 ).to_payload()
-            except (TypeError, ValueError, ValidationError):
-                logger.opt(exception=True).warning(
-                    "Could not build evidence bundle for handoff"
+            except (TypeError, ValueError, ValidationError) as exc:
+                logger.warning(
+                    "Could not build evidence bundle for handoff "
+                    "(exception_category={})",
+                    type(exc).__name__,
                 )
 
         self._pending_console_launch_context = ConsoleLiveWorkLaunch.from_values(

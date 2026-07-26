@@ -17,6 +17,7 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Chat_Widgets.chat_handoff_card import ChatHandoffCard
 from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
@@ -243,10 +244,13 @@ async def test_full_app_console_producers_stage_before_navigation(
 @pytest.mark.asyncio
 async def test_full_app_producer_normalization_failure_does_not_navigate(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    sentinel = "TASK-645-PRODUCER-NORMALIZATION-PRIVATE-SENTINEL"
+
     class CopyFailure:
         def __deepcopy__(self, _memo):
-            raise TypeError("private-copy-failure")
+            raise TypeError(sentinel)
 
     app = TldwCli()
 
@@ -261,14 +265,18 @@ async def test_full_app_producer_normalization_failure_does_not_navigate(
                 (message, severity)
             ),
         )
-
-        app.stage_console_prompt_insert("   ")
-        app.open_console_for_live_work(
-            source="tests",
-            title="copy failure",
-            payload={"nested": CopyFailure()},
-        )
-        app.open_chat_with_handoff(object())  # type: ignore[arg-type]
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, format="{message}")
+        try:
+            app.stage_console_prompt_insert("   ")
+            app.open_console_for_live_work(
+                source="tests",
+                title="copy failure",
+                payload={"nested": CopyFailure()},
+            )
+            app.open_chat_with_handoff(object())  # type: ignore[arg-type]
+        finally:
+            logger.remove(sink_id)
 
         assert messages == []
         assert len(notifications) == 3
@@ -276,6 +284,7 @@ async def test_full_app_producer_normalization_failure_does_not_navigate(
         assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
         assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK) is None
         assert app.pending_handoffs.claim(HandoffChannel.CHAT) is None
+        assert sentinel not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -599,6 +608,47 @@ async def test_full_app_chat_native_transfer_acknowledges_after_local_ownership(
         await screen._consume_pending_chat_handoff()
 
         assert app.pending_handoffs.claim(HandoffChannel.CHAT) is None
+
+
+@pytest.mark.asyncio
+async def test_full_app_chat_native_rag_recovery_does_not_log_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import tldw_chatbook.Chat.citation_evidence_models as evidence_models
+
+    sentinel = "TASK-645-NATIVE-RAG-PRIVATE-SENTINEL"
+
+    class RejectEvidenceBundle:
+        def __init__(self, **_kwargs):
+            raise ValueError(sentinel)
+
+    app = TldwCli()
+
+    async with _mounted_app(app, monkeypatch, route="chat") as pilot:
+        screen, _composer = await _mounted_chat(app, pilot)
+        monkeypatch.setattr(evidence_models, "EvidenceBundle", RejectEvidenceBundle)
+        payload = ChatHandoffPayload(
+            source="rag-search",
+            item_type="document",
+            title="private RAG handoff",
+            body="private context",
+            metadata={"nested": {"private": sentinel}},
+        )
+        app.pending_handoffs.stage(HandoffChannel.CHAT, payload)
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, format="{message}")
+        try:
+            await screen._consume_pending_chat_handoff()
+        finally:
+            logger.remove(sink_id)
+
+        combined = "\n".join(messages)
+        assert screen._pending_console_launch_context is not None
+        assert app.pending_handoffs.claim(HandoffChannel.CHAT) is None
+        assert "exception_category=ValueError" in combined
+        assert sentinel not in combined
+        assert sentinel not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -936,7 +986,9 @@ async def test_full_app_chat_apply_failure_rolls_back_without_logging_payload(
 async def test_full_app_chat_cleanup_failure_acknowledges_to_prevent_duplicate(
     monkeypatch: pytest.MonkeyPatch,
     cleanup_mode: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    sentinel = f"TASK-645-CLEANUP-{cleanup_mode}-PRIVATE-SENTINEL"
     app = TldwCli()
 
     async with _mounted_app(app, monkeypatch, route="chat") as pilot:
@@ -958,12 +1010,12 @@ async def test_full_app_chat_cleanup_failure_acknowledges_to_prevent_duplicate(
             return tab_id
 
         async def fail_apply(_session, _payload) -> None:
-            raise RuntimeError("apply failed")
+            raise RuntimeError(sentinel)
 
         async def retain_partial_tab(tab_id: str) -> None:
             cleanup_calls.append(tab_id)
             if cleanup_mode == "raises":
-                raise RuntimeError("cleanup failed")
+                raise ValueError(sentinel)
 
         monkeypatch.setattr(tab_container, "create_new_tab", record_create)
         monkeypatch.setattr(screen, "_apply_handoff_to_chat_session", fail_apply)
@@ -977,13 +1029,28 @@ async def test_full_app_chat_cleanup_failure_acknowledges_to_prevent_duplicate(
         )
         app.pending_handoffs.stage(HandoffChannel.CHAT, _chat_payload("partial"))
 
-        await screen._consume_pending_chat_handoff()
-        await screen._consume_pending_chat_handoff()
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, format="{message}")
+        try:
+            await screen._consume_pending_chat_handoff()
+            await screen._consume_pending_chat_handoff()
+        finally:
+            logger.remove(sink_id)
 
+        combined = "\n".join(messages)
         assert cleanup_calls == created_ids
         assert len(created_ids) == 1
         assert created_ids[0] in tab_container.sessions
         assert app.pending_handoffs.claim(HandoffChannel.CHAT) is None
+        assert "channel=chat" in combined
+        assert "exception_category=RuntimeError" in combined
+        if cleanup_mode == "raises":
+            assert "outcome=exception" in combined
+            assert "exception_category=ValueError" in combined
+        else:
+            assert "outcome=tab_retained" in combined
+        assert sentinel not in combined
+        assert sentinel not in caplog.text
         assert notifications == [
             (
                 "Chat context could not be applied cleanly. "
@@ -1001,7 +1068,7 @@ async def test_full_app_chat_success_acknowledges_only_after_context_application
 
     async with _mounted_app(app, monkeypatch, route="chat") as pilot:
         screen, _composer = await _mounted_chat(app, pilot)
-        _tab_container = await _mount_production_chat_tabs(
+        tab_container = await _mount_production_chat_tabs(
             app,
             screen,
             pilot,
@@ -1029,13 +1096,21 @@ async def test_full_app_chat_success_acknowledges_only_after_context_application
             "acknowledge",
             record_acknowledge,
         )
-        app.pending_handoffs.stage(HandoffChannel.CHAT, _chat_payload("success"))
+        payload = _chat_payload("success")
+        app.pending_handoffs.stage(HandoffChannel.CHAT, payload)
 
         await screen._consume_pending_chat_handoff()
 
+        active_id = tab_container.active_session_id
         assert applied is True
         assert acknowledged_after_apply is True
         assert app.pending_handoffs.claim(HandoffChannel.CHAT) is None
+        assert active_id is not None
+        active_session = tab_container.sessions[active_id]
+        cards = list(active_session.query(ChatHandoffCard))
+        assert len(cards) == 1
+        assert cards[0].payload.title == "success"
+        assert active_session.get_chat_input().text == payload.default_prompt()
 
 
 @pytest.mark.asyncio
