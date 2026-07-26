@@ -121,13 +121,21 @@ class ConsoleWorkspaceSwitcherModal(ModalScreen[WorkspaceSwitcherResult | None])
             )
             with Vertical(id="console-workspace-switcher-list"):
                 for index, workspace in enumerate(self._workspaces):
-                    label = workspace.name
                     with Horizontal(
                         classes="console-workspace-switcher-row",
                     ):
+                        # ADR-027 (TASK-723): the switcher and the browser
+                        # must tell one story - Default holds everyday chats
+                        # (the browser's Chats section), named workspaces get
+                        # grouped contexts.
+                        display_name = (
+                            f"{workspace.name} (everyday chats)"
+                            if workspace.workspace_id == DEFAULT_WORKSPACE_ID
+                            else workspace.name
+                        )
                         if workspace.workspace_id == self._active_workspace_id:
                             yield Static(
-                                f"{workspace.name} (current)",
+                                f"{display_name} (current)",
                                 id=f"console-workspace-switch-current-{index}",
                                 classes=(
                                     "console-workspace-switcher-option "
@@ -137,7 +145,7 @@ class ConsoleWorkspaceSwitcherModal(ModalScreen[WorkspaceSwitcherResult | None])
                             )
                         else:
                             button = Button(
-                                label,
+                                display_name,
                                 id=f"console-workspace-switch-{index}",
                                 classes="console-workspace-switcher-option",
                                 compact=True,

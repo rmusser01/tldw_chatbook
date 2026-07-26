@@ -108,3 +108,25 @@ async def test_default_workspace_has_no_lifecycle_buttons() -> None:
         assert not list(modal.query(".console-workspace-switcher-lifecycle")), (
             "the built-in Default workspace must not offer rename/archive"
         )
+
+
+@pytest.mark.asyncio
+async def test_default_row_labeled_everyday_chats() -> None:
+    """ADR-027 (TASK-723): the switcher annotates Default so it agrees with
+    the browser filing Default-workspace conversations under Chats."""
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-a", name="Workspace 1")
+    registry.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        modal = await _open_switcher(host, pilot)
+        default_buttons = [
+            button
+            for button in modal.query(".console-workspace-switcher-option")
+            if "Default" in str(getattr(button, "label", ""))
+        ]
+        assert default_buttons, "expected the Default row as a switch option"
+        assert "everyday chats" in str(default_buttons[0].label)
