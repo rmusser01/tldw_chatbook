@@ -91,6 +91,42 @@ def _parse_snippet(source: str) -> ast.Module:
     return ast.parse(source, filename="tldw_chatbook/ownership_guard_probe.py")
 
 
+def _direct_owner_store_save_receiver(statement: ast.stmt) -> ast.Attribute | None:
+    if not (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Attribute)
+        and statement.value.func.attr == "save"
+        and isinstance(statement.value.func.value, ast.Attribute)
+        and _chain(statement.value.func.value) == "self._store"
+    ):
+        return None
+    return statement.value.func.value
+
+
+class OwnScopeYieldVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.found = False
+
+    def visit_Yield(self, node: ast.Yield) -> None:
+        self.found = True
+
+    def visit_YieldFrom(self, node: ast.YieldFrom) -> None:
+        self.found = True
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        return
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        return
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        return
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        return
+
+
 class ScopedVisitor(ast.NodeVisitor):
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -208,11 +244,8 @@ class ContextOwnershipVisitor(ScopedVisitor):
                 node.func.attr == "save"
                 and isinstance(node.func.value, ast.Attribute)
                 and receiver == "self._store"
-                and self.class_name == "RuntimePolicyContext"
-                and self.function_name == "commit_state"
+                and id(node.func.value) in self.allowed_owner_store_loads
             )
-            if direct_owner_store_save:
-                self.allowed_owner_store_loads.add(id(node.func.value))
             if node.func.attr == "save" and (
                 receiver == "self._store"
                 or _has_final_component(
@@ -242,7 +275,45 @@ class ContextOwnershipVisitor(ScopedVisitor):
             "store",
         }:
             self._record(node, "public persistence escape")
-        super().visit_FunctionDef(node)
+        is_owner_commit = (
+            self.class_name == "RuntimePolicyContext"
+            and self.function_name is None
+            and node.name == "commit_state"
+        )
+        if not is_owner_commit:
+            super().visit_FunctionDef(node)
+            return
+
+        receivers = [
+            receiver
+            for statement in node.body
+            if (receiver := _direct_owner_store_save_receiver(statement)) is not None
+        ]
+        yield_visitor = OwnScopeYieldVisitor()
+        for statement in node.body:
+            yield_visitor.visit(statement)
+
+        authorized_receiver = None
+        if len(receivers) == 1 and not yield_visitor.found:
+            authorized_receiver = receivers[0]
+            self.allowed_owner_store_loads.add(id(authorized_receiver))
+        else:
+            self._record(node, "invalid commit persistence shape")
+
+        try:
+            super().visit_FunctionDef(node)
+        finally:
+            if authorized_receiver is not None:
+                self.allowed_owner_store_loads.discard(id(authorized_receiver))
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        if (
+            self.class_name == "RuntimePolicyContext"
+            and self.function_name is None
+            and node.name == "commit_state"
+        ):
+            self._record(node, "async commit persistence shape")
+        super().visit_AsyncFunctionDef(node)
 
     def _record(self, node: ast.AST, kind: str) -> None:
         self.violations.append(
@@ -381,6 +452,126 @@ class RuntimePolicyContext:
     )
 
     assert visitor.violations
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "return lambda: self._store.save(candidate)",
+        "callback = lambda: self._store.save(candidate)",
+        "return (self._store.save(item) for item in items)",
+        "yield self._store.save(candidate)",
+        "self._store.save(candidate)\n        yield candidate",
+        "self._store.save(candidate)\n        yield from candidates",
+    ],
+)
+def test_context_guard_rejects_deferred_and_generator_commit_saves(
+    body: str,
+) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            f"""
+class RuntimePolicyContext:
+    def commit_state(self):
+        {body}
+"""
+        )
+    )
+
+    assert visitor.violations
+
+
+@pytest.mark.parametrize("keyword", ["def", "async def"])
+def test_context_guard_does_not_extend_commit_save_permission_to_nested_functions(
+    keyword: str,
+) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            f"""
+class RuntimePolicyContext:
+    def commit_state(self):
+        self._store.save(candidate)
+
+        {keyword} deferred():
+            self._store.save(candidate)
+"""
+        )
+    )
+
+    assert visitor.violations
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "return True",
+        "self._store.save(first)\n        self._store.save(second)",
+        "return self._store.save(candidate)",
+        "result = self._store.save(candidate)",
+        "if ready:\n            self._store.save(candidate)",
+        "return [self._store.save(item) for item in items]",
+    ],
+)
+def test_context_guard_requires_one_top_level_immediate_commit_save(
+    body: str,
+) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            f"""
+class RuntimePolicyContext:
+    def commit_state(self):
+        {body}
+"""
+        )
+    )
+
+    assert visitor.violations
+
+
+def test_context_guard_rejects_async_commit_state() -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            """
+class RuntimePolicyContext:
+    async def commit_state(self):
+        self._store.save(candidate)
+"""
+        )
+    )
+
+    assert visitor.violations
+
+
+def test_context_guard_ignores_yield_in_nested_definition() -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            """
+class RuntimePolicyContext:
+    def commit_state(self):
+        def nested_generator():
+            yield candidate
+
+        self._store.save(candidate)
+"""
+        )
+    )
+
+    assert visitor.violations == []
 
 
 def test_context_guard_does_not_infer_dynamic_getattr_names() -> None:
