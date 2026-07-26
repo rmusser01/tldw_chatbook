@@ -385,8 +385,9 @@ Stored in the existing `eval_results.logprobs` TEXT column:
 }
 ```
 
-`id` is the provider's token id, present on llama.cpp and absent on OpenAI; it is the identity key
-where available, with `bytes` as the fallback. `content_offset` records which position in the
+`id` is the provider's token id, present on llama.cpp and absent on OpenAI. It is recorded for
+provenance but is **not** the identity key: ids are model-local, and the grid's whole purpose is
+comparing across models. `bytes` is the identity key. `content_offset` records which position in the
 returned sequence was measured — `0` in raw mode, and in chat mode the index of the first
 non-control token, so a reader can tell how many template tokens were skipped. `canary` carries the
 target's preflight sanity verdict (`pass` | `degenerate` | `unchecked`) onto every cell, so a
@@ -434,9 +435,10 @@ carries a token `id` the spec had not accounted for:
 Captured fixtures live at `Tests/Evals/fixtures/word_bench/llamacpp_raw_completions.json` and
 `llamacpp_chat_completions.json`.
 
-The normalizer produces `[(token, logprob, bytes, token_id)]`. **`token_id` is the identity key
-where available** — it is exact within a model, where string comparison across differing escaping
-conventions is not. `bytes` is the fallback, and the token string is only for display.
+The normalizer produces `[(token, logprob, bytes, token_id)]`. **`bytes` is the identity key** —
+raw UTF-8 of the surface form, which means the same thing in every tokenizer. `token_id` is recorded
+for provenance but deliberately not matched on: ids are model-local, and the grid compares across
+models. The token string is a display fallback for providers that omit bytes.
 
 Shapes still to pin before their providers are claimed as supported:
 

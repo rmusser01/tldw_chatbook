@@ -292,10 +292,16 @@ class BenchConfig:
 class TokenProb:
     """One token and its log probability.
 
-    ``token_id`` is the provider's token id where available (llama.cpp
-    supplies it, OpenAI does not) and is the identity key when present --
-    exact within a model, where string comparison across differing escaping
-    conventions is not. ``bytes_`` is the fallback.
+    ``bytes_`` is the raw UTF-8 of the token's surface form and is the
+    identity key: two tokens with identical bytes emit identical text, in any
+    tokenizer, with no escaping conventions to disagree about.
+
+    ``token_id`` is recorded for debugging and provenance but is deliberately
+    NOT used for matching. A token id is only meaningful within one model --
+    id 1623 in one tokenizer is an unrelated token in another -- and the whole
+    point of the grid is comparing distributions ACROSS models. Matching on it
+    would silently equate unrelated tokens and report divergence 0 for
+    completely disjoint distributions.
     """
 
     token: str
@@ -308,9 +314,7 @@ class TokenProb:
         return math.exp(self.logprob)
 
     def identity(self) -> tuple:
-        """A key that is stable within one model."""
-        if self.token_id is not None:
-            return ("id", self.token_id)
+        """A key comparable ACROSS models. See the class docstring."""
         if self.bytes_:
             return ("bytes", self.bytes_)
         return ("token", self.token)
@@ -491,11 +495,15 @@ def test_chat_fixture_normalizes_with_the_same_shape():
     assert all(t.token_id is not None for t in top_k)
 
 
-def test_identity_prefers_token_id_when_present():
+def test_identity_is_bytes_based_so_it_compares_across_models():
+    """token_id is model-local: id 1623 here is an unrelated token in another
+    tokenizer. bytes are the raw UTF-8 of the surface form and mean the same
+    thing everywhere, so they -- not the id -- are the matching key."""
     top_k, _ = normalize_logprobs(
         _load("llamacpp_raw_completions.json"), want_content_token=False
     )
-    assert top_k[0].identity()[0] == "id"
+    assert top_k[0].identity() == ("bytes", (32, 109, 117, 99, 104))
+    assert top_k[0].token_id == 1623, "id is still recorded, just not matched on"
 
 
 def test_unrecognized_shape_raises_rather_than_guessing():
