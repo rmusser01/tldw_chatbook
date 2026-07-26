@@ -52,6 +52,10 @@ async def test_raw_mode_posts_to_completions_with_neutral_sampler():
     assert seen["body"]["top_k"] == 0
     assert isinstance(result, CellCapture)
     assert result.content_offset == 0
+    assert result.canary == "unchecked", (
+        "the real client always returns 'unchecked' -- turning that into the "
+        "real verdict is the runner's _stamp_canary job, not capture()'s"
+    )
 
 
 @pytest.mark.asyncio
@@ -231,6 +235,65 @@ async def test_preflight_reports_no_logprobs_as_blocked():
     result = await _client(handler).preflight(target, "raw", 5)
     assert result.state == "no_logprobs"
     assert result.status_label == "Blocked"
+
+
+@pytest.mark.asyncio
+async def test_preflight_reports_no_logprobs_as_blocked_when_top_logprobs_is_empty():
+    """The critical case this fix closes: an endpoint that honours the
+    request shape (choices[0].logprobs.content is present and carries a
+    token) but returns an empty top_logprobs at the measured position. Before
+    the fix this silently produced a zero-token CellCapture that preflight
+    read as state='ok' / 'Ready', letting a run proceed and produce an
+    all-zero-divergence grid."""
+    payload = {
+        "choices": [{"logprobs": {"content": [{
+            "id": 1, "token": " a", "bytes": [32, 97], "logprob": -0.5,
+            "top_logprobs": [],
+        }]}}]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).preflight(target, "raw", 5)
+    assert result.state == "no_logprobs"
+    assert result.status_label == "Blocked"
+
+
+@pytest.mark.asyncio
+async def test_html_200_response_becomes_a_cell_error_not_an_exception():
+    """A proxy in front of the endpoint can return an HTML error page with a
+    200 status. response.json() raises json.JSONDecodeError (a ValueError,
+    not an httpx.HTTPError) in that case -- it must not abort an entire
+    multi-hundred-cell run."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html><body>Bad Gateway</body></html>")
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).capture("s", target, "raw", 5)
+    assert isinstance(result, CellError)
+    assert result.reason == "bad_response"
+
+
+@pytest.mark.asyncio
+async def test_malformed_top_logprobs_entry_becomes_a_cell_error_not_an_exception():
+    """A top_logprobs entry missing "token" or "logprob" raises KeyError
+    inside _to_token_probs -- that must not escape capture() either."""
+    payload = {
+        "choices": [{"logprobs": {"content": [{
+            "id": 1, "token": " a", "bytes": [32, 97], "logprob": -0.5,
+            "top_logprobs": [{"id": 1, "bytes": [32, 97]}],  # missing "token"/"logprob"
+        }]}}]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).capture("s", target, "raw", 5)
+    assert isinstance(result, CellError)
+    assert result.reason == "bad_response"
 
 
 def test_canary_expectation_is_a_widely_agreed_continuation():

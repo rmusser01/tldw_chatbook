@@ -15,7 +15,7 @@ import httpx
 from loguru import logger
 
 from .models import CellCapture, CellError, PreflightResult, PromptMode, Target
-from .normalizer import NormalizerError, normalize_logprobs
+from .normalizer import CONTENT_TOKEN_WINDOW, NormalizerError, normalize_logprobs
 
 #: Pinned neutral sampling. Servers -- llama.cpp especially -- apply samplers
 #: BEFORE reporting logprobs, so a server configured with top_k=40 would make
@@ -31,8 +31,9 @@ NEUTRAL_SAMPLER: dict[str, Any] = {
     "repeat_penalty": 1.0,
 }
 
-#: Chat mode must look past leading control tokens, so it asks for a window.
-CHAT_TOKEN_WINDOW = 8
+#: Chat mode must look past leading control tokens, so it asks for a window
+#: exactly as wide as the normalizer will search -- one literal 8, not two.
+CHAT_TOKEN_WINDOW = CONTENT_TOKEN_WINDOW
 
 #: Distribution sanity canary. Confirming a target RETURNS logprobs is not the
 #: same as confirming they mean anything: a heavily chat-tuned model was
@@ -109,12 +110,21 @@ class WordBenchCaptureClient:
             return CellError(reason="http_error", detail=f"{exc.response.status_code}")
         except httpx.HTTPError as exc:
             return CellError(reason="unreachable", detail=str(exc))
+        except ValueError as exc:
+            # response.json() raises a ValueError (json.JSONDecodeError) when
+            # the body isn't JSON at all -- e.g. a proxy returning an HTML
+            # error page with a 200 status. One malformed response must not
+            # abort an entire multi-hundred-cell run.
+            return CellError(reason="bad_response", detail=f"invalid JSON body: {exc}")
 
         try:
             tokens, offset = normalize_logprobs(data, want_content_token=(mode == "chat"))
         except NormalizerError as exc:
-            reason = "no_content_token" if "no_content_token" in str(exc) else "no_logprobs"
-            return CellError(reason=reason, detail=str(exc))
+            return CellError(reason=exc.code, detail=str(exc))
+        except (KeyError, TypeError) as exc:
+            # A malformed top_logprobs entry (missing "token"/"logprob", or a
+            # value of the wrong type) must not raise past this call either.
+            return CellError(reason="bad_response", detail=f"malformed entry: {exc!r}")
 
         return CellCapture(
             prompt_mode=mode,
