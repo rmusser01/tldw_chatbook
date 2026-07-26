@@ -1,10 +1,11 @@
 ---
 id: TASK-643
 title: Make runtime policy the sole application runtime-source authority
-status: To Do
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-26 13:35'
+updated_date: '2026-07-26 15:02'
 labels:
   - architecture
   - state
@@ -33,3 +34,18 @@ Remove the active application dependency on the misleading root AppState model a
 - [ ] #5 Runtime-policy persistence follows the effective config path, uses the ADR-022 private read/atomic-write boundary, fails closed for unsafe POSIX targets, reports Windows privacy posture as unverified, and neither falls back to nor migrates from the ordinary default path under an override
 - [ ] #6 Focused runtime-policy, off-owner mutation, persistence-failure recovery, privacy-sentinel, scoped static, ownership-guard, and architecture checks pass
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/026-application-session-state-ownership.md
+Reason: ADR-026 defines the runtime authority, private persistence, mutation, projection, and thread-affinity contract.
+Full plan: Docs/superpowers/plans/2026-07-26-task-643-runtime-policy-authority.md
+
+1. Move runtime-policy JSON to the effective config path and ADR-022 private-file primitives.
+2. Replace mutable context state with owner-thread-affine revision snapshots and persist-before-publish commits.
+3. Make capability refresh discard superseded probes and side effects.
+4. Remove TldwCli AppState dependency, delete the projection boundary's AppState mirror, and remove all independent runtime projection writers.
+5. Add ownership/privacy guards and run focused gates, but keep TASK-643 In Progress until the shared TASK-646 release gates.
+<!-- SECTION:PLAN:END -->

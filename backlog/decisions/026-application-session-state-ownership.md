@@ -36,7 +36,9 @@ discarded instead of overwriting a newer source or server selection.
 Application compatibility projections are updated by a non-throwing
 publication callback owned by the context boundary; they have no independent
 production writers. Context state is read-only; there is no public state setter
-or standalone persistence escape hatch.
+or standalone persistence escape hatch, and the backing store is private. The
+callback writes only the three legacy app projection attributes and does not
+read or write `AppState`.
 
 Runtime-policy persistence is part of the ADR-022 private-data boundary. Its
 default path is resolved from the effective config path when the context is
@@ -64,12 +66,16 @@ configured alias.
 
 Destination handoffs remain memory-only and preserve the existing single-slot,
 consume-once, last-write-wins behavior. Each typed channel has a monotonic
-revision and supports atomic claim, acknowledge, and release. At most one
-claim may be in flight for a channel, and at most the latest replacement may
-wait behind it; this is not a queue. A stale acknowledge or release cannot
-clear a newer value. Successful and terminally rejected handoffs are
-acknowledged. Transient failures release the claim for a later existing
-lifecycle or user-triggered retry; they do not start an automatic retry loop.
+revision and supports atomic stage, pending-clear, claim, acknowledge, and
+release. A pending clear is itself a newer revision, so an older in-flight
+claim cannot be resurrected by release after a producer intentionally removes
+an optional value. At most one claim may be in flight for a channel, and at
+most the latest replacement may wait behind it; this is not a queue. A stale
+acknowledge or release cannot clear a newer value. Successful and terminally
+rejected handoffs are acknowledged. Transient failures release the claim for
+a later existing lifecycle or user-triggered retry; they do not start an
+automatic retry loop. Setup-blocked Console prompt insertion is transient
+readiness and releases rather than discarding the intent.
 
 Runtime commits, snapshot-store mutation, and handoff-store mutation are
 affine to the application thread captured when each owner is created. Foreign
@@ -83,7 +89,10 @@ releasing after later failure or cancellation. If cleanup itself fails, the
 claim is terminally acknowledged with bounded recovery so retries cannot create
 duplicate partial tabs. Artifact handoffs use exact canonical
 `local:chatbook:<id>` lookup and never substitute a latest record for a missing
-target.
+target. Artifact workers are guarded by an app-thread refresh generation and
+exact active claim: unmount, refresh restart, or a matching terminal
+worker-state event releases the active claim, and a stale callback cannot
+apply UI or settle a newer lifecycle's claim.
 
 The ACP session-target handoff will be completed without inventing an
 arbitrary-session repository. ACP compares the requested target with the

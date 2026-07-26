@@ -1,7 +1,7 @@
 # Application Session State Ownership Design
 
 Date: 2026-07-26
-Status: Post-approval adversarial findings reconciled and re-reviewed; awaiting user approval for implementation planning
+Status: Design approved; implementation plans independently reviewed and ready for execution
 ADR:
 [ADR-026](../../../backlog/decisions/026-application-session-state-ownership.md)
 Backlog:
@@ -9,6 +9,11 @@ Backlog:
 [TASK-644](../../../backlog/tasks/task-644%20-%20Move-cross-visit-screen-snapshots-behind-an-in-memory-owner.md),
 [TASK-645](../../../backlog/tasks/task-645%20-%20Move-Chat-and-Console-handoffs-behind-revisioned-single-slot-ownership.md),
 [TASK-646](../../../backlog/tasks/task-646%20-%20Complete-destination-handoff-ownership-and-ACP-target-recovery.md)
+Plans:
+[TASK-643](../plans/2026-07-26-task-643-runtime-policy-authority.md),
+[TASK-644](../plans/2026-07-26-task-644-screen-state-store.md),
+[TASK-645](../plans/2026-07-26-task-645-chat-console-handoffs.md),
+[TASK-646](../plans/2026-07-26-task-646-destination-handoffs.md)
 
 ## Summary
 
@@ -243,9 +248,10 @@ and app projections unchanged. Runtime state values remain immutable
 dataclasses, so a snapshot cannot be mutated in place.
 
 `state` is a read-only property. The context exposes no public setter or
-standalone `persist()` escape hatch; focused tests use revisioned commits or
-test fakes. A scoped AST guard enforces that production mutation and storage
-writes go through `commit_state()` or a higher-level runtime-policy operation.
+standalone `persist()` escape hatch, and its backing store is private; focused
+tests retain their injected stores separately or use revisioned fakes. A
+scoped AST guard enforces that production mutation and storage writes go
+through `commit_state()` or a higher-level runtime-policy operation.
 
 `snapshot()` may be read from ordinary production callers because it returns
 an immutable value. `commit_state()` and all higher-level mutation methods are
@@ -482,6 +488,7 @@ Each channel has an independent monotonic revision and supports:
 
 ```python
 def stage(channel, value) -> int: ...
+def clear_pending(channel) -> int: ...
 def claim(channel) -> HandoffClaim[T] | None: ...
 def acknowledge(claim: HandoffClaim[T]) -> bool: ...
 def release(claim: HandoffClaim[T]) -> bool: ...
@@ -490,6 +497,9 @@ def release(claim: HandoffClaim[T]) -> bool: ...
 The externally visible behavior remains a single latest pending value:
 
 - `stage()` replaces any unclaimed pending value and advances the revision.
+- `clear_pending()` advances the revision and removes the unclaimed pending
+  value. When a claim is in flight, that newer empty revision prevents a later
+  release from resurrecting the cleared value.
 - `claim()` atomically moves that value into one in-flight claim.
 - A second `claim()` while one is in flight returns `None`.
 - `stage()` during an in-flight claim retains only the latest replacement.
@@ -552,11 +562,17 @@ been transferred to that screen-local context.
 
 Console prompt insert continues appending to the user's existing composer
 draft, never replacing it. Missing composer/readiness is transient and
-releases. An empty or invalid normalized prompt is terminal and acknowledges.
+releases. First-run setup blocking is an incomplete-readiness outcome and
+therefore also releases after showing bounded recovery. An empty or invalid
+normalized prompt is terminal and acknowledges.
 
 ### Study and Artifacts details
 
 Study scope and section are separate channels so either may be staged alone.
+`open_study_screen()` clears the other optional channel when its corresponding
+argument is `None`, matching the current raw-field behavior without staging
+`None` as a domain value. The clear advances that channel's revision so an
+older in-flight failure cannot restore intent that the newer call removed.
 Each is claimed and settled independently. Applying explicit incoming values
 after restored screen state preserves their higher precedence.
 
@@ -565,6 +581,9 @@ The Artifact channel accepts only
 exact lookup through `LocalChatbookService.get_chatbook(chatbook_id)`:
 
 - Exact lookup and selection success acknowledges.
+- A returned record must reconstruct the same canonical target ID as the
+  claim; a mismatched or malformed service response cannot be selected or
+  acknowledged as success.
 - `KeyError` produces explicit missing-target recovery and acknowledges.
 - An unavailable service, unready screen, or other lookup failure releases.
 - The first-page listing and its "latest record" fallback cannot settle a
@@ -573,6 +592,15 @@ exact lookup through `LocalChatbookService.get_chatbook(chatbook_id)`:
 
 A newer target staged while exact lookup awaits cannot be cleared by the older
 claim.
+
+Artifact worker lifetime is subordinate to the destination screen lifetime.
+The app thread tracks the exact active claim and a refresh generation.
+Unmounting or restarting an exclusive refresh releases that active claim
+before another generation can claim. A matching terminal worker-state event
+releases any claim left active when cancellation or error prevents a callback.
+A callback may apply or settle only when its generation and exact claim object
+still match the live screen; late callbacks from cancelled, restarted, or
+unmounted workers are inert and cannot strand or acknowledge a handoff.
 
 ### ACP target recovery
 
@@ -621,7 +649,9 @@ authority. No import-time deprecation warning is added.
 
 Existing app-level runtime projection attributes may remain temporarily for
 read compatibility. Their values are projections from `RuntimePolicyContext`,
-and ownership guards prohibit independent production writers.
+and ownership guards prohibit independent production writers. The projection
+boundary writes only `current_runtime_backend`, `runtime_backend`, and
+`active_server_id`; it neither reads nor writes a root `AppState`.
 
 ## Migration Tasks
 
@@ -738,6 +768,7 @@ barriers rather than timing sleeps.
 
 - Claim is exclusive.
 - Staging while claimed retains only the latest replacement.
+- Clearing while claimed prevents release from resurrecting the older value.
 - Stale acknowledge/release cannot remove the replacement.
 - Release restores the claimed value only when no newer replacement exists.
 - Mutating a producer's nested Chat or Console mapping after staging cannot
@@ -771,9 +802,13 @@ barriers rather than timing sleeps.
 
 ### Integrated release gates
 
-Run focused tests and configured static/format checks for each task. After
-TASK-646 integrates the tranche, run these expensive gates once from the
-combined worktree:
+Run focused tests and configured static/format checks for each task.
+Planning-time verification found 46 unrelated full-tree Ruff diagnostics and
+five files outside the Ruff formatter baseline, so the implementation plans
+use explicit tranche-scoped Ruff commands and documented narrow baseline
+exceptions rather than falsely claiming the untouched repository is
+lint-clean. After TASK-646 integrates the tranche, run these expensive gates
+once from the combined worktree:
 
 ```bash
 pytest -q Tests/Packaging/test_installed_distribution.py
