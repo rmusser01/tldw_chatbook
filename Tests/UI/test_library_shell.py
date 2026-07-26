@@ -9,7 +9,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import dataclasses
+
 import pytest
+
+from tldw_chatbook.Library.ingest_capabilities import get_capabilities
 from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
@@ -855,13 +859,15 @@ async def test_library_shell_search_history_prefers_app_config_over_cli_config(
     app.app_config["library"] = {"search": {"history": ["from-app-config"]}}
     _seed_conversations(app, _two_conversations())
 
-    def raising_get_cli_setting(*args, **kwargs):
-        raise AssertionError(
-            "get_cli_setting should not be called when app_config already has history"
-        )
+    real_get_cli_setting = library_screen_module.get_cli_setting
+    cli_reads: list[tuple] = []
+
+    def recording_get_cli_setting(*args, **kwargs):
+        cli_reads.append(tuple(args[:2]))
+        return real_get_cli_setting(*args, **kwargs)
 
     monkeypatch.setattr(
-        library_screen_module, "get_cli_setting", raising_get_cli_setting
+        library_screen_module, "get_cli_setting", recording_get_cli_setting
     )
 
     host = LibraryHarness(app)
@@ -870,6 +876,16 @@ async def test_library_shell_search_history_prefers_app_config_over_cli_config(
         await _wait_for_library_shell(screen, pilot)
 
         assert screen._library_search_history == ("from-app-config",)
+
+    # Recorded rather than raised. Two reasons: the screen legitimately reads
+    # OTHER settings during load (rail state, which this test does not seed, and
+    # the ingest canvas's persisted per-type options), so raising on every call
+    # reports a precedence bug that is not there; and the fallbacks sit inside
+    # `except Exception:` blocks, which swallow an AssertionError raised from
+    # the patch and leave the test unable to fail at all (task-687).
+    assert not [read for read in cli_reads if str(read[0]).startswith("library.search")], (
+        f"search history fell back to the CLI config despite app_config: {cli_reads}"
+    )
 
 
 @pytest.mark.asyncio
@@ -922,13 +938,15 @@ async def test_library_shell_rail_preferences_prefers_app_config_over_cli_config
     app.app_config["library"] = {"rail_state": {"sections": {"details_open": True}}}
     _seed_conversations(app, _two_conversations())
 
-    def raising_get_cli_setting(*args, **kwargs):
-        raise AssertionError(
-            "get_cli_setting should not be called when app_config already has rail state"
-        )
+    real_get_cli_setting = library_screen_module.get_cli_setting
+    cli_reads: list[tuple] = []
+
+    def recording_get_cli_setting(*args, **kwargs):
+        cli_reads.append(tuple(args[:2]))
+        return real_get_cli_setting(*args, **kwargs)
 
     monkeypatch.setattr(
-        library_screen_module, "get_cli_setting", raising_get_cli_setting
+        library_screen_module, "get_cli_setting", recording_get_cli_setting
     )
 
     host = LibraryHarness(app)
@@ -937,6 +955,11 @@ async def test_library_shell_rail_preferences_prefers_app_config_over_cli_config
         await _wait_for_library_shell(screen, pilot)
 
         assert screen._library_rail_preferences().details_open is True
+
+    # Recorded, not raised -- see the sibling search-history test for why.
+    assert not [read for read in cli_reads if str(read[0]).startswith("library.rail_state")], (
+        f"rail preferences fell back to the CLI config despite app_config: {cli_reads}"
+    )
 
 
 @pytest.mark.asyncio
@@ -4352,6 +4375,10 @@ async def test_library_shell_ingest_nav_context_deeplink_reentry_resets_stale_fo
             title="Stale title",
             author="Stale author",
             keywords="stale, keywords",
+            # Options the user deliberately moved off their defaults. Without
+            # these the test only proves typed text is cleared, which is the
+            # weaker half of "no state from the previous visit".
+            type_options={"generic": {"chunk_size": "500", "chunk": False}},
         )
 
         # Home's "Open details" control re-enters via this same navigation
@@ -4361,7 +4388,35 @@ async def test_library_shell_ingest_nav_context_deeplink_reentry_resets_stale_fo
         await _wait_for_selector(screen, pilot, "#library-ingest-path")
 
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
-        assert screen._library_ingest_form == LibraryIngestFormState()
+
+        # Everything the user could have typed is gone.
+        form = screen._library_ingest_form
+        fresh = LibraryIngestFormState()
+        assert dataclasses.replace(form, type_options={}) == fresh
+
+        # ``type_options`` is compared separately because a *mounted* canvas can
+        # never equal a never-mounted form: each option widget reports the value
+        # it rendered, so the per-type defaults land in the form as soon as the
+        # canvas composes. Asserting equality with a bare LibraryIngestFormState
+        # therefore tested the mount, not the reset, and failed on a screen that
+        # was resetting perfectly well (task-698).
+        #
+        # What matters is that only DEFAULTS are there -- no value carried over
+        # from the previous visit. Verified by pre-filling a changed chunk_size
+        # and chunk above: both come back at their schema defaults, so the reset
+        # really does discard user overrides rather than merely clearing text.
+        generic = form.type_options.get("generic", {})
+        expected_defaults = {
+            field.name: field.default
+            for field in get_capabilities("generic").fields
+        }
+        for name, value in generic.items():
+            # Number inputs round-trip through display text, so compare as text.
+            assert str(value) == str(expected_defaults[name]), (
+                f"{name} came back as {value!r}, not its default "
+                f"{expected_defaults[name]!r} -- a previous visit leaked through"
+            )
+
         path_input = screen.query_one("#library-ingest-path", Input)
         assert path_input.value == ""
 

@@ -1,9 +1,11 @@
 ---
 id: TASK-699
 title: 'Library shell tests fail nondeterministically, hiding real regressions'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-26 15:02'
+updated_date: '2026-07-26 18:02'
 labels:
   - testing
   - library
