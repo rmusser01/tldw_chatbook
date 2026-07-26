@@ -2,7 +2,7 @@
 id: TASK-686
 title: >-
   fal/Gemini image backends follow-ups
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-26 03:30'
 updated_date: '2026-07-26 03:30'
@@ -33,6 +33,9 @@ Non-blocking follow-ups from the fal.ai + Gemini image-backend program's final w
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
+1. Engine cluster (one unit): choke-point hardening (len(content) + empty-content refusal), fal APP_NAMESPACES app-id grammar, per-backend keyring tests, fetch_bytes_via_post docstring, gemini-429/fal-403 enriched messages.
+2. Chat-side x-goog-api-key redirect gap (LLM_API_Calls.py Google path) as its own unit — guarded transport or redirect-strip.
+Each unit: TDD, per-unit review; PR + merge per the standing procedure.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
