@@ -1,7 +1,7 @@
 # Application Session State Ownership Design
 
 Date: 2026-07-26
-Status: Design approved; implementation plans independently reviewed and ready for execution
+Status: Design approved; TASK-643 corrective plan pending structural-amendment review, TASK-644 through TASK-646 plans ready
 ADR:
 [ADR-026](../../../backlog/decisions/026-application-session-state-ownership.md)
 Backlog:

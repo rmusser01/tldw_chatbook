@@ -8,12 +8,13 @@
 
 **Decision:** [ADR-026](../../../backlog/decisions/026-application-session-state-ownership.md)
 
-**Supersedes:** The projection/store-enforcement shape in Task 4, Steps 1 and
-3 of the original TASK-643 implementation plan, together with the alias-flow
-implementation inside `Tests/test_application_state_ownership.py`. It does not
-replace the runtime authority, persistence ordering, or compatibility
-decisions already made for TASK-643. The implementation plan must be amended
-to this shape before implementation resumes.
+**Supersedes:** The `_store` naming and enforcement shape in Task 2, Step 3 and
+the projection/store-enforcement shape in Task 4, Steps 1 and 3 of the original
+TASK-643 implementation plan, together with the alias-flow implementation
+inside `Tests/test_application_state_ownership.py`. It does not replace the
+runtime authority, persistence ordering, or compatibility decisions already
+made for TASK-643. The implementation plan must be amended to this shape before
+implementation resumes.
 
 **ADR required:** yes
 
@@ -123,17 +124,35 @@ existing three `setattr()` operations. This preserves focused bootstrap tests
 and helper compatibility without weakening the production app surface.
 
 The fallback is selected only when the publisher attribute is absent. A
-present but non-callable publisher is an error. If a publisher call raises,
-the exception propagates to `RuntimePolicyContext.commit_state()`'s existing
-projection-failure containment; bootstrap must not retry through public
-`setattr()`. Logs include only bounded exception-category metadata.
+present but non-callable publisher is an error. For commit-triggered
+publication, a publisher exception reaches
+`RuntimePolicyContext.commit_state()`'s existing projection-failure
+containment; bootstrap must not retry through public `setattr()`. Logs include
+only bounded exception-category metadata.
+
+When an already-loaded state needs no synchronization commit,
+`load_runtime_policy_for_app()` performs the one permitted initial direct
+projection. An exception from that initial publication propagates and aborts
+bootstrap; it is not contained as a successful commit and does not trigger the
+lightweight-double fallback.
 
 The symbol `_publish_runtime_policy_projection` may occur in production only
 as its `TldwCli` method definition and as the direct or constant-string lookup
 and invocation inside `_apply_runtime_policy_to_app()`. Static checks reject
 direct calls, captured callbacks, and constant-string dynamic references
-elsewhere, so no production caller can publish projections without a durable
-context commit.
+elsewhere. Publication therefore occurs only after a durable context commit or
+from the one initial projection of an already-loaded authoritative state.
+
+The symbol `_apply_runtime_policy_to_app` may occur in production only as:
+
+- its definition;
+- the contained projection callback registered by
+  `load_runtime_policy_for_app()`; and
+- the single initial projection of an already-loaded authoritative state in
+  that same loader.
+
+Exact direct, captured, qualified, and constant-string dynamic references are
+rejected elsewhere.
 
 ### Uniquely private context store
 
@@ -180,23 +199,27 @@ The custom alias and control-flow engine is removed. Replacement tests verify:
    getter, and both are assigned only by
    `_publish_runtime_policy_projection()`. Direct and constant-string
    `getattr`/`setattr`/`delattr` references elsewhere are rejected.
-4. `_publish_runtime_policy_projection` occurs only at its method definition
+4. `_apply_runtime_policy_to_app` occurs only at its definition, the contained
+   callback registration, and the one initial loaded-state projection in
+   `load_runtime_policy_for_app()`. Direct, captured, qualified, and
+   constant-string dynamic references elsewhere are rejected.
+5. `_publish_runtime_policy_projection` occurs only at its method definition
    and at the publisher lookup/invocation inside
    `_apply_runtime_policy_to_app()`. Direct and constant-string dynamic
    references elsewhere are rejected.
-5. The bootstrap boundary uses the three public `setattr()` calls only in its
+6. The bootstrap boundary uses the three public `setattr()` calls only in its
    explicit publisher-absent lightweight-double fallback. Publisher errors
-   propagate to context containment and never enter the fallback.
-6. `RuntimePolicyContext.state` has no setter; the context has no public
+   never enter the fallback.
+7. `RuntimePolicyContext.state` has no setter; the context has no public
    `persist` or `store` surface; direct assignment fails through an alias.
-7. The raw context-store name occurs only in the exact `__slots__`,
+8. The raw context-store name occurs only in the exact `__slots__`,
    constructor-assignment, and immediate-commit structures above. The mangled
    name occurs nowhere. Raw or mangled constant-string dynamic access is
    rejected.
-8. `RuntimeSourceStateStore` definition, import, construction, and qualified or
+9. `RuntimeSourceStateStore` definition, import, construction, and qualified or
    constant-`getattr` references remain confined to `source_state.py` and
    `bootstrap.py`.
-9. The production tree contains exactly one direct private-store save
+10. The production tree contains exactly one direct private-store save
    statement, in synchronous, non-generator `commit_state()`.
 
 These checks depend on unique symbols and descriptor behavior, not variable
@@ -251,6 +274,8 @@ The implementation must demonstrate red-to-green tests for:
   fallback;
 - a throwing publisher being contained after durable commit without public
   `setattr()` fallback;
+- a throwing publisher during the direct initial loaded-state projection
+  propagating and aborting bootstrap without public `setattr()` fallback;
 - persistence failure leaving a previously published real projection
   unchanged.
 

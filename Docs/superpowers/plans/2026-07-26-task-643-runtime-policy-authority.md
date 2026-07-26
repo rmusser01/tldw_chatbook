@@ -18,8 +18,9 @@
 
 **Reason:** ADR-026 already defines the runtime authority, mutation, projection, thread-affinity, and persistence boundary implemented by this task.
 
-> **Quality-review amendment:** Task 4's public-projection and private-store
-> enforcement steps are superseded by
+> **Quality-review amendment:** Task 2, Step 3's `_store` naming/enforcement
+> details and Task 4's public-projection and private-store enforcement steps
+> are superseded by
 > [TASK-643 Structural Ownership Enforcement Design](../specs/2026-07-26-task-643-structural-ownership-enforcement-design.md).
 > Do not resume implementation from the old direct-public-write or alias-flow
 > instructions. A corrective implementation plan must replace those steps
@@ -306,7 +307,7 @@ class RuntimePolicyContext:
         "_owner_thread_id",
         "_publish",
         "_snapshot",
-        "_store",
+        "__runtime_policy_state_store",
     )
 
     def __init__(
@@ -319,7 +320,7 @@ class RuntimePolicyContext:
         self._snapshot = (state, 0)
         self._owner_thread_id = threading.get_ident()
         self._publish = publish
-        self._store = store
+        self.__runtime_policy_state_store = store
 
     @property
     def state(self) -> RuntimeSourceState:
@@ -338,7 +339,7 @@ class RuntimePolicyContext:
         _, current_revision = self._snapshot
         if expected_revision != current_revision:
             return False
-        self._store.save(candidate)
+        self.__runtime_policy_state_store.save(candidate)
         self._snapshot = (candidate, current_revision + 1)
         if self._publish is not None:
             try:
@@ -361,7 +362,8 @@ In `test_server_context_provider.py`, let `_runtime_context()` accept an
 optional injected `SavingRuntimeStore`. The authority test retains that store
 in a local variable, passes it into the context, and asserts
 `runtime_store.saved_states == []`; it must not reach through
-`runtime_context._store` or require a public compatibility property.
+`runtime_context.__runtime_policy_state_store`, its mangled spelling, or
+require a public compatibility property.
 
 - [ ] **Step 4: Route bootstrap synchronization and source changes through commits**
 
