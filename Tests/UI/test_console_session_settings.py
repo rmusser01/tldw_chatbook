@@ -4734,3 +4734,63 @@ def test_save_as_default_model_agrees_across_config_sections() -> None:
         sections["chat_defaults"]["model"]
         == sections["api_settings.llama_cpp"]["model"]
     )
+
+
+# --- Roleplay UAT: model discovery looked like it did nothing ---
+# Live repro (origin/dev @ f384a2807): pressing "Discover models" produced no
+# visible change. The status line ("Found 1 model at http://127.0.0.1:9099.")
+# was composed BELOW the unrelated Base URL field, four rows from the button
+# that produced it, and the discovered model was not selected -- the
+# known-broken model stayed in the box. It read as a dead button.
+
+
+def test_discovery_status_renders_next_to_the_discover_button() -> None:
+    """Feedback must sit with the control that produced it, not below another field."""
+    source = Path(
+        chat_screen_module.__file__
+    ).resolve().parents[2] / "Widgets" / "Console" / "console_settings_modal.py"
+    text = source.read_text()
+
+    status_pos = text.index("id=MODEL_DISCOVER_STATUS_ID,")
+    base_url_pos = text.index('id="console-settings-base-url"')
+
+    assert status_pos < base_url_pos, (
+        "discovery status is composed after the Base URL row, so it renders "
+        "detached from the button that produced it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_discovery_selects_the_model_when_exactly_one_is_found() -> None:
+    """One discovered model must be selected, not left for the user to notice.
+
+    Leaving the previous (often wrong) model selected after a successful
+    discovery is what let a TTS model stay active on a chat endpoint.
+    """
+    app = ModalHarness()
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp", model="stale-model", base_url="http://127.0.0.1:9099"
+        ),
+        app_config=app.app_config,
+        providers_models={"llama_cpp": ["stale-model"]},
+        context_estimate=ConsoleSettingsContextEstimate(
+            used_tokens=10, token_limit=16384, label="10 / 16k"
+        ),
+        can_save=True,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._apply_model_discovery_result(
+            "llama_cpp",
+            LocalModelProbeResult(
+                ok=True,
+                base_url="http://127.0.0.1:9099",
+                model_ids=("only-real-model",),
+            ),
+        )
+        await pilot.pause()
+
+        assert modal._current_model_value() == "only-real-model"

@@ -760,9 +760,11 @@ class PersonasCharacterEditorWidget(Container):
         ``level == "error"``.
 
         Display is gated on ``_user_touched``: a freshly-opened form
-        (``load_character``/``new_character``) must not show errors before
-        the user has actually interacted with it, so while untouched no row
-        is marked invalid and the footer stays clear.
+        (``load_character``/``new_character``) must not show errors before the
+        user has actually interacted with it, so while untouched no row is
+        marked invalid. The gated path deliberately leaves the footer text
+        alone -- it is shared with the screen's blocked-save findings, and
+        clearing it here erased them; ``load_character`` owns clearing it.
 
         Returns:
             The findings actually rendered - empty when gated by
@@ -772,7 +774,13 @@ class PersonasCharacterEditorWidget(Container):
         if not self._user_touched:
             for fid in self._validated_field_ids():
                 self.query_one(f"#{fid}").parent.remove_class(self._FIELD_ERROR_CLASS)
-            self.show_validation(())
+            # Un-mark rows, but do NOT clear the footer. This runs debounced,
+            # so clearing here wiped messages the footer's other writer owns --
+            # notably the blocked-save findings the screen pushes via
+            # `show_validation` -- and the blocker silently vanished while the
+            # save stayed blocked. The freshly-opened case that motivated this
+            # gate is already covered: `load_character` clears the footer
+            # explicitly on every load.
             return []
         findings = self.validate()
         invalid_ids = {fid for fid, _msg, level in findings if level == "error"}

@@ -283,6 +283,36 @@ PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH = 90
 PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH = 13
 PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH = 11
 
+#: Longest character-row meta line. One row, one line: the library row is a
+#: two-line cell (name + meta) and a wrapped snippet would reflow the list.
+CHARACTER_ROW_META_MAX_CHARS = 72
+
+
+def _character_row_meta(record: dict) -> str | None:
+    """Return the secondary line for a character library row.
+
+    Prefers a one-line description snippet, because that is what makes a row
+    recognizable in a library of many characters. The previous meta was the
+    last-modified date alone, which in practice was identical across rows and
+    so identified nothing. Falls back to the date when a character carries no
+    description, so nothing loses its subtitle.
+
+    Args:
+        record: Character summary record from the library query.
+
+    Returns:
+        A single-line meta string, or ``None`` when neither a description nor
+        a last-modified timestamp is available.
+    """
+    description = " ".join(str(record.get("description") or "").split())
+    if description:
+        if len(description) > CHARACTER_ROW_META_MAX_CHARS:
+            return description[: CHARACTER_ROW_META_MAX_CHARS - 1].rstrip() + "…"
+        return description
+    last_modified = str(record.get("last_modified") or "")
+    return last_modified[:10] if last_modified else None
+
+
 #: Center-area widgets toggled by ``_show_center``.
 _CENTER_VIEW_IDS: tuple[str, ...] = (
     "#personas-dictionary-detail",
@@ -1007,8 +1037,7 @@ class PersonasScreen(BaseAppScreen):
                 continue
             meta = None
             if kind == "character":
-                last_modified = str(record.get("last_modified") or "")
-                meta = last_modified[:10] if last_modified else None
+                meta = _character_row_meta(record)
             name = str(record.get("name") or "Unnamed")
             rows.append(
                 LibraryRow(
@@ -1861,6 +1890,17 @@ class PersonasScreen(BaseAppScreen):
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
+        # Fire-and-forget, like the conversations list below: the portrait
+        # needs a DB read and an image decode, and awaiting it inline made
+        # selecting a character wait on both. It also yielded control mid
+        # selection, which let the editor's debounced validation run and clear
+        # a footer the save path had just written. The render carries its own
+        # selection-changed guard, so a late result cannot paint the wrong face.
+        self.run_worker(
+            self._render_inspector_avatar(),
+            group="inspector-avatar",
+            exclusive=True,
+        )
         # Drop any previous character's rows immediately and show a loading
         # placeholder; the worker fills the panel in once the listing returns
         # (or replaces the placeholder with the empty-state copy).
@@ -1908,6 +1948,9 @@ class PersonasScreen(BaseAppScreen):
         self._show_center("#ccp-persona-card-view")
         inspector = self.query_one(PersonasInspectorPane)
         inspector.show_selection(name=entity_name, kind="user_profile")
+        # Drop any previous character's portrait: the rail must never show a
+        # face that belongs to a different selection.
+        inspector.set_avatar_thumbnail(None)
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
@@ -1955,6 +1998,9 @@ class PersonasScreen(BaseAppScreen):
         library.mark_active_row("dictionary", entity_id)
         inspector = self.query_one(PersonasInspectorPane)
         inspector.show_selection(name=entity_name, kind="dictionary")
+        # Drop any previous character's portrait: the rail must never show a
+        # face that belongs to a different selection.
+        inspector.set_avatar_thumbnail(None)
         self.query_one(PersonasDictionaryTryItWidget).set_ready(
             True, "Run the preview to see what this dictionary changes."
         )
@@ -2012,6 +2058,9 @@ class PersonasScreen(BaseAppScreen):
         library.mark_active_row("lore", entity_id)
         inspector = self.query_one(PersonasInspectorPane)
         inspector.show_selection(name=entity_name, kind="lore")
+        # Drop any previous character's portrait: the rail must never show a
+        # face that belongs to a different selection.
+        inspector.set_avatar_thumbnail(None)
         self.query_one(PersonasLoreTryItWidget).set_ready(
             True, "Run the preview to see what this lore book injects."
         )
@@ -4347,6 +4396,89 @@ class PersonasScreen(BaseAppScreen):
             return
         self._notify("Avatar staged. Save the character to persist it.", "information")
         await self._render_character_editor_avatar()
+
+    async def _render_inspector_avatar(self) -> None:
+        """Decode and mount the selected character's Inspector portrait.
+
+        Reuses the editor thumbnail's decode path (off-thread via
+        ``ConsoleImageRenderCache``, then ``_fit_avatar_cell_size`` /
+        ``_build_avatar_pixels``), so the Inspector cannot reintroduce the
+        oversized-Pixels cropping those helpers already solve. Clears the box
+        for selections with no embedded portrait.
+        """
+        try:
+            inspector = self.query_one(PersonasInspectorPane)
+        except QueryError:
+            return
+        if self.state.selected_entity_kind != "character":
+            inspector.set_avatar_thumbnail(None)
+            return
+        selected_id_raw = self.state.selected_entity_id
+        # Read the portrait straight from the DB rather than from the card
+        # widget: `load_character` fills that widget through the character
+        # handler (worker + call_from_thread), so reading it here races the
+        # load and yields no bytes on the first selection.
+        db = self._character_db()
+        if db is None or selected_id_raw is None:
+            inspector.set_avatar_thumbnail(None)
+            return
+        try:
+            record = await asyncio.to_thread(
+                db.get_character_card_by_id, int(selected_id_raw)
+            )
+        except Exception:
+            logger.opt(exception=True).debug("Inspector portrait fetch failed.")
+            inspector.set_avatar_thumbnail(None)
+            return
+        image = (record or {}).get("image")
+        data = image if isinstance(image, (bytes, bytearray)) else None
+        if not data:
+            inspector.set_avatar_thumbnail(None)
+            return
+        from ...Chat.console_image_view import (
+            ConsoleImageRenderCache,
+            resolve_default_mode,
+        )
+
+        if getattr(self, "_avatar_render_cache", None) is None:
+            self._avatar_render_cache = ConsoleImageRenderCache()
+        cache = self._avatar_render_cache
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        mode = resolve_default_mode(app_config)
+        selected_id = str(self.state.selected_entity_id or "")
+        cache_key = f"inspector-avatar-{selected_id}"
+        try:
+            ok = await asyncio.to_thread(cache.prepare, cache_key, bytes(data))
+        except Exception:
+            logger.opt(exception=True).debug("Inspector portrait decode failed.")
+            ok = False
+        # The selection can change while the decode is in flight; a late
+        # render must not paint another character's face into the rail -- and
+        # a late FAILURE must not blank the portrait of whoever is selected
+        # now, so the staleness check comes before any clearing.
+        if str(self.state.selected_entity_id or "") != selected_id:
+            return
+        if not ok or not self.is_mounted:
+            inspector.set_avatar_thumbnail(None)
+            return
+        renderable = None
+        if mode == "graphics":
+            try:
+                from textual_image.widget import Image as _GraphicsImage
+
+                pil = cache.get_pil(cache_key)
+                if pil is not None:
+                    renderable = _GraphicsImage(pil)
+                    w_cells, h_cells = self._fit_avatar_cell_size(
+                        pil.width, pil.height
+                    )
+                    renderable.styles.width = w_cells
+                    renderable.styles.height = h_cells
+            except Exception:
+                renderable = self._build_avatar_pixels(cache, cache_key)
+        else:
+            renderable = self._build_avatar_pixels(cache, cache_key)
+        inspector.set_avatar_thumbnail(renderable)
 
     async def _render_character_editor_avatar(self) -> None:
         """Decode and mount the character editor's avatar thumbnail off-thread.

@@ -355,7 +355,7 @@ class TestTabNavigationProvider:
             "Artifacts",
             # task-435: the personas destination's palette command uses the
             # full accessible label (destination.full_label), not the short
-            # "RP&CD" rail label -- see the dedicated assertion below.
+            # "Roleplay" rail label -- see the dedicated assertion below.
             "Roleplay & Chat Dictionaries",
             "Watchlists",
             "Schedules",

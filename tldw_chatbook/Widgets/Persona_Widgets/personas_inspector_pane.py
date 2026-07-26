@@ -6,7 +6,7 @@ import re
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, ListItem, ListView, Static
 
 from .personas_pane_messages import ConversationRowSelected
@@ -38,6 +38,17 @@ class PersonasInspectorPane(Vertical):
     # action buttons below it are always visible when the pane renders.
     # Rows are ListItems in a ListView (keyboard-first, Notes idiom).
     DEFAULT_CSS = """
+    /* Portrait box for the selected character. Sized like the editor's
+       thumbnail rather than the 80x40 transcript image box: this is a single
+       always-visible preview, and the rail is narrow. `height: auto` keeps the
+       box from reserving space for selections that have no portrait. */
+    PersonasInspectorPane #personas-inspector-avatar-thumb {
+        height: auto;
+        max-width: 24;
+        max-height: 10;
+        padding: 0 1;
+    }
+
     PersonasInspectorPane #personas-conversations-list {
         height: auto;
         max-height: 10;
@@ -115,6 +126,10 @@ class PersonasInspectorPane(Vertical):
             yield collapse_button
         yield Static("Selected: none", id="personas-selected-name")
         yield Static("Type: -", id="personas-selected-kind")
+        # Portrait of the selected character. A roleplay user identifies a
+        # character by its picture at least as much as by its name, and the
+        # inspector previously showed every attribute EXCEPT the portrait.
+        yield Container(id="personas-inspector-avatar-thumb")
         yield Static("", id="personas-active-profile-summary")
         yield Static("Validation: OK", id="personas-validation-summary")
         yield Static("Conversations", classes="destination-section")
@@ -382,6 +397,30 @@ class PersonasInspectorPane(Vertical):
         png_button.disabled = not (export_enabled and kind == "character")
         png_button.tooltip = export_tooltip
         self.query_one("#personas-delete", Button).disabled = not selected
+
+    def set_avatar_thumbnail(self, renderable: object | None) -> None:
+        """Mount a prepared portrait renderable, or clear the box.
+
+        Mirrors ``PersonasCharacterEditorWidget.set_avatar_thumbnail``: the
+        screen owns decoding off-thread via ``ConsoleImageRenderCache`` and
+        passes a finished renderable here. A rich renderable (e.g.
+        ``rich_pixels.Pixels``) mounts inside a ``Static``; a Textual widget
+        (e.g. a ``textual_image`` graphics ``Image``) mounts directly.
+
+        Args:
+            renderable: Prepared renderable to display, or ``None`` to clear
+                (selections with no portrait, and non-character kinds).
+        """
+        try:
+            holder = self.query_one("#personas-inspector-avatar-thumb", Container)
+        except Exception:
+            return
+        holder.remove_children()
+        if renderable is None:
+            return
+        from textual.widget import Widget as _W
+
+        holder.mount(renderable if isinstance(renderable, _W) else Static(renderable))
 
     @on(ListView.Selected, "#personas-conversations-list")
     def _conversation_selected(self, event: ListView.Selected) -> None:

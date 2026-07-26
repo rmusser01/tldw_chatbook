@@ -138,6 +138,15 @@ def test_lib_wrapper_shapes_rows(db):
     )
     _add(db, "Zeta", ["x"])
     rows = get_character_page_for_ui(db, limit=10, offset=0)
-    assert rows and set(rows[0]) == {"id", "name", "last_modified", "created_at", "tags"}
+    # `description` joined the projection so the character library row can show a
+    # recognizable snippet instead of a last-modified date identical on every row.
+    assert rows and set(rows[0]) == {
+        "id",
+        "name",
+        "description",
+        "last_modified",
+        "created_at",
+        "tags",
+    }
     assert count_character_page(db) == len(get_character_page_for_ui(db, limit=1000, offset=0))
     assert "x" in list_character_tags(db)

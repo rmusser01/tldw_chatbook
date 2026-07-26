@@ -78,7 +78,10 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
     ),
     ShellDestination(
         "personas",
-        "RP&CD",
+        # A roleplay-first newcomer finds characters from this label, so it has
+        # to be readable cold. "RP&CD" could only be decoded after navigating
+        # here and reading the screen title -- i.e. after already guessing right.
+        "Roleplay",
         "personas",
         "Characters, user profiles, dictionaries, and behavior profiles.",
         "Manage behavior profiles and user profile context.",

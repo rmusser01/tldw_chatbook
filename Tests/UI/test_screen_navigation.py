@@ -1277,7 +1277,7 @@ async def test_main_navigation_copy_and_order():
         ("nav-console", "2 Console"),
         ("nav-library", "3 Library"),
         ("nav-artifacts", "4 Artifacts"),
-        ("nav-personas", "5 RP&CD"),
+        ("nav-personas", "5 Roleplay"),
         ("nav-watchlists_collections", "6 Watchlists"),
         ("nav-schedules", "7 Schedules"),
         ("nav-workflows", "8 Workflows"),
