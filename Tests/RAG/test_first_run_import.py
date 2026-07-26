@@ -437,3 +437,160 @@ def test_imported_profile_does_not_merge_legacy_index_determining_keys(monkeypat
     assert imported.vector_store.distance_metric != "l2"
     assert imported.search.default_top_k == 25  # query-time key still merged
     assert fingerprint_collection(imported) == pre_fp
+
+
+# --- Task-639: healing must not undo a deliberate profile switch, and must --
+# --- clean up configs already damaged by the pre-635 always-import bug -----
+
+
+def test_ensure_imported_profile_does_not_reflip_deliberate_switch(monkeypatch, tmp_path):
+    """AC #1: once a user has deliberately activated a DIFFERENT profile
+    (neither the default builtin nor imported_settings), a later
+    ensure_imported_profile() call (e.g. the next process's first RAG touch)
+    must leave that pointer alone -- the old healing branch treated "pointer
+    != imported_settings" as proof of a half-done first run, which silently
+    undid a real user choice on every subsequent launch."""
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    _wire_legacy_rag_config(monkeypatch, {"search": {"default_top_k": 10}})
+
+    new_id = ac.ensure_imported_profile()
+    assert ptr["v"] == new_id  # sanity: import activated it, as before
+
+    # The user later, deliberately, switches to a different builtin.
+    ptr["v"] = "fast_search"
+
+    result = ac.ensure_imported_profile()
+
+    assert result is None  # idempotent, no duplicate profile
+    assert ptr["v"] == "fast_search"  # NOT flipped back to imported_settings
+
+
+def test_ensure_imported_profile_still_heals_when_pointer_is_default(monkeypatch, tmp_path):
+    """AC #3 (restated for task-639's narrower gate): the healing branch must
+    still fire for the one case it exists for -- the pointer never having
+    been successfully written by anyone, i.e. it still names the default
+    builtin. This is the same scenario
+    test_ensure_imported_profile_heals_half_done_first_run covers; kept here
+    too as an explicit task-639 lock on the new gating condition itself
+    (`_active_profile_id() == DEFAULT_PROFILE`, not `!= _IMPORTED_ID`)."""
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    half_done = ProfileConfig(id=ac._IMPORTED_ID,
+                              name="Imported settings",
+                              description="Captured from your existing RAG configuration on first run.",
+                              profile_type="custom",
+                              rag_config=ac.resolve_active_rag_config())
+    mgr.save_profile(half_done)
+    assert ptr["v"] is None  # pointer still resolves to the default builtin
+
+    result = ac.ensure_imported_profile()
+
+    assert result is None
+    assert ptr["v"] == ac._IMPORTED_ID  # healed
+
+
+def _pre635_damage_snapshot(mgr, ac):
+    """A profile shaped exactly like what the pre-635 always-import bug would
+    have created+activated for a truly fresh install: a snapshot of the
+    default builtin (the active pointer a fresh user starts with), no legacy
+    merge, no reranking."""
+    return ProfileConfig(
+        id=ac._IMPORTED_ID,
+        name="Imported settings",
+        description="Snapshot of your active RAG profile (plus any RAG_* env "
+                    "overrides) captured on first run; edit freely.",
+        profile_type="custom",
+        rag_config=ac.resolve_active_rag_config(),  # pointer is still default here
+    )
+
+
+def test_ensure_imported_profile_heals_pre635_damage_artifact_back_to_default(monkeypatch, tmp_path):
+    """AC #2: a config whose pointer is imported_settings AND whose imported
+    profile is provably indistinguishable from the default builtin (same
+    index fingerprint, no hand-set query-time/reranking differences) is a
+    damage artifact from the pre-635 always-import bug on what would now be
+    classified as a fresh install -- clean it up by deleting the profile and
+    repointing to the default builtin, so the user is no longer silently
+    parked on a profile they never chose.
+
+    Must actually DELETE the profile (not just repoint the pointer): if it
+    were left on disk, the very next ensure_imported_profile() call would see
+    `existing is not None` with the pointer now on the default builtin and
+    re-activate it via the healing branch, undoing the cleanup immediately.
+    """
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    damaged = _pre635_damage_snapshot(mgr, ac)
+    mgr.save_profile(damaged)
+    ptr["v"] = ac._IMPORTED_ID  # pre-635 bug already activated it
+
+    result = ac.ensure_imported_profile()
+
+    assert result is None
+    assert ptr["v"] == ac.DEFAULT_PROFILE  # repointed back to the default builtin
+    assert mgr.get_profile(ac._IMPORTED_ID) is None  # deleted, not just repointed
+
+    # Idempotent from here on: the next call is a true fresh-install no-op
+    # (no legacy material was ever wired in this test).
+    assert ac.ensure_imported_profile() is None
+    assert ptr["v"] == ac.DEFAULT_PROFILE
+    assert mgr.get_profile(ac._IMPORTED_ID) is None
+
+
+def test_ensure_imported_profile_does_not_delete_hand_set_query_time_difference(monkeypatch, tmp_path):
+    """Negative case: the imported profile has a real, hand-set difference
+    from the default builtin (a non-fingerprint, query-time field) -- this is
+    NOT provably a damage artifact (it could be a genuine legacy import or
+    later customization), so it must be left completely alone."""
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    damaged = _pre635_damage_snapshot(mgr, ac)
+    damaged.rag_config.search.default_top_k = 999  # real hand-set difference
+    mgr.save_profile(damaged)
+    ptr["v"] = ac._IMPORTED_ID
+
+    result = ac.ensure_imported_profile()
+
+    assert result is None
+    assert ptr["v"] == ac._IMPORTED_ID  # left active, untouched
+    assert mgr.get_profile(ac._IMPORTED_ID) is not None  # NOT deleted
+
+
+def test_ensure_imported_profile_does_not_delete_fingerprint_mismatch(monkeypatch, tmp_path):
+    """Negative case: the imported profile's index-determining config (here,
+    embedding model) diverges from the default builtin's -- a genuine legacy
+    upgrade, not a damage artifact -- so it must be left alone even though no
+    query-time key differs."""
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    damaged = _pre635_damage_snapshot(mgr, ac)
+    damaged.rag_config.embedding.model = "a-genuinely-different-embedding-model"
+    mgr.save_profile(damaged)
+    ptr["v"] = ac._IMPORTED_ID
+
+    result = ac.ensure_imported_profile()
+
+    assert result is None
+    assert ptr["v"] == ac._IMPORTED_ID
+    assert mgr.get_profile(ac._IMPORTED_ID) is not None
+
+
+def test_ensure_imported_profile_does_not_delete_when_reranking_config_present(monkeypatch, tmp_path):
+    """Negative case: a fabricated `reranking_config` (task-495's legacy-
+    reranking-enabled path) is a real customization even when every other
+    field matches the default builtin and the fingerprint is identical (
+    reranking is not an index-determining field) -- must not be deleted."""
+    from tldw_chatbook.RAG_Search.reranker import RerankingConfig
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    damaged = _pre635_damage_snapshot(mgr, ac)
+    damaged.reranking_config = RerankingConfig()
+    mgr.save_profile(damaged)
+    ptr["v"] = ac._IMPORTED_ID
+
+    result = ac.ensure_imported_profile()
+
+    assert result is None
+    assert ptr["v"] == ac._IMPORTED_ID
+    assert mgr.get_profile(ac._IMPORTED_ID) is not None
