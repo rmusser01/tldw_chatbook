@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Any
 
 from loguru import logger
@@ -20,6 +21,7 @@ from tldw_chatbook.MCP.permission_store import (
     BUILTIN_TOOL_SERVER_KEY,
     EffectiveToolState,
     GatedToolRef,
+    _as_mapping,
     resolve_builtin_state,
 )
 from tldw_chatbook.Tools.tool_executor import Tool
@@ -279,3 +281,105 @@ def build_builtin_gate(service: Any | None = None) -> BuiltinToolGate:
         A `BuiltinToolGate` wired to `service`.
     """
     return BuiltinToolGate(service)
+
+
+# --- task-627 (P2 Task 2): settings-time enumeration ------------------------
+#
+# A settings-time enumerator lives beside the runtime gate deliberately, to
+# keep one definition of how a built-in tool maps to a `GatedToolRef`
+# (`tool_ref`, above) shared between the execution-time gate and the
+# permissions UI.
+
+
+def _stored_builtin_tool_names(payload: dict) -> set[str]:
+    """Names with a persisted decision under the built-in tool namespace.
+
+    Args:
+        payload: A loaded permission-store payload; tolerates a malformed
+            shape (e.g. a hand-edited file) at every nesting level via
+            ``_as_mapping``.
+
+    Returns:
+        The set of tool names with a ``tools`` entry under
+        ``profiles.default.servers[BUILTIN_TOOL_SERVER_KEY]``.
+    """
+    profile = _as_mapping(_as_mapping(payload.get("profiles")).get("default"))
+    servers = _as_mapping(profile.get("servers"))
+    server_entry = _as_mapping(servers.get(BUILTIN_TOOL_SERVER_KEY))
+    tools = _as_mapping(server_entry.get("tools"))
+    return set(tools.keys())
+
+
+@dataclass(frozen=True)
+class BuiltinPermRow:
+    """One built-in tool's row for the permissions UI.
+
+    Attributes:
+        name: The tool's LLM-facing name.
+        description: One-line description, empty for an orphaned entry.
+        effective: State resolved by ``resolve_builtin_state`` -- NEVER by
+            the MCP resolver (see the design doc's spike findings).
+        orphaned: True when a stored decision exists for a name no live
+            built-in tool provides. Such rows must stay listed so the user
+            can clear a decision for a tool a later release removed.
+    """
+
+    name: str
+    description: str
+    effective: EffectiveToolState
+    orphaned: bool = False
+
+
+def builtin_permission_rows(payload: dict) -> list[BuiltinPermRow]:
+    """Enumerate built-in tools with their effective permission state.
+
+    Settings-time enumeration: constructs a throwaway ``BuiltinToolProvider``
+    (cheap -- it builds two Tool objects and its gate is lazy, built only on
+    ``invoke()``), so no agent run is started and no gate is created.
+
+    Args:
+        payload: A loaded permission-store payload; ``{}`` is valid and
+            resolves everything to the built-in allow floor.
+
+    Returns:
+        One row per live built-in tool, plus one per stored ``agent:builtin``
+        tool entry with no matching live tool (``orphaned=True``), sorted by
+        name.
+    """
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    provider = BuiltinToolProvider()
+    rows: list[BuiltinPermRow] = []
+    live: set[str] = set()
+    for entry in provider.list_catalog():
+        tool = provider.tool_for(entry.name)
+        if tool is None:            # defensive: catalog/registry disagree
+            continue
+        live.add(entry.name)
+        rows.append(
+            BuiltinPermRow(
+                name=entry.name,
+                description=entry.one_line_description,
+                effective=resolve_builtin_state(payload, tool_ref(tool)),
+            )
+        )
+
+    for name in _stored_builtin_tool_names(payload) - live:
+        rows.append(
+            BuiltinPermRow(
+                name=name,
+                description="",
+                effective=resolve_builtin_state(
+                    payload,
+                    GatedToolRef(
+                        server_key=BUILTIN_TOOL_SERVER_KEY,
+                        name=name,
+                        description="",
+                        input_schema=None,
+                        tags=(),
+                    ),
+                ),
+                orphaned=True,
+            )
+        )
+    return sorted(rows, key=lambda row: row.name)
