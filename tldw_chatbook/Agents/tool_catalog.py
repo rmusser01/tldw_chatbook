@@ -270,7 +270,18 @@ class BuiltinToolProvider:
 
     SOURCE = "builtin"
 
-    def __init__(self, gate: Any | None = None) -> None:
+    def __init__(
+        self, gate: Any | None = None, workspace_id: str | None = None
+    ) -> None:
+        # settings-workspaces-folder-roots spec §3: the run's workspace,
+        # bound around every tool execution (see `invoke`) so file tools
+        # resolve THIS run's folder roots -- never whatever workspace the
+        # user happens to be looking at when the tool actually fires.
+        # `None` (the default -- every construction site that never cares
+        # about workspace-scoped file roots, e.g. Settings-time enumeration
+        # in `builtin_tool_gate.builtin_permission_rows`) leaves
+        # `allowed_file_roots` to fall back to the active workspace.
+        self._workspace_id = workspace_id
         self._tools = {t.name: t for t in (CalculatorTool(), DateTimeTool())}
         # task-584: surface the app's existing sandbox-rooted file tools to the
         # agent loop. They were registered on the global ToolExecutor but never
@@ -373,11 +384,20 @@ class BuiltinToolProvider:
             return ToolResult(ok=False, error=f"permission check failed: {exc}")
         if refusal is not None:
             return ToolResult(ok=False, error=refusal)
+        from tldw_chatbook.Tools.workspace_file_roots import run_workspace
+
         try:
             # Providers bridge async tools; the loop's interface is sync.
             # Safe here: the service runs in a worker thread with no
-            # running event loop.
-            raw = asyncio.run(tool.execute(**args))
+            # running event loop. `run_workspace` binds this run's
+            # workspace for the DURATION of the call only (context-managed,
+            # reset in its own `finally`) so file tools (`allowed_file_
+            # roots`) resolve THIS run's folder bindings, never a stale or
+            # concurrent run's. `self._workspace_id=None` keeps the
+            # ContextVar at `None`, which is `allowed_file_roots`' own
+            # documented fallback to the active workspace.
+            with run_workspace(self._workspace_id):
+                raw = asyncio.run(tool.execute(**args))
         except Exception as exc:  # noqa: BLE001 — captured, never escapes
             return ToolResult(ok=False, error=str(exc))
         if isinstance(raw, dict) and raw.get("error"):

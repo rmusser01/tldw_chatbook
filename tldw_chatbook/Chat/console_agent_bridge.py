@@ -780,6 +780,7 @@ def _compose_run_registry_and_allowed(
     *,
     mcp_provider: Any | None = None,
     builtin_gate: Any | None = None,
+    workspace_id: str | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -809,6 +810,14 @@ def _compose_run_registry_and_allowed(
             own fail-closed default) -- callers that care about the hook
             and ``invoke()`` agreeing on stamps must pass the same object
             to both.
+        workspace_id: task-6 (settings-workspaces-folder-roots spec §3) --
+            the running session's workspace id, threaded into the
+            freshly-constructed ``BuiltinToolProvider`` so its ``invoke()``
+            binds THIS run's workspace (via ``run_workspace``) around every
+            tool call, and file tools resolve that workspace's folder
+            roots. ``None`` (the default) leaves the ContextVar unset for
+            the run, which is ``allowed_file_roots``'s own documented
+            fallback to whatever workspace is currently active.
 
     Returns:
         ``(registry, allowed_tools, builtin_names)`` -- the per-run
@@ -819,7 +828,7 @@ def _compose_run_registry_and_allowed(
         so a skill's sub-agent can never call another skill).
     """
     registry = ToolCatalogRegistry()
-    builtin_provider = BuiltinToolProvider(gate=builtin_gate)
+    builtin_provider = BuiltinToolProvider(gate=builtin_gate, workspace_id=workspace_id)
     registry.register_provider(builtin_provider)
     builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
     eligible = _non_colliding_skill_entries(context, builtin_names)
@@ -1017,6 +1026,17 @@ class ConsoleAgentBridge:
         skills/MCP-free run on the shared, construction-time
         ``self._registry``/``self._allowed_tools`` fast path unchanged.
 
+        task-6 (settings-workspaces-folder-roots spec §3): whenever this
+        run takes the fresh-build branch below, ``self._store``'s own
+        record of ``session_id``'s bound workspace is looked up and
+        threaded into ``_compose_run_registry_and_allowed`` as
+        ``workspace_id`` -- so this run's ``BuiltinToolProvider`` binds
+        THIS session's workspace, not whatever workspace is active in the
+        UI by the time a file tool actually fires. A missing store or an
+        already-closed session degrades to ``None`` (the documented
+        active-workspace fallback) rather than failing the run over an
+        ancillary lookup.
+
         Returns:
             A ``(run_id, outcome)`` tuple: the primary run's id (so the
             caller can record the produced reply's persisted id onto the run
@@ -1068,8 +1088,21 @@ class ConsoleAgentBridge:
             context: Mapping[str, Any] = {}
             if self._skills_service is not None:
                 context = asyncio.run(self._skills_service.get_context(mode="local"))
+            # task-6: `self._store` is `None` in some bridge-construction-only
+            # tests, and `session_id` could in principle name an already-
+            # closed session -- either degrades to `None`, never raises,
+            # matching `allowed_file_roots`'s own fail-safe posture.
+            run_workspace_id: str | None = None
+            if self._store is not None:
+                try:
+                    run_workspace_id = self._store.session_workspace_id(session_id)
+                except KeyError:
+                    run_workspace_id = None
             registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(
-                context, mcp_provider=mcp_provider, builtin_gate=builtin_gate
+                context,
+                mcp_provider=mcp_provider,
+                builtin_gate=builtin_gate,
+                workspace_id=run_workspace_id,
             )
             if self._skills_service is not None:
                 skill_names = frozenset(

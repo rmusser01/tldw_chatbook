@@ -612,6 +612,17 @@ class ConsoleChatStore:
         """Return in-memory settings for a native Console session."""
         return self._session_or_raise(session_id).settings
 
+    def session_workspace_id(self, session_id: str) -> str:
+        """Return the workspace id a native Console session is bound to.
+
+        Used by ``ConsoleAgentBridge.run_reply`` (task-6, settings-
+        workspaces-folder-roots spec §3) to thread the RUNNING session's
+        own workspace into ``BuiltinToolProvider`` -- never whatever
+        workspace happens to be active in the UI by the time a tool
+        actually fires.
+        """
+        return self._session_or_raise(session_id).workspace_id
+
     def replace_session_settings(
         self,
         session_id: str,
