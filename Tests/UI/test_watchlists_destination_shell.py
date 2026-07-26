@@ -35,29 +35,14 @@ class WatchlistsContextHarness(App):
 
 
 @pytest.mark.asyncio
-async def test_watchlists_shell_has_navigator_and_panes():
-    app = _build_test_app()
-    host = DestinationHarness(app, "watchlists_collections")
-    async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.1)
-        screen = host.screen_stack[-1]
-        assert isinstance(screen, WatchlistsCollectionsScreen)
-        assert screen.query_one("#watchlists-navigator")
-        assert screen.query_one("#watchlists-list-pane")
-        assert screen.query_one("#watchlists-detail-pane")
-        assert screen.query_one("#watchlists-inspector-pane")
-        assert screen.query_one("#watchlists-backend-select", Select)
-
-
-@pytest.mark.asyncio
-async def test_watchlists_navigator_updates_active_section():
+async def test_watchlists_tab_strip_updates_active_section():
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
         assert screen.active_section == "overview"
-        screen.query_one("#nav-sources", Button).press()
+        screen.query_one("#wl-tab-sources", Button).press()
         await pilot.pause()
         assert screen.active_section == "sources"
 
@@ -548,26 +533,6 @@ async def test_watchlists_notifications_section_reads_real_client_inbox():
 
 
 @pytest.mark.asyncio
-async def test_existing_panes_survive_the_workbench_rehost():
-    app = _build_test_app()
-    host = DestinationHarness(app, "watchlists_collections")
-    async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.1)
-        screen = host.screen_stack[-1]
-        assert screen.query("#wl-workbench"), "the workbench container should be mounted"
-        # The panes that existed before must still be mounted, not replaced.
-        assert screen.query("#watchlists-navigator")
-        # Default active_section is "overview", so OverviewPane is what's there
-        # to start; switch to Sources (as the pre-existing navigator test does)
-        # to confirm SourcesPane also still renders inside the re-hosted ITEMS
-        # region rather than being dropped.
-        assert screen.query("#watchlists-overview-pane")
-        screen.query_one("#nav-sources", Button).press()
-        await pilot.pause()
-        assert screen.query("#watchlists-sources-pane")
-
-
-@pytest.mark.asyncio
 async def test_bracket_keys_toggle_the_rails():
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -769,7 +734,7 @@ async def test_bracket_toggle_preserves_in_progress_create_form_draft():
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
 
-        screen.query_one("#nav-sources", Button).press()
+        screen.query_one("#wl-tab-sources", Button).press()
         await pilot.pause()
         screen.query_one("#sources-new-button", Button).press()
         await pilot.pause()
@@ -813,7 +778,7 @@ async def test_submitting_the_create_form_clears_the_draft():
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
 
-        screen.query_one("#nav-sources", Button).press()
+        screen.query_one("#wl-tab-sources", Button).press()
         await pilot.pause()
         screen.query_one("#sources-new-button", Button).press()
         await pilot.pause()
@@ -846,7 +811,7 @@ async def test_cancelling_the_create_form_clears_the_draft():
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
 
-        screen.query_one("#nav-sources", Button).press()
+        screen.query_one("#wl-tab-sources", Button).press()
         await pilot.pause()
         screen.query_one("#sources-new-button", Button).press()
         await pilot.pause()
@@ -904,7 +869,7 @@ async def test_bracket_toggle_preserves_loaded_sources_items_and_rules_tables():
             ("items", "#items-table"),
             ("rules", "#rules-table"),
         ):
-            screen.query_one(f"#nav-{section}", Button).press()
+            screen.query_one(f"#wl-tab-{section}", Button).press()
             await pilot.pause()
 
             table = await _wait_for_table_rows(pilot, table_id, screen, 1)
@@ -936,7 +901,7 @@ async def test_bracket_toggle_preserves_inspector_selection():
             return_value=[{"id": "s1", "name": "Feed One", "source_type": "rss"}]
         )
 
-        screen.query_one("#nav-sources", Button).press()
+        screen.query_one("#wl-tab-sources", Button).press()
         await pilot.pause()
         await _wait_for_table_rows(pilot, "#sources-table", screen, 1)
 
@@ -978,7 +943,7 @@ async def test_bracket_toggle_preserves_in_progress_rule_edit():
         }
         screen._controller.list_alert_rules = AsyncMock(return_value=[rule])
 
-        screen.query_one("#nav-rules", Button).press()
+        screen.query_one("#wl-tab-rules", Button).press()
         await pilot.pause()
         await _wait_for_table_rows(pilot, "#rules-table", screen, 1)
 
@@ -1049,7 +1014,7 @@ async def test_saving_a_rule_edit_does_not_leave_a_phantom_form_open():
 
         screen._controller.get_overview_data = _fake_overview_data
 
-        screen.query_one("#nav-rules", Button).press()
+        screen.query_one("#wl-tab-rules", Button).press()
         await pilot.pause()
         await _wait_for_table_rows(pilot, "#rules-table", screen, 1)
 
