@@ -1,11 +1,11 @@
 ---
 id: TASK-699
 title: 'Library shell tests fail nondeterministically, hiding real regressions'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-26 15:02'
-updated_date: '2026-07-26 22:20'
+updated_date: '2026-07-26 23:44'
 labels:
   - testing
   - library
@@ -26,17 +26,20 @@ The Library shell test file fails around six tests on every run, but not the sam
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Reduced this file from 9 failures to a low-rate intermittent, and ruled out two candidate causes. NOT closed.
+Root cause found and fixed. The file went from 9 failures on clean dev to 259 passed / 0 failed.
 
-WHAT WAS FIXED. Three of the original nine were STABLE, not flaky, and were misfiled here as nondeterminism: two over-broad config-precedence traps (task-687) and one assertion comparing a mounted form against a never-mounted one (task-698). Both merged in PR #933. The screen was correct in all three cases.
+Three of the original nine were STABLE failures misfiled here as nondeterminism -- two over-broad config-precedence traps and one assertion comparing a mounted form against a never-mounted one (tasks 687/698, PR #933). The screen was correct in all three cases.
 
-WHAT WAS RULED OUT. The wait helpers were bounded by a count of pilot.pause(0.02) calls rather than wall clock, which is genuinely wrong -- a pause takes as long as the loop needs, so under contention the budget silently shrinks. Fixed, and worth keeping. But it is NOT the cause of the remaining tail: the very next full-file run still failed, in 289s against an earlier 520s, i.e. under LESS load. Do not re-litigate load sensitivity; it has been tested.
+The remaining intermittent was a state-then-DOM race in
+test_library_shell_note_conflict_shows_overwrite_reload_and_keeps_user_text. It waited for _library_note_autosave_state to become 'conflict', then immediately asserted screen.query('#library-note-conflict-overwrite'). The wait succeeded every time -- the state really had flipped -- but the screen had not yet recomposed to render the buttons that state implies, and an empty DOMQuery is falsy. Whether it passed depended on whether a recompose landed in the same tick.
 
-Also ruled out: cross-contamination inside the notes suite. All 81 notes tests pass together, and each failing test passes in isolation. So the polluter, if there is one, is outside that set.
+That explains every observation, including the ones that killed my earlier theories: passes alone, passes alongside all 81 notes tests, fails only sometimes in a full file, and no correlation with machine load (a run failed at 289s where an earlier one passed at 520s). It also explains why the whole tail was in the note-conflict family: they share the shape.
 
-OBSERVED RATES, so the next attempt starts from data. Before the helper change: 4 failed, 2, 0, 1, 0. After: 1, 0. Every failure has been in the notes/note-conflict family -- note_conflict_shows_overwrite_reload_and_keeps_user_text, note_conflict_during_preview_reads_live_text, note_conflict_reload_discards_local_edits, note_save_result_after_switch_is_discarded, notes_sync_now_calls_recording_service_with_chosen_enums -- plus export_registry_failure_* and ingest_canvas_different_canvas_isolation seen earlier.
+Fixed by awaiting the widgets with _wait_for_selector. Grepped for the same pattern; this test was the only instance.
 
-WHAT I NEVER GOT. The assertion text. Every encounter was a bare FAILED line, and the two runs where I set out to capture the traceback both passed. That is the single most useful next step: run the full file repeatedly with -rf until one fails and the message is captured, since the failing tests have several await points where a prior test's pending autosave or a stale preview snapshot could interfere -- a far better fit for 'passes alone, fails in a full file' than timing.
+What finally worked, after five single-run attempts to capture a traceback all passed: looping the full file until one failed. A rate this low makes single runs useless as a diagnostic.
 
-Suggested approach next time: rather than bisecting 257 tests by hand, run the file under pytest-repeat or in a loop capturing -rf output, get one real traceback, and work back from the assertion. A rate this low makes single-run bisection unreliable.
+Two hypotheses were tested and eliminated along the way, and should not be revisited: load sensitivity via the wait helpers (disproved by the 289s-vs-520s run; the wall-clock fix in PR #942 stands on its own merits but was not the cause) and contamination inside the notes suite (all 81 pass together).
+
+PRs: #933 (687/698), #942 (wait-helper robustness), #946 (this fix).
 <!-- SECTION:NOTES:END -->
