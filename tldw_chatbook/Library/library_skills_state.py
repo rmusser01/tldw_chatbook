@@ -72,6 +72,11 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # still shadows a real builtin the moment a user enables the gate.
         "read_file",
         "list_directory",
+        # task-11 (builtin-tool-packs): the files pack's path- and
+        # content-search tools. Same config-gated blind spot as read_file/
+        # list_directory above.
+        "glob_files",
+        "grep_files",
     )
 )
 
