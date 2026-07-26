@@ -43,8 +43,8 @@ widget can never be a legitimate capture for anyone.
 """
 
 from typing import TYPE_CHECKING, Optional
-from loguru import logger
 
+from loguru import logger
 from textual.geometry import Region
 from textual.widget import Widget
 
@@ -86,9 +86,12 @@ class RecomposeCaptureGuard:
         try:
             app.capture_mouse(None)
         except Exception:
-            logger.debug(
-                f"{type(self).__name__}: mouse-capture release {context} skipped.",
-                exc_info=True,
+            # Loguru does not honor the stdlib `exc_info=True` kwarg -- it is
+            # bound as an opaque "extra" field instead, and the traceback is
+            # silently dropped. `logger.opt(exception=True)` is loguru's own
+            # mechanism for attaching the current exception to a log record.
+            logger.opt(exception=True).debug(
+                f"{type(self).__name__}: mouse-capture release {context} skipped."
             )
 
     def refresh(
@@ -103,6 +106,17 @@ class RecomposeCaptureGuard:
         Mirrors ``BaseAppScreen.refresh`` -- released here (at the moment
         ``refresh(recompose=True)`` is CALLED) so the common, already-idle
         case never depends on the deferred-teardown guard below at all.
+
+        Args:
+            *regions: Regions to repaint; forwarded to ``Widget.refresh``
+                unchanged.
+            repaint: Whether to repaint the widget; forwarded unchanged.
+            layout: Whether to trigger a layout pass; forwarded unchanged.
+            recompose: If ``True``, schedules a full recompose. Only this
+                case triggers the pre-teardown mouse-capture release.
+
+        Returns:
+            ``self``, per ``Widget.refresh``'s own return contract.
         """
         if recompose and self.is_running:
             self._release_own_capture_if_any(context="before recompose")
@@ -130,8 +144,11 @@ class RecomposeCaptureGuard:
                 try:
                     self.app.capture_mouse(None)
                 except Exception:
-                    logger.debug(
+                    # See the matching comment in
+                    # `_release_own_capture_if_any`: loguru needs
+                    # `logger.opt(exception=True)`, not stdlib's
+                    # `exc_info=True`, to attach a traceback.
+                    logger.opt(exception=True).debug(
                         f"{type(self).__name__}: stale post-recompose "
-                        "mouse-capture sweep skipped.",
-                        exc_info=True,
+                        "mouse-capture sweep skipped."
                     )

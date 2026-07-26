@@ -295,6 +295,7 @@ class TestSearchRAGWindow:
                 SearchRAGWindow, app_instance=mock_app_instance
             ) as pilot:
                 window = pilot.app.test_widget
+                await _wait_for_mount_dependency_probe(pilot)
 
                 search_input = window.query_one("#search-query-input", Input)
                 search_button = window.query_one("#search-button", Button)
@@ -839,6 +840,21 @@ def _notify_messages(mock_app: MagicMock) -> list[str]:
     return [str(call.args[0]) for call in mock_app.notify.call_args_list if call.args]
 
 
+async def _wait_for_mount_dependency_probe(pilot) -> None:
+    """Let ``on_mount``'s embeddings/RAG thread-worker probe finish and land.
+
+    Task-905 review: the mount-time dependency check now runs on a
+    ``@work(thread=True)`` worker instead of inline, so tests that force a
+    pristine or unavailable registry before mounting ``SearchRAGWindow``
+    must wait for that worker (and the ``call_from_thread`` hop back to the
+    UI thread it performs on completion) before asserting on the resulting
+    banner/disabled state.
+    """
+    await pilot.pause()
+    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+
+
 async def _wait_for_indexing_cycle(pilot) -> None:
     """Let a Start Indexing press run its worker plus the follow-up stats refresh."""
     await pilot.pause()
@@ -868,7 +884,64 @@ class TestLazyEmbeddingsDependencyGate:
     installed. Both call sites now route through
     ``optional_deps.lazy_embeddings_rag_available()``, which re-probes for
     real on a False reading instead of trusting the stale default.
+
+    PR #905 review: the ``on_mount`` re-probe used to call
+    ``lazy_embeddings_rag_available()`` -- and therefore, on a pristine
+    registry, the real deep-import ``check_embeddings_rag_deps()`` -- inline
+    on the UI event loop, which can take real wall-clock seconds importing
+    torch/transformers/chromadb/sentence_transformers and would stall the
+    whole app during the window's very first mount. It is now dispatched to
+    a ``@work(thread=True)`` worker instead.
     """
+
+    @pytest.mark.asyncio
+    async def test_mount_time_dependency_probe_runs_off_the_ui_thread(
+        self,
+        mock_app_instance: MagicMock,
+        temp_user_data_dir: Path,
+        widget_pilot,
+    ) -> None:
+        """A pristine registry must resolve the deep probe on a worker thread.
+
+        Regression for the mount-time-blocking bug (PR #905 review):
+        records which OS thread actually calls
+        ``lazy_embeddings_rag_available()`` from ``on_mount``. Before the
+        fix this is RED -- ``on_mount`` awaited that call directly on the
+        Textual app's own event-loop thread (the same thread this test runs
+        on), so the recorded thread id would equal the test's own thread id
+        instead of a separate worker thread.
+        """
+        reset_dependency_checks()
+        main_thread_id = threading.get_ident()
+        calling_thread_ids: list[int] = []
+
+        def recording_probe() -> bool:
+            calling_thread_ids.append(threading.get_ident())
+            return True
+
+        try:
+            with _search_rag_persistence_env(temp_user_data_dir):
+                with patch.object(
+                    search_rag_window_module,
+                    "lazy_embeddings_rag_available",
+                    recording_probe,
+                ):
+                    async with await widget_pilot(
+                        SearchRAGWindow, app_instance=mock_app_instance
+                    ) as pilot:
+                        await _wait_for_mount_dependency_probe(pilot)
+
+                        assert calling_thread_ids, (
+                            "lazy_embeddings_rag_available() was never "
+                            "called by the mount-time probe"
+                        )
+                        assert calling_thread_ids[0] != main_thread_id, (
+                            "the deep dependency probe ran synchronously on "
+                            "the UI/event-loop thread instead of a worker "
+                            "thread"
+                        )
+        finally:
+            reset_dependency_checks()
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(
@@ -897,6 +970,7 @@ class TestLazyEmbeddingsDependencyGate:
                     SearchRAGWindow, app_instance=mock_app_instance
                 ) as pilot:
                     window = pilot.app.test_widget
+                    await _wait_for_mount_dependency_probe(pilot)
 
                     search_input = window.query_one("#search-query-input", Input)
                     search_button = window.query_one("#search-button", Button)
@@ -976,6 +1050,65 @@ class TestIndexingControls:
     """Task-251: the Maintenance-tab indexing controls trigger real indexing."""
 
     @pytest.mark.asyncio
+    async def test_start_indexing_guard_never_runs_the_deep_import_probe(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """Pressing Start Indexing must not risk a synchronous heavy import.
+
+        PR #905 review: ``_start_indexing_run`` is reached from a
+        synchronous ``@on(Button.Pressed, "#start-indexing")`` handler --
+        still on the UI thread, not a worker -- so its dependency guard must
+        use the cheap, import-free ``embeddings_rag_deps_installed()``
+        probe rather than ``lazy_embeddings_rag_available()`` (whose deep
+        ``check_embeddings_rag_deps()`` path imports
+        torch/transformers/chromadb/sentence_transformers and can take real
+        wall-clock seconds). Patches the deep probe to fail loudly if
+        called at all.
+        """
+
+        def _must_not_be_called() -> bool:
+            raise AssertionError(
+                "_start_indexing_run must not call the deep "
+                "lazy_embeddings_rag_available() probe synchronously"
+            )
+
+        calls: list[dict] = []
+
+        async def fake_backfill(**kwargs):
+            calls.append(kwargs)
+            return _ok_summary()
+
+        with patch.object(
+            search_rag_window_module,
+            "lazy_embeddings_rag_available",
+            _must_not_be_called,
+        ):
+            with patch.object(
+                search_rag_window_module, "backfill_semantic_index", fake_backfill
+            ):
+                with patch.object(
+                    search_rag_window_module,
+                    "peek_shared_rag_service",
+                    return_value=None,
+                ):
+                    async with await widget_pilot(
+                        SearchRAGWindow, app_instance=mock_app_instance
+                    ) as pilot:
+                        window = pilot.app.test_widget
+
+                        window.query_one("#start-indexing", Button).press()
+                        await _wait_for_indexing_cycle(pilot)
+
+                        assert len(calls) == 1
+                        messages = _notify_messages(mock_app_instance)
+                        assert not any(
+                            "Indexing did not run" in message for message in messages
+                        )
+
+    @pytest.mark.asyncio
     async def test_missing_embeddings_dependency_disables_indexing_controls_with_recovery(
         self,
         mock_app_instance: MagicMock,
@@ -986,6 +1119,7 @@ class TestIndexingControls:
         with _force_embeddings_rag_unavailable():
             async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
                 window = pilot.app.test_widget
+                await _wait_for_mount_dependency_probe(pilot)
 
                 start_button = window.query_one("#start-indexing", Button)
                 source_select = window.query_one("#index-source-select", Select)

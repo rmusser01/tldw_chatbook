@@ -43,7 +43,11 @@ from ....Chat.chat_handoff_messages import (
     build_handoff_policy_blocking_message,
 )
 from ....Chat.chat_handoff_models import ChatHandoffPayload
-from ....Utils.optional_deps import DEPENDENCIES_AVAILABLE, lazy_embeddings_rag_available
+from ....Utils.optional_deps import (
+    DEPENDENCIES_AVAILABLE,
+    embeddings_rag_deps_installed,
+    lazy_embeddings_rag_available,
+)
 from ....RAG_Search.ingestion_indexing import (
     ITEM_TYPE_CONVERSATION,
     ITEM_TYPE_MEDIA,
@@ -551,53 +555,103 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
             if isawaitable(result):
                 await result
 
-        # Check if embeddings/RAG dependencies are available. Routed through
-        # the lazy-ensure seam (task-638) rather than reading the raw flag:
-        # under the default lazy dependency-checking mode nothing else calls
-        # check_embeddings_rag_deps() before this runs, so the raw flag
-        # would stay stuck at its pristine False default and show this
-        # banner even when the packages are genuinely importable.
-        if not lazy_embeddings_rag_available():
-            from ....Utils.widget_helpers import alert_embeddings_not_available
-            recovery_state = self._missing_embeddings_recovery_state()
-            # Show alert after a short delay to ensure UI is ready
-            self.set_timer(0.1, lambda: alert_embeddings_not_available(self))
-            try:
-                results_list = self.query_one("#results-list-enhanced")
-                await results_list.remove_children()
-                await results_list.mount(
-                    Static(
-                        recovery_state.visible_copy,
-                        id=recovery_state.stable_selector,
-                        classes="search-empty-state search-recovery-state",
-                    )
-                )
-                search_input = self.query_one("#search-query-input", Input)
-                search_input.disabled = True
-                search_input.placeholder = "Embeddings not available - install dependencies"
-                search_input.tooltip = recovery_state.disabled_tooltip
-                search_button = self.query_one("#search-button", Button)
-                search_button.disabled = True
-                search_button.tooltip = recovery_state.disabled_tooltip
-            except NoMatches:
-                pass
-            # The Maintenance-tab indexing controls need the same runtime the
-            # searches do; disable them with the same recovery copy (task-251).
-            try:
-                start_indexing = self.query_one("#start-indexing", Button)
-                start_indexing.disabled = True
-                start_indexing.tooltip = recovery_state.disabled_tooltip
-                index_source = self.query_one("#index-source-select", Select)
-                index_source.disabled = True
-                index_source.tooltip = recovery_state.disabled_tooltip
-            except NoMatches:
-                pass
+        # Check if embeddings/RAG dependencies are available. The cheap
+        # registry read is trusted instantly when already True (task-638's
+        # lazy-ensure seam never needs to re-probe a positive result). A
+        # False reading is NOT necessarily a real probe failure -- under the
+        # default lazy dependency-checking mode nothing else calls
+        # check_embeddings_rag_deps() before this runs, so the raw flag can
+        # simply be its pristine False default even when the packages are
+        # genuinely importable. Resolving that ambiguity means actually
+        # running the deep-import probe (``lazy_embeddings_rag_available()``
+        # -> ``check_embeddings_rag_deps()``), which imports
+        # torch/transformers/chromadb/sentence_transformers and can take
+        # real wall-clock seconds -- too slow to run inline here on the UI
+        # event loop during the window's very first mount (PR #905 review),
+        # so it is dispatched to a thread worker instead; the banner below
+        # is only ever applied once that worker reports back.
+        if not DEPENDENCIES_AVAILABLE.get("embeddings_rag", False):
+            self._probe_embeddings_rag_availability()
 
         # Setup UI components after all widgets are created
         self._setup_history_table()
         self._setup_analytics()
         self._setup_collections_list()
         self._setup_index_stats()
+
+    @work(thread=True, exclusive=True, group="embeddings-rag-mount-probe", exit_on_error=False)
+    def _probe_embeddings_rag_availability(self) -> None:
+        """Thread worker: run the deep embeddings/RAG dependency probe.
+
+        ``lazy_embeddings_rag_available()`` imports torch/transformers/
+        chromadb/sentence_transformers on a False registry reading and can
+        take real wall-clock seconds -- this runs it off the UI event loop
+        so mounting this window never stalls the whole app, then marshals
+        the resolved availability back to the UI thread to apply (or skip)
+        the missing-dependency banner.
+        """
+        try:
+            available = lazy_embeddings_rag_available()
+        except Exception:
+            logger.opt(exception=True).error(
+                "SearchRAGWindow: embeddings/RAG dependency probe crashed; "
+                "treating as unavailable."
+            )
+            available = False
+        try:
+            self.app.call_from_thread(
+                self._apply_embeddings_rag_availability, available
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                "SearchRAGWindow: could not deliver the embeddings/RAG "
+                "probe result back to the UI thread."
+            )
+
+    async def _apply_embeddings_rag_availability(self, available: bool) -> None:
+        """Apply a resolved embeddings/RAG availability determination to the UI.
+
+        Called on the UI thread via ``call_from_thread`` from the mount-time
+        probe worker (``_probe_embeddings_rag_availability``). A ``True``
+        result needs no UI change -- the window mounts fully enabled by
+        default -- so this only has work to do on ``False``.
+        """
+        if available or not self.is_running:
+            return
+        from ....Utils.widget_helpers import alert_embeddings_not_available
+        recovery_state = self._missing_embeddings_recovery_state()
+        # Show alert after a short delay to ensure UI is ready
+        self.set_timer(0.1, lambda: alert_embeddings_not_available(self))
+        try:
+            results_list = self.query_one("#results-list-enhanced")
+            await results_list.remove_children()
+            await results_list.mount(
+                Static(
+                    recovery_state.visible_copy,
+                    id=recovery_state.stable_selector,
+                    classes="search-empty-state search-recovery-state",
+                )
+            )
+            search_input = self.query_one("#search-query-input", Input)
+            search_input.disabled = True
+            search_input.placeholder = "Embeddings not available - install dependencies"
+            search_input.tooltip = recovery_state.disabled_tooltip
+            search_button = self.query_one("#search-button", Button)
+            search_button.disabled = True
+            search_button.tooltip = recovery_state.disabled_tooltip
+        except NoMatches:
+            pass
+        # The Maintenance-tab indexing controls need the same runtime the
+        # searches do; disable them with the same recovery copy (task-251).
+        try:
+            start_indexing = self.query_one("#start-indexing", Button)
+            start_indexing.disabled = True
+            start_indexing.tooltip = recovery_state.disabled_tooltip
+            index_source = self.query_one("#index-source-select", Select)
+            index_source.disabled = True
+            index_source.tooltip = recovery_state.disabled_tooltip
+        except NoMatches:
+            pass
 
     def _authoritative_runtime_backend(self) -> str:
         get_source = getattr(self.app_instance, "get_authoritative_runtime_source", None)
@@ -933,8 +987,22 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         Honest by construction: refuses (with WHY) when embeddings support is
         missing, a run is already in flight, or no source database backs the
         selected content type -- it never pretends to index.
+
+        Unlike ``on_mount``, this guard is reached from a synchronous
+        ``@on(Button.Pressed, "#start-indexing")`` handler -- i.e. still on
+        the UI thread, not a worker (PR #905 review) -- so it deliberately
+        uses the cheap, import-free ``embeddings_rag_deps_installed()``
+        probe rather than ``lazy_embeddings_rag_available()``'s deep-import
+        check, which would otherwise block the UI thread on the same click.
+        This mirrors ``semantic_indexing_available()``'s own gate (used
+        inside ``_run_index_backfill`` below), so a "specs present but the
+        deep import is genuinely broken" edge case still fails safely --
+        just one round trip later, off-thread, via that worker's existing
+        ``get_shared_rag_service()`` failure handling and its own
+        "Indexing did not run" notification -- instead of being caught here
+        synchronously.
         """
-        if not lazy_embeddings_rag_available():
+        if not embeddings_rag_deps_installed():
             self.app_instance.notify(
                 f"Indexing did not run: {INDEXING_UNAVAILABLE_MESSAGE}",
                 severity="warning",
