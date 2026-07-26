@@ -88,6 +88,76 @@ class TestEmbeddingsServiceWrapper:
             assert service._cache_size == 2
 
 
+class TestBareHfModelIdNormalization:
+    """task-640 item 4: EmbeddingsServiceWrapper._build_config() must map
+    known-broken bare HuggingFace model ids to their canonical, resolvable
+    form for the underlying loader, WITHOUT ever mutating `model_name`
+    itself (the exact string that round-trips as RAGConfig.embedding.model,
+    the collection-fingerprint-determining field -- see
+    Tests/RAG/simplified/test_collection_fingerprint.py's
+    test_hybrid_basic_builtin_profile_fingerprint_is_stable_across_the_hf_
+    model_id_fix for the fingerprint-side proof)."""
+
+    def test_bare_all_minilm_model_id_is_normalized_for_the_loader(self):
+        """The builtin "hybrid_basic"/"bm25_basic"/"fast" RAG profiles'
+        embedding model, "all-MiniLM-L6-v2", is missing its
+        "sentence-transformers/" org prefix and 404s against the real HF
+        Hub as-is -- model_name_or_path must resolve to the canonical id."""
+        with patch(
+            "tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory"
+        ):
+            service = EmbeddingsServiceWrapper(model_name="all-MiniLM-L6-v2")
+            config = service._build_config("all-MiniLM-L6-v2", None, None, None, None)
+            assert (
+                config["models"]["default"]["model_name_or_path"]
+                == "sentence-transformers/all-MiniLM-L6-v2"
+            )
+
+    def test_bare_model_id_normalization_never_mutates_model_name(self):
+        """`model_name` (and therefore what flows into RAGConfig.embedding.
+        model / the collection fingerprint) must stay exactly the
+        as-configured bare id -- only the HTTP-facing model_name_or_path is
+        canonicalized."""
+        with patch(
+            "tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory"
+        ):
+            service = EmbeddingsServiceWrapper(model_name="all-MiniLM-L6-v2")
+            assert service.model_name == "all-MiniLM-L6-v2"
+            # _build_config's own return value must not carry the bare id
+            # forward anywhere BUT model_name_or_path either.
+            config = service._build_config("all-MiniLM-L6-v2", None, None, None, None)
+            assert config["default_model_id"] == "default"
+
+    def test_already_prefixed_model_ids_pass_through_unchanged(self):
+        """A model id that already carries its real org prefix (every OTHER
+        builtin profile's embedding.model) must never be rewritten."""
+        with patch(
+            "tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory"
+        ):
+            service = EmbeddingsServiceWrapper(
+                model_name="sentence-transformers/all-mpnet-base-v2"
+            )
+            config = service._build_config(
+                "sentence-transformers/all-mpnet-base-v2", None, None, None, None
+            )
+            assert (
+                config["models"]["default"]["model_name_or_path"]
+                == "sentence-transformers/all-mpnet-base-v2"
+            )
+
+    def test_unrelated_bare_model_ids_are_not_touched_by_the_narrow_alias_map(self):
+        """The fix is a narrow, explicit alias map for the one known-broken
+        id -- NOT a "no slash -> prepend sentence-transformers/" heuristic,
+        which would silently break a legitimate slash-free top-level HF
+        model id like "bert-base-uncased"."""
+        with patch(
+            "tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory"
+        ):
+            service = EmbeddingsServiceWrapper(model_name="bert-base-uncased")
+            config = service._build_config("bert-base-uncased", None, None, None, None)
+            assert config["models"]["default"]["model_name_or_path"] == "bert-base-uncased"
+
+
 class TestVectorStores:
     """Unit tests for vector store implementations"""
 
