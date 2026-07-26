@@ -52,10 +52,26 @@ server contract work. The immediate gap is application routing and settings
 state, followed by durable per-character profile ownership.
 
 Before Slice 1 UAT, Chatbook records the installed external server build and
-revalidates the current Homebrew/release contract for `/health`, `/v1/models`,
-`/v1/audio/voices`, and a complete-WAV `/v1/audio/speech` response. Upstream
-streaming capability does not expand this release: Chatbook continues to request
-and consume one complete WAV through the asynchronous response interface.
+characterizes `/health`, `/v1/models`, `/v1/audio/voices`, and a complete-WAV
+`/v1/audio/speech` response against the contract pinned by ADR-023. The
+[current server documentation](https://github.com/0xShug0/audio.cpp/blob/main/app/server/README.md)
+and [release history](https://github.com/0xShug0/audio.cpp/releases) are evidence
+for selecting the installed build, not permission to silently repin the
+adapter.
+
+This is a stop/go compatibility gate:
+
+- if the installed Homebrew/release build matches the pinned endpoint, request,
+  response, MIME, and WAV semantics, Chatbook records its build identity and
+  adds that build to compatibility fixtures and UAT evidence without changing
+  the pin;
+- if it is incompatible, Slice 1 stops before implementation continues or UAT
+  proceeds. A separate reviewed change must amend ADR-023, its pinned contract,
+  adapter fixtures, and compatibility policy before work resumes.
+
+Upstream streaming capability does not expand this release. Chatbook continues
+to request and consume one complete WAV through the asynchronous response
+interface.
 
 ## Design principles
 
@@ -158,7 +174,8 @@ A `TTSGenerationProfile` is a reusable, complete, exact generation selection.
 It contains:
 
 - immutable UUID profile ID;
-- trimmed display name plus a case-insensitive normalized uniqueness key;
+- trimmed display name plus a Unicode-normalized, case-insensitive uniqueness
+  key;
 - canonical provider ID;
 - exact model ID;
 - nullable exact voice ID;
@@ -211,14 +228,61 @@ at most 256 characters. The source-aware character layer supplies the
 canonical representation; profile code does not parse, renumber, or derive it
 from a display label.
 
+Server authority acquisition follows one explicit policy:
+
+1. use a durable Chatbook server-profile ID plus a stable authenticated
+   principal or tenant returned by the server's authenticated identity
+   contract;
+2. use server-profile-only authority only when that server contract explicitly
+   guarantees that character IDs are global across principals;
+3. never use an API key, token, credential source, or credential fingerprint as
+   durable authority;
+4. when neither stable form is available, disable server-character assignment
+   and assigned speech with the actionable reason **Server identity
+   unavailable**.
+
+The opaque encoded server authority carries an authority-schema version so a
+future construction change cannot collide with an older authority. Credential
+rotation must preserve the resulting authority, while different principals on
+the same normalized origin must remain distinct.
+
 A server-backed conversation records its full authority scope when the
 conversation is launched. Existing conversations without that provenance
 cannot receive or use a server-character assignment until they are reopened or
 explicitly repaired.
 
+A local conversation persists its complete local `CharacterRef`, not only a
+bare character ID. A legacy local conversation containing only
+`character_id` may be interpreted and backfilled using the
+`local_authority_id` of the character database that owns that conversation.
+Legacy server conversations are never backfilled from whichever server or
+credential happens to be active.
+
 Speech admission resolves a `CharacterRef` only for assistant messages authored
 by the selected roleplay character. User, system, tool, persona-only, and
 generic assistant messages do not inherit a character assignment.
+
+### Console speech snapshot
+
+Clicking **Speak** creates an immutable, app-issued
+`TTSMessageSpeechSnapshot`. It contains:
+
+- native session and message IDs;
+- nullable persisted conversation and message IDs;
+- the visible content snapshot and stable selected-variant token or content
+  revision;
+- message role and completion status;
+- assistant kind and the complete source-aware `CharacterRef`, when one was
+  established from trusted session or conversation state.
+
+The Console store, not an event caller, issues this value. Changing the active
+session after the click does not change its scope. Before request admission,
+the resolver verifies that the message still belongs to that session, is a
+completed assistant message, still selects the captured variant/content
+revision, and still has matching persisted or in-memory authorship. Deletion,
+variant switching, content replacement, or authority mismatch makes the
+snapshot stale and fails safely rather than speaking different content or
+borrowing the current session's character.
 
 ## Architecture and ownership
 
@@ -239,6 +303,29 @@ falls back to that bridge.
 
 ### New components
 
+#### `TTSRequestAdmissionCoordinator`
+
+One app-owned admission coordinator makes preference/profile resolution and
+provider lease acquisition a single consistency boundary. It owns a
+shared/exclusive asynchronous gate:
+
+- a request enters the shared side, verifies its
+  `TTSMessageSpeechSnapshot` when present, resolves and freezes its global
+  preference or exact profile selection, resolves any `first_available`
+  catalog choice, and obtains a service-owned provider lease with the matching
+  configuration revision before leaving the gate;
+- a settings publication enters the exclusive side, preventing any request
+  from resolving a selection or acquiring a provider lease during the
+  transition;
+- the acquired lease remains owned by the resulting service operation and
+  `TTSAudioResponse` through asynchronous body consumption and close.
+
+The coordinator exposes no concrete adapter or lease to UI code. It either
+hands a coherent admitted operation to `TTSService` or returns a structured
+admission failure. An expected provider revision is checked at the service and
+registry boundary as a defensive invariant; a mismatch never proceeds with a
+mixed selection and adapter.
+
 #### `TTSProfileRepository`
 
 The repository owns a dedicated, versioned SQLite database in the existing user
@@ -251,7 +338,9 @@ data directory. It provides:
 - referential delete protection;
 - bounded profile listing and assignment counts;
 - one joined assignment/profile read for request admission;
-- explicit backup and restore participation.
+- explicit backup and restore participation;
+- a repository-owned serialized worker, connection, and lifecycle generation;
+- cooperative shared/exclusive interprocess store locking.
 
 It has no dependency on Textual, adapter instances, provider health, character
 cards, or the active server.
@@ -280,10 +369,12 @@ global preference snapshot into either:
 - an immutable resolved request selection; or
 - a structured, user-actionable resolution failure.
 
-For a persisted message, authorship is resolved from the message's persisted
-conversation/session identity. For an unsaved in-memory message, the Console
-supplies an immutable, app-issued authorship snapshot created with the message.
-`TTSRequestEvent` is not allowed to supply an arbitrary `CharacterRef` as
+For a persisted message, authorship is resolved from the identifiers in the
+app-issued speech snapshot and rechecked against the persisted conversation.
+For an unsaved in-memory message, the Console store rechecks the immutable
+snapshot against its native session and message state. `TTSRequestEvent` accepts
+only that app-issued snapshot or a generic global-speech request; it is not
+allowed to supply arbitrary text, session identity, or `CharacterRef` as
 authority. Generic or ad-hoc callers therefore resolve through global
 preferences.
 
@@ -297,10 +388,12 @@ concrete adapter, mutate assignments, or silently fall back.
 Console / STTS / Character editor
              |
              v
- CharacterTTSRequestResolver -----> TTSProfileService
-             |                              |
-             |                              v
-             |                     TTSProfileRepository
+ TTSRequestAdmissionCoordinator
+             |
+             +----> CharacterTTSRequestResolver -----> TTSProfileService
+             |                                                |
+             |                                                v
+             |                                      TTSProfileRepository
              v
       app-owned TTSService
              |
@@ -311,8 +404,9 @@ Console / STTS / Character editor
    native audio_cpp adapter
 ```
 
-UI layers may use the profile service for management and the resolver for
-speech admission. They never access SQLite rows or concrete adapters directly.
+UI layers may use the profile service for management and submit app-issued
+speech snapshots to the admission coordinator. They never access SQLite rows,
+provider leases, or concrete adapters directly.
 
 ## Persistence model
 
@@ -328,8 +422,8 @@ Logical table `tts_generation_profiles` contains:
 | Field | Constraint |
 | --- | --- |
 | `profile_id` | UUID primary key; immutable |
-| `display_name` | trimmed, 1–128 Unicode characters |
-| `normalized_name` | case-folded uniqueness key |
+| `display_name` | trimmed, 1–128 Unicode characters with forbidden control, format-control, surrogate, and noncharacter code points rejected |
+| `normalized_name` | `NFKC(trimmed display_name).casefold()` uniqueness key |
 | `provider_id` | canonical identifier, 1–64 characters |
 | `model_id` | exact opaque identifier, 1–256 characters |
 | `voice_id` | nullable exact opaque identifier, at most 256 characters |
@@ -352,11 +446,29 @@ Logical table `character_tts_assignments` contains:
 The three identity fields form the assignment primary key. One character has
 at most one assigned profile; one profile may serve many characters.
 
-Names are trimmed and compared by a stored case-folded key. Case-only duplicate
-names fail with a conflict. Display spelling remains user-controlled.
+Names are trimmed and compared by the stored
+`NFKC(trimmed display_name).casefold()` key. Case-only and canonically
+equivalent duplicate names fail with a conflict. Unicode control,
+format-control, surrogate, and noncharacter code points are rejected so an
+import cannot create an invisible or unrenderable library entry. Subject to
+those checks, the separately stored display spelling remains user-controlled.
 
 ### Transaction and concurrency rules
 
+- All repository operations are marshalled onto one repository-owned serialized
+  worker with at most one SQLite connection active at a time. No caller-owned
+  executor or thread-local connection may outlive repository lifecycle
+  transitions.
+- The repository has explicit `open`, `restoring`, `unavailable`, and `closed`
+  states plus a monotonic lifecycle generation. New operations are rejected
+  while restoring. Every queued operation and result carries its generation;
+  stale work from before a restore cannot write or repopulate service/UI caches
+  afterward.
+- Each Chatbook process holds a shared interprocess lock while the profile store
+  is open. Restore closes its own connection, releases its shared hold, and
+  acquires the exclusive lock within a bounded deadline. Another process that
+  still has the database open therefore causes restore to fail safely before
+  replacement rather than leaving two processes attached to different inodes.
 - Profile creation and assignment mutation are transactional.
 - An update supplies the revision the editor loaded. A mismatched revision
   returns an optimistic conflict and preserves both the stored row and the
@@ -405,13 +517,22 @@ cannot produce a torn copy. This guarantee applies per database; Backup All is
 not a cross-database atomic snapshot, and this slice does not refactor the
 legacy backup implementation for unrelated stores.
 
-Restore is explicit and quiesces and closes the profile repository before
-replacement. Chatbook validates the candidate database version and integrity,
-creates a pre-restore backup of the current store, atomically replaces the
-file, reopens and rebinds the repository, and invalidates profile-related
-service and UI state. Validation or replacement failure leaves the current
-store in place. Reopen failure reports the profile store unavailable rather
-than creating a fresh database.
+Backup and restore execute through the same serialized repository lifecycle
+lane as ordinary CRUD. Restore is explicit and first changes the repository to
+`restoring`, rejects new work, drains or cancels queued work according to its
+generation, closes its long-lived connection, and acquires the exclusive
+interprocess store lock. On the same serialized lane and under that lock,
+Chatbook validates the candidate database version and integrity, opens a scoped
+source connection to create a pre-restore SQLite online backup of the current
+store, closes it, atomically replaces the file, advances the lifecycle
+generation, reopens and rebinds the repository, and invalidates
+profile-related service and UI state.
+
+Failure to quiesce or acquire the exclusive lock within the bounded deadline
+leaves the current store untouched and reopens it. Validation or replacement
+failure likewise leaves the current store in place. Reopen failure reports the
+profile store unavailable rather than creating a fresh database. No operation
+or cached result from the pre-restore generation is published afterward.
 
 Assignments restored beside a different character database or server authority
 retain their full `CharacterRef` and become `unverified` or `missing` according
@@ -419,19 +540,33 @@ to authoritative checks. They are never rebound by bare character ID.
 
 ## Global settings save and publication
 
-Saving TTS settings is one ordered operation:
+TTS settings publications are serialized. When more than one provider is
+affected, provider transitions are acquired in canonical provider-ID order and
+released in reverse order. Saving TTS settings is one ordered operation:
 
 1. validate the complete proposed configuration, including explicit model and
    voice modes;
 2. atomically replace the configuration file, including all required exact-key
    sets and dynamic-mode deletions across `[app_tts]` and legacy aliases;
-3. enter an application publication barrier and mark affected provider slots
-   as reconfiguring so they admit no new requests;
-4. install each affected provider's saved configuration, or mark its slot
-   unavailable if reconfiguration fails;
-5. publish the new immutable `TTSPreferencesSnapshot` while the barrier and
-   provider gates remain held;
-6. release the gates.
+3. enter the exclusive side of `TTSRequestAdmissionCoordinator` and mark each
+   affected provider slot `reconfiguring`, which detaches it from new lease
+   acquisition while allowing already admitted leases to finish;
+4. begin each exclusive provider handoff with the saved publication generation;
+5. when old leases drain within the bounded foreground handoff deadline, close
+   the old adapter, install the saved lazy configuration, and mark the slot
+   ready; if they do not drain, retain the old adapter only for those leases and
+   leave the new slot unavailable to requests with a latest-generation pending
+   configuration;
+6. publish the new immutable `TTSPreferencesSnapshot` while the admission gate
+   remains exclusive. Every affected slot is now either ready with the same
+   saved generation or unavailable/reconfiguring; none can admit the old
+   adapter;
+7. release the gates and report either **Saved** or **Saved — applying after
+   current speech** without blocking the Textual event loop;
+8. for a pending handoff, a background finalizer waits for the existing leases,
+   closes the old adapter, and installs only the latest saved generation. It
+   marks the slot ready on success or unavailable on failure and exposes
+   **Retry/Reconnect**.
 
 If validation or file replacement fails, neither the in-memory snapshot nor the
 registry changes. If file replacement succeeds but provider reconfiguration
@@ -439,14 +574,28 @@ fails, the saved snapshot remains authoritative and the provider is reported
 unavailable with **Retry/Reconnect** recovery. The app must not continue using
 an old adapter configuration or silently restore an old selection.
 
-Any unexpected failure after the gates are acquired leaves affected provider
-slots unavailable until retry or restart; cleanup never releases a usable slot
-against a mismatched preference snapshot.
+The foreground handoff deadline bounds settings completion, not legitimate
+speech. Reconfiguration never silently cancels an admitted synthesis or closes
+its response lease. A leaked or abandoned response therefore cannot freeze the
+settings UI indefinitely: its provider remains unavailable to new requests,
+and bounded service-response cleanup plus retry/restart provides recovery.
+
+A newer settings save supersedes an older pending generation. A stale
+finalizer may close its retired adapter but may never publish its configuration
+or mark the slot ready. Any unexpected failure after the gates are acquired
+leaves affected provider slots unavailable until retry or restart; cleanup
+never releases a usable slot against a mismatched preference snapshot.
+
+For exclusive audio.cpp handoff, the pending configuration is inert data. A
+replacement adapter is not constructed until all old leases have drained and
+the old adapter has closed, so old and replacement audio.cpp instances never
+coexist.
 
 Requests admitted before the publication barrier continue with their already
-frozen old snapshot and adapter. Requests admitted after it is released see the
-new coherent snapshot and provider slot. No request is admitted while new
-preferences are paired with an old adapter or vice versa.
+frozen old snapshot and lease. Requests admitted after it is released see the
+new coherent snapshot and either its matching provider slot or a structured
+reconfiguring/unavailable failure. No request is admitted while new preferences
+are paired with an old adapter or vice versa.
 
 This sequence fixes the stale-settings UAT defect. Textual sentinel objects are
 interpreted as selection modes and are never serialized as empty exact values.
@@ -475,6 +624,11 @@ configuration revision used at admission. Actual response provider, model,
 format, content type, sample rate, and other response metadata remain separate
 artifact fields and are not silently substituted into the reusable request
 profile.
+
+STTS preview uses the same admission coordinator as Console speech. Selector
+snapshot, any catalog-derived value, provider configuration revision, and
+matching service lease are therefore admitted atomically rather than assembled
+from independently changing settings and registry state.
 
 **Save result as profile** reads only that immutable selection snapshot. It
 does not reread mutable Playground controls. Before creation, the profile
@@ -536,8 +690,8 @@ events remain the UI contract.
 
 For a character-authored assistant message:
 
-1. Resolve trusted authorship from the persisted message and conversation, or
-   from the app-issued in-memory authorship snapshot.
+1. Validate the app-issued `TTSMessageSpeechSnapshot` against the persisted
+   message and conversation or the owning in-memory Console store.
 2. Build its authority-scoped `CharacterRef`.
 3. Read assignment and profile together.
 4. If a valid assignment exists, freeze the exact profile UUID, revision, and
@@ -546,14 +700,18 @@ For a character-authored assistant message:
 6. If an assignment references an unavailable or invalid profile, fail closed.
    Do not try global preferences.
 
-For a message without `CharacterRef`, resolve only global preferences.
+For a generic request without a trusted `CharacterRef`, resolve only global
+preferences. A stale or invalid character speech snapshot is an error; it does
+not become a generic global request.
 
-A persisted message ID is a lookup handle, not proof of authorship. The
-resolver verifies that the message is an assistant response belonging to the
-resolved conversation character. `TTSRequestEvent` does not accept a
-caller-chosen `CharacterRef`. For a server-backed roleplay, this path is enabled
-only when the existing Console session supplies durable server authority
-provenance; this feature does not create a new server conversation transport.
+A persisted message ID, native message ID, or text value is a lookup handle,
+not proof of authorship. The resolver verifies the snapshot's session
+ownership, stable visible variant/content revision, completed assistant role,
+assistant kind, and conversation character. `TTSRequestEvent` does not accept a
+caller-chosen `CharacterRef` or raw character-speech text. For a server-backed
+roleplay, this path is enabled only when the Console session persisted a
+versioned durable server authority established by the authenticated identity
+policy; this feature does not create a new server conversation transport.
 
 When the profile store itself is unavailable, every message carrying a
 `CharacterRef` fails closed because Chatbook cannot establish that no assignment
@@ -565,9 +723,11 @@ a `CharacterRef` continue to use global preferences.
 ### Exact assigned profile
 
 An assigned profile supplies an exact model. The resolver constructs one
-canonical `TTSRequest` and calls `TTSService.synthesize()` without a redundant
-profile-layer catalog preflight. The adapter owns readiness and validates the
-request against current upstream state.
+canonical `TTSRequest`. While the admission coordinator's shared gate remains
+held, it records the provider configuration revision and asks `TTSService` to
+acquire the matching lease without a redundant profile-layer catalog preflight.
+Only that admitted operation may synthesize. The adapter owns readiness and
+validates the request against current upstream state.
 
 An explicit voice is submitted exactly. Voice discovery helps users create and
 repair profiles, but it is not a second request-time availability gate because
@@ -581,9 +741,11 @@ fails with its safe native error. No alternate value is chosen.
 
 An exact global model follows the same direct native request path. A global
 `first_available` model is the only path that asks
-`get_catalog(refresh=False)` before synthesis. The first eligible model is
-selected and frozen for that request. If it disappears before synthesis, the
-request fails; the resolver does not choose a second model.
+`get_catalog(refresh=False)` before synthesis. Catalog resolution, selection
+freeze, provider-revision capture, and matching lease acquisition all occur
+inside the same shared admission gate. The first eligible model is selected and
+frozen for that request. If it disappears before synthesis, the request fails;
+the resolver does not choose a second model.
 
 A global `server_default` voice is submitted as `None`. A global exact voice is
 submitted unchanged.
@@ -827,45 +989,67 @@ assignment survives the failed profile transaction.
 
 ## Delivery slices
 
-This design is implemented as four ordered, independently reviewable PR-sized
-slices. Each slice receives its own Backlog task, acceptance criteria, and
-implementation plan only after this written design is approved.
+This design has four ordered delivery milestones, not four omnibus PRs. After
+the written design is approved, planning decomposes them into the six atomic,
+independently testable PR-sized sub-slices below. Each sub-slice receives its
+own Backlog task, acceptance criteria, ADR links, and implementation plan; no
+task combines repository lifecycle, UI library work, authority migration, and
+speech runtime integration merely to preserve a milestone number.
 
 ### Slice 1 — Native external audio.cpp Console TTS
 
+- Amend ADR-023 before implementation with atomic request
+  admission/publication, expected-revision enforcement, and bounded exclusive
+  handoff behavior.
 - Add typed global preference modes and backward-compatible blank-value reads.
 - Atomically remove canonical and legacy stale exact values for dynamic modes.
 - Publish saved preferences and targeted provider reconfiguration behind one
-  admission barrier.
+  shared/exclusive admission coordinator.
 - Route Console audio.cpp **Speak** through native `TTSService.synthesize()`.
 - Preserve the async response interface and existing complete-WAV autoplay.
 - Keep legacy global speech working through the temporary bridge.
-- Revalidate the installed audio.cpp endpoint and complete-WAV contract.
+- Apply the installed-build stop/go characterization gate before changing the
+  pinned audio.cpp endpoint or complete-WAV contract.
 - Prove the external user-owned server lifecycle is untouched.
 
 This slice independently fixes the first-time-user UAT failure.
 
-### Slice 2 — Local profile repository and STTS library
+### Slice 2A — Profile domain and repository lifecycle
 
 - Create and link
   `backlog/decisions/027-character-tts-generation-profile-ownership.md`,
   extending ADR-023.
-- Add the versioned profile repository, service, validation, optimistic
-  concurrency, backup, and restore.
+- Add domain models, normalized-name validation, the versioned serialized
+  repository, optimistic concurrency, interprocess lifecycle locking, backup,
+  and restore.
+- Verify concurrent CRUD/restore and stale-generation exclusion before any UI
+  consumes the store.
+
+### Slice 2B — Profile service and STTS library
+
+- Add the profile service and native-provider validation.
 - Add bounded STTS list/search, save-from-preview, edit, duplicate, preview,
   export, delete, availability, and repair flows.
 - Extend successful preview artifacts with immutable requested-selection and
   provider-configuration provenance.
 - Support native audio.cpp execution only.
 
-This slice delivers reusable local profiles before character assignment.
+Together, Slices 2A and 2B deliver reusable local profiles before character
+assignment.
 
-### Slice 3 — Character assignment and roleplay speech
+### Slice 3A — Character identity, authorship, and assignment
 
-- Use durable local-database and server-principal authority provenance.
-- Add canonical `CharacterRef` assignment behavior and trusted Console
-  authorship resolution.
-- Add character-editor controls and resolver integration.
+- Persist durable local-database and stable server-profile/principal authority
+  provenance, including safe legacy-local backfill and fail-closed server
+  identity acquisition.
+- Add canonical `CharacterRef` assignment behavior and app-issued immutable
+  Console speech snapshots.
+- Add character-editor assignment controls.
+
+### Slice 3B — Roleplay resolution and speech runtime
+
+- Add trusted persisted and in-memory authorship resolution through the
+  admission coordinator.
 - Apply assigned profiles to character-authored Console roleplay messages.
 - Add fail-closed recovery and the explicit one-message global override.
 - Preserve assignments through soft delete/restore; add permanent-delete
@@ -890,13 +1074,20 @@ not part of any slice here.
 
 - initial schema creation and every supported migration;
 - transaction rollback, database corruption, and unsupported-version behavior;
-- normalized unique names and case-only conflicts;
+- normalized unique names, composed/decomposed canonical-equivalent conflicts,
+  non-ASCII case-fold conflicts, and rejected control, format-control,
+  surrogate, and noncharacter code points;
 - optimistic update conflicts;
 - assignment foreign key and delete restriction;
 - bounded pagination and assignment counts;
+- serialized worker ordering and rejection of new work while restoring;
 - online backup during a concurrent write;
 - restore validation, open-repository quiescence/rebind, pre-restore recovery
   copy, and character-authority mismatch behavior;
+- concurrent CRUD plus restore cannot publish a queued pre-restore write or
+  stale read result after the lifecycle generation advances;
+- a second Chatbook process holding the shared store lock makes exclusive
+  restore fail safely before file replacement;
 - joined assignment/profile read returns one immutable revision snapshot.
 
 ### Resolution matrix
@@ -910,6 +1101,11 @@ Cover:
 - profile-store failure for an apparently unassigned `CharacterRef`;
 - generic message using global preferences;
 - missing server authority;
+- API-key rotation preserving one server authority;
+- two authenticated principals on one normalized server origin producing
+  different authorities;
+- missing stable authenticated identity disabling server assignments rather
+  than using a credential fingerprint;
 - active, inactive, unverified, and missing targets;
 - soft delete followed by restore preserves the assignment;
 - permanent deletion alone triggers automatic cleanup;
@@ -924,6 +1120,11 @@ authenticated principals on the same server profile containing the same
 character ID, to prove assignments cannot collide or follow the currently
 active authority.
 
+Use controlled interleavings that change the active Console session, switch the
+selected variant, replace content, and delete the message after **Speak** is
+clicked but before its event is handled. Only the unchanged app-issued snapshot
+may be admitted; every stale or mismatched snapshot fails safely.
+
 ### Settings and runtime tests
 
 - old blank audio.cpp model/voice values read as explicit modes without startup
@@ -937,8 +1138,15 @@ active authority.
 - validation/file-replacement failure publishes nothing;
 - post-save reconfiguration failure leaves saved preferences authoritative and
   reports the provider unavailable;
-- concurrent request admission never observes new preferences with an old
-  adapter or old preferences with a new adapter;
+- a controlled pause between preference/profile resolution and lease
+  acquisition cannot produce new preferences with an old adapter or old
+  preferences with a new adapter;
+- an expected provider-revision mismatch fails admission defensively;
+- a long-running or abandoned response never blocks the settings action past
+  its foreground handoff deadline, is not silently cancelled, and leaves new
+  requests rejected until the latest saved generation becomes ready;
+- a superseded background reconfiguration finalizer cannot publish stale
+  configuration, and multi-provider transitions use deterministic ordering;
 - preview profile creation preserves requested model, voice, format, speed, and
   options even after controls are changed;
 - response-model provenance remains distinct from the requested profile model;
@@ -953,8 +1161,14 @@ active authority.
 - audio.cpp rejects every speed other than exactly `1.0`;
 - complete WAV validation, bounded consumption, playback, cancellation, and
   cleanup;
-- installed audio.cpp build passes health, model, voice, and complete-WAV speech
-  compatibility checks without Chatbook process management;
+- a matching installed audio.cpp build passes health, model, voice, MIME, and
+  complete-WAV characterization and records its build identity without silently
+  changing the pin;
+- an incompatible installed build stops Slice 1 and requires a separately
+  reviewed ADR-023 and adapter-contract amendment;
+- an older configuration reader retains exact-mode values through dual-write,
+  while dynamic-mode downgrade is explicitly rejected or requires a
+  pre-feature configuration backup;
 - no automatic synthesis POST retry;
 - no adapter, model, voice, global, or legacy fallback after assigned
   resolution;
@@ -972,8 +1186,11 @@ active authority.
 - temporary server unavailability never auto-detaches an assignment, while a
   confirmed profile-library action can detach that exact unverified assignment;
 - Console **Speak**, progress, autoplay, explicit override, and errors;
+- settings display **Saved — applying after current speech** and structured
+  unavailable/retry states without freezing the Textual event loop;
 - persisted and app-issued authorship resolution rejects spoofed or mismatched
-  character references and leaves generic assistants on global preferences;
+  character references, stale sessions, deleted messages, and changed variants,
+  and leaves generic assistants on global preferences;
 - server-character authority missing and same-ID/different-authority cases;
 - paginated profile views perform bounded, cached verification only against the
   matching active authority;
@@ -991,6 +1208,8 @@ active authority.
 - reject unknown fields, oversized identifiers/payloads, deep JSON, invalid
   UUIDs, non-finite or non-`1.0` audio.cpp speed, unsupported formats, and
   audio.cpp options;
+- reject canonically duplicate or invisible profile names after local or card
+  import normalization;
 - every UUID/name collision combination follows the explicit matrix, including
   the different-UUID/same-name/same-generation case;
 - a collision-free import adopts the portable UUID; any required copy UUID is
@@ -1030,7 +1249,9 @@ user-started external audio.cpp server:
 6. use a deterministic local LLM-compatible fixture to generate a new
    character-authored roleplay response through the real Console flow;
 7. click **Speak** and validate provider/model/voice provenance, a complete
-   playable WAV, expected format metadata, and successful `afplay`;
+   playable WAV, expected format metadata, and successful playback through the
+   application's player abstraction; on the current macOS UAT host, record
+   `afplay` as the selected platform player;
 8. confirm server health;
 9. confirm Chatbook did not launch, restart, signal, or stop the server.
 
@@ -1040,10 +1261,16 @@ flow.
 ## Performance, privacy, and observability
 
 - Profile list/search is bounded and paginated.
-- Store work that may exceed the UI budget runs off the Textual event loop.
+- All profile-store work runs through the repository-owned serialized worker
+  off the Textual event loop; no UI or ad-hoc executor owns a database
+  connection.
 - Persisted assigned request admission uses one bounded
   message/conversation-authorship lookup followed by one joined profile lookup;
   an app-issued in-memory authorship snapshot avoids the first lookup.
+- The admission coordinator never holds its exclusive gate on the Textual event
+  loop while waiting for synthesis leases to drain. Foreground settings
+  completion is bounded and longer handoffs use the generation-checked
+  finalizer.
 - Assignment target verification is not part of synthesis admission and adds no
   character-server network request to the speech path.
 - Exact assigned requests add no profile-layer catalog network call.
@@ -1060,20 +1287,38 @@ ignore it. Removing the profile/assignment UI returns behavior to global
 preferences without mutating character cards. Schema downgrades are not
 performed automatically.
 
-Slice 1 is independently reversible because it changes routing and preference
-publication without creating profile data. Each later slice must preserve data
-created by earlier slices if its UI integration is disabled.
+Slice 1 code and routing are reversible, but its configuration downgrade
+compatibility depends on the selected modes. Exact model/voice modes remain
+readable by older builds because their legacy exact keys are dual-written.
+Dynamic modes intentionally remove those keys, and an older build does not
+understand `default_model_mode` or `default_voice_mode`. Before downgrading from
+dynamic modes, the user must either save explicit model and voice values with
+the current build or restore a trusted pre-feature configuration backup. The UI
+and release notes must not describe that downgrade as transparent.
+
+Each later slice must preserve data created by earlier slices if its UI
+integration is disabled.
 
 ## ADR assessment
 
 **ADR required:** yes
 
-**ADR path:** `backlog/decisions/027-character-tts-generation-profile-ownership.md`
+**ADR paths:**
 
-**Reason:** the feature establishes a new versioned store, data ownership and
-identity rules, a cross-module resolution interface, fail-closed runtime
-semantics, and character-card import/export policy. ADR-027 will extend rather
-than duplicate ADR-023 and will be created before Slice 2 implementation begins.
+- amend
+  `backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md`
+  before Slice 1 implementation;
+- create
+  `backlog/decisions/027-character-tts-generation-profile-ownership.md`
+  before Slice 2A implementation.
+
+**Reason:** Slice 1 strengthens the existing cross-module TTS service contract
+with atomic request admission/publication, expected configuration revisions,
+and a bounded exclusive handoff state machine; those decisions amend ADR-023
+rather than waiting for profile persistence. The later profile feature
+establishes a new versioned store, data ownership and identity rules,
+fail-closed runtime semantics, and character-card import/export policy. ADR-027
+will extend rather than duplicate the amended ADR-023.
 
 No new dependency decision is required. The implementation uses the existing
 SQLite, validation, TTS service, registry, Textual, backup, and playback
@@ -1085,17 +1330,31 @@ facilities.
   Console **Speak** without restarting Chatbook.
 - Blank legacy audio.cpp defaults have explicit compatible semantics and are
   never treated as unavailable exact identifiers.
-- A successful settings save admits no request against a mixed old/new
-  preference and adapter configuration.
+- Preference/profile selection, catalog-derived choices, provider revision,
+  and adapter lease acquisition form one admission boundary, so a successful
+  settings save admits no mixed old/new request.
+- Settings completion is bounded even while an existing audio.cpp response
+  retains its lease; admitted speech is not silently cancelled, new requests
+  fail safely during handoff, and only the latest saved generation can become
+  ready.
 - Console speech uses the native adapter and plays a complete validated WAV
   while preserving the asynchronous response contract.
+- Console character speech uses an immutable app-issued session/message/content
+  snapshot and rejects stale, deleted, variant-switched, spoofed, or mismatched
+  authorship.
 - A user can save a successful STTS audio.cpp preview as a named reusable
   profile and manage it in a shared library.
+- Profile names use trimmed NFKC case-folded uniqueness and reject invisible or
+  invalid control code points across local and imported data.
 - Every first-release audio.cpp global selection and profile uses WAV, speed
   exactly `1.0`, and no arbitrary options.
 - A user can assign one profile to a local or authority-scoped server character.
 - Assignments remain scoped across local database changes and authenticated
-  principals sharing one server, and survive character soft delete/restore.
+  principals sharing one server, remain stable across credential rotation, and
+  survive character soft delete/restore.
+- Server assignments require a durable versioned server-profile/principal
+  authority; credential fingerprints and the currently active server are never
+  used as substitutes.
 - Manual speech for a character-authored response uses the assigned immutable
   profile revision.
 - An unavailable assigned profile produces an actionable error with no silent
@@ -1109,7 +1368,13 @@ facilities.
 - Import never changes an existing character assignment without explicit
   confirmation.
 - Backup uses a consistent per-profile-database SQLite snapshot, and failed
-  restore validation does not replace the current profile store.
+  restore validation, concurrent queued work, or failure to exclude another
+  Chatbook process does not replace or split the current profile store.
+- The installed audio.cpp build must pass the pinned-contract characterization
+  gate; an incompatible build stops the slice until ADR-023 and adapter
+  fixtures are separately amended.
+- Exact-mode configuration remains readable by the legacy reader; dynamic-mode
+  downgrade requires explicit values or a pre-feature configuration backup.
 - Existing unassigned legacy-provider speech continues through the temporary
   bridge.
 - Chatbook never manages the external audio.cpp process in this feature.
