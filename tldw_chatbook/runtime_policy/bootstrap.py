@@ -43,12 +43,22 @@ def default_runtime_policy_path() -> Path:
 
     try:
         return _get_effective_config_path().parent / "runtime_policy.json"
-    except Exception:
-        # An unreadable or rejected override must not stop the app booting;
-        # falling back to the default keeps behaviour identical to before.
-        logger.opt(exception=True).debug(
-            "Could not resolve the active config path for the runtime-policy "
-            "file; using the default location."
+    except (ValueError, OSError):
+        # A rejected or unreadable override must not stop the app booting, but
+        # falling back means this profile's local/server mode is read from and
+        # written to the DEFAULT profile -- exactly the cross-profile leak this
+        # function exists to prevent. So it is a warning, not a debug line: the
+        # earlier version logged at debug and would have hidden the misrouting
+        # in a normal run.
+        #
+        # Only the two failure modes the resolver actually raises are caught.
+        # Anything else is a defect rather than a bad path, and swallowing it
+        # here would silently route state to the wrong profile; letting it
+        # surface is the safer direction.
+        logger.opt(exception=True).warning(
+            f"Could not resolve the active config path; runtime-policy state "
+            f"will use the default profile at {DEFAULT_RUNTIME_POLICY_PATH}. "
+            "A local/server mode change made now will affect that profile."
         )
         return DEFAULT_RUNTIME_POLICY_PATH
 

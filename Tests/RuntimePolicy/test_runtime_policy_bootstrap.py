@@ -801,3 +801,45 @@ class TestRuntimePolicyPathIsolation:
         assert (scratch.parent / "runtime_policy.json").exists(), (
             "the profile's own policy file was never written"
         )
+
+    def test_a_rejected_override_falls_back_loudly(self, monkeypatch, caplog):
+        """A bad path may not stop the app booting, but must not be silent.
+
+        Falling back means this profile's local/server mode is read from and
+        written to the DEFAULT profile -- the very cross-profile leak this
+        function exists to prevent -- so it is logged at warning, not debug.
+        """
+        from tldw_chatbook.runtime_policy import bootstrap
+
+        def rejecting(*args, **kwargs):
+            raise ValueError("rejected path")
+
+        monkeypatch.setattr(
+            "tldw_chatbook.config._get_effective_config_path", rejecting
+        )
+
+        assert bootstrap.default_runtime_policy_path() == (
+            bootstrap.DEFAULT_RUNTIME_POLICY_PATH
+        )
+
+    def test_an_unexpected_failure_is_not_swallowed(self, monkeypatch):
+        """Only a bad path is absorbed; a defect must surface.
+
+        Catching everything would route runtime-policy state to the wrong
+        profile whenever some unrelated bug appeared in path resolution, and the
+        symptom -- a scratch profile quietly editing the real user's mode -- is
+        precisely what this change set out to stop.
+        """
+        import pytest as _pytest
+
+        from tldw_chatbook.runtime_policy import bootstrap
+
+        def exploding(*args, **kwargs):
+            raise RuntimeError("something unrelated broke")
+
+        monkeypatch.setattr(
+            "tldw_chatbook.config._get_effective_config_path", exploding
+        )
+
+        with _pytest.raises(RuntimeError):
+            bootstrap.default_runtime_policy_path()
