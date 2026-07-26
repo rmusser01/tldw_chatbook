@@ -464,12 +464,14 @@ def atomic_private_write_bytes(
 
     if not _atomic_posix_guards_available():
         if _WINDOWS_PLATFORM:
-            selected.parent.mkdir(parents=True, exist_ok=True)
-            fd, temporary = tempfile.mkstemp(
-                dir=selected.parent,
-                prefix=f".{selected.name}.",
-                suffix=".tmp",
-            )
+            try:
+                fd, temporary = tempfile.mkstemp(
+                    dir=selected.parent,
+                    prefix=f".{selected.name}.",
+                    suffix=".tmp",
+                )
+            except OSError as exc:
+                raise _private_path_error_from_oserror(selected, exc) from None
             try:
                 with os.fdopen(fd, "wb") as stream:
                     stream.write(payload)

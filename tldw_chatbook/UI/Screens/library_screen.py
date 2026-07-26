@@ -13055,7 +13055,7 @@ class LibraryScreen(BaseAppScreen):
             return None
 
         runtime_policy = getattr(self.app_instance, "runtime_policy", None)
-        runtime_state = getattr(runtime_policy, "state", None)
+        runtime_state = runtime_policy.state if runtime_policy is not None else None
         if (
             not isinstance(runtime_state, RuntimeSourceState)
             or runtime_state.active_source != "server"

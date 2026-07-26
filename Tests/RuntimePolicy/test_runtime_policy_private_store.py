@@ -189,6 +189,21 @@ def test_custom_runtime_policy_parent_is_never_created(tmp_path: Path) -> None:
     assert not custom_parent.exists()
 
 
+def test_windows_custom_runtime_policy_parent_is_never_created(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    custom_parent = tmp_path / "custom"
+    store = RuntimeSourceStateStore(custom_parent / "runtime_policy.json")
+    monkeypatch.setattr(private_paths, "_atomic_posix_guards_available", lambda: False)
+    monkeypatch.setattr(private_paths, "_WINDOWS_PLATFORM", True)
+
+    with pytest.raises(PrivatePathError):
+        store.save(RuntimeSourceState())
+
+    assert not custom_parent.exists()
+
+
 @pytest.mark.skipif(os.name != "posix", reason="POSIX directory mode contract")
 def test_custom_runtime_policy_parent_is_never_chmodded(tmp_path: Path) -> None:
     custom_parent = tmp_path / "custom"

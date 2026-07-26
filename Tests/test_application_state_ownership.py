@@ -4,6 +4,8 @@ import ast
 from pathlib import Path
 import warnings
 
+import pytest
+
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.state import (
     AppState,
@@ -21,11 +23,23 @@ MEDIA_INGEST_PATH = (
     PROJECT_ROOT / "tldw_chatbook" / "UI" / "Screens" / "media_ingest_screen.py"
 )
 STUDY_PATH = PROJECT_ROOT / "tldw_chatbook" / "UI" / "Screens" / "study_screen.py"
-RUNTIME_POLICY_ROOT = PROJECT_ROOT / "tldw_chatbook" / "runtime_policy"
 PROJECTION_NAMES = {
     "current_runtime_backend",
     "runtime_backend",
     "active_server_id",
+}
+CONTEXT_RECEIVER_NAMES = {
+    "ctx",
+    "context",
+    "runtime_context",
+    "runtime_policy",
+    "runtime_policy_context",
+}
+CONTEXT_SENSITIVE_ATTRIBUTES = {
+    "state",
+    "persist",
+    "store",
+    "_store",
 }
 
 
@@ -53,6 +67,18 @@ def _constant_attribute_name(call: ast.Call) -> str | None:
         if isinstance(name, ast.Constant) and isinstance(name.value, str)
         else None
     )
+
+
+def _has_final_component(chain: str, names: set[str]) -> bool:
+    return bool(chain) and chain.rsplit(".", 1)[-1] in names
+
+
+def _is_context_receiver(chain: str) -> bool:
+    return _has_final_component(chain, CONTEXT_RECEIVER_NAMES)
+
+
+def _parse_snippet(source: str) -> ast.Module:
+    return ast.parse(source, filename="tldw_chatbook/ownership_guard_probe.py")
 
 
 class ScopedVisitor(ast.NodeVisitor):
@@ -113,11 +139,11 @@ class ProjectionWriteVisitor(ScopedVisitor):
         self.generic_visit(node)
 
     def _is_app_projection_base(self, base: str) -> bool:
-        if self.path == BOOTSTRAP_PATH:
-            return base == "app"
-        if self.path == APP_PATH:
-            return base == "self"
-        return base.endswith("app_instance")
+        if self.path == APP_PATH and base == "self":
+            return True
+        return base in {"app", "self.app"} or _has_final_component(
+            base, {"app_instance"}
+        )
 
     def _describe(self, node: ast.AST, name: str) -> str:
         return (
@@ -132,21 +158,23 @@ class ContextOwnershipVisitor(ScopedVisitor):
         self.violations: list[str] = []
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
-        chain = _chain(node)
-        if node.attr == "_store" and self.class_name != "RuntimePolicyContext":
-            self._record(node, "private-store access")
+        receiver = _chain(node.value)
+        if node.attr in {"store", "_store"} and _is_context_receiver(receiver):
+            self._record(node, "context-store access")
+        if node.attr == "persist" and _is_context_receiver(receiver):
+            self._record(node, "removed persist access")
         if (
             node.attr == "store"
             and self.class_name == "RuntimePolicyContext"
-            and _chain(node.value) == "self"
+            and receiver == "self"
         ):
             self._record(node, "public-store escape")
         if (
             node.attr == "state"
             and isinstance(node.ctx, (ast.Store, ast.Del))
-            and any(
-                token in chain
-                for token in ("runtime_context", "runtime_policy", "context.state")
+            and (
+                _is_context_receiver(receiver)
+                or (self.class_name == "RuntimePolicyContext" and receiver == "self")
             )
         ):
             self._record(node, "context-state mutation")
@@ -155,13 +183,12 @@ class ContextOwnershipVisitor(ScopedVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         if isinstance(node.func, ast.Attribute):
             receiver = _chain(node.func.value)
-            if node.func.attr == "persist" and any(
-                token in receiver
-                for token in ("runtime_context", "runtime_policy", "context")
-            ):
-                self._record(node, "removed persist call")
             if node.func.attr == "save" and (
-                receiver == "self._store" or receiver in {"runtime_store", "store"}
+                receiver == "self._store"
+                or _has_final_component(
+                    receiver,
+                    {"runtime_store", "runtime_policy_store"},
+                )
             ):
                 if not (
                     self.class_name == "RuntimePolicyContext"
@@ -172,28 +199,15 @@ class ContextOwnershipVisitor(ScopedVisitor):
         if isinstance(node.func, ast.Name) and node.args:
             attribute_name = _constant_attribute_name(node)
             target = _chain(node.args[0])
-            context_target = any(
-                token in target
-                for token in ("runtime_context", "runtime_policy", "context")
+            context_target = _is_context_receiver(target) or (
+                self.class_name == "RuntimePolicyContext" and target == "self"
             )
             if (
-                node.func.id in {"setattr", "delattr"}
-                and attribute_name == "state"
-                and context_target
-            ):
-                self._record(node, "dynamic context-state mutation")
-            if (
                 node.func.id in {"getattr", "setattr", "delattr"}
-                and attribute_name == "_store"
-                and self.class_name != "RuntimePolicyContext"
-            ):
-                self._record(node, "dynamic private-store access")
-            if (
-                node.func.id == "getattr"
-                and attribute_name == "persist"
+                and attribute_name in CONTEXT_SENSITIVE_ATTRIBUTES
                 and context_target
             ):
-                self._record(node, "dynamic removed persist access")
+                self._record(node, "dynamic context-sensitive access")
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -208,6 +222,108 @@ class ContextOwnershipVisitor(ScopedVisitor):
         self.violations.append(
             f"{self.path.relative_to(PROJECT_ROOT)}:{node.lineno}:{kind}"
         )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "app.current_runtime_backend = 'server'",
+        "self.app.runtime_backend = 'server'",
+        "setattr(app, 'active_server_id', 'server-1')",
+        "delattr(self.app, 'runtime_backend')",
+    ],
+)
+def test_projection_guard_detects_common_app_receiver_aliases(source: str) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ProjectionWriteVisitor(path)
+
+    visitor.visit(_parse_snippet(source))
+
+    assert visitor.writes
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "ctx.state = candidate",
+        "ctx.persist()",
+        "getattr(ctx, 'persist')()",
+        "callback = ctx.persist",
+    ],
+)
+def test_context_guard_detects_common_context_aliases(source: str) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(_parse_snippet(source))
+
+    assert visitor.violations
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+class RuntimePolicyContext:
+    def leak(self, ctx):
+        ctx._store.save(candidate)
+""",
+        """
+class RuntimePolicyContext:
+    def leak(self):
+        getattr(self, "_store").save(candidate)
+""",
+    ],
+)
+def test_context_guard_does_not_exempt_sensitive_access_inside_owner_class(
+    source: str,
+) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(_parse_snippet(source))
+
+    assert visitor.violations
+
+
+@pytest.mark.parametrize("operation", ["getattr", "setattr", "delattr"])
+@pytest.mark.parametrize("attribute", ["state", "persist", "store", "_store"])
+def test_context_guard_detects_dynamic_sensitive_access(
+    operation: str,
+    attribute: str,
+) -> None:
+    args = (
+        f"ctx, {attribute!r}, replacement"
+        if operation == "setattr"
+        else f"ctx, {attribute!r}"
+    )
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(_parse_snippet(f"{operation}({args})"))
+
+    assert visitor.violations
+
+
+def test_ownership_guards_ignore_unrelated_widget_and_domain_state() -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    tree = _parse_snippet(
+        """
+widget.state = candidate
+widget.runtime_backend = backend
+widget.persist()
+getattr(widget, "state")
+storage._store.save(candidate)
+"""
+    )
+    projection_visitor = ProjectionWriteVisitor(path)
+    context_visitor = ContextOwnershipVisitor(path)
+
+    projection_visitor.visit(tree)
+    context_visitor.visit(tree)
+
+    assert projection_visitor.writes == []
+    assert context_visitor.violations == []
 
 
 def test_tldw_cli_neither_imports_nor_instantiates_app_state() -> None:
@@ -272,7 +388,7 @@ def test_app_projection_attributes_have_one_production_writer() -> None:
 
 def test_runtime_policy_context_has_no_mutation_or_persistence_escape_hatch() -> None:
     violations: list[str] = []
-    for path in RUNTIME_POLICY_ROOT.glob("*.py"):
+    for path in (PROJECT_ROOT / "tldw_chatbook").rglob("*.py"):
         visitor = ContextOwnershipVisitor(path)
         visitor.visit(_parse(path))
         violations.extend(visitor.violations)

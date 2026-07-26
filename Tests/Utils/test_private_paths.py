@@ -11,6 +11,7 @@ from tldw_chatbook.Utils.private_paths import (
     PrivatePathResult,
     PrivatePathStatus,
     _classify_private_file_stat,
+    atomic_private_write_text,
     create_private_text,
     lexical_path,
     open_private_binary,
@@ -162,6 +163,50 @@ def test_windows_encoding_failure_has_no_filesystem_residue(
 
     assert not owned_directory.exists()
     assert not target.exists()
+
+
+def test_windows_atomic_write_does_not_create_custom_parent(
+    tmp_path,
+    monkeypatch,
+):
+    custom_parent = tmp_path / "custom"
+    target = custom_parent / "config.toml"
+    monkeypatch.setattr(
+        private_paths,
+        "_atomic_posix_guards_available",
+        lambda: False,
+    )
+    monkeypatch.setattr(private_paths, "_WINDOWS_PLATFORM", True)
+
+    with pytest.raises(PrivatePathError):
+        atomic_private_write_text(target, "[chat]\n")
+
+    assert not custom_parent.exists()
+    assert not target.exists()
+
+
+def test_windows_atomic_write_creates_explicit_application_owned_parent(
+    tmp_path,
+    monkeypatch,
+):
+    owned_parent = tmp_path / "application-config"
+    target = owned_parent / "config.toml"
+    monkeypatch.setattr(private_paths, "_posix_guards_available", lambda: False)
+    monkeypatch.setattr(
+        private_paths,
+        "_atomic_posix_guards_available",
+        lambda: False,
+    )
+    monkeypatch.setattr(private_paths, "_WINDOWS_PLATFORM", True)
+
+    result = atomic_private_write_text(
+        target,
+        "[chat]\n",
+        application_owned_directory=owned_parent,
+    )
+
+    assert result.status is PrivatePathStatus.UNVERIFIED_PLATFORM
+    assert target.read_text(encoding="utf-8") == "[chat]\n"
 
 
 def test_unsupported_posix_guards_fail_closed_without_creating(
