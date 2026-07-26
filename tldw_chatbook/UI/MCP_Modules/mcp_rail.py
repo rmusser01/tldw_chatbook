@@ -15,6 +15,7 @@ from tldw_chatbook.MCP.readiness import (
     STATE_GLYPHS,
     ReadinessSnapshot,
 )
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 # Task 4: one-shot mount-echo consumption sentinel. `on_select_changed`'s
 # scope/scope-ref guards compare an incoming Select.Changed value against the
@@ -111,8 +112,16 @@ def _row_label(snapshot: ReadinessSnapshot, pad_width: int = _MAX_ROW_LABEL) -> 
     return f"{STATE_GLYPHS[snapshot.state]} {text} {count:>3}"
 
 
-class MCPRail(Vertical):
-    """Left rail for the MCP workbench. Index-based row ids; keys in a list."""
+class MCPRail(RecomposeCaptureGuard, Vertical):
+    """Left rail for the MCP workbench. Index-based row ids; keys in a list.
+
+    ``sync_state()`` (below) drives ``self.refresh(recompose=True)`` on every
+    resync; ``RecomposeCaptureGuard`` (task-637) keeps a stale mouse capture
+    from leaking app-wide when that recompose tears down a row/Select the
+    mouse is still captured on (same bug class as task-627's
+    ``BaseAppScreen`` fix, one level down: the rail isn't a screen, so it
+    never inherited that guard).
+    """
 
     DEFAULT_CSS = """
     MCPRail {

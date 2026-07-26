@@ -23,6 +23,7 @@ from datetime import datetime
 
 from ..Chatbooks.chatbook_models import ContentType
 from ..Utils.optional_deps import check_mindmap_available
+from ..Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 # Lazy imports
 SmartContentTree = None
@@ -63,8 +64,15 @@ def _lazy_import_mindmap():
         return False
 
 
-class MindmapViewerWindow(Screen):
-    """Mindmap visualization window"""
+class MindmapViewerWindow(RecomposeCaptureGuard, Screen):
+    """Mindmap visualization window.
+
+    ``check_dependencies_again()`` below calls ``self.refresh(recompose=True)``;
+    ``RecomposeCaptureGuard`` (task-637) keeps a stale mouse capture from
+    leaking app-wide when that recompose fires (same bug class as task-627's
+    ``BaseAppScreen`` fix -- this window is a ``Screen`` subclass but is not
+    a ``BaseAppScreen``, so it never inherited that guard).
+    """
 
     DEFAULT_CSS = """
     MindmapViewerWindow {

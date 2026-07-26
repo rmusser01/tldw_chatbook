@@ -40,6 +40,7 @@ from ..Local_Ingestion import (
     get_supported_extensions,
 )
 from ..Widgets.Media import MediaIngestionSourcePanel
+from ..Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -2005,12 +2006,19 @@ class IngestionResultsPanel(Container):
         log.clear()
 
 
-class MediaIngestWindowRebuilt(Widget):
+class MediaIngestWindowRebuilt(RecomposeCaptureGuard, Widget):
     """
     Main Media Ingestion Window following Textual best practices.
 
     This widget provides a tabbed interface for ingesting media content
     from local files and for managing server-backed ingestion sources.
+
+    ``app.py`` calls ``self.refresh(recompose=True)`` on the mounted
+    ``#ingest-window`` instance of this class after an ingest UI style
+    change; ``RecomposeCaptureGuard`` (task-637) keeps a stale mouse capture
+    from leaking app-wide when that recompose fires (same bug class as
+    task-627's ``BaseAppScreen`` fix -- this window isn't a screen, so it
+    never inherited that guard).
     """
 
     DEFAULT_CSS = """

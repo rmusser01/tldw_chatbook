@@ -20,6 +20,8 @@ from textual.widgets import Static, Button, Input, ListView, ListItem
 from textual.reactive import reactive
 from loguru import logger
 
+from ..Widgets.recompose_capture_guard import RecomposeCaptureGuard
+
 if TYPE_CHECKING:
     from ..app import TldwCli
 
@@ -188,8 +190,16 @@ class EmptyStateWidget(Container):
             )
 
 
-class ChatbooksWindowImproved(Screen):
-    """Enhanced Chatbooks management interface."""
+class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
+    """Enhanced Chatbooks management interface.
+
+    ``chatbooks`` below is a ``recompose=True`` reactive; ``RecomposeCaptureGuard``
+    (task-637) keeps a stale mouse capture from leaking app-wide when that
+    recompose fires. This class is a ``Screen`` subclass but is embedded as a
+    plain child widget of ``ChatbooksScreen`` (a ``BaseAppScreen``, see
+    ``UI/Screens/chatbooks_screen.py``), not pushed via the screen stack --
+    it never inherited ``BaseAppScreen``'s task-627 guard.
+    """
 
     GRID_VIEW_TOOLTIP = "Show chatbooks as visual cards."
     LIST_VIEW_TOOLTIP = "Show chatbooks as a dense text list."
