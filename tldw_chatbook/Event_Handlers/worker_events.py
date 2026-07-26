@@ -111,6 +111,7 @@ def chat_wrapper_function(
             error_message_if_any = None
             chunk_count = 0
             stream_start_time = time.time()
+            logged_first_chunk_structure = False
 
             log_counter(
                 "chat_worker_streaming_started",
@@ -173,14 +174,11 @@ def chat_wrapper_function(
                                 "vllm",
                             ]:
                                 if "choices" in json_data and json_data.get("choices"):
-                                    # Only log if we haven't logged the structure yet
-                                    if not hasattr(
-                                        chat_wrapper_function, "_logged_structure"
-                                    ):
+                                    if not logged_first_chunk_structure:
                                         logger.info(
                                             f"First streaming chunk structure for {api_endpoint} with logprobs enabled: {json.dumps(json_data, indent=2)[:1000]}..."
                                         )
-                                        chat_wrapper_function._logged_structure = True
+                                        logged_first_chunk_structure = True
 
                             choices = json_data.get("choices")
                             if (

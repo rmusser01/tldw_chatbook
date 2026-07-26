@@ -124,6 +124,69 @@ def test_streaming_worker_keeps_builder_local_and_logs_no_request_or_answer_cont
         assert sentinel not in rendered_logs
 
 
+def test_streaming_first_chunk_structure_is_logged_once_per_request(monkeypatch):
+    answers = [
+        "FIRST_REQUEST_ANSWER_SENTINEL_TASK_553_13",
+        "SECOND_REQUEST_ANSWER_SENTINEL_TASK_553_13",
+    ]
+
+    def fake_core_chat_function(**_kwargs):
+        answer = answers.pop(0)
+
+        def stream():
+            for suffix in ("one", "two"):
+                yield "data: " + json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "delta": {"content": f"{answer}-{suffix}"},
+                                "logprobs": {
+                                    "content": [
+                                        {
+                                            "token": f"{answer}-{suffix}",
+                                            "logprob": -0.1,
+                                        }
+                                    ]
+                                },
+                            }
+                        ]
+                    }
+                )
+            yield "data: [DONE]"
+
+        return stream()
+
+    monkeypatch.setattr(worker_events, "core_chat_function", fake_core_chat_function)
+    diagnostic = (
+        "First streaming chunk received with logprobs enabled; "
+        "provider=openai; choice_count=1"
+    )
+    per_request_logs = []
+
+    for answer in tuple(answers):
+        captured_logs = []
+        sink_id = loguru_logger.add(
+            captured_logs.append,
+            level="DEBUG",
+            format="{message}",
+        )
+        try:
+            result = worker_events.chat_wrapper_function(
+                _app(),
+                **_request_kwargs(_RequestBuilder(), streaming=True),
+            )
+        finally:
+            loguru_logger.remove(sink_id)
+
+        assert result == "STREAMING_HANDLED_BY_EVENTS"
+        rendered_logs = "".join(str(message) for message in captured_logs)
+        assert answer not in rendered_logs
+        per_request_logs.append(rendered_logs)
+
+    assert not hasattr(worker_events.chat_wrapper_function, "_logged_structure")
+    assert [logs.count(diagnostic) for logs in per_request_logs] == [1, 1]
+
+
 def test_non_streaming_worker_keeps_builder_local_without_changing_rag_seam(
     monkeypatch,
 ):
