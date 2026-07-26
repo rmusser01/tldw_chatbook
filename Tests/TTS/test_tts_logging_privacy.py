@@ -8,6 +8,7 @@ import struct
 import sys
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Mapping
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +41,11 @@ from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_module
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.legacy_bridge import LEGACY_ROUTES
-from tldw_chatbook.TTS.TTS_Generation import TTSService
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.TTS_Generation import (
+    TTSService,
+    TTSSettingsPublicationTicket,
+)
 
 GUIDE_PATH = Path(__file__).parents[2] / "Docs/Development/TTS/TTS_MODULE_GUIDE.md"
 _TEST_WAIT_SECONDS = 2.0
@@ -316,56 +321,119 @@ async def test_openai_backend_never_logs_api_key_details(monkeypatch) -> None:
 async def test_stts_settings_save_logs_names_and_destinations_not_secrets(
     monkeypatch,
 ) -> None:
+    from tldw_chatbook import config as config_module
+
     secrets = {
         "openai_api_key": "sk-OpenAI-UniquePrefix-PrivateSuffix",
         "elevenlabs_api_key": "xi-ElevenLabs-UniquePrefix-PrivateSuffix",
     }
-    saved_batches: list[dict[str, dict[str, str]]] = []
+    saved_batches: list[dict[str, dict[str, Any]]] = []
+    saved_deletes: list[dict[str, tuple[str, ...]]] = []
+    attempted_configs: list[tuple[str, dict[str, Any]]] = []
     messages: list[str] = []
+    posted_messages: list[object] = []
+    current_settings: dict[str, Any] = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "API": {},
+            "app_tts": {},
+        }
+    }
 
     class App:
         def notify(self, message: str, *, severity: str) -> None:
             messages.append(f"{severity}: {message}")
 
-    handler = STTSEventHandler(App())
+        def post_message(self, message: object) -> bool:
+            posted_messages.append(message)
+            return True
 
-    class Service:
-        async def reconfigure_provider(self, provider_id: str, config: object) -> None:
-            del provider_id, config
+    class CapturingRegistry(TTSAdapterRegistry):
+        async def begin_reconfigure_provider(
+            self,
+            provider_id: str,
+            config: Mapping[str, Any],
+            *,
+            generation: int | None = None,
+        ) -> Any:
+            attempted_configs.append((provider_id, deepcopy(dict(config))))
+            return await super().begin_reconfigure_provider(
+                provider_id,
+                config,
+                generation=generation,
+            )
 
-    def save_settings(section_values: dict[str, dict[str, str]]) -> bool:
-        saved_batches.append(section_values)
-        return True
-
-    handler._stts_service = Service()
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config",
-        save_settings,
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    registry = CapturingRegistry(
+        specs=tuple(
+            provider_spec(provider_id, FakeAdapterFactory(provider_id))
+            for provider_id in ("openai", "elevenlabs")
+        ),
+        aliases={},
     )
+    service = TTSService(
+        registry,
+        preferences_snapshot=TTSPreferencesSnapshot.from_settings(current_settings),
+    )
+    handler = STTSEventHandler(App())
+    handler._stts_service = service
+
+    def apply_settings(
+        section_values: Mapping[str, Mapping[Any, Any]],
+        *,
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> Any:
+        saved_batches.append(
+            {
+                section: deepcopy(dict(values))
+                for section, values in section_values.items()
+            }
+        )
+        saved_deletes.append(deepcopy(dict(delete_keys)))
+        return config_module.ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(config_module, "settings", current_settings)
     monkeypatch.setattr(
-        "tldw_chatbook.config.load_settings",
-        lambda *, force_reload=False: {
-            "COMPREHENSIVE_CONFIG_RAW": {"API": secrets, "app_tts": {}}
-        },
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        apply_settings,
     )
 
     sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
     try:
-        await handler.handle_settings_save(STTSSettingsSaveEvent(secrets))
+        await asyncio.wait_for(
+            handler.handle_settings_save(STTSSettingsSaveEvent(secrets)),
+            timeout=_TEST_WAIT_SECONDS,
+        )
     finally:
         logger.remove(sink_id)
+        await asyncio.wait_for(service.close(), timeout=_TEST_WAIT_SECONDS)
+        await asyncio.wait_for(service.wait_closed(), timeout=_TEST_WAIT_SECONDS)
 
-    assert saved_batches == [
-        {
-            "API": {
-                "openai_api_key": secrets["openai_api_key"],
-                "elevenlabs_api_key": secrets["elevenlabs_api_key"],
-            }
-        }
+    assert len(saved_batches) == 1
+    assert saved_batches[0]["API"] == secrets
+    assert saved_deletes == [{}]
+    assert service.preferences_generation() == 1
+    assert registry.configuration_revision("openai") == 2
+    assert registry.configuration_revision("elevenlabs") == 2
+    assert [provider_id for provider_id, _config in attempted_configs] == [
+        "openai",
+        "elevenlabs",
     ]
+    configs_by_provider = dict(attempted_configs)
+    assert (
+        configs_by_provider["openai"]["app_config"]["openai_api"]["api_key"]
+        == secrets["openai_api_key"]
+    )
+    assert (
+        configs_by_provider["elevenlabs"]["app_config"]["elevenlabs_api"]["api_key"]
+        == secrets["elevenlabs_api_key"]
+    )
+    assert len(posted_messages) == 2
     rendered = "\n".join(messages)
     assert "Saved openai_api_key to [API].openai_api_key" in rendered
     assert "Saved elevenlabs_api_key to [API].elevenlabs_api_key" in rendered
+    assert "information: Settings saved successfully!" in rendered
     for secret in secrets.values():
         assert secret not in rendered
         assert secret[:12] not in rendered
@@ -379,33 +447,111 @@ async def test_stts_settings_save_logs_names_and_destinations_not_secrets(
 async def test_stts_settings_save_does_not_echo_secret_from_writer_error(
     monkeypatch,
 ) -> None:
+    from tldw_chatbook import config as config_module
+
     secret = "sk-WriterError-UniquePrefix-PrivateSuffix"
-    messages: list[str] = []
+    log_messages: list[str] = []
+    notifications: list[tuple[str, str]] = []
+    posted_messages: list[object] = []
+    attempted_batches: list[dict[str, dict[str, Any]]] = []
+    captured_ticket: TTSSettingsPublicationTicket | None = None
+    current_settings: dict[str, Any] = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "API": {},
+            "app_tts": {},
+        }
+    }
 
     class App:
         def notify(self, message: str, *, severity: str) -> None:
-            messages.append(f"{severity}: {message}")
+            notifications.append((message, severity))
 
+        def post_message(self, message: object) -> bool:
+            posted_messages.append(message)
+            return True
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("openai", FakeAdapterFactory("openai")),),
+        aliases={},
+    )
+    service = TTSService(
+        registry,
+        preferences_snapshot=TTSPreferencesSnapshot.from_settings(current_settings),
+    )
+    original_begin = service.begin_preferences_publication
+
+    def begin_publication(*args: Any, **kwargs: Any) -> TTSSettingsPublicationTicket:
+        nonlocal captured_ticket
+        captured_ticket = original_begin(*args, **kwargs)
+        return captured_ticket
+
+    service.begin_preferences_publication = begin_publication  # type: ignore[method-assign]
     handler = STTSEventHandler(App())
+    handler._stts_service = service
 
-    def fail_to_save(section_values: dict[str, dict[str, str]]) -> None:
+    def fail_to_save(
+        section_values: Mapping[str, Mapping[Any, Any]],
+        *,
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> Any:
+        del delete_keys
+        attempted_batches.append(
+            {
+                section: deepcopy(dict(values))
+                for section, values in section_values.items()
+            }
+        )
         raise RuntimeError(f"could not save {section_values['API']['openai_api_key']}")
 
+    monkeypatch.setattr(config_module, "settings", current_settings)
     monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config",
+        config_module,
+        "apply_settings_mutation_to_cli_config",
         fail_to_save,
     )
 
-    sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
+    sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
+    completion = None
     try:
-        await handler.handle_settings_save(
-            STTSSettingsSaveEvent({"openai_api_key": secret})
+        await asyncio.wait_for(
+            handler.handle_settings_save(
+                STTSSettingsSaveEvent({"openai_api_key": secret})
+            ),
+            timeout=_TEST_WAIT_SECONDS,
+        )
+        assert captured_ticket is not None
+        completion = await asyncio.wait_for(
+            asyncio.shield(captured_ticket.completion),
+            timeout=_TEST_WAIT_SECONDS,
         )
     finally:
         logger.remove(sink_id)
+        await asyncio.wait_for(service.close(), timeout=_TEST_WAIT_SECONDS)
+        await asyncio.wait_for(service.wait_closed(), timeout=_TEST_WAIT_SECONDS)
 
-    rendered = "\n".join(messages)
+    assert len(attempted_batches) == 1
+    assert attempted_batches[0]["API"] == {"openai_api_key": secret}
+    assert completion is not None
+    assert completion.published is False
+    assert completion.persistence.file_replaced is False
+    assert completion.persistence.caches_reloaded is False
+    assert completion.persistence.failure_phase == "before_replace"
+    assert completion.provider_statuses == {"openai": "unchanged"}
+    assert captured_ticket is not None
+    assert captured_ticket.completion.exception() is None
+    assert registry.configuration_revision("openai") == 1
+    assert posted_messages == []
+    assert notifications == [("Failed to save settings", "error")]
+    rendered = "\n".join(
+        [
+            *log_messages,
+            *(f"{severity}: {message}" for message, severity in notifications),
+            repr(completion),
+        ]
+    )
     assert "Failed to save settings" in rendered
+    assert "could not save" not in rendered
     assert secret not in rendered
     assert secret[:12] not in rendered
     assert secret[-12:] not in rendered
@@ -418,66 +564,125 @@ async def test_stts_settings_save_does_not_echo_secret_from_writer_error(
 async def test_stts_settings_save_does_not_echo_reconfiguration_error_secret(
     monkeypatch,
 ) -> None:
+    from tldw_chatbook import config as config_module
+
     secret = "sk-Reconfigure-UniquePrefix-PrivateSuffix"
-    messages: list[str] = []
-    saved_batches: list[dict[str, dict[str, str]]] = []
-    get_service_calls = 0
+    log_messages: list[str] = []
+    notifications: list[tuple[str, str]] = []
+    posted_messages: list[object] = []
+    saved_batches: list[dict[str, dict[str, Any]]] = []
+    attempted_configs: list[tuple[str, dict[str, Any]]] = []
+    captured_ticket: TTSSettingsPublicationTicket | None = None
+    current_settings: dict[str, Any] = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "API": {},
+            "app_tts": {},
+        }
+    }
 
     class App:
         def notify(self, message: str, *, severity: str) -> None:
-            messages.append(f"{severity}: {message}")
+            notifications.append((message, severity))
 
-    handler = STTSEventHandler(App())
+        def post_message(self, message: object) -> bool:
+            posted_messages.append(message)
+            return True
 
-    class Service:
-        async def reconfigure_provider(
+    class SecretFailingRegistry(TTSAdapterRegistry):
+        async def begin_reconfigure_provider(
             self,
             provider_id: str,
-            config: object,
-        ) -> None:
-            del provider_id, config
+            config: Mapping[str, Any],
+            *,
+            generation: int | None = None,
+        ) -> Any:
+            del generation
+            attempted_configs.append((provider_id, deepcopy(dict(config))))
             raise RuntimeError(f"rejected credential {secret}")
 
-    def save_settings(section_values: dict[str, dict[str, str]]) -> bool:
-        saved_batches.append(section_values)
-        return True
-
-    async def get_bound_service() -> Service:
-        nonlocal get_service_calls
-        get_service_calls += 1
-        return Service()
-
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config",
-        save_settings,
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    registry = SecretFailingRegistry(
+        specs=(provider_spec("openai", FakeAdapterFactory("openai")),),
+        aliases={},
     )
-    monkeypatch.setattr(
-        "tldw_chatbook.config.load_settings",
-        lambda *, force_reload=False: {
-            "COMPREHENSIVE_CONFIG_RAW": {
-                "API": {"openai_api_key": secret},
-                "app_tts": {},
+    service = TTSService(
+        registry,
+        preferences_snapshot=TTSPreferencesSnapshot.from_settings(current_settings),
+    )
+    original_begin = service.begin_preferences_publication
+
+    def begin_publication(*args: Any, **kwargs: Any) -> TTSSettingsPublicationTicket:
+        nonlocal captured_ticket
+        captured_ticket = original_begin(*args, **kwargs)
+        return captured_ticket
+
+    service.begin_preferences_publication = begin_publication  # type: ignore[method-assign]
+    handler = STTSEventHandler(App())
+    handler._stts_service = service
+
+    def apply_settings(
+        section_values: Mapping[str, Mapping[Any, Any]],
+        *,
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> Any:
+        del delete_keys
+        saved_batches.append(
+            {
+                section: deepcopy(dict(values))
+                for section, values in section_values.items()
             }
-        },
-    )
+        )
+        return config_module.ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(config_module, "settings", current_settings)
     monkeypatch.setattr(
-        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.get_tts_service",
-        get_bound_service,
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        apply_settings,
     )
 
-    sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
+    sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
+    completion = None
     try:
-        await handler.handle_settings_save(
-            STTSSettingsSaveEvent({"openai_api_key": secret})
+        await asyncio.wait_for(
+            handler.handle_settings_save(
+                STTSSettingsSaveEvent({"openai_api_key": secret})
+            ),
+            timeout=_TEST_WAIT_SECONDS,
+        )
+        assert captured_ticket is not None
+        completion = await asyncio.wait_for(
+            asyncio.shield(captured_ticket.completion),
+            timeout=_TEST_WAIT_SECONDS,
         )
     finally:
         logger.remove(sink_id)
+        await asyncio.wait_for(service.close(), timeout=_TEST_WAIT_SECONDS)
+        await asyncio.wait_for(service.wait_closed(), timeout=_TEST_WAIT_SECONDS)
 
-    assert saved_batches == [{"API": {"openai_api_key": secret}}]
-    assert get_service_calls == 1
-    rendered = "\n".join(messages)
-    assert "Failed to reconfigure TTS providers: openai" in rendered
-    assert "Settings saved, but some TTS providers could not be updated" in rendered
+    assert len(saved_batches) == 1
+    assert saved_batches[0]["API"] == {"openai_api_key": secret}
+    assert attempted_configs[0][0] == "openai"
+    assert attempted_configs[0][1]["app_config"]["openai_api"]["api_key"] == secret
+    assert completion is not None
+    assert completion.provider_statuses == {"openai": "unavailable"}
+    assert captured_ticket is not None
+    assert captured_ticket.completion.exception() is None
+    assert posted_messages == []
+    assert notifications == [
+        (
+            "Settings saved, but TTS is unavailable. Retry/Reconnect.",
+            "error",
+        )
+    ]
+    rendered = "\n".join(
+        [
+            *log_messages,
+            *(f"{severity}: {message}" for message, severity in notifications),
+            repr(completion),
+        ]
+    )
+    assert "Saved openai_api_key to [API].openai_api_key" in rendered
     assert "rejected credential" not in rendered
     assert secret not in rendered
     assert secret[:12] not in rendered

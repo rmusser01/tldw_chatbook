@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Mapping
 from typing import Any
 
 import pytest
@@ -37,6 +37,19 @@ from tldw_chatbook.TTS import TTS_Generation as generation_module
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 
 _WAIT_SECONDS = 1.0
+
+
+async def _wait_bounded(awaitable: Awaitable[Any]) -> Any:
+    """Join one test synchronization point with a finite deadline."""
+    protected = (
+        asyncio.shield(awaitable)
+        if isinstance(awaitable, asyncio.Future)
+        else awaitable
+    )
+    return await asyncio.wait_for(
+        protected,
+        timeout=_WAIT_SECONDS,
+    )
 
 
 def _admission_api() -> tuple[type[Any], type[Any]]:
@@ -1295,11 +1308,34 @@ class _OlderPublicationObserverFirstService(TTSService):
         ticket: Any,
     ) -> Any:
         if ticket.generation == self.newer_generation:
-            await self.older_status_classified.wait()
+            await _wait_bounded(self.older_status_classified.wait())
         status = await super()._reconfiguration_status(provider_id, ticket)
         if ticket.generation == self.older_generation:
             self.older_status_classified.set()
         return status
+
+
+class _ReconfigurationObservedRegistry(_RecordingRegistry):
+    """Expose when a publication has registered its provider transition."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.reconfiguration_begun = asyncio.Event()
+        super().__init__(**kwargs)
+
+    async def begin_reconfigure_provider(
+        self,
+        provider_id: str,
+        config: Mapping[str, Any],
+        *,
+        generation: int | None = None,
+    ) -> Any:
+        ticket = await super().begin_reconfigure_provider(
+            provider_id,
+            config,
+            generation=generation,
+        )
+        self.reconfiguration_begun.set()
+        return ticket
 
 
 @pytest.mark.asyncio
@@ -1316,7 +1352,7 @@ async def test_persisted_newer_handoff_supersedes_older_before_snapshot_publish(
         adapters.append(adapter)
         return adapter
 
-    registry = _RecordingRegistry(
+    registry = _ReconfigurationObservedRegistry(
         specs=(
             TTSProviderSpec(
                 descriptor=TTSProviderDescriptor(
@@ -1347,9 +1383,10 @@ async def test_persisted_newer_handoff_supersedes_older_before_snapshot_publish(
             foreground_timeout_seconds=0,
         )
         service.older_generation = older.generation
-        assert (await asyncio.shield(older.foreground)).provider_statuses == {
+        assert (await _wait_bounded(older.foreground)).provider_statuses == {
             "audio_cpp": "pending"
         }
+        registry.reconfiguration_begun.clear()
 
         newer = service.begin_preferences_publication(
             _snapshot(model_id="Model/Three"),
@@ -1359,20 +1396,16 @@ async def test_persisted_newer_handoff_supersedes_older_before_snapshot_publish(
         )
         service.newer_generation = newer.generation
 
-        async def wait_for_newer_pending_config() -> None:
-            while registry._slots["audio_cpp"].pending_generation != newer.generation:
-                await asyncio.sleep(0)
+        await _wait_bounded(registry.reconfiguration_begun.wait())
+        assert registry._slots["audio_cpp"].pending_generation == newer.generation
+        await _wait_bounded(active_response.aclose())
 
-        await asyncio.wait_for(
-            wait_for_newer_pending_config(),
-            timeout=_WAIT_SECONDS,
-        )
-        await active_response.aclose()
-
-        older_result, newer_foreground, newer_result = await asyncio.gather(
-            asyncio.shield(older.completion),
-            asyncio.shield(newer.foreground),
-            asyncio.shield(newer.completion),
+        older_result, newer_foreground, newer_result = await _wait_bounded(
+            asyncio.gather(
+                asyncio.shield(older.completion),
+                asyncio.shield(newer.foreground),
+                asyncio.shield(newer.completion),
+            )
         )
 
         assert older_result.provider_statuses == {"audio_cpp": "superseded"}
@@ -1386,18 +1419,20 @@ async def test_persisted_newer_handoff_supersedes_older_before_snapshot_publish(
         assert adapters[0].generation == "one"
         assert adapters[0].close_calls == 1
 
-        replacement = await service.synthesize_default(text="Generation three")
+        replacement = await _wait_bounded(
+            service.synthesize_default(text="Generation three")
+        )
         assert len(adapters) == 2
         assert adapters[0].close_calls == 1
         assert adapters[1].generation == "three"
         assert adapters[1].requests[0].model_id == "Model/Three"
         assert registry.expected_revisions[-1] == ("audio_cpp", 2)
     finally:
-        await active_response.aclose()
+        await _wait_bounded(active_response.aclose())
         if replacement is not None:
-            await replacement.aclose()
-        await service.close()
-        await service.wait_closed()
+            await _wait_bounded(replacement.aclose())
+        await _wait_bounded(service.close())
+        await _wait_bounded(service.wait_closed())
 
     assert [adapter.close_calls for adapter in adapters] == [1, 1]
 
@@ -1409,75 +1444,102 @@ async def test_persistence_runs_off_loop_and_publications_remain_serialized() ->
         adapter,
         _snapshot(model_id="Model/One"),
     )
-    first_started = threading.Event()
+    loop = asyncio.get_running_loop()
+    first_started = asyncio.Event()
     release_first = threading.Event()
-    second_started = threading.Event()
+    second_started = asyncio.Event()
     release_second = threading.Event()
+    second_publication_entered = asyncio.Event()
     outcome_type = generation_module.TTSSettingsPersistenceOutcome
     heartbeat_ticks = 0
-    stop_heartbeat = asyncio.Event()
+    heartbeat_advanced = asyncio.Event()
+    heartbeat_running = True
+    publication_entries = 0
+    publications: list[Any] = []
+    original_run = service._run_preferences_publication
 
-    async def heartbeat() -> None:
+    async def observe_publication_entry(*args: Any, **kwargs: Any) -> Any:
+        nonlocal publication_entries
+        publication_entries += 1
+        if publication_entries == 2:
+            second_publication_entered.set()
+        return await original_run(*args, **kwargs)
+
+    service._run_preferences_publication = (  # type: ignore[method-assign]
+        observe_publication_entry
+    )
+
+    def heartbeat() -> None:
         nonlocal heartbeat_ticks
-        while not stop_heartbeat.is_set():
-            heartbeat_ticks += 1
-            await asyncio.sleep(0)
+        if not heartbeat_running:
+            return
+        heartbeat_ticks += 1
+        heartbeat_advanced.set()
+        loop.call_soon(heartbeat)
 
     def first_persistence() -> Any:
-        first_started.set()
+        loop.call_soon_threadsafe(first_started.set)
         release_first.wait()
         return outcome_type(True, True, None)
 
     def second_persistence() -> Any:
-        second_started.set()
+        loop.call_soon_threadsafe(second_started.set)
         release_second.wait()
         return outcome_type(True, True, None)
 
-    heartbeat_task = asyncio.create_task(heartbeat())
-    first = service.begin_preferences_publication(
-        _snapshot(model_id="Model/Two"),
-        {},
-        first_persistence,
-        foreground_timeout_seconds=0,
-    )
-    while not first_started.is_set():
-        await asyncio.sleep(0)
-    observed_ticks = heartbeat_ticks
-    for _ in range(5):
-        await asyncio.sleep(0)
-    assert heartbeat_ticks > observed_ticks
+    loop.call_soon(heartbeat)
+    try:
+        first = service.begin_preferences_publication(
+            _snapshot(model_id="Model/Two"),
+            {},
+            first_persistence,
+            foreground_timeout_seconds=0,
+        )
+        publications.append(first)
+        await _wait_bounded(first_started.wait())
+        observed_ticks = heartbeat_ticks
+        heartbeat_advanced.clear()
+        await _wait_bounded(heartbeat_advanced.wait())
+        assert heartbeat_ticks > observed_ticks
 
-    async def wait_for_foreground() -> Any:
-        return await asyncio.shield(first.foreground)
+        async def wait_for_foreground() -> Any:
+            return await asyncio.shield(first.foreground)
 
-    initiating_waiter = asyncio.create_task(wait_for_foreground())
-    initiating_waiter.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await initiating_waiter
-    assert first.completion.cancelled() is False
+        initiating_waiter = asyncio.create_task(wait_for_foreground())
+        initiating_waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await _wait_bounded(initiating_waiter)
+        assert first.completion.cancelled() is False
 
-    second = service.begin_preferences_publication(
-        _snapshot(model_id="Model/Three"),
-        {},
-        second_persistence,
-        foreground_timeout_seconds=0,
-    )
-    for _ in range(5):
-        await asyncio.sleep(0)
-    assert second_started.is_set() is False
+        second = service.begin_preferences_publication(
+            _snapshot(model_id="Model/Three"),
+            {},
+            second_persistence,
+            foreground_timeout_seconds=0,
+        )
+        publications.append(second)
+        await _wait_bounded(second_publication_entered.wait())
+        assert second_started.is_set() is False
 
-    release_first.set()
-    await asyncio.shield(first.completion)
-    while not second_started.is_set():
-        await asyncio.sleep(0)
-    release_second.set()
-    await asyncio.shield(second.completion)
+        release_first.set()
+        await _wait_bounded(first.completion)
+        await _wait_bounded(second_started.wait())
+        release_second.set()
+        await _wait_bounded(second.completion)
 
-    stop_heartbeat.set()
-    await heartbeat_task
-    assert service.preferences_snapshot().model_id == "Model/Three"
-    await service.close()
-    await service.wait_closed()
+        assert service.preferences_snapshot().model_id == "Model/Three"
+    finally:
+        heartbeat_running = False
+        release_first.set()
+        release_second.set()
+        await _wait_bounded(
+            asyncio.gather(
+                *(publication.completion for publication in publications),
+                return_exceptions=True,
+            )
+        )
+        await _wait_bounded(service.close())
+        await _wait_bounded(service.wait_closed())
 
 
 @pytest.mark.asyncio
@@ -1487,38 +1549,57 @@ async def test_service_shutdown_joins_retained_settings_publication() -> None:
         adapter,
         _snapshot(model_id="Model/One"),
     )
-    persistence_started = threading.Event()
+    loop = asyncio.get_running_loop()
+    persistence_started = asyncio.Event()
     release_persistence = threading.Event()
     outcome_type = generation_module.TTSSettingsPersistenceOutcome
+    ticket: Any = None
+    wait_closed: asyncio.Task[None] | None = None
 
     def persistence() -> Any:
-        persistence_started.set()
+        loop.call_soon_threadsafe(persistence_started.set)
         release_persistence.wait()
         return outcome_type(True, True, None)
 
-    ticket = service.begin_preferences_publication(
-        _snapshot(model_id="Model/Two"),
-        {},
-        persistence,
-        foreground_timeout_seconds=0,
-    )
-    while not persistence_started.is_set():
-        await asyncio.sleep(0)
-
-    await service.close()
-    wait_closed = asyncio.create_task(service.wait_closed())
     try:
-        for _ in range(50):
-            if wait_closed.done():
-                break
-            await asyncio.sleep(0)
+        ticket = service.begin_preferences_publication(
+            _snapshot(model_id="Model/Two"),
+            {},
+            persistence,
+            foreground_timeout_seconds=0,
+        )
+        await _wait_bounded(persistence_started.wait())
+
+        await _wait_bounded(service.close())
+        wait_closed_entered = asyncio.Event()
+
+        async def join_service() -> None:
+            wait_closed_entered.set()
+            await service.wait_closed()
+
+        wait_closed = asyncio.create_task(join_service())
+        await _wait_bounded(wait_closed_entered.wait())
 
         assert wait_closed.done() is False
         assert ticket.completion.done() is False
+
+        release_persistence.set()
+        await _wait_bounded(ticket.completion)
+        await _wait_bounded(wait_closed)
     finally:
         release_persistence.set()
-    await asyncio.shield(ticket.completion)
-    await wait_closed
+        pending = [
+            task
+            for task in (
+                ticket.completion if ticket is not None else None,
+                wait_closed,
+            )
+            if task is not None
+        ]
+        if pending:
+            await _wait_bounded(asyncio.gather(*pending, return_exceptions=True))
+        if wait_closed is None:
+            await _wait_bounded(service.wait_closed())
 
 
 @pytest.mark.asyncio
@@ -1542,7 +1623,7 @@ async def test_failed_multi_provider_begin_seals_in_reverse_and_joins_started_wo
             if provider_id == "beta":
                 if events[:2] != ["begin-alpha", "begin-beta"]:
                     raise RuntimeError("providers started out of canonical order")
-                await alpha_started.wait()
+                await _wait_bounded(alpha_started.wait())
                 raise RuntimeError(secret)
             return await super().begin_reconfigure_provider(
                 provider_id,
@@ -1556,7 +1637,7 @@ async def test_failed_multi_provider_begin_seals_in_reverse_and_joins_started_wo
             new_config: dict[str, Any],
         ) -> Any:
             alpha_started.set()
-            await allow_alpha.wait()
+            await _wait_bounded(allow_alpha.wait())
             return await super()._reconfigure_retiring(slot, new_config)
 
         async def seal_provider_unavailable(self, provider_id: str) -> None:
@@ -1588,42 +1669,53 @@ async def test_failed_multi_provider_begin_seals_in_reverse_and_joins_started_wo
         ),
     )
     outcome_type = generation_module.TTSSettingsPersistenceOutcome
-    publication = service.begin_preferences_publication(
-        _snapshot(
-            provider_id="alpha",
-            model_id="Model/Two",
-            voice_mode="exact",
-            voice_id="voice",
-        ),
-        {
-            "beta": {"generation": "two"},
-            "alpha": {"generation": "two"},
-        },
-        lambda: outcome_type(True, True, None),
-        foreground_timeout_seconds=0,
-    )
-    foreground = await asyncio.shield(publication.foreground)
+    publication: Any = None
+    try:
+        publication = service.begin_preferences_publication(
+            _snapshot(
+                provider_id="alpha",
+                model_id="Model/Two",
+                voice_mode="exact",
+                voice_id="voice",
+            ),
+            {
+                "beta": {"generation": "two"},
+                "alpha": {"generation": "two"},
+            },
+            lambda: outcome_type(True, True, None),
+            foreground_timeout_seconds=0,
+        )
+        foreground = await _wait_bounded(publication.foreground)
 
-    assert foreground.provider_statuses == {
-        "alpha": "unavailable",
-        "beta": "unavailable",
-    }
-    assert events[:4] == [
-        "begin-alpha",
-        "begin-beta",
-        "seal-beta",
-        "seal-alpha",
-    ]
-    assert publication.completion.done() is False
+        assert foreground.provider_statuses == {
+            "alpha": "unavailable",
+            "beta": "unavailable",
+        }
+        assert events[:4] == [
+            "begin-alpha",
+            "begin-beta",
+            "seal-beta",
+            "seal-alpha",
+        ]
+        assert publication.completion.done() is False
 
-    allow_alpha.set()
-    completion = await asyncio.shield(publication.completion)
-    assert completion.provider_statuses == foreground.provider_statuses
-    with pytest.raises(TTSProviderUnavailableError):
-        await registry.acquire("alpha")
-    assert secret not in repr(completion)
-    await service.close()
-    await service.wait_closed()
+        allow_alpha.set()
+        completion = await _wait_bounded(publication.completion)
+        assert completion.provider_statuses == foreground.provider_statuses
+        with pytest.raises(TTSProviderUnavailableError):
+            await _wait_bounded(registry.acquire("alpha"))
+        assert secret not in repr(completion)
+    finally:
+        allow_alpha.set()
+        if publication is not None:
+            await _wait_bounded(
+                asyncio.gather(
+                    publication.completion,
+                    return_exceptions=True,
+                )
+            )
+        await _wait_bounded(service.close())
+        await _wait_bounded(service.wait_closed())
 
 
 @pytest.mark.asyncio
