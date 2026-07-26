@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-26 04:41'
-updated_date: '2026-07-26 05:12'
+updated_date: '2026-07-26 05:43'
 labels:
   - tts
   - audio-cpp
@@ -62,6 +62,10 @@ The following commands ran at task base commit
 changes. Each command returned the expected nonzero status. These results are
 baseline evidence only and do not authorize fixes to unrelated pre-existing
 debt.
+
+The commands ran from the worktree root with Python 3.12.11, Ruff 0.15.22,
+and mypy 2.3.0; the tool versions were verified again before recording this
+evidence.
 
 ### Ruff check
 
@@ -143,6 +147,24 @@ tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py:743: error: "TTSEventHandl
 tldw_chatbook/UI/STTS_Window.py:5612: error: Name "_get_model_for_provider" already defined on line 5358  [no-redef]
 Found 12 errors in 3 files (checked 8 source files)
 ```
+
+## Installed-build Stop/Go Gate Evidence
+
+On 2026-07-25, the installed Homebrew package `audio-cpp 0.4` passed the
+contract gate without changing the ADR-023 upstream pin:
+
+- Bounded health, model, and voice responses passed the pinned parsers, with
+  the characterized model and voice present.
+- One bounded speech response had content type `audio/wav` and passed complete,
+  non-empty mono PCM16 WAV validation at 44.1 kHz.
+- The provenance schema change followed a focused TDD red/green cycle: the
+  contract test first failed because compatible-build evidence was absent and
+  then passed after the single bounded entry was added.
+- The focused contract and adapter suite passed all 361 tests, and
+  `git diff --check` passed.
+- After verification, health remained `ok` and the same pre-existing process
+  still owned the listener. Chatbook did not launch, restart, signal, adopt,
+  reconfigure, supervise, or stop it.
 
 ## Definition of Done
 <!-- DOD:BEGIN -->

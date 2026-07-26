@@ -162,6 +162,12 @@ overlap.
 Normal tests use fake HTTP transport and fixtures pinned to the reviewed
 upstream commit. They require neither an audio.cpp binary nor model downloads.
 
+The installed Homebrew package `audio-cpp 0.4` was characterized on
+2026-07-25 as compatible with the pinned health, model, voice, and speech
+endpoints and complete PCM16 `audio/wav` response contract. This is
+compatible-build evidence only: it does not move the ADR-023 upstream pin or
+grant Chatbook ownership of the external server process.
+
 ### Catalog-driven STTS Playground (Slice 3)
 
 TASK-569 implements the external audio.cpp Playground vertical. Opening the

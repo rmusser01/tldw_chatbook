@@ -192,6 +192,26 @@ def test_pinned_fixtures_capture_reviewed_upstream_contract() -> None:
         "repository": "https://github.com/0xShug0/audio.cpp",
         "commit": "d3d748179e5ace353386fbf17bcaedfacf482d75",
         "reviewed": "2026-07-23",
+        "compatible_builds": [
+            {
+                "distribution": "Homebrew",
+                "package": "audio-cpp 0.4",
+                "characterized": "2026-07-25",
+                "contract": {
+                    "endpoints": [
+                        "GET /health",
+                        "GET /v1/models",
+                        "GET /v1/audio/voices?model=<id>",
+                        "POST /v1/audio/speech",
+                    ],
+                    "speech_response": {
+                        "content_type": "audio/wav",
+                        "delivery": "complete",
+                        "encoding": "PCM16",
+                    },
+                },
+            },
+        ],
         "endpoints": [
             "GET /health",
             "GET /v1/models",
