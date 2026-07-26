@@ -199,3 +199,97 @@ async def test_grep_files_bounds_examined_candidates(sandbox, monkeypatch):
     result = await files_mod.GrepFiles().execute(pattern="DEBUG", glob="**/*.py")
 
     assert len(result["matches"]) <= 5
+
+
+# ---------------------------------------------------------------------------
+# Finding 3 (pre-merge review): _tool_sandbox_root() runs outside any try in
+# both GlobFiles.execute and GrepFiles.execute. It calls Path.mkdir(parents=
+# True), so an unusable configured root (verified for real with the
+# "/dev/null/nope" case below -- /dev/null is a file, so mkdir under it raises
+# NotADirectoryError) previously raised straight out of execute(), violating
+# the "tools never raise, they return an error dict" contract every sibling
+# tool (read_file, write_file, list_directory) already honours.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_glob_files_returns_error_dict_when_sandbox_root_is_unusable(monkeypatch):
+    import tldw_chatbook.Tools.file_operation_tools as fot
+    from tldw_chatbook.Agents.builtin_packs.files import GlobFiles
+
+    monkeypatch.setattr(fot, "_resolve_sandbox_config", lambda: "/dev/null/nope")
+
+    result = await GlobFiles().execute(pattern="**/*.py")
+
+    assert "error" in result
+    assert "matches" not in result
+
+
+@pytest.mark.asyncio
+async def test_grep_files_returns_error_dict_when_sandbox_root_is_unusable(monkeypatch):
+    import tldw_chatbook.Tools.file_operation_tools as fot
+    from tldw_chatbook.Agents.builtin_packs.files import GrepFiles
+
+    monkeypatch.setattr(fot, "_resolve_sandbox_config", lambda: "/dev/null/nope")
+
+    result = await GrepFiles().execute(pattern="DEBUG")
+
+    assert "error" in result
+    assert "matches" not in result
+
+
+# ---------------------------------------------------------------------------
+# Finding 2 (pre-merge review): grep_files/glob_files called is_within() ->
+# is_sensitive_path() once per CANDIDATE, and that helper is deliberately
+# uncached -- it resolves 11 config accessors every time so it cannot go
+# stale across the test suite's TLDW_CONFIG_PATH switches. Over a 1,530-file
+# sandbox that measured ~4.6s (~1.9ms/candidate), ~37s at the 20k candidate
+# bound. The fix resolves the sensitive-path set ONCE per tool call and
+# reuses it across every candidate. These regressions pin the call count
+# structurally; Tests/Agents/test_builtin_packs.py's benchmark script (see
+# the final-review-fixes-report) pins the wall-clock improvement.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_grep_files_resolves_sensitive_context_once_per_call(sandbox, monkeypatch):
+    import tldw_chatbook.Agents.builtin_packs.files as files_mod
+    from tldw_chatbook.Utils import sensitive_paths
+
+    real_resolve = sensitive_paths.resolve_sensitive_context
+    calls: list[None] = []
+
+    def counting_resolve():
+        calls.append(None)
+        return real_resolve()
+
+    monkeypatch.setattr(files_mod, "resolve_sensitive_context", counting_resolve)
+    for i in range(50):
+        (sandbox / f"extra{i}.py").write_text("DEBUG = True\n")
+
+    result = await files_mod.GrepFiles().execute(pattern="DEBUG", glob="**/*.py")
+
+    assert len(calls) == 1, "sensitive-path set must be resolved once per call, not per candidate"
+    assert len(result["matches"]) >= 50
+
+
+@pytest.mark.asyncio
+async def test_glob_files_resolves_sensitive_context_once_per_call(sandbox, monkeypatch):
+    import tldw_chatbook.Agents.builtin_packs.files as files_mod
+    from tldw_chatbook.Utils import sensitive_paths
+
+    real_resolve = sensitive_paths.resolve_sensitive_context
+    calls: list[None] = []
+
+    def counting_resolve():
+        calls.append(None)
+        return real_resolve()
+
+    monkeypatch.setattr(files_mod, "resolve_sensitive_context", counting_resolve)
+    for i in range(50):
+        (sandbox / f"extra{i}.py").write_text("x = 1\n")
+
+    result = await files_mod.GlobFiles().execute(pattern="**/*.py")
+
+    assert len(calls) == 1, "sensitive-path set must be resolved once per call, not per candidate"
+    assert len(result["matches"]) >= 50

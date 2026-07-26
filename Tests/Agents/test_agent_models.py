@@ -154,6 +154,12 @@ def test_clamp_child_budget_preserves_max_total_tokens():
     assert clamp_child_budget(child, 10.0).max_total_tokens == 7000
 
 
+def test_clamp_child_budget_preserves_max_tool_result_chars():
+    from tldw_chatbook.Agents.agent_models import RunBudget, clamp_child_budget
+    child = RunBudget(max_tool_result_chars=0)
+    assert clamp_child_budget(child, 10.0).max_tool_result_chars == 0
+
+
 def test_clamp_child_budget_propagates_tool_call_seconds():
     parent = RunBudget(max_tool_call_seconds=45.0)
     child = clamp_child_budget(parent, 30.0)

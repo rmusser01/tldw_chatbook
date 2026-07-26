@@ -6,6 +6,14 @@ This document provides a comprehensive review of the tool calling implementation
 
 **Last Updated**: 2025-07-16
 
+> **Mechanics note (post-refactor):** the `Tools.get_tool_executor()`/`ToolExecutor`
+> dispatcher referenced by the code samples below was removed (task-545/task-577).
+> Tools are now `Tool` subclasses (`Tools/base.py`) registered in a pack's `TOOLS`
+> list under `Agents/builtin_packs/`, gated by `[agent_tools] enabled_packs`, and
+> dispatched through `Agents/tool_catalog.py`'s `BuiltinToolProvider` -- see
+> CLAUDE.md's "New Tool" section for the current recipe. The rest of this
+> document is kept as a historical record of the original design review.
+
 ## Quick Status Summary
 
 **Current State**: Tool calling is now **FULLY IMPLEMENTED** and **100% functional**! 🎉
@@ -180,17 +188,18 @@ class Tool(ABC):
    ```python
    # In handle_stream_done() after detecting tool calls:
    if tool_calls:
-       # Import tool components
-       from tldw_chatbook.Tools import get_tool_executor
+       # Import tool components. `get_tool_executor`/`ToolExecutor` no
+       # longer exist -- see the mechanics note at the top of this
+       # document; the current dispatch path is
+       # `Agents/tool_catalog.py`'s `BuiltinToolProvider`.
        from tldw_chatbook.Widgets.tool_message_widgets import ToolExecutionWidget
        
        # Create and mount tool execution widget
        tool_widget = ToolExecutionWidget(tool_calls)
        await chat_container.mount(tool_widget)
        
-       # Execute tools
-       executor = get_tool_executor()
-       results = await executor.execute_tool_calls(tool_calls)
+       # Execute tools via BuiltinToolProvider.invoke(tool_id, args) -> ToolResult
+       # (see Agents/tool_catalog.py for the current dispatch contract)
        
        # Update widget with results
        tool_widget.update_results(results)
@@ -285,22 +294,16 @@ def test_parse_tool_calls():
 
 ### Integration Tests
 ```python
-# Test end-to-end tool execution
+# Test end-to-end tool execution. `ToolExecutor` no longer exists (see the
+# mechanics note at the top of this document) -- the current dispatch path
+# is `Agents/tool_catalog.py`'s `BuiltinToolProvider.invoke(tool_id, args)`,
+# which returns a `ToolResult(ok, content, error)`.
 async def test_tool_execution_flow():
-    executor = ToolExecutor()
-    executor.register_tool(CalculatorTool())
-    
-    tool_call = {
-        "id": "test_call",
-        "type": "function",
-        "function": {
-            "name": "calculator",
-            "arguments": '{"expression": "2 + 2"}'
-        }
-    }
-    
-    result = await executor.execute_tool_call(tool_call)
-    assert result["result"]["result"] == 4
+    provider = BuiltinToolProvider()
+
+    result = provider.invoke("builtin:calculator", {"expression": "2 + 2"})
+    assert result.ok
+    assert '"result": 4' in result.content
 ```
 
 ### Security Tests

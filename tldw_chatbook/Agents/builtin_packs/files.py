@@ -25,6 +25,7 @@ from tldw_chatbook.Tools.file_operation_tools import (
     is_within,
 )
 from tldw_chatbook.Tools.base import Tool
+from tldw_chatbook.Utils.sensitive_paths import resolve_sensitive_context
 
 
 class ReadFile(ReadFileTool):
@@ -119,13 +120,21 @@ class GlobFiles(Tool):
             return {"error": "pattern is required"}
         if _rejects_traversal(pattern):
             return {"error": "pattern must stay inside the sandbox root"}
-        root = _tool_sandbox_root()
+        try:
+            root = _tool_sandbox_root()
+        except OSError as exc:
+            return {"error": f"sandbox root is not usable: {exc}"}
         try:
             candidates = root.glob(pattern)
         except (ValueError, NotImplementedError) as exc:
             return {"error": f"invalid pattern: {exc}"}
         matches: list[str] = []
         examined = 0
+        # Resolved ONCE for this call and reused for every candidate below,
+        # rather than letting `is_within` -> `is_sensitive_path` re-resolve
+        # the sensitive-path set (11 config accessors) per candidate -- see
+        # Utils.sensitive_paths.resolve_sensitive_context.
+        sensitive_ctx = resolve_sensitive_context()
         while True:
             # `Path.glob()` validates lazily: a malformed pattern (e.g.
             # "**foo/*") doesn't raise at construction above, it raises on
@@ -142,7 +151,7 @@ class GlobFiles(Tool):
             examined += 1
             if len(matches) >= _MAX_MATCHES or examined > _MAX_CANDIDATES:
                 break
-            if path.is_file() and is_within(path, root):
+            if path.is_file() and is_within(path, root, context=sensitive_ctx):
                 matches.append(str(path))
         return {"matches": sorted(matches)}
 
@@ -204,7 +213,10 @@ class GrepFiles(Tool):
         except re.error as exc:
             return {"error": f"invalid regular expression: {exc}"}
 
-        root = _tool_sandbox_root()
+        try:
+            root = _tool_sandbox_root()
+        except OSError as exc:
+            return {"error": f"sandbox root is not usable: {exc}"}
         glob_pattern = str(kwargs.get("glob") or "**/*")
         if _rejects_traversal(glob_pattern):
             return {"error": "glob must stay inside the sandbox root"}
@@ -217,6 +229,9 @@ class GrepFiles(Tool):
         # Deliberately NOT sorted(candidates): materialising and sorting the
         # generator defeats _MAX_CANDIDATES on a broad pattern.
         examined = 0
+        # Resolved ONCE for this call and reused for every candidate below --
+        # see the matching comment in GlobFiles.execute above.
+        sensitive_ctx = resolve_sensitive_context()
         while True:
             # As in GlobFiles: `Path.glob()` validates lazily, so a bad
             # pattern raises here, on `next()`, not at the call above. Only
@@ -232,7 +247,7 @@ class GrepFiles(Tool):
             examined += 1
             if len(matches) >= _MAX_MATCHES or examined > _MAX_CANDIDATES:
                 break
-            if not path.is_file() or not is_within(path, root):
+            if not path.is_file() or not is_within(path, root, context=sensitive_ctx):
                 continue
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")

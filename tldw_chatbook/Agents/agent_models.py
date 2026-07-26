@@ -245,6 +245,7 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
         max_subagents=0,
         max_active_tools=child.max_active_tools,
         max_subagent_result_chars=child.max_subagent_result_chars,
+        max_tool_result_chars=child.max_tool_result_chars,
         max_model_turns=child.max_model_turns,
         max_total_tokens=child.max_total_tokens,
         max_tool_call_seconds=child.max_tool_call_seconds,

@@ -171,6 +171,46 @@ def test_read_file_refuses_this_apps_own_sqlite_db(monkeypatch):
     assert "marker" not in str(result)
 
 
+def test_list_directory_filters_sensitive_entries_from_recursive_listing(monkeypatch):
+    """Finding 5 (pre-merge review): a recursive listing correctly refuses to
+    DESCEND into a sensitive directory (~/.ssh, ~/.aws), but individual
+    sensitive FILES sitting inside an otherwise-ordinary, listable ancestor
+    were still emitted by name and size -- this app's own
+    ``mcp_permissions.json`` under ``~/.config/tldw_cli`` and the
+    ChaChaNotes DB (plus its ``-wal`` sidecar) under
+    ``~/.local/share/tldw_cli/<user>``. Contents never leaked, only the
+    listing row itself; this closes that.
+    """
+    home = Path(os.environ["HOME"])
+
+    config_dir = home / ".config" / "tldw_cli"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "mcp_permissions.json").write_text('{"version": 1}')
+    (config_dir / "ordinary.toml").write_text("fine = true\n")
+
+    from tldw_chatbook import config as app_config
+
+    db_path = app_config.get_chachanotes_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db_path.write_text("marker")
+    wal_path = db_path.with_name(db_path.name + "-wal")
+    wal_path.write_text("wal-marker")
+
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: home.resolve())
+
+    result = asyncio.run(
+        fot.ListDirectoryTool().execute(
+            directory_path=".", recursive=True, include_hidden=True, max_depth=5
+        )
+    )
+
+    names = {e["name"] for e in result["entries"]}
+    assert "mcp_permissions.json" not in names
+    assert db_path.name not in names
+    assert wal_path.name not in names
+    assert "ordinary.toml" in names  # non-sensitive sibling still listed
+
+
 def test_read_file_refuses_wal_sidecar_of_this_apps_own_sqlite_db(monkeypatch):
     """The gap this task closes: WAL mode writes ``<name>.db-wal`` next to
     the database, carrying the same class of recent data, but exact-path

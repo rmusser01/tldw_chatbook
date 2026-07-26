@@ -34,6 +34,7 @@ the real answer for shell execution.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import NamedTuple
 
 from loguru import logger
 
@@ -146,7 +147,62 @@ def _db_sidecar_paths(db_path: Path) -> tuple[Path, ...]:
     return tuple(db_path.with_name(db_path.name + suffix) for suffix in _DB_SIDECAR_SUFFIXES)
 
 
-def is_sensitive_path(candidate: Path) -> bool:
+class SensitivePathContext(NamedTuple):
+    """A snapshot of the resolved sensitive-path set, valid for one tool call.
+
+    Building one of these costs the same 11 config-accessor resolutions
+    ``is_sensitive_path`` would otherwise repeat on every invocation. A
+    caller that tests many candidate paths within a single tool invocation
+    (``GlobFiles``/``GrepFiles`` in ``Agents/builtin_packs/files.py``, and
+    ``ListDirectoryTool``'s recursive walk) should build exactly ONE of
+    these at the start of that invocation and pass it into every
+    ``is_sensitive_path``/``is_within`` call it makes, rather than let each
+    call re-resolve the set from scratch.
+
+    Deliberately not cached at module or process scope -- see
+    ``resolve_sensitive_context``.
+    """
+
+    files: tuple[Path, ...]
+    dirs: tuple[Path, ...]
+    db_paths: tuple[Path, ...]
+
+
+def resolve_sensitive_context() -> SensitivePathContext:
+    """Resolve the full sensitive-path set once, for reuse across many checks.
+
+    Call this ONCE per tool invocation and thread the result through to
+    every ``is_sensitive_path``/``is_within`` call that invocation makes.
+    Do NOT cache the return value at module or process scope: the whole
+    point of the per-call ``_sensitive_db_paths()`` resolution it wraps is
+    to observe a config change (e.g. the test suite swapping
+    ``TLDW_CONFIG_PATH`` between cases) on the very next call rather than
+    serving a stale answer. A single invocation resolving this once is
+    "per call"; a global cache would not be.
+
+    Returns:
+        A ``SensitivePathContext`` snapshotting the currently configured
+        sensitive files, directories, and database paths (entries that
+        failed to resolve are dropped).
+    """
+    return SensitivePathContext(
+        files=tuple(
+            p for p in (_resolved(entry) for entry in _SENSITIVE_FILES) if p is not None
+        ),
+        dirs=tuple(
+            p for p in (_resolved(entry) for entry in _SENSITIVE_DIRS) if p is not None
+        ),
+        db_paths=tuple(
+            p
+            for p in (_resolved(str(raw)) for raw in _sensitive_db_paths())
+            if p is not None
+        ),
+    )
+
+
+def is_sensitive_path(
+    candidate: Path, context: SensitivePathContext | None = None
+) -> bool:
     """Whether ``candidate`` is a credential, gate-state, or app-database path.
 
     Comparison is by RESOLVED ancestry, never by string prefix, so
@@ -164,6 +220,14 @@ def is_sensitive_path(candidate: Path) -> bool:
 
     Args:
         candidate: The path a tool intends to touch.
+        context: An optional pre-resolved ``SensitivePathContext`` from
+            ``resolve_sensitive_context()``. Pass one in when checking many
+            candidates within a single tool invocation, so the sensitive-path
+            set is resolved once instead of once per candidate. Leave this
+            ``None`` (the default) for a one-off, single-path check -- that
+            keeps this function's resolution genuinely per-call, which is
+            what lets it observe a config-path switch (e.g. the test suite's
+            ``TLDW_CONFIG_PATH`` swaps) without going stale.
 
     Returns:
         True when the path is refused. Fails CLOSED: a path that cannot be
@@ -173,23 +237,20 @@ def is_sensitive_path(candidate: Path) -> bool:
     if resolved is None:
         return True
 
-    for entry in _SENSITIVE_FILES:
-        target = _resolved(entry)
-        if target is not None and resolved == target:
-            return True
+    ctx = context if context is not None else resolve_sensitive_context()
 
-    for db_path in _sensitive_db_paths():
-        target = _resolved(str(db_path))
-        if target is None:
-            continue
+    for target in ctx.files:
         if resolved == target:
             return True
-        if resolved in _db_sidecar_paths(target):
+
+    for db_path in ctx.db_paths:
+        if resolved == db_path:
+            return True
+        if resolved in _db_sidecar_paths(db_path):
             return True
 
-    for entry in _SENSITIVE_DIRS:
-        root = _resolved(entry)
-        if root is not None and (resolved == root or root in resolved.parents):
+    for root in ctx.dirs:
+        if resolved == root or root in resolved.parents:
             return True
 
     return False

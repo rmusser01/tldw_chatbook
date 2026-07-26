@@ -10,7 +10,11 @@ from loguru import logger
 
 from .base import Tool
 from ..Utils.path_validation import validate_path
-from ..Utils.sensitive_paths import is_sensitive_path
+from ..Utils.sensitive_paths import (
+    SensitivePathContext,
+    is_sensitive_path,
+    resolve_sensitive_context,
+)
 
 
 def _resolve_sandbox_config() -> str:
@@ -21,7 +25,9 @@ def _resolve_sandbox_config() -> str:
     return get_cli_setting("tools", "file_sandbox_root", default_root) or default_root
 
 
-def is_within(candidate: Path, root: Path) -> bool:
+def is_within(
+    candidate: Path, root: Path, context: SensitivePathContext | None = None
+) -> bool:
     """Return whether ``candidate`` resolves inside ``root`` and is not sensitive.
 
     Callers include ``ListDirectoryTool``'s recursive-descent guard, which
@@ -37,6 +43,13 @@ def is_within(candidate: Path, root: Path) -> bool:
     Args:
         candidate: Path to test.
         root: The sandbox root it must stay under.
+        context: Optional pre-resolved ``SensitivePathContext`` (see
+            ``Utils.sensitive_paths.resolve_sensitive_context``). Callers that
+            test many candidates in one tool invocation (``GlobFiles``,
+            ``GrepFiles``, the recursive-listing walk) should resolve this
+            ONCE per invocation and pass it through here, rather than let
+            every candidate re-resolve the sensitive-path set from scratch.
+            Leave ``None`` for a one-off check.
 
     Returns:
         True only when the fully-resolved candidate is the root or below it
@@ -47,7 +60,7 @@ def is_within(candidate: Path, root: Path) -> bool:
         root_resolved = root.resolve()
     except (OSError, RuntimeError):
         return False
-    if is_sensitive_path(resolved):
+    if is_sensitive_path(resolved, context=context):
         return False
     return resolved == root_resolved or root_resolved in resolved.parents
 
@@ -230,10 +243,16 @@ class ListDirectoryTool(Tool):
             validated_path = validate_path(directory_path, sandbox_root)
             path = Path(validated_path)
 
+            # Resolve the sensitive-path set ONCE for this call and reuse it
+            # for the top-level check below, the recursive-descent guard, and
+            # every per-entry check the walk makes -- not a fresh resolution
+            # per entry (see Utils.sensitive_paths.resolve_sensitive_context).
+            sensitive_ctx = resolve_sensitive_context()
+
             # Refuse credential, gate-state, and app-database paths outright,
             # regardless of the sandbox root (see Utils.sensitive_paths). This
             # must run before any filesystem access below.
-            if is_sensitive_path(path):
+            if is_sensitive_path(path, context=sensitive_ctx):
                 return {
                     "directory_path": directory_path,
                     "error": f"Refused: '{directory_path}' is a protected path and cannot be listed",
@@ -266,6 +285,18 @@ class ListDirectoryTool(Tool):
                         if not include_hidden and item.name.startswith("."):
                             continue
 
+                        # Refuse individual sensitive entries the same way the
+                        # top-level target is refused above. The recursive
+                        # descent guard below already stops the walk from
+                        # entering a sensitive DIRECTORY (e.g. ~/.ssh), but a
+                        # sensitive FILE sitting inside an otherwise-ordinary
+                        # directory (this app's own config.toml,
+                        # mcp_permissions.json, or a ChaChaNotes DB and its
+                        # WAL/SHM sidecars) would still be listed by name and
+                        # size without this per-entry check.
+                        if is_sensitive_path(item, context=sensitive_ctx):
+                            continue
+
                         # Get item info
                         try:
                             stat = item.stat()
@@ -290,7 +321,7 @@ class ListDirectoryTool(Tool):
                                 and item.is_dir()
                                 and not item.is_symlink()
                                 and current_depth < max_depth
-                                and is_within(item, sandbox_root)
+                                and is_within(item, sandbox_root, context=sensitive_ctx)
                             ):
                                 list_dir_contents(item, current_depth + 1)
 

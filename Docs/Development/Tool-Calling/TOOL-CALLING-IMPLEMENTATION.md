@@ -3,6 +3,15 @@
 **Date**: 2025-07-16
 **Author**: Claude Code
 
+> **Mechanics note (post-refactor):** `get_tool_executor()`/`ToolExecutor` and
+> the `chat_streaming_events.py`/`worker_events.py` wiring described below were
+> removed (task-545/task-577); that import path now raises `ImportError`.
+> Tools are now `Tool` subclasses (`Tools/base.py`) registered in a pack's
+> `TOOLS` list under `Agents/builtin_packs/`, gated by `[agent_tools]
+> enabled_packs`, and dispatched through `Agents/tool_catalog.py`'s
+> `BuiltinToolProvider` -- see CLAUDE.md's "New Tool" section for the current
+> recipe. The rest of this document is kept as a historical record.
+
 ## Overview
 
 This document summarizes the complete implementation of tool calling functionality in tldw_chatbook. Tool calling is now fully functional for both streaming and non-streaming responses.
@@ -63,7 +72,7 @@ The `_continue_conversation_with_tools` function:
 ### For Developers
 
 1. **Tool Detection**: `parse_tool_calls_from_response()` handles multiple provider formats
-2. **Tool Execution**: `ToolExecutor` manages safe execution with timeouts
+2. **Tool Execution**: dispatched through `Agents/tool_catalog.py`'s `BuiltinToolProvider`, reached via the Agents runtime (`Agents/native_tools.py` + `AgentService`); safe execution is gated by the `agent:builtin` permission matrix, not `ToolExecutor` (removed, see the mechanics note above)
 3. **UI Display**: `ToolExecutionWidget` shows calls and results
 4. **Database**: Messages saved with proper roles for conversation history
 5. **Continuation**: Automatic flow maintains conversation context
@@ -76,12 +85,12 @@ Currently, two built-in tools are available:
 
 ## Adding New Tools
 
-To add a new tool:
+To add a new tool (see CLAUDE.md's "New Tool" section):
 
-1. Create a class extending `Tool` in `tldw_chatbook/Tools/`
-2. Implement required properties and `execute()` method
-3. Register in `get_tool_executor()` function
-4. Tool will automatically be available in all conversations
+1. Subclass `Tool` (ABC) in `tldw_chatbook/Tools/base.py`
+2. Implement the `name`, `description`, `parameters` properties and the async `execute()` method
+3. Add the class to a pack module's `TOOLS` list under `Agents/builtin_packs/`
+4. Enable the pack via `[agent_tools] enabled_packs` in config (built-in tools stay disabled by default)
 
 Example:
 ```python
