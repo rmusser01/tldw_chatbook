@@ -45,7 +45,7 @@ RUNTIME_TOOL_NAMES = frozenset(
     }
 )
 
-DIRECT_DISCLOSE_THRESHOLD = 8
+DIRECT_DISCLOSE_THRESHOLD = 16
 LOOP_DETECTION_N = 3
 #: Default ceiling on provider turns (STEP_MODEL steps) in one run. Stays
 #: >= the default max_steps so it is provably unreachable at engine
@@ -140,7 +140,7 @@ class RunBudget:
     max_steps: int = 8
     max_wall_seconds: float = 240.0
     max_subagents: int = 2
-    max_active_tools: int = 8
+    max_active_tools: int = 24
     max_subagent_result_chars: int = 4000
     # Primary provider-call limiter (task-244): counts STEP_MODEL turns.
     # Raised 8 -> 20 so an agent gets ~20 tool-calling rounds per user

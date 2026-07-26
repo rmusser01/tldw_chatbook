@@ -166,9 +166,9 @@ class _NamedSkillRunner:
 
 
 def _nine_entry_names():
-    # 9 > DIRECT_DISCLOSE_THRESHOLD(8) -- forces the find/load path.
-    assert DIRECT_DISCLOSE_THRESHOLD == 8
-    return ["code-review"] + [f"filler{i}" for i in range(8)]
+    # Create enough entries to exceed DIRECT_DISCLOSE_THRESHOLD -- forces the find/load path.
+    assert DIRECT_DISCLOSE_THRESHOLD >= 16
+    return ["code-review"] + [f"filler{i}" for i in range(DIRECT_DISCLOSE_THRESHOLD)]
 
 
 def test_undisclosed_skill_tool_is_refused_without_find_load(tmp_path):
