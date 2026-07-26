@@ -155,3 +155,16 @@ def test_tool_executor_reexports_the_same_abc():
     from tldw_chatbook.Tools.tool_executor import Tool as LegacyTool
 
     assert BaseTool is LegacyTool
+
+
+def test_tool_executor_is_gone():
+    """TASK-545 P3: nothing may dispatch tools outside the gated runtime.
+
+    The executor had no callers left, and its own [tools] config read was
+    the TASK-547 defect. Removing it closes both.
+    """
+    import tldw_chatbook.Tools as tools_pkg
+    import tldw_chatbook.Tools.tool_executor as executor_mod
+
+    assert not hasattr(executor_mod, "ToolExecutor")
+    assert not hasattr(tools_pkg, "get_tool_executor")

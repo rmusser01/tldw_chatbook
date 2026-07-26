@@ -10,18 +10,19 @@ general rationale). This matters here specifically because
 ``WebSearchTool`` used to be imported eagerly here, which pulls in
 ``Article_Extractor_Lib.py``'s module-scope playwright + trafilatura
 imports (~197ms, see task-257) even though ``web_search_enabled`` defaults
-to ``False`` and no user session had touched web search yet. The actual
-tool-registration path (``tool_executor.get_tool_executor()``) already
-imports each optional tool class directly from its own submodule, gated
-by per-tool config flags -- it never goes through this package's names.
-The remaining optional tool classes (file ops, RAG search, note
-management) are made lazy too, for consistency and because there is no
-reason to pay any submodule's import cost for a tool nobody asked for.
+to ``False`` and no user session had touched web search yet. The optional
+tool classes below (file ops, RAG search, note management) are not
+currently registered by anything -- the config-driven ``ToolExecutor``
+dispatcher that used to wire them up was removed (TASK-547/545 P3; agent
+tools now run through the permission-gated runtime instead) -- but the
+lazy pattern is kept so importing this package never pays a submodule's
+import cost for a tool nobody has repointed to yet.
 
-``Tool``/``ToolExecutor``/``DateTimeTool``/``CalculatorTool``/
-``get_tool_executor``/``reload_tool_executor`` stay eager: they are
+``Tool``/``DateTimeTool``/``CalculatorTool`` stay eager: they are
 lightweight (defined directly in ``tool_executor.py``, no heavy
-transitive deps) and are the framework's core, always-needed surface.
+transitive deps) and are the framework's core, always-needed surface --
+``DateTimeTool``/``CalculatorTool`` are the two always-on built-ins
+``Agents/tool_catalog.py`` registers.
 """
 
 from typing import Any
@@ -29,21 +30,12 @@ from typing import Any
 from loguru import logger
 
 from .base import Tool
-from .tool_executor import (
-    ToolExecutor,
-    DateTimeTool,
-    CalculatorTool,
-    get_tool_executor,
-    reload_tool_executor,
-)
+from .tool_executor import DateTimeTool, CalculatorTool
 
 __all__ = [
     "Tool",
-    "ToolExecutor",
     "DateTimeTool",
     "CalculatorTool",
-    "get_tool_executor",
-    "reload_tool_executor",
     "WebSearchTool",
     "ReadFileTool",
     "ListDirectoryTool",
