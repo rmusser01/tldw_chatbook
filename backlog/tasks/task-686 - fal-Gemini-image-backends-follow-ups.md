@@ -1,10 +1,10 @@
 ---
 id: TASK-686
 title: fal/Gemini image backends follow-ups
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-26 03:30'
-updated_date: '2026-07-26 05:54'
+updated_date: '2026-07-26 06:03'
 labels:
   - image-generation
   - followup
@@ -22,7 +22,7 @@ Non-blocking follow-ups from the fal.ai + Gemini image-backend program's final w
 <!-- AC:BEGIN -->
 - [x] #1 Reference-image size cap validates `len(content)` rather than trusting the caller-supplied `bytes_len` field, and empty `content=b""` is refused at the choke point (harden BEFORE the Console attach-UX program opens a real production constructor; today both adapters fail loudly anyway).
 - [x] #2 fal `_app_id` handles fal's `APP_NAMESPACES` endpoint grammar (`workflows/...`, `comfy/...` prefixes shift the owner/app segments by one) — today a namespaced model would misdiagnose as "fal queue URL shape changed" (loud, but wrong diagnosis).
-- [ ] #3 Pre-existing (out of this program's diff): the chat-side Google path (`LLM_Calls/LLM_API_Calls.py` ~:2906) sends `x-goog-api-key` through a redirect-following `requests.Session` — outside the guarded-helper credential-strip net that now protects the image path. Route it through guarded transport or strip on redirect.
+- [x] #3 Pre-existing (out of this program's diff): the chat-side Google path (`LLM_Calls/LLM_API_Calls.py` ~:2906) sends `x-goog-api-key` through a redirect-following `requests.Session` — outside the guarded-helper credential-strip net that now protects the image path. Route it through guarded transport or strip on redirect.
 - [x] #4 Per-backend keyring-source loader tests for `fal`/`gemini` (generic keyring path is covered; sibling backends share the same gap).
 - [x] #5 `fetch_bytes_via_post`'s docstring cites Fireworks (dropped) as its example consumer — reword to a generic bytes-returning-POST description. Note the helper currently has NO production consumer (kept: tested, guarded, and the class of API it serves recurs).
 - [x] #6 Gemini 429 (quota) and fal 403 (locked/exhausted-balance) surface generic httpx text — add friendlier enriched messages ("rate limited / image quota exhausted — free-tier caps apply"; "fal account locked or out of balance — top up at fal.ai") alongside the 404 enrichment pattern (live-UAT observations; both raw bodies carry actionable detail our sanitization rightly drops — the enrichment can name the CATEGORY without echoing bodies).
@@ -108,6 +108,39 @@ tldw_chatbook.app"` (imports cleanly). Files touched: `request_validation.py`,
 `adapters/fal_image_adapter.py`, `adapters/gemini_image_adapter.py`,
 `http_client.py`, `Tests/Image_Generation/test_request_validation.py`,
 `test_fal_adapter.py`, `test_gemini_adapter.py`, `test_config_loader.py`.
+
+### Unit 2 (chat-side x-goog-api-key redirect gap, AC #3) -- 2026-07-26
+
+`grep -rn "x-goog-api-key" tldw_chatbook/LLM_Calls/` confirmed exactly one
+occurrence -- `chat_with_google` in `LLM_API_Calls.py`, one call site shared
+by both the streaming and non-streaming branches. The `Retry`'s
+`status_forcelist` is `[429, 500, 503]` (never 3xx), and the target URL is a
+hardcoded literal, so no legitimate redirect was ever expected. Chose option
+(a) from the plan: added `allow_redirects=False` to the `session.post(...)`
+call, and an explicit check right after (`raise_for_status()` does NOT raise
+on 3xx, so this can't ride on that) that closes the response and raises
+`ChatProviderError(provider="google", status_code=<3xx>, message="Google
+endpoint redirected unexpectedly -- refusing to follow with credentials.")`
+for any `300 <= status_code < 400`. `ChatProviderError` is a `ChatAPIError`
+subclass, so the function's existing outer exception handler re-raises it
+verbatim instead of wrapping it as a generic error. Verified the streaming
+call shape (`stream=True`) honors `allow_redirects=False` identically to
+non-streaming.
+
+Added 8 tests to the existing `Tests/Chat/test_google_native_tools.py`
+(mocks `requests.Session.post`, drives `chat_api_call`): pin that
+`allow_redirects=False` is always passed; a parametrized 3xx test
+(301/302/303/307/308) for both non-streaming and streaming asserting the
+refusal error, exactly one request issued (nothing re-sent the credential),
+`raise_for_status()` never called, and the response closed; and a pin that
+the normal 200 path is unaffected.
+
+Verification: `Tests/Chat/test_google_native_tools.py` (28 passed, including
+the 8 new), `Tests/Image_Generation/` full suite (251 passed, 9 skipped,
+collateral -- unaffected), `ruff check` on both touched files (clean),
+`python -c "import tldw_chatbook.app"` (imports cleanly). Files touched:
+`LLM_Calls/LLM_API_Calls.py`, `Tests/Chat/test_google_native_tools.py`. Full
+report: `.superpowers/sdd/2026-07-26-imagegen-fal-gemini-fireworks/task-686-unit2-report.md`.
 <!-- SECTION:NOTES:END -->
 
 <!-- SECTION:NOTES:END -->
