@@ -2,15 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Delete 10,258 lines of Evals UI that no reachable code imports, and add a guard test that keeps it deleted.
+**Goal:** Delete ~9,783 lines of Evals UI that no reachable code imports, and add a guard test that keeps it deleted.
 
-**Architecture:** Pure deletion. Three groups, each gated on a reachability check that is verified before the files are removed: an orphaned second-generation Evals UI cluster (5 modules), the `Widgets/Evals/` files only that cluster imported (11 files), and 3 more widgets whose only remaining importers are tests. A parametrized guard test asserts the paths stay gone and no production import resurrects them. No behaviour changes and no new capability.
+**Architecture:** Pure deletion. Three groups, each gated on a reachability check that is verified before the files are removed: an orphaned second-generation Evals UI cluster (4 modules this PR still owns — a fifth, `ResultsDashboardWindow.py`, was independently deleted on `dev` before this branch's rebase and is covered only by the guard's regression entry now), the `Widgets/Evals/` files only that cluster imported (11 files), and 3 more widgets whose only remaining importers are tests. A parametrized guard test asserts the paths stay gone and no production import resurrects them. No behaviour changes and no new capability.
 
 **Tech Stack:** Python 3.11+, pytest, Textual. No new dependencies.
 
 ## Global Constraints
 
-- Base branch: `origin/dev` at `8242a5b58`. Work in a git worktree, not the primary checkout — many concurrent agents mutate branches there.
+- Base branch: `origin/dev` at `d043ce9b4` (rebased 2026-07-26; originally planned against `8242a5b58`). Work in a git worktree, not the primary checkout — many concurrent agents mutate branches there.
 - **A git worktree has no `.venv`.** Use the primary checkout's interpreter by absolute path, always with cwd set to the worktree, so the worktree's copy of the package wins over the editable-install pointer:
 
   ```bash
@@ -18,15 +18,15 @@
   ```
 
   Confirm resolution before the first test run — `python -c "import tldw_chatbook; print(tldw_chatbook.__file__)"` must print a path inside the worktree. If it prints one in the primary checkout, **stop**: tests would be verifying the wrong tree and every deletion check would be meaningless.
-- **`pytest Tests/UI` cannot be run in one call.** It collects 5,183 tests and exceeds the platform's hard 10-minute per-call cap. The per-task gate below preserves its intent — a deletion breaks imports, and broken imports surface as *collection* errors:
+- **`pytest Tests/UI` cannot be run in one call.** It collects 5,173 tests (measured before Task 1 adds the guard's own 10) and exceeds the platform's hard 10-minute per-call cap. The per-task gate below preserves its intent — a deletion breaks imports, and broken imports surface as *collection* errors — **but collection alone is not sufficient for this PR.** `test_non_obscuring_focus_contract.py` and `test_file_picker_filters_callable.py` assert by calling `Path(...).read_text()` on the module files directly, inside the test *body*, not via a module-level `import`. A stale reference to a deleted file therefore raises `FileNotFoundError` only when the test actually *runs* — `--collect-only` sees no import to fail on and reports the file clean. (Task 3 hit this for real: the two now-removed sample-browser CSS-contract tests in `test_non_obscuring_focus_contract.py` read `sample_browser_dialog.py` off disk by path.) Run the five touched test files directly as well — they total ~3.6s:
 
   ```bash
   python -m pytest Tests/UI --collect-only -q   # must report 0 collection errors (~2.4s)
-  python -m pytest Tests/UI/test_evals_deletion_guard.py -q
+  python -m pytest Tests/UI/test_evals_deletion_guard.py Tests/UI/test_bulk_selection_tooltips.py Tests/UI/test_file_picker_action_tooltips.py Tests/UI/test_file_picker_filters_callable.py Tests/UI/test_non_obscuring_focus_contract.py -q
   python -c "import tldw_chatbook.app"
   ```
 
-  Full-suite runs are the controller's job, backgrounded, and belong to Task 5. An implementer that finds itself waiting on a backgrounded suite should stop and report instead.
+  Full-suite runs are the controller's job, backgrounded, and belong to Task 5. An implementer that finds itself waiting on a backgrounded suite should stop and report instead. **PRs 2 and 3 inherit this tightened gate** — any test file either of them touches that reads source off disk by path needs the same direct-run treatment, not just `--collect-only`.
 - The `timeout` command is not available in this environment.
 - Deletion is gated **per symbol**, never per file assumption. Every group below states the exact importer check that must return empty before deleting.
 - No file outside the listed sets is modified, except `tldw_chatbook/app.py` in Task 4.
@@ -50,21 +50,21 @@ That is a per-selector migration with its own risk profile. It belongs in PR 3 a
 
 **Correction, from live verification during Task 5:** "live" here means *routed*, not *working*. On the base commit the hub renders an **empty body** inside the app shell — `DestinationHeader` and `LabModeStrip` appear and no cards do. `EvalsWindowV3` mounts correctly in isolation (`EvalNavigationScreen` plus 8 buttons), so this is a shell-integration failure consistent with the `Screen`-inside-a-`Container` architecture the spec flags. Keeping it out of PR 1 is still right — a deletion PR should not be the thing that removes a routed screen — but **PR 3 must not treat the hub as a working surface to preserve parity with.** There is no working behaviour to preserve.
 
-Revised PR 1 total: **19 files, 10,258 lines**, plus 12 dead lines in `app.py`.
+Revised PR 1 total, re-derived with git after the `origin/dev` rebase (`git diff --numstat origin/dev...HEAD -- tldw_chatbook/`): **18 files, 9,783 lines**, plus 7 dead lines in `app.py` (the "12" originally stated here was never right — the reactive declaration is 1 line and the no-op watcher, including its trailing blank line, is 6). The guard's `REMOVED_MODULES`/`REMOVED_STEMS` tuples still carry **19** entries; `ResultsDashboardWindow.py` keeps its slot as a regression guard even though it is no longer part of this PR's own diff (see Group A below).
 
 ## File Structure
 
-**Deleted — Group A, orphan gen-2 UI cluster (5 files, 3,751 lines).** These import only each other; nothing else in the tree imports any of them.
+**Deleted — Group A, orphan gen-2 UI cluster (4 files this PR deletes, 3,274 lines; 3,751 lines / 5 files as originally scoped).** These import only each other; nothing else in the tree imports any of them. `ResultsDashboardWindow.py` (477 lines) was independently deleted on `origin/dev` (task-671, commit `1b7be2213`) before this branch's post-review rebase onto `d043ce9b4` — it is no longer part of this PR's diff, but its path stays in the guard's tuples for regression coverage.
 
-| File | Lines |
-|---|---|
-| `tldw_chatbook/UI/ResultsDashboardWindow.py` | 477 |
-| `tldw_chatbook/UI/ModelManagementWindow.py` | 421 |
-| `tldw_chatbook/UI/DatasetManagementWindow.py` | 289 |
-| `tldw_chatbook/UI/Views/evals_views.py` | 839 |
-| `tldw_chatbook/Event_Handlers/eval_events.py` | 1,725 |
+| File | Lines | Status |
+|---|---|---|
+| `tldw_chatbook/UI/ResultsDashboardWindow.py` | 477 | already absent on `origin/dev`; guard-only, not in this PR's diff |
+| `tldw_chatbook/UI/ModelManagementWindow.py` | 421 | deleted by this PR |
+| `tldw_chatbook/UI/DatasetManagementWindow.py` | 289 | deleted by this PR |
+| `tldw_chatbook/UI/Views/evals_views.py` | 839 | deleted by this PR |
+| `tldw_chatbook/Event_Handlers/eval_events.py` | 1,725 | deleted by this PR |
 
-**Deleted — Group B, widgets orphaned by Group A (11 files, 4,473 lines).** Eight have zero importers today; three are imported only by Group A files.
+**Deleted — Group B, widgets orphaned by Group A (11 files, 4,475 lines).** Eight have zero importers today; three are imported only by Group A files. `metrics_display.py` grew from 61 to 63 lines on `origin/dev` (task-670, commit `5b9eb5840`, extended `RecomposeCaptureGuard` to it) before this branch's rebase; the rebase resolved that modify/delete conflict as delete (re-verified empty reachability against the new `origin/dev` head).
 
 | File | Lines | Only importer |
 |---|---|---|
@@ -75,7 +75,7 @@ Revised PR 1 total: **19 files, 10,258 lines**, plus 12 dead lines in `app.py`.
 | `tldw_chatbook/Widgets/Evals/eval_cost_monitor.py` | 333 | none |
 | `tldw_chatbook/Widgets/Evals/eval_error_dialog.py` | 368 | none |
 | `tldw_chatbook/Widgets/Evals/eval_smart_suggestions.py` | 556 | none |
-| `tldw_chatbook/Widgets/Evals/metrics_display.py` | 61 | none |
+| `tldw_chatbook/Widgets/Evals/metrics_display.py` | 63 | none |
 | `tldw_chatbook/Widgets/Evals/cost_estimation_widget.py` | 395 | `evals_views` (Group A) |
 | `tldw_chatbook/Widgets/Evals/eval_config_dialogs.py` | 486 | `eval_events` (Group A) |
 | `tldw_chatbook/Widgets/Evals/eval_results_widgets.py` | 576 | `eval_events`, `ResultsDashboardWindow`, `evals_views` (Group A) |
@@ -93,7 +93,7 @@ Revised PR 1 total: **19 files, 10,258 lines**, plus 12 dead lines in `app.py`.
 | File | Change |
 |---|---|
 | `Tests/UI/test_sample_browser_dialog_selection.py` | Deleted whole — all 4 tests are `SampleBrowserDialog` |
-| `Tests/UI/test_bulk_selection_tooltips.py` | Remove 2 of 6 tests + 2 imports; 4 non-Evals tests remain |
+| `Tests/UI/test_bulk_selection_tooltips.py` | Remove 2 Evals tests + 2 imports (originally left 4 non-Evals tests). `origin/dev`'s task-671 independently removed a 5th test, `test_mindmap_source_selection_clear_control_has_tooltip`, plus its `MindmapViewerWindow` import, in this same file; the rebase resolved the resulting conflict as the union of both removals. **3 tests remain** (note selection, tag management, multi-item review) |
 | `Tests/UI/test_file_picker_action_tooltips.py` | Remove 1 of 5 tests + 1 import; 4 remain |
 | `Tests/UI/test_file_picker_filters_callable.py` | Remove 1 test + 1 parametrize entry; 3 items remain |
 | `Tests/UI/test_non_obscuring_focus_contract.py` | Remove 2 tests + `SAMPLE_BROWSER_DIALOG` constant. **Keep** `EVAL_NAV_SCREEN` and its test — the card hub is not deleted in this PR |
@@ -596,7 +596,7 @@ cd "$(git rev-parse --show-toplevel)"
 git diff --stat origin/dev...HEAD -- tldw_chatbook/ | tail -1
 ```
 
-Expected: deletions of roughly 10,258 lines across `tldw_chatbook/`, plus the 12 removed from `app.py`. Insertions in `tldw_chatbook/` should be **zero** — this PR adds no production code.
+Expected: deletions of roughly 9,790 lines across `tldw_chatbook/` (9,783 from the 18 deleted files plus 7 from `app.py`). Insertions in `tldw_chatbook/` should be **zero** — this PR adds no production code.
 
 - [ ] **Step 2: Search for stale string-path references**
 
@@ -630,7 +630,7 @@ Expected: no new failures relative to the `origin/dev` baseline. Record the pass
 Use the `verify` skill to drive the TUI. Confirm all of:
 
 1. The app boots and reaches Home without a traceback.
-2. The Evals destination opens via the Lab tab, then the `Evals` mode chip. `Ctrl+1`..`Ctrl+0` **cannot** be verified through this harness — tmux `send-keys` has no ASCII encoding for ctrl+digit. Assert those bindings in a unit test instead; never conclude they are broken from a tmux probe.
+2. The Evals destination opens via the Lab tab, then the `Evals` mode chip. `Ctrl+1`..`Ctrl+0` **cannot** be verified through this harness — tmux `send-keys` has no ASCII encoding for ctrl+digit; never conclude they are broken from a tmux probe. Those bindings are out of scope for a deletion PR — this plan does not own a task to cover them, and claiming an unfiled obligation here would be worse than saying nothing.
 3. **Capture the Evals screen on a second worktree checked out at the base commit, and diff the two captures.** They must be identical apart from the footer's live memory-telemetry readout.
 4. No CSS warnings about missing selectors in the log.
 
@@ -654,17 +654,20 @@ Expected: no output. If the bundle changed, something rebuilt it — revert that
 
 ```bash
 git push -u origin HEAD
-gh pr create --base dev --title "refactor(evals): retire ~10.3k lines of unreachable Evals UI" --body "$(cat <<'EOF'
+gh pr create --base dev --title "refactor(evals): retire ~9.8k lines of unreachable Evals UI" --body "$(cat <<'EOF'
 PR 1 of 3 in the Evals Console rebuild. Pure deletion; no behaviour change.
 
 Removes an entire second-generation Evals UI that no reachable code
-imported -- ResultsDashboardWindow, ModelManagementWindow,
-DatasetManagementWindow, Views/evals_views, and Event_Handlers/eval_events
-referenced only each other -- plus the 14 Widgets/Evals files whose only
-importers were that cluster or tests using them as contract subjects.
+imported -- ModelManagementWindow, DatasetManagementWindow,
+Views/evals_views, and Event_Handlers/eval_events referenced only each
+other -- plus the 14 Widgets/Evals files whose only importers were that
+cluster or tests using them as contract subjects. A fifth cluster member,
+ResultsDashboardWindow, was independently deleted on dev (task-671) before
+this branch's post-review rebase; its guard entry stays for regression
+coverage even though it's no longer part of this PR's own diff.
 
-19 files, 10,258 lines, plus a dead reactive and its no-op watcher in
-app.py. Adds Tests/UI/test_evals_deletion_guard.py so a stale import
+18 files, 9,783 lines, plus a 7-line dead reactive and its no-op watcher
+in app.py. Adds Tests/UI/test_evals_deletion_guard.py so a stale import
 cannot silently resurrect any of it.
 
 Two items from the design spec's deletion table are deliberately NOT here:
@@ -676,6 +679,13 @@ Two items from the design spec's deletion table are deliberately NOT here:
   the screen rebuild.
 - The card hub stays. It is the live Evals screen; it is replaced in PR 3,
   in the same change that provides its replacement.
+
+Despite being a deletion PR, this branch's diff shows substantial
+insertions: it also carries ~1,400 lines of spec and plan documentation
+(Docs/superpowers/specs/2026-07-25-evals-console-rebuild-design.md and
+this plan). Don't be surprised by the insertion count in the diffstat --
+zero production code is added; only Docs/ and the new guard test insert
+lines.
 
 Spec: Docs/superpowers/specs/2026-07-25-evals-console-rebuild-design.md
 
@@ -690,5 +700,5 @@ EOF
 
 - **Every group is gated on a verified importer check**, run as the first step of its task. If any check returns a hit from outside the group, the correct action is to stop and re-plan, not to delete and fix fallout.
 - **The guard test grows across three tasks** rather than landing complete in Task 1, so each task has a genuine red-to-green cycle instead of a single test that stays red for the whole PR.
-- **Line counts are from `origin/dev` at `8242a5b58`.** If the base moves, re-derive them; do not trust the numbers in this document after a rebase.
+- **Line counts are from `origin/dev` at `d043ce9b4`**, re-derived by the 2026-07-26 fix-wave rebase (originally `8242a5b58`; `git diff --numstat origin/dev...HEAD -- tldw_chatbook/` is the command that produced the current numbers). If the base moves again, re-derive them; do not trust the numbers in this document after a rebase.
 - **`Tests/UI` loses exactly 11 tests and gains 38.** Removed: four from the deleted file, two from `test_bulk_selection_tooltips`, one from `test_file_picker_action_tooltips`, one from `test_file_picker_filters_callable`, two from `test_non_obscuring_focus_contract`, and one dropped `parametrize` case. Added: the guard's 19 path cases + 19 stem cases. Net for the PR: **+27**. Any other delta needs explaining.
