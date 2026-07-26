@@ -161,6 +161,102 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return _workspace_from_row(row) if row is not None else None
 
+    def rename_workspace(self, workspace_id: str, name: str) -> WorkspaceRecord:
+        """Rename a workspace (TASK-714).
+
+        The built-in Default workspace keeps its identity: rail copy and
+        runtime rules reference it by name, so it is protected from rename.
+
+        Args:
+            workspace_id: Workspace to rename.
+            name: New user-facing name (must be non-blank).
+
+        Returns:
+            The updated workspace record.
+
+        Raises:
+            WorkspaceNotFound: Unknown or archived workspace.
+            WorkspaceRegistryServiceError: Blank name, Default workspace, or
+                storage failure.
+        """
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        safe_name = str(name or "").strip()
+        if not safe_name:
+            raise WorkspaceRegistryServiceError("Workspace name cannot be blank.")
+        if safe_workspace_id == DEFAULT_WORKSPACE_ID:
+            raise WorkspaceRegistryServiceError(
+                "The Default workspace cannot be renamed."
+            )
+        record = self.get_workspace(safe_workspace_id)
+        if record is None or record.archived:
+            raise WorkspaceNotFound(safe_workspace_id)
+        now = self._now_factory()
+        try:
+            with self.db.transaction() as conn:
+                conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET name = ?, updated_at = ?
+                    WHERE workspace_id = ?
+                    """,
+                    (safe_name, now, safe_workspace_id),
+                )
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        renamed = self.get_workspace(safe_workspace_id)
+        if renamed is None:
+            raise WorkspaceRegistryServiceError("Workspace rename failed.")
+        return renamed
+
+    def archive_workspace(self, workspace_id: str) -> WorkspaceRecord:
+        """Archive a workspace, hiding it from listings (TASK-714).
+
+        Conversations and memberships are untouched - archiving only removes
+        the workspace from the switcher/browser. When the archived workspace
+        was active, the built-in Default workspace becomes active so Console
+        always has a real context.
+
+        Args:
+            workspace_id: Workspace to archive.
+
+        Returns:
+            The archived workspace record.
+
+        Raises:
+            WorkspaceNotFound: Unknown or already-archived workspace.
+            WorkspaceRegistryServiceError: Default workspace or storage
+                failure.
+        """
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        if safe_workspace_id == DEFAULT_WORKSPACE_ID:
+            raise WorkspaceRegistryServiceError(
+                "The Default workspace cannot be archived."
+            )
+        record = self.get_workspace(safe_workspace_id)
+        if record is None or record.archived:
+            raise WorkspaceNotFound(safe_workspace_id)
+        was_active = record.active
+        now = self._now_factory()
+        try:
+            with self.db.transaction() as conn:
+                conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET archived = 1, active = 0, updated_at = ?
+                    WHERE workspace_id = ?
+                    """,
+                    (now, safe_workspace_id),
+                )
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if was_active:
+            self.ensure_default_workspace()
+            self.set_active_workspace(DEFAULT_WORKSPACE_ID)
+        archived = self.get_workspace(safe_workspace_id)
+        if archived is None:
+            raise WorkspaceRegistryServiceError("Workspace archive failed.")
+        return archived
+
     def set_active_workspace(self, workspace_id: str) -> WorkspaceRecord:
         """Set exactly one active workspace."""
 

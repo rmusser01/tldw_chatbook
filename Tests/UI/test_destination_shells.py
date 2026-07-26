@@ -1028,6 +1028,7 @@ def _assert_policy_recovery_copy(
     next_action: str,
     recovery_action: str,
     authority_owner: str,
+    pressable_when_blocked: bool = False,
 ) -> None:
     assert status_label in visible_text
     assert f"Unavailable: {unavailable_what}." in visible_text
@@ -1035,7 +1036,14 @@ def _assert_policy_recovery_copy(
     assert f"Next: {next_action}" in visible_text
     assert f"Recovery: {recovery_action}." in visible_text
     assert f"Owner: {authority_owner}." in visible_text
-    assert button.disabled is True
+    if pressable_when_blocked:
+        # TASK-716: Library's blocked source action stays pressable so the
+        # press handler can explain the block (disabled Buttons never emit
+        # Pressed); the blocked class carries the dimmed styling.
+        assert button.disabled is False
+        assert button.has_class("library-source-action-blocked")
+    else:
+        assert button.disabled is True
     assert why in str(button.tooltip)
     assert next_action in str(button.tooltip)
 
@@ -1449,7 +1457,11 @@ async def test_library_destination_empty_state_disables_console_handoff():
         assert "Media (0)" in text
         assert "Conversations (0)" in text
         assert screen.query_one("#library-canvas-landing")
-        assert button.disabled is True
+        # TASK-716: blocked actions stay pressable (a disabled Button never
+        # emits Pressed, so its explanatory warning was unreachable); the
+        # blocked class carries the dimmed styling.
+        assert button.disabled is False
+        assert button.has_class("library-source-action-blocked")
         assert "Stage Library source context" in str(button.tooltip)
 
 
@@ -1530,7 +1542,8 @@ async def test_library_destination_service_failure_uses_recovery_copy():
             "Library source services unavailable; retry Library later."
             in _visible_text(screen)
         )
-        assert button.disabled is True
+        assert button.disabled is False
+        assert button.has_class("library-source-action-blocked")
         assert "Library source services are unavailable" in str(button.tooltip)
 
 
@@ -1557,6 +1570,7 @@ async def test_library_policy_denial_uses_runtime_recovery_taxonomy():
         button = screen.query_one("#library-use-in-console", Button)
 
         _assert_policy_recovery_copy(
+            pressable_when_blocked=True,
             visible_text=_static_text(details_body),
             button=button,
             status_label="Wrong source",

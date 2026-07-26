@@ -1,7 +1,7 @@
 ---
 id: TASK-723
 title: Decide how Default-workspace chats are classified in the conversation browser
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-26 17:05'
 labels:
@@ -22,6 +22,18 @@ Source: workspace-settings UX review baseline, Docs/superpowers/qa/workspace-set
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A documented decision states how Default-workspace conversations are grouped and why
-- [ ] #2 Browser grouping and switcher copy agree with that decision
+- [x] #1 A documented decision states how Default-workspace conversations are grouped and why
+- [x] #2 Browser grouping and switcher copy agree with that decision
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Decide, record as ADR, align switcher copy with the browser grouping, lock with a test.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Decision recorded as backlog/decisions/027-default-workspace-chats-in-chats-section.md: Default-workspace conversations stay in the Chats section (everyday chatting must not demand workspace vocabulary; a perpetual Default group would kill the honest "No workspace conversations." empty state; storage identity stays an implementation detail). Alignment: the switcher's Default row is annotated "Default (everyday chats)" so switcher copy and browser grouping tell one story; Default is rename/archive-protected (TASK-714) so the anchor stays stable. Test: test_default_row_labeled_everyday_chats in Tests/UI/test_console_workspace_lifecycle.py.
+<!-- SECTION:NOTES:END -->

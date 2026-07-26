@@ -239,14 +239,17 @@ def _base_grouped_workspace_state(
     marks_available: bool = True,
     query: str = "",
     rows: tuple[ConsoleConversationBrowserInputRow, ...] | None = None,
+    configured_server: bool = False,
 ) -> ConsoleWorkspaceContextState:
+    """Build grouped-browser state; ``configured_server`` renders the full
+    Sync/Server/ACP rows instead of the TASK-715 collapsed line."""
     section = _section_state(rows=0)
     state = _base_workspace_state(section)
     return ConsoleWorkspaceContextState(
         heading=state.heading,
         workspace_label=state.workspace_label,
         authority_label=state.authority_label,
-        sync_label=state.sync_label,
+        sync_label="Sync: syncing" if configured_server else state.sync_label,
         runtime_label=state.runtime_label,
         conversation_rows=(),
         conversation_empty_copy=state.conversation_empty_copy,
@@ -261,10 +264,16 @@ def _base_grouped_workspace_state(
         new_conversation_enabled=state.new_conversation_enabled,
         new_conversation_recovery=state.new_conversation_recovery,
         recovery_copy=state.recovery_copy,
-        server_readiness_label=state.server_readiness_label,
+        server_readiness_label=(
+            "Server: adapter ready"
+            if configured_server
+            else state.server_readiness_label
+        ),
         server_readiness_detail=state.server_readiness_detail,
         handoff_rows=state.handoff_rows,
-        acp_handoff_label=state.acp_handoff_label,
+        acp_handoff_label=(
+            "ACP task/run: ready" if configured_server else state.acp_handoff_label
+        ),
         acp_handoff_detail=state.acp_handoff_detail,
         acp_handoff_audit=state.acp_handoff_audit,
     )
@@ -596,6 +605,12 @@ async def test_console_workspace_context_keeps_status_rows_below_grouped_browser
         for index in range(16)
     )
     app = _build_test_app()
+    # TASK-715: factory-default sync/server/ACP rows collapse; this test
+    # asserts the full lower status rows' geometry, so configure them.
+    app.workspace_server_adapter_state = ConsoleWorkspaceServerAdapterState(
+        available=False,
+        detail="No tldw_server workspace API configured.",
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(120, 34)) as pilot:
@@ -1010,6 +1025,12 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
 ):
     app = _build_test_app()
     _configure_native_ready_console(app)
+    # TASK-715: default sync/server/ACP rows collapse; this test needs the
+    # full lower status rows as scroll anchors, so configure them.
+    app.workspace_server_adapter_state = ConsoleWorkspaceServerAdapterState(
+        available=False,
+        detail="No tldw_server workspace API configured.",
+    )
     service = app.workspace_registry_service
     active_workspace = service.get_active_workspace()
     for index in range(40):
@@ -1337,15 +1358,12 @@ async def test_console_workspace_context_exposes_new_conversation_for_default_wo
             label_selector="#console-workspace-runtime-label",
             value_selector="#console-workspace-runtime-value",
             label="File tools",
-            value_contains="Off in Default workspace",
+            value_contains="Off in Default",
         )
-        _assert_status_row(
-            console,
-            label_selector="#console-workspace-server-readiness-label",
-            value_selector="#console-workspace-server-readiness-value",
-            label="Server handoff",
-            value_contains="Not configured",
-        )
+        # TASK-715: unconfigured server features collapse into one line
+        # instead of a Server status row.
+        assert console.query("#console-workspace-server-features-collapsed")
+        assert not console.query("#console-workspace-server-readiness-label")
         assert "local registry" not in text.lower()
         assert "authoritative" not in text.lower()
         assert "Workspace conversation creation lands in a later slice" not in text
@@ -1586,7 +1604,7 @@ async def test_console_workspace_context_renders_server_readiness_handoff_and_ac
             console,
             label_selector="#console-workspace-server-readiness-label",
             value_selector="#console-workspace-server-readiness-value",
-            label="Server handoff",
+            label="Server",
             value_contains="Unavailable",
         )
         assert "No tldw_server workspace API configured." in text
@@ -1600,12 +1618,14 @@ async def test_console_workspace_context_renders_server_readiness_handoff_and_ac
         assert "Handoff" in text
         assert "Source note - copy" in text
         assert "Conversation package - metadata-only" in text
+        # TASK-715: the ACP status row no longer shares the Handoff section's
+        # label - "ACP" fits the 12-cell column and is unambiguous.
         _assert_status_row(
             console,
             label_selector="#console-workspace-handoff-label",
             value_selector="#console-workspace-handoff-value",
-            label="Handoff",
-            value_contains="ACP handoff: Not configured",
+            label="ACP",
+            value_contains="Not configured",
         )
         assert "Audit: visible only; no package was sent." in text
 

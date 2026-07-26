@@ -137,11 +137,14 @@ async def test_details_tray_renders_status_and_handoff_rows():
     app = _DetailsApp()
     async with app.run_test(size=(60, 30)):
         assert app.query_one("#console-workspace-authority-label")
-        assert app.query_one("#console-workspace-sync-label")
         assert app.query_one("#console-workspace-runtime-label")
-        assert app.query_one("#console-workspace-server-readiness-label")
         assert app.query_one("#console-workspace-handoff-title")
-        assert app.query_one("#console-workspace-acp-handoff-audit")
+        # TASK-715: sync/server/ACP rows are factory defaults here, so they
+        # collapse into a single plain not-configured line.
+        assert app.query_one("#console-workspace-server-features-collapsed")
+        assert not list(app.query("#console-workspace-sync-label"))
+        assert not list(app.query("#console-workspace-server-readiness-label"))
+        assert not list(app.query("#console-workspace-acp-handoff-audit"))
 
 
 class _ContextTrayApp(App):

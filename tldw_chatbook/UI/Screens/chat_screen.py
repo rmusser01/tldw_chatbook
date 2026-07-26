@@ -290,8 +290,10 @@ from ...Widgets.Console import (
     ConsoleStagedContextTray,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
+    ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
 )
+from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
 from ...Widgets.Console.console_generation_card import (
     ConsoleGenerationCardSpec,
@@ -762,6 +764,9 @@ class ChatScreen(BaseAppScreen):
         ),
         Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=True),
         Binding("alt+m", "open_console_model_popover", "Model", show=True),
+        Binding(
+            "alt+w", "open_console_workspace_switcher", "Workspace", show=True
+        ),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
         Binding("ctrl+shift+p", "view_chat_context", "View context", show=True),
         Binding(
@@ -1546,11 +1551,21 @@ class ChatScreen(BaseAppScreen):
             await self._activate_native_console_session(entry.native_session_id)
             return
         if entry.conversation_id:
-            await self._resume_console_workspace_conversation(
+            resumed = await self._resume_console_workspace_conversation(
                 entry.conversation_id,
                 target_scope_type=entry.scope_type or None,
                 target_workspace_id=entry.workspace_id,
             )
+            if resumed is False:
+                # TASK-717: record missing - same honest feedback and broken
+                # marking as the rail row path (resume no longer self-toasts
+                # for this failure class).
+                self._mark_console_conversation_row_broken(entry.conversation_id)
+                self.app_instance.notify(
+                    "This saved conversation could not be loaded - "
+                    "its record is missing.",
+                    severity="warning",
+                )
 
     async def _create_native_console_session_from_active_context(self) -> None:
         """Create and focus a native Console session in the active workspace context."""
@@ -1574,6 +1589,14 @@ class ChatScreen(BaseAppScreen):
     def on_console_change_workspace(self, event: Button.Pressed) -> None:
         """Open the active Console workspace switcher."""
         event.stop()
+        self._open_console_workspace_switcher()
+
+    def action_open_console_workspace_switcher(self) -> None:
+        """Open the workspace switcher (Alt+W / command palette, TASK-722)."""
+        self._open_console_workspace_switcher()
+
+    def _open_console_workspace_switcher(self) -> None:
+        """Open the active Console workspace switcher."""
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
         )
@@ -1596,7 +1619,7 @@ class ChatScreen(BaseAppScreen):
             return
         if not workspaces:
             self.app_instance.notify(
-                "Create a workspace in Library > Workspaces before switching.",
+                "Create one with the rail's New button or in Library > Details > Workspace.",
                 severity="warning",
             )
             return
@@ -1605,9 +1628,7 @@ class ChatScreen(BaseAppScreen):
             active_workspace.workspace_id if active_workspace is not None else None
         )
 
-        def _apply_workspace_switch(workspace_id: str | None) -> None:
-            if not workspace_id:
-                return
+        def _switch_to(workspace_id: str) -> None:
             try:
                 registry_service.set_active_workspace(workspace_id)
             except Exception:
@@ -1628,6 +1649,19 @@ class ChatScreen(BaseAppScreen):
                 group="console-sync",
             )
 
+        def _apply_workspace_switch(
+            result: tuple[str, str] | None,
+        ) -> None:
+            if not result:
+                return
+            action, workspace_id = result
+            if action == "switch":
+                _switch_to(workspace_id)
+            elif action == "rename":
+                self._open_console_workspace_rename(workspace_id)
+            elif action == "archive":
+                self._confirm_console_workspace_archive(workspace_id)
+
         self.app.push_screen(
             ConsoleWorkspaceSwitcherModal(
                 workspaces=workspaces,
@@ -1636,10 +1670,134 @@ class ChatScreen(BaseAppScreen):
             callback=_apply_workspace_switch,
         )
 
+    def _open_console_workspace_rename(self, workspace_id: str) -> None:
+        """Prompt for and apply a new workspace name (TASK-714)."""
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        if registry_service is None:
+            self.app_instance.notify(
+                "Workspace service is not ready.", severity="warning"
+            )
+            return
+        record = registry_service.get_workspace(workspace_id)
+        if record is None:
+            self.app_instance.notify(
+                "Workspace is no longer available.", severity="warning"
+            )
+            return
+
+        def _apply_rename(new_name: str | None) -> None:
+            if not new_name:
+                return
+            try:
+                renamed = registry_service.rename_workspace(workspace_id, new_name)
+            except WorkspaceRegistryServiceError as exc:
+                self.app_instance.notify(str(exc), severity="warning")
+                return
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Unable to rename Console workspace"
+                )
+                self.app_instance.notify(
+                    "Workspace could not be renamed.", severity="error"
+                )
+                return
+            self._sync_console_chat_core_state()
+            self._sync_console_workspace_context()
+            self.run_worker(
+                self._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            self.app_instance.notify(
+                f"Renamed workspace to {renamed.name}.", severity="information"
+            )
+
+        self.app.push_screen(
+            ConsoleWorkspaceRenameModal(current_name=record.name),
+            callback=_apply_rename,
+        )
+
+    def _confirm_console_workspace_archive(self, workspace_id: str) -> None:
+        """Confirm and archive a workspace (TASK-714)."""
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        if registry_service is None:
+            self.app_instance.notify(
+                "Workspace service is not ready.", severity="warning"
+            )
+            return
+        record = registry_service.get_workspace(workspace_id)
+        if record is None:
+            self.app_instance.notify(
+                "Workspace is no longer available.", severity="warning"
+            )
+            return
+        was_active = bool(record.active)
+
+        # ConfirmationDialog awaits its confirm callback, so this must be a
+        # coroutine function.
+        async def _archive() -> None:
+            try:
+                registry_service.archive_workspace(workspace_id)
+            except WorkspaceRegistryServiceError as exc:
+                self.app_instance.notify(str(exc), severity="warning")
+                return
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Unable to archive Console workspace"
+                )
+                self.app_instance.notify(
+                    "Workspace could not be archived.", severity="error"
+                )
+                return
+            self._sync_console_chat_core_state()
+            if was_active:
+                self._activate_console_session_for_workspace(DEFAULT_WORKSPACE_ID)
+            self._sync_console_workspace_context()
+            self.run_worker(
+                self._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            suffix = (
+                " Console switched to the Default workspace."
+                if was_active
+                else ""
+            )
+            self.app_instance.notify(
+                f"Archived {record.name}. Its conversations stay saved in "
+                f"Library.{suffix}",
+                severity="information",
+            )
+
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Archive workspace?",
+                message=(
+                    f"Archive {record.name}? Its conversations stay saved and "
+                    "remain visible in Library; the workspace disappears from "
+                    "the switcher and the Console browser."
+                ),
+                confirm_label="Archive",
+                confirm_callback=_archive,
+            )
+        )
+
     @on(Button.Pressed, "#console-new-workspace")
     def on_console_new_workspace(self, event: Button.Pressed) -> None:
         """Create a new local workspace from the Console rail and activate it."""
         event.stop()
+        self._create_console_workspace()
+
+    def action_new_console_workspace(self) -> None:
+        """Create a local workspace from the command palette (TASK-722)."""
+        self._create_console_workspace()
+
+    def _create_console_workspace(self) -> None:
+        """Create a new local workspace and activate it."""
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
         )
@@ -1677,6 +1835,13 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_workspace_context()
         self.run_worker(
             self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+        )
+        # TASK-713: creation also activates the workspace and opens a tab;
+        # without a notification the whole sequence is invisible when the
+        # Workspace status row is scrolled out of view.
+        self.app_instance.notify(
+            f"Created {workspace_name} and switched Console to it.",
+            severity="information",
         )
 
     @on(Button.Pressed, "#console-workspace-rag-scope-open")
@@ -4670,17 +4835,43 @@ class ChatScreen(BaseAppScreen):
                 row.loading = loading
                 return
 
+    def _mark_console_conversation_row_broken(self, conversation_id: str) -> None:
+        """Record a conversation whose record is missing and refresh the rail.
+
+        TASK-717: openability cannot be known at render time without probing
+        the DB per row, so rows are marked lazily after the first informative
+        failure and stay visibly broken for the rest of the session.
+        """
+        target = str(conversation_id or "").strip()
+        if not target:
+            return
+        broken = getattr(self, "_console_broken_conversation_ids", None)
+        if broken is None:
+            broken = set()
+            self._console_broken_conversation_ids = broken
+        if target in broken:
+            return
+        broken.add(target)
+        self._sync_console_workspace_context()
+
     async def _resume_console_workspace_conversation(
         self,
         conversation_id: str,
         *,
         target_scope_type: str | None = None,
         target_workspace_id: str | None = None,
-    ) -> bool:
-        """Load a persisted saved conversation into a native Console session."""
+    ) -> bool | None:
+        """Load a persisted saved conversation into a native Console session.
+
+        Returns:
+            True on success; None on a transient failure this method already
+            notified about (service unavailable / load error); False when the
+            conversation record is missing - the caller owns that failure's
+            feedback (TASK-717).
+        """
         target = str(conversation_id or "").strip()
         if not target:
-            return False
+            return None
         # TASK-339: keystrokes typed while the conversation tree loads
         # belong to the resumed session — snapshot the composer now.
         self._capture_console_draft_switch_snapshot()
@@ -4697,7 +4888,7 @@ class ChatScreen(BaseAppScreen):
                 "Saved conversation resume is unavailable in this build.",
                 severity="warning",
             )
-            return False
+            return None
 
         try:
             # Task 8: raise the depth/root caps well past the service defaults
@@ -4715,13 +4906,12 @@ class ChatScreen(BaseAppScreen):
                 "Unable to load this saved conversation.",
                 severity="error",
             )
-            return False
+            return None
 
         if not isinstance(tree, dict) or not tree.get("conversation"):
-            self.app_instance.notify(
-                "Saved conversation was not found.",
-                severity="warning",
-            )
+            # TASK-717: missing record - the caller owns this failure's UX
+            # (honest toast + marking the row visibly broken), so do not
+            # stack a second notification here.
             return False
 
         conversation = tree.get("conversation")
@@ -5029,6 +5219,18 @@ class ChatScreen(BaseAppScreen):
                 or active_workspace.workspace_id != workspace_id
             ):
                 registry_service.set_active_workspace(workspace_id)
+                # TASK-713: opening a row from another workspace's group
+                # retargets the whole Console context; the Workspace status
+                # row is usually scrolled out of view at that moment, so the
+                # side effect needs an explicit announcement.
+                switched = registry_service.get_active_workspace()
+                switched_name = (
+                    switched.name if switched is not None else workspace_id
+                )
+                self.app_instance.notify(
+                    f"Switched Console to {switched_name}.",
+                    severity="information",
+                )
             self._ensure_console_chat_store().set_workspace_context(
                 self._current_console_workspace_context()
             )
@@ -5281,6 +5483,8 @@ class ChatScreen(BaseAppScreen):
                     ),
                     source_kind="membership",
                     updated_sort=str(getattr(membership, "created_at", "") or ""),
+                    openable=conversation_id
+                    not in getattr(self, "_console_broken_conversation_ids", set()),
                 )
                 rows.append(self._apply_console_browser_star_state(row, starred_ids))
         return rows
@@ -15078,8 +15282,16 @@ class ChatScreen(BaseAppScreen):
                 if resumed:
                     await self._refresh_console_conversation_browser_after_selection()
                     return
+                if resumed is None:
+                    # Transient failure; the resume path already explained it.
+                    return
+                # TASK-717: the record is missing - say so honestly (Library
+                # has no affordance for a nonexistent record) and mark the
+                # row visibly broken so it stops presenting as openable.
+                self._mark_console_conversation_row_broken(row_conversation_id)
                 self.app_instance.notify(
-                    "Open this saved conversation from Library before switching here.",
+                    "This saved conversation could not be loaded - "
+                    "its record is missing.",
                     severity="warning",
                 )
                 return

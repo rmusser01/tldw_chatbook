@@ -108,9 +108,6 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
             ComposeResult yielding the status-pair widget.
         """
         label, value = self._split_status_row(text, fallback_label)
-        if fallback_label == "Handoff" and label != fallback_label:
-            value = f"{label}: {value}"
-            label = fallback_label
         yield ConsoleWorkspaceStatusPair(
             label,
             value,
@@ -118,8 +115,27 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
             value_id=value_id,
         )
 
+    def _server_features_unconfigured(self) -> bool:
+        """True when sync, server handoff, and ACP are all factory defaults.
+
+        TASK-715: none of these can be configured anywhere in the UI today
+        (no production writer for server adapter state, sync status, or ACP
+        handoff state), so their default rows are aspirational jargon. They
+        collapse into one plain line until any of them reports real state.
+        """
+        sync = str(self.state.sync_label or "").strip().lower()
+        server = str(self.state.server_readiness_label or "").strip().lower()
+        acp = str(self.state.acp_handoff_label or "").strip().lower()
+        return (
+            sync == "sync: not configured"
+            and server.startswith("server: local fallback")
+            and acp.startswith("acp task/run: unavailable")
+        )
+
     def compose(self) -> ComposeResult:
         """Render workspace status, readiness, runtime, and handoff rows."""
+
+        collapse_server_features = self._server_features_unconfigured()
 
         yield from self._status_pair(
             self._friendly_status_label(self.state.authority_label),
@@ -127,29 +143,38 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
             value_id="console-workspace-authority-value",
             fallback_label="Storage",
         )
-        yield from self._status_pair(
-            self._friendly_status_label(self.state.sync_label),
-            label_id="console-workspace-sync-label",
-            value_id="console-workspace-sync-value",
-            fallback_label="Sync",
-        )
+        if not collapse_server_features:
+            yield from self._status_pair(
+                self._friendly_status_label(self.state.sync_label),
+                label_id="console-workspace-sync-label",
+                value_id="console-workspace-sync-value",
+                fallback_label="Sync",
+            )
         yield from self._status_pair(
             self._friendly_status_label(self.state.runtime_label),
             label_id="console-workspace-runtime-label",
             value_id="console-workspace-runtime-value",
             fallback_label="File tools",
         )
-        yield from self._status_pair(
-            self._friendly_status_label(self.state.server_readiness_label),
-            label_id="console-workspace-server-readiness-label",
-            value_id="console-workspace-server-readiness-value",
-            fallback_label="Server handoff",
-        )
-        yield self._static(
-            self._friendly_detail_copy(self.state.server_readiness_detail),
-            id="console-workspace-server-readiness-detail",
-            classes="console-workspace-recovery",
-        )
+        if collapse_server_features:
+            yield self._static(
+                "Server features (sync, handoff, ACP): not configured. "
+                "Chats stay local.",
+                id="console-workspace-server-features-collapsed",
+                classes="console-workspace-recovery",
+            )
+        else:
+            yield from self._status_pair(
+                self._friendly_status_label(self.state.server_readiness_label),
+                label_id="console-workspace-server-readiness-label",
+                value_id="console-workspace-server-readiness-value",
+                fallback_label="Server",
+            )
+            yield self._static(
+                self._friendly_detail_copy(self.state.server_readiness_detail),
+                id="console-workspace-server-readiness-detail",
+                classes="console-workspace-recovery",
+            )
         yield self._static(
             "Handoff",
             id="console-workspace-handoff-title",
@@ -170,22 +195,23 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
                     id="console-workspace-handoff-empty",
                     classes="console-workspace-empty-copy",
                 )
-        yield from self._status_pair(
-            self._friendly_status_label(self.state.acp_handoff_label),
-            label_id="console-workspace-handoff-label",
-            value_id="console-workspace-handoff-value",
-            fallback_label="Handoff",
-        )
-        yield self._static(
-            self._friendly_detail_copy(self.state.acp_handoff_detail),
-            id="console-workspace-acp-handoff-detail",
-            classes="console-workspace-recovery",
-        )
-        yield self._static(
-            self.state.acp_handoff_audit,
-            id="console-workspace-acp-handoff-audit",
-            classes="console-workspace-recovery",
-        )
+        if not collapse_server_features:
+            yield from self._status_pair(
+                self._friendly_status_label(self.state.acp_handoff_label),
+                label_id="console-workspace-handoff-label",
+                value_id="console-workspace-handoff-value",
+                fallback_label="ACP",
+            )
+            yield self._static(
+                self._friendly_detail_copy(self.state.acp_handoff_detail),
+                id="console-workspace-acp-handoff-detail",
+                classes="console-workspace-recovery",
+            )
+            yield self._static(
+                self.state.acp_handoff_audit,
+                id="console-workspace-acp-handoff-audit",
+                classes="console-workspace-recovery",
+            )
 
     @staticmethod
     def _friendly_status_label(label: str) -> str:
@@ -201,7 +227,9 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
         if normalized == "sync: not configured":
             return "Sync: Off"
         if normalized.startswith("runtime: none, file tools disabled"):
-            return "File tools: Off in Default workspace"
+            # TASK-715: "Off in Default workspace" ellipsized in the rail's
+            # ~23-cell value column even in its own default state.
+            return "File tools: Off in Default"
         if normalized.startswith("runtime: none"):
             return "File tools: Off"
         if normalized.startswith("runtime:"):
@@ -212,16 +240,21 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
                     label = f"{label}, {readiness.group(2)} missing"
                 return label
             return raw.replace("Runtime:", "File tools:", 1)
+        # TASK-715: "Server handoff" (14 cells) wrapped in the 12-cell label
+        # column, leaving an orphaned lowercase "handoff" line; and mapping
+        # ACP rows to "ACP handoff:" made two different rows share a label
+        # with the Handoff package section. Use "Server" / "ACP" - both fit,
+        # and the Handoff section title keeps the handoff wording.
         if normalized == "server: local fallback":
-            return "Server handoff: Not configured"
+            return "Server: Not configured"
         if normalized.startswith("server: unavailable"):
-            return "Server handoff: Unavailable"
+            return "Server: Unavailable"
         if normalized.startswith("server:"):
-            return raw.replace("Server:", "Server handoff:", 1)
+            return raw
         if normalized.startswith("acp task/run: unavailable"):
-            return "ACP handoff: Not configured"
+            return "ACP: Not configured"
         if normalized.startswith("acp task/run:"):
-            return raw.replace("ACP task/run:", "ACP handoff:", 1)
+            return raw.replace("ACP task/run:", "ACP:", 1)
         return raw
 
     @staticmethod

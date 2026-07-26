@@ -3147,6 +3147,19 @@ ConsoleSystemPromptModal {
     color: $ds-text-muted;
 }
 
+/* TASK-716: pressable-but-blocked Library source actions render dim; the
+   press handler explains the block instead of a dead disabled button. */
+.library-source-action-blocked {
+    color: $ds-text-muted;
+}
+
+/* TASK-717: conversation rows whose record is proven missing render dim and
+   inert instead of impersonating openable chats. */
+.console-workspace-conversation-row-broken {
+    color: $ds-text-muted;
+    text-style: italic;
+}
+
 .console-workspace-action-row {
     height: auto;
     min-height: 1;
@@ -3157,6 +3170,12 @@ ConsoleSystemPromptModal {
     height: 1;
     min-height: 1;
     margin: 0 1 0 0;
+    /* TASK-712: Textual's default Button min-width (16) made Switch consume
+       the whole action row after the row's 12-col indent, pushing New's
+       label past the rail clip - invisible but still clickable. Size the
+       compact actions to their labels so both fit the ~20-col row. */
+    min-width: 5;
+    width: auto;
 }
 
 #console-transcript-empty-state,
