@@ -546,9 +546,9 @@ def test_repository_factory_owns_fixed_closed_retrieval_policy(
         PolicyCapability.VIEW_SNAPSHOT,
         PolicyCapability.VIEW_SOURCE_IDENTITY,
     )
-    assert PolicyCapability.RESOLVE_CURRENT_SOURCE not in captured[
-        "policy_capabilities"
-    ]
+    assert (
+        PolicyCapability.RESOLVE_CURRENT_SOURCE not in captured["policy_capabilities"]
+    )
     assert PolicyCapability.OPEN_NATIVE not in captured["policy_capabilities"]
     assert PolicyCapability.OPEN_EXTERNAL not in captured["policy_capabilities"]
     assert set(captured) == {

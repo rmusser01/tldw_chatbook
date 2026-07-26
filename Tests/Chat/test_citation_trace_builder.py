@@ -1054,7 +1054,9 @@ def test_record_initial_answer_attempt_retains_governed_body_and_metadata() -> N
     assert attempt.attempt_id == attempt_id
     assert attempt.attempt_ordinal == 1
     assert attempt.kind is AnswerAttemptKind.INITIAL
-    assert attempt.prompt_evidence_set_id == builder.prompt_evidence_sets[0].prompt_set_id
+    assert (
+        attempt.prompt_evidence_set_id == builder.prompt_evidence_sets[0].prompt_set_id
+    )
     assert attempt.answer_payload_ref == payload.payload_id
     assert attempt.occurrences == ()
     assert attempt.created_at == NOW
@@ -1128,9 +1130,7 @@ def test_answer_body_byte_cap_rejects_initial_attempt_atomically() -> None:
     builder = _builder()
     prompt_set_id = _record_prompt_set(builder)
     sentinel = "ANSWER_BODY_SECRET_SENTINEL"
-    oversized = sentinel * (
-        (ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX // len(sentinel)) + 1
-    )
+    oversized = sentinel * ((ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX // len(sentinel)) + 1)
 
     with pytest.raises(ValueError, match="answer_body exceeds") as captured:
         builder.record_initial_answer_attempt(
@@ -1214,7 +1214,9 @@ def test_initial_answer_rejects_naive_completion_explicitly_and_atomically() -> 
     prompt_set_id = _record_prompt_set(builder)
     body_sentinel = "ANSWER_COMPLETION_BODY_SENTINEL"
 
-    with pytest.raises(ValueError, match="completed_at must be timezone-aware") as captured:
+    with pytest.raises(
+        ValueError, match="completed_at must be timezone-aware"
+    ) as captured:
         builder.record_initial_answer_attempt(
             prompt_evidence_set_id=prompt_set_id,
             answer_body=body_sentinel,
@@ -1241,7 +1243,9 @@ def test_attempt_completion_cannot_precede_prompt_creation_and_is_atomic() -> No
     assert builder.answer_attempt_payloads == ()
 
 
-def test_second_initial_answer_attempt_is_rejected_without_repair_or_rerun_api() -> None:
+def test_second_initial_answer_attempt_is_rejected_without_repair_or_rerun_api() -> (
+    None
+):
     builder, first_attempt_id = _builder_with_initial_answer()
 
     with pytest.raises(ValueError, match="initial answer attempt"):
@@ -1285,21 +1289,17 @@ def test_seal_returns_one_shot_local_immutable_write_with_fixed_linkage() -> Non
     assert trace.policy_version == TEST_POLICY_VERSION
     assert trace.policy_capabilities == TEST_POLICY_CAPABILITIES
     assert sealed_write.evidence_run_payloads == builder.evidence_run_payloads
-    assert (
-        sealed_write.evidence_snapshot_payloads
-        == builder.evidence_snapshot_payloads
-    )
+    assert sealed_write.evidence_snapshot_payloads == builder.evidence_snapshot_payloads
     assert sealed_write.answer_attempt_payloads == builder.answer_attempt_payloads
     trace_json = json.dumps(trace.model_dump(mode="json"), sort_keys=True)
     assert answer_body not in trace_json
     assert sealed_write.answer_attempt_payloads[0].body_integrity_hmac not in trace_json
     assert sealed_write.answer_attempt_payloads[0].answer_body == answer_body
-    assert (
-        sealed_write.answer_attempt_payloads[0].body_integrity_hmac
-        == CitationFingerprintCodec(SECRET).fingerprint(
-            CitationFingerprintDomain.MESSAGE_BODY,
-            answer_body,
-        )
+    assert sealed_write.answer_attempt_payloads[
+        0
+    ].body_integrity_hmac == CitationFingerprintCodec(SECRET).fingerprint(
+        CitationFingerprintDomain.MESSAGE_BODY,
+        answer_body,
     )
     persistence_retry = sealed_write
     assert persistence_retry is sealed_write
