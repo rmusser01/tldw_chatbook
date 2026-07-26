@@ -4,7 +4,7 @@ title: Capture answer attempts and seal terminal local citation traces
 status: Done
 assignee: []
 created_date: '2026-07-26 18:18'
-updated_date: '2026-07-26 20:36'
+updated_date: '2026-07-26 20:46'
 labels:
   - rag
   - citations
@@ -64,6 +64,6 @@ Detailed plan: Docs/superpowers/plans/2026-07-26-local-answer-attempt-terminal-s
 - Added real CharactersRAGDB controller integration proving atomic message/trace graph ownership, marker-free empty occurrences, governed-body privacy, restart discovery, and deterministic owner-stage rollback with no partial provenance.
 - Plan deviation/privacy fix: the real RED test exposed message bodies in CharactersRAGDB SQL DEBUG parameter previews. Added an explicit redact_params keyword to execute_query and enabled it only for add_message's sensitive INSERT; default SQL preview and execution/error semantics remain unchanged. Added focused SQL-log regression coverage.
 - ADR required: yes. ADR path: backlog/decisions/024-rag-citation-provenance-and-source-resolution.md. Reason: Direct implementation of the accepted terminal seal and atomic ownership contract; no new decision.
-- Scoped verification: SQL-log RED 1 failed/13 deselected, then GREEN 1 passed/13 deselected; complete SQL-log file 14 passed; real integration RED 2 failed/35 deselected solely on privacy, then GREEN 2 passed/35 deselected; final plan gate 254 passed/506 deselected with one existing dependency warning; targeted Ruff lint/format and git diff --check passed.
+- Scoped verification: SQL-log RED 1 failed/13 deselected, then GREEN 1 passed/13 deselected; complete SQL-log file 14 passed; real integration RED 2 failed/35 deselected solely on privacy, then GREEN 2 passed/35 deselected; final plan gate 254 passed/506 deselected with one existing dependency warning. Ruff lint passed on touched Python files; Ruff format check passed on the changed test files. Whole-file Ruff format for ChaChaNotes_DB.py retains identical pre-existing baseline drift before and after this task, while the changed execute_query and add_message hunks are formatter-stable. git diff --check passed.
 - Task-6 files: Tests/Chat/test_console_terminal_citation_persistence.py, Tests/DB/test_sql_debug_logging.py, tldw_chatbook/DB/ChaChaNotes_DB.py, and this Backlog task file.
 <!-- SECTION:NOTES:END -->

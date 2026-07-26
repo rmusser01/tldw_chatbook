@@ -1190,4 +1190,5 @@ async def test_real_rollback_deterministic_unavailable_falls_back_without_trace_
 
     log_output = log_stream.getvalue()
     _assert_content_free_diagnostics(log_output)
+    assert "forced_deterministic_unavailable" not in log_output
     assert builder.answer_attempt_payloads[0].body_integrity_hmac not in log_output
