@@ -294,7 +294,7 @@ class BuiltinToolProvider:
                 # note_management_tools was unimportable on dev for an unknown
                 # period (it imported a name that exists only inside a string
                 # literal in config.py) and nothing surfaced it. The legacy
-                # path logs the same failure (tool_executor.py:725/738/779/805).
+                # legacy path logged the same failure before it was retired (P3).
                 logger.warning(
                     f"Could not register builtin tool {entry.factory_name} "
                     f"(gate {entry.gate_key} is enabled): {exc}"
