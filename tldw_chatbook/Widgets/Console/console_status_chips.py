@@ -267,6 +267,7 @@ class ConsoleStatusChips(Horizontal):
         label_values = {
             "#console-provider-chip": state.provider_label,
             "#console-model-chip": state.model_label,
+            "#console-character-chip": state.character_label,
             "#console-persona-chip": state.user_profile_label,
             "#console-rag-chip": state.rag_label,
             "#console-sources-chip": state.sources_label,

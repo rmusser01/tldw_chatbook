@@ -96,3 +96,26 @@ async def test_approvals_chip_posts_review_requested():
         assert any(
             isinstance(m, ConsoleApprovalsChip.ReviewRequested) for m in posted
         )
+
+
+@pytest.mark.asyncio
+async def test_status_chips_sync_updates_character_chip():
+    """The character chip must refresh on sync, not stay at its compose value.
+
+    Live repro: starting a chat from a character rendered "Character: none"
+    forever, because the chip was painted once at compose (before any character
+    existed) and `sync_state` never touched it again.
+    """
+    app = _ChipsApp(_state())
+    async with app.run_test(size=(160, 6)) as pilot:
+        await pilot.pause()
+        chips = app.query_one("#console-status-chips", ConsoleStatusChips)
+        chips.sync_state(
+            ConsoleControlState.from_values(
+                provider="llama_cpp", model="m", character="Seraphina"
+            )
+        )
+        await pilot.pause()
+
+        chip = app.query_one("#console-character-chip")
+        assert "Seraphina" in str(chip.render())
