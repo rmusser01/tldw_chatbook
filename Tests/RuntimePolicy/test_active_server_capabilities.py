@@ -451,7 +451,77 @@ async def test_active_server_capabilities_does_not_call_server_when_unconfigured
     assert snapshot["auth_state"] == "unknown"
     assert snapshot["errors"][0]["reason_code"] == "server_not_configured"
     assert runtime_scope.calls == []
-    assert context.snapshot()[1] == 1
+    assert context.snapshot()[1] == 0
+
+
+@pytest.mark.asyncio
+async def test_clean_unconfigured_refresh_is_a_repeatable_no_op():
+    from tldw_chatbook.runtime_policy.server_capabilities import (
+        ActiveServerCapabilityService,
+    )
+
+    initial = RuntimeSourceState(active_source="local", server_configured=False)
+    store = RecordingRuntimeStore()
+    published: list[RuntimeSourceState] = []
+    context = RuntimePolicyContext(
+        initial,
+        store,
+        publish=published.append,
+    )
+    runtime_scope = FakeServerRuntimeScope()
+    service = ActiveServerCapabilityService(
+        runtime_context=context,
+        server_runtime_scope_service=runtime_scope,
+    )
+
+    first_snapshot = await service.refresh()
+    second_snapshot = await service.refresh()
+
+    assert first_snapshot["errors"][0]["reason_code"] == "server_not_configured"
+    assert second_snapshot["errors"][0]["reason_code"] == "server_not_configured"
+    assert context.snapshot() == (initial, 0)
+    assert store.saved_states == []
+    assert published == []
+    assert runtime_scope.calls == []
+
+
+@pytest.mark.asyncio
+async def test_dirty_unconfigured_probe_fields_are_cleared_with_one_commit():
+    from tldw_chatbook.runtime_policy.server_capabilities import (
+        ActiveServerCapabilityService,
+    )
+
+    initial = RuntimeSourceState(
+        active_source="local",
+        server_configured=False,
+        server_reachability="reachable",
+        server_reachability_checked_at=datetime(
+            2026, 4, 28, 12, 0, tzinfo=timezone.utc
+        ),
+        server_auth_state="authenticated",
+        server_auth_checked_at=datetime(2026, 4, 28, 12, 1, tzinfo=timezone.utc),
+    )
+    clean = replace(
+        initial,
+        server_reachability="unknown",
+        server_reachability_checked_at=None,
+        server_auth_state="unknown",
+        server_auth_checked_at=None,
+    )
+    store = RecordingRuntimeStore()
+    context = RuntimePolicyContext(initial, store)
+    runtime_scope = FakeServerRuntimeScope()
+    service = ActiveServerCapabilityService(
+        runtime_context=context,
+        server_runtime_scope_service=runtime_scope,
+    )
+
+    snapshot = await service.refresh()
+
+    assert snapshot["errors"][0]["reason_code"] == "server_not_configured"
+    assert context.snapshot() == (clean, 1)
+    assert store.saved_states == [clean]
+    assert runtime_scope.calls == []
 
 
 @pytest.mark.asyncio
@@ -610,15 +680,7 @@ async def test_no_server_configured_branch_returns_superseded_fresh_authority():
         ActiveServerCapabilityService,
     )
 
-    captured = RuntimeSourceState(
-        active_source="local",
-        server_reachability="reachable",
-        server_reachability_checked_at=datetime(
-            2026, 4, 28, 12, 0, tzinfo=timezone.utc
-        ),
-        server_auth_state="authenticated",
-        server_auth_checked_at=datetime(2026, 4, 28, 12, 1, tzinfo=timezone.utc),
-    )
+    captured = RuntimeSourceState(active_source="local")
     fresh = RuntimeSourceState(
         active_source="server",
         active_server_id="https://fresh.example.test/api",
@@ -634,11 +696,8 @@ async def test_no_server_configured_branch_returns_superseded_fresh_authority():
 
     snapshot = await service.refresh()
 
-    assert len(context.commit_calls) == 1
-    candidate, expected_revision = context.commit_calls[0]
-    assert expected_revision == 7
-    assert candidate.server_reachability == "unknown"
-    assert candidate.server_auth_state == "unknown"
+    assert context.commit_calls == []
+    assert context.snapshot_calls == 2
     assert snapshot["errors"][0]["reason_code"] == "capability_result_superseded"
     assert snapshot["active_server_id"] == fresh.active_server_id
     assert snapshot["health"] == {}

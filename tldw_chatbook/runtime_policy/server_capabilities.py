@@ -33,12 +33,17 @@ class ActiveServerCapabilityService:
                 server_auth_state="unknown",
                 server_auth_checked_at=None,
             )
-            if not self.runtime_context.commit_state(
-                updated_state,
-                expected_revision=revision,
-            ):
-                fresh_state, _ = self.runtime_context.snapshot()
-                return self._superseded_snapshot(fresh_state, now=now)
+            if updated_state != state:
+                if not self.runtime_context.commit_state(
+                    updated_state,
+                    expected_revision=revision,
+                ):
+                    fresh_state, _ = self.runtime_context.snapshot()
+                    return self._superseded_snapshot(fresh_state, now=now)
+            else:
+                fresh_state, fresh_revision = self.runtime_context.snapshot()
+                if fresh_revision != revision or fresh_state != state:
+                    return self._superseded_snapshot(fresh_state, now=now)
             return self._snapshot(
                 state=updated_state,
                 now=now,

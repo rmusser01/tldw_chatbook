@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, replace
 import threading
@@ -158,8 +159,8 @@ def test_snapshot_reads_remain_coherent_during_owner_thread_commits() -> None:
     reader_started = threading.Event()
     commits_finished = threading.Event()
 
-    def read_snapshots() -> list[tuple[RuntimeSourceState, int]]:
-        observed: list[tuple[RuntimeSourceState, int]] = []
+    def read_snapshots() -> deque[tuple[RuntimeSourceState, int]]:
+        observed: deque[tuple[RuntimeSourceState, int]] = deque(maxlen=256)
         reader_started.set()
         while not commits_finished.is_set():
             observed.append(context.snapshot())
@@ -168,18 +169,20 @@ def test_snapshot_reads_remain_coherent_during_owner_thread_commits() -> None:
 
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(read_snapshots)
-        assert reader_started.wait(timeout=2)
-        for revision in range(1, 31):
-            candidate = RuntimeSourceState(
-                active_source="server",
-                active_server_id=str(revision),
-                server_configured=True,
-            )
-            assert context.commit_state(
-                candidate,
-                expected_revision=revision - 1,
-            )
-        commits_finished.set()
+        try:
+            assert reader_started.wait(timeout=2)
+            for revision in range(1, 31):
+                candidate = RuntimeSourceState(
+                    active_source="server",
+                    active_server_id=str(revision),
+                    server_configured=True,
+                )
+                assert context.commit_state(
+                    candidate,
+                    expected_revision=revision - 1,
+                )
+        finally:
+            commits_finished.set()
         observed = future.result(timeout=2)
 
     assert observed
