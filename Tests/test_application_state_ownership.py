@@ -166,6 +166,7 @@ class ContextOwnershipVisitor(ScopedVisitor):
     def __init__(self, path: Path) -> None:
         super().__init__(path)
         self.violations: list[str] = []
+        self.allowed_owner_store_loads: set[int] = set()
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         receiver = _chain(node.value)
@@ -178,9 +179,7 @@ class ContextOwnershipVisitor(ScopedVisitor):
         ):
             allowed = (
                 self.function_name == "__init__" and isinstance(node.ctx, ast.Store)
-            ) or (
-                self.function_name == "commit_state" and isinstance(node.ctx, ast.Load)
-            )
+            ) or id(node) in self.allowed_owner_store_loads
             if not allowed:
                 self._record(node, "owner private-store access outside commit")
         if node.attr == "persist" and _is_context_receiver(receiver):
@@ -205,6 +204,15 @@ class ContextOwnershipVisitor(ScopedVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         if isinstance(node.func, ast.Attribute):
             receiver = _chain(node.func.value)
+            direct_owner_store_save = (
+                node.func.attr == "save"
+                and isinstance(node.func.value, ast.Attribute)
+                and receiver == "self._store"
+                and self.class_name == "RuntimePolicyContext"
+                and self.function_name == "commit_state"
+            )
+            if direct_owner_store_save:
+                self.allowed_owner_store_loads.add(id(node.func.value))
             if node.func.attr == "save" and (
                 receiver == "self._store"
                 or _has_final_component(
@@ -212,11 +220,7 @@ class ContextOwnershipVisitor(ScopedVisitor):
                     {"runtime_store", "runtime_policy_store"},
                 )
             ):
-                if not (
-                    self.class_name == "RuntimePolicyContext"
-                    and self.function_name == "commit_state"
-                    and receiver == "self._store"
-                ):
+                if not direct_owner_store_save:
                     self._record(node, "runtime store save outside commit")
         if isinstance(node.func, ast.Name) and node.args:
             attribute_name = _constant_attribute_name(node)
@@ -350,6 +354,33 @@ class RuntimePolicyContext:
     )
 
     assert visitor.violations == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "return self._store",
+        "return self._store.save",
+        "callback = self._store.save",
+    ],
+)
+def test_context_guard_rejects_commit_state_store_and_bound_save_escapes(
+    body: str,
+) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            f"""
+class RuntimePolicyContext:
+    def commit_state(self):
+        {body}
+"""
+        )
+    )
+
+    assert visitor.violations
 
 
 def test_context_guard_does_not_infer_dynamic_getattr_names() -> None:
