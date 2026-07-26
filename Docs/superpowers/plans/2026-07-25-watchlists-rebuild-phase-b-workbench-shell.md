@@ -451,7 +451,9 @@ git commit -m "feat(watchlists): persist workbench collapse state to config"
 
 **Interfaces:**
 - Consumes: `Region`, `CENTRE_REGIONS`, `RegionLayout` from Task 1.
-- Produces: `WatchlistsWorkbench(Horizontal)` with constructor `WatchlistsWorkbench(layout: RegionLayout, *, id: str | None = None)`, a `layout` reactive, and the message `RegionToggled(region: Region)` posted when a collapsed header or rail handle is activated. Task 5 mounts it and handles `RegionToggled`.
+- Produces: `WatchlistsWorkbench(Horizontal)` with constructor `WatchlistsWorkbench(layout: RegionLayout, *, id: str | None = None)`, a **`region_layout`** reactive, and the message `RegionToggled(region: Region)` posted when a collapsed header or rail handle is activated. Task 5 mounts it and handles `RegionToggled`.
+
+**The reactive cannot be called `layout`.** `Widget.layout` already exists in Textual as a read-only property the compositor calls `.arrange()` on during every render; shadowing it with a reactive breaks rendering. The constructor parameter stays `layout` for readability; the attribute is `region_layout`.
 
 Each region renders a titled body when expanded and a single-line header when collapsed. **A collapsed region's header stays focusable and clickable** — otherwise collapse is one-way when focus cannot return to it.
 
@@ -524,7 +526,7 @@ async def test_updating_the_layout_reactive_re_renders():
     app = _WorkbenchApp(RegionLayout())
     async with app.run_test() as pilot:
         workbench = app.query_one(WatchlistsWorkbench)
-        workbench.layout = RegionLayout(collapsed=frozenset({Region.LEFT_RAIL}))
+        workbench.region_layout = RegionLayout(collapsed=frozenset({Region.LEFT_RAIL}))
         await pilot.pause()
         assert app.query("#wl-header-left_rail")
         assert not app.query("#wl-region-left_rail")
@@ -971,7 +973,11 @@ Load persisted state in `on_mount`, before the first render:
         """Set the layout, push it to the workbench, and persist it."""
         self.region_layout = layout
         try:
-            self.query_one(WatchlistsWorkbench).layout = layout
+            # The workbench's reactive is `region_layout`, NOT `layout` —
+            # `Widget.layout` is an existing read-only Textual property the
+            # compositor calls .arrange() on every render, so shadowing it
+            # breaks rendering outright. Verified empirically in Task 3.
+            self.query_one(WatchlistsWorkbench).region_layout = layout
         except Exception:
             logger.debug("Workbench not mounted yet; layout will apply on compose.")
         save_region_layout(layout)
