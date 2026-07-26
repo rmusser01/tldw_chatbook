@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from io import StringIO
+import json
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from loguru import logger
 
 import tldw_chatbook.Chat.console_chat_store as console_chat_store_module
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.citation_provenance_runtime import (
+    CitationProvenanceRuntimePolicy,
+)
 from tldw_chatbook.Chat.citation_source_locators import CanonicalSourceKind
 from tldw_chatbook.Chat.citation_trace_builder import (
     CitationTraceBuilder,
@@ -27,13 +35,19 @@ from tldw_chatbook.Chat.citation_trace_models import (
     SealedCitationWrite,
 )
 from tldw_chatbook.Chat.citation_trace_repository import (
+    ActiveCitationTraceState,
     CitationPersistenceUnavailable,
+    CitationTraceRepository,
+    load_local_citation_identity_context,
 )
+from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     MessageAttachment,
 )
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 _MISSING = object()
@@ -167,6 +181,98 @@ class _RaisingSyncProducer:
         raise RuntimeError(_EXCEPTION_SENTINEL)
 
 
+class _DeterministicallyUnavailableRepository(CitationTraceRepository):
+    def _fail_after(self, row_family: str) -> None:
+        if row_family == "owner":
+            raise CitationPersistenceUnavailable("forced_deterministic_unavailable")
+
+
+class _RealDirectGateway:
+    def __init__(self, chunks: tuple[str, ...]) -> None:
+        self.chunks = chunks
+
+    async def resolve_for_send(self, _selection: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            ready=True,
+            visible_copy="",
+            provider="llama_cpp",
+            model="test-model",
+            max_tokens=128,
+        )
+
+    async def stream_chat(
+        self,
+        _resolution: object,
+        _messages: object,
+    ):
+        for chunk in self.chunks:
+            yield chunk
+
+
+@dataclass(slots=True)
+class _RealCitationStack:
+    db_path: Path
+    client_id: str
+    db: CharactersRAGDB
+    codec: CitationFingerprintCodec
+    repository: CitationTraceRepository
+    store: ConsoleChatStore
+    closed: bool = False
+
+    def close(self) -> None:
+        if not self.closed:
+            self.db.close_connection()
+            self.closed = True
+
+
+@pytest.fixture
+def real_citation_stack_factory(tmp_path: Path):
+    stacks: list[_RealCitationStack] = []
+
+    def create(
+        name: str,
+        repository_type: type[CitationTraceRepository] = CitationTraceRepository,
+    ) -> _RealCitationStack:
+        client_id = f"{name}-client"
+        db_path = tmp_path / f"{name}.sqlite"
+        db = CharactersRAGDB(db_path, client_id=client_id)
+        identity = load_local_citation_identity_context(db)
+        assert identity is not None
+        codec = CitationFingerprintCodec(b"task-553.14-real-integration-key")
+        repository = repository_type(
+            db,
+            policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+            identity_context=identity,
+            fingerprint_codec=codec,
+        )
+        persistence = ChatPersistenceService(
+            db,
+            citation_repository=repository,
+        )
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.ensure_session(
+            settings=ConsoleSessionSettings(provider="llama_cpp")
+        )
+        session.persisted_conversation_id = persistence.create_conversation(
+            runtime_backend="local"
+        )
+        stack = _RealCitationStack(
+            db_path=db_path,
+            client_id=client_id,
+            db=db,
+            codec=codec,
+            repository=repository,
+            store=store,
+        )
+        stacks.append(stack)
+        return stack
+
+    yield create
+
+    for stack in stacks:
+        stack.close()
+
+
 def _assert_terminal_state_paired(store: ConsoleChatStore) -> None:
     assert set(store._terminal_citation_finalizers) == set(
         store._terminal_persistence_deferred_ids
@@ -252,6 +358,99 @@ def _sealed_write_for_body(body: str) -> SealedCitationWrite:
         selected_attempt_id=attempt_id,
         sealed_at=_NOW + timedelta(seconds=1),
     )
+
+
+def _real_captured_builder(
+    repository: CitationTraceRepository,
+) -> tuple[CitationTraceBuilder, str]:
+    builder = repository.create_local_trace_builder(
+        request_id="request-real-terminal",
+        generation_id="generation-real-terminal",
+    )
+    assert builder is not None
+    captured_at = datetime.now(UTC)
+    run_id = builder.record_retrieval_run(
+        stage="hybrid",
+        raw_query=_QUERY_SENTINEL,
+        candidates=(
+            LocalRetrievalCandidateCapture(
+                candidate_rank=1,
+                source_kind=CanonicalSourceKind.MEDIA_DB,
+                source_id=_SOURCE_SENTINEL,
+                title=_TITLE_SENTINEL,
+                score_kind=RetrievalScoreKind.VECTOR_SIMILARITY,
+                score_scale=RetrievalScoreScale.ZERO_TO_ONE,
+                score=0.9,
+                chunk_id=_LOCATOR_SENTINEL,
+            ),
+        ),
+        retrieval_metadata=LocalRetrievalRunMetadata(
+            search_mode="hybrid",
+            requested_top_k=1,
+            max_context_characters=1_000,
+            rerank_enabled=False,
+            source_kinds=(CanonicalSourceKind.MEDIA_DB,),
+            scope_state="unscoped",
+        ),
+        started_at=captured_at,
+        ended_at=captured_at,
+    )
+    prompt_id = builder.record_prompt_evidence_set(
+        run_id=run_id,
+        evidence=(
+            LocalPromptEvidenceCapture(
+                candidate_rank=1,
+                snapshot_text=f"[S1] {_SNAPSHOT_SENTINEL}",
+            ),
+        ),
+        created_at=captured_at,
+    )
+    return builder, prompt_id
+
+
+def _real_controller(
+    stack: _RealCitationStack,
+    builder: CitationTraceBuilder,
+    prompt_id: str,
+) -> ConsoleChatController:
+    async def capture(_draft: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            context=f"[S1] MEDIA — {_TITLE_SENTINEL}\n{_SNAPSHOT_SENTINEL}",
+            citation_builder=builder,
+            prompt_evidence_set_id=prompt_id,
+        )
+
+    return ConsoleChatController(
+        store=stack.store,
+        provider_gateway=_RealDirectGateway(
+            ("Exact terminal body 🧪\n", "with arbitrary boundaries.")
+        ),
+        rag_capture_provider=capture,
+        agent_runtime_enabled=False,
+    )
+
+
+def _real_assistant(store: ConsoleChatStore):
+    return next(
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    )
+
+
+def _citation_row_counts(db: CharactersRAGDB) -> dict[str, int]:
+    connection = db.get_connection()
+    return {
+        table: connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+        for table in (
+            "rag_citation_traces",
+            "rag_evidence_runs",
+            "rag_evidence_snapshots",
+            "rag_answer_attempt_payloads",
+            "rag_trace_evidence_refs",
+            "rag_message_trace_owners",
+        )
+    }
 
 
 def _capture_logs() -> tuple[StringIO, int]:
@@ -848,3 +1047,147 @@ def test_bookkeeping_failure_after_create_never_replays_terminal_create(
     assert len(persistence.create_calls) == 1
     assert "terminal_persistence_bookkeeping_unavailable" in output
     _assert_content_free_diagnostics(output, sealed_write=sealed_write)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_real_atomic_direct_controller_persists_exact_body_and_trace_on_restart(
+    real_citation_stack_factory,
+) -> None:
+    stack = real_citation_stack_factory("real-atomic")
+    builder, prompt_id = _real_captured_builder(stack.repository)
+    controller = _real_controller(stack, builder, prompt_id)
+    log_stream, handler_id = _capture_logs()
+    try:
+        result = await controller.submit_draft("question")
+    finally:
+        logger.remove(handler_id)
+
+    assistant = _real_assistant(stack.store)
+    persisted = stack.db.get_message_by_id(assistant.id)
+    assert result.accepted is True
+    assert assistant.status == "complete"
+    assert assistant.content == _BODY_SENTINEL
+    assert assistant.persisted_message_id == assistant.id
+    assert persisted is not None
+    assert persisted["id"] == assistant.id
+    assert persisted["content"] == assistant.content
+    assert _citation_row_counts(stack.db) == {
+        "rag_citation_traces": 1,
+        "rag_evidence_runs": 1,
+        "rag_evidence_snapshots": 1,
+        "rag_answer_attempt_payloads": 1,
+        "rag_trace_evidence_refs": 1,
+        "rag_message_trace_owners": 1,
+    }
+
+    connection = stack.db.get_connection()
+    trace_row = connection.execute(
+        "SELECT trace_id, aggregate_json FROM rag_citation_traces"
+    ).fetchone()
+    attempt_row = connection.execute(
+        """
+        SELECT attempt_id, answer_body, body_integrity_hmac
+        FROM rag_answer_attempt_payloads
+        """
+    ).fetchone()
+    owner_row = connection.execute(
+        """
+        SELECT message_id, message_revision, trace_id, state
+        FROM rag_message_trace_owners
+        """
+    ).fetchone()
+    aggregate = json.loads(trace_row["aggregate_json"])
+
+    assert attempt_row["attempt_id"] == aggregate["selected_attempt_id"]
+    assert attempt_row["answer_body"] == persisted["content"]
+    assert aggregate["answer_attempts"][0]["occurrences"] == []
+    assert len(aggregate["evidence_runs"]) == 1
+    assert len(aggregate["prompt_evidence_sets"]) == 1
+    assert _BODY_SENTINEL not in trace_row["aggregate_json"]
+    assert attempt_row["body_integrity_hmac"] not in trace_row["aggregate_json"]
+    assert "body_integrity_hmac" not in trace_row["aggregate_json"]
+    assert owner_row["message_id"] == assistant.id
+    assert owner_row["message_revision"] == persisted["version"]
+    assert owner_row["trace_id"] == trace_row["trace_id"]
+    assert owner_row["state"] == "active"
+
+    log_output = log_stream.getvalue()
+    _assert_content_free_diagnostics(log_output)
+    assert attempt_row["body_integrity_hmac"] not in log_output
+
+    persisted_version = persisted["version"]
+    trace_id = trace_row["trace_id"]
+    stack.close()
+    reopened = CharactersRAGDB(stack.db_path, client_id=stack.client_id)
+    try:
+        reopened_identity = load_local_citation_identity_context(reopened)
+        assert reopened_identity is not None
+        restarted_repository = CitationTraceRepository(
+            reopened,
+            policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+            identity_context=reopened_identity,
+            fingerprint_codec=stack.codec,
+        )
+
+        active = restarted_repository.get_active_trace_for_message(
+            assistant.id,
+            persisted_version,
+            assistant.content,
+            stack.codec,
+        )
+
+        assert active.state is ActiveCitationTraceState.ACTIVE
+        assert active.summary is not None
+        assert active.summary.trace.trace_id == trace_id
+        assert restarted_repository.verify_active_trace_result(active) is True
+    finally:
+        reopened.close_connection()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_real_rollback_deterministic_unavailable_falls_back_without_trace_rows(
+    real_citation_stack_factory,
+) -> None:
+    stack = real_citation_stack_factory(
+        "real-rollback",
+        _DeterministicallyUnavailableRepository,
+    )
+    builder, prompt_id = _real_captured_builder(stack.repository)
+    controller = _real_controller(stack, builder, prompt_id)
+    log_stream, handler_id = _capture_logs()
+    try:
+        result = await controller.submit_draft("question")
+    finally:
+        logger.remove(handler_id)
+
+    assistant = _real_assistant(stack.store)
+    persisted = stack.db.get_message_by_id(assistant.id)
+    assert result.accepted is True
+    assert assistant.status == "complete"
+    assert assistant.content == _BODY_SENTINEL
+    assert assistant.persisted_message_id == assistant.id
+    assert persisted is not None
+    assert persisted["id"] == assistant.id
+    assert persisted["content"] == assistant.content
+    assert _citation_row_counts(stack.db) == {
+        "rag_citation_traces": 0,
+        "rag_evidence_runs": 0,
+        "rag_evidence_snapshots": 0,
+        "rag_answer_attempt_payloads": 0,
+        "rag_trace_evidence_refs": 0,
+        "rag_message_trace_owners": 0,
+    }
+
+    active = stack.repository.get_active_trace_for_message(
+        assistant.id,
+        persisted["version"],
+        persisted["content"],
+        stack.codec,
+    )
+    assert active.state is ActiveCitationTraceState.NOT_FOUND
+
+    log_output = log_stream.getvalue()
+    _assert_content_free_diagnostics(log_output)
+    assert builder.answer_attempt_payloads[0].body_integrity_hmac not in log_output
