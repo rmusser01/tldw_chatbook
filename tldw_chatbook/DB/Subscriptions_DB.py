@@ -22,6 +22,7 @@
 #########################################
 
 import json
+import sqlite3
 import threading
 import time
 from contextlib import closing, contextmanager
@@ -73,6 +74,20 @@ class SubscriptionsDB(BaseDB):
         """
         self._local = threading.local()
         super().__init__(db_path, client_id)
+
+    def _get_connection(self) -> sqlite3.Connection:
+        """Return a connection with foreign-key enforcement enabled.
+
+        ``PRAGMA foreign_keys`` is per-connection and defaults to OFF, and
+        ``BaseDB._get_connection`` sets only ``row_factory``. Without this
+        override every ``ON DELETE CASCADE`` in this schema is inert, which
+        silently orphaned ``subscription_items`` whenever a subscription was
+        deleted. Matches ``ChaChaNotes_DB`` and ``Client_Media_DB_v2``, which
+        each enable it per connection.
+        """
+        conn = super()._get_connection()
+        conn.execute("PRAGMA foreign_keys = ON;")
+        return conn
 
     def _initialize_schema(self):
         """Initialize the database schema."""
