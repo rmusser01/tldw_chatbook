@@ -132,3 +132,52 @@ async def test_preview_is_hidden_until_a_generation_arrives():
 async def test_name_field_is_not_generatable_per_field():
     """Name is a one-liner the author owns; it comes from whole-character gen."""
     assert "name" not in GENERATABLE_FIELDS
+
+
+async def test_concept_input_never_schedules_validation():
+    """The concept box is scratch and must not trigger re-validation.
+
+    `_field_changed` calls `_schedule_validation()` for every Input in this
+    editor. On a freshly-opened form that debounced run renders nothing (the
+    `_user_touched` gate), so it CLEARED the validation footer a blocked save
+    had just written -- which broke two save/validation regressions in
+    test_personas_workbench.py that pass in isolation and only fail once
+    enough editor churn accumulates. The greetings edit area is excluded from
+    `_field_changed` for the same reason.
+
+    Asserted on the handler directly: mounting the editor posts Changed events
+    for its other Inputs, so a timing-based test would measure that churn
+    rather than the concept box.
+    """
+    from textual.widgets import Input
+
+    app = _EditorHost()
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        editor = app.query_one(PersonasCharacterEditorWidget)
+        concept = editor.query_one("#personas-char-editor-concept", Input)
+
+        scheduled: list[int] = []
+        editor._schedule_validation = lambda: scheduled.append(1)
+
+        editor._field_changed(Input.Changed(concept, "a concept"))
+
+        assert scheduled == []
+
+
+async def test_a_real_character_field_still_schedules_validation():
+    """The exclusion must be surgical: real fields still validate."""
+    from textual.widgets import Input
+
+    app = _EditorHost()
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        editor = app.query_one(PersonasCharacterEditorWidget)
+        name = editor.query_one("#personas-char-editor-name", Input)
+
+        scheduled: list[int] = []
+        editor._schedule_validation = lambda: scheduled.append(1)
+
+        editor._field_changed(Input.Changed(name, "Seraphina"))
+
+        assert scheduled == [1]

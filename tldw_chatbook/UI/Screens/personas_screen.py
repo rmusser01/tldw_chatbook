@@ -4478,6 +4478,47 @@ class PersonasScreen(BaseAppScreen):
             exclusive=True,
         )
 
+    async def _run_whole_character_generation(self, concept: str) -> None:
+        """Draft a whole character and fill the editor's empty fields."""
+        editor = self._editor_or_none()
+        if editor is None:
+            return
+        controller = self._character_generation_controller()
+        try:
+            fields = await controller.generate_whole_character(concept)
+        except CharacterGenerationError as exc:
+            self._notify(f"Could not generate: {exc}", "error")
+            return
+        except Exception as exc:  # defensive: never leave the author stuck
+            logger.opt(exception=True).warning("Whole-character generation failed.")
+            self._notify(f"Could not generate: {exc}", "error")
+            return
+        filled = editor.apply_generated_character(fields)
+        editor.set_concept_row_visible(False)
+        if filled:
+            self._notify(f"Filled {len(filled)} empty field(s).", "information")
+        else:
+            # Honest: the request succeeded, it just had nowhere to land.
+            self._notify(
+                "Nothing was filled: every generated field already has content.",
+                "warning",
+            )
+
+    @on(Button.Pressed, "#personas-char-editor-concept-run")
+    def _concept_run_pressed(self, event: Button.Pressed) -> None:
+        """Draft a whole character from the concept the author typed."""
+        event.stop()
+        editor = self._editor_or_none()
+        concept = editor.concept_text if editor is not None else ""
+        if not concept:
+            self._notify("Describe the character first, in a line or two.", "warning")
+            return
+        self.run_worker(
+            self._run_whole_character_generation(concept),
+            group="character-generation",
+            exclusive=True,
+        )
+
     @on(Button.Pressed, "#personas-char-editor-generate-regenerate")
     def _regenerate_pressed(self, event: Button.Pressed) -> None:
         """Re-run the generation for the field currently being previewed."""

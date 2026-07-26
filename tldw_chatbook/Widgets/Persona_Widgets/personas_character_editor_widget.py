@@ -137,6 +137,16 @@ class PersonasCharacterEditorWidget(Container):
         width: 100%;
     }
 
+    PersonasCharacterEditorWidget #personas-char-editor-concept-row {
+        height: auto;
+        width: 100%;
+    }
+
+    PersonasCharacterEditorWidget #personas-char-editor-concept {
+        width: 1fr;
+        min-width: 0;
+    }
+
     PersonasCharacterEditorWidget #personas-char-editor-generate-preview {
         height: auto;
         width: 100%;
@@ -378,6 +388,21 @@ class PersonasCharacterEditorWidget(Container):
                 )
                 whole.tooltip = "Draft every empty field from a short concept"
                 yield whole
+            with Horizontal(id="personas-char-editor-concept-row"):
+                yield Input(
+                    id="personas-char-editor-concept",
+                    placeholder="One-line concept, e.g. a drowned-library archivist",
+                )
+                yield Button(
+                    "Draft",
+                    id="personas-char-editor-concept-run",
+                    classes="console-action-secondary",
+                )
+                yield Button(
+                    "Cancel",
+                    id="personas-char-editor-concept-cancel",
+                    classes="console-action-subdued",
+                )
             # Preview lives ABOVE the fields and is always in view: generated
             # text is proposed, never written over the author's own words until
             # they accept it.
@@ -641,22 +666,29 @@ class PersonasCharacterEditorWidget(Container):
             )
 
     def on_mount(self) -> None:
-        """Register the alternate-greetings table's single column."""
+        """Register the greetings column and hide the generation affordances.
+
+        Both live here rather than in a second ``on_mount``: a duplicate
+        definition silently replaces the first, which is how adding the
+        generation hide-step once wiped out the greetings column registration
+        and left every alternate-greeting row failing to insert.
+        """
         self.query_one(
             "#personas-char-editor-greetings-table", DataTable
         ).add_column("Greeting", key="g")
+        for node_id in (
+            "#personas-char-editor-generate-preview",
+            "#personas-char-editor-concept-row",
+        ):
+            try:
+                self.query_one(node_id).display = False
+            except Exception:
+                continue
 
     # ===== Field accessors =====
 
     def _input(self, suffix: str) -> Input:
         return self.query_one(f"#personas-char-editor-{suffix}", Input)
-
-    def on_mount(self) -> None:
-        """Hide the generation preview until a generation actually arrives."""
-        try:
-            self.query_one("#personas-char-editor-generate-preview").display = False
-        except Exception:
-            pass
 
     def _area(self, suffix: str) -> TextArea:
         return self.query_one(f"#personas-char-editor-{suffix}", TextArea)
@@ -885,6 +917,74 @@ class PersonasCharacterEditorWidget(Container):
             self.query_one("#personas-char-editor-generate-preview").display = False
         except Exception:
             return
+
+    @property
+    def concept_text(self) -> str:
+        """Current text in the whole-character concept input."""
+        try:
+            return self.query_one("#personas-char-editor-concept", Input).value.strip()
+        except Exception:
+            return ""
+
+    def set_concept_row_visible(self, visible: bool) -> None:
+        """Show or hide the whole-character concept input."""
+        try:
+            self.query_one("#personas-char-editor-concept-row").display = visible
+        except Exception:
+            return
+        if visible:
+            try:
+                self.query_one("#personas-char-editor-concept", Input).focus()
+            except Exception:
+                pass
+
+    def apply_generated_character(self, fields: dict) -> list[str]:
+        """Fill EMPTY fields from a generated character, leaving written ones.
+
+        Filling a blank card must never overwrite work the author has already
+        done, so a field with any content is skipped.
+
+        Args:
+            fields: Parsed field -> text mapping from the model.
+
+        Returns:
+            The field keys that were actually filled.
+        """
+        filled: list[str] = []
+        name_value = str(fields.get("name") or "").strip()
+        if name_value:
+            try:
+                name_input = self.query_one("#personas-char-editor-name", Input)
+                if not name_input.value.strip():
+                    name_input.value = name_value
+                    filled.append("name")
+            except Exception:
+                pass
+        for field, suffix in GENERATION_FIELD_SUFFIXES.items():
+            text = str(fields.get(field) or "").strip()
+            if not text:
+                continue
+            try:
+                area = self._area(suffix)
+            except Exception:
+                continue
+            if area.text.strip():
+                continue
+            area.text = text
+            filled.append(field)
+        if filled:
+            self._user_touched = True
+        return filled
+
+    @on(Button.Pressed, "#personas-char-editor-generate-whole")
+    def _open_concept_row(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.set_concept_row_visible(True)
+
+    @on(Button.Pressed, "#personas-char-editor-concept-cancel")
+    def _close_concept_row(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.set_concept_row_visible(False)
 
     @on(Button.Pressed, "#personas-char-editor-generate-context")
     def _cycle_generation_context(self, event: Button.Pressed) -> None:
@@ -1394,6 +1494,17 @@ class PersonasCharacterEditorWidget(Container):
             isinstance(event, TextArea.Changed)
             and event.text_area.id == "personas-char-editor-greeting-edit"
         ):
+            return
+        if (
+            isinstance(event, Input.Changed)
+            and event.input.id == "personas-char-editor-concept"
+        ):
+            # The whole-character concept box is scratch, exactly like the
+            # greetings edit area above: it stages a prompt, not card content.
+            # Beyond dirty detection it must not reach `_schedule_validation`
+            # either -- a debounced re-validation on a freshly-opened form
+            # renders nothing (the `_user_touched` gate) and so CLEARS the
+            # validation footer a blocked save had just written into it.
             return
         # Same condition _mark_dirty ultimately gates on (minus _dirty_posted,
         # which only suppresses the once-per-session announcement, not the
