@@ -434,6 +434,31 @@ def test_deferred_reads_materialize_chunks_without_early_create() -> None:
     _assert_terminal_state_paired(store)
 
 
+def test_explicit_persist_keeps_terminal_message_deferred_until_completion() -> None:
+    persistence = _ReadyCitationPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    sealed_write = _sealed_write_for_body(_BODY_SENTINEL)
+    session_id, message_id = _append_eligible(store, lambda body: sealed_write)
+    store.append_stream_chunk(message_id, _BODY_SENTINEL)
+
+    assert store.get_message(message_id).content == _BODY_SENTINEL
+    assert store.messages_for_session(session_id)[-1].content == _BODY_SENTINEL
+    explicitly_persisted = store.persist_message_if_needed(message_id)
+
+    assert explicitly_persisted.persisted_message_id is None
+    assert persistence.create_calls == []
+    assert message_id in store._pending_persistence_message_ids
+    assert message_id in store._terminal_persistence_deferred_ids
+    _assert_terminal_state_paired(store)
+
+    completed = store.mark_message_complete(message_id)
+
+    assert completed.persisted_message_id == message_id
+    assert len(persistence.create_calls) == 1
+    assert persistence.create_calls[0]["message_id"] == message_id
+    assert persistence.create_calls[0]["citation_write"] is sealed_write
+
+
 def test_ordinary_empty_assistant_keeps_first_content_persistence_timing() -> None:
     persistence = _ReadyCitationPersistence()
     store = ConsoleChatStore(persistence=persistence)

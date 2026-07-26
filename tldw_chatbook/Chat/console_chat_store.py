@@ -884,6 +884,7 @@ class ConsoleChatStore:
         self._active_leaf_by_session[session_id] = message.id
         self._recompute_active_path(session_id)
         if arm_terminal_citation:
+            assert terminal_citation_finalizer is not None
             self._terminal_citation_finalizers[message.id] = terminal_citation_finalizer
             self._terminal_persistence_deferred_ids.add(message.id)
         try:
@@ -2054,6 +2055,10 @@ class ConsoleChatStore:
     ) -> None:
         if self.persistence is None:
             return
+        if message.id in self._terminal_persistence_deferred_ids:
+            self._pending_persistence_message_ids.add(message.id)
+            self.persist_session_if_needed(session_id)
+            return
         if not message.content and not message.attachments:
             self._pending_persistence_message_ids.add(message.id)
             self.persist_session_if_needed(session_id)
@@ -2073,7 +2078,12 @@ class ConsoleChatStore:
             )
             return (
                 accepts_citation_write
-                and persistence.canonical_citation_writes_ready is True
+                and getattr(
+                    persistence,
+                    "canonical_citation_writes_ready",
+                    False,
+                )
+                is True
             )
         except Exception:
             return False
