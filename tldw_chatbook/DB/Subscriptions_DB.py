@@ -22,6 +22,7 @@
 #########################################
 
 import json
+import sqlite3
 import threading
 import time
 from contextlib import closing, contextmanager
@@ -73,6 +74,20 @@ class SubscriptionsDB(BaseDB):
         """
         self._local = threading.local()
         super().__init__(db_path, client_id)
+
+    def _get_connection(self) -> sqlite3.Connection:
+        """Return a connection with foreign-key enforcement enabled.
+
+        ``PRAGMA foreign_keys`` is per-connection and defaults to OFF, and
+        ``BaseDB._get_connection`` sets only ``row_factory``. Without this
+        override every ``ON DELETE CASCADE`` in this schema is inert, which
+        silently orphaned ``subscription_items`` whenever a subscription was
+        deleted. Matches ``ChaChaNotes_DB`` and ``Client_Media_DB_v2``, which
+        each enable it per connection.
+        """
+        conn = super()._get_connection()
+        conn.execute("PRAGMA foreign_keys = ON;")
+        return conn
 
     def _initialize_schema(self):
         """Initialize the database schema."""
@@ -252,7 +267,26 @@ class SubscriptionsDB(BaseDB):
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
-            
+
+            -- Local watchlist run history. Owned here rather than created
+            -- lazily by LocalWatchlistsService, so one place owns schema and
+            -- additive migrations can ALTER it unconditionally.
+            CREATE TABLE IF NOT EXISTS local_watchlist_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id INTEGER NOT NULL,
+                job_id INTEGER,
+                batch_id TEXT,
+                status TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                stats_json TEXT,
+                error_msg TEXT,
+                log_text TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (source_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+            );
+
             -- Create indices
             CREATE INDEX IF NOT EXISTS idx_subscriptions_priority_active ON subscriptions(priority DESC, is_active, is_paused);
             CREATE INDEX IF NOT EXISTS idx_subscriptions_tags ON subscriptions(tags);
@@ -324,42 +358,360 @@ class SubscriptionsDB(BaseDB):
         for row in cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"):
             existing_check = row[0]
         if existing_check and "'include'" not in existing_check:
-            cursor.execute("""
-                CREATE TABLE subscription_filters_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    subscription_id INTEGER,
-                    name TEXT NOT NULL,
-                    is_active BOOLEAN DEFAULT 1,
-                    conditions TEXT NOT NULL,
-                    action TEXT NOT NULL CHECK(action IN ('auto_ingest','auto_ignore','tag','priority','notify','include','exclude','flag')),
-                    action_params TEXT,
-                    priority INTEGER DEFAULT 0,
-                    is_include_required BOOLEAN DEFAULT 0,
-                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+            # This rebuild predates FK enforcement (Task 1a) and may run
+            # against a real database that already has a subscription_filters
+            # row whose subscription_id no longer exists -- the orphan
+            # condition Task 1a exists to stop *creating*, not to clean up
+            # retroactively (cleanup is out of scope; already-orphaned rows
+            # must survive). Copying such a row into subscription_filters_new,
+            # which declares the FK, would raise IntegrityError now that
+            # enforcement is on. Disable enforcement for this rebuild only,
+            # then restore it -- this is the documented SQLite procedure for
+            # a table rebuild that must tolerate pre-existing violations.
+            #
+            # PRAGMA foreign_keys is a no-op while a transaction is pending,
+            # so commit immediately before toggling it off, and again after
+            # the rebuild before toggling it back on. Read the pragma back
+            # rather than assuming the toggle took effect.
+            conn.commit()
+            cursor.execute("PRAGMA foreign_keys = OFF;")
+            if cursor.execute("PRAGMA foreign_keys").fetchone()[0] != 0:
+                raise RuntimeError(
+                    "Could not disable foreign_keys enforcement for the "
+                    "subscription_filters rebuild; refusing to risk a "
+                    "silent partial migration."
                 )
-            """)
-            cursor.execute("""
-                INSERT INTO subscription_filters_new
-                    (id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at)
-                SELECT id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at
-                FROM subscription_filters
-            """)
-            cursor.execute("DROP TABLE subscription_filters")
-            cursor.execute("ALTER TABLE subscription_filters_new RENAME TO subscription_filters")
-            cursor.execute("""
-                CREATE TRIGGER IF NOT EXISTS update_subscription_filters_timestamp
-                AFTER UPDATE ON subscription_filters
-                BEGIN
-                    UPDATE subscription_filters SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
-                END
-            """)
+            try:
+                # CREATE TABLE runs in autocommit in Python's sqlite3 module
+                # (only DML gets an implicit transaction), so the
+                # conn.rollback() in the except below cannot undo it. If a
+                # previous run of this rebuild died after creating this table
+                # but before the rename below, `_new` survives indefinitely
+                # and every later open hits "table subscription_filters_new
+                # already exists" here -- permanently. Drop it first so a
+                # stray table from an earlier failed attempt never blocks a
+                # fresh one.
+                cursor.execute("DROP TABLE IF EXISTS subscription_filters_new")
+                cursor.execute("""
+                    CREATE TABLE subscription_filters_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        subscription_id INTEGER,
+                        name TEXT NOT NULL,
+                        is_active BOOLEAN DEFAULT 1,
+                        conditions TEXT NOT NULL,
+                        action TEXT NOT NULL CHECK(action IN ('auto_ingest','auto_ignore','tag','priority','notify','include','exclude','flag')),
+                        action_params TEXT,
+                        priority INTEGER DEFAULT 0,
+                        is_include_required BOOLEAN DEFAULT 0,
+                        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+                    )
+                """)
+                cursor.execute("""
+                    INSERT INTO subscription_filters_new
+                        (id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at)
+                    SELECT id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at
+                    FROM subscription_filters
+                """)
+                cursor.execute("DROP TABLE subscription_filters")
+                cursor.execute("ALTER TABLE subscription_filters_new RENAME TO subscription_filters")
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS update_subscription_filters_timestamp
+                    AFTER UPDATE ON subscription_filters
+                    BEGIN
+                        UPDATE subscription_filters SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+                    END
+                """)
+                conn.commit()
+            except Exception:
+                # Roll back any partial rebuild so no pending transaction
+                # remains -- otherwise the PRAGMA restore below would be a
+                # silent no-op and leave enforcement off for the rest of
+                # this connection's life, reintroducing the bug Task 1a
+                # fixed.
+                conn.rollback()
+                # conn.rollback() does not remove subscription_filters_new
+                # itself (CREATE TABLE is autocommit -- see the comment
+                # above), so this attempt's own partially-built table would
+                # otherwise become the exact stray table the DROP above
+                # exists to guard against, for the next open.
+                cursor.execute("DROP TABLE IF EXISTS subscription_filters_new")
+                raise
+            finally:
+                cursor.execute("PRAGMA foreign_keys = ON;")
+                if cursor.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+                    logger.error(
+                        "Failed to re-enable foreign_keys enforcement after "
+                        "the subscription_filters rebuild."
+                    )
 
         # Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_queued ON subscription_items(queued_for_briefing, status)")
+
+        # Reader/body columns. `content` holds the renderable body: article text
+        # for feed items, diff text for site changes. `url_snapshots` remains the
+        # authority for full-page and previous-snapshot views.
+        if "content" not in items_cols:
+            cursor.execute("ALTER TABLE subscription_items ADD COLUMN content TEXT")
+        if "content_format" not in items_cols:
+            cursor.execute("ALTER TABLE subscription_items ADD COLUMN content_format TEXT")
+        if "content_kind" not in items_cols:
+            cursor.execute("ALTER TABLE subscription_items ADD COLUMN content_kind TEXT")
+        # Flag is a separate boolean, not a status: the status CHECK has no
+        # 'flagged' value, and an item can be flagged *and* reviewed at once.
+        if "is_flagged" not in items_cols:
+            cursor.execute("ALTER TABLE subscription_items ADD COLUMN is_flagged BOOLEAN DEFAULT 0")
+
+        # Watchlist bundle entity. `name` is intentionally not UNIQUE — uniqueness
+        # is enforced case-insensitively in WatchlistBundleService with
+        # auto-suffixing, because a SQL constraint would raise mid-migration.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS watchlists (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                tags TEXT,
+                is_active BOOLEAN DEFAULT 1,
+                sort_order INTEGER DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS watchlist_sources (
+                watchlist_id    INTEGER NOT NULL REFERENCES watchlists(id)     ON DELETE CASCADE,
+                subscription_id INTEGER NOT NULL REFERENCES subscriptions(id)  ON DELETE CASCADE,
+                added_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (watchlist_id, subscription_id)
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_watchlist_sources_subscription "
+            "ON watchlist_sources(subscription_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_items_flagged "
+            "ON subscription_items(is_flagged, status)"
+        )
+        cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS update_watchlists_timestamp
+            AFTER UPDATE ON watchlists
+            BEGIN
+                UPDATE watchlists SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+            END
+        """)
+        # Per-migration markers. schema_version cannot be reused: it is a single
+        # INTEGER PRIMARY KEY column with no room for keys.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS watchlist_migration_state (
+                key TEXT PRIMARY KEY,
+                applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # local_watchlist_runs is guaranteed to exist: BaseDB.__init__ runs
+        # _initialize_schema (base_db.py:76), which creates it and then calls
+        # this method. Only the column needs checking, for databases created
+        # before batch_id existed.
+        run_cols = {row[1] for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")}
+        if "batch_id" not in run_cols:
+            cursor.execute("ALTER TABLE local_watchlist_runs ADD COLUMN batch_id TEXT")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_local_watchlist_runs_batch "
+            "ON local_watchlist_runs(batch_id)"
+        )
+
+        # External-content FTS over items, matching the pattern used by
+        # character_cards_fts / conversations_fts / media_fts. Triggers rather
+        # than explicit index writes, so every INSERT path stays indexed.
+        #
+        # Do NOT add `columnsize=0` to the fts5 options below: that option
+        # removes the `_docsize` shadow table, which both the guarded delete
+        # legs below and `backfill_items_fts()` depend on to answer "has this
+        # rowid actually been written into the FTS index yet".
+        cursor.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS subscription_items_fts USING fts5(
+                title,
+                content,
+                author,
+                content='subscription_items',
+                content_rowid='id'
+            )
+        """)
+        cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS subscription_items_fts_ai
+            AFTER INSERT ON subscription_items BEGIN
+                INSERT INTO subscription_items_fts(rowid, title, content, author)
+                VALUES (new.id, new.title, new.content, new.author);
+            END
+        """)
+        # subscription_items_fts is an external-content FTS5 table: its
+        # 'delete' command is only legal for a rowid that is actually present
+        # in the index (has a row in the `_docsize` shadow table). This
+        # migration creates the index over a `subscription_items` table that
+        # may already hold rows from before this branch existed, so without a
+        # guard the very first UPDATE/DELETE of a pre-existing, never-indexed
+        # item would fire 'delete' against a rowid FTS5 has never seen --
+        # FTS5 rejects the whole statement, and it surfaces to the caller as
+        # "database disk image is malformed" even though nothing is actually
+        # corrupt. Guard the delete legs on index membership so an unindexed
+        # row is skipped instead of fatal. `_au`'s insert leg stays
+        # unconditional, so a skipped/unindexed row simply becomes indexed on
+        # its next update.
+        #
+        # These two triggers are dropped and recreated unconditionally
+        # (rather than `CREATE ... IF NOT EXISTS`) so that a database that
+        # already ran the previous, unguarded versions of these triggers on
+        # this branch picks up the fix too -- `IF NOT EXISTS` would otherwise
+        # silently keep the old, unguarded trigger bodies in place. This is
+        # idempotent: re-running it just drops-and-recreates the same guarded
+        # triggers again.
+        #
+        # Do not split `_au` into two separate triggers (one delete, one
+        # insert): SQLite does not guarantee firing order between multiple
+        # triggers on the same event, and an insert-then-guarded-delete
+        # ordering would corrupt the index.
+        cursor.execute("DROP TRIGGER IF EXISTS subscription_items_fts_ad")
+        cursor.execute("""
+            CREATE TRIGGER subscription_items_fts_ad
+            AFTER DELETE ON subscription_items BEGIN
+                INSERT INTO subscription_items_fts(subscription_items_fts, rowid, title, content, author)
+                SELECT 'delete', old.id, old.title, old.content, old.author
+                WHERE EXISTS (SELECT 1 FROM subscription_items_fts_docsize WHERE id = old.id);
+            END
+        """)
+        cursor.execute("DROP TRIGGER IF EXISTS subscription_items_fts_au")
+        cursor.execute("""
+            CREATE TRIGGER subscription_items_fts_au
+            AFTER UPDATE ON subscription_items BEGIN
+                INSERT INTO subscription_items_fts(subscription_items_fts, rowid, title, content, author)
+                SELECT 'delete', old.id, old.title, old.content, old.author
+                WHERE EXISTS (SELECT 1 FROM subscription_items_fts_docsize WHERE id = old.id);
+                INSERT INTO subscription_items_fts(rowid, title, content, author)
+                VALUES (new.id, new.title, new.content, new.author);
+            END
+        """)
+
         conn.commit()
+
+    def backfill_items_fts(self, chunk_size: int = 500) -> int:
+        """Index one chunk of items that are missing from the FTS table.
+
+        Runs in a background worker, never inline in migration — a synchronous
+        backfill of a large subscription_items table would block app boot.
+        Resumes by rowid, so an interrupted backfill continues rather than
+        restarting.
+
+        The "not yet indexed" check reads ``subscription_items_fts_docsize``
+        rather than ``subscription_items_fts`` itself. For an external-content
+        FTS5 table (``content='subscription_items'``), an unfiltered/no-MATCH
+        query against the fts5 table is satisfied straight from the external
+        content table's rowids -- it does not reflect the actual state of the
+        FTS index. ``%_docsize`` is the shadow table SQLite documents for this
+        purpose: it is populated only by real writes into the fts5 table (the
+        insert/update triggers, or this method), so it is the only place that
+        truthfully answers "has this rowid been indexed yet".
+
+        Args:
+            chunk_size: Maximum rows to index in this call. Must be >= 1.
+
+        Returns:
+            Number of rows indexed. ``0`` means the backfill is complete.
+
+        Raises:
+            ValueError: If ``chunk_size`` is less than 1. A non-positive
+                value would make ``LIMIT ?`` return zero rows regardless of
+                how large the real backlog is, and this method would then
+                report ``0`` ("complete") while unindexed rows remain --
+                silently stranding them once this becomes the repair path
+                for legacy rows the guarded FTS triggers skip.
+        """
+        if chunk_size < 1:
+            raise ValueError(f"chunk_size must be >= 1, got {chunk_size!r}")
+        with self.transaction() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, title, content, author
+                FROM subscription_items
+                WHERE id NOT IN (SELECT rowid FROM subscription_items_fts_docsize)
+                ORDER BY id
+                LIMIT ?
+                """,
+                (chunk_size,),
+            ).fetchall()
+            if not rows:
+                return 0
+            conn.executemany(
+                "INSERT INTO subscription_items_fts(rowid, title, content, author) "
+                "VALUES (?, ?, ?, ?)",
+                [(row[0], row[1], row[2], row[3]) for row in rows],
+            )
+            return len(rows)
+
+    # Sentinel bucket ids for the watchlists tree roots.
+    UNASSIGNED_BUCKET = -1
+    ALL_SOURCES_BUCKET = -2
+
+    def get_watchlist_item_counts(self) -> Dict[int, Dict[str, int]]:
+        """Item totals and unread counts for every watchlists tree node.
+
+        Returned in a single query so that adding watchlists never adds
+        round-trips. ``SUM(CASE …)`` is used rather than ``COUNT(*) FILTER``
+        to avoid depending on a newer SQLite than the bundled one.
+
+        The per-watchlist leg is anchored on ``watchlists`` with LEFT JOINs
+        (not an INNER JOIN from ``watchlist_sources``), so a watchlist with
+        no sources yet -- or sources with no items yet -- still appears with
+        ``{"total": 0, "unread": 0}`` instead of being missing from the
+        result entirely. With a LEFT JOIN, ``COUNT(si.id)`` would still be
+        correct (``COUNT`` ignores NULLs), but ``COUNT(*)`` would wrongly
+        count the null-padded row for a sourceless watchlist -- the
+        ``SUM(CASE WHEN si.id IS NOT NULL ...)`` form is used to make that
+        unambiguous rather than relying on a NULL-counting subtlety.
+
+        Returns:
+            Mapping of bucket id to ``{"total": int, "unread": int}``. Bucket
+            ``-1`` is Unassigned (sources in no watchlist) and ``-2`` is All
+            sources. Real watchlist ids are positive.
+        """
+        rows = self.conn.execute(
+            """
+            SELECT w.id AS bucket,
+                   SUM(CASE WHEN si.id IS NOT NULL THEN 1 ELSE 0 END) AS total,
+                   SUM(CASE WHEN si.status = 'new' THEN 1 ELSE 0 END) AS unread
+            FROM watchlists w
+            LEFT JOIN watchlist_sources ws  ON ws.watchlist_id = w.id
+            LEFT JOIN subscription_items si ON si.subscription_id = ws.subscription_id
+            GROUP BY w.id
+
+            UNION ALL
+
+            SELECT ?, COUNT(si.id),
+                   SUM(CASE WHEN si.status = 'new' THEN 1 ELSE 0 END)
+            FROM subscription_items si
+            WHERE NOT EXISTS (
+                SELECT 1 FROM watchlist_sources ws
+                WHERE ws.subscription_id = si.subscription_id
+            )
+
+            UNION ALL
+
+            SELECT ?, COUNT(si.id),
+                   SUM(CASE WHEN si.status = 'new' THEN 1 ELSE 0 END)
+            FROM subscription_items si
+            """,
+            (self.UNASSIGNED_BUCKET, self.ALL_SOURCES_BUCKET),
+        ).fetchall()
+
+        # No `if row[0] is not None` filter here: watchlists.id and
+        # watchlist_sources.watchlist_id are NOT NULL, and both sentinels
+        # bind non-null literals, so every row's bucket id is always non-null.
+        return {
+            row[0]: {"total": row[1] or 0, "unread": row[2] or 0}
+            for row in rows
+        }
 
     @property
     def conn(self):
@@ -1317,36 +1669,28 @@ class SubscriptionsDB(BaseDB):
         if existing:
             return existing["id"]
 
-        # Insert new item
-        cursor.execute(
-            """
-            INSERT INTO subscription_items
-            (subscription_id, url, title, content_hash, published_date,
-             author, categories, enclosures, extracted_data, canonical_url,
-             previous_hash, change_percentage, diff_summary, change_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                subscription_id,
-                item["url"],
-                item.get("title"),
-                item.get("content_hash"),
-                item.get("published_date"),
-                item.get("author"),
-                json.dumps(item.get("categories")) if item.get("categories") else None,
-                json.dumps(item.get("enclosures")) if item.get("enclosures") else None,
-                json.dumps(item.get("extracted_data"))
-                if item.get("extracted_data")
-                else None,
-                canonical_url,
-                item.get("previous_hash"),
-                item.get("change_percentage"),
-                item.get("diff_summary"),
-                item.get("change_type"),
-            ),
-        )
+        # Insert new item via the shared persistence path so the full
+        # column set (content, content_kind, content_format, run_id,
+        # alert_matches, ...) is written, not just the change/dedup fields
+        # this path used to carry alone. The canonical-URL dedupe guard
+        # above is kept unchanged; persist_subscription_item's own
+        # ON CONFLICT target (subscription_id, url, content_hash) is a
+        # narrower, independent dedupe rule that still applies underneath
+        # it — the two dedupe rules are deliberately not unified.
+        #
+        # Imported locally: Subscriptions/__init__.py imports
+        # LocalWatchlistsService, which imports this module, so a
+        # module-level import here would be circular.
+        from ..Subscriptions.item_persist import persist_subscription_item
 
-        return cursor.lastrowid
+        now = datetime.now(timezone.utc).isoformat()
+        return persist_subscription_item(
+            cursor.connection,
+            subscription_id,
+            {**item, "canonical_url": canonical_url},
+            run_id=None,
+            now=now,
+        )
 
     def _update_subscription_stats(
         self, subscription_id: int, stats: Dict[str, Any], had_error: bool

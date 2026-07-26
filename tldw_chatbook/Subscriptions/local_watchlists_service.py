@@ -16,6 +16,7 @@ from ..Utils.egress import (
     guarded_fetch_httpx_async,
     origin_set,
 )
+from .item_persist import persist_subscription_item
 from .watchlist_content_alert_service import WatchlistContentAlertService
 from .watchlist_filter_service import WatchlistFilterService
 from .watchlist_normalizers import (
@@ -179,7 +180,6 @@ class LocalWatchlistsService:
         db = self._db()
         if db.get_subscription(resolved_source_id) is None:
             raise KeyError(f"Subscription not found: {resolved_source_id}")
-        self._ensure_run_schema(db)
         now = self._utc_now()
         with db.transaction() as conn:
             cursor = conn.cursor()
@@ -205,7 +205,6 @@ class LocalWatchlistsService:
     async def execute_run(self, run_id: Any) -> dict[str, Any]:
         """Execute a queued local watchlist run and persist its observed result."""
         db = self._db()
-        self._ensure_run_schema(db)
         current = await self.get_run(run_id)
         source_id = int(current.get("source_id") or current.get("job_id"))
         subscription = db.get_subscription(source_id)
@@ -264,7 +263,6 @@ class LocalWatchlistsService:
         **_: Any,
     ) -> list[dict[str, Any]]:
         db = self._db()
-        self._ensure_run_schema(db)
         filters: list[str] = []
         values: list[Any] = []
         resolved_source_id = source_id if source_id is not None else job_id
@@ -291,7 +289,6 @@ class LocalWatchlistsService:
     def list_home_run_snapshot(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """Return recent local watchlist runs from a synchronous Home-safe path."""
         db = self._db()
-        self._ensure_run_schema(db)
         cursor = db.conn.cursor()
         cursor.execute(
             """
@@ -307,7 +304,6 @@ class LocalWatchlistsService:
 
     async def get_run(self, run_id: Any) -> dict[str, Any]:
         db = self._db()
-        self._ensure_run_schema(db)
         cursor = db.conn.cursor()
         cursor.execute(
             "SELECT * FROM local_watchlist_runs WHERE id = ?", (int(run_id),)
@@ -322,7 +318,6 @@ class LocalWatchlistsService:
 
     async def cancel_run(self, run_id: Any) -> dict[str, Any]:
         db = self._db()
-        self._ensure_run_schema(db)
         now = self._utc_now()
         with db.transaction() as conn:
             cursor = conn.cursor()
@@ -350,7 +345,6 @@ class LocalWatchlistsService:
     ) -> dict[str, Any]:
         """Persist a completed local run and emit notifications for matching alert rules."""
         db = self._db()
-        self._ensure_run_schema(db)
         current = await self.get_run(run_id)
         now = self._utc_now()
         stats_payload = dict(stats or {})
@@ -962,28 +956,6 @@ class LocalWatchlistsService:
         return []
 
     @staticmethod
-    def _ensure_run_schema(db: SubscriptionsDB) -> None:
-        with db.transaction() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS local_watchlist_runs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_id INTEGER NOT NULL,
-                    job_id INTEGER,
-                    status TEXT NOT NULL,
-                    started_at TEXT,
-                    finished_at TEXT,
-                    stats_json TEXT,
-                    error_msg TEXT,
-                    log_text TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY (source_id) REFERENCES subscriptions(id) ON DELETE CASCADE
-                )
-                """
-            )
-
-    @staticmethod
     def _ensure_alert_rule_schema(db: SubscriptionsDB) -> None:
         with db.transaction() as conn:
             conn.execute(
@@ -1301,53 +1273,19 @@ class LocalWatchlistsService:
             return
         now = LocalWatchlistsService._utc_now()
         with db.transaction() as conn:
-            cursor = conn.cursor()
             for item in items:
                 url = str(item.get("url") or "")
                 content_hash = str(item.get("content_hash") or "")
                 if not url or not content_hash:
                     continue
-                title = item.get("title")
-                published_date = item.get("published_date")
-                author = item.get("author")
-                categories = item.get("categories")
-                enclosures = item.get("enclosures")
-                extracted_data = item.get("extracted_data")
                 alert_matches = item.get("alert_matches")
-                cursor.execute(
-                    """
-                    INSERT INTO subscription_items (
-                        subscription_id, url, title, content_hash, published_date,
-                        author, categories, enclosures, extracted_data, status,
-                        run_id, alert_matches, created_at, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(subscription_id, url, content_hash) DO UPDATE SET
-                        title = excluded.title,
-                        published_date = excluded.published_date,
-                        author = excluded.author,
-                        categories = excluded.categories,
-                        enclosures = excluded.enclosures,
-                        extracted_data = excluded.extracted_data,
-                        status = excluded.status,
-                        run_id = excluded.run_id,
-                        alert_matches = excluded.alert_matches,
-                        updated_at = excluded.updated_at
-                    """,
-                    (
-                        source_id,
-                        url,
-                        title,
-                        content_hash,
-                        published_date,
-                        author,
-                        json.dumps(categories) if categories is not None else None,
-                        json.dumps(enclosures) if enclosures is not None else None,
-                        json.dumps(extracted_data) if extracted_data is not None else None,
-                        "new",
-                        run_id,
-                        json.dumps(alert_matches) if alert_matches is not None else None,
-                        now,
-                        now,
-                    ),
+                persist_subscription_item(
+                    conn,
+                    source_id,
+                    {
+                        **item,
+                        "alert_matches": alert_matches,
+                    },
+                    run_id=run_id,
+                    now=now,
                 )
