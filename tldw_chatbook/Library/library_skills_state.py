@@ -65,6 +65,13 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # signal-erosion the guard exists to prevent.
         "rewind",
         "generate-image",
+        # The sandbox-rooted file tools. These are CONFIG-GATED (off by
+        # default), so the drift guard -- which builds a BuiltinToolProvider
+        # with default config -- cannot see them and would not have caught
+        # their absence. Listed explicitly: a skill named after one of them
+        # still shadows a real builtin the moment a user enables the gate.
+        "read_file",
+        "list_directory",
     )
 )
 

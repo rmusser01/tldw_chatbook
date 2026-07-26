@@ -20,6 +20,24 @@ def _resolve_sandbox_config() -> str:
     return get_cli_setting("tools", "file_sandbox_root", default_root) or default_root
 
 
+def _is_within(candidate: Path, root: Path) -> bool:
+    """Return whether ``candidate`` resolves inside ``root``.
+
+    Args:
+        candidate: Path to test.
+        root: The sandbox root it must stay under.
+
+    Returns:
+        True only when the fully-resolved candidate is the root or below it.
+    """
+    try:
+        resolved = candidate.resolve()
+        root_resolved = root.resolve()
+    except OSError:
+        return False
+    return resolved == root_resolved or root_resolved in resolved.parents
+
+
 def _tool_sandbox_root() -> Path:
     """Resolve + create the file-tool sandbox root.
 
@@ -185,7 +203,8 @@ class ListDirectoryTool(Tool):
 
         try:
             # Validate the path
-            validated_path = validate_path(directory_path, _tool_sandbox_root())
+            sandbox_root = _tool_sandbox_root()
+            validated_path = validate_path(directory_path, sandbox_root)
             path = Path(validated_path)
 
             # Check if directory exists
@@ -227,11 +246,19 @@ class ListDirectoryTool(Tool):
                             }
                             entries.append(entry)
 
-                            # Recursively list subdirectories
+                            # Recursively list subdirectories, but NEVER
+                            # follow a symlink: a link planted inside the
+                            # sandbox would otherwise let the walk enumerate
+                            # files outside file_sandbox_root, breaking the
+                            # containment every other path here relies on.
+                            # Belt-and-braces, the resolved child must still
+                            # sit under the sandbox root.
                             if (
                                 recursive
                                 and item.is_dir()
+                                and not item.is_symlink()
                                 and current_depth < max_depth
+                                and _is_within(item, sandbox_root)
                             ):
                                 list_dir_contents(item, current_depth + 1)
 

@@ -191,6 +191,27 @@ class BuiltinToolProvider:
 
     def __init__(self, gate: Any | None = None) -> None:
         self._tools = {t.name: t for t in (CalculatorTool(), DateTimeTool())}
+        # task-584: surface the app's existing sandbox-rooted file tools to the
+        # agent loop. They were registered on the global ToolExecutor but never
+        # reachable from here, so retained script output -- deliberately written
+        # under the file-tool sandbox root -- had no consumer. Behind the SAME
+        # [tools] gates that already govern them, which default to DISABLED:
+        # this changes reachability, not the default posture.
+        for gate_key, factory_name in (
+            ("read_file_enabled", "ReadFileTool"),
+            ("list_directory_enabled", "ListDirectoryTool"),
+        ):
+            try:
+                from ..config import get_cli_setting
+
+                if not get_cli_setting("tools", gate_key, False):
+                    continue
+                from ..Tools import file_operation_tools as _file_tools
+
+                tool = getattr(_file_tools, factory_name)()
+            except Exception:  # noqa: BLE001 — an unavailable tool is just absent
+                continue
+            self._tools[tool.name] = tool
         # `None` means "build the real gate on first use" -- NOT "ungated".
         # Every construction site (console_agent_bridge's default registry
         # and its per-run registry) passes nothing today, so an ungated
