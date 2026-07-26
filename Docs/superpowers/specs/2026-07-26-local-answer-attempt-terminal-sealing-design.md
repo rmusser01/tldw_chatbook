@@ -49,7 +49,9 @@ decision, so no new ADR is required.
 - seal the request-scoped builder exactly once
 - derive selected-attempt completeness using the canonical reducer
 - carry repository-owned policy version and capabilities into the trace
-- defer citation-bearing assistant persistence until terminal completion
+- wire the Console persistence service to the same repository instance that
+  created the request-local builder
+- defer provenance-eligible assistant persistence until terminal completion
 - atomically persist the final message, trace, governed payloads, references,
   and owner association
 - use stable message and trace identities for one same-identity retry after an
@@ -176,10 +178,13 @@ attempt.
 `seal()` requires:
 
 - at least one evidence run
+- every local evidence run has a non-null `ended_at`
 - the selected prompt set
 - the selected answer attempt
-- a terminal timestamp not preceding request, retrieval, prompt, or attempt
-  boundaries
+- strict lifecycle ordering from each retrieval end through its prompt set,
+  selected answer attempt, and terminal seal
+- a terminal timestamp not preceding any request, retrieval, prompt, or
+  attempt boundary
 
 It constructs a local, sealed `CitationTrace`, computes
 `completeness_at_seal` with `reduce_selected_attempt_completeness()`, and then
@@ -200,7 +205,10 @@ set. The Console request keeps the tuple of:
 - explicit prompt-evidence-set ID
 
 If any element required for terminal provenance is missing, generation remains
-compatible but no terminal citation callback is installed.
+compatible but no terminal citation callback is installed. Required elements
+include a persistence adapter that accepts `citation_write` and, for the real
+Console service, the exact repository instance used by the app's capture
+factory bound to the same database.
 
 ## Console completion contract
 
@@ -266,6 +274,23 @@ fallback copy, but that fallback is not an answer attempt and is not sealed.
 When a sealed write exists, `ConsoleChatStore` passes it through the optional
 `citation_write` parameter already supported by the real
 `ChatPersistenceService.create_message()` implementation.
+
+### Production composition and compatibility
+
+`ChatScreen._ensure_console_chat_store()` must construct
+`ChatPersistenceService` with both the ChaChaNotes database and the exact
+`app_instance.citation_trace_repository` used by local RAG capture. The
+repository must be bound to that same database. Without this composition, the
+existing service deterministically raises `citation_repository_unavailable`
+and no trace can reach storage.
+
+The Console persistence protocol declares `citation_write` as an optional
+creation capability. Existing narrow test fakes may continue to omit it, using
+the store's existing signature-probing compatibility pattern. A nonpersistent
+store, an adapter without that capability, a missing repository, or a
+repository/database mismatch does not arm a terminal finalizer and keeps
+ordinary message behavior. It must not build and seal a trace that cannot be
+stored.
 
 The store supplies the native Console message UUID as the explicit database
 message ID for every provenance-eligible terminal persistence attempt. The
@@ -368,6 +393,7 @@ without overstating structural or semantic trust.
 - marker-bearing body rejection with no partial mutation
 - answer-body and aggregate byte bounds
 - explicit prompt-set linkage and timestamp ordering
+- incomplete local retrieval runs and out-of-order lifecycle rejection
 - atomic rejection with no partial mutation
 - repository-owned policy metadata and bounded capabilities
 - deterministic completeness
@@ -376,6 +402,9 @@ without overstating structural or semantic trust.
 
 ### Store and persistence tests
 
+- real Console composition passes the app's exact citation repository instance
+  into `ChatPersistenceService`
+- nonpersistent and citation-incapable adapters never arm a finalizer
 - UI materialization does not persist a terminal-deferred assistant early
 - placeholder creation installs finalizer and deferral atomically
 - outer dispatch cleanup clears unconsumed finalizers and terminal deferrals on
