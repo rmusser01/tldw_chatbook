@@ -12,6 +12,31 @@ A **watchlist** becomes a first-class entity: a named bundle of sources (RSS fee
 sites) that is the unit of organization, checking, and — in a later slice — briefing and podcast
 generation.
 
+## Starting point — corrected 2026-07-26
+
+An earlier revision of this spec described the existing screen as placeholder scaffolding, citing
+literal `Column 1: Watchlist List` labels. **That was wrong.** Those strings appear only in
+`Docs/static/watchlists-screenshots/`, captured during Slice 1A (`90d4da5b2`); the real panes
+landed the same day in `33fcf3f66`, and the screenshot was stale within hours. It was read in
+preference to the code, and the error propagated into the implementation plans.
+
+What actually ships today: `OverviewPane`, `SourcesPane`, `RunsPane`, `ItemsPane`, `RulesPane`,
+`NotificationsPane`, a section navigator, a backend selector, and an inspector — with 16 tests
+covering run deep-linking across raw/canonical/server backends, the notifications inbox, and
+selection survival across recompose. **This is working, tested product. The rebuild must re-host
+it, never replace it with stubs.**
+
+The case for the redesign is unchanged, but it rests on density rather than absence. Captured live
+at 235×52 on a fresh profile, the shipped screen spends:
+
+- ~55 of 235 columns (23% of width) on a left rail displaying six words
+- a full-width, three-row `Select` on a single Local/Server value
+- an Overview dashboard rendering **seven empty bordered cards** — boxes drawn around nothing
+- three fixed ~52-column panes with heavy internal padding
+
+Structural waste, not empty-state waste: the rail, the selector, and the card grid consume that
+space whether or not any sources exist. The goal is to reclaim it, not to rebuild what works.
+
 The screen's centre becomes a three-level drill-down (feeds → items → content) with every region
 independently collapsible. The service layer beneath the UI does not move.
 
@@ -224,14 +249,14 @@ The shell stays thin. `chat_screen.py` is 13,082 lines and is the failure mode t
 | `UI/Watchlists_Modules/watchlists_workbench.py` | Rails + vertically-stacked collapsible centre container | new |
 | `UI/Watchlists_Modules/watchlist_tree.py` | Left rail: roots, watchlists, sources, tag + status filters | new |
 | `UI/Watchlists_Modules/feeds_pane.py` | Centre pane 1 — feeds table scoped by tree selection | new |
-| `UI/Watchlists_Modules/items_pane.py` | Centre pane 2 — items table | replaces placeholder |
+| `UI/Watchlists_Modules/items_pane.py` | Centre pane 2 — items table | **evolve existing** |
 | `UI/Watchlists_Modules/content_pane.py` | Centre pane 3 — article and change renderers | new |
 | `UI/Watchlists_Modules/content_render.py` | HTML→text, diff formatting, markup escaping | new |
 | `UI/Watchlists_Modules/region_layout.py` | Five-region collapse/solo/restore state; pure, no Textual | new |
 | `UI/Watchlists_Modules/inspector_pane.py` | Right rail — breadcrumb stack + actions | rewrite |
-| `UI/Watchlists_Modules/sources_tab.py` | Source CRUD, OPML, health | replaces `sources_pane` |
-| `UI/Watchlists_Modules/runs_tab.py` | Run history, batches, logs | replaces `runs_pane` |
-| `UI/Watchlists_Modules/rules_tab.py` | Filters + alert rules | replaces `rules_pane` |
+| `UI/Watchlists_Modules/sources_tab.py` | Source CRUD, OPML, health | **evolve existing** `sources_pane` |
+| `UI/Watchlists_Modules/runs_tab.py` | Run history, batches, logs | **evolve existing** `runs_pane` |
+| `UI/Watchlists_Modules/rules_tab.py` | Filters + alert rules | **evolve existing** `rules_pane` |
 | `UI/Watchlists_Modules/artifacts_tab.py` | Artifacts produced by this watchlist → Artifacts screen | new |
 | `UI/Watchlists_Modules/watchlists_backend_controller.py` | Local/server routing, capability reporting | keep, extended |
 | `UI/Watchlists_Modules/overview_pane.py` | Root-node dashboard | keep, re-scoped |
@@ -508,7 +533,8 @@ Feed titles, authors, and bodies are attacker-controllable. Two requirements:
 
 - Replace `sources_pane.py`, `items_pane.py`, `runs_pane.py`, `rules_pane.py`, `inspector_pane.py`.
 - Extract Console handoff from the shell into `watchlists_console_handoff.py`.
-- Retire the placeholder column labels ("Column 1: Watchlist List", etc.).
+- Re-host the existing panes inside the new workbench. They are working, tested product — the
+  earlier "replace the placeholders" framing was based on a stale screenshot and is withdrawn.
 - Update `Tests/Watchlists/` and `Tests/UI/test_watchlists_*` to the new panes.
 - Amend ADR-018's section IA and pane set; record the new IA and entity model in a new ADR.
 - Note in ADR-018 that its "groups/tags read-only" statement is stale — group CRUD exists at
