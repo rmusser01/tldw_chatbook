@@ -20,20 +20,29 @@ def _resolve_sandbox_config() -> str:
     return get_cli_setting("tools", "file_sandbox_root", default_root) or default_root
 
 
-def _is_within(candidate: Path, root: Path) -> bool:
+def is_within(candidate: Path, root: Path) -> bool:
     """Return whether ``candidate`` resolves inside ``root``.
+
+    Also refuses credential and gate-state paths outright (see
+    ``Utils.sensitive_paths``), so widening the configured root can never
+    expose them.
 
     Args:
         candidate: Path to test.
         root: The sandbox root it must stay under.
 
     Returns:
-        True only when the fully-resolved candidate is the root or below it.
+        True only when the fully-resolved candidate is the root or below it
+        AND is not a sensitive path.
     """
+    from ..Utils.sensitive_paths import is_sensitive_path
+
     try:
         resolved = candidate.resolve()
         root_resolved = root.resolve()
     except OSError:
+        return False
+    if is_sensitive_path(resolved):
         return False
     return resolved == root_resolved or root_resolved in resolved.parents
 
@@ -258,7 +267,7 @@ class ListDirectoryTool(Tool):
                                 and item.is_dir()
                                 and not item.is_symlink()
                                 and current_depth < max_depth
-                                and _is_within(item, sandbox_root)
+                                and is_within(item, sandbox_root)
                             ):
                                 list_dir_contents(item, current_depth + 1)
 
