@@ -115,6 +115,145 @@ def test_gemini_trusted_origins_is_self_built_url_origin(monkeypatch):
     assert seen["trusted_origins"] == frozenset({"generativelanguage.googleapis.com"})
 
 
+def _patch_dns_public(monkeypatch, hc):
+    """Make every hostname resolve to a fixed public IP (mirrors test_http_client.py's
+    _policy_env fixture) so the real egress DNS-resolution branch doesn't hit the network."""
+    monkeypatch.setattr(hc.egress, "_resolve", lambda host: ["93.184.216.34"])
+
+    async def _resolve_async(host):
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(hc.egress, "_resolve_async", _resolve_async)
+    monkeypatch.setattr(hc.egress, "get_cli_setting", lambda s, k=None, d=None: d)
+
+
+def test_gemini_cross_origin_redirect_strips_api_key(monkeypatch):
+    # Fix-round-1 (reviewer IMPORTANT finding): x-goog-api-key must be
+    # stripped on a cross-origin redirect exactly like Authorization/Cookie.
+    # This exercises the REAL fetch_json redirect machinery (fetch_json is
+    # NOT monkeypatched here) so the fix is proven end-to-end through the
+    # adapter, not just at the egress unit level.
+    from tldw_chatbook.Image_Generation import config as _c
+    from tldw_chatbook.Image_Generation import http_client as hc
+
+    _c.reset_image_generation_config_cache()
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    _patch_dns_public(monkeypatch, hc)
+
+    from tldw_chatbook.Image_Generation.adapters import gemini_image_adapter as m
+
+    seen = []
+    start_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent"
+
+    class RedirResp:
+        is_redirect = True
+        headers = {"location": "https://attacker.example/steal"}
+        url = start_url
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {}
+
+    class FinalResp:
+        is_redirect = False
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return _gemini_response()
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def request(self, method, url, *, headers=None, **k):
+            seen.append((url, dict(headers or {})))
+            return FinalResp() if url == "https://attacker.example/steal" else RedirResp()
+
+    monkeypatch.setattr(hc.httpx, "Client", FakeClient)
+    req = _req(model="gemini-2.5-flash-image")
+    m.GeminiImageAdapter().generate(req)
+
+    assert len(seen) == 2
+    first_url, first_headers = seen[0]
+    assert first_url == start_url
+    assert first_headers.get("x-goog-api-key") == "test-key"
+    second_url, second_headers = seen[1]
+    assert second_url == "https://attacker.example/steal"
+    assert "x-goog-api-key" not in second_headers
+
+
+def test_gemini_same_origin_redirect_keeps_api_key(monkeypatch):
+    # Companion to the cross-origin test above: a same-origin redirect must
+    # NOT strip the key (only cross-origin hops are stripped).
+    from tldw_chatbook.Image_Generation import config as _c
+    from tldw_chatbook.Image_Generation import http_client as hc
+
+    _c.reset_image_generation_config_cache()
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    _patch_dns_public(monkeypatch, hc)
+
+    from tldw_chatbook.Image_Generation.adapters import gemini_image_adapter as m
+
+    seen = []
+    start_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent"
+    same_origin_url = "https://generativelanguage.googleapis.com/v1beta/models/other:generateContent"
+
+    class RedirResp:
+        is_redirect = True
+        headers = {"location": same_origin_url}
+        url = start_url
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {}
+
+    class FinalResp:
+        is_redirect = False
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return _gemini_response()
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def request(self, method, url, *, headers=None, **k):
+            seen.append((url, dict(headers or {})))
+            return FinalResp() if url == same_origin_url else RedirResp()
+
+    monkeypatch.setattr(hc.httpx, "Client", FakeClient)
+    req = _req(model="gemini-2.5-flash-image")
+    m.GeminiImageAdapter().generate(req)
+
+    assert len(seen) == 2
+    second_url, second_headers = seen[1]
+    assert second_url == same_origin_url
+    assert second_headers.get("x-goog-api-key") == "test-key"
+
+
 def test_gemini_response_modalities_pinned(monkeypatch):
     # task-620 lesson: verified live against docs, not guessed. See report.
     m = _reset_and_import(monkeypatch)
@@ -296,6 +435,49 @@ def test_gemini_snake_case_inline_data_spelling_accepted(monkeypatch):
     req = _req(model="gemini-2.5-flash-image")
     res = m.GeminiImageAdapter().generate(req)
     assert res.bytes_len > 0
+
+
+def test_gemini_malformed_base64_in_first_candidate_does_not_abort_scan(monkeypatch):
+    # Fix-round-1 (reviewer MINOR finding): corrupted base64 in candidate[0]
+    # must not raise out of the scan and mask a valid image in candidate[1].
+    m = _reset_and_import(monkeypatch)
+
+    response = {
+        "candidates": [
+            {
+                "content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": "not-valid-base64!!!"}}]},
+                "finishReason": "STOP",
+            },
+            {
+                "content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": _b64_png()}}]},
+                "finishReason": "STOP",
+            },
+        ]
+    }
+    monkeypatch.setattr(m, "fetch_json", lambda *a, **kw: response)
+    req = _req(model="gemini-2.5-flash-image")
+    res = m.GeminiImageAdapter().generate(req)
+    assert res.bytes_len > 0
+
+
+def test_gemini_all_parts_undecodable_raises_dedicated_error(monkeypatch):
+    from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
+    m = _reset_and_import(monkeypatch)
+
+    response = {
+        "candidates": [
+            {
+                "content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": "not-valid-base64!!!"}}]},
+                "finishReason": "STOP",
+            }
+        ]
+    }
+    monkeypatch.setattr(m, "fetch_json", lambda *a, **kw: response)
+    req = _req(model="gemini-2.5-flash-image")
+    with pytest.raises(ImageGenerationError) as exc_info:
+        m.GeminiImageAdapter().generate(req)
+    assert str(exc_info.value) == "Gemini returned image data that could not be decoded"
 
 
 # ---------------------------------------------------------------------------

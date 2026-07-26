@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from loguru import logger
 
 from tldw_chatbook.Image_Generation.http_client import fetch_json
 from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest, ImageGenResult
@@ -208,6 +209,13 @@ class GeminiImageAdapter:
         }
 
     def _extract_image(self, data: Any) -> tuple[bytes, str]:
+        # Fix-round-1 (reviewer MINOR finding): a decode failure in one part
+        # must not abort the scan -- candidate[1] can still carry a valid
+        # image even if candidate[0]'s inline data is corrupt. `saw_undecodable`
+        # distinguishes "no inline-data part existed at all" (falls through to
+        # the normal blockReason/finishReason mapping) from "at least one did,
+        # but every one of them failed to decode" (a clearer, dedicated error).
+        saw_undecodable = False
         if isinstance(data, dict):
             candidates = data.get("candidates")
             if isinstance(candidates, list):
@@ -221,14 +229,26 @@ class GeminiImageAdapter:
                     if not isinstance(parts, list):
                         continue
                     for part in parts:
-                        extracted = self._extract_inline_data(part)
+                        extracted, undecodable = self._extract_inline_data(part)
                         if extracted is not None:
                             return extracted
+                        saw_undecodable = saw_undecodable or undecodable
+        if saw_undecodable:
+            raise ImageGenerationError("Gemini returned image data that could not be decoded")
         raise ImageGenerationError(self._no_image_message(data))
 
-    def _extract_inline_data(self, part: Any) -> tuple[bytes, str] | None:
+    def _extract_inline_data(self, part: Any) -> tuple[tuple[bytes, str] | None, bool]:
+        """Try to pull a decoded image out of one response ``part``.
+
+        Returns ``(result, undecodable)``: ``result`` is the decoded
+        ``(bytes, mime_type)`` on success, else ``None``; ``undecodable`` is
+        ``True`` only when the part *had* an inline-data payload that failed
+        to decode (malformed base64 / oversize) -- the caller uses this to
+        pick a more specific error than the generic no-image mapping when
+        every part with inline data failed this way.
+        """
         if not isinstance(part, dict):
-            return None
+            return None, False
         # Defensive against both spellings: the canonical REST/JSON response
         # field is camelCase `inlineData`, but proto-JSON also round-trips
         # the original `inline_data` field name.
@@ -236,12 +256,19 @@ class GeminiImageAdapter:
         if not isinstance(inline, dict):
             inline = part.get("inline_data")
         if not isinstance(inline, dict):
-            return None
+            return None, False
         b64data = inline.get("data")
         if not isinstance(b64data, str) or not b64data.strip():
-            return None
+            return None, False
         mime_type = inline.get("mimeType") or inline.get("mime_type") or "image/png"
-        return decode_base64_image(b64data.strip(), max_bytes=self._max_output_bytes()), str(mime_type)
+        try:
+            content = decode_base64_image(b64data.strip(), max_bytes=self._max_output_bytes())
+        except ImageGenerationError as exc:
+            # Never log the b64 payload itself -- only the decoder's generic
+            # failure reason (e.g. "invalid base64 image data").
+            logger.debug(f"Gemini image adapter: skipping undecodable inline-data part ({exc})")
+            return None, True
+        return (content, str(mime_type)), False
 
     @staticmethod
     def _no_image_message(data: Any) -> str:
