@@ -1,7 +1,7 @@
 # Application Session State Ownership Design
 
 Date: 2026-07-26
-Status: Corrected after independent review; pending re-review
+Status: Corrected after independent review round two; pending final re-review
 ADR:
 [ADR-026](../../../backlog/decisions/026-application-session-state-ownership.md)
 Backlog:
@@ -80,6 +80,11 @@ specification was written.
   while the constructed screen reports `screen_name="personas"`. Current
   navigation saves under the screen-owned name and restores under the routed
   name, so aliases can already miss their own snapshots.
+- Startup initially writes the resolved canonical tab in
+  `_push_initial_screen()`, but `_post_mount_setup()` later overwrites it with
+  the raw configured route both directly and through deferred
+  `_set_initial_tab()`. An alias-configured startup can therefore leave
+  `current_tab` noncanonical before the first outgoing save.
 - Navigation flushes outgoing pending work, saves state, constructs a fresh
   screen, restores state, applies explicit navigation context, and switches
   screens. That order carries user-visible semantics.
@@ -303,6 +308,16 @@ by `resolve_screen_target()`, not the requested route, the resolver's
 The store accepts an already canonical, non-empty key and does not perform a
 second route resolution. This keeps registry policy in the navigation owner
 and makes the key contract testable.
+
+`_push_initial_screen()` becomes the sole startup writer of `current_tab`. It
+already resolves the configured/first-run route and assigns `resolved_tab`
+after the screen is pushed. TASK-644 removes the deferred `_set_initial_tab()`
+call/method and the final raw assignment in `_post_mount_setup()` so neither
+can overwrite that canonical value. The app always enables screen navigation,
+and `watch_current_tab()` returns immediately in that mode, so those later
+assignments provide no required watcher behavior. Any startup code that needs
+the configured route for a one-time branch may keep it in a local variable,
+but it may not publish that unresolved value as `current_tab`.
 
 Runtime identity consists of the active source and, in server mode, the active
 server ID. A source mismatch invalidates the saved snapshot. In server mode, a
@@ -580,6 +595,9 @@ barriers rather than timing sleeps.
 - `ccp`/`personas`, retired Library aliases, and other aliases sharing a
   canonical tab use the same snapshot, while distinct canonical tabs remain
   isolated even when their screen-owned names match.
+- Mounted startup with alias defaults such as `ccp`, `notes`, and `customize`
+  leaves `current_tab` at the resolver's canonical tab after post-mount setup,
+  then saves/restores through that same key on the next navigation.
 - Flush veto/exception prevents navigation; save/restore failure does not.
 - Fresh screen construction and explicit Library, Settings, and Watchlists
   context precedence are mounted and verified.

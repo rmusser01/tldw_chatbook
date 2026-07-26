@@ -49,7 +49,9 @@ The outgoing key comes from the app's current tab established by the prior
 successful navigation, and the incoming key comes from the new resolution.
 Requested aliases, routed screen names, and screen-owned names are not
 alternative keys. Aliases sharing a canonical tab intentionally share a
-snapshot.
+snapshot. Initial screen push is the sole startup writer of the canonical
+current tab; deferred post-mount code must not replace it with the unresolved
+configured alias.
 
 Destination handoffs remain memory-only and preserve the existing single-slot,
 consume-once, last-write-wins behavior. Each typed channel has a monotonic
