@@ -247,6 +247,32 @@ class WatchlistBundleService:
         ).fetchall()
         return [row[0] for row in rows]
 
+    def list_source_rows(self, watchlist_id: int) -> list[dict[str, Any]]:
+        """Sources in a watchlist, with the fields a tree row needs.
+
+        ``list_sources`` returns bare ids; resolving each to a name would be
+        one query per source inside a render. This joins instead, so expanding
+        a watchlist costs exactly one query no matter how many sources it has.
+
+        Args:
+            watchlist_id: The watchlist whose sources to list.
+
+        Returns:
+            One dict per source with ``id``, ``name`` and ``type``, in the
+            order the sources were added.
+        """
+        rows = self._db.conn.execute(
+            """
+            SELECT s.id, s.name, s.type
+            FROM watchlist_sources ws
+            JOIN subscriptions s ON s.id = ws.subscription_id
+            WHERE ws.watchlist_id = ?
+            ORDER BY ws.added_at, s.id
+            """,
+            (watchlist_id,),
+        ).fetchall()
+        return [{"id": row[0], "name": row[1], "type": row[2]} for row in rows]
+
     # --- Migration ---
 
     MIGRATION_KEY = "folders_to_watchlists"

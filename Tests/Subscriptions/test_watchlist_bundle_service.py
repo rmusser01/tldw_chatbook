@@ -169,3 +169,47 @@ def test_migrate_folders_runs_once(service, db):
 def test_migrate_folders_is_noop_with_no_sources(service):
     assert service.migrate_folders() is True
     assert service.list_watchlists() == []
+
+
+def test_list_source_rows_returns_names_and_types(service, db):
+    watchlist = service.create("Morning")
+    a = db.add_subscription(name="ArXiv: AI", type="rss", source="https://a.example/f")
+    b = db.add_subscription(name="anthropic.com", type="url", source="https://b.example/")
+    service.add_source(watchlist["id"], a)
+    service.add_source(watchlist["id"], b)
+
+    rows = service.list_source_rows(watchlist["id"])
+    assert [r["name"] for r in rows] == ["ArXiv: AI", "anthropic.com"]
+    assert {r["type"] for r in rows} == {"rss", "url"}
+    assert {r["id"] for r in rows} == {a, b}
+
+
+def test_list_source_rows_is_empty_for_a_watchlist_with_no_sources(service):
+    watchlist = service.create("Empty")
+    assert service.list_source_rows(watchlist["id"]) == []
+
+
+def test_list_source_rows_uses_a_single_query(service, db, monkeypatch):
+    watchlist = service.create("Morning")
+    for index in range(6):
+        service.add_source(
+            watchlist["id"],
+            db.add_subscription(name=f"S{index}", type="rss", source=f"https://s{index}.example/f"),
+        )
+
+    class _Counting:
+        def __init__(self, inner):
+            self._inner = inner
+            self.execute_count = 0
+
+        def execute(self, *args, **kwargs):
+            self.execute_count += 1
+            return self._inner.execute(*args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    counting = _Counting(db.conn)
+    monkeypatch.setattr(type(db), "conn", property(lambda self: counting))
+    service.list_source_rows(watchlist["id"])
+    assert counting.execute_count == 1
