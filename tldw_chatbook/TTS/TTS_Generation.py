@@ -23,6 +23,8 @@ from tldw_chatbook.TTS.adapter_types import (
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.request_admission import TTSRequestAdmissionCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +283,7 @@ class TTSService:
         registry: TTSAdapterRegistry,
         *,
         max_concurrent_operations: int = 4,
+        preferences_snapshot: TTSPreferencesSnapshot | None = None,
     ) -> None:
         if max_concurrent_operations < 1:
             raise ValueError("max_concurrent_operations must be positive")
@@ -291,6 +294,15 @@ class TTSService:
         self._shutdown_task: asyncio.Task[None] | None = None
         self._responses: set[_ManagedAudioResponse] = set()
         self._admitted_operations: set[_AdmittedTTSOperation] = set()
+        initial_preferences = (
+            TTSPreferencesSnapshot.from_settings({})
+            if preferences_snapshot is None
+            else preferences_snapshot
+        )
+        self._request_admission = TTSRequestAdmissionCoordinator(
+            self,
+            initial_preferences,
+        )
 
     async def admit(
         self,
@@ -354,6 +366,24 @@ class TTSService:
         """
         operation = await self.admit(request)
         return await operation.synthesize(progress_sink)
+
+    def preferences_snapshot(self) -> TTSPreferencesSnapshot:
+        """Return the current immutable default TTS preference snapshot."""
+        return self._request_admission.preferences_snapshot()
+
+    async def synthesize_default(
+        self,
+        *,
+        text: str,
+        voice_override: str | None = None,
+        progress_sink: ProgressSink | None = None,
+    ) -> TTSAudioResponse:
+        """Resolve and synthesize one revision-coherent default request."""
+        return await self._request_admission.synthesize_default(
+            text=text,
+            voice_override=voice_override,
+            progress_sink=progress_sink,
+        )
 
     async def generate_audio_stream(
         self,

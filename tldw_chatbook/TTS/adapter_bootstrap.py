@@ -18,6 +18,7 @@ from tldw_chatbook.TTS.legacy_bridge import (
     _legacy_config_snapshot as _legacy_config_snapshot,
     legacy_provider_specs,
 )
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 
 
@@ -66,6 +67,7 @@ def build_default_tts_service(
     Returns:
         A service whose adapters remain unmaterialized until first use.
     """
+    preferences_snapshot = TTSPreferencesSnapshot.from_settings(app_config)
     registry = TTSAdapterRegistry(
         specs=(
             audio_cpp_provider_spec(app_config),
@@ -73,4 +75,8 @@ def build_default_tts_service(
         ),
         aliases={},
     )
-    return TTSService(registry, max_concurrent_operations=4)
+    return TTSService(
+        registry,
+        max_concurrent_operations=4,
+        preferences_snapshot=preferences_snapshot,
+    )

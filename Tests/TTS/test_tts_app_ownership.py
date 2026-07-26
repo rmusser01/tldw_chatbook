@@ -21,6 +21,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
 )
 from tldw_chatbook.TTS import STTSPlaygroundRequest
 from tldw_chatbook.TTS.adapter_types import ProgressSink, TTSProgress
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import (
     get_tts_service,
     reset_tts_service_binding,
@@ -169,8 +170,11 @@ def test_app_construction_keeps_audio_cpp_import_and_all_adapters_lazy(
     app = _build_test_app()
 
     assert tuple(
-        descriptor.provider_id for descriptor in app.tts_service.registry.descriptors()
+        descriptor.provider_id for descriptor in app.tts_service.provider_descriptors()
     ) == ("audio_cpp", "openai")
+    assert app.tts_service.preferences_snapshot() == (
+        TTSPreferencesSnapshot.from_settings(app.app_config)
+    )
     assert factory.calls == 0
 
 
