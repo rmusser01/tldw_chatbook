@@ -151,8 +151,9 @@ class WordBenchCaptureClient:
         canary = "pass" if observed & set(CANARY_EXPECT) else "degenerate"
         if canary == "degenerate":
             logger.warning(
-                "Word bench canary degenerate for target %s: %r continued with %r",
-                target.name, CANARY_PROMPT,
+                "Word bench canary degenerate for target {}: {!r} continued with {!r}",
+                target.name,
+                CANARY_PROMPT,
                 [t.token for t in result.top_k[:3]],
             )
         return PreflightResult(

@@ -86,6 +86,26 @@ async def test_chat_mode_sends_system_prompt_as_a_message():
 
 
 @pytest.mark.asyncio
+async def test_chat_mode_also_carries_the_neutral_sampler():
+    """The two branches share one **NEUTRAL_SAMPLER splat today, but nothing
+    stops a chat-specific override from landing in the later payload.update()
+    call and shipping undetected. Pin it on chat's wire body too, not just
+    raw's."""
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=RAW)
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    await _client(handler).capture("the snippet", target, "chat", 5)
+
+    assert seen["body"]["temperature"] == 1.0
+    assert seen["body"]["top_p"] == 1.0
+    assert seen["body"]["top_k"] == 0
+
+
+@pytest.mark.asyncio
 async def test_chat_mode_requests_a_window_not_a_single_token():
     """It must be able to skip leading control tokens."""
     seen = {}
@@ -154,6 +174,31 @@ async def test_preflight_passes_canary_when_expected_token_is_present():
         "choices": [{"logprobs": {"content": [{
             "id": 1, "token": " Paris", "bytes": [], "logprob": -0.2,
             "top_logprobs": [{"id": 1, "token": " Paris", "bytes": [], "logprob": -0.2}],
+        }]}}]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).preflight(target, "raw", 5)
+    assert result.canary == "pass"
+    assert result.is_warned is False
+
+
+@pytest.mark.asyncio
+async def test_preflight_passes_canary_when_expected_token_is_present_at_rank_2():
+    """Rank order has been observed to flip between identical requests, so
+    the canary must scan the whole top-K, not only rank 1 -- a rank-1-only
+    check would be flaky in exactly this situation. Here the top-1 token is
+    NOT the expected one; the expected token is present but ranked second."""
+    payload = {
+        "choices": [{"logprobs": {"content": [{
+            "id": 2, "token": " a", "bytes": [], "logprob": -0.1,
+            "top_logprobs": [
+                {"id": 2, "token": " a", "bytes": [], "logprob": -0.1},
+                {"id": 1, "token": " Paris", "bytes": [], "logprob": -0.5},
+            ],
         }]}}]
     }
 
