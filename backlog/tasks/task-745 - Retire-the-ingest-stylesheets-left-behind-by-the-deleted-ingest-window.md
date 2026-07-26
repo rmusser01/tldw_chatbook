@@ -1,11 +1,11 @@
 ---
 id: TASK-745
 title: Retire the ingest stylesheets left behind by the deleted ingest window
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-26 16:20'
-updated_date: '2026-07-26 23:28'
+updated_date: '2026-07-26 23:44'
 labels:
   - cleanup
   - css
