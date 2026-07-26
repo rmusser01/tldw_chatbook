@@ -573,7 +573,8 @@ async def test_console_rail_state_persists_by_workspace_session_key(monkeypatch)
         await _wait_for_saved_settings(pilot, saved_settings, 2)
 
     rail_state = app.app_config["console"]["rail_state"]
-    expected_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:{session.id}"
+    # TASK-718: rail layout is a per-workspace preference.
+    expected_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:layout"
     assert rail_state[expected_key] == _rail_prefs(left_open=False, right_open=True)
     assert saved_settings[-1] == (
         "console.rail_state",
@@ -641,7 +642,7 @@ async def test_console_rail_state_uses_workspace_session_specific_keys(monkeypat
     app.app_config = {
         "console": {
             "rail_state": {
-                "console_rail_state:workspace-a:session-a": {
+                "console_rail_state:workspace-a:layout": {
                     "left_open": False,
                     "right_open": True,
                 }
@@ -695,7 +696,7 @@ async def test_console_session_preference_copies_to_durable_conversation_key(
     app.app_config = {
         "console": {
             "rail_state": {
-                f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-1": {
+                f"console_rail_state:{DEFAULT_WORKSPACE_ID}:global": {
                     "left_open": False,
                     "right_open": True,
                 }
@@ -732,14 +733,14 @@ async def test_console_session_preference_copies_to_durable_conversation_key(
         await _wait_for_selector(console, pilot, "#console-context-rail-handle")
 
     rail_state = app.app_config["console"]["rail_state"]
-    # The durable conversation copy is written through the full serialized
-    # shape, and the superseded session fallback entry is deleted so it can
-    # no longer accumulate as a permanent orphan section.
-    session_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-1"
-    assert session_key not in rail_state
-    assert session_key in deleted_keys
+    # TASK-718: the durable layout copy is written through the full serialized
+    # shape, and the superseded legacy ":global" entry is deleted so the
+    # migration does not leave a permanent orphan section behind.
+    legacy_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:global"
+    assert legacy_key not in rail_state
+    assert legacy_key in deleted_keys
     assert rail_state[
-        f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-1"
+        f"console_rail_state:{DEFAULT_WORKSPACE_ID}:layout"
     ] == _rail_prefs(left_open=False, right_open=True)
 
 
@@ -781,11 +782,17 @@ async def test_console_rail_key_prefers_native_session_over_legacy_conversation(
         await _wait_for_hidden(console, pilot, "#console-left-rail")
 
         rail_state = app.app_config["console"]["rail_state"]
+        # TASK-718: neither legacy tab conversation ids nor native session
+        # ids shape the key - all writes land on the workspace layout key.
         assert rail_state[
-            f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-native"
+            f"console_rail_state:{DEFAULT_WORKSPACE_ID}:layout"
         ] == _rail_prefs(left_open=False, right_open=False)
         assert (
             f"console_rail_state:{DEFAULT_WORKSPACE_ID}:legacy-conv" not in rail_state
+        )
+        assert (
+            f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-native"
+            not in rail_state
         )
 
         session.persisted_conversation_id = "native-conv"
@@ -793,9 +800,9 @@ async def test_console_rail_key_prefers_native_session_over_legacy_conversation(
 
     rail_state = app.app_config["console"]["rail_state"]
     assert rail_state[
-        f"console_rail_state:{DEFAULT_WORKSPACE_ID}:native-conv"
+        f"console_rail_state:{DEFAULT_WORKSPACE_ID}:layout"
     ] == _rail_prefs(left_open=False, right_open=False)
-    assert f"console_rail_state:{DEFAULT_WORKSPACE_ID}:legacy-conv" not in rail_state
+    assert f"console_rail_state:{DEFAULT_WORKSPACE_ID}:native-conv" not in rail_state
 
 
 @pytest.mark.asyncio
@@ -1012,7 +1019,7 @@ async def test_console_staged_context_badge_lands_on_inspector_handle_not_left()
     app.console_rail_session_id = "badge-session"
     app.app_config["console"] = {
         "rail_state": {
-            f"console_rail_state:{DEFAULT_WORKSPACE_ID}:badge-session": {
+            f"console_rail_state:{DEFAULT_WORKSPACE_ID}:layout": {
                 "left_open": False,
                 "right_open": False,
             }
@@ -1098,7 +1105,7 @@ async def test_console_compact_width_preserves_main_column_and_forces_right_coll
 ):
     assert columns < CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS
     session_id = f"compact-{columns}"
-    preference_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:{session_id}"
+    preference_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:layout"
     app = _build_test_app()
     app.console_rail_session_id = session_id
     app.app_config = {
@@ -1459,12 +1466,17 @@ async def test_console_rail_prune_removes_orphans_and_is_one_shot(monkeypatch):
         # Seed a mixed rail_state and stub conversation liveness. Reset the
         # one-shot latch so the manual dispatch runs against this exact state
         # rather than racing the natural mount-time dispatch.
+        # TASK-718: preferences are per-workspace (":layout"), so every
+        # conversation-scoped key is stale regardless of liveness; only the
+        # layout key and the legacy ":global" migration source survive.
         live_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-live"
+        layout_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:layout"
         global_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:global"
         orphan_a = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-dead-a"
         orphan_b = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-dead-b"
         app.app_config["console"]["rail_state"] = {
             live_key: _rail_prefs(left_open=True, right_open=False),
+            layout_key: _rail_prefs(left_open=True, right_open=False),
             global_key: _rail_prefs(left_open=True, right_open=False),
             orphan_a: _rail_prefs(left_open=False, right_open=True),
             orphan_b: _rail_prefs(left_open=False, right_open=False),
@@ -1483,11 +1495,12 @@ async def test_console_rail_prune_removes_orphans_and_is_one_shot(monkeypatch):
             if orphan_a not in rail_state and orphan_b not in rail_state:
                 break
             await pilot.pause(0.05)
-        assert live_key in rail_state
+        assert layout_key in rail_state
         assert global_key in rail_state
+        assert live_key not in rail_state
         assert orphan_a not in rail_state
         assert orphan_b not in rail_state
-        assert deleted_calls[-1] == [orphan_a, orphan_b]
+        assert deleted_calls[-1] == [live_key, orphan_a, orphan_b]
 
         # One-shot: a second dispatch does no further work.
         assert console._console_rail_prune_dispatched is True

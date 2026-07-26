@@ -13,12 +13,22 @@ def test_prunes_dead_scope_key():
     assert prunable == ["console_rail_state:ws:dead-conv"]
 
 
-def test_keeps_live_scope_key():
+def test_prunes_conversation_keys_even_when_live():
+    """TASK-718: preferences are per-workspace now; per-conversation keys are
+    stale regardless of whether their conversation is still live."""
     stored_keys = ["console_rail_state:ws:live-conv"]
 
     prunable = collect_prunable_console_rail_keys(
         stored_keys, live_scope_ids=["live-conv"]
     )
+
+    assert prunable == ["console_rail_state:ws:live-conv"]
+
+
+def test_keeps_layout_scope_key():
+    stored_keys = ["console_rail_state:ws:layout"]
+
+    prunable = collect_prunable_console_rail_keys(stored_keys, live_scope_ids=[])
 
     assert prunable == []
 
@@ -45,22 +55,25 @@ def test_keeps_malformed_and_foreign_keys():
     assert prunable == []
 
 
-def test_live_ids_are_matched_after_sanitization():
-    # The module sanitizes raw scope ids (replacing characters outside
-    # [A-Za-z0-9_.-] with "_") before building persistence keys, so a raw id
-    # containing a colon is stored under its sanitized form.
+def test_sanitized_conversation_keys_are_prunable():
+    # Under the per-workspace scheme (TASK-718) sanitized conversation keys
+    # are stale like any other conversation-scoped entry.
     stored_keys = ["console_rail_state:ws:conv_1"]
 
     prunable = collect_prunable_console_rail_keys(
         stored_keys, live_scope_ids=["conv:1"]
     )
 
-    assert prunable == []
+    assert prunable == ["console_rail_state:ws:conv_1"]
 
 
-def test_mixed_stored_keys_only_prunes_dead_scopes():
+def test_mixed_stored_keys_keeps_only_layout_and_global():
+    """TASK-718: per-workspace scheme - every conversation/session-scoped key
+    is prunable; ``:layout`` (current) and ``:global`` (migration source) and
+    foreign shapes are kept."""
     stored_keys = [
         "console_rail_state:ws:global",
+        "console_rail_state:ws:layout",
         "console_rail_state:ws:live-conv",
         "console_rail_state:ws:orphan-1",
         "console_rail_state:ws:orphan-2",
@@ -72,6 +85,7 @@ def test_mixed_stored_keys_only_prunes_dead_scopes():
     )
 
     assert sorted(prunable) == [
+        "console_rail_state:ws:live-conv",
         "console_rail_state:ws:orphan-1",
         "console_rail_state:ws:orphan-2",
     ]

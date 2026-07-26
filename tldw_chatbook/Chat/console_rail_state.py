@@ -127,6 +127,16 @@ def _build_persistence_key(workspace_id: str, scope_id: str) -> str:
     return f"{_PERSISTENCE_PREFIX}:{workspace_id}:{scope_id}"
 
 
+#: TASK-718: the single per-workspace layout scope. Rail section preferences
+#: were previously keyed per workspace+conversation, which multiplied config
+#: entries per chat and reset a user's section layout on every new
+#: conversation (a toggle made moments earlier was gone after a workspace
+#: switch round-trip). Layout is a workspace-level preference.
+CONSOLE_RAIL_LAYOUT_SCOPE = "layout"
+#: Legacy no-conversation scope kept readable as a one-time migration source.
+_LEGACY_GLOBAL_SCOPE = "global"
+
+
 def build_console_rail_preference_key(
     *,
     workspace_id: Any = None,
@@ -137,35 +147,22 @@ def build_console_rail_preference_key(
 
     Args:
         workspace_id: Workspace scope value, or global when empty.
-        conversation_id: Preferred conversation-specific scope value.
-        session_id: Temporary session scope used when no conversation exists.
+        conversation_id: Accepted for API compatibility; no longer shapes the
+            key (TASK-718 - preferences are per workspace).
+        session_id: Accepted for API compatibility; no longer shapes the key.
 
     Returns:
-        Primary preference key, with a session fallback when both conversation
-        and session scopes are available.
+        The per-workspace layout key, with the legacy ``:global`` key as the
+        read-only migration fallback (adopted by the caller's fallback
+        migration when the layout key has never been written).
     """
+    del conversation_id, session_id
     workspace_scope = _sanitize_key_part(workspace_id)
-    conversation_scope = _sanitize_optional_key_part(conversation_id)
-    session_scope = _sanitize_optional_key_part(session_id)
-
-    if conversation_scope:
-        fallback_value = (
-            _build_persistence_key(workspace_scope, session_scope)
-            if session_scope
-            else None
-        )
-        return ConsoleRailPreferenceKey(
-            workspace_id=workspace_scope,
-            scope_id=conversation_scope,
-            value=_build_persistence_key(workspace_scope, conversation_scope),
-            fallback_value=fallback_value,
-        )
-
-    scope_id = session_scope or "global"
     return ConsoleRailPreferenceKey(
         workspace_id=workspace_scope,
-        scope_id=scope_id,
-        value=_build_persistence_key(workspace_scope, scope_id),
+        scope_id=CONSOLE_RAIL_LAYOUT_SCOPE,
+        value=_build_persistence_key(workspace_scope, CONSOLE_RAIL_LAYOUT_SCOPE),
+        fallback_value=_build_persistence_key(workspace_scope, _LEGACY_GLOBAL_SCOPE),
     )
 
 
@@ -176,27 +173,22 @@ def collect_prunable_console_rail_keys(
 ) -> list[str]:
     """Return stored rail-preference keys whose scope is no longer live.
 
-    A key is prunable only when it matches the canonical
-    ``console_rail_state:<workspace>:<scope>`` shape and its scope id is
-    neither the reserved ``global`` scope nor present in ``live_scope_ids``.
-    Unrecognized key shapes are always kept.
+    TASK-718: preferences are per-workspace (``:layout`` scope) with the
+    legacy ``:global`` scope kept as the migration source, so every other
+    scoped key (per-conversation/per-session entries from the old scheme) is
+    stale by definition and safe to delete. Unrecognized key shapes are
+    always kept.
 
     Args:
         stored_keys: Iterable of stored config key strings (non-string
             entries are ignored). ``None`` is treated as empty.
-        live_scope_ids: Iterable of live scope ids (conversation ids plus
-            open session ids), matched after the module's key sanitization.
-            ``None`` is treated as empty.
+        live_scope_ids: Accepted for API compatibility; conversation/session
+            liveness no longer affects prunability.
 
     Returns:
         The subset of ``stored_keys`` safe to delete, order-preserved.
     """
-    live_sanitized = {
-        sanitized
-        for raw in (live_scope_ids or ())
-        for sanitized in (_sanitize_optional_key_part(raw),)
-        if sanitized
-    }
+    del live_scope_ids
     prunable: list[str] = []
     for key in stored_keys or ():
         if not isinstance(key, str):
@@ -205,7 +197,7 @@ def collect_prunable_console_rail_keys(
         if len(parts) != 3 or parts[0] != _PERSISTENCE_PREFIX:
             continue
         scope_id = parts[2]
-        if scope_id == "global" or scope_id in live_sanitized:
+        if scope_id in (CONSOLE_RAIL_LAYOUT_SCOPE, _LEGACY_GLOBAL_SCOPE):
             continue
         prunable.append(key)
     return prunable
