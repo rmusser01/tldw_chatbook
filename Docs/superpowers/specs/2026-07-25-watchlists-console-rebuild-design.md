@@ -20,8 +20,15 @@ its scheduled delivery. This spec designs the space those features occupy but im
 
 ## Goals
 
-- Rebuild the screen at Console-level information density, reusing `DestinationWorkbench`,
-  `DestinationModeStrip`, and the `$ds-*` token set.
+- Rebuild the screen at Console-level information density, reusing `DestinationModeStrip` and the
+  `$ds-*` token set.
+
+**`DestinationWorkbench` is deliberately not reused.** It is a fixed `Horizontal` of equal-width
+(`width: 1fr`) panes composed once from a frozen tuple set at construction, with no collapse, no
+resize, and no vertical stacking. That is the opposite of what this screen needs — two rails around
+a vertically-stacked, independently collapsible centre. A purpose-built `watchlists_workbench.py`
+container is used instead. If the collapse behaviour proves generally useful, it graduates into the
+shared widget later; it is not worth generalising ahead of a second consumer.
 - Introduce the watchlist bundle entity with many-to-many source membership.
 - Provide a real feed-reader path: collection → feeds → items → readable content.
 - Render scraped sites as first-class reader content, not second-class rows.
@@ -80,6 +87,11 @@ CREATE INDEX IF NOT EXISTS idx_watchlist_sources_subscription
 
 `PRAGMA foreign_keys = ON` is already set (`Subscriptions_DB.py:82`), so these cascades take effect.
 
+`watchlists.tags` is **comma-joined**, matching how `subscriptions.tags` is stored
+(`Subscriptions_DB.py:422` does `",".join(tags)`) — not JSON. This inherits the existing wart that
+a tag containing a comma will split; consistency with the sibling column is worth more than fixing
+it unilaterally here.
+
 **`watchlists.name` is deliberately not `UNIQUE`.** Uniqueness is enforced case-insensitively in
 `WatchlistBundleService` with auto-suffixing (`Unsorted (2)`). A raw SQL constraint would raise
 mid-migration on case-variant folder values or OPML re-imports.
@@ -91,10 +103,21 @@ Added to `subscription_items`:
 | `content` | `TEXT` | Renderable body: article text for feed items, diff text for site changes |
 | `content_kind` | `TEXT` | `article` \| `change` — selects which renderer the Content pane uses |
 | `content_format` | `TEXT` | `text` \| `markdown` \| `diff` — how to format within that renderer |
+| `is_flagged` | `BOOLEAN DEFAULT 0` | User flag, orthogonal to `status` |
 
 The two are orthogonal but constrained: `content_kind='change'` always pairs with
 `content_format='diff'`; `content_kind='article'` pairs with `text` or `markdown` depending on what
 the fetcher produced. Any other combination is a bug and is rejected at the persist boundary.
+
+**Flag needs its own column; it cannot be a status.** `subscription_items.status` carries a CHECK
+constraint allowing only `new`, `reviewed`, `ingested`, `ignored`, `error`
+(`Subscriptions_DB.py:156`) — there is no `flagged` value, and SQLite cannot drop a CHECK without
+the full table-rebuild dance. More importantly a single status column *cannot* express the real
+state: an item can be flagged **and** reviewed at once. `is_flagged` as a separate boolean follows
+the precedent ADR-018 already set with `queued_for_briefing`.
+
+**Read maps to `reviewed`.** The reader's "read/unread" language is a UI affordance over the
+existing `status` values; `new` is unread, `reviewed` is read. No new status value is introduced.
 
 Added to `local_watchlist_runs`:
 
@@ -187,6 +210,7 @@ The shell stays thin. `chat_screen.py` is 13,082 lines and is the failure mode t
 | `Subscriptions/watchlist_bundle_service.py` | Watchlist CRUD, membership, name collision handling, folder migration | new |
 | `UI/Screens/watchlists_collections_screen.py` | Shell: rails, tab routing, recovery state | rewrite; <400 LOC is a guideline, not an acceptance criterion |
 | `UI/Watchlists_Modules/watchlists_console_handoff.py` | Console staging/follow, extracted from the shell | new |
+| `UI/Watchlists_Modules/watchlists_workbench.py` | Rails + vertically-stacked collapsible centre container | new |
 | `UI/Watchlists_Modules/watchlist_tree.py` | Left rail: roots, watchlists, sources, tag + status filters | new |
 | `UI/Watchlists_Modules/feeds_pane.py` | Centre pane 1 — feeds table scoped by tree selection | new |
 | `UI/Watchlists_Modules/items_pane.py` | Centre pane 2 — items table | replaces placeholder |
@@ -258,7 +282,11 @@ the left and right rails, matching Console's rail handles.
 
 Collapsed panes become a one-line header showing their count, so nothing vanishes without a trace.
 Collapsed panes are skipped by `F6` pane cycling, but their header remains focusable and clickable
-so expansion is always reachable. Collapse state persists per user across visits.
+so expansion is always reachable.
+
+Collapse state persists across visits in the user's config under a `[watchlists.layout]` section —
+five booleans plus the solo-restore stack. It is UI preference, not data, so it belongs in config
+rather than `SubscriptionsDB`.
 
 ### Tabs
 
@@ -267,8 +295,15 @@ current screen. Only **Read** uses the three-pane split. Sources, Runs, Rules, a
 the full centre width — they have no collection→feed→item relationship.
 
 **Artifacts is empty-state-only in spec #1**, stating plainly that generation arrives in the next
-slice. It lists artifacts produced by the selected watchlist and navigates to the Artifacts screen
-via `NavigateToScreen`; it never stores or renders artifacts itself.
+slice. It lists artifacts produced by the selected watchlist and navigates to the Artifacts screen;
+it never stores or renders artifacts itself.
+
+Deep-linking needs care. `NavigateToScreen` does accept a `screen_context` dict
+(`main_navigation.py:47`), but the Artifacts screen does not read it — it consumes an app attribute,
+`pending_artifacts_chatbook_target_id` (`artifacts_screen.py:72-85`), and that attribute is
+**chatbook-specific**. Selecting a watchlist artifact therefore requires a parallel pending
+attribute and a consumer on the Artifacts screen. That work belongs to spec #2, since spec #1 has no
+artifacts to link to; it is recorded here so spec #2 does not discover it late.
 
 ### Action scopes
 
@@ -455,7 +490,7 @@ Feed titles, authors, and bodies are attacker-controllable. Two requirements:
 | UI | `Tests/Watchlists/test_watchlists_read_tab.py` | drill-down, both content renderers (article and change), auto-mark-read |
 | UI | `Tests/Watchlists/test_watchlists_inspector.py` | breadcrumb stack targeting, cadence overlap warning, Restore only on server |
 | Security | `Tests/Watchlists/test_watchlists_escaping.py` | a feed title containing `[bold]…[/]` renders literally |
-| Perf | `Tests/Watchlists/test_watchlists_counts.py` | tree counts issue exactly one query (N+1 guard) |
+| Perf | `Tests/Watchlists/test_watchlists_counts.py` | tree counts issue exactly one query (N+1 guard), asserted via a connection wrapper counting `execute` calls across a tree refresh |
 | Integration | `Tests/UI/test_watchlists_destination_shell.py` (extend) | backend switch, capability banners, Console handoff, route stability |
 
 ## Migration and cleanup
@@ -473,6 +508,8 @@ Feed titles, authors, and bodies are attacker-controllable. Two requirements:
 | Item | Owner |
 |---|---|
 | Server membership endpoint (`group_ids` on source update, or group member endpoints) | follow-up task |
+| Artifact→watchlist provenance. No link exists between a generated artifact and the watchlist that produced it, so the Artifacts tab has nothing to query even once generation ships. Reserve the shape early — retrofitting provenance after artifacts exist is materially harder | spec #2, decide before generation lands |
+| Artifacts deep-link: a watchlist-aware pending attribute plus consumer, alongside today's chatbook-only `pending_artifacts_chatbook_target_id` | spec #2 |
 | Briefing / podcast generation, template authoring, 2-speaker script + audio | spec #2 |
 | Recurring delivery scheduling for artifacts | spec #2, Schedules screen |
 | Fate of the ~4,600 unimported LOC in `Subscriptions/` (briefing, aggregation, distribution, export, RSS generation, recursive summarization) | spec #2 |
