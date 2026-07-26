@@ -94,6 +94,27 @@ class IngestJobState(str, Enum):
     WRITING = "writing"
     DONE = "done"
     FAILED = "failed"
+    #: Stopped deliberately rather than succeeding or erroring. Only a
+    #: server-origin job reaches this today: the server reports it for a
+    #: job the user cancelled.
+    CANCELLED = "cancelled"
+
+
+#: States a job never leaves. Kept as one definition so "is this finished?"
+#: cannot drift between the places that ask -- ``clear_finished``, the
+#: cancellation guard, and the queue's terminal-row rendering.
+_TERMINAL_STATES: frozenset[IngestJobState] = frozenset(
+    {IngestJobState.DONE, IngestJobState.FAILED, IngestJobState.CANCELLED}
+)
+
+
+#: States whose rows a user may clear individually. A cancellation is
+#: dismissible for the same reason a failure is -- the row has served its
+#: purpose -- but Retry stays withheld, since ``requeue`` is FAILED-only and
+#: offering a dead action is worse than offering none.
+_DISMISSIBLE_STATES: frozenset[IngestJobState] = frozenset(
+    {IngestJobState.FAILED, IngestJobState.CANCELLED}
+)
 
 
 @dataclass
@@ -677,6 +698,48 @@ class LibraryIngestJobRegistry:
         self._persist(updated)
         return replace(updated)
 
+    def mark_cancelled(
+        self, job_id: str, *, reason: str = ""
+    ) -> LibraryIngestJob | None:
+        """Transition a still-running job to ``CANCELLED``.
+
+        A cancellation is neither a success nor an error: recording it as
+        ``FAILED`` would offer Retry for something nobody wants retried, and
+        would read as a problem the user did not cause. Unlike ``mark_failed``
+        this *is* guarded -- a job that already reached ``DONE``, ``FAILED`` or
+        ``CANCELLED`` is finished, and a late cancellation must not rewrite its
+        outcome.
+
+        Args:
+            job_id: The job to transition.
+            reason: Optional human-readable reason, stored in ``error`` since
+                that is the field the queue row already surfaces.
+
+        Returns:
+            The updated job (a copy), or ``None`` when ``job_id`` is unknown,
+            hidden, or already finished. Unknown ids never raise, matching the
+            other registry mutators.
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        current = self._jobs[index]
+        if current.superseded or current.dismissed:
+            return None
+        if current.state in _TERMINAL_STATES:
+            return None
+        updated = replace(
+            current,
+            state=IngestJobState.CANCELLED,
+            error=reason,
+            finished_at=time.monotonic(),
+            finished_at_wall=datetime.now(timezone.utc).isoformat(),
+        )
+        self._jobs[index] = updated
+        self._notify_listeners()
+        self._persist(updated)
+        return replace(updated)
+
     def requeue(self, job_id: str) -> LibraryIngestJob | None:
         """Append a fresh ``QUEUED`` copy of a ``FAILED`` job, superseding it.
 
@@ -753,9 +816,10 @@ class LibraryIngestJobRegistry:
         return replace(new_job)
 
     def dismiss(self, job_id: str) -> LibraryIngestJob | None:
-        """Hide a ``FAILED`` job from ``jobs()``/``counts()``.
+        """Hide a ``FAILED`` or ``CANCELLED`` job from ``jobs()``/``counts()``.
 
-        (L3b AB wave, B2) Valid ONLY for a ``FAILED``, not-yet-hidden job --
+        (L3b AB wave, B2; widened for cancellations in task-684.2.) Valid
+        ONLY for a ``FAILED``/``CANCELLED``, not-yet-hidden job --
         calling this on a job in any other state, an unknown id, or an
         already ``superseded``/``dismissed`` id is a no-op that returns
         ``None`` and does not fire the listener. On success the job is
@@ -771,7 +835,8 @@ class LibraryIngestJobRegistry:
 
         Returns:
             The dismissed job (a copy, ``dismissed=True``), or ``None``
-            when ``job_id`` is unknown, not currently ``FAILED``, or
+            when ``job_id`` is unknown, not currently ``FAILED``/
+            ``CANCELLED``, or
             already hidden.
         """
         index = self._find_index(job_id)
@@ -779,7 +844,7 @@ class LibraryIngestJobRegistry:
             return None
         current = self._jobs[index]
         if (
-            current.state != IngestJobState.FAILED
+            current.state not in _DISMISSIBLE_STATES
             or current.superseded
             or current.dismissed
         ):
@@ -805,16 +870,8 @@ class LibraryIngestJobRegistry:
             The number of jobs actually removed (0 when there was nothing
             to clear -- a no-op that does not fire the listener).
         """
-        removed_jobs = [
-            job
-            for job in self._jobs
-            if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
-        ]
-        self._jobs = [
-            job
-            for job in self._jobs
-            if job.state not in (IngestJobState.DONE, IngestJobState.FAILED)
-        ]
+        removed_jobs = [job for job in self._jobs if job.state in _TERMINAL_STATES]
+        self._jobs = [job for job in self._jobs if job.state not in _TERMINAL_STATES]
         removed = len(removed_jobs)
         if removed:
             self._notify_listeners()

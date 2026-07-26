@@ -971,3 +971,55 @@ def test_server_origin_is_marked_in_every_state():
         row = _row_for(job)
         assert "server" in row.line.lower(), f"{state.value} row lost the marker"
         assert row.origin == "server"
+
+
+# --- cancelled row rendering (task-684.2) -----------------------------------
+
+
+def test_cancelled_row_reads_as_stopped_not_failed():
+    """A cancellation must not wear the failure glyph.
+
+    The user stopped this deliberately; showing ✗ would read as an error they
+    caused, and would sit beside a Retry the registry refuses anyway.
+    """
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/talk.mp3",
+        state=IngestJobState.CANCELLED,
+        origin="server",
+        error="Cancelled on the server.",
+        finished_at=50.0,
+    )
+
+    row = _row_for(job)
+
+    assert row.glyph not in {"✓", "✗"}
+    assert "cancelled" in row.line.lower()
+    assert "talk.mp3" in row.line
+    assert row.can_open is False
+    assert row.can_retry is False, "requeue is FAILED-only; Retry would be dead bait"
+    assert row.can_dismiss is True, "a cancelled row is clearable"
+
+
+def test_cancelled_counts_line_segment_is_rendered():
+    """A cancelled job has to appear in the queue's per-state summary."""
+    from tldw_chatbook.Library.library_ingest_state import _queue_counts_line
+
+    jobs = [
+        LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/a.mp3",
+            state=IngestJobState.CANCELLED,
+        ),
+        LibraryIngestJob(
+            job_id="ingest-job-2",
+            source_path="/tmp/b.txt",
+            state=IngestJobState.DONE,
+            media_id=1,
+        ),
+    ]
+
+    line = _queue_counts_line(jobs)
+
+    assert "1 cancelled" in line
+    assert "1 done" in line

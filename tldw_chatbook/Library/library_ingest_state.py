@@ -69,6 +69,7 @@ MAX_CHUNK_SIZE = 5000
 _GLYPH_ACTIVE = "●"  # "●" -- queued, parsing, or writing
 _GLYPH_DONE = "✓"  # "✓"
 _GLYPH_FAILED = "✗"  # "✗"
+_GLYPH_CANCELLED = "⊘"  # "⊘" -- stopped deliberately, not an error
 
 # L4: the marker `local_file_ingestion.py`'s "Unsupported file type" error
 # copy uses to separate the offending extension from its own supported-list
@@ -567,6 +568,27 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         )
     # FAILED -- the only remaining IngestJobState member.
     short_error = short_ingest_error(job.error)
+    if job.state == IngestJobState.CANCELLED:
+        # Neither ✓ nor ✗: the user stopped this on purpose, so it is not an
+        # error they caused. Retry is withheld because ``requeue`` is
+        # FAILED-only and would no-op; dismissing the row is still offered.
+        line = f"{_GLYPH_CANCELLED} cancelled · {basename}"
+        if job.error:
+            line += f" · {short_ingest_error(job.error)}"
+        return IngestQueueRow(
+            job_id=job.job_id,
+            glyph=_GLYPH_CANCELLED,
+            line=line,
+            can_open=False,
+            can_retry=False,
+            can_dismiss=True,
+            media_id=job.media_id,
+            state=job.state,
+            source_path=job.source_path,
+            progress=job.progress,
+            error_detail=job.error_detail,
+        )
+
     is_unsupported = (
         job.error_detail is not None
         and job.error_detail.get("category") == "unsupported_file_type"
@@ -599,6 +621,7 @@ _COUNTS_LINE_ORDER: tuple[IngestJobState, ...] = (
     IngestJobState.QUEUED,
     IngestJobState.DONE,
     IngestJobState.FAILED,
+    IngestJobState.CANCELLED,
 )
 
 
