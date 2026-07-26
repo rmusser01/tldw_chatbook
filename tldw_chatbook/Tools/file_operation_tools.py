@@ -9,7 +9,8 @@ from typing import Dict, Any
 from loguru import logger
 
 from . import Tool
-from ..Utils.path_validation import validate_path
+from ..Utils.path_validation import validate_path_multi
+from .workspace_file_roots import allowed_file_roots
 
 
 def _resolve_sandbox_config() -> str:
@@ -102,8 +103,12 @@ class ReadFileTool(Tool):
         encoding = kwargs.get("encoding", "utf-8")
 
         try:
-            # Validate the path
-            validated_path = validate_path(file_path, _tool_sandbox_root())
+            # Validate the path against the sandbox plus any read-eligible
+            # workspace folder roots bound to the run.
+            validated_path = validate_path_multi(
+                file_path,
+                allowed_file_roots(write=False, sandbox_root=_tool_sandbox_root()),
+            )
             path = Path(validated_path)
 
             # Check if file exists
@@ -212,10 +217,21 @@ class ListDirectoryTool(Tool):
         max_depth = kwargs.get("max_depth", 2)
 
         try:
-            # Validate the path
+            # Validate the path against the sandbox plus any read-eligible
+            # workspace folder roots bound to the run.
             sandbox_root = _tool_sandbox_root()
-            validated_path = validate_path(directory_path, sandbox_root)
+            read_roots = allowed_file_roots(write=False, sandbox_root=sandbox_root)
+            validated_path = validate_path_multi(directory_path, read_roots)
             path = Path(validated_path)
+
+            # The recursive-descent symlink guard below must compare against
+            # whichever allowed root actually contains ``path`` — not always
+            # the sandbox — otherwise a legitimately bound workspace folder
+            # would silently refuse to recurse past its top level.
+            containment_root = next(
+                (root for root in read_roots if _is_within(path, root)),
+                sandbox_root,
+            )
 
             # Check if directory exists
             if not path.exists():
@@ -257,18 +273,18 @@ class ListDirectoryTool(Tool):
                             entries.append(entry)
 
                             # Recursively list subdirectories, but NEVER
-                            # follow a symlink: a link planted inside the
-                            # sandbox would otherwise let the walk enumerate
-                            # files outside file_sandbox_root, breaking the
+                            # follow a symlink: a link planted inside an
+                            # allowed root would otherwise let the walk
+                            # enumerate files outside it, breaking the
                             # containment every other path here relies on.
                             # Belt-and-braces, the resolved child must still
-                            # sit under the sandbox root.
+                            # sit under the root that contains this listing.
                             if (
                                 recursive
                                 and item.is_dir()
                                 and not item.is_symlink()
                                 and current_depth < max_depth
-                                and _is_within(item, sandbox_root)
+                                and _is_within(item, containment_root)
                             ):
                                 list_dir_contents(item, current_depth + 1)
 
@@ -392,8 +408,12 @@ class WriteFileTool(Tool):
         create_directories = kwargs.get("create_directories", False)
 
         try:
-            # Validate the path
-            validated_path = validate_path(file_path, _tool_sandbox_root())
+            # Validate the path against the sandbox plus any write-eligible
+            # (rw) workspace folder roots bound to the run.
+            validated_path = validate_path_multi(
+                file_path,
+                allowed_file_roots(write=True, sandbox_root=_tool_sandbox_root()),
+            )
             path = Path(validated_path)
 
             # Check if we're overwriting an existing file

@@ -243,6 +243,56 @@ def test_run_reply_threads_builtin_gate_end_to_end(tmp_path):
     assert store.get_message(aid).content == "it was refused."
 
 
+def test_run_reply_threads_session_workspace_id_end_to_end(tmp_path, monkeypatch):
+    """task-6 (settings-workspaces-folder-roots spec Sec3): the RUNNING
+    session's own ``workspace_id`` must reach the run's
+    ``BuiltinToolProvider``, so a builtin tool observes it (via
+    ``workspace_file_roots.run_workspace``) while it executes -- not
+    whatever workspace happens to be active in the UI by the time the
+    call actually fires. Verified by monkeypatching ``CalculatorTool.
+    execute`` (the real built-in tool the scripted fence calls) to record
+    the ContextVar it sees, since the bridge builds its own
+    ``BuiltinToolProvider`` internally with no seam for a test double."""
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
+    from tldw_chatbook.Tools.tool_executor import CalculatorTool
+
+    observed: list[str | None] = []
+    real_execute = CalculatorTool.execute
+
+    async def _recording_execute(self, expression):
+        observed.append(wfr.current_run_workspace_id())
+        return await real_execute(self, expression)
+
+    monkeypatch.setattr(CalculatorTool, "execute", _recording_execute)
+
+    scripts = [
+        [_fence("calculator", {"expression": "6*7"})],
+        ["It is 42."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.create_session(workspace_id="ws-session-42")
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts)
+    )
+    # Any non-None `builtin_gate` forces the fresh-build branch that
+    # actually looks up and threads the session's workspace_id (see
+    # `run_reply`'s own docstring) -- the shared/no-gate fast path's
+    # provider is built once at bridge-construction time, before any
+    # session exists, so it is out of scope for a per-session binding.
+    outcome = _run(
+        bridge, store, session, assistant.id,
+        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+    )
+    assert outcome.status == "done"
+    assert observed == ["ws-session-42"]
+    assert wfr.current_run_workspace_id() is None  # cleared after the run
+
+
 def test_leaked_prose_before_disobedient_fence_is_reset_not_garbled(tmp_path):
     # Finding A repro: a disobedient turn streams prose live, THEN a tool
     # fence, in the same response. The gate has already forwarded the prose
@@ -1629,6 +1679,50 @@ def test_compose_run_registry_and_allowed_no_builtin_gate_is_unchanged():
     assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
     result = registry.invoke_by_name("calculator", {"expression": "6*7"})
     assert result.ok is True
+
+
+class _WorkspaceProbeTool:
+    """A minimal Tool double that reports the run workspace bound around it."""
+
+    name = "probe_workspace"
+    description = "records the bound run workspace"
+    parameters = {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs):
+        from tldw_chatbook.Tools import workspace_file_roots as wfr
+
+        return {"workspace": wfr.current_run_workspace_id()}
+
+
+def test_compose_run_registry_and_allowed_threads_workspace_id_into_the_provider():
+    """task-6 (settings-workspaces-folder-roots spec Sec3): `workspace_id=`
+    must reach the freshly-built `BuiltinToolProvider` so its `invoke()`
+    binds the run's workspace around every tool call."""
+    registry, _allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+        {},
+        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+        workspace_id="ws-compose",
+    )
+    # registry._providers[0] is the BuiltinToolProvider this call just built
+    # (see _compose_run_registry_and_allowed's own body) -- poke a probe
+    # tool onto it exactly as the constructor-level test does, since the
+    # real calculator/datetime tools have no way to report the ContextVar.
+    registry._providers[0]._tools["probe_workspace"] = _WorkspaceProbeTool()
+    result = registry.invoke_by_name("probe_workspace", {})
+    assert result.ok, result.error
+    assert '"workspace": "ws-compose"' in result.content
+
+
+def test_compose_run_registry_and_allowed_no_workspace_id_is_unchanged():
+    """`workspace_id=None` (the default) must not alter the pre-task-6
+    behavior -- the provider leaves the run workspace unbound."""
+    registry, _allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+        {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False)
+    )
+    registry._providers[0]._tools["probe_workspace"] = _WorkspaceProbeTool()
+    result = registry.invoke_by_name("probe_workspace", {})
+    assert result.ok, result.error
+    assert '"workspace": null' in result.content
 
 
 def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_builtin():

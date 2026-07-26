@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from loguru import logger
@@ -15,6 +16,7 @@ from tldw_chatbook.Sync_Interop.sync_readiness import (
 
 from .models import (
     DEFAULT_WORKSPACE_ID,
+    RuntimeBindingKind,
     RuntimeBindingStatus,
     WorkspaceAuthority,
     WorkspaceMembership,
@@ -620,12 +622,65 @@ def _safe_runtime_bindings(
         )
         if not runtime_bindings:
             return ()
-        return tuple(runtime_bindings)
+        return tuple(
+            _recompute_filesystem_binding_status(binding)
+            for binding in runtime_bindings
+        )
     except Exception:
         logger.opt(exception=True).warning(
             "Failed to read workspace runtime bindings for Console context rail",
         )
         return ()
+
+
+def _recompute_filesystem_binding_status(
+    binding: WorkspaceRuntimeBinding,
+) -> WorkspaceRuntimeBinding:
+    """Recompute a local-filesystem binding's status straight from disk.
+
+    Stored ``status`` is display-only and is never trusted for
+    local-filesystem bindings here: the bound folder may have been
+    deleted, or replaced by a symlink/mount that resolves somewhere else,
+    which would otherwise let the Console context rail keep reporting a
+    widened root as "ready" (ADR-028). Non local-filesystem bindings are
+    returned unchanged.
+
+    Args:
+        binding: The runtime binding to check.
+
+    Returns:
+        ``binding`` unchanged if it is not a local-filesystem binding or
+        its recomputed status matches the stored one; otherwise a copy with
+        ``status`` set to MISSING (folder gone, a symlink, or its resolved
+        path no longer matches its own stored, already-resolved locator)
+        or READY.
+    """
+    if str(binding.binding_kind) not in (
+        "local-filesystem",
+        str(RuntimeBindingKind.LOCAL_FILESYSTEM),
+    ):
+        return binding
+    folder = Path(binding.locator)
+    is_missing = True
+    if folder.is_dir() and not folder.is_symlink():
+        try:
+            is_missing = folder.resolve() != folder
+        except OSError:
+            is_missing = True
+    status = RuntimeBindingStatus.MISSING if is_missing else RuntimeBindingStatus.READY
+    if status == binding.status:
+        return binding
+    return WorkspaceRuntimeBinding(
+        workspace_id=binding.workspace_id,
+        binding_id=binding.binding_id,
+        binding_kind=binding.binding_kind,
+        label=binding.label,
+        locator=binding.locator,
+        status=status,
+        metadata=binding.metadata,
+        created_at=binding.created_at,
+        updated_at=binding.updated_at,
+    )
 
 
 def _safe_workspaces(registry_service: Any) -> tuple[WorkspaceRecord, ...]:

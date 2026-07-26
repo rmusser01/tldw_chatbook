@@ -470,6 +470,28 @@ def test_rename_workspace_protects_default(tmp_path: Path) -> None:
         service.rename_workspace(DEFAULT_WORKSPACE_ID, "Not Default")
 
 
+def test_rename_default_reports_default_protection_even_with_taken_name(
+    tmp_path: Path,
+) -> None:
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+    service.create_workspace(workspace_id="ws-a", name="Client A")
+
+    with pytest.raises(WorkspaceRegistryServiceError) as excinfo:
+        service.rename_workspace(DEFAULT_WORKSPACE_ID, "Client A")
+    assert "Default workspace cannot be renamed" in str(excinfo.value)
+
+
+def test_rename_unknown_id_reports_not_found_even_with_taken_name(
+    tmp_path: Path,
+) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Client A")
+
+    with pytest.raises(WorkspaceNotFound):
+        service.rename_workspace("ws-missing", "Client A")
+
+
 def test_archive_workspace_hides_from_listing(tmp_path: Path) -> None:
     service = build_test_registry(tmp_path)
     service.ensure_default_workspace()
@@ -509,3 +531,182 @@ def test_archive_workspace_protects_default_and_unknown(tmp_path: Path) -> None:
         service.archive_workspace(DEFAULT_WORKSPACE_ID)
     with pytest.raises(WorkspaceNotFound):
         service.archive_workspace("ws-missing")
+
+
+# --- TASK-1: unarchive + duplicate-name guard --------------------------------
+
+
+def test_unarchive_workspace_restores_listing_without_activating(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+    service.create_workspace(workspace_id="ws-a", name="Workspace 1")
+    service.set_active_workspace("ws-a")
+    service.archive_workspace("ws-a")
+
+    restored = service.unarchive_workspace("ws-a")
+
+    assert restored.archived is False
+    assert restored.active is False  # never auto-activates
+    listed = {record.workspace_id for record in service.list_workspaces()}
+    assert "ws-a" in listed
+    active = service.get_active_workspace()
+    assert active is not None and active.workspace_id == DEFAULT_WORKSPACE_ID
+
+
+def test_unarchive_workspace_rejects_unknown_and_unarchived(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace 1")
+
+    with pytest.raises(WorkspaceNotFound):
+        service.unarchive_workspace("ws-missing")
+    with pytest.raises(WorkspaceNotFound):
+        service.unarchive_workspace("ws-a")  # not archived
+
+
+def test_duplicate_names_rejected_case_insensitively(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Client A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace 2")
+
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.rename_workspace("ws-b", "client a")
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.create_workspace(workspace_id="ws-c", name="CLIENT A")
+    # Renaming to its own current name (case-changed) is allowed.
+    renamed = service.rename_workspace("ws-a", "client A")
+    assert renamed.name == "client A"
+
+
+def test_archived_names_do_not_block_reuse(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Client A")
+    service.archive_workspace("ws-a")
+
+    created = service.create_workspace(workspace_id="ws-b", name="Client A")
+    assert created.name == "Client A"
+
+
+def test_unarchive_collision_with_live_name_is_explained(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Client A")
+    service.archive_workspace("ws-a")
+    service.create_workspace(workspace_id="ws-b", name="Client A")
+
+    with pytest.raises(WorkspaceRegistryServiceError) as excinfo:
+        service.unarchive_workspace("ws-a")
+    assert "rename it before unarchiving" in str(excinfo.value)
+
+
+def test_v2_migration_dedupes_and_indexes_existing_duplicates(tmp_path: Path) -> None:
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    db = WorkspaceDB(tmp_path / "mig.sqlite", client_id="mig")
+    with db.connection() as conn:
+        conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
+        conn.execute("DELETE FROM schema_version WHERE version = 2")
+        for wid, name in (("w1", "Same Name"), ("w2", "same name"), ("w3", "SAME NAME")):
+            conn.execute(
+                """
+                INSERT INTO workspace_records
+                    (workspace_id, name, description, authority, sync_status,
+                     active, archived, created_at, updated_at)
+                VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
+                """,
+                (wid, name, f"2026-01-0{wid[-1]}T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+            )
+        conn.commit()
+
+    db._initialize_schema()
+
+    with db.connection() as conn:
+        names = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM workspace_records WHERE archived = 0 ORDER BY workspace_id"
+            ).fetchall()
+        ]
+        index_row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspace_records_name_ci'"
+        ).fetchone()
+
+    assert index_row is not None
+    assert len({n.strip().casefold() for n in names}) == len(names)
+
+
+def test_v2_migration_dedupes_across_groups_without_collision(tmp_path: Path) -> None:
+    """A rename generated for one duplicate group must not collide with a
+    name reserved by a different duplicate group's rename (Qodo #943/#944)."""
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    db = WorkspaceDB(tmp_path / "mig-cross-group.sqlite", client_id="mig")
+    with db.connection() as conn:
+        conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
+        conn.execute("DELETE FROM schema_version WHERE version = 2")
+        # Group 1: "Foo" / "foo" duplicates. Group 2: a lone pre-existing
+        # "Foo (2)" that is NOT a duplicate of anything by itself, but is
+        # exactly the candidate name group 1's rename would naively produce.
+        for wid, name in (("w1", "Foo"), ("w2", "foo"), ("w3", "Foo (2)")):
+            conn.execute(
+                """
+                INSERT INTO workspace_records
+                    (workspace_id, name, description, authority, sync_status,
+                     active, archived, created_at, updated_at)
+                VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
+                """,
+                (wid, name, f"2026-01-0{wid[-1]}T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+            )
+        conn.commit()
+
+    db._initialize_schema()
+
+    with db.connection() as conn:
+        names = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM workspace_records WHERE archived = 0 ORDER BY workspace_id"
+            ).fetchall()
+        ]
+        index_row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspace_records_name_ci'"
+        ).fetchone()
+
+    assert index_row is not None
+    assert len({n.strip().casefold() for n in names}) == len(names)
+
+
+def test_v2_migration_dedupes_against_preexisting_suffixed_name(tmp_path: Path) -> None:
+    """A generated rename must not collide with a real, pre-existing name
+    that already looks like a generated suffix (Qodo #943/#944)."""
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    db = WorkspaceDB(tmp_path / "mig-preexisting-suffix.sqlite", client_id="mig")
+    with db.connection() as conn:
+        conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
+        conn.execute("DELETE FROM schema_version WHERE version = 2")
+        for wid, name in (("w1", "Bar"), ("w2", "bar"), ("w3", "Bar (2)")):
+            conn.execute(
+                """
+                INSERT INTO workspace_records
+                    (workspace_id, name, description, authority, sync_status,
+                     active, archived, created_at, updated_at)
+                VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
+                """,
+                (wid, name, f"2026-01-0{wid[-1]}T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+            )
+        conn.commit()
+
+    db._initialize_schema()
+
+    with db.connection() as conn:
+        names = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM workspace_records WHERE archived = 0 ORDER BY workspace_id"
+            ).fetchall()
+        ]
+        index_row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspace_records_name_ci'"
+        ).fetchone()
+
+    assert index_row is not None
+    assert len({n.strip().casefold() for n in names}) == len(names)
