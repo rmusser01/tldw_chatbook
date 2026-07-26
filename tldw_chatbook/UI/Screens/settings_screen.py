@@ -5815,6 +5815,31 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 ("Boundary", "visual preferences do not change runtime or data access"),
             ),
+            SettingsCategoryId.THEME: (
+                ("Affected config", "custom theme files and the active app theme"),
+                (
+                    "Recovery",
+                    "use the editor's Reset action or remove the custom theme file",
+                ),
+                (
+                    "Boundary",
+                    "the Theme editor owns custom palettes and theme-file writes",
+                ),
+            ),
+            SettingsCategoryId.SPLASH_SCREEN: (
+                (
+                    "Affected config",
+                    "startup splash behavior, defaults, and card selection",
+                ),
+                (
+                    "Recovery",
+                    "reset defaults here or repair splash_screen in Advanced Config",
+                ),
+                (
+                    "Boundary",
+                    "splash changes save immediately and do not alter runtime authority",
+                ),
+            ),
             SettingsCategoryId.STORAGE: (
                 (
                     "Affected config",

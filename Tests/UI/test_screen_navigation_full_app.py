@@ -85,6 +85,50 @@ async def _navigate(
     await pilot.pause()
 
 
+@pytest.mark.parametrize(
+    ("configured_route", "canonical_route", "screen_class"),
+    [
+        ("ccp", "personas", PersonasScreen),
+        ("notes", "library", LibraryScreen),
+        ("customize", "settings", SettingsScreen),
+    ],
+)
+@pytest.mark.asyncio
+async def test_full_app_alias_startup_keeps_canonical_snapshot_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    configured_route: str,
+    canonical_route: str,
+    screen_class: type,
+) -> None:
+    app = TldwCli()
+
+    async with _mounted_app(app, monkeypatch, configured_route) as pilot:
+        for _ in range(150):
+            if getattr(app, "_ui_ready", False):
+                break
+            await pilot.pause(0.01)
+        assert app._ui_ready is True
+        await pilot.pause()
+
+        assert isinstance(app.screen, screen_class)
+        assert app.current_tab == canonical_route
+
+        identity = app._current_runtime_identity()
+        app.screen.state_data = {"startup_alias": configured_route}
+
+        await _navigate(app, pilot, "home")
+
+        saved_state = app.screen_state_store.restore(canonical_route, identity)
+        assert saved_state is not None
+        assert saved_state["startup_alias"] == configured_route
+
+        await _navigate(app, pilot, configured_route)
+
+        assert isinstance(app.screen, screen_class)
+        assert app.current_tab == canonical_route
+        assert app.screen.state_data["startup_alias"] == configured_route
+
+
 @pytest.mark.asyncio
 async def test_full_app_constructs_screen_state_owner_from_runtime_authority(
     monkeypatch: pytest.MonkeyPatch,
@@ -471,6 +515,33 @@ async def test_full_app_navigation_always_constructs_fresh_screens(
 
         assert isinstance(app.screen, HomeScreen)
         assert app.screen is not first_home
+
+
+@pytest.mark.parametrize(
+    "category",
+    [
+        SettingsCategoryId.THEME,
+        SettingsCategoryId.SPLASH_SCREEN,
+    ],
+)
+@pytest.mark.asyncio
+async def test_full_app_settings_self_managed_contexts_compose(
+    monkeypatch: pytest.MonkeyPatch,
+    category: SettingsCategoryId,
+) -> None:
+    app = TldwCli()
+
+    async with _mounted_app(app, monkeypatch) as pilot:
+        await _navigate(app, pilot, "home")
+        await _navigate(
+            app,
+            pilot,
+            "settings",
+            {"category": category.value},
+        )
+
+        assert isinstance(app.screen, SettingsScreen)
+        assert app.screen.active_category == category.value
 
 
 @pytest.mark.asyncio

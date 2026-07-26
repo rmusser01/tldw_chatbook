@@ -7215,11 +7215,6 @@ class TldwCli(
             is_active = window.id == f"{initial_tab}-window"
             window.display = is_active
 
-    async def _set_initial_tab(self) -> None:  # New method for deferred tab setting
-        self.loguru_logger.info("Setting initial tab via call_later.")
-        self.current_tab = self._resolve_initial_shell_route()
-        self.loguru_logger.info(f"Initial tab set to: {self.current_tab}")
-
     async def _push_initial_screen(self) -> None:
         """Push the configured initial screen for screen-based navigation startup."""
         if getattr(self, "_initial_screen_pushed", False):
@@ -7346,10 +7341,6 @@ class TldwCli(
             documentation="Duration of post-mount phase in seconds",
         )
 
-        # Crucially, set the initial tab *after* bindings and other setup that might depend on queries.
-        # The _set_initial_tab will trigger watchers.
-        self.call_later(self._set_initial_tab)
-
         post_mount_duration = time.perf_counter() - post_mount_start
         log_histogram(
             "app_post_mount_duration_seconds",
@@ -7371,15 +7362,6 @@ class TldwCli(
                 self.loguru_logger.warning(
                     f"Failed to update splash screen progress: {e}"
                 )
-
-        # If initial tab is CCP, trigger its initial search.
-        # This should happen *after* current_tab is set.
-        # We can put this logic at the end of _set_initial_tab or make watch_current_tab handle it robustly.
-        # For now, let's assume watch_current_tab will handle it.
-        # if self._initial_tab_value == TAB_CCP: # Check against the initial value
-        #    self.call_later(ccp_handlers.perform_ccp_conversation_search, self)
-        self.current_tab = self._resolve_initial_shell_route()
-        self.loguru_logger.info(f"Initial tab set to: {self.current_tab}")
 
         # Footer status population is scheduled after readiness so DB-size
         # polling cannot hold the first interactive frame.
