@@ -1,7 +1,7 @@
 # Application Session State Ownership Design
 
 Date: 2026-07-26
-Status: Approved in design discussion; pending independent specification review
+Status: Corrected after independent review; pending re-review
 ADR:
 [ADR-026](../../../backlog/decisions/026-application-session-state-ownership.md)
 Backlog:
@@ -74,6 +74,12 @@ specification was written.
   removes it again.
 - Home, Workflows, and both Schedules surfaces inspect `_screen_states`
   directly to infer recent work.
+- Screen routing has three identities that do not always agree: the requested
+  route, the resolver's routed `screen_name`, and its `canonical_tab`. For
+  example, `ccp` resolves to routed name `ccp` and canonical tab `personas`,
+  while the constructed screen reports `screen_name="personas"`. Current
+  navigation saves under the screen-owned name and restores under the routed
+  name, so aliases can already miss their own snapshots.
 - Navigation flushes outgoing pending work, saves state, constructs a fresh
   screen, restores state, applies explicit navigation context, and switches
   screens. That order carries user-visible semantics.
@@ -270,13 +276,33 @@ def restore(
 
 def discard(self, route: str) -> None: ...
 def has_snapshots(self, runtime_identity: RuntimeIdentity) -> bool: ...
-def clear(self) -> None: ...
 ```
 
 The backing mapping and envelope type are private. An envelope contains a
 canonical route, an outer copy of the screen snapshot, and runtime identity.
 It does not add policy keys to the domain mapping or expose the backing mapping
 to consumers.
+
+For this store, "canonical route" means exactly the `canonical_tab` returned
+by `resolve_screen_target()`, not the requested route, the resolver's
+`screen_name`, or `BaseAppScreen.screen_name`.
+
+- The outgoing save key is the app's existing `current_tab`, which was set from
+  the prior successful resolution's `canonical_tab`.
+- The incoming restore key is `current_tab_value`, the `canonical_tab` returned
+  while resolving the new request.
+- If an outgoing screen predates a populated `current_tab`, navigation may
+  resolve its screen-owned name and use the returned `canonical_tab` only when
+  that route is registered; otherwise it skips snapshot save rather than
+  inventing a key.
+- Aliases that resolve to the same `canonical_tab` intentionally share one
+  snapshot. Direct routes whose registry entries have different canonical tabs
+  remain distinct even when their screen classes report the same screen-owned
+  name.
+
+The store accepts an already canonical, non-empty key and does not perform a
+second route resolution. This keeps registry policy in the navigation owner
+and makes the key contract testable.
 
 Runtime identity consists of the active source and, in server mode, the active
 server ID. A source mismatch invalidates the saved snapshot. In server mode, a
@@ -332,6 +358,25 @@ view state.
 Producers stage through channel-specific typed methods or a typed generic
 boundary. Values are validated, normalized, and detached before they become
 pending. The store remains memory-only and has no serialization path.
+
+"Detached" means later producer mutation cannot change a staged or claimed
+value. After channel normalization, the store uses structural copying for
+mutable nested containers:
+
+- Chat rebuilds through `ChatHandoffPayload.to_dict()` /
+  `ChatHandoffPayload.from_dict()`, which recursively snapshots its JSON-like
+  contract mappings and sequences.
+- Console rebuilds a normalized `ConsoleLiveWorkLaunch` and deep-copies its
+  nested payload containers.
+- Study deep-copies the frozen scope dataclass so nested
+  `StudySourceItem.locator` mappings are independent.
+- Prompt text, section names, and target IDs are normalized strings and need no
+  additional copy.
+
+If a value cannot be normalized or structurally copied, staging rejects it
+without retaining a partial value and the producer uses its existing bounded
+warning path. Handoff payload sizes remain governed by their current domain
+limits; this rule does not deep-copy screen snapshots or Console histories.
 
 ### Revisioned single-slot protocol
 
@@ -407,10 +452,15 @@ cleared by the older claim.
 ### ACP target recovery
 
 ACP claims the requested session target and reads the current
-`ACPRuntimeSessionState`.
+`ACPRuntimeSessionState`. The ACP channel accepts only the canonical record-ID
+shape `local:acp_session:<session_id>` with a non-empty suffix. Producer and
+consumer use one helper to construct that identifier from a normalized bare
+session ID. The consumer reconstructs the current canonical record ID from
+`ACPRuntimeSessionState.session_id` and compares the two complete strings; it
+does not compare the staged record ID directly with the bare session ID.
 
-- When the current session ID matches, ACP focuses or opens the existing
-  current-session detail and acknowledges.
+- When the reconstructed current record ID exactly matches the claimed target,
+  ACP focuses or opens the existing current-session detail and acknowledges.
 - When no runtime session exists, the target does not match, or the current ACP
   surface cannot focus session details, ACP shows an explicit
   stale/unsupported recovery message and acknowledges.
@@ -527,6 +577,9 @@ barriers rather than timing sleeps.
 - Save and restore make outer copies and never mutate the caller's mapping.
 - Source/server identity mismatches and corrupt envelopes are discarded.
 - A large nested Console snapshot is not blindly deep-copied by the store.
+- `ccp`/`personas`, retired Library aliases, and other aliases sharing a
+  canonical tab use the same snapshot, while distinct canonical tabs remain
+  isolated even when their screen-owned names match.
 - Flush veto/exception prevents navigation; save/restore failure does not.
 - Fresh screen construction and explicit Library, Settings, and Watchlists
   context precedence are mounted and verified.
@@ -541,6 +594,8 @@ barriers rather than timing sleeps.
 - Staging while claimed retains only the latest replacement.
 - Stale acknowledge/release cannot remove the replacement.
 - Release restores the claimed value only when no newer replacement exists.
+- Mutating a producer's nested Chat or Console mapping after staging cannot
+  alter the claimed value.
 - Cancellation releases and propagates.
 - Chat and Console success, terminal rejection, and transient readiness paths
   settle correctly in mounted flows.
@@ -549,9 +604,12 @@ barriers rather than timing sleeps.
 ### TASK-646 focused proof
 
 - Study scope and section settle independently.
+- Mutating a staged Study source locator after staging cannot alter the claimed
+  scope.
 - Artifacts preserves a newer staged target during an awaited lookup.
-- ACP matching focuses current session; missing/mismatched targets show
-  explicit recovery and do not fabricate lookup.
+- ACP canonical record-ID matching focuses the current session;
+  malformed/missing/mismatched targets show explicit recovery and do not
+  fabricate lookup.
 - No old app-level `pending_*` handoff fields remain.
 - `pending_notes_workspace_context` is removed.
 - A narrow AST guard checks only the forbidden app-owned fields and known

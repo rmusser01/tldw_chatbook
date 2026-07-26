@@ -44,6 +44,13 @@ A source or active-server mismatch invalidates the snapshot. Navigation always
 constructs a fresh screen and applies any explicit navigation context after a
 compatible snapshot is restored.
 
+The snapshot key is exactly the route registry's resolved `canonical_tab`.
+The outgoing key comes from the app's current tab established by the prior
+successful navigation, and the incoming key comes from the new resolution.
+Requested aliases, routed screen names, and screen-owned names are not
+alternative keys. Aliases sharing a canonical tab intentionally share a
+snapshot.
+
 Destination handoffs remain memory-only and preserve the existing single-slot,
 consume-once, last-write-wins behavior. Each typed channel has a monotonic
 revision and supports atomic claim, acknowledge, and release. At most one
@@ -55,9 +62,10 @@ lifecycle or user-triggered retry; they do not start an automatic retry loop.
 
 The ACP session-target handoff will be completed without inventing an
 arbitrary-session repository. ACP compares the requested target with the
-current runtime session. A match focuses the current session details; a
-missing or mismatched target produces explicit stale/unsupported recovery and
-is terminally acknowledged.
+current runtime session by reconstructing the same canonical
+`local:acp_session:<session_id>` record ID used by the producer. A match
+focuses the current session details; a malformed, missing, or mismatched target
+produces explicit stale/unsupported recovery and is terminally acknowledged.
 
 ## Context
 

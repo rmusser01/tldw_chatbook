@@ -26,7 +26,7 @@ Replace the raw Chat and Console pending application fields with typed, memory-o
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A PendingHandoffStore owns typed Chat and Console channels, normalizes and detaches staged values, and remains memory-only
+- [ ] #1 A PendingHandoffStore owns typed Chat and Console channels, normalizes and structurally detaches staged values including nested mappings, and remains memory-only
 - [ ] #2 A claim is exclusive, and acknowledge or release affects only the exact claimed revision so a newer replacement cannot be cleared
 - [ ] #3 The pending_chat_handoff, pending_console_launch, and pending_console_prompt_insert application fields are migrated to the owner
 - [ ] #4 Success, terminal rejection, and transient failure semantics preserve current mount, setup, tab-creation, and retry behavior

@@ -28,7 +28,7 @@ Migrate the remaining Study, Artifacts, and ACP navigation handoffs to the revis
 <!-- AC:BEGIN -->
 - [ ] #1 Typed Study, Artifacts, and ACP slots preserve revisioned single-slot replacement semantics
 - [ ] #2 Artifacts transient failures release for later lifecycle or user retry while success and terminal missing-target outcomes acknowledge
-- [ ] #3 ACP consumes its target by matching the current runtime session and provides explicit stale or unsupported recovery instead of silently losing the target
+- [ ] #3 ACP consumes its canonical local:acp_session record target by reconstructing the same identifier from the current runtime session and provides explicit malformed, stale, or unsupported recovery instead of silently losing the target
 - [ ] #4 All listed raw application pending fields and the dead pending_notes_workspace_context slot are removed and an AST ownership guard prevents their return
 - [ ] #5 Focused and static checks plus the installed-wheel gate, product-maturity UI sentinel, and full suite pass after the integrated tranche
 <!-- AC:END -->

@@ -27,9 +27,9 @@ Replace TldwCli's raw screen-state dictionary with a process-memory owner that p
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 ScreenStateStore owns canonical-route snapshot envelopes in memory and never inserts policy metadata into domain snapshot dictionaries
+- [ ] #1 ScreenStateStore owns canonical-tab snapshot envelopes in memory and never inserts policy metadata into domain snapshot dictionaries
 - [ ] #2 Runtime-source or active-server incompatibility discards stale snapshots while compatible snapshots restore without exposing the backing mapping
 - [ ] #3 TldwCli navigation no longer creates or reads _screen_states and recent-snapshot consumers use the truthful store API
-- [ ] #4 Fresh screen construction, pending-work vetoes, corrupt snapshot recovery, and explicit Library, Settings, and Watchlists navigation-context precedence are preserved
+- [ ] #4 Fresh screen construction, alias sharing by resolved canonical tab, pending-work vetoes, corrupt snapshot recovery, and explicit Library, Settings, and Watchlists navigation-context precedence are preserved
 - [ ] #5 Focused mounted tests, payload-redaction sentinels, scoped static checks, and ownership guards pass
 <!-- AC:END -->
