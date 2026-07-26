@@ -161,5 +161,55 @@ def test_no_content_token_in_window_raises():
              "top_logprobs": [{"id": 100, "token": "<|channel>", "bytes": [], "logprob": 0.0}]},
         ]}}]
     }
-    with pytest.raises(NormalizerError, match="no_content_token"):
+    with pytest.raises(NormalizerError, match="no_content_token") as exc_info:
         normalize_logprobs(payload, want_content_token=True)
+    assert exc_info.value.code == "no_content_token"
+
+
+def test_empty_top_logprobs_at_the_measured_position_raises_no_logprobs():
+    """The catastrophic-in-practice case: the endpoint honours the request
+    shape -- choices[0].logprobs.content exists and carries a token -- but
+    does not actually report a distribution at the measured position.
+    Silently returning zero tokens here would produce a CellCapture with
+    top1_mass 0.0, truncated_mass 1.0, and divergence 0.0 against anything:
+    a grid of identical zero-entropy cells that preflight would still read
+    as Ready. This must raise instead, so it routes to Blocked."""
+    payload = {
+        "choices": [{"logprobs": {"content": [{
+            "id": 1, "token": " a", "bytes": [32, 97], "logprob": -0.5,
+            "top_logprobs": [],
+        }]}}]
+    }
+    with pytest.raises(NormalizerError) as exc_info:
+        normalize_logprobs(payload, want_content_token=False)
+    assert exc_info.value.code == "no_logprobs"
+
+
+def test_missing_top_logprobs_key_at_the_measured_position_also_raises():
+    """Some servers omit the key entirely rather than sending an empty list;
+    both must be treated identically."""
+    payload = {
+        "choices": [{"logprobs": {"content": [{
+            "id": 1, "token": " a", "bytes": [32, 97], "logprob": -0.5,
+        }]}}]
+    }
+    with pytest.raises(NormalizerError) as exc_info:
+        normalize_logprobs(payload, want_content_token=False)
+    assert exc_info.value.code == "no_logprobs"
+
+
+def test_empty_top_logprobs_at_the_measured_chat_position_also_raises():
+    """Chat mode measures the first non-control position in the window --
+    the empty-top_logprobs check must fire there too, not just at position
+    0."""
+    payload = {
+        "choices": [{"logprobs": {"content": [
+            {"id": 100, "token": "<|channel>", "bytes": [], "logprob": 0.0,
+             "top_logprobs": [{"id": 100, "token": "<|channel>", "bytes": [], "logprob": 0.0}]},
+            {"id": 7, "token": " I", "bytes": [32, 73], "logprob": -0.9,
+             "top_logprobs": []},
+        ]}}]
+    }
+    with pytest.raises(NormalizerError) as exc_info:
+        normalize_logprobs(payload, want_content_token=True)
+    assert exc_info.value.code == "no_logprobs"

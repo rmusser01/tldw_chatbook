@@ -22,6 +22,9 @@ _BRACKETED = re.compile(r"^<\|?[A-Za-z0-9_\-]+\|?>$")
 
 #: A control token is near-deterministic. A bracket-shaped token the model is
 #: genuinely uncertain about is content (markup, code), not template.
+#: -0.05 was picked because exp(-0.05) ~= 0.95: a bracket-shaped token the
+#: model assigns >=95% probability reads as template scaffolding, anything
+#: less certain than that reads as content.
 _CONTROL_LOGPROB_CEILING = -0.05
 
 #: How many positions to search for a content token before giving up.
@@ -29,7 +32,16 @@ CONTENT_TOKEN_WINDOW = 8
 
 
 class NormalizerError(Exception):
-    """The response shape was unrecognized, or held no usable distribution."""
+    """The response shape was unrecognized, or held no usable distribution.
+
+    ``code`` is a stable, matchable classifier for callers (see
+    ``capture_client.py``) -- callers must branch on it, never on the
+    message text, which is free to change.
+    """
+
+    def __init__(self, message: str, *, code: str = "no_logprobs") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def is_control_token(token: str, logprob: float) -> bool:
@@ -47,22 +59,32 @@ def _content_positions(payload: dict[str, Any]) -> list[dict[str, Any]]:
         logprobs = choices[0]["logprobs"]
     except (KeyError, IndexError, TypeError) as exc:
         raise NormalizerError(
-            f"response carries no logprobs; got keys {list(payload)!r}"
+            f"response carries no logprobs; got keys {list(payload)!r}",
+            code="no_logprobs",
         ) from exc
     if not isinstance(logprobs, dict) or "content" not in logprobs:
         raise NormalizerError(
             "unrecognized logprobs shape: expected a 'content' array "
             f"(got {list(logprobs) if isinstance(logprobs, dict) else type(logprobs)!r}). "
-            "Capture a fixture for this provider before claiming support."
+            "Capture a fixture for this provider before claiming support.",
+            code="no_logprobs",
         )
     content = logprobs["content"]
     if not content:
-        raise NormalizerError("logprobs.content was empty")
+        raise NormalizerError("logprobs.content was empty", code="no_logprobs")
     return content
 
 
 def _to_token_probs(entry: dict[str, Any]) -> list[TokenProb]:
     raw = entry.get("top_logprobs") or []
+    if not raw:
+        raise NormalizerError(
+            "the measured position carried no top_logprobs (empty or "
+            "missing). The endpoint accepted the logprobs request shape "
+            "but did not honour it -- this must block the target, not read "
+            "as a valid zero-entropy measurement.",
+            code="no_logprobs",
+        )
     out = [
         TokenProb(
             token=item["token"],
@@ -102,5 +124,6 @@ def normalize_logprobs(
     raise NormalizerError(
         "no_content_token: every position within the first "
         f"{CONTENT_TOKEN_WINDOW} was a control token. This target's template "
-        "emits only control tokens in the measured window."
+        "emits only control tokens in the measured window.",
+        code="no_content_token",
     )
