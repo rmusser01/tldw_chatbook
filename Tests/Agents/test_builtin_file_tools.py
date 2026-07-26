@@ -172,3 +172,54 @@ def test_all_gated_tool_names_are_covered_by_the_shadow_guard(tools_config):
     assert gated <= _SHADOWED_BUILTIN_NAMES, (
         f"gated builtin tool names not covered: {gated - _SHADOWED_BUILTIN_NAMES}"
     )
+
+
+# -- A failed registration must be diagnosable, not silent -------------------
+
+
+def test_a_failed_registration_logs_instead_of_vanishing(tools_config):
+    """An enabled gate whose tool cannot be built must say so.
+
+    The loop swallows every exception, so before this a real breakage was
+    indistinguishable from "the gate is off": no log, no error, the tool
+    simply absent. Not hypothetical -- note_management_tools was
+    unimportable on dev for an unknown period (it imported a name that
+    exists only inside a string literal in config.py) and nothing
+    surfaced it.
+    """
+    import sys
+    from unittest.mock import patch
+
+    from loguru import logger
+
+    tools_config["create_note_enabled"] = True
+    messages = []
+    sink = logger.add(lambda m: messages.append(m.record["message"]), level="WARNING")
+    try:
+        with patch.dict(
+            sys.modules, {"tldw_chatbook.Tools.note_management_tools": None}
+        ):
+            names = _names(BuiltinToolProvider())
+    finally:
+        logger.remove(sink)
+
+    assert "create_note" not in names, "a tool that failed to build must not register"
+    assert any("CreateNoteTool" in m for m in messages), (
+        f"registration failure was not logged; warnings seen: {messages}"
+    )
+
+
+def test_a_disabled_gate_is_not_logged_as_a_failure(tools_config):
+    """Gate-off is the normal case and must stay quiet -- otherwise every
+    default startup emits five warnings and the signal is worthless."""
+    from loguru import logger
+
+    messages = []
+    sink = logger.add(lambda m: messages.append(m.record["message"]), level="WARNING")
+    try:
+        names = _names(BuiltinToolProvider())
+    finally:
+        logger.remove(sink)
+
+    assert names == {"calculator", "get_current_datetime"}
+    assert messages == [], f"disabled gates must not warn; got: {messages}"

@@ -66,11 +66,15 @@ Note this uses the **three-argument** `get_cli_setting` form, which works — un
 
 ### 4. Note tools: resolve the real user
 
-Both note tools hardcode `user_id="default_user"` (with a literal `# Would be actual user in production` comment) while the app assigns `self.notes_user_id = settings.get("USERS_NAME", …)` **once** at init and never reassigns it. Anyone who set `[general] users_name` would have agent-created notes land in a bucket their Notes UI never reads.
+Both note tools hardcode `user_id="default_user"` (with a literal `# Would be actual user in production` comment) while the app assigns `self.notes_user_id = settings.get("USERS_NAME", …)` **once** at init and never reassigns it.
+
+**What `user_id` actually is here.** It is *not* a visibility partition — the `notes` table has no user column at all (`ChaChaNotes_DB.py:490`), and `Notes_Library.get_note_by_id` carries the explicit comment "The actual filtering by user would be in SQL if notes were user-specific". `NotesInteropService.add_note`'s own docstring states it: "The user_id will be used as the client_id." So it lands in the `client_id` attribution column that drives sync and conflict resolution.
+
+The defect is therefore attribution, not visibility: every note the app writes is attributed to the configured user, while every note the *agent* writes is attributed to a fabricated `"default_user"` client. Agent-authored notes are still visible — they are just misattributed, which is what sync and last-write-wins conflict resolution key off.
 
 Resolve at execute time from **`load_settings()["USERS_NAME"]`** — the identical source `app.notes_user_id` comes from.
 
-**Do not use `get_cli_setting("general", "users_name", …)`.** That reads only the TOML, whereas the real value is `os.getenv("USERS_NAME", toml_value)` resolved inside `load_settings()`. With the env var set, a config read would diverge from `notes_user_id` and land notes in a *third* bucket — reintroducing the same bug in a subtler form.
+**Do not use `get_cli_setting("general", "users_name", …)`.** That reads only the TOML, whereas the real value is `os.getenv("USERS_NAME", toml_value)` resolved inside `load_settings()`. With the env var set, a config read would diverge from `notes_user_id` and stamp a *third* distinct `client_id` — reintroducing the same misattribution in a subtler form.
 
 Execute-time resolution (rather than threading through constructors) matches the existing pattern in the same tool family — `file_operation_tools` resolves its sandbox root lazily the same way — and avoids threading an argument through **four** production `BuiltinToolProvider()` construction sites (`console_chat_controller.py:3733`, `console_agent_bridge.py:822` and `:931`, `builtin_tool_gate.py:352`), two of which have no app access.
 

@@ -1,5 +1,5 @@
 ---
-id: TASK-690
+id: TASK-694
 title: >-
   Port the remaining legacy tools (rag_search, web_search, search_notes,
   code_audit) behind the built-in gate

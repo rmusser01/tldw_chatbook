@@ -1,5 +1,5 @@
 ---
-id: TASK-687
+id: TASK-691
 title: UpdateNoteTool.expected_version default-of-1 causes spurious version conflicts
 status: To Do
 assignee: []

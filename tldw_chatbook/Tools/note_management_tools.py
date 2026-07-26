@@ -24,19 +24,27 @@ _DEFAULT_USER_ID = "default_user"
 
 
 def _resolve_user_id() -> str:
-    """Return the user id notes should be written under.
+    """Return the id notes should be attributed to.
+
+    This is an ATTRIBUTION value, not a visibility partition: the
+    ``notes`` table has no user column, and ``NotesInteropService.add_note``
+    documents that "the user_id will be used as the client_id" -- the
+    column sync and conflict resolution key off. Notes written under the
+    wrong id are still visible; they are misattributed.
 
     Reads ``load_settings()["USERS_NAME"]`` -- the SAME source
-    ``app.notes_user_id`` comes from (``app.py:3139``). Deliberately not
+    ``app.notes_user_id`` comes from (``app.py:3140``). Deliberately not
     ``get_cli_setting("general", "users_name", ...)``: the real value is
     ``os.getenv("USERS_NAME", <toml value>)`` resolved inside
     ``load_settings`` (``config.py:826``), so a direct TOML read would
-    diverge from the app whenever the env var is set and strand notes in
-    a third bucket.
+    diverge from the app whenever the env var is set and stamp a third
+    distinct client_id.
 
     Resolved per call rather than at construction time: a
     ``BuiltinToolProvider`` is built from four sites, two of which have no
-    app access, and the tool classes take no constructor arguments.
+    app access, and the tool classes take no constructor arguments. Note
+    this means a mid-session change to ``users_name`` takes effect here
+    while ``app.notes_user_id`` (bound once at init) keeps the old value.
 
     Returns:
         The configured user id, or ``"default_user"`` if settings cannot

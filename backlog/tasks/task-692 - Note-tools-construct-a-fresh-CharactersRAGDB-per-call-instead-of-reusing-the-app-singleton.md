@@ -1,5 +1,5 @@
 ---
-id: TASK-688
+id: TASK-692
 title: >-
   Note tools construct a fresh CharactersRAGDB per call instead of reusing the
   app singleton

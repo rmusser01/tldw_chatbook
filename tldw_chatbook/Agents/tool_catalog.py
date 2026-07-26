@@ -12,6 +12,8 @@ import asyncio
 import json
 from typing import Any, Iterable, Mapping, Protocol
 
+from loguru import logger
+
 from tldw_chatbook.Tools.tool_executor import CalculatorTool, DateTimeTool
 
 from .agent_models import (
@@ -221,7 +223,19 @@ class BuiltinToolProvider:
                     f"..Tools.{module_name}", package=__package__
                 )
                 tool = getattr(module, factory_name)()
-            except Exception:  # noqa: BLE001 — an unavailable tool is just absent
+            except Exception as exc:  # noqa: BLE001 — an unavailable tool is just absent
+                # Log rather than vanish silently. The gate-off path `continue`s
+                # ABOVE this handler, so reaching here means the user asked for
+                # the tool and it could not be built -- indistinguishable from
+                # "gate is off" without this line. That is not hypothetical:
+                # note_management_tools was unimportable on dev for an unknown
+                # period (it imported a name that exists only inside a string
+                # literal in config.py) and nothing surfaced it. The legacy
+                # path logs the same failure (tool_executor.py:725/738/779/805).
+                logger.warning(
+                    f"Could not register builtin tool {factory_name} "
+                    f"(gate {gate_key} is enabled): {exc}"
+                )
                 continue
             self._tools[tool.name] = tool
         # `None` means "build the real gate on first use" -- NOT "ungated".
