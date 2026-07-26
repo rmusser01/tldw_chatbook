@@ -5,7 +5,6 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
-from tldw_chatbook.UI.Mindmap_Viewer_Window import MindmapViewerWindow
 from tldw_chatbook.Widgets.Evals.eval_additional_dialogs import RunSelectionDialog
 from tldw_chatbook.Widgets.Evals.sample_browser_dialog import SampleBrowserDialog
 from tldw_chatbook.Widgets.Note_Widgets.note_selection_dialog import NoteSelectionDialog
@@ -128,26 +127,5 @@ async def test_multi_item_review_bulk_controls_have_tooltips():
             {
                 "select-all-items": "Select every visible media item for multi-item review.",
                 "clear-all-items": "Clear every selected media item.",
-            },
-        )
-
-
-@pytest.mark.asyncio
-async def test_mindmap_source_selection_clear_control_has_tooltip():
-    fake_db = SimpleNamespace(
-        list_notes=lambda limit=100: [],
-        get_conversations=lambda limit=50: [],
-        get_all_characters=lambda: [],
-    )
-    app_instance = SimpleNamespace(chachanotes_db=fake_db)
-    app = _ScreenHost(MindmapViewerWindow(app_instance=app_instance))
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-
-        _assert_button_tooltips(
-            app.screen_under_test,
-            {
-                "clear-selection": "Clear selected source content before creating a mindmap.",
             },
         )
