@@ -189,7 +189,8 @@ class BuiltinToolProvider:
 
     SOURCE = "builtin"
 
-    def __init__(self, gate: Any | None = None) -> None:
+    def __init__(self, gate: Any | None = None, services: Any | None = None) -> None:
+        self.services = services
         self._tools = {t.name: t for t in (CalculatorTool(), DateTimeTool())}
         # task-584: surface the app's existing sandbox-rooted file tools to the
         # agent loop. They were registered on the global ToolExecutor but never

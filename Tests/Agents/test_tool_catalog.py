@@ -241,3 +241,21 @@ def test_gate_failure_does_not_raise_into_the_loop():
         "builtin:calculator", {"expression": "1+1"}
     )
     assert out.ok is False  # fail closed, never raise
+
+
+def test_provider_accepts_services_and_still_works_without_them():
+    """TASK-656's permissions enumerator builds a bare provider.
+
+    Services must therefore stay optional: metadata is readable with
+    services=None, and only execute() needs them.
+    """
+    from tldw_chatbook.Agents.builtin_services import BuiltinToolServices
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    bare = BuiltinToolProvider()
+    assert {e.name for e in bare.list_catalog()} >= {"calculator", "get_current_datetime"}
+
+    services = BuiltinToolServices(notes_library=object())
+    injected = BuiltinToolProvider(services=services)
+    assert injected.services is services
+    assert bare.services is None
