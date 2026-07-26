@@ -4,6 +4,7 @@ title: Open a server-ingested item from the ingest queue
 status: To Do
 assignee: []
 created_date: '2026-07-26 13:58'
+updated_date: '2026-07-26 18:13'
 labels:
   - library
   - ingest
@@ -18,5 +19,7 @@ A server ingest finishes with its content in the server's library, not this mach
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A finished server-origin job offers a way to view the item it created,The action opens the item in a server-scoped view rather than looking for a local row,A job whose server result carries no usable id offers no such action
+- [ ] #1 A finished server-origin job offers a way to view the item it created
+- [ ] #2 The action opens the item in a server-scoped view rather than looking for a local row
+- [ ] #3 A job whose server result carries no usable id offers no such action
 <!-- AC:END -->
