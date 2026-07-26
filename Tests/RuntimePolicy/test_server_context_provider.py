@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import pytest
 
+import tldw_chatbook.runtime_policy.server_context as server_context_module
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
 from tldw_chatbook.runtime_policy.bootstrap import RuntimePolicyContext
@@ -1493,6 +1494,243 @@ def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activatio
         )
         is None
     )
+
+
+def test_rebind_app_config_installs_config_invalidates_cache_and_preserves_signout(
+    tmp_path,
+    monkeypatch,
+):
+    provider = _provider(
+        tmp_path,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://old.example.com/api",
+                label="Old",
+                base_url="https://old.example.com/api",
+                auth_mode="bearer",
+                is_default=True,
+            )
+        ],
+    )
+    provider._legacy_cleared_server_ids.add("https://old.example.com/api")
+    hook_calls: list[tuple[str, str | None, str | None]] = []
+    monkeypatch.setattr(
+        provider,
+        "_invalidate_event_handles_for_server_switch",
+        lambda previous, next_id: hook_calls.append(("event", previous, next_id)),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_invalidate_sync_handles_for_server_switch",
+        lambda previous, next_id: hook_calls.append(("sync", previous, next_id)),
+    )
+
+    class ClosingClient:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def close(self) -> None:
+            self.close_calls += 1
+
+    cached_client = ClosingClient()
+    provider._cached_client = cached_client
+    provider._cached_client_key = object()
+    refreshed_config = {
+        "tldw_api": {
+            "base_url": "https://new.example.com/api/",
+            "bearer_token": "refreshed-token",
+            "auth_mode": "bearer",
+        }
+    }
+
+    provider.rebind_app_config(
+        refreshed_config,
+        previous_server_id=" https://old.example.com/api ",
+        next_server_id="https://old.example.com/api",
+    )
+
+    assert provider.app_config is refreshed_config
+    assert provider._cached_client is None
+    assert provider._cached_client_key is None
+    assert cached_client.close_calls == 1
+    assert hook_calls == []
+    assert provider._legacy_cleared_server_ids == {"https://old.example.com/api"}
+    targets = provider.target_store.list_targets()
+    assert [target.server_id for target in targets] == [
+        "https://old.example.com/api",
+        "https://new.example.com/api",
+    ]
+    assert [target.is_default for target in targets] == [False, True]
+
+
+def test_rebind_app_config_invalidates_switch_hooks_once_with_normalized_ids(
+    tmp_path,
+    monkeypatch,
+):
+    provider = _provider(tmp_path)
+    hook_calls: list[tuple[str, str | None, str | None]] = []
+    monkeypatch.setattr(
+        provider,
+        "_invalidate_event_handles_for_server_switch",
+        lambda previous, next_id: hook_calls.append(("event", previous, next_id)),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_invalidate_sync_handles_for_server_switch",
+        lambda previous, next_id: hook_calls.append(("sync", previous, next_id)),
+    )
+
+    provider.rebind_app_config(
+        {},
+        previous_server_id=" server-a ",
+        next_server_id=" server-b ",
+    )
+
+    assert hook_calls == [
+        ("event", "server-a", "server-b"),
+        ("sync", "server-a", "server-b"),
+    ]
+
+
+def test_rebind_app_config_contains_target_write_failure_and_uses_refreshed_fallback(
+    tmp_path,
+    monkeypatch,
+):
+    endpoint_sentinel = "https://endpoint-sentinel.example.com/api"
+    token_sentinel = "token-sentinel-value"
+    path_sentinel = tmp_path / "path-sentinel-targets.json"
+    exception_sentinel = "exception-message-sentinel"
+    runtime_context = _runtime_context(active_server_id=endpoint_sentinel)
+    target_store = ConfiguredServerTargetStore(path_sentinel)
+    provider = RuntimeServerContextProvider(
+        runtime_context=runtime_context,
+        target_store=target_store,
+        credential_store=InMemoryServerCredentialStore(),
+        app_config={},
+    )
+
+    class ClosingClient:
+        async def close(self) -> None:
+            return None
+
+    provider._cached_client = ClosingClient()
+    provider._cached_client_key = object()
+    refreshed_config = {
+        "tldw_api": {
+            "base_url": f"{endpoint_sentinel}/",
+            "bearer_token": token_sentinel,
+            "auth_mode": "bearer",
+        }
+    }
+
+    def fail_after_install(app_config):
+        assert app_config is refreshed_config
+        assert provider.app_config is refreshed_config
+        assert provider._cached_client is None
+        assert provider._cached_client_key is None
+        raise RuntimeError(exception_sentinel)
+
+    monkeypatch.setattr(
+        target_store,
+        "upsert_legacy_config_target",
+        fail_after_install,
+    )
+    warnings: list[str] = []
+    sink = server_context_module.logger.add(
+        warnings.append,
+        level="WARNING",
+        format="{message}",
+    )
+    try:
+        provider.rebind_app_config(
+            refreshed_config,
+            previous_server_id=None,
+            next_server_id=endpoint_sentinel,
+        )
+    finally:
+        server_context_module.logger.remove(sink)
+
+    context = provider.get_active_context()
+    assert context.active_server_id == endpoint_sentinel
+    assert context.base_url == endpoint_sentinel
+    assert context.auth_token == token_sentinel
+    assert len(warnings) == 1
+    warning = warnings[0]
+    assert "exception_category=RuntimeError" in warning
+    assert endpoint_sentinel not in warning
+    assert token_sentinel not in warning
+    assert str(path_sentinel) not in warning
+    assert exception_sentinel not in warning
+
+
+def test_rebind_app_config_contains_synchronous_close_failure(tmp_path):
+    close_sentinel = "synchronous-close-secret"
+    provider = _provider(tmp_path)
+
+    class FailingCloseClient:
+        async def close(self) -> None:
+            raise RuntimeError(close_sentinel)
+
+    provider._cached_client = FailingCloseClient()
+    provider._cached_client_key = object()
+    warnings: list[str] = []
+    sink = server_context_module.logger.add(
+        warnings.append,
+        level="WARNING",
+        format="{message}",
+    )
+    try:
+        provider.rebind_app_config(
+            {},
+            previous_server_id=None,
+            next_server_id=None,
+        )
+    finally:
+        server_context_module.logger.remove(sink)
+
+    assert provider._cached_client is None
+    assert provider._cached_client_key is None
+    assert len(warnings) == 1
+    assert "exception_category=RuntimeError" in warnings[0]
+    assert close_sentinel not in warnings[0]
+
+
+@pytest.mark.asyncio
+async def test_rebind_app_config_contains_scheduled_close_failure(tmp_path):
+    close_sentinel = "scheduled-close-secret"
+    provider = _provider(tmp_path)
+
+    class FailingCloseClient:
+        async def close(self) -> None:
+            raise RuntimeError(close_sentinel)
+
+    provider._cached_client = FailingCloseClient()
+    provider._cached_client_key = object()
+    warnings: list[str] = []
+    sink = server_context_module.logger.add(
+        warnings.append,
+        level="WARNING",
+        format="{message}",
+    )
+    try:
+        provider.rebind_app_config(
+            {},
+            previous_server_id=None,
+            next_server_id=None,
+        )
+        pending_tasks = tuple(provider._pending_client_close_tasks)
+        assert len(pending_tasks) == 1
+        await asyncio.gather(*pending_tasks)
+        await asyncio.sleep(0)
+    finally:
+        server_context_module.logger.remove(sink)
+
+    assert provider._cached_client is None
+    assert provider._cached_client_key is None
+    assert provider._pending_client_close_tasks == set()
+    assert len(warnings) == 1
+    assert "exception_category=RuntimeError" in warnings[0]
+    assert close_sentinel not in warnings[0]
 
 
 @pytest.mark.asyncio

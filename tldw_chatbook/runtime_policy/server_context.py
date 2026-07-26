@@ -5,6 +5,8 @@ import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
+from loguru import logger
+
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
 
@@ -194,6 +196,31 @@ class RuntimeServerContextProvider:
         self._invalidate_sync_handles_for_server_switch(
             previous_normalized, next_normalized
         )
+
+    def rebind_app_config(
+        self,
+        app_config: Mapping[str, Any] | None,
+        *,
+        previous_server_id: str | None,
+        next_server_id: str | None,
+    ) -> None:
+        self.app_config = app_config or {}
+        self._invalidate_cached_client()
+
+        previous = self._normalize_optional_server_id(previous_server_id)
+        next_id = self._normalize_optional_server_id(next_server_id)
+        if previous != next_id:
+            self._invalidate_event_handles_for_server_switch(previous, next_id)
+            self._invalidate_sync_handles_for_server_switch(previous, next_id)
+
+        try:
+            self.target_store.upsert_legacy_config_target(self.app_config)
+        except Exception as exc:
+            logger.warning(
+                "Legacy server target refresh failed after runtime commit "
+                "(exception_category={}).",
+                type(exc).__name__,
+            )
 
     def clear_active_server_auth_tokens(self) -> None:
         active_server_id = self._require_active_server_id()
@@ -434,7 +461,13 @@ class RuntimeServerContextProvider:
 
     def _close_client_sync_safe(self, client: TLDWAPIClient) -> None:
         async def _close() -> None:
-            await client.close()
+            try:
+                await client.close()
+            except Exception as exc:
+                logger.warning(
+                    "Runtime API client cleanup failed (exception_category={}).",
+                    type(exc).__name__,
+                )
 
         try:
             loop = asyncio.get_running_loop()
