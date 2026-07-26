@@ -552,10 +552,27 @@ mode.
 
 ## Sequencing
 
-| PR | Contents |
-|---|---|
-| **PR0** | creates `features/_lab.tcss`, registers it in `CSS_MODULES`, **regenerates and commits the checked-in `tldw_cli_modular.tcss` via `build_css`**; `.lab-mode-chip.is-active` app-tier rule + rendered-label test; live look at `.library-collection-row` |
-| **PR1** | `Widgets/destination_rail.py` pure base; `ConsoleRailHandle` becomes a subclass; no consumer edits |
-| **PR2** | `LabScreen` frame, `LabWorkbench`, `LabRailLayout`, `LabRailStore`, extends `features/_lab.tcss`, focus-based mode keys, lazy body mount + `on_lab_body_ready()`; all three screens inherit |
-| **PR3** | Models rail lift |
-| **PR4** | Speech rail lift, capability panel, IA removals |
+**Every PR must leave the app in a shippable state.** An earlier draft split the frame from the
+rail lifts — PR2 landed the frame on all three screens, PR3 lifted Models' sidebar, PR4 lifted
+Speech's. That intermediate state is not shippable: after PR2 the frame renders an empty left rail
+(first run opens it) while each legacy sidebar is still alive inside its body, so Models and Speech
+would each show **two navigation columns side by side** — worse than today.
+
+Each screen's sidebar lift is therefore folded into that screen's own adoption PR. A screen adopts
+the frame and fills its rail in the same change, or it does not adopt yet.
+
+| PR | Contents | Shippable on its own |
+|---|---|---|
+| **PR0** ✅ | creates `features/_lab.tcss`, registers it in `CSS_MODULES`, regenerates the checked-in bundle via `build_css`; app-tier `.lab-mode-chip.is-active` rule + focus-disambiguation guard + rendered-label test | yes — the active mode label becomes visible |
+| **PR1** ✅ | `Widgets/destination_rail.py` pure base; `ConsoleRailHandle` becomes a subclass; zero consumer edits, zero bundle content diff | yes — pure refactor, no visual change |
+| **PR2** | `LabScreen` frame, `LabWorkbench`, `LabRailLayout`, `LabRailStore`, status row, focus-based mode keys, lazy body mount + `on_lab_body_ready()`, footer shortcuts — **and Models adopts it, lifting its nine-row sidebar into the rail** | yes — Models is fully good; Speech and Evals unchanged |
+| **PR3** | Speech adopts the frame, lifts its sidebar, and moves the capability panel into a status chip; the two IA removals land here | yes |
+| **PR4** | Evals adopts the frame with an empty rail and the honest empty state | yes |
+
+PR0 and PR1 shipped together as PR #940. PR2's tasks should be written against PR1's realised API
+rather than an anticipated one.
+
+Note that PR2 carries the frame *and* one screen's lift, making it the largest of the five. If it
+proves too big in planning, the split to reach for is by frame region (frame + rail, then status
+row + inspector), never frame-without-rail — that is the unshippable seam this section exists to
+prevent.

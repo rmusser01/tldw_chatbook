@@ -69,14 +69,16 @@ three named tests as the floor and investigate only *new* failure names, never a
 
 ---
 
-## Sequencing correction (read before planning PR2+)
+## Sequencing correction — CONFIRMED, folded into the spec
 
 The spec sequences PR2 as "frame + all three screens inherit", with the rail lifts following in PR3
 (Models) and PR4 (Speech). **That intermediate state is not shippable.** After PR2 the frame would
 render an empty left rail (spec: "first run: left rail open") while each legacy sidebar is still
 alive inside its body — two navigation columns side by side, worse than today.
 
-Recommended restructure for the remaining work, to be confirmed before PR2 is planned:
+**Confirmed and adopted** — the spec's Sequencing section now carries this as the plan of record.
+Each screen's sidebar lift is folded into that screen's own adoption PR: a screen adopts the frame
+and fills its rail in one change, or it does not adopt yet.
 
 | PR | Contents | Shippable? |
 |---|---|---|
