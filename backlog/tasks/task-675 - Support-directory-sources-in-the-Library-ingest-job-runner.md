@@ -1,5 +1,5 @@
 ---
-id: TASK-662
+id: TASK-675
 title: Support directory sources in the Library ingest job runner
 status: Done
 assignee: []

@@ -1,5 +1,5 @@
 ---
-id: TASK-669
+id: TASK-682
 title: Stop rewriting the whole config file on every ingest submit
 status: To Do
 assignee: []

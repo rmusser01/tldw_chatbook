@@ -1,5 +1,5 @@
 ---
-id: TASK-665
+id: TASK-678
 title: Clear the ingest pre-flight summary when the form is submitted
 status: To Do
 assignee: []

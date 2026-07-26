@@ -1,5 +1,5 @@
 ---
-id: TASK-664
+id: TASK-677
 title: Fail ingest jobs that extract no content instead of reporting success
 status: Done
 assignee: []

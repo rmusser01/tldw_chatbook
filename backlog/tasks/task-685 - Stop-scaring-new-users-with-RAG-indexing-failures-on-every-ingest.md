@@ -1,5 +1,5 @@
 ---
-id: TASK-672
+id: TASK-685
 title: Stop scaring new users with RAG indexing failures on every ingest
 status: To Do
 assignee: []

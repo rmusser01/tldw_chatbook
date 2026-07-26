@@ -742,7 +742,7 @@ async def test_mounting_option_panels_posts_no_option_changes():
     ``Input`` does the same for a non-empty ``value=``. Bubbling those as
     ``OptionValueChanged`` made the screen recompose, which remounted the
     select, which posted again -- an unbounded recompose cycle that pinned
-    the UI at 100% CPU for every pdf/audio/ebook pre-flight (task-660).
+    the UI at 100% CPU for every pdf/audio/ebook pre-flight (task-673).
 
     Every type group is mounted at once: ``pdf``, ``audio_video`` and
     ``ebook`` each carry a select and so each reproduced the freeze on its
@@ -787,7 +787,7 @@ async def test_chunk_size_enabled_when_chunk_checked():
 
     They were gated through the installed-feature lookup on the name
     "chunk", which is a sibling field rather than a package, so they were
-    disabled no matter what the user did (task-663).
+    disabled no matter what the user did (task-676).
     """
     form = _default_form()
     form.chunk = True

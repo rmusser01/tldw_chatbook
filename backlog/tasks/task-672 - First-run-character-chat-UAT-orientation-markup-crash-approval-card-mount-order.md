@@ -1,4 +1,4 @@
-# task-673 - First-run character-chat UAT: orientation markup crash + approval-card mount order
+# task-635 - First-run character-chat UAT: orientation markup crash + approval-card mount order
 
 ## Description (the why)
 

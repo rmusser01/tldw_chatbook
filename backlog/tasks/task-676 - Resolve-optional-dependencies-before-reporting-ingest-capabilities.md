@@ -1,5 +1,5 @@
 ---
-id: TASK-663
+id: TASK-676
 title: Resolve optional dependencies before reporting ingest capabilities
 status: Done
 assignee: []

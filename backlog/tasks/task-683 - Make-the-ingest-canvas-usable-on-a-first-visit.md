@@ -1,5 +1,5 @@
 ---
-id: TASK-670
+id: TASK-683
 title: Make the ingest canvas usable on a first visit
 status: To Do
 assignee: []

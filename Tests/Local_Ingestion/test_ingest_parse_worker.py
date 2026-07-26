@@ -618,7 +618,7 @@ def test_run_parse_job_through_real_spawn_pool(tmp_path: Path) -> None:
     )
 
 
-# --- empty-extraction guard (task-664) --------------------------------------
+# --- empty-extraction guard (task-677) --------------------------------------
 
 
 def test_persist_rejects_payload_with_no_extracted_content(tmp_path: Path) -> None:
@@ -627,7 +627,7 @@ def test_persist_rejects_payload_with_no_extracted_content(tmp_path: Path) -> No
     A PDF whose extraction produced nothing was written as a media row with
     empty content, reported as done in the queue and counted in the library
     total. The user got an entry that looks imported but returns nothing from
-    search or RAG, with no signal anything went wrong (task-664).
+    search or RAG, with no signal anything went wrong (task-677).
     """
     source = tmp_path / "scanned.pdf"
     source.write_bytes(b"%PDF-1.4 not really extractable")

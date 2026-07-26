@@ -447,7 +447,7 @@ class LibraryIngestCanvas(VerticalScroll):
         dropped here: forwarding them made the screen recompose, which
         remounted the widgets, which posted again -- an unbounded recompose
         cycle that pinned the UI at 100% CPU for every pdf/audio/ebook
-        pre-flight (task-660). Comparing against the last value we rendered
+        pre-flight (task-673). Comparing against the last value we rendered
         *or* forwarded (rather than a "still mounting" flag) keeps this free
         of event-ordering assumptions, and still lets a user return a field
         to its original value: the previous edit updated the record.

@@ -265,7 +265,7 @@ async def test_submitting_a_directory_queues_one_job_per_file(
     Pre-flight happily reports "4 plain text files" for a directory and lets
     the user start it, but the runner used to classify the directory itself
     and fail the whole submission with "Unsupported file type: ." -- so the
-    batch import the UI advertises never worked at all (task-662).
+    batch import the UI advertises never worked at all (task-675).
     """
     db = _make_db(tmp_path)
     folder = tmp_path / "batch"

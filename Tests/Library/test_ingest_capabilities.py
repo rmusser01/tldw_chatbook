@@ -223,7 +223,7 @@ def test_is_installed_probes_when_registry_says_unchecked(monkeypatch) -> None:
     lazy mode never happened. Treating that placeholder as authoritative made
     every optional feature look missing: users were told to install packages
     they already had, and every dependent advanced option was permanently
-    disabled (task-663).
+    disabled (task-676).
     """
     from types import SimpleNamespace
 
@@ -350,7 +350,7 @@ def test_no_group_feature_is_hardwired_unavailable(monkeypatch) -> None:
 
     A feature the lookup cannot resolve is stuck at ``False`` forever, which
     is what permanently disabled the advanced options and produced install
-    hints for packages that were already present (task-663). With everything
+    hints for packages that were already present (task-676). With everything
     importable, every feature the type groups use must come back installed --
     any that does not is resolved by no route at all.
 

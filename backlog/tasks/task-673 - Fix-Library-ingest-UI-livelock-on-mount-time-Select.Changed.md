@@ -1,5 +1,5 @@
 ---
-id: TASK-660
+id: TASK-673
 title: Fix Library ingest UI livelock on mount-time Select.Changed
 status: Done
 assignee: []

@@ -1,5 +1,5 @@
 ---
-id: TASK-671
+id: TASK-684
 title: Retire the second ingestion window in favour of the Library ingest canvas
 status: To Do
 assignee: []

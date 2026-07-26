@@ -1,5 +1,5 @@
 ---
-id: TASK-666
+id: TASK-679
 title: Rewrite ingest option and warning copy for end users
 status: To Do
 assignee: []

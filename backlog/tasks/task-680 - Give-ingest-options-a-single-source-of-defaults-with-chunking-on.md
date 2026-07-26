@@ -1,5 +1,5 @@
 ---
-id: TASK-667
+id: TASK-680
 title: Give ingest options a single source of defaults with chunking on
 status: To Do
 assignee: []

@@ -220,7 +220,7 @@ class TestAnalyzePath:
         can surface those files separately, but the capability lookup has no
         such group, so asking it for tooling warnings raised ``KeyError`` and
         replaced the entire pre-flight summary with a raw error string
-        (task-661).
+        (task-674).
         """
         (tmp_path / "notes.xyz").write_text("nope")
 
