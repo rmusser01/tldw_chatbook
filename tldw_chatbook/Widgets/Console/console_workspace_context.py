@@ -1180,6 +1180,14 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             row_button.workspace_id = row.workspace_id
             row_button.styles.width = "1fr"
             row_button.styles.min_width = 0
+            if not row.openable:
+                # TASK-717: a prior open proved this record is missing; the
+                # row must stop presenting as an openable conversation.
+                row_button.disabled = True
+                row_button.add_class("console-workspace-conversation-row-broken")
+                row_button.tooltip = (
+                    "This conversation's record is missing and cannot be opened."
+                )
             yield row_button
 
             star_disabled = not marks_available or not row.star_enabled

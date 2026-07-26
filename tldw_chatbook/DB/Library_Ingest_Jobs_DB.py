@@ -19,7 +19,7 @@ from .base_db import BaseDB
 
 
 class LibraryIngestJobsDB(BaseDB):
-    _CURRENT_SCHEMA_VERSION = 3
+    _CURRENT_SCHEMA_VERSION = 4
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         self._conn: sqlite3.Connection | None = None
@@ -178,7 +178,8 @@ class LibraryIngestJobsDB(BaseDB):
                 content_hash TEXT DEFAULT NULL,
                 origin TEXT NOT NULL DEFAULT 'local' CHECK (origin IN ('local','server')),
                 remote_job_id TEXT DEFAULT NULL,
-                batch_id TEXT DEFAULT NULL
+                batch_id TEXT DEFAULT NULL,
+                remote_media_id TEXT DEFAULT NULL
             );
             """
         )
@@ -191,6 +192,33 @@ class LibraryIngestJobsDB(BaseDB):
             current_version = 2
         if current_version < 3:
             self._migrate_v2_to_v3()
+            current_version = 3
+        if current_version < 4:
+            self._migrate_v3_to_v4()
+
+
+    def _migrate_v3_to_v4(self) -> None:
+        """Record the id of the media row the SERVER created.
+
+        A finished server job's ``result`` carries a ``media_id``, but it
+        addresses a row in the server's library, not this machine's, so it
+        cannot go in ``media_id`` -- that column means a local row, and pointing
+        "Open in Library" at a server id would open a wrong or absent one
+        (task-700). A separate column keeps both meanings intact.
+
+        A plain ``ALTER TABLE`` here, unlike the v2->v3 rebuild: nothing changes
+        an existing CHECK constraint, so SQLite can add the column in place.
+        """
+        with self.transaction() as conn:
+            try:
+                conn.execute(
+                    "ALTER TABLE ingest_jobs ADD COLUMN remote_media_id TEXT DEFAULT NULL"
+                )
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" not in str(e).lower():
+                    raise
+            conn.execute("DELETE FROM schema_version")
+            conn.execute("INSERT INTO schema_version (version) VALUES (4)")
 
     @staticmethod
     def _seq_of(job_id: str) -> int:
@@ -206,8 +234,8 @@ class LibraryIngestJobsDB(BaseDB):
                chunk_enabled, chunk_size, state, retry_count, detected_type, error,
                finished_at_wall, media_id, superseded, dismissed, permanent,
                ingest_options, error_detail, progress, content_hash,
-               origin, remote_job_id, batch_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               origin, remote_job_id, batch_id, remote_media_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(job_id) DO UPDATE SET
               source_path=excluded.source_path, title=excluded.title, author=excluded.author,
               keywords=excluded.keywords, perform_analysis=excluded.perform_analysis,
@@ -219,7 +247,7 @@ class LibraryIngestJobsDB(BaseDB):
               ingest_options=excluded.ingest_options, error_detail=excluded.error_detail,
               progress=excluded.progress, content_hash=excluded.content_hash,
               origin=excluded.origin, remote_job_id=excluded.remote_job_id,
-              batch_id=excluded.batch_id
+              batch_id=excluded.batch_id, remote_media_id=excluded.remote_media_id
             """,
             (
                 self._seq_of(job.job_id),
@@ -247,6 +275,7 @@ class LibraryIngestJobsDB(BaseDB):
                 job.origin,
                 job.remote_job_id,
                 job.batch_id,
+                job.remote_media_id,
             ),
         )
         conn.commit()

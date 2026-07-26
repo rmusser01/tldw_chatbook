@@ -36,7 +36,7 @@ def test_console_rail_state_uses_first_start_defaults():
     assert state.right_open is False
     assert state.preferred_left_open is True
     assert state.preferred_right_open is False
-    assert state.persistence_key == "console_rail_state:workspace-1:session-1"
+    assert state.persistence_key == "console_rail_state:workspace-1:layout"
 
 
 def test_console_rail_state_restores_stored_preferences():
@@ -85,65 +85,40 @@ def test_console_rail_state_coerces_integer_preferences():
     assert preferences.right_open is True
 
 
-def test_console_rail_preference_key_prefers_conversation_then_session_fallback():
+def test_console_rail_preference_key_is_per_workspace_only():
+    """TASK-718: layout preferences are keyed per workspace. Conversation and
+    session ids are accepted for API compatibility but must not shape the key -
+    per-conversation keys multiplied config entries and reset section layouts
+    on every new chat."""
     key = build_console_rail_preference_key(
         workspace_id="workspace 1",
         conversation_id="conv:1",
         session_id="session:1",
     )
+    bare_key = build_console_rail_preference_key(workspace_id="workspace 1")
 
-    assert key.value == "console_rail_state:workspace_1:conv_1"
-    assert key.fallback_value == "console_rail_state:workspace_1:session_1"
+    assert key.value == "console_rail_state:workspace_1:layout"
+    assert bare_key.value == key.value
+    # Legacy per-workspace ':global' keys are the one-time migration source.
+    assert key.fallback_value == "console_rail_state:workspace_1:global"
 
 
-def test_console_rail_preference_key_covers_scope_fallbacks():
-    session_key = build_console_rail_preference_key(
-        workspace_id="workspace 1",
-        session_id="session:1",
-    )
-    workspace_key = build_console_rail_preference_key(workspace_id="workspace 1")
+def test_console_rail_preference_key_scope_inputs_never_leak_into_key():
+    for conversation_id, session_id in ((0, 0), ("   ", 0), ("conv", None)):
+        key = build_console_rail_preference_key(
+            workspace_id="workspace",
+            conversation_id=conversation_id,
+            session_id=session_id,
+        )
+        assert key.value == "console_rail_state:workspace:layout"
+        assert key.fallback_value == "console_rail_state:workspace:global"
+
+
+def test_console_rail_preference_key_global_workspace_fallback():
     global_key = build_console_rail_preference_key()
 
-    assert session_key.value == "console_rail_state:workspace_1:session_1"
-    assert session_key.fallback_value is None
-    assert workspace_key.value == "console_rail_state:workspace_1:global"
-    assert workspace_key.fallback_value is None
-    assert global_key.value == "console_rail_state:global:global"
-    assert global_key.fallback_value is None
-
-
-def test_console_rail_preference_key_treats_zero_scope_ids_as_present():
-    key = build_console_rail_preference_key(
-        workspace_id="workspace",
-        conversation_id=0,
-        session_id=0,
-    )
-    session_key = build_console_rail_preference_key(
-        workspace_id="workspace",
-        session_id=0,
-    )
-
-    assert key.value == "console_rail_state:workspace:0"
-    assert key.fallback_value == "console_rail_state:workspace:0"
-    assert session_key.value == "console_rail_state:workspace:0"
-
-
-def test_console_rail_preference_key_treats_whitespace_scope_ids_as_absent():
-    session_key = build_console_rail_preference_key(
-        workspace_id="workspace",
-        conversation_id="   ",
-        session_id=0,
-    )
-    global_key = build_console_rail_preference_key(
-        workspace_id="workspace",
-        conversation_id="   ",
-        session_id="\t",
-    )
-
-    assert session_key.value == "console_rail_state:workspace:0"
-    assert session_key.fallback_value is None
-    assert global_key.value == "console_rail_state:workspace:global"
-    assert global_key.fallback_value is None
+    assert global_key.value == "console_rail_state:global:layout"
+    assert global_key.fallback_value == "console_rail_state:global:global"
 
 
 def test_console_context_rail_badge_reflects_workspace_and_session_only():

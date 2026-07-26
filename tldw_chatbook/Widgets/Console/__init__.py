@@ -17,7 +17,10 @@ from .console_staged_context import ConsoleStagedContextTray
 from .console_transcript import ConsoleTranscript
 from .console_workbench_state import build_console_workbench_state
 from .console_workspace_context import ConsoleWorkspaceContextTray
-from .console_workspace_switcher_modal import ConsoleWorkspaceSwitcherModal
+from .console_workspace_switcher_modal import (
+    ConsoleWorkspaceRenameModal,
+    ConsoleWorkspaceSwitcherModal,
+)
 
 __all__ = [
     "build_console_workbench_state",
@@ -40,5 +43,6 @@ __all__ = [
     "ConsoleTranscript",
     "ConsoleTranscriptSurface",
     "ConsoleWorkspaceContextTray",
+    "ConsoleWorkspaceRenameModal",
     "ConsoleWorkspaceSwitcherModal",
 ]

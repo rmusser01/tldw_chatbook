@@ -168,6 +168,9 @@ class ConsoleConversationBrowserInputRow:
     source_kind: str = "persisted"
     starred_sort: str = ""
     updated_sort: str = ""
+    #: TASK-717: False when a prior open attempt proved the conversation
+    #: record is missing; the row renders visibly broken and inert.
+    openable: bool = True
 
 
 @dataclass(frozen=True)
@@ -206,6 +209,8 @@ class ConsoleConversationBrowserRow:
     star_enabled: bool = True
     source_kind: str = "persisted"
     subagent_count: int = 0
+    #: TASK-717: False when the conversation record is known to be missing.
+    openable: bool = True
 
 
 @dataclass(frozen=True)
@@ -469,6 +474,7 @@ def _normalize_input_row(
         source_kind=source_kind,
         starred_sort=str(row.starred_sort or ""),
         updated_sort=str(row.updated_sort or ""),
+        openable=bool(row.openable),
     )
 
 
@@ -492,6 +498,7 @@ def _to_browser_row(
         star_enabled=row.star_enabled,
         source_kind=row.source_kind,
         subagent_count=subagent_count,
+        openable=bool(row.openable),
     )
 
 

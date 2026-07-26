@@ -436,3 +436,76 @@ def test_next_local_workspace_identity_avoids_name_collision(tmp_path: Path) -> 
 
     assert workspace_id == "workspace-local-3"
     assert workspace_name == "Workspace 3"
+
+
+# --- TASK-714: rename / archive lifecycle -------------------------------------
+
+
+def test_rename_workspace_updates_name(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace 1")
+
+    renamed = service.rename_workspace("ws-a", "Client A")
+
+    assert renamed.name == "Client A"
+    stored = service.get_workspace("ws-a")
+    assert stored is not None and stored.name == "Client A"
+
+
+def test_rename_workspace_rejects_blank_and_unknown(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace 1")
+
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.rename_workspace("ws-a", "   ")
+    with pytest.raises(WorkspaceNotFound):
+        service.rename_workspace("ws-missing", "Anything")
+
+
+def test_rename_workspace_protects_default(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.rename_workspace(DEFAULT_WORKSPACE_ID, "Not Default")
+
+
+def test_archive_workspace_hides_from_listing(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+    service.create_workspace(workspace_id="ws-a", name="Workspace 1")
+
+    archived = service.archive_workspace("ws-a")
+
+    assert archived.archived is True
+    assert archived.active is False
+    listed = {record.workspace_id for record in service.list_workspaces()}
+    assert "ws-a" not in listed
+    listed_all = {
+        record.workspace_id
+        for record in service.list_workspaces(include_archived=True)
+    }
+    assert "ws-a" in listed_all
+
+
+def test_archiving_active_workspace_falls_back_to_default(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+    service.create_workspace(workspace_id="ws-a", name="Workspace 1")
+    service.set_active_workspace("ws-a")
+
+    service.archive_workspace("ws-a")
+
+    active = service.get_active_workspace()
+    assert active is not None
+    assert active.workspace_id == DEFAULT_WORKSPACE_ID
+
+
+def test_archive_workspace_protects_default_and_unknown(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.archive_workspace(DEFAULT_WORKSPACE_ID)
+    with pytest.raises(WorkspaceNotFound):
+        service.archive_workspace("ws-missing")

@@ -5,7 +5,7 @@
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Literal
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -40,6 +40,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
 from tldw_chatbook.TTS import (
     STTSGeneratedAudio,
     STTSPlaygroundRequest,
+    TTSPreferencesSnapshot,
     get_tts_service,
 )
 from tldw_chatbook.TTS.adapter_types import (
@@ -2546,6 +2547,7 @@ class TTSSettingsWidget(Widget):
     def __init__(self) -> None:
         super().__init__()
         self._audio_cpp_discovery_generation = 0
+        self._preferences_snapshot: TTSPreferencesSnapshot | None = None
 
     DEFAULT_CSS = """
     TTSSettingsWidget {
@@ -3384,10 +3386,48 @@ class TTSSettingsWidget(Widget):
     def _set_initial_values(self) -> None:
         """Apply config values after all child Select widgets have mounted."""
         try:
+            default_provider = get_cli_setting(
+                "app_tts",
+                "default_provider",
+                "openai",
+            )
+            is_audio_cpp = default_provider == AUDIO_CPP_PROVIDER_ID
+            preference_values: dict[str, object] = {
+                "default_provider": default_provider,
+                "default_model": get_cli_setting(
+                    "app_tts",
+                    "default_model",
+                    "" if is_audio_cpp else "tts-1",
+                ),
+                "default_voice": get_cli_setting(
+                    "app_tts",
+                    "default_voice",
+                    "" if is_audio_cpp else "alloy",
+                ),
+                "default_format": get_cli_setting(
+                    "app_tts",
+                    "default_format",
+                    "wav" if is_audio_cpp else "mp3",
+                ),
+                "default_speed": get_cli_setting(
+                    "app_tts",
+                    "default_speed",
+                    1.0,
+                ),
+            }
+            missing_mode = object()
+            for mode_key in ("default_model_mode", "default_voice_mode"):
+                mode = get_cli_setting("app_tts", mode_key, missing_mode)
+                if mode is not missing_mode:
+                    preference_values[mode_key] = mode
+            preferences = TTSPreferencesSnapshot.from_settings(
+                {"app_tts": preference_values}
+            )
+            self._preferences_snapshot = preferences
+
             # Set default provider
             provider_select = self.query_one("#default-provider-select", Select)
-            default_provider = get_cli_setting("app_tts", "default_provider", "openai")
-            if default_provider in [
+            if preferences.provider_id in [
                 "openai",
                 "audio_cpp",
                 "elevenlabs",
@@ -3396,7 +3436,7 @@ class TTSSettingsWidget(Widget):
                 "higgs",
                 "alltalk",
             ]:
-                provider_select.value = default_provider
+                provider_select.value = preferences.provider_id
 
             # Load voice blends
             self._load_kokoro_voice_blends()
@@ -3418,12 +3458,20 @@ class TTSSettingsWidget(Widget):
             self._update_file_button_labels()
 
             # Update voice and model options based on default provider
-            self._update_default_voice_options(default_provider)
-            self._update_default_model_options(default_provider)
+            self._update_default_voice_options(preferences.provider_id)
+            self._update_default_model_options(preferences.provider_id)
 
             # Set default voice and model
-            default_voice = get_cli_setting("app_tts", "default_voice", "alloy")
-            default_model = get_cli_setting("app_tts", "default_model", "tts-1")
+            default_voice: object = (
+                SERVER_DEFAULT_VOICE_ID
+                if preferences.voice_mode == "server_default"
+                else preferences.voice_id
+            )
+            default_model: object = (
+                FIRST_AVAILABLE_MODEL_ID
+                if preferences.model_mode == "first_available"
+                else preferences.model_id
+            )
 
             voice_select = self.query_one("#default-voice-select", Select)
             model_select = self.query_one("#default-model-select", Select)
@@ -3443,10 +3491,10 @@ class TTSSettingsWidget(Widget):
 
             # Set default format
             format_select = self.query_one("#default-format-select", Select)
-            default_format = get_cli_setting("app_tts", "default_format", "mp3")
-            if default_format in ["mp3", "opus", "aac", "flac", "wav"]:
-                format_select.value = default_format
-            self._update_audio_cpp_default_constraints(default_provider)
+            if preferences.response_format in ["mp3", "opus", "aac", "flac", "wav"]:
+                format_select.value = preferences.response_format
+            self.query_one("#default-speed-input", Input).value = str(preferences.speed)
+            self._update_audio_cpp_default_constraints(preferences.provider_id)
 
             # Set Kokoro device
             try:
@@ -3636,20 +3684,15 @@ class TTSSettingsWidget(Widget):
         if provider == AUDIO_CPP_PROVIDER_ID:
             options = [("Server default", SERVER_DEFAULT_VOICE_ID)]
             selected = SERVER_DEFAULT_VOICE_ID
-            configured_provider = get_cli_setting(
-                "app_tts",
-                "default_provider",
-                "openai",
-            )
-            stored_voice = get_cli_setting("app_tts", "default_voice", None)
+            preferences = self._preferences_snapshot
             if (
-                configured_provider == AUDIO_CPP_PROVIDER_ID
-                and isinstance(stored_voice, str)
-                and stored_voice
-                and stored_voice != SERVER_DEFAULT_VOICE_ID
+                preferences is not None
+                and preferences.provider_id == AUDIO_CPP_PROVIDER_ID
+                and preferences.voice_mode == "exact"
+                and preferences.voice_id is not None
             ):
-                options.append(("Saved server voice", stored_voice))
-                selected = stored_voice
+                options.append(("Saved server voice", preferences.voice_id))
+                selected = preferences.voice_id
             voice_select.set_options(options)
             voice_select.value = selected
         elif provider == "openai":
@@ -3807,19 +3850,15 @@ class TTSSettingsWidget(Widget):
                 ("First available server model", FIRST_AVAILABLE_MODEL_ID),
             ]
             selected = FIRST_AVAILABLE_MODEL_ID
-            configured_provider = get_cli_setting(
-                "app_tts",
-                "default_provider",
-                "openai",
-            )
-            stored_model = get_cli_setting("app_tts", "default_model", None)
+            preferences = self._preferences_snapshot
             if (
-                configured_provider == AUDIO_CPP_PROVIDER_ID
-                and isinstance(stored_model, str)
-                and stored_model
+                preferences is not None
+                and preferences.provider_id == AUDIO_CPP_PROVIDER_ID
+                and preferences.model_mode == "exact"
+                and preferences.model_id is not None
             ):
-                options.append(("Saved server model", stored_model))
-                selected = stored_model
+                options.append(("Saved server model", preferences.model_id))
+                selected = preferences.model_id
             model_select.set_options(options)
             model_select.value = selected
         elif provider == "openai":
@@ -3895,27 +3934,58 @@ class TTSSettingsWidget(Widget):
     def _save_settings(self) -> None:
         """Save TTS settings"""
         try:
+            provider = self.query_one("#default-provider-select", Select).value
+            if not isinstance(provider, str):
+                raise ValueError("A default TTS provider must be selected")
+
+            selected_model = self.query_one("#default-model-select", Select).value
+            model_mode: Literal["exact", "first_available"]
+            model_id: str | None
+            if selected_model is FIRST_AVAILABLE_MODEL_ID:
+                model_mode = "first_available"
+                model_id = None
+            elif isinstance(selected_model, str):
+                model_mode = "exact"
+                model_id = selected_model
+            else:
+                raise ValueError("A default TTS model must be selected")
+
+            selected_voice = self.query_one("#default-voice-select", Select).value
+            voice_mode: Literal["exact", "server_default"]
+            voice_id: str | None
+            if selected_voice is SERVER_DEFAULT_VOICE_ID:
+                voice_mode = "server_default"
+                voice_id = None
+            elif isinstance(selected_voice, str):
+                voice_mode = "exact"
+                voice_id = selected_voice
+            else:
+                raise ValueError("A default TTS voice must be selected")
+
+            response_format = self.query_one(
+                "#default-format-select",
+                Select,
+            ).value
+            if not isinstance(response_format, str):
+                raise ValueError("A default TTS format must be selected")
+            speed = self._validate_numeric_input(
+                self.query_one("#default-speed-input", Input).value,
+                0.25,
+                4.0,
+                1.0,
+            )
+            preferences = TTSPreferencesSnapshot(
+                provider_id=provider,
+                model_mode=model_mode,
+                model_id=model_id,
+                voice_mode=voice_mode,
+                voice_id=voice_id,
+                response_format=response_format,
+                speed=speed,
+            )
+
             # Collect all settings
             settings = {}
-
-            # Default settings
-            settings["default_provider"] = self.query_one(
-                "#default-provider-select", Select
-            ).value
-            default_voice = self.query_one("#default-voice-select", Select).value
-            settings["default_voice"] = (
-                default_voice if isinstance(default_voice, str) else ""
-            )
-            default_model = self.query_one("#default-model-select", Select).value
-            settings["default_model"] = (
-                default_model if isinstance(default_model, str) else ""
-            )
-            settings["default_format"] = self.query_one(
-                "#default-format-select", Select
-            ).value
-            settings["default_speed"] = self._validate_numeric_input(
-                self.query_one("#default-speed-input", Input).value, 0.25, 4.0, 1.0
-            )
 
             settings["audio_cpp"] = self._collect_audio_cpp_config().to_mapping()
 
@@ -4165,7 +4235,9 @@ class TTSSettingsWidget(Widget):
             ).value
 
             # Post save event
-            self.app.post_message(STTSSettingsSaveEvent(settings))
+            self.app.post_message(
+                STTSSettingsSaveEvent(settings, preferences=preferences)
+            )
 
         except Exception:
             logger.error("Failed to collect TTS settings")

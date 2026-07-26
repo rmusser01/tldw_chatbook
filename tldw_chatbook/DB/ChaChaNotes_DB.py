@@ -6322,8 +6322,17 @@ UPDATE db_schema_version
             clauses.append("scope_type = ?")
             params.append(normalized_scope)
 
+        # TASK-721: the browse-everything seam ("all") must also span client
+        # ids - rows written by another client (server sync, seeds, another
+        # install) are real conversations the Console workspace browser
+        # already lists via memberships, so hiding them from the Library
+        # Browse count/list made the two surfaces disagree. Scoped listings
+        # keep the historical client filter.
+        scope_is_all = (
+            str(scope_type or "").strip().lower() == CONVERSATION_SCOPE_ALL
+        )
         effective_client_id = self.client_id if client_id is None else client_id
-        if effective_client_id is not None:
+        if effective_client_id is not None and not scope_is_all:
             clauses.append("client_id = ?")
             params.append(effective_client_id)
 

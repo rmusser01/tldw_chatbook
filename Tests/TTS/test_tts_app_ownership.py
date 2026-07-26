@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import ast
 import builtins
+import threading
 from collections.abc import AsyncIterator, Iterator, Mapping
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,8 +21,13 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
 )
 from tldw_chatbook.TTS import STTSPlaygroundRequest
+from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
 from tldw_chatbook.TTS.adapter_types import ProgressSink, TTSProgress
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import (
+    TTSService,
+    TTSSettingsPersistenceOutcome,
+    TTSSettingsPublicationTicket,
     get_tts_service,
     reset_tts_service_binding,
 )
@@ -169,8 +175,11 @@ def test_app_construction_keeps_audio_cpp_import_and_all_adapters_lazy(
     app = _build_test_app()
 
     assert tuple(
-        descriptor.provider_id for descriptor in app.tts_service.registry.descriptors()
+        descriptor.provider_id for descriptor in app.tts_service.provider_descriptors()
     ) == ("audio_cpp", "openai")
+    assert app.tts_service.preferences_snapshot() == (
+        TTSPreferencesSnapshot.from_settings(app.app_config)
+    )
     assert factory.calls == 0
 
 
@@ -448,6 +457,88 @@ async def test_stts_cleanup_cancels_and_joins_tracked_event_tasks(
             if not task.done():
                 task.cancel()
         await asyncio.gather(*created_tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_stts_event_cancellation_does_not_cancel_service_owned_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", FakeAdapterFactory("audio_cpp")),),
+        aliases={},
+    )
+    service = TTSService(registry)
+    app = SimpleNamespace(notify=Mock(), post_message=Mock())
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = service
+    persistence_started = threading.Event()
+    release_persistence = threading.Event()
+    captured_ticket: TTSSettingsPublicationTicket | None = None
+    begin_publication = service.begin_preferences_publication
+    preferences = TTSPreferencesSnapshot(
+        provider_id="audio_cpp",
+        model_mode="exact",
+        model_id="Model/Retained",
+        voice_mode="server_default",
+        voice_id=None,
+        response_format="wav",
+        speed=1.0,
+    )
+
+    def persist_settings(*_args: object, **_kwargs: object) -> object:
+        persistence_started.set()
+        release_persistence.wait()
+        return SimpleNamespace(
+            file_replaced=True,
+            caches_reloaded=True,
+            failure_phase=None,
+        )
+
+    def capture_publication(*args: Any, **kwargs: Any) -> TTSSettingsPublicationTicket:
+        nonlocal captured_ticket
+        captured_ticket = begin_publication(*args, **kwargs)
+        return captured_ticket
+
+    monkeypatch.setattr(config_module, "settings", {})
+    monkeypatch.setattr(
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        persist_settings,
+    )
+    monkeypatch.setattr(service, "begin_preferences_publication", capture_publication)
+
+    handler.on_stts_settings_save_event(
+        STTSSettingsSaveEvent({}, preferences=preferences)
+    )
+    try:
+        for _ in range(100):
+            if persistence_started.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert persistence_started.is_set()
+        assert captured_ticket is not None
+
+        await handler.cleanup_tts_resources()
+
+        assert captured_ticket.completion.cancelled() is False
+        assert captured_ticket.completion.done() is False
+
+        release_persistence.set()
+        publication = await asyncio.shield(captured_ticket.completion)
+
+        assert publication.persistence == TTSSettingsPersistenceOutcome(
+            file_replaced=True,
+            caches_reloaded=True,
+            failure_phase=None,
+        )
+        assert publication.published is True
+        assert service.preferences_snapshot() == preferences
+    finally:
+        release_persistence.set()
+        await service.close()
+        await service.wait_closed()
 
 
 @pytest.mark.asyncio

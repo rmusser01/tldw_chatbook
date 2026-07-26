@@ -37,6 +37,8 @@ tldw_chatbook/TTS/
 ├── legacy_bridge.py         # Temporary provider-scoped compatibility adapters
 ├── audio_cpp_config.py      # Immutable external-server configuration
 ├── audio_cpp_contract.py    # Pinned JSON and PCM16 WAV validation
+├── preferences.py           # Immutable global defaults and config mutations
+├── request_admission.py     # Atomic preference/revision/lease admission
 ├── playground_types.py      # Immutable Playground request/artifact contracts
 ├── adapters/
 │   └── audio_cpp.py         # Native external audio.cpp adapter
@@ -78,6 +80,52 @@ shutdown. Registration is sealed at construction time.
 `TTSBackendBase`, `TTSBackendManager`, and the class-global legacy backend
 registry are compatibility-bridge internals. They are not the extension point
 for new providers.
+
+### Global defaults and Console request admission
+
+TASK-710 represents global TTS defaults as one immutable
+`TTSPreferencesSnapshot`. audio.cpp supports explicit selection modes in
+`[app_tts]`:
+
+```toml
+[app_tts]
+default_provider = "audio_cpp"
+default_model_mode = "first_available" # or "exact"
+default_voice_mode = "server_default"  # or "exact"
+default_format = "wav"
+default_speed = 1.0
+```
+
+`exact` mode also requires the corresponding non-empty `default_model` or
+`default_voice`. `first_available` resolves the first model from one admitted
+catalog snapshot, and `server_default` omits `voice` from the request. Existing
+audio.cpp configurations that have no mode keys and contain blank model or
+voice values read as `first_available` and `server_default` without a startup
+write.
+
+The settings UI translates its local Select sentinels before persistence, so a
+sentinel cannot become an empty exact identifier. One atomic configuration
+mutation always writes the authoritative mode keys. Exact values are
+dual-written to the canonical and legacy exact keys; dynamic modes remove stale
+exact values from both locations. Exact-mode configurations therefore remain
+readable by older builds. Dynamic-mode downgrade is not transparent: save
+explicit model and voice values before downgrading, or restore a trusted
+pre-feature configuration backup.
+
+`TTSRequestAdmissionCoordinator` freezes the complete preference selection,
+resolves any dynamic model, reads the provider revision, and acquires the
+matching registry lease under one writer-preferred admission gate. Settings
+publication persists off the Textual event loop in one service-retained task,
+then uses the exclusive side of that gate for a bounded handoff. A foreground
+save may report **Saved — applying after current speech**; the admitted speech
+continues, only the latest pending generation may become active, and the old
+audio.cpp adapter closes before a replacement can be created.
+
+Console **Speak** calls `TTSService.synthesize_default()`. An `audio_cpp`
+selection uses the native adapter with locked WAV, speed `1.0`, and empty
+options. The six retained providers continue through `LegacyTTSAdapter`. The
+native complete WAV is still consumed through `TTSAudioResponse`'s asynchronous
+iterator and closed through the existing artifact/playback lifecycle.
 
 ### Native audio.cpp adapter (external mode)
 
@@ -161,6 +209,28 @@ overlap.
 
 Normal tests use fake HTTP transport and fixtures pinned to the reviewed
 upstream commit. They require neither an audio.cpp binary nor model downloads.
+
+The installed Homebrew package `audio-cpp 0.4` was characterized on
+2026-07-25 as compatible with the pinned health, model, voice, and speech
+endpoints and complete PCM16 `audio/wav` response contract. This is
+compatible-build evidence only: it does not move the ADR-023 upstream pin or
+grant Chatbook ownership of the external server process.
+
+An isolated clean-config Textual Console UAT subsequently selected
+`audio_cpp` at `http://127.0.0.1:8080` with `first_available` model and
+`server_default` voice, generated a deterministic Mira response, and exercised
+one native adapter. Console produced one owner-only (`0600`) complete WAV of
+594,604 bytes: mono PCM16 at 44.1 kHz, 297,280 frames, and 6.741 seconds.
+Observed lifecycle counts were complete `1`, playback `1`, progress `4`, and
+streaming `0`; `/usr/bin/afplay` exited `0`. The same external listener identity
+and healthy response were present before and after the run, and application
+shutdown took no action on that user-owned process.
+
+After the implementation was rebased, all 23 patches were range-diff
+identical. Fresh focused and broad automated suites passed, but a second live
+run was unavailable because the installed `audio-cpp 0.4` binary had no
+running process, listener, or healthy endpoint. Chatbook intentionally did not
+launch it; external-process ownership remains with the user.
 
 ### Catalog-driven STTS Playground (Slice 3)
 

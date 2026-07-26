@@ -96,7 +96,7 @@ These are direct helper call sites rather than service classes. They should be r
 
 | Module | Audit lines | Notes |
 | --- | ---: | --- |
-| `tldw_chatbook/Event_Handlers/tldw_api_events.py` | 572 | Explicit UI/event helper holdout. Direct endpoint/auth form flow is not safely replaceable by the current app provider without a broader event/UI state refactor. Semantic match: `api_client = build_runtime_api_client(`. |
+| _(none)_ | — | The sole holdout, `tldw_chatbook/Event_Handlers/tldw_api_events.py`, was deleted with the standalone ingestion window it served (task-684.4). Its direct endpoint/auth form flow -- the reason it could not be migrated to the app provider without a broader event/UI refactor -- went with it, so the holdout resolved by retirement rather than migration. |
 
 ### Intentional Current Provider And Bootstrap Usage
 

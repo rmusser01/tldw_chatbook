@@ -70,6 +70,32 @@ def _field(status: Any, name: str) -> Any:
     return getattr(status, name, None)
 
 
+
+def _remote_media_id(status: Any) -> str | None:
+    """Read the id of the media row the server created, if it reported one.
+
+    A finished job's ``result`` carries it (confirmed live:
+    ``{"status": "Success", "media_id": 1125, ...}``). It addresses a row in the
+    SERVER's library, so it is kept apart from the local ``media_id`` -- see
+    ``LibraryIngestJob.remote_media_id`` (task-700).
+
+    Args:
+        status: A ``MediaIngestJobStatus``-shaped model or dict.
+
+    Returns:
+        The id as a string, or ``None`` when the result carries none. Returned
+        as a string because the id only ever travels back to the server, and a
+        stringly id cannot be mistaken for a local integer row id.
+    """
+    result = _field(status, "result")
+    if result is None:
+        return None
+    media_id = _field(result, "media_id")
+    if media_id is None or media_id == "":
+        return None
+    return str(media_id)
+
+
 def _progress_payload(status: Any) -> dict[str, Any] | None:
     """Build a progress payload from whatever the server reported, or ``None``."""
     percent = _field(status, "progress_percent")
@@ -134,7 +160,9 @@ def reconcile_remote_ingest_jobs(
         progress = _progress_payload(status)
 
         if target is IngestJobState.DONE:
-            updated = registry.mark_remote_done(job.job_id)
+            updated = registry.mark_remote_done(
+                job.job_id, remote_media_id=_remote_media_id(status)
+            )
         elif target is IngestJobState.FAILED:
             updated = registry.mark_failed(
                 job.job_id,

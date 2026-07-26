@@ -2164,8 +2164,10 @@ class SettingsScreen(BaseAppScreen):
                     value for _, value in SETTINGS_OVERVIEW_BOUNDARY_ROWS
                 ),
                 recovery_copy=(
-                    "Open the matching Settings category or destination to change behavior; "
-                    "sync and workspace status here is read-only."
+                    "Sync and workspace status here is read-only - switch "
+                    "workspaces in Console (Alt+W), manage them in "
+                    "Library > Details > Workspace, and run sync from the "
+                    "owning sync surfaces."
                 ),
                 read_only_reason="Overview summarizes status and ownership only.",
             ),
@@ -4582,8 +4584,12 @@ class SettingsScreen(BaseAppScreen):
             return (
                 "Sync: unavailable; owning sync surfaces control dry-run and recovery"
             )
+        # TASK-719: each surface's sync_label already begins with "Sync:";
+        # joining them verbatim produced "Collections: Sync: dry-run only".
         return "; ".join(
-            f"{state.surface_label}: {state.sync_label}" for state in sync_states
+            f"{state.surface_label}: "
+            f"{str(state.sync_label).removeprefix('Sync:').strip() or state.sync_label}"
+            for state in sync_states
         )
 
     def _sync_recovery_label(
@@ -4643,9 +4649,12 @@ class SettingsScreen(BaseAppScreen):
                 "not-configured",
             )
             if workspace_id:
+                # TASK-719: the row label already says "Workspace default";
+                # repeating "Workspace:"/"Authority:"/"Sync:" as value
+                # prefixes read like debug output.
                 return (
-                    f"Workspace: {workspace_name} ({workspace_id}); "
-                    f"Authority: {authority}; Sync: {sync_status}"
+                    f"{workspace_name} ({workspace_id}); "
+                    f"authority {authority}; sync {sync_status}"
                 )
         store = getattr(self.app_instance, "console_chat_store", None)
         context = getattr(store, "workspace_context", None)
@@ -4654,10 +4663,14 @@ class SettingsScreen(BaseAppScreen):
         ).strip()
         if active_workspace_id and active_workspace_id != "global":
             return (
-                f"Workspace: {active_workspace_id}; Console context active; "
+                f"{active_workspace_id}; Console context active; "
                 "Library browse/search remains global"
             )
-        return "Workspace: Local Default; Console/Home/Library own workspace switching"
+        # TASK-719: name the concrete owning surfaces instead of a vague list.
+        return (
+            "Local Default; switch in Console (Alt+W), "
+            "manage in Library > Details > Workspace"
+        )
 
     def _acp_runtime_session_state(self) -> ACPRuntimeSessionState:
         get_state = getattr(self.app_instance, "get_acp_runtime_session_state", None)
@@ -10261,7 +10274,22 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-storage-save-result",
                     classes="settings-status-row",
                 )
-                yield Static("Database paths", classes="destination-section")
+                yield Static(
+                    "Database paths (configured)", classes="destination-section"
+                )
+                # TASK-720: the inputs edit config.toml values; the files a
+                # session actually uses are resolved at runtime (a profile
+                # from [general].users_name relocates defaults under a
+                # per-profile directory). Without this note the configured
+                # default and the resolved path read as two conflicting
+                # current locations.
+                yield Static(
+                    "These are the configured config.toml values. The files "
+                    "actually in use this session are listed under Active "
+                    "files below and can differ when a user profile is set.",
+                    id="settings-storage-configured-note",
+                    classes="settings-status-row",
+                )
                 for key, label in STORAGE_FIELD_LABELS.items():
                     selector = self._storage_field_selector(key)
                     if selector is None:
@@ -10274,7 +10302,10 @@ class SettingsScreen(BaseAppScreen):
                             classes="settings-compact-input",
                             placeholder="~/path/to/database.db",
                         )
-                yield Static("Runtime local paths", classes="destination-section")
+                yield Static(
+                    "Active files (resolved this session)",
+                    classes="destination-section",
+                )
                 for path_summary in self._known_storage_paths():
                     yield self._split_detail_row(path_summary)
                 yield self._detail_row(

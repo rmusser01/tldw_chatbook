@@ -38,6 +38,14 @@ class TTSProviderReconfiguringError(RuntimeError):
     """Raised when an exclusive provider handoff blocks new operations."""
 
 
+class TTSConfigurationRevisionError(RuntimeError):
+    """Raised when request selection and provider revision no longer match."""
+
+
+class TTSProviderUnavailableError(RuntimeError):
+    """Raised when a failed handoff has sealed a provider slot."""
+
+
 class TTSOperationError(RuntimeError):
     """A provider-neutral operation failure with safe, stable details."""
 

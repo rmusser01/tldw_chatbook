@@ -831,6 +831,16 @@ class LibraryScreen(BaseAppScreen):
         ("escape", "library_skill_back", "Back to skills list"),
     ]
 
+    #: Whether the media item open in the viewer lives on the SERVER. Set only
+    #: by the ingest queue's "View on server" action (task-700); every other
+    #: route into the viewer opens a local row and clears it.
+    #:
+    #: Declared on the class, not in a method, because a restored session
+    #: reaches the viewer without running the constructors that set instance
+    #: state -- an attribute defined only there is missing exactly when the
+    #: viewer is rebuilt on mount, and the detail fetch that reads it fails.
+    _library_media_detail_is_remote: bool = False
+
     #: Footer hint set — mirrors the show=True bindings the retired Textual
     #: Footer used to render (task-264 review: per-screen AppFooterStatus
     #: renders registered contexts, not bindings).
@@ -3443,15 +3453,20 @@ class LibraryScreen(BaseAppScreen):
                     tooltip="Open Library Import/Export to add workspace-eligible sources.",
                 )
             )
-        widgets.append(
-            Button(
-                "Use in Console",
-                id="library-use-in-console",
-                classes="library-source-action",
-                disabled=handoff_disabled,
-                tooltip=handoff_tooltip,
-            )
+        # TASK-716: a disabled Button never emits Pressed, which made the
+        # press handler's explanatory warning (the whole reason the action
+        # is blocked) unreachable - the control read as dead. Keep the
+        # button pressable and let the handler explain the block inline;
+        # the blocked class carries the dimmed styling.
+        use_in_console = Button(
+            "Use in Console",
+            id="library-use-in-console",
+            classes="library-source-action",
+            tooltip=handoff_tooltip,
         )
+        if handoff_disabled:
+            use_in_console.add_class("library-source-action-blocked")
+        widgets.append(use_in_console)
         widgets.append(
             Static(
                 "Server sync WIP · local only",
@@ -4121,7 +4136,10 @@ class LibraryScreen(BaseAppScreen):
         try:
             detail = await self._run_library_service_call(
                 get_media_item,
-                mode="local",
+                # A media item opened from a finished SERVER ingest lives in the
+                # server's library, so resolving it locally would find nothing
+                # (task-700). Every other route into this viewer is local.
+                mode="server" if self._library_media_detail_is_remote else "local",
                 media_id=media_id,
                 include_content=True,
                 include_versions=True,
@@ -12197,6 +12215,35 @@ class LibraryScreen(BaseAppScreen):
             return
         self._open_job_in_library(job)
 
+
+    @on(Button.Pressed, ".library-ingest-view-server")
+    def handle_library_ingest_view_on_server(self, event: Button.Pressed) -> None:
+        """Open the item a finished SERVER ingest created, in the server view.
+
+        Distinct from "Open in Library": that resolves a row in this machine's
+        media DB, and a server ingest never wrote one. The server reports the id
+        of the row it made, so the item is addressable -- against the server
+        (task-700).
+
+        Args:
+            event: Button press event emitted by a "View on server" row action.
+        """
+        event.stop()
+        job_id = self._ingest_job_id_from_button(
+            event.button.id, "library-ingest-view-server-"
+        )
+        if job_id is None:
+            return
+        job = self._library_ingest_job_by_id(job_id)
+        remote_media_id = getattr(job, "remote_media_id", None) if job else None
+        if not remote_media_id:
+            # The row only offers this action when the id is present, so this is
+            # a stale-press guard rather than an expected path.
+            self.notify("The server did not report which item it created.")
+            return
+        self._library_media_detail_is_remote = True
+        self.run_worker(self._open_library_item_by_id("media", str(remote_media_id)))
+
     @on(Button.Pressed, ".library-ingest-retry")
     def handle_library_ingest_retry(self, event: Button.Pressed) -> None:
         """Requeue a failed ingest job.
@@ -14586,6 +14633,7 @@ class LibraryScreen(BaseAppScreen):
             # Mirrors handle_library_media_row's full state-set EXACTLY so
             # the recomposed canvas lands on a clean viewer, never a stale
             # one carried over from a previously opened item.
+            self._library_media_detail_is_remote = False
             self._selected_media_id = record_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
             self._library_media_view = "viewer"
@@ -15132,10 +15180,53 @@ class LibraryScreen(BaseAppScreen):
             return
 
         self._invalidate_library_workspace_depth_state()
+        # TASK-716: the whole-screen recompose replaces the rail and resets
+        # its scroll to the top, hiding the Details disclosure (and the
+        # updated Active row) the user was just working in. Preserve the
+        # rail's scroll offset across the rebuild.
+        self._preserve_library_rail_scroll()
         self.refresh(recompose=True)
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
-            notify(f"Created local workspace {workspace_name}.", severity="information")
+            # TASK-713: creation also makes the workspace active, which
+            # retargets Console's context from another screen - say so.
+            notify(
+                f"Created local workspace {workspace_name} and made it active; "
+                "Console now targets it.",
+                severity="information",
+            )
+
+    def _preserve_library_rail_scroll(self) -> None:
+        """Restore the rail's scroll offset after the next recompose.
+
+        TASK-716: ``refresh(recompose=True)`` replaces the ``#library-rail``
+        widget, so its scroll position resets to the top and the user loses
+        the spot (typically the bottom-of-rail Workspace group) they were
+        acting in. Capture the offset now and re-apply it to the freshly
+        mounted rail after the rebuild settles.
+        """
+        try:
+            scroll_y = float(self.query_one("#library-rail").scroll_y)
+        except Exception:
+            return
+        if scroll_y <= 0:
+            return
+
+        def _restore() -> None:
+            try:
+                rail = self.query_one("#library-rail")
+            except Exception:
+                return
+            # force=True: the freshly recomposed rail may not have computed
+            # its scroll bounds yet, and an unforced scroll_to clamps to 0.
+            rail.scroll_to(y=scroll_y, animate=False, force=True)
+
+        def _after_recompose() -> None:
+            # Two refresh hops: the first lands after the recompose is
+            # scheduled, the second after the new rail exists and laid out.
+            self.call_after_refresh(_restore)
+
+        self.call_after_refresh(_after_recompose)
 
     def _open_study_section(self, initial_section: str = "dashboard") -> None:
         open_study_screen = getattr(self.app_instance, "open_study_screen", None)

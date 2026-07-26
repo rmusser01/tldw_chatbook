@@ -1465,6 +1465,14 @@ async def test_settings_storage_surfaces_check_action_before_long_path_editor(tm
 
         assert text.index("Draft path check") < text.index("Database paths")
 
+        # TASK-720: configured config values and runtime-resolved files must
+        # not read as two conflicting current locations - the inputs are
+        # labeled configured, the resolved list is labeled active, and a note
+        # explains why they can differ (per-profile resolution).
+        assert "Database paths (configured)" in text
+        assert "Active files (resolved this session)" in text
+        assert "can differ when a user profile is set" in text
+
 
 @pytest.mark.asyncio
 async def test_settings_storage_save_and_revert_defaults(monkeypatch, tmp_path):
@@ -1681,10 +1689,10 @@ def test_settings_server_sync_workspace_rows_use_source_contracts():
     assert captured_sync_kwargs["workspace_scope"] == "research"
     assert rows["Active server profile"] == "Main Server (server-main)"
     assert rows["Local/server authority"] == "server; Settings is read-only"
-    assert rows["Sync safety"] == "Collections: Sync: dry-run only"
+    assert rows["Sync safety"] == "Collections: dry-run only"
     assert rows["Sync recovery"] == "Review dry-run results before enabling writes."
     assert rows["Workspace default"] == (
-        "Workspace: Research (research); Authority: server-backed; Sync: ready"
+        "Research (research); authority server-backed; sync ready"
     )
     assert rows["Library visibility"] == LIBRARY_WORKSPACE_VISIBILITY_COPY
     assert rows["Handoff policy"] == (
@@ -1773,10 +1781,10 @@ def test_settings_server_sync_workspace_rows_fallback_to_read_only_wip_copy():
 
     assert rows["Active server profile"] == "local-only; no active server profile"
     assert rows["Local/server authority"] == "local; Settings is read-only"
-    assert "Collections: Sync: dry-run only" in rows["Sync safety"]
-    assert "Workspaces: Sync: dry-run only" in rows["Sync safety"]
+    assert "Collections: dry-run only" in rows["Sync safety"]
+    assert "Workspaces: dry-run only" in rows["Sync safety"]
     assert rows["Workspace default"] == (
-        "Workspace: Local Default; Console/Home/Library own workspace switching"
+        "Local Default; switch in Console (Alt+W), manage in Library > Details > Workspace"
     )
     assert rows["Library visibility"] == LIBRARY_WORKSPACE_VISIBILITY_COPY
     assert rows["ACP handoff readiness"] == (
@@ -1970,7 +1978,7 @@ def test_settings_status_language_agrees_with_home_console_and_library_contracts
     assert "Mode: Server" in home.sections[0].lines[0]
     assert "Server: Ready" in home.sections[0].lines[0]
     assert rows["Workspace default"] == (
-        "Workspace: workspace-a; Console context active; Library browse/search remains global"
+        "workspace-a; Console context active; Library browse/search remains global"
     )
     assert rows["Library visibility"] == LIBRARY_WORKSPACE_VISIBILITY_COPY
 
@@ -2016,10 +2024,10 @@ async def test_settings_overview_renders_server_sync_workspace_handoff_contracts
         assert "Server, sync, workspace, and handoff" in text
         assert "Active server profile: Main Server (server-main)" in text
         assert "Local/server authority: server; Settings is read-only" in text
-        assert "Collections: Sync: dry-run only" in text
-        assert "Workspaces: Sync: dry-run only" in text
+        assert "Collections: dry-run only" in text
+        assert "Workspaces: dry-run only" in text
         assert (
-            "Workspace: Research (research); Authority: local-only; Sync: not-configured"
+            "Research (research); authority local-only; sync not-configured"
             in text
         )
         assert LIBRARY_WORKSPACE_VISIBILITY_COPY in text
