@@ -263,13 +263,20 @@ def _install_hint(feature_id: str) -> dict[str, str]:
     info = OPTIONAL_FEATURES.get(extra)
 
     if info is not None:
+        # ``hint`` is the *capability at stake*, not a sentence: the two
+        # metadata fields are used inconsistently across extras (for PDF,
+        # label="PDF processing"/what="PDF ingestion"; for audio they are
+        # effectively swapped), so any template combining both reads wrong for
+        # one of them. Callers compose the final line -- see
+        # ``build_warning_lines``, which pairs this with the specific missing
+        # feature's own label and drops it when the two would just repeat.
         return {
-            "hint": f"{info.label} is unavailable: {info.unavailable_what}.",
+            "hint": info.unavailable_what,
             "command": info.source_install_command,
         }
 
     return {
-        "hint": f"Optional dependency '{feature_id}' is not installed.",
+        "hint": "",
         "command": f'pip install -e ".[{feature_id}]"',
     }
 
@@ -380,14 +387,21 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 name="analyze",
                 label="Analyze after ingest",
                 type="checkbox",
-                default=True,
+                # Off by default: analysis costs an LLM call per document at
+                # ingest time, which a user importing a folder has not asked
+                # for and may not have a provider configured for.
+                default=False,
                 depends_on=None,
             ),
             OptionField(
                 name="chunk",
                 label="Chunk content",
                 type="checkbox",
-                default=False,
+                # On by default: chunking is local and cheap, and without it
+                # imported documents are never chunked for retrieval, which
+                # quietly undermines search and RAG for anyone who never
+                # opens this panel.
+                default=True,
                 depends_on=None,
             ),
             OptionField(

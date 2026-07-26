@@ -29,7 +29,11 @@ from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chatbooks.chatbook_models import ContentType
-from ...config import get_cli_setting, save_setting_to_cli_config
+from ...config import (
+    get_cli_setting,
+    save_setting_to_cli_config,
+    save_settings_to_cli_config,
+)
 from ...Constants import (
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
@@ -175,7 +179,7 @@ from ...Sync_Interop.sync_readiness import (
     DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
     build_sync_readiness_report,
 )
-from ...Third_Party.textual_fspicker import FileOpen, FileSave, SelectDirectory
+from ...Third_Party.textual_fspicker import FileOpen, FileSave, Filters, SelectDirectory
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import (
@@ -385,6 +389,28 @@ LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY = "Generation and review run in Study."
 # How many carried-forward source titles the handoff canvas names before
 # collapsing the rest into an "and N more" count.
 LIBRARY_STUDY_HANDOFF_TITLES_CAP = 3
+
+
+def _ingestible_file_filters() -> Filters:
+    """Filters that separate importable files from the rest.
+
+    The picker previously listed every file regardless of whether ingest
+    could do anything with it, so a user could pick something that was only
+    ever going to fail. The supported set is taken from the ingest capability
+    layer, so it cannot drift from what the pipeline actually accepts.
+    """
+    from ...Library.ingest_capabilities import UNSUPPORTED_GROUP, get_type_group
+
+    def _is_ingestible(path: Path) -> bool:
+        try:
+            return get_type_group(str(path)) != UNSUPPORTED_GROUP
+        except Exception:
+            return False
+
+    return Filters(
+        ("Importable files", _is_ingestible),
+        ("All files", lambda _path: True),
+    )
 
 
 def _library_carries_forward_line(titles: Sequence[str]) -> str:
@@ -11618,6 +11644,25 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._library_ingest_form.keywords = event.value
 
+    @on(Button.Pressed, "#library-ingest-clear-path")
+    def handle_library_ingest_clear_path(self, event: Button.Pressed) -> None:
+        """Empty the ingest path field in one press.
+
+        Clearing a long path by hand meant selecting it first; there was no
+        affordance for the most common correction on the screen.
+
+        Args:
+            event: Button press event emitted by the "Clear" action.
+        """
+        event.stop()
+        self._cancel_library_ingest_preflight()
+        form = self._library_ingest_form
+        form.path = ""
+        form.preflight = None
+        form.preflight_checking = False
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#ingest-preflight-choose")
     @on(Button.Pressed, "#library-ingest-browse")
     def handle_library_ingest_browse(self, event: Button.Pressed) -> None:
         """Push a ``FileOpen`` dialog to pick a local file to ingest.
@@ -11638,13 +11683,53 @@ class LibraryScreen(BaseAppScreen):
         async def browse_callback(selected_path: Path | None) -> None:
             if selected_path is None:
                 return
+            self._remember_library_ingest_location(selected_path)
             self._library_ingest_form.path = str(selected_path)
             self.refresh(recompose=True)
             self._trigger_library_ingest_preflight(str(selected_path))
 
         self.app.push_screen(
-            FileOpen(title="Import Media"),
+            FileOpen(
+                location=self._library_ingest_browse_location(),
+                title="Import Media",
+                filters=_ingestible_file_filters(),
+            ),
             browse_callback,
+        )
+
+    def _library_ingest_browse_location(self) -> str:
+        """Return where the ingest file browser should open.
+
+        The picker defaulted to ``"."`` -- whatever directory the process
+        happened to be started from, which for anyone launching from a shell
+        is an arbitrary place with none of their documents in it. Prefer the
+        directory they last imported from, then their home directory.
+
+        Returns:
+            A directory path suitable for ``FileOpen(location=...)``.
+        """
+        remembered = get_cli_setting("library.ingest", "last_directory")
+        if remembered:
+            try:
+                candidate = Path(str(remembered)).expanduser()
+                if candidate.is_dir():
+                    return str(candidate)
+            except OSError:
+                pass
+        return str(Path.home())
+
+    def _remember_library_ingest_location(self, selected_path: Path) -> None:
+        """Persist the directory a source was picked from, for next time."""
+        try:
+            directory = (
+                selected_path
+                if selected_path.is_dir()
+                else selected_path.parent
+            )
+        except OSError:
+            return
+        save_setting_to_cli_config(
+            "library.ingest", "last_directory", str(directory)
         )
 
     @on(LibraryIngestCanvas.OptionPanelToggled)
@@ -11692,6 +11777,18 @@ class LibraryScreen(BaseAppScreen):
         if field is not None and field.type not in ("text", "number"):
             self.refresh(recompose=True)
 
+    def _cancel_library_ingest_preflight(self) -> None:
+        """Cancel any in-flight pre-flight worker, ignoring a finished one."""
+        worker = self._library_ingest_preflight_worker
+        if worker is None:
+            return
+        try:
+            if not worker.is_finished:
+                worker.cancel()
+        except Exception:
+            pass
+        self._library_ingest_preflight_worker = None
+
     def _trigger_library_ingest_preflight(self, path: str) -> None:
         """Start (or restart) the pre-flight worker for ``path``.
 
@@ -11701,12 +11798,7 @@ class LibraryScreen(BaseAppScreen):
         if not path.strip():
             self._library_ingest_form.preflight_checking = False
             return
-        if self._library_ingest_preflight_worker is not None:
-            try:
-                if not self._library_ingest_preflight_worker.is_finished:
-                    self._library_ingest_preflight_worker.cancel()
-            except Exception:
-                pass
+        self._cancel_library_ingest_preflight()
         self._library_ingest_form.preflight_checking = True
         self.refresh(recompose=True)
         self._library_ingest_preflight_worker = self._run_library_ingest_preflight(path)
@@ -11886,11 +11978,27 @@ class LibraryScreen(BaseAppScreen):
             chunk_enabled=form.chunk,
             chunk_size=clamp_chunk_size(form.chunk_size),
         )
-        for group, values in snapshot.items():
-            for key, val in values.items():
-                save_setting_to_cli_config(f"library.ingest_options.{group}", key, val)
+        # One batched write. Saving key-by-key re-read and re-parsed the whole
+        # config file and invalidated the global settings cache once per
+        # option -- roughly six full reload cycles for a single submitted file,
+        # growing with every option and every submission.
+        option_settings = {
+            f"library.ingest_options.{group}": dict(values)
+            for group, values in snapshot.items()
+            if values
+        }
+        if option_settings:
+            save_settings_to_cli_config(option_settings)
         form.path = ""
         form.title = ""
+        # The summary described the file that just left the form, so keeping
+        # it would leave the canvas asserting two things at once: "Enter a
+        # file path to start." next to "1 plain text file - 333 B", which
+        # reads as though something is still staged. Any in-flight analysis is
+        # cancelled too, so a late result cannot repopulate what was cleared.
+        self._cancel_library_ingest_preflight()
+        form.preflight = None
+        form.preflight_checking = False
         self.refresh(recompose=True)
 
     def _load_library_ingest_options_from_config(self) -> None:

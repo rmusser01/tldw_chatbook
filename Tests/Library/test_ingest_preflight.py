@@ -327,3 +327,28 @@ class TestPublicApi:
         # importing a private name from local_file_ingestion.
         assert is_http_url("https://example.com") is True
         assert is_http_url("/local/path") is False
+
+
+class TestPathErrorsAreMarked:
+    """A path that cannot be found is not something to retry (task-666)."""
+
+    def test_missing_path_is_flagged_as_a_path_problem(self, tmp_path: Path) -> None:
+        result = analyze_path(str(tmp_path / "nope.txt"))
+        assert result.errors
+        assert result.path_invalid is True
+
+    def test_successful_analysis_is_not_flagged(self, tmp_path: Path) -> None:
+        (tmp_path / "a.txt").write_text("hello")
+        result = analyze_path(str(tmp_path / "a.txt"))
+        assert result.errors == []
+        assert result.path_invalid is False
+
+    def test_unreachable_url_is_not_a_path_problem(self) -> None:
+        """A URL that failed to respond is worth retrying; a typo'd path isn't."""
+        with patch(
+            "tldw_chatbook.Library.ingest_preflight.urlopen",
+            side_effect=URLError("connection refused"),
+        ):
+            result = analyze_path("https://example.com/document.pdf")
+        assert result.errors
+        assert result.path_invalid is False

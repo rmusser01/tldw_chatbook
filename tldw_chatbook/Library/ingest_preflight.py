@@ -148,6 +148,7 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
     total_size = 0
     truncated = False
     total_files = 0
+    path_invalid = False
 
     if is_http_url(path_or_url):
         error = _probe_url(path_or_url)
@@ -170,9 +171,11 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
                 total_size=total_size,
                 truncated=truncated,
                 total_files=total_files,
+                path_invalid=True,
             )
         if not p.exists():
             errors.append(f"Path not found: {path_or_url}")
+            path_invalid = True
         elif p.is_file():
             group = get_type_group(str(p))
             type_groups.setdefault(group, []).append(str(p))
@@ -195,6 +198,7 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
                 warnings.extend(get_tooling_warnings(group))
         else:
             errors.append(f"Path is neither a file nor a directory: {path_or_url}")
+            path_invalid = True
 
     return PreflightResult(
         type_groups=type_groups,
@@ -203,4 +207,5 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
         total_size=total_size,
         truncated=truncated,
         total_files=total_files,
+        path_invalid=path_invalid,
     )

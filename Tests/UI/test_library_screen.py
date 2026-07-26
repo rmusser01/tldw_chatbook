@@ -1,5 +1,7 @@
 """LibraryScreen rail-level UI tests."""
 
+from pathlib import Path
+
 import pytest
 import pytest_asyncio
 from textual.widgets import Button
@@ -48,6 +50,8 @@ def _minimal_ingest_screen() -> LibraryScreen:
     """Return a LibraryScreen instance without mounting the full UI."""
     screen = object.__new__(LibraryScreen)
     screen._library_ingest_form = LibraryIngestFormState()
+    # Set by ``__init__``, which this shortcut bypasses.
+    screen._library_ingest_preflight_worker = None
     return screen
 
 
@@ -140,13 +144,24 @@ def test_do_submit_ingest_persists_options(monkeypatch) -> None:
         "audio_video": {"transcription_model": "small"},
     }
 
-    saved: list[tuple[str, str, object]] = []
+    batches: list[dict] = []
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
+        "tldw_chatbook.UI.Screens.library_screen.save_settings_to_cli_config",
+        lambda section_values: batches.append(
+            {s: dict(v) for s, v in section_values.items()}
+        )
+        or True,
     )
 
     screen._do_submit_ingest("/tmp/test.pdf")
+
+    # One batched write, not one full config read/parse/reload per option key.
+    assert len(batches) == 1, f"expected a single batched save, got {len(batches)}"
+    saved = [
+        (section, key, value)
+        for section, values in batches[0].items()
+        for key, value in values.items()
+    ]
 
     assert screen.app_instance.submit_library_ingest_job.called
     assert ("library.ingest_options.pdf", "pdf_engine", "docling") in saved
@@ -327,3 +342,62 @@ async def test_handle_library_ingest_open_wires_to_open_job_in_library() -> None
 
     screen._library_ingest_job_by_id.assert_called_once_with("ingest-job-1")
     screen._open_job_in_library.assert_called_once_with(job)
+
+
+def test_ingest_browse_location_prefers_last_used_then_home(tmp_path, monkeypatch) -> None:
+    """The file browser opens somewhere the user actually keeps files.
+
+    It defaulted to ``"."`` -- whichever directory the process was started
+    from, which for anyone launching from a shell is arbitrary (task-668).
+    """
+    screen = _minimal_ingest_screen()
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.get_cli_setting",
+        lambda *args, **kwargs: str(tmp_path),
+    )
+    assert screen._library_ingest_browse_location() == str(tmp_path)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.get_cli_setting",
+        lambda *args, **kwargs: None,
+    )
+    assert screen._library_ingest_browse_location() == str(Path.home())
+
+    # A remembered directory that no longer exists must not be handed back.
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.get_cli_setting",
+        lambda *args, **kwargs: str(tmp_path / "deleted"),
+    )
+    assert screen._library_ingest_browse_location() == str(Path.home())
+
+
+def test_ingest_browse_remembers_the_directory_of_the_picked_file(
+    tmp_path, monkeypatch
+) -> None:
+    """Picking a file stores its folder, so the next Browse starts there."""
+    screen = _minimal_ingest_screen()
+    picked = tmp_path / "doc.txt"
+    picked.write_text("hi")
+
+    saved: list[tuple] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+
+    screen._remember_library_ingest_location(picked)
+
+    assert saved == [("library.ingest", "last_directory", str(tmp_path))]
+
+
+def test_ingestible_file_filters_separate_importable_from_the_rest() -> None:
+    """The picker distinguishes files ingest can handle from ones it cannot."""
+    from tldw_chatbook.UI.Screens.library_screen import _ingestible_file_filters
+
+    filters = _ingestible_file_filters()
+    importable = filters[0]
+
+    assert importable(Path("/tmp/notes.txt")) is True
+    assert importable(Path("/tmp/paper.pdf")) is True
+    assert importable(Path("/tmp/cover.jpg")) is False
