@@ -137,6 +137,16 @@ def _app_id(model_path: str) -> str:
 
 
 class FalImageAdapter:
+    """Image-generation adapter for fal.ai's queue-based generation API.
+
+    Implements the ``ImageGenerationAdapter`` protocol (``base.py``):
+    ``name``/``supported_formats``/``generate()``. Submits a job, polls its
+    status until completion (or timeout), fetches the result payload, then
+    downloads the resulting image from its (untrusted, vendor-returned) CDN
+    URL. See the module docstring for the verified submit/poll/result URL
+    shapes and the app-id derivation rule.
+    """
+
     name = "fal"
     supported_formats = {"png", "jpg", "webp"}
     _PENDING_STATUSES = {"IN_QUEUE", "IN_PROGRESS"}
@@ -146,6 +156,31 @@ class FalImageAdapter:
         self._config = get_image_generation_config()
 
     def generate(self, request: ImageGenRequest) -> ImageGenResult:
+        """Submit a fal generation job, poll it to completion, and fetch the image.
+
+        Args:
+            request: The normalized generation request. ``request.model``
+                overrides the configured default model path (validated via
+                ``_validate_model_path``); ``request.negative_prompt``, when
+                set, is appended to the prompt text; ``request.seed``/
+                ``request.width``/``request.height``, when set, are passed
+                through; ``request.reference_image``, when set, is encoded
+                as a data URL and sent as ``image_url``; ``request.format``
+                must be one of ``supported_formats``.
+
+        Returns:
+            The decoded, format-converted image result.
+
+        Raises:
+            ImageGenerationError: If ``request.format`` is unsupported, the
+                submit/poll/result requests fail, the job doesn't reach
+                ``COMPLETED`` before the configured timeout, the result
+                payload has no image URL, or the vendor's ``status_url``
+                cross-check (see ``_cross_check_status_url``) detects an
+                unexpected queue URL shape.
+            ImageBackendUnavailableError: If the API key, base URL, or the
+                resolved model path is missing or fails validation.
+        """
         output_format = request.format.lower()
         if output_format not in self.supported_formats:
             raise ImageGenerationError(f"unsupported output format: {output_format}")

@@ -349,20 +349,26 @@ def test_gemini_reference_image_part_before_text(monkeypatch):
     assert "text" in parts[1]
 
 
-def test_gemini_reference_image_via_temp_path(monkeypatch, tmp_path):
+def test_gemini_reference_image_content_none_raises_contract_violation(monkeypatch, tmp_path):
+    # Qodo PR #915 FIX 1: the engine's choke-point contract is bytes-in-memory
+    # ONLY -- file_id/temp_path variants are never accepted by the engine, and
+    # the validator refuses content=None before any adapter runs. So a
+    # reference_image reaching the adapter with content=None is a contract
+    # violation, not a "fall back to reading temp_path" case: the adapter
+    # must refuse it and must never touch the filesystem, even when
+    # temp_path happens to be populated (as the dataclass invariant requires
+    # when content is None).
     m = _reset_and_import(monkeypatch)
     from tldw_chatbook.Image_Generation.capabilities import ResolvedReferenceImage
+    from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
 
     ref_file = tmp_path / "ref.png"
-    ref_file.write_bytes(b"xyz123")
+    ref_file.write_bytes(b"should never be read")
 
-    seen = {}
+    def _boom(*a, **kw):
+        raise AssertionError("fetch_json must not be called when the reference image violates the contract")
 
-    def _capture(method, url, *, headers=None, json=None, params=None, timeout=None, trusted_origins=frozenset()):
-        seen["json"] = json
-        return _gemini_response()
-
-    monkeypatch.setattr(m, "fetch_json", _capture)
+    monkeypatch.setattr(m, "fetch_json", _boom)
     ref = ResolvedReferenceImage(
         file_id=1,
         filename="ref.png",
@@ -374,11 +380,9 @@ def test_gemini_reference_image_via_temp_path(monkeypatch, tmp_path):
         temp_path=str(ref_file),
     )
     req = _req(model="gemini-2.5-flash-image", reference_image=ref)
-    m.GeminiImageAdapter().generate(req)
-
-    parts = seen["json"]["contents"][0]["parts"]
-    assert parts[0]["inline_data"]["mime_type"] == "image/jpeg"
-    assert parts[0]["inline_data"]["data"] == base64.b64encode(b"xyz123").decode("ascii")
+    with pytest.raises(ImageGenerationError) as exc_info:
+        m.GeminiImageAdapter().generate(req)
+    assert "choke-point contract violation" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------

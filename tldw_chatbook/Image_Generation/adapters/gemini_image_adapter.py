@@ -18,7 +18,6 @@ from __future__ import annotations
 import base64
 import os
 import re
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -74,6 +73,16 @@ def _validate_model_id(model: str) -> str:
 
 
 class GeminiImageAdapter:
+    """Image-generation adapter for Google's Gemini (AI Studio) API.
+
+    Implements the ``ImageGenerationAdapter`` protocol (``base.py``):
+    ``name``/``supported_formats``/``generate()``. Submits a single-shot
+    ``generateContent`` request (no polling) and extracts the first decodable
+    inline-data image part from the response. See the module docstring for
+    the verified request/response shape and the ``responseModalities``
+    requirement.
+    """
+
     name = "gemini"
     supported_formats = {"png", "jpg", "webp"}
 
@@ -81,6 +90,29 @@ class GeminiImageAdapter:
         self._config = get_image_generation_config()
 
     def generate(self, request: ImageGenRequest) -> ImageGenResult:
+        """Generate one image via Gemini's ``models/{model}:generateContent`` endpoint.
+
+        Args:
+            request: The normalized generation request. ``request.model``
+                overrides the configured default model (validated via
+                ``_validate_model_id``); ``request.negative_prompt``, when
+                set, is appended to the prompt text; ``request.reference_image``,
+                when set, is threaded in as an ``inline_data`` part before the
+                text part (see ``_reference_image_part``); ``request.format``
+                must be one of ``supported_formats``.
+
+        Returns:
+            The decoded, format-converted image result.
+
+        Raises:
+            ImageGenerationError: If ``request.format`` is unsupported,
+                the request to Gemini fails, Gemini returns no usable image
+                (blocked prompt, a non-``STOP`` finish reason, an empty
+                response, or undecodable inline data), or the reference
+                image violates the engine's bytes-in-memory contract.
+            ImageBackendUnavailableError: If the API key, base URL, or the
+                resolved model id is missing or fails validation.
+        """
         output_format = request.format.lower()
         if output_format not in self.supported_formats:
             raise ImageGenerationError(f"unsupported output format: {output_format}")
@@ -185,18 +217,33 @@ class GeminiImageAdapter:
 
     @staticmethod
     def _reference_image_part(reference_image: ResolvedReferenceImage) -> dict[str, Any]:
-        # task-3's choke point already validated mime/size/content before
-        # this reaches the adapter -- this just reads whichever of
-        # content/temp_path is populated (ResolvedReferenceImage guarantees
-        # exactly one), mirroring image_format_utils.reference_image_data_url.
+        """Build the Gemini ``inline_data`` part for a validated reference image.
+
+        Args:
+            reference_image: The reference image, already checked by the
+                engine's choke point (task-3) for backend capability,
+                allowed mime type, size cap, and non-empty content before
+                this adapter ever runs.
+
+        Returns:
+            The ``{"inline_data": {"mime_type": ..., "data": ...}}`` part,
+            placed before the text part in the request body.
+
+        Raises:
+            ImageGenerationError: If ``reference_image.content`` is ``None``
+                or empty. The engine's contract is bytes-in-memory ONLY --
+                ``file_id``/``temp_path`` variants are never accepted by the
+                choke-point validator, so this should be unreachable in
+                practice; it exists as a defensive contract check, not a
+                recoverable code path. Unlike ``file_id``/``temp_path``
+                inputs, this adapter never reads from disk.
+        """
         content = reference_image.content
         if content is None:
-            if not reference_image.temp_path:
-                raise ImageGenerationError("invalid reference image data")
-            try:
-                content = Path(reference_image.temp_path).read_bytes()
-            except Exception as exc:
-                raise ImageGenerationError("invalid reference image data") from exc
+            raise ImageGenerationError(
+                "reference image reached the adapter without content bytes "
+                "(choke-point contract violation)"
+            )
         if not content:
             raise ImageGenerationError("invalid reference image data")
 
