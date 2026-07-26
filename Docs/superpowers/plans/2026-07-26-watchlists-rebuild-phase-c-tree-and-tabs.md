@@ -1176,7 +1176,46 @@ Expected: FAIL — the screen has no `scoped_source_rows`.
             return []
 ```
 
-Implement `_all_source_rows` and `_unassigned_source_rows` on the screen, each as **one** query — mirror `get_watchlist_item_counts`'s discipline, and do not loop `list_source_rows` over every watchlist.
+Add the two remaining resolvers to `WatchlistBundleService` (not the screen — they are queries, and
+the service owns queries), each **one** statement. Do not loop `list_source_rows` over every
+watchlist; that is the N+1 this whole design keeps avoiding.
+
+```python
+    def list_all_source_rows(self) -> list[dict[str, Any]]:
+        """Every source, in the shape the tree and Feeds region render.
+
+        Returns:
+            One dict per source with ``id``, ``name`` and ``type``.
+        """
+        rows = self._db.conn.execute(
+            "SELECT id, name, type FROM subscriptions ORDER BY LOWER(name), id"
+        ).fetchall()
+        return [{"id": r[0], "name": r[1], "type": r[2]} for r in rows]
+
+    def list_unassigned_source_rows(self) -> list[dict[str, Any]]:
+        """Sources belonging to no watchlist.
+
+        These would be unreachable from a watchlist-only tree, which is why
+        the tree carries a permanent Unassigned root.
+
+        Returns:
+            One dict per unassigned source with ``id``, ``name`` and ``type``.
+        """
+        rows = self._db.conn.execute(
+            """
+            SELECT s.id, s.name, s.type
+            FROM subscriptions s
+            WHERE NOT EXISTS (
+                SELECT 1 FROM watchlist_sources ws WHERE ws.subscription_id = s.id
+            )
+            ORDER BY LOWER(s.name), s.id
+            """
+        ).fetchall()
+        return [{"id": r[0], "name": r[1], "type": r[2]} for r in rows]
+```
+
+Have the screen call these through its service accessor, and add a service-level test that each
+issues exactly one query (reuse the counting-connection pattern from Task 1's tests).
 
 Have `_build_list_pane` render `scoped_source_rows()` with a heading naming the scope (for example `Feeds in Morning AI Brief (3)`), and make `watch_selected_scope` refresh so the region follows the selection.
 
