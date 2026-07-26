@@ -55,6 +55,16 @@ def _chain(node: ast.AST) -> str:
     if isinstance(node, ast.Attribute):
         prefix = _chain(node.value)
         return f"{prefix}.{node.attr}" if prefix else node.attr
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and node.args
+    ):
+        prefix = _chain(node.args[0])
+        attribute = _constant_attribute_name(node)
+        if prefix and attribute is not None:
+            return f"{prefix}.{attribute}"
     return ""
 
 
@@ -161,6 +171,18 @@ class ContextOwnershipVisitor(ScopedVisitor):
         receiver = _chain(node.value)
         if node.attr in {"store", "_store"} and _is_context_receiver(receiver):
             self._record(node, "context-store access")
+        if (
+            node.attr == "_store"
+            and self.class_name == "RuntimePolicyContext"
+            and receiver == "self"
+        ):
+            allowed = (
+                self.function_name == "__init__" and isinstance(node.ctx, ast.Store)
+            ) or (
+                self.function_name == "commit_state" and isinstance(node.ctx, ast.Load)
+            )
+            if not allowed:
+                self._record(node, "owner private-store access outside commit")
         if node.attr == "persist" and _is_context_receiver(receiver):
             self._record(node, "removed persist access")
         if (
@@ -284,6 +306,67 @@ def test_context_guard_does_not_exempt_sensitive_access_inside_owner_class(
     visitor.visit(_parse_snippet(source))
 
     assert visitor.violations
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "setattr(getattr(app, 'runtime_policy'), 'state', candidate)",
+        "getattr(getattr(owner, 'runtime_context'), '_store')",
+        "callback = getattr(getattr(app, 'runtime_policy'), 'persist')",
+        """
+class RuntimePolicyContext:
+    def leak(self):
+        return self._store
+""",
+    ],
+)
+def test_context_guard_detects_nested_getattr_and_owner_store_leaks(
+    source: str,
+) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(_parse_snippet(source))
+
+    assert visitor.violations
+
+
+def test_context_guard_permits_required_owner_private_store_accesses() -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            """
+class RuntimePolicyContext:
+    def __init__(self, store):
+        self._store = store
+
+    def commit_state(self, candidate):
+        self._store.save(candidate)
+"""
+        )
+    )
+
+    assert visitor.violations == []
+
+
+def test_context_guard_does_not_infer_dynamic_getattr_names() -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            """
+attribute_name = choose_attribute()
+getattr(ctx, attribute_name)
+getattr(getattr(owner, attribute_name), "_store")
+"""
+        )
+    )
+
+    assert visitor.violations == []
 
 
 @pytest.mark.parametrize("operation", ["getattr", "setattr", "delattr"])

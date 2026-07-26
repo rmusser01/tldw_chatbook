@@ -392,9 +392,8 @@ def _library_carries_forward_line(titles: Sequence[str]) -> str:
 
 
 def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
-    runtime_state = getattr(
-        getattr(app_instance, "runtime_policy", None), "state", None
-    )
+    runtime_policy = getattr(app_instance, "runtime_policy", None)
+    runtime_state = runtime_policy.state if runtime_policy is not None else None
     active_source = str(
         getattr(runtime_state, "active_source", "local") or "local"
     ).lower()
@@ -3796,9 +3795,8 @@ class LibraryScreen(BaseAppScreen):
             Adapter-provided Library shell input reflecting live counts and
             runtime state.
         """
-        runtime_state = getattr(
-            getattr(self.app_instance, "runtime_policy", None), "state", None
-        )
+        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
+        runtime_state = runtime_policy.state if runtime_policy is not None else None
         active_source = str(
             getattr(runtime_state, "active_source", "local") or "local"
         ).lower()
@@ -4376,9 +4374,8 @@ class LibraryScreen(BaseAppScreen):
         ChaChaNotes DBs), so both the rail Export row and the section
         "Export..." actions must refuse to run in server mode.
         """
-        runtime_state = getattr(
-            getattr(self.app_instance, "runtime_policy", None), "state", None
-        )
+        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
+        runtime_state = runtime_policy.state if runtime_policy is not None else None
         active_source = str(
             getattr(runtime_state, "active_source", "local") or "local"
         ).lower()
@@ -5245,9 +5242,8 @@ class LibraryScreen(BaseAppScreen):
         registry = self._library_ingest_registry()
         jobs_fn = getattr(registry, "jobs", None)
         jobs = jobs_fn() if callable(jobs_fn) else ()
-        runtime_state = getattr(
-            getattr(self.app_instance, "runtime_policy", None), "state", None
-        )
+        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
+        runtime_state = runtime_policy.state if runtime_policy is not None else None
         runtime_source = str(
             getattr(runtime_state, "active_source", "local") or "local"
         )

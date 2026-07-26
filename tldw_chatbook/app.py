@@ -4813,7 +4813,8 @@ class TldwCli(
         return "local"
 
     def get_authoritative_runtime_source(self) -> str:
-        runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
+        runtime_policy = getattr(self, "runtime_policy", None)
+        runtime_state = runtime_policy.state if runtime_policy is not None else None
         if isinstance(runtime_state, RuntimeSourceState):
             normalized = str(runtime_state.active_source or "").strip().lower()
             if normalized in {"local", "server"}:
@@ -4821,7 +4822,8 @@ class TldwCli(
         return self._resolve_initial_media_runtime_backend()
 
     def _server_notification_event_scope(self) -> dict[str, str | None]:
-        runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
+        runtime_policy = getattr(self, "runtime_policy", None)
+        runtime_state = runtime_policy.state if runtime_policy is not None else None
         active_server_id = getattr(runtime_state, "active_server_id", None)
         authenticated_principal_id = None
         server_context_provider = getattr(self, "server_context_provider", None)
@@ -4861,8 +4863,9 @@ class TldwCli(
             ):
                 state = policy_enforcer.current_state()
         if not isinstance(state, RuntimeSourceState):
-            runtime_state = getattr(
-                getattr(self, "runtime_policy", None), "state", None
+            runtime_policy = getattr(self, "runtime_policy", None)
+            runtime_state = (
+                runtime_policy.state if runtime_policy is not None else None
             )
             if isinstance(runtime_state, RuntimeSourceState):
                 state = runtime_state
@@ -4930,7 +4933,8 @@ class TldwCli(
                     )
 
         resolved_backend = normalized_backend
-        runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
+        runtime_policy = getattr(self, "runtime_policy", None)
+        runtime_state = runtime_policy.state if runtime_policy is not None else None
         if runtime_state is not None:
             resolved_backend = (
                 str(runtime_state.active_source or normalized_backend).strip().lower()

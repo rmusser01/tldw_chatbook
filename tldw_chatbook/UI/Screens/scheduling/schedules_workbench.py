@@ -78,9 +78,8 @@ class SchedulesWorkbench(BaseAppScreen):
         self._latest_console_context_loaded = False
 
     def _active_server_id(self) -> str | None:
-        runtime_state = getattr(
-            getattr(self.app_instance, "runtime_policy", None), "state", None
-        )
+        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
+        runtime_state = runtime_policy.state if runtime_policy is not None else None
         return getattr(runtime_state, "active_server_id", None)
 
     def compose_content(self) -> ComposeResult:

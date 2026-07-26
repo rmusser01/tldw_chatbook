@@ -2728,9 +2728,8 @@ class SettingsScreen(BaseAppScreen):
         return text or fallback
 
     def _runtime_source_state(self) -> object | None:
-        return getattr(
-            getattr(self.app_instance, "runtime_policy", None), "state", None
-        )
+        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
+        return runtime_policy.state if runtime_policy is not None else None
 
     def _active_server_profile_label(self) -> str:
         state = self._runtime_source_state()
