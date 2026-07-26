@@ -1538,6 +1538,20 @@ def snippets():
 
 
 @pytest.fixture
+def dataset(db):
+    """A real eval_datasets row.
+
+    eval_tasks.dataset_id carries a FOREIGN KEY to eval_datasets(id) and
+    Evals_DB sets PRAGMA foreign_keys = ON per connection, so an invented id
+    raises. This is also the faithful mapping: a word bench's snippet set IS
+    an eval_datasets row.
+    """
+    return db.create_dataset(
+        name="loaded-nouns", format="custom", source_path="inline:loaded-nouns"
+    )
+
+
+@pytest.fixture
 def targets(db):
     """Two real eval_models rows, returned as Targets carrying their ids."""
     base_id = db.create_model(name="base", provider="llama_cpp", model_id="m")
@@ -1550,17 +1564,29 @@ def targets(db):
 
 
 @pytest.fixture
-def config(targets):
+def config(targets, dataset):
     from tldw_chatbook.Evals.word_bench.models import BenchConfig
     return BenchConfig(
         name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-        dataset_id="d1", target_ids=tuple(t.id for t in targets),
+        dataset_id=dataset, target_ids=tuple(t.id for t in targets),
         probes=(" Sure", " I"),
     )
 ```
 
-Because target ids are now database-assigned UUIDs, **tests must key on `target.name` or on the
-fixture objects, never on a literal `"t1"`.**
+Because target and dataset ids are database-assigned UUIDs, **tests must key on `target.name` or on
+the fixture objects, never on a literal `"t1"` or `"d1"`.**
+
+**Two `Evals_DB` quirks this task must work around**, both verified:
+
+- `create_run` validates its `model_id` and `eval_tasks.dataset_id` carries an enforced foreign key,
+  so both a model row and a dataset row must exist first — hence the fixtures above.
+- `update_run` takes a dict but filters it against a hardcoded allow-list
+  (`error_message`, `end_time`, `metrics_summary`, `config_overrides`) and **silently discards
+  anything else**, including `run_group_id` and `total_samples`. Add both to that allow-list in
+  `Evals_DB.update_run`. That is completing the schema change this task already makes, not an API
+  redesign — and it is much better than reaching around the class with raw SQL, which would bypass
+  its timestamp handling. Do not otherwise alter `Evals_DB`'s API.
+- `update_task` takes keyword arguments, not a dict. Adapt the call site in `storage.py`.
 
 - [ ] **Step 2: Write the failing test**
 
