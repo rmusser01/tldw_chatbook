@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from types import MappingProxyType
 from uuid import UUID, uuid4
 
@@ -595,6 +595,41 @@ def test_timestamp_subclasses_are_rejected_before_behavior() -> None:
         ProfileValidationError, match=r"^TTS profile validation failed: created_at$"
     ):
         _profile(created_at=HostileTimestamp(2026, 7, 26, tzinfo=UTC))
+
+
+def test_timestamp_timezone_offset_failure_never_leaks_raw_text() -> None:
+    class ExplodingTimezone(tzinfo):
+        def utcoffset(self, dt: datetime | None) -> timedelta | None:
+            raise RuntimeError("secret timezone offset failure")
+
+        def dst(self, dt: datetime | None) -> timedelta | None:
+            return None
+
+    with pytest.raises(ProfileValidationError) as raised:
+        _profile(created_at=datetime(2026, 7, 26, tzinfo=ExplodingTimezone()))
+
+    assert str(raised.value) == "TTS profile validation failed: created_at"
+    assert "secret timezone offset failure" not in repr(raised.value)
+
+
+def test_timestamp_timezone_conversion_failure_never_leaks_raw_text() -> None:
+    class StatefulTimezone(tzinfo):
+        calls = 0
+
+        def utcoffset(self, dt: datetime | None) -> timedelta | None:
+            type(self).calls += 1
+            if type(self).calls > 1:
+                raise RuntimeError("secret timezone conversion failure")
+            return timedelta(0)
+
+        def dst(self, dt: datetime | None) -> timedelta | None:
+            return None
+
+    with pytest.raises(ProfileValidationError) as raised:
+        _profile(created_at=datetime(2026, 7, 26, tzinfo=StatefulTimezone()))
+
+    assert str(raised.value) == "TTS profile validation failed: created_at"
+    assert "secret timezone conversion failure" not in repr(raised.value)
 
 
 def test_speed_subclasses_are_rejected_before_behavior() -> None:

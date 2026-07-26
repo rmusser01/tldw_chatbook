@@ -251,11 +251,11 @@ def _validate_utc_timestamp(value: object, field_name: str) -> datetime:
         raise ProfileValidationError(field_name)
     try:
         offset = value.utcoffset()
-    except (TypeError, ValueError):
+        if offset != timedelta(0):
+            raise ProfileValidationError(field_name)
+        return value.astimezone(UTC)
+    except Exception:
         raise ProfileValidationError(field_name) from None
-    if offset != timedelta(0):
-        raise ProfileValidationError(field_name)
-    return value.astimezone(UTC)
 
 
 def _validate_nonnegative_integer(value: object, field_name: str) -> int:
