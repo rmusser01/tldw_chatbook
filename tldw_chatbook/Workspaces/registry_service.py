@@ -109,6 +109,10 @@ class LocalWorkspaceRegistryService:
                     ),
                 )
         except sqlite3.IntegrityError as exc:
+            if "idx_workspace_records_name_ci" in str(exc):
+                raise WorkspaceRegistryServiceError(
+                    f"A workspace named {record.name} already exists."
+                ) from exc
             raise DuplicateWorkspace(record.workspace_id) from exc
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
@@ -184,7 +188,6 @@ class LocalWorkspaceRegistryService:
         safe_name = str(name or "").strip()
         if not safe_name:
             raise WorkspaceRegistryServiceError("Workspace name cannot be blank.")
-        self._reject_duplicate_name(safe_name, exclude_workspace_id=safe_workspace_id)
         if safe_workspace_id == DEFAULT_WORKSPACE_ID:
             raise WorkspaceRegistryServiceError(
                 "The Default workspace cannot be renamed."
@@ -192,6 +195,7 @@ class LocalWorkspaceRegistryService:
         record = self.get_workspace(safe_workspace_id)
         if record is None or record.archived:
             raise WorkspaceNotFound(safe_workspace_id)
+        self._reject_duplicate_name(safe_name, exclude_workspace_id=safe_workspace_id)
         now = self._now_factory()
         try:
             with self.db.transaction() as conn:
@@ -203,6 +207,10 @@ class LocalWorkspaceRegistryService:
                     """,
                     (safe_name, now, safe_workspace_id),
                 )
+        except sqlite3.IntegrityError as exc:
+            raise WorkspaceRegistryServiceError(
+                f"A workspace named {safe_name} already exists."
+            ) from exc
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         renamed = self.get_workspace(safe_workspace_id)
@@ -283,6 +291,10 @@ class LocalWorkspaceRegistryService:
                     """,
                     (now, safe_workspace_id),
                 )
+        except sqlite3.IntegrityError as exc:
+            raise WorkspaceRegistryServiceError(
+                f"A workspace named {record.name} already exists; rename it before unarchiving."
+            ) from exc
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         restored = self.get_workspace(safe_workspace_id)

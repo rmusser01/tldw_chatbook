@@ -470,6 +470,28 @@ def test_rename_workspace_protects_default(tmp_path: Path) -> None:
         service.rename_workspace(DEFAULT_WORKSPACE_ID, "Not Default")
 
 
+def test_rename_default_reports_default_protection_even_with_taken_name(
+    tmp_path: Path,
+) -> None:
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+    service.create_workspace(workspace_id="ws-a", name="Client A")
+
+    with pytest.raises(WorkspaceRegistryServiceError) as excinfo:
+        service.rename_workspace(DEFAULT_WORKSPACE_ID, "Client A")
+    assert "Default workspace cannot be renamed" in str(excinfo.value)
+
+
+def test_rename_unknown_id_reports_not_found_even_with_taken_name(
+    tmp_path: Path,
+) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Client A")
+
+    with pytest.raises(WorkspaceNotFound):
+        service.rename_workspace("ws-missing", "Client A")
+
+
 def test_archive_workspace_hides_from_listing(tmp_path: Path) -> None:
     service = build_test_registry(tmp_path)
     service.ensure_default_workspace()
@@ -562,3 +584,50 @@ def test_archived_names_do_not_block_reuse(tmp_path: Path) -> None:
 
     created = service.create_workspace(workspace_id="ws-b", name="Client A")
     assert created.name == "Client A"
+
+
+def test_unarchive_collision_with_live_name_is_explained(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Client A")
+    service.archive_workspace("ws-a")
+    service.create_workspace(workspace_id="ws-b", name="Client A")
+
+    with pytest.raises(WorkspaceRegistryServiceError) as excinfo:
+        service.unarchive_workspace("ws-a")
+    assert "rename it before unarchiving" in str(excinfo.value)
+
+
+def test_v2_migration_dedupes_and_indexes_existing_duplicates(tmp_path: Path) -> None:
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    db = WorkspaceDB(tmp_path / "mig.sqlite", client_id="mig")
+    with db.connection() as conn:
+        conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
+        conn.execute("DELETE FROM schema_version WHERE version = 2")
+        for wid, name in (("w1", "Same Name"), ("w2", "same name"), ("w3", "SAME NAME")):
+            conn.execute(
+                """
+                INSERT INTO workspace_records
+                    (workspace_id, name, description, authority, sync_status,
+                     active, archived, created_at, updated_at)
+                VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
+                """,
+                (wid, name, f"2026-01-0{wid[-1]}T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+            )
+        conn.commit()
+
+    db._initialize_schema()
+
+    with db.connection() as conn:
+        names = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM workspace_records WHERE archived = 0 ORDER BY workspace_id"
+            ).fetchall()
+        ]
+        index_row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspace_records_name_ci'"
+        ).fetchone()
+
+    assert index_row is not None
+    assert len({n.strip().casefold() for n in names}) == len(names)
