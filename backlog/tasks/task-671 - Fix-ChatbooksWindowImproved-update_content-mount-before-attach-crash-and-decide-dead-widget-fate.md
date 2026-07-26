@@ -89,7 +89,7 @@ with MountError pre-fix and GREEN post-fix, including pumping the message
 loop past the deferred recompose to confirm cards survive. Full gate green:
 Tests/UI/test_chatbooks_screen_server_actions.py (9),
 Tests/Widgets/test_recompose_capture_guard.py + Tests/UI/test_mcp_rail.py
-(20), Tests/UI/test_bulk_selection_tooltips.py (4),
+(20), Tests/UI/test_bulk_selection_tooltips.py (5),
 Tests/UI/test_mindmap_viewer_tooltips.py (1), Tests/Evals/ (283 passed, 13
 skipped). `python -c "import tldw_chatbook.app"` still imports cleanly.
 

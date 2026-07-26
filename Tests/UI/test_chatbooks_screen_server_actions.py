@@ -264,9 +264,10 @@ async def test_server_import_action_uses_server_mode(monkeypatch):
 
 
 # -- task-637: mouse-capture guard for widget-level (non-screen) recompose --
-# `chatbooks` is a `reactive([], recompose=True)` field; changing it drives
-# the same `Widget.recompose()` teardown/remount as `self.refresh(
-# recompose=True)`. `ChatbooksWindowImproved` is a `Screen` subclass but is
+# `chatbooks` was a `reactive([], recompose=True)` field when this guard
+# landed; task-671 dropped the recompose flag (the deferred recompose wiped
+# the watcher-built cards), so these tests drive `refresh(recompose=True)`
+# directly. `ChatbooksWindowImproved` is a `Screen` subclass but is
 # embedded as a plain child widget of `ChatbooksScreen` (a `BaseAppScreen`),
 # not pushed via the screen stack -- it never inherited task-627's guard.
 # The tests below drive `refresh(recompose=True)` directly rather than
