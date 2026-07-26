@@ -50,8 +50,18 @@ Measured mount cost (`run_test`, 120×40, three runs):
 display; `STTSWindow` mounts exactly one content widget at a time. The bigger file is the cheaper
 mount. This cost is pre-existing — every visit to Models already pays it.
 
-**Not verified live:** the scratch profile put Console into its first-run state, so Console's
-mature frame was not observed. Console structural claims here remain source-derived.
+**Not verified live: Console's own frame.** Console renders a *blocking* setup modal
+(`chat_screen.py:6602` — "keep the workbench inert") whose dim backdrop covers the entire
+destination: no header, no rails, no handles, only the starfield and the "Get started" card.
+Reaching the mature frame requires satisfying `provider_done = readiness.native_send_supported`
+(`console_onboarding_state.py:188`); three config attempts against a live `llama-server` on :9099
+did not clear it. **Every Console structural claim in this spec is therefore source-derived, not
+observed** — if Console's real chrome differs from the source reading, this frame inherits the
+error. Closing that gap is worth doing before PR2 designs against it.
+
+Screenshots (SVG, 200×50) for Models, Speech, Evals, and Console's blocked state were captured via
+`App.save_screenshot` under `run_test`. The app has no in-app screenshot command; a driver script
+is required.
 
 ## Prerequisite — PR0: the invisible active-mode label
 
@@ -327,10 +337,26 @@ Both are user-visible removals and belong in release notes.
 
 ### Evals
 
-Empty rail with the honest empty state. Evals renders nothing today, so there is no parity to
-preserve. **The Evals rebuild's PR3 fills `compose_lab_rail()` and `compose_lab_body()` rather than
-authoring its own frame** — this must be agreed before PR3 starts or the two designs collide at
-merge.
+Empty rail with the honest empty state.
+
+**Evals renders nothing today because `EvalsWindowV3` composes a `Screen` as a child widget.**
+`evals_window_v3.py:51-52` does `self.current_screen = EvalNavigationScreen(...)` then
+`yield self.current_screen`, and `EvalNavigationScreen` is a `Screen` subclass
+(`eval_nav_screen.py:40`; MRO `[EvalNavigationScreen, Screen, Generic, Widget, DOMNode]`). Screens
+belong on the app's screen stack, not in the widget tree. Every entry in `_create_screen` is
+likewise a `Screen`, and `go_back` / `reset_to_home` `self.mount(...)` them the same way.
+
+So there is genuinely no parity to preserve, and **PR3 must rebuild rather than adapt** — the whole
+`EvalsWindowV3` navigation model is invalid, not merely unstyled. **PR3 fills `compose_lab_rail()`
+and `compose_lab_body()` rather than authoring its own frame**; this must be agreed before PR3
+starts or the two designs collide at merge.
+
+The card hub itself holds **no** database references, so this is not a data problem. Separately,
+implementers on this branch will hit
+`Evals_DB.SchemaError: Database version 4 is newer than supported version 3` — the concurrent
+word-bench branch left a v4 DB at the user-scoped `evals.db` (`eval_orchestrator.py:94`). That is
+pre-existing, unrelated to the blank render, and must not be mistaken for a regression introduced
+here.
 
 ### Selection styling
 
