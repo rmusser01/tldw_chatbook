@@ -18,13 +18,24 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 
-#: Repo-relative paths removed by PR 1. Tasks 2 and 3 extend this tuple.
+#: Repo-relative paths removed by PR 1. Task 3 extends this tuple.
 REMOVED_MODULES: tuple[str, ...] = (
     "tldw_chatbook/UI/ResultsDashboardWindow.py",
     "tldw_chatbook/UI/ModelManagementWindow.py",
     "tldw_chatbook/UI/DatasetManagementWindow.py",
     "tldw_chatbook/UI/Views/evals_views.py",
     "tldw_chatbook/Event_Handlers/eval_events.py",
+    "tldw_chatbook/Widgets/Evals/Evals_Sidebar.py",
+    "tldw_chatbook/Widgets/Evals/ab_test_dialog.py",
+    "tldw_chatbook/Widgets/Evals/ab_test_results_widget.py",
+    "tldw_chatbook/Widgets/Evals/dataset_validation_dialog.py",
+    "tldw_chatbook/Widgets/Evals/eval_cost_monitor.py",
+    "tldw_chatbook/Widgets/Evals/eval_error_dialog.py",
+    "tldw_chatbook/Widgets/Evals/eval_smart_suggestions.py",
+    "tldw_chatbook/Widgets/Evals/metrics_display.py",
+    "tldw_chatbook/Widgets/Evals/cost_estimation_widget.py",
+    "tldw_chatbook/Widgets/Evals/eval_config_dialogs.py",
+    "tldw_chatbook/Widgets/Evals/eval_results_widgets.py",
 )
 
 #: Module basenames that must not appear in any import statement.
@@ -34,6 +45,17 @@ REMOVED_STEMS: tuple[str, ...] = (
     "DatasetManagementWindow",
     "evals_views",
     "eval_events",
+    "Evals_Sidebar",
+    "ab_test_dialog",
+    "ab_test_results_widget",
+    "dataset_validation_dialog",
+    "eval_cost_monitor",
+    "eval_error_dialog",
+    "eval_smart_suggestions",
+    "metrics_display",
+    "cost_estimation_widget",
+    "eval_config_dialogs",
+    "eval_results_widgets",
 )
 
 
