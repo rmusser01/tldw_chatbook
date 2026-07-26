@@ -310,10 +310,12 @@ def _model_ids_from_payload(payload: object) -> tuple[str, ...] | None:
         return None
     model_ids: list[str] = []
     saw_non_chat_entry = False
+    chat_candidate_count = 0
     for entry in entries:
         if _entry_declares_non_chat_task(entry):
             saw_non_chat_entry = True
             continue
+        chat_candidate_count += 1
         model_id: object = entry
         if isinstance(entry, Mapping):
             model_id = entry.get("id") or entry.get("name") or entry.get("model")
@@ -324,9 +326,12 @@ def _model_ids_from_payload(payload: object) -> tuple[str, ...] | None:
             model_ids.append(sanitized)
         if len(model_ids) >= MODEL_IDS_MAX_COUNT:
             break
-    if not model_ids and saw_non_chat_entry:
-        # The server listed models and every one of them is a non-chat
-        # workload: this endpoint is a real API, just not a chat API.
+    if not model_ids and saw_non_chat_entry and chat_candidate_count == 0:
+        # EVERY entry was explicitly non-chat: this endpoint is a real API,
+        # just not a chat API. A listing that merely failed to yield ids (odd
+        # shapes, non-string ids) alongside a non-chat entry is NOT rejected --
+        # that would turn an unrecognized-but-plausible server into "no models
+        # endpoint" and hide a chat-capable host from discovery.
         return None
     return tuple(model_ids)
 

@@ -140,7 +140,10 @@ class ConsoleStatusChips(Horizontal):
             classes += " console-chip-dim"
         elif emphasis is True:
             classes += " console-chip-alert"
-        chip = chip_class(label, id=id, classes=classes)
+        # markup=False: chip labels carry user data (character and profile
+        # names, model ids). A name containing `[red]...[/]` would otherwise
+        # restyle the chip strip, or raise MarkupError when unbalanced.
+        chip = chip_class(label, id=id, classes=classes, markup=False)
         chip.tooltip = label
         return chip
 

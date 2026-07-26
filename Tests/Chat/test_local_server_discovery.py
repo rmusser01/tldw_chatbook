@@ -416,3 +416,35 @@ async def test_probe_keeps_only_chat_capable_models_from_mixed_server() -> None:
 
     assert result.ok is True
     assert result.model_ids == ("chat-1",)
+
+
+@pytest.mark.asyncio
+async def test_probe_keeps_a_server_whose_other_entries_are_merely_unrecognized() -> None:
+    """A non-chat entry beside odd-shaped entries must not condemn the server.
+
+    Review finding: the reject condition was "no ids AND saw a non-chat entry",
+    which also rejected listings whose remaining entries simply failed to yield
+    an id (non-string ids, unexpected shapes). That turned an
+    unrecognized-but-plausible server into "no models endpoint" and hid a
+    possibly chat-capable host. Only an ALL-non-chat listing is a rejection.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [
+                    {"id": "voice-1", "task": "tts"},
+                    {"id": 12345},  # non-string id: unrecognized, not non-chat
+                ],
+            },
+        )
+
+    async with _client(handler) as client:
+        result = await probe_models_endpoint(
+            "http://127.0.0.1:9099", provider_key="llama_cpp", http_client=client
+        )
+
+    assert result.ok is True
+    assert result.model_ids == ()

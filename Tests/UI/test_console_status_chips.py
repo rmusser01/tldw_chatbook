@@ -119,3 +119,29 @@ async def test_status_chips_sync_updates_character_chip():
 
         chip = app.query_one("#console-character-chip")
         assert "Seraphina" in str(chip.render())
+
+
+@pytest.mark.asyncio
+async def test_status_chips_do_not_parse_markup_in_names():
+    """A character or profile name must never be parsed as Rich markup.
+
+    Names are user data (imported cards included). Rendering them through a
+    markup-enabled Static lets `[red]...[/]` restyle the chip strip, or raise
+    MarkupError on an unbalanced tag, from nothing more than a character name.
+    """
+    app = _ChipsApp(
+        ConsoleControlState.from_values(
+            provider="llama_cpp",
+            model="m",
+            character="[red]Seraphina[/]",
+            persona="[bold]Corvin[/]",
+        )
+    )
+    async with app.run_test(size=(200, 6)) as pilot:
+        await pilot.pause()
+
+        character_chip = app.query_one("#console-character-chip")
+        profile_chip = app.query_one("#console-persona-chip")
+
+        assert "[red]Seraphina[/]" in str(character_chip.render())
+        assert "[bold]Corvin[/]" in str(profile_chip.render())

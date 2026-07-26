@@ -318,7 +318,10 @@ class ConsoleControlState:
         Args:
             provider: Active provider name, or falsy for "not selected".
             model: Active model name, or falsy for "not selected".
-            persona: Persona/assistant label; falsy falls back to "General".
+            persona: The user's own profile label (the human side of the
+                conversation); falsy renders as "You: default".
+            character: Active character driving replies (the AI side);
+                falsy renders as "Character: none".
             rag_enabled: Whether RAG is on for this send.
             staged_source_count: Number of staged context sources.
             tool_count: Built-in tools that can run.
