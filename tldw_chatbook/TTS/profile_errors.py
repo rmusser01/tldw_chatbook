@@ -66,7 +66,9 @@ class ProfileValidationError(_ProfileError, ValueError):
     """A value-independent failure at the profile-domain boundary."""
 
     def __init__(self, code: str) -> None:
-        safe_code = code if code in _VALIDATION_CODES else "options"
+        safe_code = (
+            code if type(code) is str and code in _VALIDATION_CODES else "options"
+        )
         super().__init__(safe_code, f"TTS profile validation failed: {safe_code}")
 
 
@@ -74,5 +76,9 @@ class ProfileRepositoryError(_ProfileError, RuntimeError):
     """A value-independent profile repository failure."""
 
     def __init__(self, code: str) -> None:
-        safe_code = code if code in _REPOSITORY_CODES else "operation_failed"
+        safe_code = (
+            code
+            if type(code) is str and code in _REPOSITORY_CODES
+            else "operation_failed"
+        )
         super().__init__(safe_code, f"TTS profile repository failed: {safe_code}")

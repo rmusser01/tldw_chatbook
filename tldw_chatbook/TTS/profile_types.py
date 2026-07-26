@@ -81,7 +81,7 @@ def _validate_display_name(value: object) -> str:
 
 
 def _validate_provider_id(value: object) -> str:
-    if not isinstance(value, str) or not _PROVIDER_ID_PATTERN.fullmatch(value):
+    if type(value) is not str or not _PROVIDER_ID_PATTERN.fullmatch(value):
         raise ProfileValidationError("provider_id")
     return value
 
@@ -91,11 +91,7 @@ def _validate_opaque_id(
 ) -> str | None:
     if value is None and nullable:
         return None
-    if (
-        not isinstance(value, str)
-        or not value
-        or len(value) > _MAX_OPAQUE_ID_CHARACTERS
-    ):
+    if type(value) is not str or not value or len(value) > _MAX_OPAQUE_ID_CHARACTERS:
         raise ProfileValidationError(field_name)
     return value
 
@@ -111,7 +107,7 @@ def _validate_canonical_opaque_id(value: object, field_name: str) -> str:
 
 
 def _validate_speed(value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if type(value) not in (int, float):
         raise ProfileValidationError("speed")
     try:
         speed = float(value)
@@ -123,7 +119,7 @@ def _validate_speed(value: object) -> float:
 
 
 def _validate_response_format(value: object) -> str:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise ProfileValidationError("response_format")
     response_format = value.strip().lower()
     if not _RESPONSE_FORMAT_PATTERN.fullmatch(response_format):
@@ -239,19 +235,19 @@ def _validate_audio_cpp(
 
 
 def _validate_revision(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+    if type(value) is not int or value <= 0:
         raise ProfileValidationError("revision")
     return value
 
 
 def _validate_uuid(value: object, field_name: str) -> UUID:
-    if not isinstance(value, UUID):
+    if type(value) is not UUID:
         raise ProfileValidationError(field_name)
     return value
 
 
 def _validate_utc_timestamp(value: object, field_name: str) -> datetime:
-    if not isinstance(value, datetime) or value.tzinfo is None:
+    if type(value) is not datetime or value.tzinfo is None:
         raise ProfileValidationError(field_name)
     try:
         offset = value.utcoffset()
@@ -263,7 +259,7 @@ def _validate_utc_timestamp(value: object, field_name: str) -> datetime:
 
 
 def _validate_nonnegative_integer(value: object, field_name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    if type(value) is not int or value < 0:
         raise ProfileValidationError(field_name)
     return value
 

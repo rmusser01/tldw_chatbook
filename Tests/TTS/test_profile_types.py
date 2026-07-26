@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta, timezone
 from types import MappingProxyType
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -122,6 +122,22 @@ def test_provider_identifier_is_preserved_without_normalization() -> None:
     assert draft.provider_id == "audio_cpp"
 
 
+def test_provider_subclass_cannot_bypass_audio_cpp_profile_contract() -> None:
+    class DeceptiveProvider(str):
+        def __eq__(self, other: object) -> bool:
+            return False
+
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: provider_id$"
+    ):
+        _draft(
+            provider_id=DeceptiveProvider("audio_cpp"),
+            response_format="mp3",
+            speed=1.1,
+            options={"bypass": True},
+        )
+
+
 @pytest.mark.parametrize("field_name", ["model_id", "voice_id"])
 @pytest.mark.parametrize("value", ["", "x" * 257])
 def test_exact_model_and_voice_identifiers_have_bounds(
@@ -139,6 +155,25 @@ def test_exact_model_and_voice_identifiers_remain_opaque() -> None:
     assert draft.model_id == " model/v1 "
     assert draft.voice_id == " M1 "
     assert _draft(voice_id=None).voice_id is None
+
+
+def test_model_and_voice_subclasses_never_leak_overridable_text_behavior() -> None:
+    class HostileText(str):
+        def __bool__(self) -> bool:
+            raise RuntimeError("secret boolean failure")
+
+        def __len__(self) -> int:
+            raise RuntimeError("secret length failure")
+
+        def strip(self, chars: str | None = None) -> str:
+            raise RuntimeError("secret strip failure")
+
+    for field_name in ("model_id", "voice_id"):
+        with pytest.raises(
+            ProfileValidationError,
+            match=rf"^TTS profile validation failed: {field_name}$",
+        ):
+            _draft(**{field_name: HostileText("value")})
 
 
 @pytest.mark.parametrize(
@@ -185,6 +220,18 @@ def test_response_format_is_trimmed_and_lowercased() -> None:
     assert _draft(response_format="  WAV_16 ").response_format == "wav_16"
 
 
+def test_response_format_subclass_cannot_masquerade_as_wav() -> None:
+    class MasqueradingFormat(str):
+        def strip(self, chars: str | None = None) -> str:
+            return "wav"
+
+    with pytest.raises(
+        ProfileValidationError,
+        match=r"^TTS profile validation failed: response_format$",
+    ):
+        _draft(response_format=MasqueradingFormat("not-wav"))
+
+
 @pytest.mark.parametrize("revision", [True, 0, -1, 1.0, "1"])
 def test_persisted_profile_revision_must_be_a_positive_integer(
     revision: object,
@@ -226,6 +273,68 @@ def test_character_ref_rejects_noncanonical_or_unbounded_identity(
         ProfileValidationError, match=rf"^TTS profile validation failed: {field_name}$"
     ):
         CharacterRef(**values)
+
+
+def test_character_text_subclasses_never_leak_overridable_text_behavior() -> None:
+    class HostileText(str):
+        def __bool__(self) -> bool:
+            raise RuntimeError("secret boolean failure")
+
+        def __len__(self) -> int:
+            raise RuntimeError("secret length failure")
+
+        def strip(self, chars: str | None = None) -> str:
+            raise RuntimeError("secret strip failure")
+
+    for field_name in ("authority_id", "character_id"):
+        values: dict[str, object] = {
+            "source": "local",
+            "authority_id": "main",
+            "character_id": "card",
+        }
+        values[field_name] = HostileText("value")
+        with pytest.raises(
+            ProfileValidationError,
+            match=rf"^TTS profile validation failed: {field_name}$",
+        ):
+            CharacterRef(**values)  # type: ignore[arg-type]
+
+
+def test_display_name_and_source_subclasses_are_rejected() -> None:
+    class TextSubclass(str):
+        pass
+
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: display_name$"
+    ):
+        _draft(display_name=TextSubclass("Profile"))
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: source$"
+    ):
+        CharacterRef(
+            source=TextSubclass("local"), authority_id="main", character_id="card"
+        )
+
+
+def test_exact_text_values_remain_accepted_and_normalized() -> None:
+    draft = _draft(
+        display_name="  Profile  ",
+        provider_id="audio_cpp",
+        model_id="model",
+        voice_id="voice",
+        response_format=" WAV ",
+        speed=1.0,
+    )
+    reference = CharacterRef(
+        source="server", authority_id="authority", character_id="card"
+    )
+
+    assert draft.display_name == "Profile"
+    assert draft.provider_id == "audio_cpp"
+    assert draft.model_id == "model"
+    assert draft.voice_id == "voice"
+    assert draft.response_format == "wav"
+    assert reference.source == "server"
 
 
 @pytest.mark.parametrize("source", [[], {}])
@@ -467,6 +576,38 @@ def test_generation_profile_rejects_normalized_name_subclasses() -> None:
         _profile(normalized_name=supplied)
 
 
+def test_uuid_subclasses_are_rejected_before_behavior() -> None:
+    class HostileUUID(UUID):
+        pass
+
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: profile_id$"
+    ):
+        _profile(profile_id=HostileUUID(str(uuid4())))
+
+
+def test_timestamp_subclasses_are_rejected_before_behavior() -> None:
+    class HostileTimestamp(datetime):
+        def utcoffset(self) -> timedelta | None:
+            raise RuntimeError("secret timestamp failure")
+
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: created_at$"
+    ):
+        _profile(created_at=HostileTimestamp(2026, 7, 26, tzinfo=UTC))
+
+
+def test_speed_subclasses_are_rejected_before_behavior() -> None:
+    class HostileSpeed(float):
+        def __float__(self) -> float:
+            raise RuntimeError("secret speed failure")
+
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: speed$"
+    ):
+        _draft(speed=HostileSpeed(1.0))
+
+
 def test_repository_values_are_frozen_and_minimal() -> None:
     profile = _profile()
     reference = CharacterRef(
@@ -524,6 +665,14 @@ def test_safe_profile_errors_never_include_caller_values() -> None:
     assert str(repository) == "TTS profile repository failed: operation_failed"
     assert "secret-name" not in repr(validation)
     assert "secret-upstream-text" not in repr(repository)
+
+
+def test_safe_profile_errors_reject_non_string_codes_without_raw_exceptions() -> None:
+    validation = ProfileValidationError([])  # type: ignore[arg-type]
+    repository = ProfileRepositoryError({})  # type: ignore[arg-type]
+
+    assert str(validation) == "TTS profile validation failed: options"
+    assert str(repository) == "TTS profile repository failed: operation_failed"
 
 
 def test_profile_error_base_cannot_be_constructed_with_arbitrary_payloads() -> None:
