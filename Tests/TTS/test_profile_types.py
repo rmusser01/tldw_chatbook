@@ -14,7 +14,6 @@ import pytest
 
 import tldw_chatbook.TTS as tts_package
 import tldw_chatbook.TTS.profile_errors as profile_errors
-import tldw_chatbook.TTS.profile_types as profile_types
 from tldw_chatbook.TTS.profile_errors import (
     ProfileRepositoryError,
     ProfileValidationError,
@@ -460,27 +459,13 @@ def test_options_reject_mutable_hash_string_keys_before_retaining_them() -> None
         _draft(options=options)
 
 
-def test_canonical_options_returns_a_safe_error_when_encoding_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = 0
+def test_canonical_options_never_leaks_utf8_encoding_failures() -> None:
+    with pytest.raises(ProfileValidationError) as raised:
+        canonical_json_options({"value": "\ud800"})
 
-    def fail_only_during_public_encoding(_: Mapping[str, object]) -> str:
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise RuntimeError("secret encoding failure")
-        return "{}"
-
-    monkeypatch.setattr(
-        profile_types,
-        "_canonical_json_from_frozen",
-        fail_only_during_public_encoding,
-    )
-    with pytest.raises(
-        ProfileValidationError, match=r"^TTS profile validation failed: options$"
-    ):
-        canonical_json_options({"safe": False})
+    assert str(raised.value) == "TTS profile validation failed: options"
+    assert "UnicodeEncodeError" not in repr(raised.value)
+    assert "surrogates not allowed" not in repr(raised.value)
 
 
 def test_options_reject_excessive_nesting_and_canonical_size() -> None:
