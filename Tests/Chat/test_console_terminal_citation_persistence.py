@@ -441,14 +441,26 @@ def _real_assistant(store: ConsoleChatStore):
 def _citation_row_counts(db: CharactersRAGDB) -> dict[str, int]:
     connection = db.get_connection()
     return {
-        table: connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
-        for table in (
-            "rag_citation_traces",
-            "rag_evidence_runs",
-            "rag_evidence_snapshots",
-            "rag_answer_attempt_payloads",
-            "rag_trace_evidence_refs",
-            "rag_message_trace_owners",
+        table: connection.execute(query).fetchone()[0]
+        for table, query in (
+            ("rag_citation_traces", "SELECT count(*) FROM rag_citation_traces"),
+            ("rag_evidence_runs", "SELECT count(*) FROM rag_evidence_runs"),
+            (
+                "rag_evidence_snapshots",
+                "SELECT count(*) FROM rag_evidence_snapshots",
+            ),
+            (
+                "rag_answer_attempt_payloads",
+                "SELECT count(*) FROM rag_answer_attempt_payloads",
+            ),
+            (
+                "rag_trace_evidence_refs",
+                "SELECT count(*) FROM rag_trace_evidence_refs",
+            ),
+            (
+                "rag_message_trace_owners",
+                "SELECT count(*) FROM rag_message_trace_owners",
+            ),
         )
     }
 

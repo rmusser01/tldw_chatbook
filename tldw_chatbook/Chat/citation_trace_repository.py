@@ -492,7 +492,12 @@ class CitationTraceRepository:
 
     @property
     def local_citation_writes_ready(self) -> bool:
-        """Return whether local canonical writes have an exact persisted identity."""
+        """Return whether local canonical writes have an exact persisted identity.
+
+        Returns:
+            True when canonical writes are enabled and the active identity
+            exactly matches the identity persisted in the repository.
+        """
 
         if not self.policy.canonical_writes_enabled:
             return False
@@ -511,7 +516,16 @@ class CitationTraceRepository:
         request_id: str,
         generation_id: str,
     ) -> CitationTraceBuilder | None:
-        """Create request-scoped local capture when canonical writes are enabled."""
+        """Create request-scoped local capture when canonical writes are enabled.
+
+        Args:
+            request_id: Opaque identifier for the generation request.
+            generation_id: Opaque identifier for the generation attempt.
+
+        Returns:
+            A request-scoped citation builder, or ``None`` when canonical local
+            writes are not ready.
+        """
 
         if not self.local_citation_writes_ready:
             return None

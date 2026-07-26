@@ -1061,6 +1061,38 @@ def _real_capture_repository(tmp_path, availability):
 
 
 @pytest.mark.asyncio
+async def test_missing_custom_pipeline_log_includes_safe_context(monkeypatch):
+    from tldw_chatbook.RAG_Search import pipeline_builder_simple
+
+    monkeypatch.setattr(
+        pipeline_builder_simple, "get_pipeline", lambda _pipeline_id: None
+    )
+    captured_logs = []
+    sink_id = loguru_logger.add(
+        captured_logs.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        results, error = await cre.perform_search_with_pipeline(
+            app=None,
+            query="PRIVATE-MISSING-PIPELINE-QUERY",
+            sources={"media": True, "conversations": False, "notes": True},
+            pipeline_id="custom-local-pipeline",
+        )
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert results == []
+    assert error == "Pipeline 'custom-local-pipeline' not found"
+    rendered_logs = "".join(str(message) for message in captured_logs)
+    assert "reason=pipeline_not_found" in rendered_logs
+    assert "pipeline_id=custom-local-pipeline" in rendered_logs
+    assert "selected_source_count=2" in rendered_logs
+    assert "PRIVATE-MISSING-PIPELINE-QUERY" not in rendered_logs
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "search_mode",
     ["plain", "semantic", "hybrid", "custom-pipeline"],
@@ -1362,6 +1394,8 @@ async def test_console_prompt_evidence_recording_failure_returns_no_capture(
     assert captured.prompt_evidence_set_id is None
     rendered_logs = "".join(str(message) for message in captured_logs)
     assert "reason=canonical_capture_failure" in rendered_logs
+    assert "normalized_candidates=1" in rendered_logs
+    assert "authorized_candidates=1" in rendered_logs
     for sentinel in (query, title, content, failure):
         assert sentinel not in rendered_logs
 
@@ -1699,13 +1733,17 @@ async def test_prompt_evidence_set_recording_failure_discards_context_and_builde
         )
         assert captured.prompt_evidence_set_id is None
         connection = db.get_connection()
-        for table in ("rag_evidence_runs", "rag_evidence_snapshots"):
-            assert (
-                connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
-            )
+        for query in (
+            "SELECT count(*) FROM rag_evidence_runs",
+            "SELECT count(*) FROM rag_evidence_snapshots",
+        ):
+            assert connection.execute(query).fetchone()[0] == 0
         rendered_logs = "".join(str(message) for message in captured_logs)
         assert sentinel not in rendered_logs
         assert "reason=canonical_capture_failure" in rendered_logs
+        assert "mode=plain" in rendered_logs
+        assert "requested_top_k=5" in rendered_logs
+        assert "scope_state=unscoped" in rendered_logs
     finally:
         db.close_connection()
 

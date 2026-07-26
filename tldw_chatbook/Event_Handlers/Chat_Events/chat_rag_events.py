@@ -345,7 +345,11 @@ async def perform_search_with_pipeline(
     config = get_pipeline(pipeline_id)
 
     if not config:
-        logger.error("RAG pipeline unavailable; reason=pipeline_not_found")
+        logger.error(
+            "RAG pipeline unavailable; reason=pipeline_not_found; "
+            f"pipeline_id={pipeline_id}; "
+            f"selected_source_count={sum(bool(value) for value in sources.values())}"
+        )
         return [], f"Pipeline '{pipeline_id}' not found"
 
     # Make a copy to avoid modifying the original
@@ -1520,7 +1524,11 @@ async def _capture_local_pipeline_results(
         context = formatted.context if formatted.context.strip() else None
         return LocalRagContextResult(context, builder, prompt_evidence_set_id)
     except Exception:
-        logger.error("Canonical RAG capture failed; reason=canonical_capture_failure")
+        logger.error(
+            "Canonical RAG capture failed; reason=canonical_capture_failure; "
+            f"mode={search_mode}; requested_top_k={top_k}; "
+            f"scope_state={effective_scope.state}"
+        )
         return LocalRagContextResult(None, None)
 
 
@@ -1684,7 +1692,10 @@ async def capture_console_staged_evidence_for_chat(
         )
     except Exception:
         logger.error(
-            "Console canonical RAG capture failed; reason=canonical_capture_failure"
+            "Console canonical RAG capture failed; "
+            "reason=canonical_capture_failure; "
+            f"normalized_candidates={len(normalized)}; "
+            f"authorized_candidates={len(authorization.candidates)}"
         )
         return LocalRagContextResult(None, None)
 

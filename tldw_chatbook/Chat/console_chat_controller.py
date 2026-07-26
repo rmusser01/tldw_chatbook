@@ -3388,7 +3388,8 @@ class ConsoleChatController:
             raise
         except Exception:
             logger.error(
-                "Console RAG capture unavailable; reason=capture_provider_failure"
+                "Console RAG capture unavailable; "
+                f"reason=capture_provider_failure; draft_length={len(draft)}"
             )
             return None, None, None
         captured_context = getattr(captured, "context", None)

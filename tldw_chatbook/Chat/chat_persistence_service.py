@@ -28,7 +28,12 @@ class ChatPersistenceService:
 
     @property
     def canonical_citation_writes_ready(self) -> bool:
-        """Return whether this service can persist canonical local citations."""
+        """Return whether this service can persist canonical local citations.
+
+        Returns:
+            True when the configured citation repository shares this service's
+            database and is ready for local canonical writes.
+        """
 
         repository = self.citation_repository
         return bool(

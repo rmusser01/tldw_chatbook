@@ -249,6 +249,36 @@ def _final_user_content(messages) -> str:
 
 
 @pytest.mark.asyncio
+async def test_capture_provider_failure_logs_only_structural_context():
+    async def capture(_draft):
+        raise RuntimeError(_PRIVATE_EXCEPTION)
+
+    controller = ConsoleChatController(
+        store=_persisted_store(),
+        provider_gateway=_RecordingGateway(),
+        rag_capture_provider=capture,
+        agent_runtime_enabled=False,
+    )
+    captured_logs = []
+    sink_id = loguru_logger.add(
+        captured_logs.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        captured = await controller._capture_rag_context(_PRIVATE_QUERY)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert captured == (None, None, None)
+    rendered_logs = "".join(str(message) for message in captured_logs)
+    assert "reason=capture_provider_failure" in rendered_logs
+    assert f"draft_length={len(_PRIVATE_QUERY)}" in rendered_logs
+    assert _PRIVATE_QUERY not in rendered_logs
+    assert _PRIVATE_EXCEPTION not in rendered_logs
+
+
+@pytest.mark.asyncio
 async def test_console_canonical_evidence_is_added_after_prompt_transforms_and_builder_is_local():
     ordinary_prompt = "ORDINARY_PROMPT_SENTINEL_TASK_553_13"
     transformed_prompt = "TRANSFORMED_PROMPT_SENTINEL_TASK_553_13"
