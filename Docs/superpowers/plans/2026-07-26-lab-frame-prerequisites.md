@@ -60,6 +60,13 @@ Tests/UI/test_library_shell.py::test_library_shell_ingest_nav_context_deeplink_r
 
 Confirm the count is unchanged rather than expecting zero.
 
+**Caveat — this file's count is not a reliable gate.** Independent re-runs found the three above
+fail deterministically, but 3 of 4 runs showed a *fourth* failure that rotated between
+`test_library_shell_export_registry_failure_warns_it_wont_appear_in_artifacts` and
+`test_library_shell_ingest_canvas_different_canvas_isolation` — both self-documented in the test
+file as order/global-state and CPU-contention flakes, and both sensitive to machine load. Treat the
+three named tests as the floor and investigate only *new* failure names, never a raw count.
+
 ---
 
 ## Sequencing correction (read before planning PR2+)
