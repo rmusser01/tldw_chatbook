@@ -9,7 +9,7 @@ from loguru import logger
 
 from . import Tool
 from ..Notes.Notes_Library import NotesInteropService
-from ..config import get_chachanotes_db_path
+from ..config import get_chachanotes_db_path, load_settings
 
 # Base directory for the notes DB, mirroring the app's own NotesInteropService
 # wiring in app.py (`get_chachanotes_db_path().parent`). The previous
@@ -17,6 +17,36 @@ from ..config import get_chachanotes_db_path
 # inside the CONFIG_TOML_CONTENT string literal, not as a real module-level
 # constant, so this module could never actually be imported.
 USER_DB_BASE_DIR = get_chachanotes_db_path().parent
+
+#: Matches config.py's own `default_users_name_fallback`, so an
+#: unconfigured user sees no change from the previously hardcoded value.
+_DEFAULT_USER_ID = "default_user"
+
+
+def _resolve_user_id() -> str:
+    """Return the user id notes should be written under.
+
+    Reads ``load_settings()["USERS_NAME"]`` -- the SAME source
+    ``app.notes_user_id`` comes from (``app.py:3139``). Deliberately not
+    ``get_cli_setting("general", "users_name", ...)``: the real value is
+    ``os.getenv("USERS_NAME", <toml value>)`` resolved inside
+    ``load_settings`` (``config.py:826``), so a direct TOML read would
+    diverge from the app whenever the env var is set and strand notes in
+    a third bucket.
+
+    Resolved per call rather than at construction time: a
+    ``BuiltinToolProvider`` is built from four sites, two of which have no
+    app access, and the tool classes take no constructor arguments.
+
+    Returns:
+        The configured user id, or ``"default_user"`` if settings cannot
+        be read.
+    """
+    try:
+        return load_settings().get("USERS_NAME") or _DEFAULT_USER_ID
+    except Exception as e:  # noqa: BLE001 — a tool must not crash on config
+        logger.warning(f"Could not resolve USERS_NAME, using default: {e}")
+        return _DEFAULT_USER_ID
 
 
 class CreateNoteTool(Tool):
@@ -66,8 +96,6 @@ class CreateNoteTool(Tool):
             return {"error": "No content provided"}
 
         try:
-            # Get the notes service - use default user for now
-            # In a real implementation, this would use the actual user context
             from ..config import chachanotes_db
 
             notes_service = NotesInteropService(
@@ -76,9 +104,8 @@ class CreateNoteTool(Tool):
                 global_db_to_use=chachanotes_db,
             )
 
-            # Create the note
             note_id = notes_service.add_note(
-                user_id="default_user",  # Would be actual user in production
+                user_id=_resolve_user_id(),
                 title=title,
                 content=content,
             )
@@ -249,7 +276,6 @@ class UpdateNoteTool(Tool):
             return {"error": "No updates provided (need title or content)"}
 
         try:
-            # Get the notes service
             from ..config import chachanotes_db
 
             notes_service = NotesInteropService(
@@ -258,9 +284,11 @@ class UpdateNoteTool(Tool):
                 global_db_to_use=chachanotes_db,
             )
 
+            user_id = _resolve_user_id()
+
             # First, get the current note to check it exists
             current_note = notes_service.get_note_by_id(
-                user_id="default_user", note_id=note_id
+                user_id=user_id, note_id=note_id
             )
 
             if not current_note:
@@ -275,7 +303,7 @@ class UpdateNoteTool(Tool):
 
             # Update the note
             success = notes_service.update_note(
-                user_id="default_user",
+                user_id=user_id,
                 note_id=note_id,
                 update_data=update_data,
                 expected_version=expected_version,
