@@ -106,3 +106,52 @@ def test_rename_to_own_case_variant_has_no_suffix(service):
     watchlist = service.create("Security")
     renamed = service.rename(watchlist["id"], "security")
     assert renamed["name"] == "security"
+
+
+MIGRATION_KEY = "folders_to_watchlists"
+
+
+def test_migrate_folders_groups_by_folder(service, db):
+    first = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f",
+                                folder="Research")
+    second = db.add_subscription(name="HN", type="rss", source="https://b.example/f",
+                                 folder="Research")
+    third = db.add_subscription(name="Krebs", type="rss", source="https://c.example/f",
+                                folder="Security")
+
+    assert service.migrate_folders() is True
+
+    names = {row["name"] for row in service.list_watchlists()}
+    assert names == {"Research", "Security"}
+
+    by_name = {row["name"]: row["id"] for row in service.list_watchlists()}
+    assert sorted(service.list_sources(by_name["Research"])) == sorted([first, second])
+    assert service.list_sources(by_name["Security"]) == [third]
+
+
+def test_migrate_folders_puts_folderless_sources_in_unsorted(service, db):
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+
+    service.migrate_folders()
+
+    by_name = {row["name"]: row["id"] for row in service.list_watchlists()}
+    assert "Unsorted" in by_name
+    assert service.list_sources(by_name["Unsorted"]) == [source_id]
+
+
+def test_migrate_folders_runs_once(service, db):
+    db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f", folder="Research")
+
+    assert service.migrate_folders() is True
+    assert service.migrate_folders() is False
+    assert len(service.list_watchlists()) == 1
+
+    marker = db.conn.execute(
+        "SELECT COUNT(*) FROM watchlist_migration_state WHERE key = ?", (MIGRATION_KEY,)
+    ).fetchone()[0]
+    assert marker == 1
+
+
+def test_migrate_folders_is_noop_with_no_sources(service):
+    assert service.migrate_folders() is True
+    assert service.list_watchlists() == []

@@ -157,3 +157,58 @@ class WatchlistBundleService:
             (watchlist_id,),
         ).fetchall()
         return [row[0] for row in rows]
+
+    # --- Migration ---
+
+    MIGRATION_KEY = "folders_to_watchlists"
+
+    def migrate_folders(self) -> bool:
+        """Turn distinct ``subscriptions.folder`` values into watchlists.
+
+        Sources with no folder join a single ``Unsorted`` watchlist. The
+        ``folder`` column is left in place and untouched, so this is reversible.
+
+        In practice this migrates almost nothing: no live code path writes
+        ``folder``. It exists for hand-seeded databases.
+
+        Returns:
+            ``True`` if the migration ran, ``False`` if it had already been
+            applied.
+        """
+        with self._db.transaction() as conn:
+            already = conn.execute(
+                "SELECT 1 FROM watchlist_migration_state WHERE key = ?",
+                (self.MIGRATION_KEY,),
+            ).fetchone()
+            if already:
+                return False
+
+            rows = conn.execute(
+                "SELECT id, folder FROM subscriptions ORDER BY id"
+            ).fetchall()
+
+            buckets: dict[str, list[int]] = {}
+            for subscription_id, folder in rows:
+                label = (folder or "").strip() or "Unsorted"
+                buckets.setdefault(label, []).append(subscription_id)
+
+            for label, source_ids in buckets.items():
+                resolved = self._unique_name(conn, label)
+                cursor = conn.execute(
+                    "INSERT INTO watchlists (name) VALUES (?)", (resolved,)
+                )
+                watchlist_id = cursor.lastrowid
+                conn.executemany(
+                    "INSERT OR IGNORE INTO watchlist_sources "
+                    "(watchlist_id, subscription_id) VALUES (?, ?)",
+                    [(watchlist_id, source_id) for source_id in source_ids],
+                )
+
+            conn.execute(
+                "INSERT INTO watchlist_migration_state (key) VALUES (?)",
+                (self.MIGRATION_KEY,),
+            )
+            logger.info(
+                "Migrated {} folder group(s) into watchlists.", len(buckets)
+            )
+            return True
