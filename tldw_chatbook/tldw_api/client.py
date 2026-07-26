@@ -5547,10 +5547,35 @@ class TLDWAPIClient:
     async def ingest_web_content(
         self, request_data: IngestWebContentRequest
     ) -> IngestWebContentResponse:
+        """Clip one or more web pages into the server's library.
+
+        Unlike the ingest-jobs routes, this endpoint declares a *required*
+        lowercase ``token`` header, checked independently of the declared
+        security schemes -- so ``X-API-KEY`` on the shared client is not enough
+        and the call 422s before doing any work.
+
+        Both headers are needed, confirmed against a live server: ``X-API-KEY``
+        alone (and ``Authorization: Bearer`` alone) fail validation with
+        ``{"loc": ["header", "token"]}``; ``token`` alone passes validation but
+        is then denied, which this server reports as a 429 ``rate_limited``
+        rather than a 401; ``token`` plus ``X-API-KEY`` reaches the handler.
+
+        ``token`` is sent per-request rather than added to the shared client
+        because only this route asks for it. httpx merges it with the
+        client-level ``X-API-KEY``, so the wire carries both.
+
+        Args:
+            request_data: The clip request; ``urls`` is the only required field.
+
+        Returns:
+            The server's clip result.
+        """
+        headers = {"token": self.token} if self.token else None
         response = await self._request(
             "POST",
             "/api/v1/media/ingest-web-content",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers=headers,
         )
         return IngestWebContentResponse.model_validate(response)
 

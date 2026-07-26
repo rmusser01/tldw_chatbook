@@ -2254,6 +2254,64 @@ async def test_media_ingest_job_events_stream_parses_sse(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_ingest_web_content_sends_the_token_header_the_endpoint_requires(
+    monkeypatch,
+):
+    """This endpoint requires a lowercase ``token`` header; nothing else works.
+
+    Unlike the ingest-jobs routes -- where ``X-API-KEY`` alone is accepted --
+    ``/api/v1/media/ingest-web-content`` declares ``token`` as a *required*
+    header parameter, checked independently of the declared security schemes.
+    Verified against a live server:
+
+        X-API-KEY only         -> 422 {"loc": ["header", "token"]}
+        Authorization: Bearer  -> 422 {"loc": ["header", "token"]}
+        token only             -> 429 rate_limited (this server's shape for a
+                                  DENIAL, not throttling -- so token satisfies
+                                  the header check but does NOT authenticate)
+        token + X-API-KEY      -> reaches the handler and does the work
+
+    So BOTH are needed: ``token`` to pass validation, ``X-API-KEY`` to
+    authenticate. Do not "simplify" this by dropping either. The client set only
+    ``X-API-KEY``, so web clipping failed with a validation error for every
+    API-key user before doing any work.
+
+    ``token`` is sent per-request rather than added to the shared client because
+    only this route asks for it; httpx merges it with the client-level
+    ``X-API-KEY``, so the wire carries both.
+    """
+    client = TLDWAPIClient("http://localhost:8000", token="secret-key")
+    mocked = AsyncMock(return_value={"status": "success", "message": "ok"})
+    monkeypatch.setattr(client, "_request", mocked)
+
+    await client.ingest_web_content(
+        api.IngestWebContentRequest(urls=["https://example.com/a"])
+    )
+
+    assert mocked.await_args.kwargs["headers"] == {"token": "secret-key"}
+
+
+@pytest.mark.asyncio
+async def test_ingest_web_content_omits_the_token_header_when_unauthenticated(
+    monkeypatch,
+):
+    """No credential configured means no header to send, not an empty one.
+
+    An empty ``token`` would present as a supplied-but-blank credential rather
+    than an absent one, and the endpoint's own error is clearer than ours.
+    """
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(return_value={"status": "success", "message": "ok"})
+    monkeypatch.setattr(client, "_request", mocked)
+
+    await client.ingest_web_content(
+        api.IngestWebContentRequest(urls=["https://example.com/a"])
+    )
+
+    assert not mocked.await_args.kwargs.get("headers")
+
+
+@pytest.mark.asyncio
 async def test_ingest_web_content_route_wires_json_payload(monkeypatch):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
