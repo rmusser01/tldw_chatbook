@@ -365,6 +365,134 @@ async def test_console_tts_metrics_use_only_the_safe_slice_one_allowlist(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("response_provider", "response_model", "response_format"),
+    (
+        ("PRIVATE_RESPONSE_PROVIDER", "model", "wav"),
+        ("audio_cpp", None, "wav"),
+        ("audio_cpp", "model", "PRIVATE_RESPONSE_FORMAT"),
+    ),
+)
+async def test_console_malformed_response_metadata_is_an_audio_contract_error(
+    response_provider: object,
+    response_model: object,
+    response_format: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_values = (
+        "PRIVATE_RESPONSE_PROVIDER",
+        "PRIVATE_RESPONSE_FORMAT",
+        "PRIVATE_RESPONSE_METADATA",
+        "PRIVATE_RESPONSE_TEXT",
+    )
+    metric_calls: list[tuple[str, str, float | int, dict[str, Any]]] = []
+    log_messages: list[str] = []
+    stream_iterations = 0
+
+    async def stream() -> AsyncIterator[bytes]:
+        nonlocal stream_iterations
+        stream_iterations += 1
+        yield b"must not be consumed"
+
+    class Response:
+        def __init__(self) -> None:
+            self.provider_id = response_provider
+            self.model_id = response_model
+            self.audio_format = response_format
+            self.content_type = "audio/wav"
+            self.metadata = {"private": private_values[2]}
+            self.byte_stream = stream()
+            self.close_calls = 0
+
+        async def aclose(self) -> None:
+            self.close_calls += 1
+            await self.byte_stream.aclose()
+
+    response = Response()
+
+    class Service:
+        def preferences_snapshot(self) -> SimpleNamespace:
+            return SimpleNamespace(provider_id="audio_cpp")
+
+        async def synthesize_default(
+            self,
+            *,
+            text: str,
+            voice_override: str | None = None,
+            progress_sink: object = None,
+        ) -> Response:
+            assert text == private_values[3]
+            assert voice_override is None
+            del progress_sink
+            return response
+
+    class Handler(TTSEventHandler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.messages: list[object] = []
+
+        async def post_message(self, message: object) -> None:
+            self.messages.append(message)
+
+    def capture_counter(
+        name: str,
+        value: int = 1,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        metric_calls.append((name, "counter", value, dict(labels or {})))
+
+    def capture_histogram(
+        name: str,
+        value: float,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        metric_calls.append((name, "histogram", value, dict(labels or {})))
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_counter",
+        capture_counter,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_histogram",
+        capture_histogram,
+    )
+    handler = Handler()
+    handler._tts_service = Service()
+    sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
+    try:
+        await handler._generate_tts(
+            private_values[3],
+            "console-invalid-response",
+            None,
+        )
+    finally:
+        logger.remove(sink_id)
+        await handler.cleanup_tts_resources()
+
+    completions = [
+        message for message in handler.messages if isinstance(message, TTSCompleteEvent)
+    ]
+    assert len(completions) == 1
+    assert (
+        completions[0].error
+        == "The TTS service returned invalid audio; check provider compatibility"
+    )
+    assert response.close_calls == 1
+    assert stream_iterations == 0
+    assert len(metric_calls) == 2
+    for _name, _kind, _value, labels in metric_calls:
+        assert labels == {
+            "provider_id": "audio_cpp",
+            "resolution_source": "global",
+            "outcome_code": "audio_response_invalid",
+        }
+
+    rendered = repr(metric_calls) + "\n".join(log_messages) + repr(completions)
+    for private_value in private_values:
+        assert private_value not in rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("failure", "expected_copy", "expected_outcome"),
     (
         (

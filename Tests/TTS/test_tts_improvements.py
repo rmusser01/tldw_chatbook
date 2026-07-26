@@ -406,6 +406,35 @@ class TestTTSEventHandler:
         metadata_path = export_path.with_suffix(".mp3.json")
         assert metadata_path.exists()
 
+    @pytest.mark.asyncio
+    async def test_audio_cleanup_keeps_ownership_until_secure_delete_succeeds(
+        self,
+        handler,
+        tmp_path,
+        monkeypatch,
+    ):
+        test_audio = tmp_path / "retry-cleanup.wav"
+        test_audio.write_bytes(b"audio")
+        handler._audio_files["msg-retry"] = test_audio
+        delete_results = iter((False, True))
+
+        def delete(path):
+            assert Path(path) == test_audio
+            result = next(delete_results)
+            if result:
+                test_audio.unlink()
+            return result
+
+        monkeypatch.setattr(tts_events_module, "secure_delete_file", delete)
+
+        await handler._cleanup_audio_file("msg-retry")
+        assert handler._audio_files == {"msg-retry": test_audio}
+        assert test_audio.exists()
+
+        await handler._cleanup_audio_file("msg-retry")
+        assert handler._audio_files == {}
+        assert not test_audio.exists()
+
     # --- task-559 unit 2: stop must actually interrupt playback ----------
     #
     # Previously `handle_tts_playback`'s "stop" branch only deleted the

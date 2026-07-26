@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import stat
+import threading
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from types import SimpleNamespace
@@ -179,6 +180,72 @@ class _RecordingTempManager:
         self.paths.append(path)
         self.suffixes.append(suffix)
         return str(path)
+
+
+class _HeartbeatBlocker:
+    """Record whether the asyncio loop runs while one sync phase is blocked."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self.entered = threading.Event()
+        self.heartbeat = threading.Event()
+        self.release = threading.Event()
+        self.observed_heartbeat: bool | None = None
+        self._coordinator = threading.Thread(target=self._coordinate)
+
+    def start(self) -> None:
+        self._coordinator.start()
+
+    def block(self) -> None:
+        self.entered.set()
+        assert self.release.wait(timeout=1.0)
+        self.observed_heartbeat = self.heartbeat.is_set()
+
+    def join(self) -> None:
+        self._coordinator.join(timeout=1.0)
+        assert not self._coordinator.is_alive()
+
+    def _coordinate(self) -> None:
+        assert self.entered.wait(timeout=1.0)
+        self._loop.call_soon_threadsafe(self._heartbeat)
+        if not self.heartbeat.wait(timeout=0.2):
+            # Unstick the pre-fix synchronous path without leaking a test thread.
+            self.release.set()
+
+    def _heartbeat(self) -> None:
+        self.heartbeat.set()
+        self.release.set()
+
+
+class _BlockingFile:
+    def __init__(
+        self,
+        wrapped: Any,
+        blocker: _HeartbeatBlocker,
+        phase: str,
+    ) -> None:
+        self._wrapped = wrapped
+        self._blocker = blocker
+        self._phase = phase
+
+    def __enter__(self) -> _BlockingFile:
+        self._wrapped.__enter__()
+        return self
+
+    def __exit__(self, *exc_info: object) -> object:
+        if self._phase == "close":
+            self._blocker.block()
+        return self._wrapped.__exit__(*exc_info)
+
+    def write(self, content: bytes) -> int:
+        if self._phase == "write":
+            self._blocker.block()
+        return self._wrapped.write(content)
+
+    def flush(self) -> None:
+        if self._phase == "flush":
+            self._blocker.block()
+        self._wrapped.flush()
 
 
 class _DefaultService:
@@ -431,3 +498,220 @@ async def test_console_cancellation_deletes_partial_artifact_and_closes_response
     assert not any(
         isinstance(message, TTSCompleteEvent) for message in handler.messages
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ("create", "write", "flush", "close"))
+async def test_console_artifact_io_keeps_event_loop_responsive(
+    phase: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop = asyncio.get_running_loop()
+    blocker = _HeartbeatBlocker(loop)
+    timeline: list[str] = []
+    response = _Response(_RecordingStream(_WAV_CHUNKS[:1], timeline))
+    handler = _Handler()
+    handler._tts_service = _DefaultService(response)
+
+    class TempManager(_RecordingTempManager):
+        def create_temp_file(
+            self,
+            content: str | bytes,
+            suffix: str = "",
+            prefix: str = "tmp",
+            dir: str | None = None,
+        ) -> str:
+            if phase == "create":
+                blocker.block()
+            return super().create_temp_file(content, suffix, prefix, dir)
+
+    temp_manager = TempManager(tmp_path)
+    handler._temp_manager = temp_manager
+    original_open = Path.open
+
+    if phase != "create":
+
+        def blocking_open(path: Path, *args: object, **kwargs: object) -> Any:
+            wrapped = original_open(path, *args, **kwargs)
+            if path.parent == tmp_path and path.name.startswith("tts_audio_"):
+                return _BlockingFile(wrapped, blocker, phase)
+            return wrapped
+
+        monkeypatch.setattr(Path, "open", blocking_open)
+
+    blocker.start()
+    try:
+        await handler._generate_tts(
+            "Character response",
+            f"console-native-{phase}",
+            None,
+        )
+    finally:
+        blocker.join()
+
+    assert blocker.observed_heartbeat is True
+    assert response.close_calls == 1
+    assert any(
+        isinstance(message, TTSCompleteEvent) and message.audio_file is not None
+        for message in handler.messages
+    )
+    await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_console_cancellation_joins_blocking_artifact_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tasks_before = asyncio.all_tasks()
+    entered = threading.Event()
+    release = threading.Event()
+    worker_exited = threading.Event()
+    fallback_used = threading.Event()
+    timeline: list[str] = []
+    response = _Response(_RecordingStream(_WAV_CHUNKS[:1], timeline))
+    handler = _Handler()
+    handler._tts_service = _DefaultService(response)
+    temp_manager = _RecordingTempManager(tmp_path)
+    handler._temp_manager = temp_manager
+    original_open = Path.open
+
+    class BlockingWriteFile:
+        def __init__(self, wrapped: Any) -> None:
+            self._wrapped = wrapped
+
+        def __enter__(self) -> BlockingWriteFile:
+            self._wrapped.__enter__()
+            return self
+
+        def __exit__(self, *exc_info: object) -> object:
+            return self._wrapped.__exit__(*exc_info)
+
+        def write(self, content: bytes) -> int:
+            entered.set()
+            try:
+                assert release.wait(timeout=1.0)
+                return self._wrapped.write(content)
+            finally:
+                worker_exited.set()
+
+        def flush(self) -> None:
+            self._wrapped.flush()
+
+    def blocking_open(path: Path, *args: object, **kwargs: object) -> Any:
+        wrapped = original_open(path, *args, **kwargs)
+        if path.parent == tmp_path and path.name.startswith("tts_audio_"):
+            return BlockingWriteFile(wrapped)
+        return wrapped
+
+    def unblock_synchronous_red_path() -> None:
+        assert entered.wait(timeout=1.0)
+        if not release.wait(timeout=0.2):
+            fallback_used.set()
+            release.set()
+
+    monkeypatch.setattr(Path, "open", blocking_open)
+    watchdog = threading.Thread(target=unblock_synchronous_red_path)
+    watchdog.start()
+    generation = asyncio.create_task(
+        handler._generate_tts(
+            "Character response",
+            "console-native-worker-cancel",
+            None,
+        )
+    )
+
+    async def wait_for_thread_entry() -> None:
+        while not entered.is_set():
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(wait_for_thread_entry(), timeout=1.0)
+    generation.cancel()
+    await asyncio.sleep(0)
+    assert not generation.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await generation
+    watchdog.join(timeout=1.0)
+
+    assert not watchdog.is_alive()
+    assert not fallback_used.is_set()
+    assert worker_exited.is_set()
+    assert response.close_calls == 1
+    assert handler._audio_files == {}
+    assert handler._artifact_cleanup_retry == set()
+    assert len(temp_manager.paths) == 1
+    assert not temp_manager.paths[0].exists()
+    assert asyncio.all_tasks() - tasks_before == set()
+
+
+@pytest.mark.asyncio
+async def test_console_secure_delete_keeps_event_loop_responsive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "partial.wav"
+    path.write_bytes(b"partial audio")
+    handler = _Handler()
+    handler._audio_files["message"] = path
+    blocker = _HeartbeatBlocker(asyncio.get_running_loop())
+
+    def blocking_delete(candidate: str | Path) -> bool:
+        assert Path(candidate) == path
+        blocker.block()
+        path.unlink()
+        return True
+
+    monkeypatch.setattr(tts_events_module, "secure_delete_file", blocking_delete)
+    blocker.start()
+    try:
+        await handler._discard_tts_artifact("message", path)
+    finally:
+        blocker.join()
+
+    assert blocker.observed_heartbeat is True
+    assert not path.exists()
+    assert handler._audio_files == {}
+
+
+@pytest.mark.asyncio
+async def test_console_failed_secure_delete_retains_retry_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "partial-private-path.wav"
+    path.write_bytes(b"partial audio")
+    handler = _Handler()
+    handler._audio_files["message"] = path
+    delete_results = iter((False, True))
+    log_messages: list[str] = []
+
+    def delete(candidate: str | Path) -> bool:
+        assert Path(candidate) == path
+        result = next(delete_results)
+        if result:
+            path.unlink()
+        return result
+
+    monkeypatch.setattr(tts_events_module, "secure_delete_file", delete)
+    sink_id = tts_events_module.logger.add(
+        log_messages.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        await handler._discard_tts_artifact("message", path)
+        assert handler._audio_files == {}
+        assert handler._artifact_cleanup_retry == {path}
+        assert path.exists()
+
+        await handler.cleanup_tts_resources()
+    finally:
+        tts_events_module.logger.remove(sink_id)
+
+    assert handler._artifact_cleanup_retry == set()
+    assert not path.exists()
+    rendered = "\n".join(log_messages)
+    assert "Incomplete TTS artifact cleanup will be retried" in rendered
+    assert str(path) not in rendered

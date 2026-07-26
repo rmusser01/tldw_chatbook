@@ -3,7 +3,9 @@
 #
 # Imports
 import asyncio
-from typing import Optional, Dict
+from collections.abc import Callable
+from functools import partial
+from typing import Dict, Optional, TypeVar
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass
@@ -23,6 +25,13 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRegistryClosedError,
 )
 from tldw_chatbook.Utils.secure_temp_files import get_temp_manager, secure_delete_file
+
+_T = TypeVar("_T")
+
+
+class _TTSResponseContractError(RuntimeError):
+    """Raised when a synthesized response violates the Console audio contract."""
+
 
 #######################################################################################################################
 #
@@ -219,6 +228,7 @@ class TTSEventHandler:
         self._tts_service = None
         self._temp_manager = get_temp_manager()
         self._audio_files: Dict[str, Path] = {}  # Track audio files by message_id
+        self._artifact_cleanup_retry: set[Path] = set()
         # task-559 fix round 1: which file the player last loaded, tracked
         # independently of `_audio_files` -- that cache is deleted 5s after
         # playback STARTS (see handle_tts_playback's "play" branch), well
@@ -453,23 +463,30 @@ class TTSEventHandler:
                 if (
                     not isinstance(response.provider_id, str)
                     or not response.provider_id
+                    or (provider_id is not None and response.provider_id != provider_id)
                 ):
-                    raise ValueError("TTS response provider metadata is invalid")
+                    raise _TTSResponseContractError
                 if not isinstance(response.model_id, str) or not response.model_id:
-                    raise ValueError("TTS response model metadata is invalid")
-                provider_id = response.provider_id
+                    raise _TTSResponseContractError
                 audio_format = self._response_audio_format(response.audio_format)
-                artifact_path = Path(
-                    self._temp_manager.create_temp_file(
-                        content=b"",
-                        suffix=f".{audio_format}",
-                        prefix="tts_audio_",
-                    )
+
+                def remember_cancelled_creation(path: Path) -> None:
+                    nonlocal artifact_path
+                    artifact_path = path
+
+                created_artifact_path = await self._run_blocking_tts_io(
+                    lambda: self._create_tts_artifact(audio_format),
+                    on_cancelled_result=remember_cancelled_creation,
                 )
-                with artifact_path.open("ab") as audio_file:
-                    async for chunk in response.byte_stream:
-                        audio_file.write(chunk)
-                    audio_file.flush()
+                artifact_path = created_artifact_path
+                async for chunk in response.byte_stream:
+                    await self._run_blocking_tts_io(
+                        partial(
+                            self._append_tts_artifact_chunk,
+                            created_artifact_path,
+                            chunk,
+                        )
+                    )
             except BaseException as error:
                 primary_error = error
                 raise
@@ -541,6 +558,68 @@ class TTSEventHandler:
                 except Exception:
                     logger.debug("TTS metric publication failed")
 
+    @staticmethod
+    async def _run_blocking_tts_io(
+        operation: Callable[[], _T],
+        *,
+        on_cancelled_result: Callable[[_T], None] | None = None,
+    ) -> _T:
+        """Run one artifact operation off-loop and join it before cancellation."""
+        worker = asyncio.create_task(asyncio.to_thread(operation))
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    continue
+            try:
+                result = worker.result()
+            except BaseException:
+                logger.warning(
+                    "TTS artifact I/O did not complete while cancellation was pending"
+                )
+            else:
+                if on_cancelled_result is not None:
+                    on_cancelled_result(result)
+            raise
+
+    def _create_tts_artifact(self, audio_format: str) -> Path:
+        """Create one owner-only Console audio artifact."""
+        return Path(
+            self._temp_manager.create_temp_file(
+                content=b"",
+                suffix=f".{audio_format}",
+                prefix="tts_audio_",
+            )
+        )
+
+    @staticmethod
+    def _append_tts_artifact_chunk(artifact_path: Path, chunk: bytes) -> None:
+        """Append and flush one response chunk while preserving stream order."""
+        with artifact_path.open("ab") as audio_file:
+            audio_file.write(chunk)
+            audio_file.flush()
+
+    @staticmethod
+    def _secure_delete_tts_artifact(artifact_path: Path) -> bool:
+        """Delete an artifact and treat an already-absent path as complete."""
+        deleted = secure_delete_file(artifact_path)
+        return deleted is True or not artifact_path.exists()
+
+    async def _try_secure_delete_tts_artifact(self, artifact_path: Path) -> bool:
+        """Attempt secure deletion without exposing the artifact path in logs."""
+        try:
+            deleted = await self._run_blocking_tts_io(
+                lambda: self._secure_delete_tts_artifact(artifact_path)
+            )
+        except Exception:
+            deleted = False
+        if not deleted:
+            logger.warning("Incomplete TTS artifact cleanup will be retried")
+        return deleted
+
     async def _discard_tts_artifact(
         self,
         message_id: str,
@@ -552,19 +631,20 @@ class TTSEventHandler:
         async with self._audio_files_lock:
             if self._audio_files.get(message_id) == artifact_path:
                 del self._audio_files[message_id]
-        try:
-            secure_delete_file(artifact_path)
-        except Exception:
-            logger.warning("Failed to remove incomplete TTS artifact")
+            self._artifact_cleanup_retry.add(artifact_path)
+
+        if await self._try_secure_delete_tts_artifact(artifact_path):
+            async with self._audio_files_lock:
+                self._artifact_cleanup_retry.discard(artifact_path)
 
     @staticmethod
     def _response_audio_format(audio_format: object) -> str:
         """Return one safe canonical extension from response-owned metadata."""
         if not isinstance(audio_format, str):
-            raise ValueError("TTS response format metadata is invalid")
+            raise _TTSResponseContractError
         normalized = audio_format.lower().strip().removeprefix(".")
         if normalized not in {"mp3", "opus", "aac", "flac", "wav", "pcm"}:
-            raise ValueError("TTS response format metadata is invalid")
+            raise _TTSResponseContractError
         return normalized
 
     @staticmethod
@@ -580,6 +660,8 @@ class TTSEventHandler:
             return "unavailable"
         if isinstance(error, TTSOperationError):
             return error.code
+        if isinstance(error, _TTSResponseContractError):
+            return "audio_response_invalid"
         if isinstance(error, ValueError):
             return "configuration_invalid"
         return "generation_failed"
@@ -605,6 +687,10 @@ class TTSEventHandler:
             if error.code == "generation_timeout":
                 return "TTS generation timed out; retry"
             return "TTS generation failed; retry"
+        if isinstance(error, _TTSResponseContractError):
+            return (
+                "The TTS service returned invalid audio; check provider compatibility"
+            )
         if isinstance(error, ValueError):
             return "TTS is not configured; open STTS Settings"
         return "Unexpected TTS generation failure; retry"
@@ -735,11 +821,15 @@ class TTSEventHandler:
             await asyncio.sleep(delay)
 
         async with self._audio_files_lock:
-            if message_id in self._audio_files:
-                audio_file = self._audio_files[message_id]
-                if secure_delete_file(audio_file):
-                    logger.debug(f"Cleaned up audio file for message {message_id}")
-                del self._audio_files[message_id]
+            audio_file = self._audio_files.get(message_id)
+        if audio_file is None:
+            return
+
+        if await self._try_secure_delete_tts_artifact(audio_file):
+            async with self._audio_files_lock:
+                if self._audio_files.get(message_id) == audio_file:
+                    del self._audio_files[message_id]
+            logger.debug(f"Cleaned up audio file for message {message_id}")
 
     def on_tts_request_event(self, event: TTSRequestEvent) -> None:
         """Handle TTS request event"""
@@ -785,15 +875,23 @@ class TTSEventHandler:
         if tasks_to_cancel:
             await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
 
-        # Clean up audio files with lock
+        # Snapshot owned files without dropping failed-deletion bookkeeping.
         async with self._audio_files_lock:
             files_to_clean = list(self._audio_files.items())
-            self._audio_files.clear()
+            retries_to_clean = list(self._artifact_cleanup_retry)
             self._last_played = None
 
         for message_id, audio_file in files_to_clean:
-            secure_delete_file(audio_file)
-            logger.debug(f"Cleaned up audio file for message {message_id}")
+            if await self._try_secure_delete_tts_artifact(audio_file):
+                async with self._audio_files_lock:
+                    if self._audio_files.get(message_id) == audio_file:
+                        del self._audio_files[message_id]
+                logger.debug(f"Cleaned up audio file for message {message_id}")
+
+        for audio_file in retries_to_clean:
+            if await self._try_secure_delete_tts_artifact(audio_file):
+                async with self._audio_files_lock:
+                    self._artifact_cleanup_retry.discard(audio_file)
 
         # Clear active tasks with lock
         async with self._active_tasks_lock:
