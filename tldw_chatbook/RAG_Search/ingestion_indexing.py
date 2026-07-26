@@ -213,6 +213,38 @@ def _configured_profile() -> str:
     return DEFAULT_PROFILE
 
 
+def _close_discarded_rag_service(service: Any) -> None:
+    """Best-effort release of resources on a build discarded by a race.
+
+    task-640 item 2: a build loses the race in ``get_shared_rag_service()``
+    when a concurrent ``set_shared_rag_service()``/``reset_shared_rag_
+    service()`` already installed a different instance, or bumped
+    ``_shared_service_generation`` past what this build started with --
+    see the two discard branches there. Investigation found
+    ``EnhancedRAGServiceV2`` (via its ``EnhancedRAGService``/``RAGService``
+    base, ``rag_service.py``) DOES define a real ``close()`` that shuts down
+    its thread pool executor and releases its embeddings/vector-store
+    handles and DB connection pools -- a discarded build is therefore not
+    actually resource-free once the underlying service grows any of those,
+    so it is closed here rather than just dropped for GC. The ``getattr``/
+    ``callable`` guard keeps this a documented no-op seam rather than
+    inventing lifecycle machinery, in case a future service implementation
+    genuinely has nothing to close.
+
+    MUST be called OUTSIDE ``_shared_service_lock`` -- ``close()`` can block
+    (e.g. ``ThreadPoolExecutor.shutdown(wait=True)``), and holding that lock
+    across a blocking call is exactly the task-641 hazard this module's
+    two-lock design exists to avoid.
+    """
+    close = getattr(service, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception as e:
+        logger.debug(f"Error closing discarded shared RAG service build: {e}")
+
+
 def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
     """Get (or lazily create) the process-wide RAG service instance.
 
@@ -251,6 +283,19 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
     discarded entirely rather than quietly resurrecting a superseded profile
     immediately after the reset that was meant to clear it.
 
+    task-640 item 1: config/profile resolution (``_configured_profile()`` +
+    ``resolve_active_rag_config()``, both plain disk reads with no side
+    effects) now runs BEFORE either lock is acquired at all -- previously it
+    ran under BOTH ``_shared_service_build_lock`` and ``_shared_service_
+    lock``, needlessly widening the window builders hold the fast lock for.
+    Two racing first-touch callers may now each redundantly resolve config
+    once before queuing behind ``_shared_service_build_lock`` to build, but
+    that's cheap, and the generation check below still catches the only
+    correctness-relevant case: a reset landing between this resolution and
+    the swap discards the (now-stale) build regardless of how early its
+    config was read, so the worst case is a safe, spurious discard, never a
+    stale profile silently winning.
+
     Args:
         profile_name: Optional profile override for the first construction.
 
@@ -263,31 +308,33 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
     global _shared_service
     if _shared_service is not None:
         return _shared_service
+
+    try:
+        from .simplified import create_rag_service
+        # Function-level import: active_config is consumed by
+        # ingestion_indexing (Task 4 wires the reverse edge), so a
+        # module-top import here would risk a circular import.
+        from .simplified.active_config import resolve_active_rag_config
+
+        active = _configured_profile()
+        if profile_name is None or profile_name == active:
+            profile = active
+            build_kwargs = {
+                "profile_name": profile,
+                "config": resolve_active_rag_config(),
+            }
+        else:
+            profile = profile_name
+            build_kwargs = {"profile_name": profile_name}
+    except Exception as e:
+        logger.error(f"Failed to resolve config for shared RAG service: {e}")
+        return None
+
     with _shared_service_build_lock:
         with _shared_service_lock:
             if _shared_service is not None:
                 return _shared_service
             generation = _shared_service_generation
-            try:
-                from .simplified import create_rag_service
-                # Function-level import: active_config is consumed by
-                # ingestion_indexing (Task 4 wires the reverse edge), so a
-                # module-top import here would risk a circular import.
-                from .simplified.active_config import resolve_active_rag_config
-
-                active = _configured_profile()
-                if profile_name is None or profile_name == active:
-                    profile = active
-                    build_kwargs = {
-                        "profile_name": profile,
-                        "config": resolve_active_rag_config(),
-                    }
-                else:
-                    profile = profile_name
-                    build_kwargs = {"profile_name": profile_name}
-            except Exception as e:
-                logger.error(f"Failed to resolve config for shared RAG service: {e}")
-                return None
 
         # Build OUTSIDE _shared_service_lock (but still inside
         # _shared_service_build_lock) -- see docstring above for why this
@@ -298,12 +345,14 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
             logger.error(f"Failed to create shared RAG service: {e}")
             return None
 
+        discard_built = False
         with _shared_service_lock:
             if _shared_service is not None:
                 # An injected set_shared_rag_service() call already won
                 # while we were building; discard ours and agree with it.
-                return _shared_service
-            if generation != _shared_service_generation:
+                winner = _shared_service
+                discard_built = True
+            elif generation != _shared_service_generation:
                 # A reset/set landed while we were building outside the
                 # lock -- this build reflects a since-superseded profile.
                 # Discard it so the NEXT caller rebuilds fresh rather than
@@ -313,10 +362,18 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
                     "Discarding shared RAG service build superseded by a "
                     "concurrent reset/set"
                 )
-                return None
-            _shared_service = built
-            logger.info(f"Created shared RAG service (profile={profile})")
-        return _shared_service
+                winner = None
+                discard_built = True
+            else:
+                _shared_service = built
+                logger.info(f"Created shared RAG service (profile={profile})")
+                winner = _shared_service
+
+    if discard_built:
+        # Always OUTSIDE _shared_service_lock -- see
+        # _close_discarded_rag_service's docstring (task-640 item 2).
+        _close_discarded_rag_service(built)
+    return winner
 
 
 def peek_shared_rag_service() -> Optional[Any]:

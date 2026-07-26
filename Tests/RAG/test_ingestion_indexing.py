@@ -122,6 +122,13 @@ class FakeRAGService:
         self.vector_store = FakeVectorStore()
         self.indexed_docs = []
         self.fail = False
+        self.close_calls = 0
+
+    def close(self):
+        """task-640 item 2: mirrors EnhancedRAGServiceV2's real close(), so
+        tests can assert get_shared_rag_service() releases a build it
+        discards due to a construction race."""
+        self.close_calls += 1
 
     async def index_batch_optimized(self, documents, show_progress=True, batch_size=32):
         if self.fail:
@@ -938,4 +945,166 @@ class TestSharedRagServiceLockDeadlock:
             assert ingestion_indexing.peek_shared_rag_service() is None
         finally:
             release_construction.set()
+            ingestion_indexing.reset_shared_rag_service()
+
+    def test_reset_racing_in_flight_construction_closes_the_discarded_build(
+        self, monkeypatch
+    ):
+        """task-640 item 2: a build discarded because a concurrent reset
+        superseded its generation must have close() called on it (releasing
+        whatever real resources -- thread pool, embeddings, vector store,
+        DB connection pools -- EnhancedRAGServiceV2.close() frees) instead
+        of just being dropped for GC."""
+        ingestion_indexing.reset_shared_rag_service()
+        entered_construction = threading.Event()
+        release_construction = threading.Event()
+        built_holder = []
+
+        def _slow_create_rag_service(**kwargs):
+            entered_construction.set()
+            release_construction.wait(timeout=5)
+            built = FakeRAGService()
+            built_holder.append(built)
+            return built
+
+        self._patch_construction(monkeypatch, _slow_create_rag_service)
+
+        builder = threading.Thread(
+            target=ingestion_indexing.get_shared_rag_service, daemon=True
+        )
+        builder.start()
+        try:
+            assert entered_construction.wait(timeout=5), (
+                "construction never started"
+            )
+            ingestion_indexing.reset_shared_rag_service()
+            release_construction.set()
+            builder.join(timeout=5)
+            assert not builder.is_alive()
+
+            assert len(built_holder) == 1
+            assert built_holder[0].close_calls == 1, (
+                "the build discarded by the concurrent reset was never "
+                "closed -- its resources (thread pool/embeddings/vector "
+                "store/DB connection pools) leak"
+            )
+        finally:
+            release_construction.set()
+            ingestion_indexing.reset_shared_rag_service()
+
+    def test_concurrent_set_racing_in_flight_construction_closes_the_discarded_build(
+        self, monkeypatch
+    ):
+        """task-640 item 2, the other discard branch: an injected
+        set_shared_rag_service() winning while a build is in flight must
+        also close the losing (discarded) build -- and must NOT close the
+        winner it just installed."""
+        ingestion_indexing.reset_shared_rag_service()
+        entered_construction = threading.Event()
+        release_construction = threading.Event()
+        built_holder = []
+
+        def _slow_create_rag_service(**kwargs):
+            entered_construction.set()
+            release_construction.wait(timeout=5)
+            built = FakeRAGService()
+            built_holder.append(built)
+            return built
+
+        self._patch_construction(monkeypatch, _slow_create_rag_service)
+
+        results = []
+        builder = threading.Thread(
+            target=lambda: results.append(ingestion_indexing.get_shared_rag_service()),
+            daemon=True,
+        )
+        builder.start()
+        winner = FakeRAGService()
+        try:
+            assert entered_construction.wait(timeout=5), (
+                "construction never started"
+            )
+            ingestion_indexing.set_shared_rag_service(winner)
+            release_construction.set()
+            builder.join(timeout=5)
+            assert not builder.is_alive()
+
+            assert results == [winner]
+            assert len(built_holder) == 1
+            assert built_holder[0].close_calls == 1, (
+                "the build discarded because an injected "
+                "set_shared_rag_service() already won was never closed"
+            )
+            assert winner.close_calls == 0, (
+                "the WINNING (installed) service must never be closed just "
+                "because a concurrent build lost the race"
+            )
+        finally:
+            release_construction.set()
+            ingestion_indexing.reset_shared_rag_service()
+
+    def test_config_resolution_runs_before_the_build_lock_not_serialized_behind_it(
+        self, monkeypatch
+    ):
+        """task-640 item 1: resolve_active_rag_config()/_configured_profile()
+        must run BEFORE _shared_service_build_lock is acquired at all, so a
+        second caller's config resolution is never serialized behind a slow
+        in-flight build holding that lock."""
+        import tldw_chatbook.RAG_Search.simplified as simplified_pkg
+        import tldw_chatbook.RAG_Search.simplified.active_config as active_config
+
+        ingestion_indexing.reset_shared_rag_service()
+        entered_construction = threading.Event()
+        release_construction = threading.Event()
+
+        def _slow_create_rag_service(**kwargs):
+            entered_construction.set()
+            release_construction.wait(timeout=5)
+            return FakeRAGService()
+
+        monkeypatch.setattr(simplified_pkg, "create_rag_service", _slow_create_rag_service)
+
+        resolve_calls = []
+        resolve_calls_lock = threading.Lock()
+        second_resolve_seen = threading.Event()
+
+        def _tracking_resolve(**kwargs):
+            with resolve_calls_lock:
+                resolve_calls.append(1)
+                count = len(resolve_calls)
+            if count == 2:
+                second_resolve_seen.set()
+            return object()
+
+        monkeypatch.setattr(active_config, "resolve_active_rag_config", _tracking_resolve)
+
+        t1 = threading.Thread(
+            target=ingestion_indexing.get_shared_rag_service, daemon=True
+        )
+        t1.start()
+        try:
+            assert entered_construction.wait(timeout=5), (
+                "construction never started"
+            )
+            # t1 is now stuck mid-build, holding _shared_service_build_lock
+            # (its own config resolution already happened before that).
+            t2 = threading.Thread(
+                target=ingestion_indexing.get_shared_rag_service, daemon=True
+            )
+            t2.start()
+            try:
+                assert second_resolve_seen.wait(timeout=2), (
+                    "the second caller's config resolution was blocked "
+                    "behind the in-flight build's _shared_service_build_"
+                    "lock -- config resolution must run BEFORE that lock "
+                    "is acquired (task-640 item 1)"
+                )
+            finally:
+                release_construction.set()
+                t2.join(timeout=5)
+                assert not t2.is_alive()
+        finally:
+            release_construction.set()
+            t1.join(timeout=5)
+            assert not t1.is_alive()
             ingestion_indexing.reset_shared_rag_service()
