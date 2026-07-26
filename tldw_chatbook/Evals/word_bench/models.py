@@ -123,10 +123,17 @@ class TokenProb:
         return math.exp(self.logprob)
 
     def identity(self) -> tuple:
-        """A key comparable ACROSS models. See the class docstring."""
-        if self.bytes_:
-            return ("bytes", self.bytes_)
-        return ("token", self.token)
+        """A key comparable ACROSS models. See the class docstring.
+
+        Always keyed in the SAME namespace, ``"bytes"``, whether or not the
+        provider sent a ``bytes`` field: a bytes-less token (e.g. an OpenAI
+        legacy completions response) falls back to the UTF-8 encoding of its
+        surface text. Two disjoint namespaces (bytes vs. token) would make a
+        bytes-carrying provider compared against a bytes-less one report
+        maximal divergence for identical distributions -- the same defect
+        matching on provider-local token ids would cause.
+        """
+        return ("bytes", self.bytes_ or tuple(self.token.encode("utf-8")))
 
 
 @dataclass(frozen=True)

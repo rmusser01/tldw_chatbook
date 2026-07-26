@@ -88,6 +88,19 @@ def test_truncated_mass_clamps_when_observed_mass_exceeds_one():
     assert 0.0 <= cap.truncated_mass <= 1.0
 
 
+def test_identity_is_one_namespace_regardless_of_whether_bytes_are_present():
+    """bytes-carrying and bytes-less TokenProbs for the same surface form
+    must produce the SAME identity key. Two disjoint namespaces (a "bytes"
+    tuple key vs a "token" string key) would make a bytes-carrying provider
+    (llama.cpp) compared against a bytes-less one (e.g. OpenAI legacy
+    completions) report maximal divergence for identical distributions --
+    the exact mirror of the token-id defect this engine already guards
+    against."""
+    with_bytes = TokenProb(token=" a", logprob=-0.1, bytes_=(32, 97), token_id=1)
+    without_bytes = TokenProb(token=" a", logprob=-0.1, bytes_=(), token_id=2)
+    assert with_bytes.identity() == without_bytes.identity()
+
+
 def test_cell_error_is_distinguishable_from_capture():
     err = CellError(reason="unreachable", detail="connection refused")
     assert err.reason == "unreachable"
