@@ -52,6 +52,7 @@ from tldw_chatbook.Chat.citation_trace_identity import (
     CitationFingerprintCodec,
     LocalCitationIdentityContext,
 )
+from tldw_chatbook.Chat.citation_trace_models import PolicyCapability
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
@@ -876,6 +877,11 @@ class _BuilderRepository:
                 fingerprint_key_id="scope-key",
             ),
             fingerprint_codec=CitationFingerprintCodec(b"s" * 32),
+            policy_version="test-local-policy-v1",
+            policy_capabilities=(
+                PolicyCapability.VIEW_SNAPSHOT,
+                PolicyCapability.VIEW_SOURCE_IDENTITY,
+            ),
         )
         self.builders.append(builder)
         return builder

@@ -21,19 +21,31 @@ from tldw_chatbook.Chat.citation_trace_identity import (
     LocalCitationIdentityContext,
 )
 from tldw_chatbook.Chat.citation_trace_models import (
+    ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX,
     EVIDENCE_ENTRIES_PER_PROMPT_MAX,
     PROMPT_EVIDENCE_SETS_MAX,
     RETRIEVAL_CANDIDATES_PER_RUN_MAX,
     SNAPSHOT_TEXT_UTF8_BYTES_MAX,
+    AnswerAttemptKind,
+    CitationCompleteness,
     EvidenceStorageMode,
     MarkerNamespace,
+    PolicyCapability,
     RetrievalScoreKind,
     RetrievalScoreScale,
+    TraceLifecycle,
+    TraceOrigin,
+    reduce_selected_attempt_completeness,
 )
 
 
 NOW = datetime(2026, 7, 25, 12, 0, tzinfo=UTC)
 SECRET = b"0123456789abcdef0123456789abcdef"
+TEST_POLICY_VERSION = "test-local-policy-v1"
+TEST_POLICY_CAPABILITIES = (
+    PolicyCapability.VIEW_SNAPSHOT,
+    PolicyCapability.VIEW_SOURCE_IDENTITY,
+)
 
 
 def _identity() -> LocalCitationIdentityContext:
@@ -50,6 +62,8 @@ def _builder() -> CitationTraceBuilder:
         generation_id="generation-1",
         identity_context=_identity(),
         fingerprint_codec=CitationFingerprintCodec(SECRET),
+        policy_version=TEST_POLICY_VERSION,
+        policy_capabilities=TEST_POLICY_CAPABILITIES,
         created_at=NOW,
     )
 
@@ -100,6 +114,40 @@ def _record_run(builder: CitationTraceBuilder) -> str:
     )
 
 
+def _record_prompt_set(
+    builder: CitationTraceBuilder,
+    *,
+    run_id: str | None = None,
+    created_at: datetime = NOW,
+) -> str:
+    linked_run_id = run_id if run_id is not None else _record_run(builder)
+    return builder.record_prompt_evidence_set(
+        run_id=linked_run_id,
+        evidence=(
+            LocalPromptEvidenceCapture(
+                candidate_rank=1,
+                snapshot_text="[S1] MEDIA — Alpha\nExact",
+            ),
+        ),
+        created_at=created_at,
+    )
+
+
+def _builder_with_initial_answer(
+    *,
+    answer_body: str = "Marker-free exact answer.",
+    completed_at: datetime = NOW,
+) -> tuple[CitationTraceBuilder, str]:
+    builder = _builder()
+    prompt_set_id = _record_prompt_set(builder)
+    attempt_id = builder.record_initial_answer_attempt(
+        prompt_evidence_set_id=prompt_set_id,
+        answer_body=answer_body,
+        completed_at=completed_at,
+    )
+    return builder, attempt_id
+
+
 def _compact_model_json_bytes(model: BaseModel) -> int:
     return len(
         json.dumps(
@@ -121,8 +169,10 @@ def test_local_builder_starts_empty_unsealed_and_redacts_private_context() -> No
     assert builder.evidence_run_payloads == ()
     assert builder.prompt_evidence_sets == ()
     assert builder.evidence_snapshot_payloads == ()
+    assert builder.answer_attempts == ()
+    assert builder.answer_attempt_payloads == ()
     assert builder.is_sealed is False
-    assert not hasattr(builder, "seal")
+    assert hasattr(builder, "seal")
     assert not hasattr(builder, "persist")
     assert not hasattr(builder, "prepare_write")
     assert SECRET.decode() not in repr(builder)
@@ -146,6 +196,8 @@ def test_local_builder_requires_a_valid_frozen_local_identity_binding() -> None:
             generation_id="generation-1",
             identity_context=missing_profile,
             fingerprint_codec=CitationFingerprintCodec(SECRET),
+            policy_version=TEST_POLICY_VERSION,
+            policy_capabilities=TEST_POLICY_CAPABILITIES,
             created_at=NOW,
         )
     with pytest.raises(TypeError, match="identity_context"):
@@ -153,6 +205,19 @@ def test_local_builder_requires_a_valid_frozen_local_identity_binding() -> None:
             request_id="request-1",
             generation_id="generation-1",
             identity_context=None,  # type: ignore[arg-type]
+            fingerprint_codec=CitationFingerprintCodec(SECRET),
+            policy_version=TEST_POLICY_VERSION,
+            policy_capabilities=TEST_POLICY_CAPABILITIES,
+            created_at=NOW,
+        )
+
+
+def test_local_builder_requires_explicit_policy_metadata() -> None:
+    with pytest.raises(TypeError):
+        CitationTraceBuilder.local(
+            request_id="request-1",
+            generation_id="generation-1",
+            identity_context=_identity(),
             fingerprint_codec=CitationFingerprintCodec(SECRET),
             created_at=NOW,
         )
@@ -177,6 +242,8 @@ def test_local_builder_rejects_invalid_request_identity_or_timestamp(
             generation_id=generation_id,
             identity_context=_identity(),
             fingerprint_codec=CitationFingerprintCodec(SECRET),
+            policy_version=TEST_POLICY_VERSION,
+            policy_capabilities=TEST_POLICY_CAPABILITIES,
             created_at=created_at,
         )
 
@@ -188,6 +255,8 @@ def test_local_builder_rejects_falsy_non_datetime_created_at() -> None:
             generation_id="generation-1",
             identity_context=_identity(),
             fingerprint_codec=CitationFingerprintCodec(SECRET),
+            policy_version=TEST_POLICY_VERSION,
+            policy_capabilities=TEST_POLICY_CAPABILITIES,
             created_at=0,  # type: ignore[arg-type]
         )
 
@@ -232,6 +301,8 @@ def test_strict_revalidation_never_leaks_sensitive_values_to_warnings_or_stderr(
                 generation_id="generation-1",
                 identity_context=forged_identity,
                 fingerprint_codec=CitationFingerprintCodec(SECRET),
+                policy_version=TEST_POLICY_VERSION,
+                policy_capabilities=TEST_POLICY_CAPABILITIES,
                 created_at=NOW,
             )
         with pytest.raises(ValidationError):
@@ -971,3 +1042,378 @@ def test_cumulative_snapshot_batch_overflow_is_atomic(
 
     assert builder.prompt_evidence_sets == ()
     assert builder.evidence_snapshot_payloads == ()
+
+
+def test_record_initial_answer_attempt_retains_governed_body_and_metadata() -> None:
+    answer_body = "Marker-free exact answer 🧪."
+    builder, attempt_id = _builder_with_initial_answer(answer_body=answer_body)
+
+    assert len(builder.answer_attempts) == 1
+    attempt = builder.answer_attempts[0]
+    payload = builder.answer_attempt_payloads[0]
+    assert attempt.attempt_id == attempt_id
+    assert attempt.attempt_ordinal == 1
+    assert attempt.kind is AnswerAttemptKind.INITIAL
+    assert attempt.prompt_evidence_set_id == builder.prompt_evidence_sets[0].prompt_set_id
+    assert attempt.answer_payload_ref == payload.payload_id
+    assert attempt.occurrences == ()
+    assert attempt.created_at == NOW
+    assert payload.attempt_id == attempt_id
+    assert payload.answer_body == answer_body
+    assert payload.body_integrity_hmac == CitationFingerprintCodec(SECRET).fingerprint(
+        CitationFingerprintDomain.MESSAGE_BODY,
+        answer_body,
+    )
+    immutable_json = json.dumps(attempt.model_dump(mode="json"), sort_keys=True)
+    assert answer_body not in immutable_json
+    assert payload.body_integrity_hmac not in immutable_json
+
+
+def test_initial_answer_governed_payload_view_is_deep_detached() -> None:
+    builder, _attempt_id = _builder_with_initial_answer()
+
+    returned = builder.answer_attempt_payloads[0]
+    object.__setattr__(returned, "answer_body", "tampered")
+
+    assert builder.answer_attempt_payloads[0].answer_body == "Marker-free exact answer."
+
+
+@pytest.mark.parametrize(
+    "answer_body",
+    (
+        "Eligible [S1] marker.",
+        "Eligible [S1] and [S2] markers.",
+    ),
+)
+def test_initial_answer_with_eligible_markers_is_unavailable_and_atomic(
+    answer_body: str,
+) -> None:
+    builder = _builder()
+    prompt_set_id = _record_prompt_set(builder)
+
+    with pytest.raises(ValueError) as captured:
+        builder.record_initial_answer_attempt(
+            prompt_evidence_set_id=prompt_set_id,
+            answer_body=answer_body,
+            completed_at=NOW,
+        )
+
+    assert isinstance(
+        captured.value,
+        builder_module.CitationTraceBuildUnavailable,
+    )
+    assert captured.value.reason_code == "occurrence_mapping_unavailable"
+    assert builder.answer_attempts == ()
+    assert builder.answer_attempt_payloads == ()
+
+
+@pytest.mark.parametrize(
+    "answer_body",
+    (
+        r"Escaped marker \[S1] is literal.",
+        "Inline code `[S1]` is literal.",
+        "```text\n[S1]\n```\nCode fence only.",
+    ),
+)
+def test_marker_free_eligibility_ignores_markdown_code_and_escaped_literals(
+    answer_body: str,
+) -> None:
+    builder, attempt_id = _builder_with_initial_answer(answer_body=answer_body)
+
+    assert builder.answer_attempts[0].attempt_id == attempt_id
+    assert builder.answer_attempts[0].occurrences == ()
+
+
+def test_answer_body_byte_cap_rejects_initial_attempt_atomically() -> None:
+    builder = _builder()
+    prompt_set_id = _record_prompt_set(builder)
+    sentinel = "ANSWER_BODY_SECRET_SENTINEL"
+    oversized = sentinel * (
+        (ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX // len(sentinel)) + 1
+    )
+
+    with pytest.raises(ValueError, match="answer_body exceeds") as captured:
+        builder.record_initial_answer_attempt(
+            prompt_evidence_set_id=prompt_set_id,
+            answer_body=oversized,
+            completed_at=NOW,
+        )
+
+    assert "ANSWER_BODY_" not in str(captured.value)
+    assert builder.answer_attempts == ()
+    assert builder.answer_attempt_payloads == ()
+
+
+def test_answer_body_aggregate_governed_payload_overflow_is_atomic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    measuring_builder, _attempt_id = _builder_with_initial_answer()
+    governed_bytes = sum(
+        _compact_model_json_bytes(payload)
+        for payload in (
+            *measuring_builder.evidence_run_payloads,
+            *measuring_builder.evidence_snapshot_payloads,
+            *measuring_builder.answer_attempt_payloads,
+        )
+    )
+    builder = _builder()
+    prompt_set_id = _record_prompt_set(builder)
+    monkeypatch.setattr(
+        builder_module,
+        "GOVERNED_PAYLOAD_UTF8_BYTES_MAX",
+        governed_bytes - 1,
+        raising=False,
+    )
+
+    with pytest.raises(ValueError, match="governed payload exceeds"):
+        builder.record_initial_answer_attempt(
+            prompt_evidence_set_id=prompt_set_id,
+            answer_body="Marker-free exact answer.",
+            completed_at=NOW,
+        )
+
+    assert builder.answer_attempts == ()
+    assert builder.answer_attempt_payloads == ()
+
+
+def test_initial_answer_rejects_unknown_prompt_set_atomically() -> None:
+    builder = _builder()
+
+    with pytest.raises(ValueError, match="unknown prompt evidence set"):
+        builder.record_initial_answer_attempt(
+            prompt_evidence_set_id="missing-prompt",
+            answer_body="Marker-free exact answer.",
+            completed_at=NOW,
+        )
+
+    assert builder.answer_attempts == ()
+    assert builder.answer_attempt_payloads == ()
+
+
+def test_attempt_completion_cannot_precede_prompt_creation_and_is_atomic() -> None:
+    builder = _builder()
+    prompt_set_id = _record_prompt_set(builder, created_at=NOW + timedelta(seconds=1))
+
+    with pytest.raises(ValueError, match="prompt evidence set"):
+        builder.record_initial_answer_attempt(
+            prompt_evidence_set_id=prompt_set_id,
+            answer_body="Marker-free exact answer.",
+            completed_at=NOW,
+        )
+
+    assert builder.answer_attempts == ()
+    assert builder.answer_attempt_payloads == ()
+
+
+def test_second_initial_answer_attempt_is_rejected_without_repair_or_rerun_api() -> None:
+    builder, first_attempt_id = _builder_with_initial_answer()
+
+    with pytest.raises(ValueError, match="initial answer attempt"):
+        builder.record_initial_answer_attempt(
+            prompt_evidence_set_id=builder.prompt_evidence_sets[0].prompt_set_id,
+            answer_body="Another marker-free answer.",
+            completed_at=NOW,
+        )
+
+    assert [attempt.attempt_id for attempt in builder.answer_attempts] == [
+        first_attempt_id
+    ]
+    assert len(builder.answer_attempt_payloads) == 1
+    assert not hasattr(builder, "record_repair_answer_attempt")
+    assert not hasattr(builder, "record_pipeline_rerun")
+
+
+def test_seal_returns_one_shot_local_immutable_write_with_fixed_linkage() -> None:
+    answer_body = "Marker-free exact answer."
+    builder, attempt_id = _builder_with_initial_answer(answer_body=answer_body)
+
+    sealed_write = builder.seal(
+        selected_attempt_id=attempt_id,
+        sealed_at=NOW + timedelta(seconds=1),
+    )
+
+    trace = sealed_write.trace
+    assert builder.is_sealed is True
+    assert trace.origin is TraceOrigin.LOCAL
+    assert trace.lifecycle is TraceLifecycle.SEALED
+    assert trace.completeness_at_seal is CitationCompleteness.COMPLETE
+    assert trace.completeness_at_seal is reduce_selected_attempt_completeness(
+        trace,
+        {
+            payload.payload_id: payload
+            for payload in sealed_write.evidence_snapshot_payloads
+        },
+    )
+    assert trace.selected_attempt_id == attempt_id
+    assert trace.answer_attempts[0].occurrences == ()
+    assert trace.policy_version == TEST_POLICY_VERSION
+    assert trace.policy_capabilities == TEST_POLICY_CAPABILITIES
+    assert sealed_write.evidence_run_payloads == builder.evidence_run_payloads
+    assert (
+        sealed_write.evidence_snapshot_payloads
+        == builder.evidence_snapshot_payloads
+    )
+    assert sealed_write.answer_attempt_payloads == builder.answer_attempt_payloads
+    trace_json = json.dumps(trace.model_dump(mode="json"), sort_keys=True)
+    assert answer_body not in trace_json
+    assert sealed_write.answer_attempt_payloads[0].body_integrity_hmac not in trace_json
+    assert sealed_write.answer_attempt_payloads[0].answer_body == answer_body
+    assert (
+        sealed_write.answer_attempt_payloads[0].body_integrity_hmac
+        == CitationFingerprintCodec(SECRET).fingerprint(
+            CitationFingerprintDomain.MESSAGE_BODY,
+            answer_body,
+        )
+    )
+    persistence_retry = sealed_write
+    assert persistence_retry is sealed_write
+
+
+def test_seal_requires_complete_graph_and_known_selected_attempt() -> None:
+    empty = _builder()
+    with pytest.raises(ValueError, match="evidence run"):
+        empty.seal(selected_attempt_id="missing", sealed_at=NOW)
+    assert empty.is_sealed is False
+
+    run_only = _builder()
+    _record_run(run_only)
+    with pytest.raises(ValueError, match="prompt evidence set"):
+        run_only.seal(selected_attempt_id="missing", sealed_at=NOW)
+    assert run_only.is_sealed is False
+
+    prompt_only = _builder()
+    _record_prompt_set(prompt_only)
+    with pytest.raises(ValueError, match="answer attempt"):
+        prompt_only.seal(selected_attempt_id="missing", sealed_at=NOW)
+    assert prompt_only.is_sealed is False
+
+    complete, _attempt_id = _builder_with_initial_answer()
+    with pytest.raises(ValueError, match="selected answer attempt"):
+        complete.seal(selected_attempt_id="missing", sealed_at=NOW)
+    assert complete.is_sealed is False
+
+
+def test_seal_requires_every_retrieval_run_to_have_ended() -> None:
+    builder = _builder()
+    run_id = builder.record_retrieval_run(
+        stage="hybrid",
+        raw_query="secret query",
+        candidates=(_candidate(),),
+        retrieval_metadata=_metadata(),
+        started_at=NOW,
+        ended_at=None,
+    )
+    prompt_set_id = _record_prompt_set(builder, run_id=run_id)
+    attempt_id = builder.record_initial_answer_attempt(
+        prompt_evidence_set_id=prompt_set_id,
+        answer_body="Marker-free exact answer.",
+        completed_at=NOW,
+    )
+
+    with pytest.raises(ValueError, match="ended_at"):
+        builder.seal(selected_attempt_id=attempt_id, sealed_at=NOW)
+
+    assert builder.is_sealed is False
+
+
+def test_seal_revalidates_run_prompt_and_attempt_lifecycle_order() -> None:
+    builder, attempt_id = _builder_with_initial_answer()
+    prompt = builder.prompt_evidence_sets[0]
+    builder._evidence_runs[0] = builder.evidence_runs[0].model_copy(  # type: ignore[attr-defined]
+        update={"ended_at": prompt.created_at + timedelta(seconds=1)}
+    )
+
+    with pytest.raises(ValueError, match="prompt"):
+        builder.seal(
+            selected_attempt_id=attempt_id,
+            sealed_at=NOW + timedelta(seconds=2),
+        )
+    assert builder.is_sealed is False
+
+    builder._evidence_runs[0] = builder.evidence_runs[0].model_copy(  # type: ignore[attr-defined]
+        update={"ended_at": NOW}
+    )
+    builder._answer_attempts[0] = builder.answer_attempts[0].model_copy(  # type: ignore[attr-defined]
+        update={"created_at": prompt.created_at - timedelta(seconds=1)}
+    )
+    with pytest.raises(ValueError, match="attempt"):
+        builder.seal(
+            selected_attempt_id=attempt_id,
+            sealed_at=NOW + timedelta(seconds=2),
+        )
+    assert builder.is_sealed is False
+
+
+@pytest.mark.parametrize(
+    "sealed_at",
+    (
+        NOW - timedelta(seconds=1),
+        NOW + timedelta(milliseconds=500),
+        NOW + timedelta(seconds=2, milliseconds=500),
+        NOW + timedelta(seconds=3, milliseconds=500),
+    ),
+)
+def test_seal_rejects_sealed_at_before_any_lifecycle_order_boundary(
+    sealed_at: datetime,
+) -> None:
+    builder = _builder()
+    run_id = builder.record_retrieval_run(
+        stage="hybrid",
+        raw_query="secret query",
+        candidates=(_candidate(),),
+        retrieval_metadata=_metadata(),
+        started_at=NOW + timedelta(seconds=1),
+        ended_at=NOW + timedelta(seconds=2),
+    )
+    prompt_set_id = _record_prompt_set(
+        builder,
+        run_id=run_id,
+        created_at=NOW + timedelta(seconds=3),
+    )
+    attempt_id = builder.record_initial_answer_attempt(
+        prompt_evidence_set_id=prompt_set_id,
+        answer_body="Marker-free exact answer.",
+        completed_at=NOW + timedelta(seconds=4),
+    )
+
+    with pytest.raises((ValueError, ValidationError), match="sealed_at"):
+        builder.seal(selected_attempt_id=attempt_id, sealed_at=sealed_at)
+
+    assert builder.is_sealed is False
+
+
+def test_every_mutation_and_second_seal_reject_after_successful_seal() -> None:
+    builder, attempt_id = _builder_with_initial_answer()
+    builder.seal(selected_attempt_id=attempt_id, sealed_at=NOW)
+    run_id = builder.evidence_runs[0].run_id
+    prompt_set_id = builder.prompt_evidence_sets[0].prompt_set_id
+
+    mutations = (
+        lambda: builder.record_retrieval_run(
+            stage="hybrid",
+            raw_query="secret query",
+            candidates=(_candidate(),),
+            retrieval_metadata=_metadata(),
+            started_at=NOW,
+            ended_at=NOW,
+        ),
+        lambda: builder.record_prompt_evidence_set(
+            run_id=run_id,
+            evidence=(
+                LocalPromptEvidenceCapture(
+                    candidate_rank=1,
+                    snapshot_text="[S1] MEDIA — Alpha\nExact",
+                ),
+            ),
+            created_at=NOW,
+        ),
+        lambda: builder.record_initial_answer_attempt(
+            prompt_evidence_set_id=prompt_set_id,
+            answer_body="Marker-free answer.",
+            completed_at=NOW,
+        ),
+        lambda: builder.seal(selected_attempt_id=attempt_id, sealed_at=NOW),
+    )
+    for mutation in mutations:
+        with pytest.raises(ValueError, match="sealed"):
+            mutation()

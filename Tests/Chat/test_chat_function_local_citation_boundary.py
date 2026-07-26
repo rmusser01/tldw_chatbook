@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.citation_trace_identity import (
     LocalCitationIdentityContext,
 )
 from tldw_chatbook.Chat.citation_trace_models import (
+    PolicyCapability,
     RetrievalScoreKind,
     RetrievalScoreScale,
 )
@@ -70,6 +71,11 @@ def _canonical_capture():
             fingerprint_key_id="fingerprint-key-1",
         ),
         fingerprint_codec=CitationFingerprintCodec(SECRET),
+        policy_version="test-local-policy-v1",
+        policy_capabilities=(
+            PolicyCapability.VIEW_SNAPSHOT,
+            PolicyCapability.VIEW_SOURCE_IDENTITY,
+        ),
         created_at=NOW,
     )
     candidates = tuple(

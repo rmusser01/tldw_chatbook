@@ -407,6 +407,54 @@ def test_local_trace_builder_canonical_capture_returns_request_scoped_builder(
     assert builder.prompt_evidence_sets == ()
 
 
+def test_repository_factory_owns_fixed_closed_retrieval_policy(
+    db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(db)
+    sentinel = object()
+    captured: dict[str, object] = {}
+
+    def capture_local_builder(
+        cls: type[CitationTraceBuilder],
+        **kwargs: object,
+    ) -> object:
+        del cls
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(
+        CitationTraceBuilder,
+        "local",
+        classmethod(capture_local_builder),
+    )
+
+    result = repository.create_local_trace_builder(
+        request_id="request-policy",
+        generation_id="generation-policy",
+    )
+
+    assert result is sentinel
+    assert captured["policy_version"] == "local-prompt-provenance-v1"
+    assert captured["policy_capabilities"] == (
+        PolicyCapability.VIEW_SNAPSHOT,
+        PolicyCapability.VIEW_SOURCE_IDENTITY,
+    )
+    assert PolicyCapability.RESOLVE_CURRENT_SOURCE not in captured[
+        "policy_capabilities"
+    ]
+    assert PolicyCapability.OPEN_NATIVE not in captured["policy_capabilities"]
+    assert PolicyCapability.OPEN_EXTERNAL not in captured["policy_capabilities"]
+    assert set(captured) == {
+        "request_id",
+        "generation_id",
+        "identity_context",
+        "fingerprint_codec",
+        "policy_version",
+        "policy_capabilities",
+    }
+
+
 def test_local_trace_builder_canonical_capture_without_injected_identity_returns_none(
     db: CharactersRAGDB,
 ) -> None:

@@ -32,6 +32,7 @@ from tldw_chatbook.Chat.citation_trace_identity import (
 )
 from tldw_chatbook.Chat.citation_trace_models import (
     EVIDENCE_ENTRIES_PER_PROMPT_MAX,
+    PolicyCapability,
     RetrievalScoreKind,
     RetrievalScoreScale,
     SNAPSHOT_TEXT_UTF8_BYTES_MAX,
@@ -962,6 +963,11 @@ class _CaptureRepository:
                 fingerprint_key_id="key-1",
             ),
             fingerprint_codec=CitationFingerprintCodec(b"k" * 32),
+            policy_version="test-local-policy-v1",
+            policy_capabilities=(
+                PolicyCapability.VIEW_SNAPSHOT,
+                PolicyCapability.VIEW_SOURCE_IDENTITY,
+            ),
         )
         self.builders.append(builder)
         return builder

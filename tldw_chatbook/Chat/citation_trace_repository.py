@@ -68,6 +68,11 @@ if TYPE_CHECKING:
 
 
 _ROW_FAMILIES = frozenset({"trace", "runs", "snapshots", "attempts", "refs", "owner"})
+_LOCAL_TRACE_POLICY_VERSION = "local-prompt-provenance-v1"
+_LOCAL_TRACE_POLICY_CAPABILITIES = (
+    PolicyCapability.VIEW_SNAPSHOT,
+    PolicyCapability.VIEW_SOURCE_IDENTITY,
+)
 
 
 class CitationPersistenceUnavailable(RuntimeError):
@@ -514,6 +519,8 @@ class CitationTraceRepository:
             generation_id=generation_id,
             identity_context=identity,
             fingerprint_codec=codec,
+            policy_version=_LOCAL_TRACE_POLICY_VERSION,
+            policy_capabilities=_LOCAL_TRACE_POLICY_CAPABILITIES,
         )
 
     @classmethod

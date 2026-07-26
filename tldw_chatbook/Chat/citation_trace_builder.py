@@ -19,22 +19,35 @@ from .citation_trace_identity import (
     new_opaque_id,
 )
 from .citation_trace_models import (
+    ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX,
+    ANSWER_ATTEMPTS_MAX,
     EVIDENCE_ENTRIES_PER_PROMPT_MAX,
     GOVERNED_PAYLOAD_UTF8_BYTES_MAX,
     PROMPT_EVIDENCE_SETS_MAX,
     RETRIEVAL_CANDIDATES_PER_RUN_MAX,
     SNAPSHOT_TEXT_UTF8_BYTES_MAX,
+    AnswerAttempt,
+    AnswerAttemptKind,
+    AnswerAttemptPayload,
+    CitationCompleteness,
+    CitationTrace,
     EvidenceRun,
     EvidenceRunPayload,
     EvidenceSnapshotPayload,
     EvidenceStorageMode,
     MarkerNamespace,
+    PolicyCapability,
     PromptEvidenceEntry,
     PromptEvidenceSet,
     RetrievalCandidatePayload,
     RetrievalScoreKind,
     RetrievalScoreScale,
+    SealedCitationWrite,
     ShortCode,
+    TraceLifecycle,
+    TraceOrigin,
+    eligible_citation_marker_spans,
+    reduce_selected_attempt_completeness,
 )
 
 _SAFE_PIPELINE_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
@@ -65,7 +78,19 @@ class _StrictFrozenCapture(BaseModel):
 class _LocalBuilderHeader(_StrictFrozenCapture):
     request_id: BoundedIdentifier
     generation_id: BoundedIdentifier
+    policy_version: BoundedIdentifier
+    policy_capabilities: tuple[PolicyCapability, ...] = Field(min_length=1)
     created_at: datetime
+
+    @field_validator("policy_capabilities")
+    @classmethod
+    def _validate_policy_capabilities(
+        cls,
+        value: tuple[PolicyCapability, ...],
+    ) -> tuple[PolicyCapability, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("policy_capabilities must be unique")
+        return value
 
     @field_validator("created_at")
     @classmethod
@@ -191,14 +216,24 @@ class LocalPromptEvidenceCapture(_StrictFrozenCapture):
         return self
 
 
+class CitationTraceBuildUnavailable(ValueError):
+    """Fail-closed local trace construction denial."""
+
+    reason_code = "occurrence_mapping_unavailable"
+
+    def __init__(self) -> None:
+        super().__init__(self.reason_code)
+
+
 class CitationTraceBuilder:
     """Mutable, request-scoped local citation capture.
 
-    The builder intentionally has no persistence or sealing API. Secret
-    fingerprint material remains private and is never represented.
+    Secret fingerprint material remains private and is never represented.
     """
 
     __slots__ = (
+        "_answer_attempt_payloads",
+        "_answer_attempts",
         "_created_at",
         "_evidence_run_payloads",
         "_evidence_runs",
@@ -206,8 +241,12 @@ class CitationTraceBuilder:
         "_fingerprint_codec",
         "_generation_id",
         "_identity_context",
+        "_policy_capabilities",
+        "_policy_version",
         "_prompt_evidence_sets",
         "_request_id",
+        "_sealed_write",
+        "_trace_id",
     )
 
     def __init__(
@@ -217,6 +256,8 @@ class CitationTraceBuilder:
         generation_id: str,
         identity_context: LocalCitationIdentityContext,
         fingerprint_codec: CitationFingerprintCodec,
+        policy_version: str,
+        policy_capabilities: tuple[PolicyCapability, ...],
         created_at: datetime,
     ) -> None:
         if not isinstance(identity_context, LocalCitationIdentityContext):
@@ -232,17 +273,25 @@ class CitationTraceBuilder:
         header = _LocalBuilderHeader(
             request_id=request_id,
             generation_id=generation_id,
+            policy_version=policy_version,
+            policy_capabilities=policy_capabilities,
             created_at=created_at,
         )
         self._request_id = header.request_id
         self._generation_id = header.generation_id
+        self._trace_id = new_opaque_id("citation-trace")
         self._identity_context = validated_identity
         self._fingerprint_codec = fingerprint_codec
+        self._policy_version = header.policy_version
+        self._policy_capabilities = header.policy_capabilities
         self._created_at = header.created_at
         self._evidence_runs: list[EvidenceRun] = []
         self._evidence_run_payloads: list[EvidenceRunPayload] = []
         self._prompt_evidence_sets: list[PromptEvidenceSet] = []
         self._evidence_snapshot_payloads: list[EvidenceSnapshotPayload] = []
+        self._answer_attempts: list[AnswerAttempt] = []
+        self._answer_attempt_payloads: list[AnswerAttemptPayload] = []
+        self._sealed_write: SealedCitationWrite | None = None
 
     @classmethod
     def local(
@@ -252,6 +301,8 @@ class CitationTraceBuilder:
         generation_id: str,
         identity_context: LocalCitationIdentityContext,
         fingerprint_codec: CitationFingerprintCodec,
+        policy_version: str,
+        policy_capabilities: tuple[PolicyCapability, ...],
         created_at: datetime | None = None,
     ) -> CitationTraceBuilder:
         """Create a builder bound to one validated local authority profile."""
@@ -261,6 +312,8 @@ class CitationTraceBuilder:
             generation_id=generation_id,
             identity_context=identity_context,
             fingerprint_codec=fingerprint_codec,
+            policy_version=policy_version,
+            policy_capabilities=policy_capabilities,
             created_at=created_at if created_at is not None else datetime.now(UTC),
         )
 
@@ -311,6 +364,20 @@ class CitationTraceBuilder:
             for payload in self._evidence_snapshot_payloads
         )
 
+    @property
+    def answer_attempts(self) -> tuple[AnswerAttempt, ...]:
+        """Return immutable generation-attempt relationships."""
+
+        return tuple(self._answer_attempts)
+
+    @property
+    def answer_attempt_payloads(self) -> tuple[AnswerAttemptPayload, ...]:
+        """Return governed exact answer payloads recorded so far."""
+
+        return tuple(
+            payload.model_copy(deep=True) for payload in self._answer_attempt_payloads
+        )
+
     def record_retrieval_run(
         self,
         *,
@@ -323,6 +390,7 @@ class CitationTraceBuilder:
     ) -> str:
         """Record one validated local retrieval execution atomically."""
 
+        self._ensure_unsealed()
         if not isinstance(stage, str):
             raise TypeError("stage must be a string")
         if stage and _SAFE_PIPELINE_CODE.fullmatch(stage) is None:
@@ -441,6 +509,7 @@ class CitationTraceBuilder:
     ) -> str:
         """Record one exact local prompt-evidence set atomically."""
 
+        self._ensure_unsealed()
         if not isinstance(run_id, str):
             raise TypeError("run_id must be a string")
         if len(self._prompt_evidence_sets) >= PROMPT_EVIDENCE_SETS_MAX:
@@ -550,6 +619,82 @@ class CitationTraceBuilder:
         self._prompt_evidence_sets.append(prompt_set)
         return prompt_set_id
 
+    def record_initial_answer_attempt(
+        self,
+        *,
+        prompt_evidence_set_id: str,
+        answer_body: str,
+        completed_at: datetime,
+    ) -> str:
+        """Record the single marker-free initial answer atomically."""
+
+        self._ensure_unsealed()
+        if self._answer_attempts:
+            raise ValueError("initial answer attempt is already recorded")
+        if len(self._answer_attempts) >= ANSWER_ATTEMPTS_MAX:
+            raise ValueError(
+                f"answer attempts exceeds {ANSWER_ATTEMPTS_MAX} entries"
+            )
+        if not isinstance(prompt_evidence_set_id, str):
+            raise TypeError("prompt_evidence_set_id must be a string")
+        if not isinstance(answer_body, str):
+            raise TypeError("answer_body must be a string")
+        if len(answer_body.encode("utf-8")) > ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX:
+            raise ValueError(
+                "answer_body exceeds "
+                f"{ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX} UTF-8 bytes"
+            )
+        matching_prompt_sets = [
+            prompt_set
+            for prompt_set in self._prompt_evidence_sets
+            if prompt_set.prompt_set_id == prompt_evidence_set_id
+        ]
+        if not matching_prompt_sets:
+            raise ValueError("unknown prompt evidence set")
+        if len(matching_prompt_sets) != 1:
+            raise ValueError("duplicate prompt evidence set reference")
+        prompt_set = matching_prompt_sets[0]
+        if completed_at < prompt_set.created_at:
+            raise ValueError(
+                "answer attempt cannot precede its prompt evidence set"
+            )
+        try:
+            marker_spans = eligible_citation_marker_spans(
+                answer_body,
+                prompt_set.marker_namespace,
+                max_count=1,
+            )
+        except ValueError:
+            raise CitationTraceBuildUnavailable() from None
+        if marker_spans:
+            raise CitationTraceBuildUnavailable()
+
+        attempt_id = new_opaque_id("answer-attempt")
+        payload_id = new_opaque_id("answer-payload")
+        payload = AnswerAttemptPayload(
+            payload_id=payload_id,
+            attempt_id=attempt_id,
+            answer_body=answer_body,
+            body_integrity_hmac=self._fingerprint_codec.fingerprint(
+                CitationFingerprintDomain.MESSAGE_BODY,
+                answer_body,
+            ),
+        )
+        attempt = AnswerAttempt(
+            attempt_id=attempt_id,
+            attempt_ordinal=1,
+            kind=AnswerAttemptKind.INITIAL,
+            prompt_evidence_set_id=prompt_set.prompt_set_id,
+            answer_payload_ref=payload.payload_id,
+            occurrences=(),
+            created_at=completed_at,
+        )
+        self._ensure_governed_payload_capacity((payload,))
+
+        self._answer_attempt_payloads.append(payload)
+        self._answer_attempts.append(attempt)
+        return attempt_id
+
     @staticmethod
     def _comparison_snapshot_bytes(snapshot_text: str) -> bytes:
         normalized_newlines = snapshot_text.replace("\r\n", "\n").replace("\r", "\n")
@@ -557,11 +702,15 @@ class CitationTraceBuilder:
 
     def _ensure_governed_payload_capacity(
         self,
-        proposed: tuple[EvidenceRunPayload | EvidenceSnapshotPayload, ...],
+        proposed: tuple[
+            EvidenceRunPayload | EvidenceSnapshotPayload | AnswerAttemptPayload,
+            ...,
+        ],
     ) -> None:
         payloads = (
             *self._evidence_run_payloads,
             *self._evidence_snapshot_payloads,
+            *self._answer_attempt_payloads,
             *proposed,
         )
         byte_count = sum(self._canonical_payload_bytes(payload) for payload in payloads)
@@ -573,7 +722,9 @@ class CitationTraceBuilder:
 
     @staticmethod
     def _canonical_payload_bytes(
-        payload: EvidenceRunPayload | EvidenceSnapshotPayload,
+        payload: EvidenceRunPayload
+        | EvidenceSnapshotPayload
+        | AnswerAttemptPayload,
     ) -> int:
         return len(
             json.dumps(
@@ -584,11 +735,137 @@ class CitationTraceBuilder:
             ).encode("utf-8")
         )
 
+    def seal(
+        self,
+        *,
+        selected_attempt_id: str,
+        sealed_at: datetime | None = None,
+    ) -> SealedCitationWrite:
+        """Seal the complete local trace exactly once."""
+
+        self._ensure_unsealed()
+        if not self._evidence_runs:
+            raise ValueError("citation trace requires at least one evidence run")
+        if not self._prompt_evidence_sets:
+            raise ValueError(
+                "citation trace requires at least one prompt evidence set"
+            )
+        if not self._answer_attempts:
+            raise ValueError("citation trace requires at least one answer attempt")
+        selected_attempts = [
+            attempt
+            for attempt in self._answer_attempts
+            if attempt.attempt_id == selected_attempt_id
+        ]
+        if not selected_attempts:
+            raise ValueError("selected answer attempt is unknown")
+        if len(selected_attempts) != 1:
+            raise ValueError("selected answer attempt is duplicated")
+
+        runs_by_id = {run.run_id: run for run in self._evidence_runs}
+        if len(runs_by_id) != len(self._evidence_runs):
+            raise ValueError("evidence run identity is duplicated")
+        for run in self._evidence_runs:
+            if run.ended_at is None:
+                raise ValueError("every evidence run requires ended_at before seal")
+        prompts_by_id = {
+            prompt_set.prompt_set_id: prompt_set
+            for prompt_set in self._prompt_evidence_sets
+        }
+        if len(prompts_by_id) != len(self._prompt_evidence_sets):
+            raise ValueError("prompt evidence set identity is duplicated")
+        for prompt_set in self._prompt_evidence_sets:
+            for entry in prompt_set.entries:
+                run = runs_by_id.get(entry.run_id)
+                if run is None:
+                    raise ValueError("prompt entry references an unknown evidence run")
+                if run.ended_at is None:
+                    raise ValueError(
+                        "every evidence run requires ended_at before seal"
+                    )
+                if run.ended_at > prompt_set.created_at:
+                    raise ValueError(
+                        "prompt evidence set cannot precede its evidence run end"
+                    )
+        for attempt in self._answer_attempts:
+            prompt_set = prompts_by_id.get(attempt.prompt_evidence_set_id)
+            if prompt_set is None:
+                raise ValueError(
+                    "answer attempt references an unknown prompt evidence set"
+                )
+            if prompt_set.created_at > attempt.created_at:
+                raise ValueError(
+                    "answer attempt cannot precede its prompt evidence set"
+                )
+
+        seal_time = sealed_at if sealed_at is not None else datetime.now(UTC)
+        if not isinstance(seal_time, datetime):
+            raise TypeError("sealed_at must be a datetime")
+        if seal_time.tzinfo is None or seal_time.utcoffset() is None:
+            raise ValueError("sealed_at must be timezone-aware")
+        lifecycle_boundaries = [
+            self._created_at,
+            *(run.started_at for run in self._evidence_runs),
+            *(
+                run.ended_at
+                for run in self._evidence_runs
+                if run.ended_at is not None
+            ),
+            *(prompt.created_at for prompt in self._prompt_evidence_sets),
+            *(attempt.created_at for attempt in self._answer_attempts),
+        ]
+        if any(boundary > seal_time for boundary in lifecycle_boundaries):
+            raise ValueError("sealed_at must not precede any lifecycle boundary")
+
+        trace_data = {
+            "trace_id": self._trace_id,
+            "request_id": self._request_id,
+            "generation_id": self._generation_id,
+            "origin": TraceOrigin.LOCAL,
+            "lifecycle": TraceLifecycle.SEALED,
+            "evidence_runs": tuple(self._evidence_runs),
+            "prompt_evidence_sets": tuple(self._prompt_evidence_sets),
+            "answer_attempts": tuple(self._answer_attempts),
+            "selected_attempt_id": selected_attempt_id,
+            "policy_capabilities": self._policy_capabilities,
+            "policy_version": self._policy_version,
+            "created_at": self._created_at,
+            "sealed_at": seal_time,
+        }
+        provisional_trace = CitationTrace(
+            **trace_data,
+            completeness_at_seal=CitationCompleteness.UNAVAILABLE,
+        )
+        snapshot_payload_index = {
+            payload.payload_id: payload
+            for payload in self._evidence_snapshot_payloads
+        }
+        completeness = reduce_selected_attempt_completeness(
+            provisional_trace,
+            snapshot_payload_index,
+        )
+        trace = CitationTrace(
+            **trace_data,
+            completeness_at_seal=completeness,
+        )
+        sealed_write = SealedCitationWrite(
+            trace=trace,
+            evidence_run_payloads=tuple(self._evidence_run_payloads),
+            evidence_snapshot_payloads=tuple(self._evidence_snapshot_payloads),
+            answer_attempt_payloads=tuple(self._answer_attempt_payloads),
+        )
+        self._sealed_write = sealed_write
+        return sealed_write
+
+    def _ensure_unsealed(self) -> None:
+        if self._sealed_write is not None:
+            raise ValueError("citation trace builder is already sealed")
+
     @property
     def is_sealed(self) -> bool:
-        """Report the intentionally unsealed state of this request builder."""
+        """Return whether a complete immutable write was built successfully."""
 
-        return False
+        return self._sealed_write is not None
 
     def __repr__(self) -> str:
         return (
@@ -597,11 +874,14 @@ class CitationTraceBuilder:
             f"generation_id={self._generation_id!r}, "
             f"evidence_runs={len(self._evidence_runs)}, "
             f"prompt_evidence_sets={len(self._prompt_evidence_sets)}, "
+            f"answer_attempts={len(self._answer_attempts)}, "
+            f"is_sealed={self.is_sealed}, "
             "fingerprint_codec=<redacted>)"
         )
 
 
 __all__ = [
+    "CitationTraceBuildUnavailable",
     "CitationTraceBuilder",
     "LocalPromptEvidenceCapture",
     "LocalRetrievalCandidateCapture",
