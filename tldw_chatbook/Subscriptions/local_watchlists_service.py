@@ -16,6 +16,7 @@ from ..Utils.egress import (
     guarded_fetch_httpx_async,
     origin_set,
 )
+from .item_persist import persist_subscription_item
 from .watchlist_content_alert_service import WatchlistContentAlertService
 from .watchlist_filter_service import WatchlistFilterService
 from .watchlist_normalizers import (
@@ -1272,53 +1273,19 @@ class LocalWatchlistsService:
             return
         now = LocalWatchlistsService._utc_now()
         with db.transaction() as conn:
-            cursor = conn.cursor()
             for item in items:
                 url = str(item.get("url") or "")
                 content_hash = str(item.get("content_hash") or "")
                 if not url or not content_hash:
                     continue
-                title = item.get("title")
-                published_date = item.get("published_date")
-                author = item.get("author")
-                categories = item.get("categories")
-                enclosures = item.get("enclosures")
-                extracted_data = item.get("extracted_data")
                 alert_matches = item.get("alert_matches")
-                cursor.execute(
-                    """
-                    INSERT INTO subscription_items (
-                        subscription_id, url, title, content_hash, published_date,
-                        author, categories, enclosures, extracted_data, status,
-                        run_id, alert_matches, created_at, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(subscription_id, url, content_hash) DO UPDATE SET
-                        title = excluded.title,
-                        published_date = excluded.published_date,
-                        author = excluded.author,
-                        categories = excluded.categories,
-                        enclosures = excluded.enclosures,
-                        extracted_data = excluded.extracted_data,
-                        status = excluded.status,
-                        run_id = excluded.run_id,
-                        alert_matches = excluded.alert_matches,
-                        updated_at = excluded.updated_at
-                    """,
-                    (
-                        source_id,
-                        url,
-                        title,
-                        content_hash,
-                        published_date,
-                        author,
-                        json.dumps(categories) if categories is not None else None,
-                        json.dumps(enclosures) if enclosures is not None else None,
-                        json.dumps(extracted_data) if extracted_data is not None else None,
-                        "new",
-                        run_id,
-                        json.dumps(alert_matches) if alert_matches is not None else None,
-                        now,
-                        now,
-                    ),
+                persist_subscription_item(
+                    conn,
+                    source_id,
+                    {
+                        **item,
+                        "alert_matches": alert_matches,
+                    },
+                    run_id=run_id,
+                    now=now,
                 )
