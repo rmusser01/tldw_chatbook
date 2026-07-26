@@ -531,6 +531,13 @@ Add an async bootstrap test whose store raises on save and assert `handle_runtim
 Add a projection test using an app double with no `app_state` attribute and a
 second double whose trap property fails if `app_state` is accessed; both must
 receive only the three compatibility projection attributes.
+Add bootstrap tests proving load, synchronization persistence, and direct
+initial projection failures leave no `runtime_policy` installed and allow a
+clean retry. Add the complementary case where a synchronization commit
+succeeds but its projection callback fails: the committed context is installed
+exactly once because post-commit projection failure is contained. Change the
+`TldwCli` constructor to invoke the installing loader without assigning its
+return value, and guard that exact call shape structurally.
 Add Settings/coordinator tests proving a refreshed configuration remains
 unpublished when the runtime store fails: app/provider configuration, provider
 cache, configured target/default, context, projections, and screen callback
@@ -572,6 +579,11 @@ caller-owned serializable compatibility containers and are not the
 application's live authority. Preserve `to_dict()`/`from_dict()` behavior
 byte-for-byte.
 
+Construct the context locally and attach it to `app.runtime_policy` only after
+required synchronization persistence and initial projection preparation.
+Failed preparation must not leave a context that blocks retry; a contained
+post-commit projection failure still installs the durably committed context.
+
 - [ ] **Step 4: Coordinate a failure-atomic Settings/provider rebind**
 
 Extend `set_authoritative_runtime_source()` with an optional explicit
@@ -589,14 +601,16 @@ invokes a focused provider rebind, and only then awaits the screen callback.
 `set_authoritative_runtime_source()` must surface a `False` compare-and-swap
 result as failure; returning the context's newer snapshot is not proof that
 this request committed.
+
 The provider rebind must install its config and detach its cache before
-best-effort legacy-target upsert. Cache-close and target-upsert failures are
-contained with bounded category-only diagnostics; refreshed config remains a
-usable fallback for the committed binding. Settings emits success and starts
-Sync v2 preparation only when the coordinator succeeds. Do not attempt to roll
-back a successful Settings-file write after a later runtime-policy failure;
-report that activation failed and leave the saved values available for
-retry/startup.
+invoking the existing event/sync invalidation hooks exactly once for a changed
+server ID and attempting best-effort legacy-target upsert. Cache-close and
+target-upsert failures are contained with bounded category-only diagnostics;
+refreshed config remains a usable fallback for the committed binding. Settings
+emits success and starts Sync v2 preparation only when the coordinator
+succeeds. Do not attempt to roll back a successful Settings-file write after a
+later runtime-policy failure; report that activation failed and leave the
+saved values available for retry/startup.
 
 Treat the awaited active-screen callback as a contained post-commit observer.
 Its failure may produce bounded category-only diagnostics, but the coordinator

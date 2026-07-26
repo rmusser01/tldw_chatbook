@@ -172,6 +172,18 @@ loading a store or publishing a projection, it checks for an installed
 `ensure_runtime_policy_for_app()` remains the idempotent accessor: it returns
 the installed context or invokes the loader only when none exists.
 
+The loader constructs the context locally and installs it on
+`app.runtime_policy` only after any required synchronization commit and initial
+projection have succeeded. A store/load/synchronization failure, or a failure
+from the direct initial projection path, leaves no context installed and
+permits a clean retry. A projection-callback exception after a successful
+synchronization commit remains contained by `commit_state()`; the durable
+context is installed because that commit succeeded. No await or externally
+reentrant step separates successful preparation from installation.
+`TldwCli.__init__` invokes the installing loader as a standalone call rather
+than assigning its return value, so the prepared context is attached exactly
+once.
+
 Production calls to the loader are confined to the `TldwCli` constructor and
 the internal `ensure_runtime_policy_for_app()` fallback. Loader-symbol
 references are confined to its definition, the internal fallback call, the
@@ -209,12 +221,15 @@ After a successful commit, and before any awaited screen callback, the
 coordinator installs `refreshed_config` on `app.app_config` and calls a focused
 `RuntimeServerContextProvider.rebind_app_config()` operation. The provider
 first replaces its config mapping and detaches its cached client/key, with
-client-close failures contained and logged only by exception category. It then
-best-effort upserts the derived legacy-config target. Target-store failure is
-contained: the newly committed authority remains usable through the
-provider's existing config-derived fallback, and a subsequent successful
-rebind may repair the materialized target/default. The post-commit provider
-rebind is therefore non-throwing for these cleanup/materialization failures.
+client-close failures contained and logged only by exception category. Using
+the coordinator's captured previous server ID and committed next server ID, it
+also invokes the existing event/sync server-switch invalidation hooks exactly
+once when the identity changed. It then best-effort upserts the derived
+legacy-config target. Target-store failure is contained: the newly committed
+authority remains usable through the provider's existing config-derived
+fallback, and a subsequent successful rebind may repair the materialized
+target/default. The post-commit provider rebind is therefore non-throwing for
+these cleanup/materialization failures.
 
 `handle_runtime_backend_changed()` only notifies the active screen after a
 successful coordinated commit/rebind. That callback is a post-commit observer:
@@ -335,15 +350,17 @@ spelling, alias propagation, or control-flow interpretation.
 1. `load_runtime_policy_for_app()` loads and verifies the durable state.
 2. It creates `RuntimePolicyContext` with the private store and a contained
    publication callback.
-3. A higher-level runtime operation captures `(state, revision)` and derives a
+3. It durably synchronizes and initially projects that context when required,
+   then installs the successfully prepared context on the app.
+4. A higher-level runtime operation captures `(state, revision)` and derives a
    candidate.
-4. `commit_state()` verifies the owner thread and revision.
-5. It persists through the unique private store reference.
-6. It publishes the new immutable snapshot and advances the revision before
+5. `commit_state()` verifies the owner thread and revision.
+6. It persists through the unique private store reference.
+7. It publishes the new immutable snapshot and advances the revision before
    invoking the projection callback, so callback readers observe the committed
    `(state, revision)`.
-7. The callback reaches `_apply_runtime_policy_to_app()`.
-8. A real `TldwCli` atomically replaces its private projection tuple through
+8. The callback reaches `_apply_runtime_policy_to_app()`.
+9. A real `TldwCli` atomically replaces its private projection tuple through
    the one private publisher; the three public properties immediately reflect
    one coherent pair.
 
@@ -394,6 +411,12 @@ The implementation must demonstrate red-to-green tests for:
   `setattr()` fallback;
 - a throwing publisher during the direct initial loaded-state projection
   propagating and aborting bootstrap without public `setattr()` fallback;
+- a failed initial load, synchronization persistence, or direct projection
+  leaving no context installed and allowing a clean retry;
+- a synchronized durable commit whose contained projection callback fails
+  still installing the committed context exactly once;
+- `TldwCli` construction invoking the installing loader without a duplicate
+  assignment of its return value;
 - persistence failure leaving a previously published real projection
   unchanged;
 - a second loader call rejecting before store I/O or publication and retaining
@@ -408,7 +431,8 @@ The implementation must demonstrate red-to-green tests for:
 - a failed batched Settings save causing no reload, rebind, partial
   base-URL/token activation, or success notification;
 - the provider rebind refreshing its config mapping/default legacy target and
-  invalidating its cached client only after the authoritative commit;
+  invalidating its cached client and changed-server hooks only after the
+  authoritative commit, without duplicate hook invocation;
 - a legacy-target upsert failure leaving the new committed authority usable
   through the provider's refreshed-config fallback;
 - a throwing active-screen callback occurring only after commit, remaining

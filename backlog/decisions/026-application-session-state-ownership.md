@@ -43,6 +43,9 @@ atomically; direct writes through the public attributes fail.
 One `RuntimePolicyContext` identity is installed for the `TldwCli` lifetime.
 Configuration changes rebind that context and its server-context provider
 rather than replacing the authority object retained by long-lived consumers.
+Initial load, synchronization persistence, and direct initial projection
+prepare the context before it is attached; failure leaves no half-installed
+authority and permits retry.
 Context state is read-only; there is no public state setter or standalone
 persistence escape hatch, and both the backing store and projection callback
 are private. The callback does not read or write `AppState`.

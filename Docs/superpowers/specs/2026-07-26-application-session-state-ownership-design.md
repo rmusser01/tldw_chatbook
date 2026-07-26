@@ -656,6 +656,9 @@ the projection boundary invokes the sole private publisher behind the three
 getter-only properties; it neither reads nor writes a root `AppState`.
 
 The application installs one `RuntimePolicyContext` identity for its lifetime.
+Bootstrap prepares any synchronization commit and initial projection before
+attaching that identity; failed preparation leaves no half-installed context
+and may be retried.
 Settings changes persist the server URL and token in one checked configuration
 batch, then pass a locally loaded candidate configuration to one app-level
 coordinator instead of loading and installing another authority.
