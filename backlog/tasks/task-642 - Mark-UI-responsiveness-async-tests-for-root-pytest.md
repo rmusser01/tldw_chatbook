@@ -4,7 +4,7 @@ title: Mark UI responsiveness async tests for root pytest
 status: Done
 assignee: []
 created_date: '2026-07-26 03:43'
-updated_date: '2026-07-26 03:44'
+updated_date: '2026-07-26 07:45'
 labels:
   - tests
   - pytest
@@ -74,4 +74,8 @@ Reason: Test metadata repair only; no application or architectural behavior chan
 Files modified:
 - Tests/UI/test_ui_responsiveness.py
 - backlog/tasks/task-642 - Mark-UI-responsiveness-async-tests-for-root-pytest.md
+
+Additional closure verification:
+- Collection-tail run from the failed responsiveness module through the remaining repository tail: 1,852 passed, 22 skipped, 20 warnings in 22m55s.
+- Final permitted from-zero full suite: 12,757 passed, 231 skipped, 240 warnings in 3h34m55s; TASK-642 crossed at 86% and the process exited 0.
 <!-- SECTION:NOTES:END -->
