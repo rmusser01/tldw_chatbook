@@ -101,6 +101,7 @@ def persist_subscription_item(
                 ELSE 'new'
             END,
             updated_at = excluded.updated_at
+        RETURNING id
         """,
         (
             subscription_id,
@@ -127,4 +128,4 @@ def persist_subscription_item(
             now,
         ),
     )
-    return cursor.lastrowid
+    return cursor.fetchone()[0]

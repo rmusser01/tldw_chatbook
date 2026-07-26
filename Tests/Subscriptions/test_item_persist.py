@@ -51,6 +51,40 @@ def test_persists_full_column_set(db, source_id):
     assert row[9] == "content"
 
 
+def test_returns_the_real_row_id_on_upsert_not_lastrowid(db, source_id):
+    """Regression for fix round 2.
+
+    ``cursor.lastrowid`` reflects the last genuine INSERT on the
+    *connection*, not the row an ``ON CONFLICT ... DO UPDATE`` actually
+    touched. Insert A, then insert B (B is now the connection's
+    lastrowid), then re-upsert A: the returned id must be A's, not B's.
+    This is reachable in production because ``_upsert_subscription_items``
+    never sets ``canonical_url``, so when the same item later round-trips
+    through ``_add_subscription_item`` (whose guard compares against
+    ``canonical_url``), the guard's NULL comparison never matches, falls
+    through, and the upsert resolves as an UPDATE on a row that is not the
+    most recently inserted one on that connection.
+    """
+    item_a = {"url": "https://a.example/1", "title": "A", "content_hash": "h1", "content": "a"}
+    item_b = {"url": "https://a.example/2", "title": "B", "content_hash": "h2", "content": "b"}
+    with db.transaction() as conn:
+        id_a = persist_subscription_item(conn, source_id, item_a, run_id=1, now="2026-07-25T00:00:00Z")
+        id_b = persist_subscription_item(conn, source_id, item_b, run_id=1, now="2026-07-25T00:00:00Z")
+        assert id_b != id_a  # sanity: two distinct rows exist
+
+        reupsert_id = persist_subscription_item(
+            conn, source_id, item_a, run_id=2, now="2026-07-25T01:00:00Z"
+        )
+
+    assert reupsert_id == id_a
+    assert reupsert_id != id_b
+
+    row = db.conn.execute(
+        "SELECT id FROM subscription_items WHERE url = ?", ("https://a.example/1",)
+    ).fetchone()
+    assert row[0] == id_a
+
+
 @pytest.mark.parametrize("preserved_status", ["reviewed", "ignored", "ingested"])
 def test_upsert_preserves_status_from_user_action(db, source_id, preserved_status):
     """Regression for fix round 1, Finding 2.

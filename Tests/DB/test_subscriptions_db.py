@@ -101,6 +101,43 @@ def test_record_check_result_persists_full_column_set_via_unified_path(db):
     assert rows[0]["content"] == "retrieval quality rubric"
 
 
+def test_record_check_result_collapses_canonical_url_variants_to_one_row(db):
+    """Regression for fix round 2 (unpinned ruled behaviour).
+
+    The human ruling's stated reason for keeping the canonical-URL dedupe
+    guard in ``_add_subscription_item`` separate from
+    ``persist_subscription_item``'s own raw-url ``ON CONFLICT`` rule was
+    that URLs differing only by case or a trailing slash must still
+    collapse to a single row. Nothing pinned that until now.
+    """
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/feed"
+    )
+
+    db.record_check_result(
+        subscription_id=source_id,
+        items=[
+            {
+                "url": "HTTPS://A.Example/1",
+                "title": "First variant",
+                "content_hash": "hash-1",
+            },
+            {
+                "url": "https://a.example/1/",
+                "title": "Second variant",
+                "content_hash": "hash-1",
+            },
+        ],
+    )
+
+    rows = db.conn.execute(
+        "SELECT id, url, canonical_url FROM subscription_items WHERE subscription_id = ?",
+        (source_id,),
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["canonical_url"] == "https://a.example/1"
+
+
 def test_deleting_subscription_cascades_to_its_items(db):
     source_id = db.add_subscription(
         name="ArXiv", type="rss", source="https://a.example/feed"
