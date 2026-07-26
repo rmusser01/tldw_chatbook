@@ -168,3 +168,56 @@ def test_long_history_drops_exact_turns_via_binary_search():
 
 def test_default_response_reservation_value():
     assert DEFAULT_RESPONSE_RESERVATION == 1024
+
+
+# --- Roleplay UAT regression: reservation must never consume the whole window ---
+# Live repro (origin/dev @ f384a2807): a local llama.cpp model resolved to the
+# 4096 fallback window while Console's default max_tokens (4096) was passed as
+# the response reservation, making the history budget negative
+# (4096 - 4096 - 512 = -512). Every prior turn was dropped on EVERY send, so the
+# character had no memory: one turn after being told "my favorite color is teal"
+# the model answered "I don't know your favorite color yet".
+
+
+def test_reservation_equal_to_window_still_keeps_recent_history():
+    """A reservation as large as the window must not zero out the history budget.
+
+    Without the clamp the budget goes negative and every prior turn is dropped,
+    which is the roleplay amnesia bug.
+    """
+    msgs = [
+        _msg("system", "you are Seraphina"),
+        _msg("user", "my favorite color is teal"),
+        _msg("assistant", "I will remember that"),
+        _msg("user", "what is my favorite color"),
+    ]
+    result = bound_messages_to_window(
+        msgs,
+        model="m",
+        provider="p",
+        response_reservation=4096,
+        window=4096,
+        count_fn=_wordcount,
+    )
+    assert result.dropped_count == 0
+    assert result.messages == msgs
+
+
+def test_reservation_larger_than_window_still_keeps_recent_history():
+    """An over-large reservation must be clamped, not allowed to starve history."""
+    msgs = [
+        _msg("system", "sys"),
+        _msg("user", "remember this fact"),
+        _msg("assistant", "noted"),
+        _msg("user", "recall the fact"),
+    ]
+    result = bound_messages_to_window(
+        msgs,
+        model="m",
+        provider="p",
+        response_reservation=999_999,
+        window=4096,
+        count_fn=_wordcount,
+    )
+    assert result.dropped_count == 0
+    assert result.messages == msgs

@@ -289,6 +289,7 @@ class ConsoleControlState:
 
     provider_label: str
     model_label: str
+    character_label: str
     user_profile_label: str
     rag_label: str
     sources_label: str
@@ -305,6 +306,7 @@ class ConsoleControlState:
         provider: Any = None,
         model: Any = None,
         persona: Any = None,
+        character: Any = None,
         rag_enabled: bool = False,
         staged_source_count: int = 0,
         tool_count: int = 0,
@@ -316,7 +318,10 @@ class ConsoleControlState:
         Args:
             provider: Active provider name, or falsy for "not selected".
             model: Active model name, or falsy for "not selected".
-            persona: Persona/assistant label; falsy falls back to "General".
+            persona: The user's own profile label (the human side of the
+                conversation); falsy renders as "You: default".
+            character: Active character driving replies (the AI side);
+                falsy renders as "Character: none".
             rag_enabled: Whether RAG is on for this send.
             staged_source_count: Number of staged context sources.
             tool_count: Built-in tools that can run.
@@ -329,10 +334,14 @@ class ConsoleControlState:
             can actually run (built-in + MCP) and whose ``*_active`` flags drive
             chip emphasis.
         """
+        # Two distinct facts, two chips. The old single chip rendered
+        # "Assistant: General" from the USER-PROFILE value, which Console always
+        # passed as None -- so it was a constant that named neither side of the
+        # conversation. `{{user}}` is the human; the character is the AI side.
+        character_text = _clean(character, "")
+        character_label = f"Character: {character_text or 'none'}"
         persona_text = _clean(persona, "")
-        user_profile_label = (
-            f"As: {persona_text}" if persona_text else "Assistant: General"
-        )
+        user_profile_label = f"You: {persona_text or 'default'}"
         # TASK-350: the chip must reflect the tools that can ACTUALLY run — built-in
         # AND MCP. Counting only built-in read "Tools: 0 ready" while the inspector
         # showed "MCP: 10 tools ready". `mcp_tool_count is None` means no MCP seam
@@ -341,6 +350,7 @@ class ConsoleControlState:
         return cls(
             provider_label=f"Provider: {_clean(provider, 'not selected')}",
             model_label=f"Model: {_clean(model, 'not selected')}",
+            character_label=character_label,
             user_profile_label=user_profile_label,
             rag_label=f"RAG: {'on' if rag_enabled else 'off'}",
             sources_label=f"Sources: {staged_source_count} staged",

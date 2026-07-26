@@ -219,20 +219,88 @@ def _sanitize_model_id(raw: str) -> str:
     return cleaned[:MODEL_ID_MAX_CHARS]
 
 
-def _model_ids_from_payload(payload: object) -> tuple[str, ...] | None:
-    """Extract model id strings from a models-endpoint JSON payload.
+#: Declared model tasks that cannot serve `/v1/chat/completions`. Matched only
+#: against an EXPLICIT task/type field: llama.cpp and most OpenAI-compatible
+#: servers declare no task at all, so absence must always mean "assume chat"
+#: or discovery would stop finding real chat servers.
+NON_CHAT_MODEL_TASKS = frozenset(
+    {
+        "asr",
+        "classification",
+        "embed",
+        "embedding",
+        "embeddings",
+        "image",
+        "moderation",
+        "rerank",
+        "reranking",
+        "speech",
+        "stt",
+        "transcription",
+        "tts",
+    }
+)
 
-    Accepts the OpenAI ``{"data": [{"id": ...}]}`` shape, the Ollama
-    ``{"models": [{"name": ...}]}`` shape, and bare lists of entries.
+
+def _entry_declares_non_chat_task(entry: object) -> bool:
+    """Return whether a models-listing entry explicitly declares a non-chat task.
+
+    Args:
+        entry: One element of a models listing, of any shape.
+
+    Returns:
+        ``True`` only when the entry carries a recognizable task/type field
+        naming a non-chat workload (``"task": "tts"`` and friends). Entries
+        with no such field are never rejected.
+    """
+    if not isinstance(entry, Mapping):
+        return False
+    for key in ("task", "task_type", "model_type"):
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip().lower() in NON_CHAT_MODEL_TASKS:
+            return True
+    return False
+
+
+def _payload_lists_only_non_chat_models(payload: object) -> bool:
+    """Return whether a models listing contained entries, all of them non-chat.
 
     Args:
         payload: Decoded JSON payload of any shape.
 
     Returns:
-        Ordered unique sanitized model ids (possibly empty) when the payload
-        carries a recognizable models container, or ``None`` when it does not
-        look like a models endpoint at all — a JSON page from some unrelated
-        local service must not count as a detected LLM server (PR #608 review).
+        ``True`` when the payload is a recognizable models listing whose every
+        entry explicitly declares a non-chat task; used to pick honest failure
+        copy rather than the generic "unrecognized payload" message.
+    """
+    entries: object = payload
+    if isinstance(payload, Mapping):
+        data = payload.get("data")
+        entries = data if isinstance(data, list) else payload.get("models")
+    if not isinstance(entries, list) or not entries:
+        return False
+    return all(_entry_declares_non_chat_task(entry) for entry in entries)
+
+
+def _model_ids_from_payload(payload: object) -> tuple[str, ...] | None:
+    """Extract chat-capable model id strings from a models-endpoint payload.
+
+    Accepts the OpenAI ``{"data": [{"id": ...}]}`` shape, the Ollama
+    ``{"models": [{"name": ...}]}`` shape, and bare lists of entries. Entries
+    that explicitly declare a non-chat task (TTS/STT/embedding/rerank/...) are
+    dropped: a text-to-speech engine listening on the well-known llama.cpp port
+    answers ``/v1/models`` with a perfectly valid 2xx listing but 404s every
+    chat completion, and used to be offered as a detected chat server.
+
+    Args:
+        payload: Decoded JSON payload of any shape.
+
+    Returns:
+        Ordered unique sanitized chat-capable model ids (possibly empty) when
+        the payload carries a recognizable models container, or ``None`` when
+        it does not look like a models endpoint at all — a JSON page from some
+        unrelated local service must not count as a detected LLM server
+        (PR #608 review) — or when every listed model is explicitly non-chat.
     """
     entries: object = payload
     if isinstance(payload, Mapping):
@@ -241,7 +309,13 @@ def _model_ids_from_payload(payload: object) -> tuple[str, ...] | None:
     if not isinstance(entries, list):
         return None
     model_ids: list[str] = []
+    saw_non_chat_entry = False
+    chat_candidate_count = 0
     for entry in entries:
+        if _entry_declares_non_chat_task(entry):
+            saw_non_chat_entry = True
+            continue
+        chat_candidate_count += 1
         model_id: object = entry
         if isinstance(entry, Mapping):
             model_id = entry.get("id") or entry.get("name") or entry.get("model")
@@ -252,6 +326,13 @@ def _model_ids_from_payload(payload: object) -> tuple[str, ...] | None:
             model_ids.append(sanitized)
         if len(model_ids) >= MODEL_IDS_MAX_COUNT:
             break
+    if not model_ids and saw_non_chat_entry and chat_candidate_count == 0:
+        # EVERY entry was explicitly non-chat: this endpoint is a real API,
+        # just not a chat API. A listing that merely failed to yield ids (odd
+        # shapes, non-string ids) alongside a non-chat entry is NOT rejected --
+        # that would turn an unrecognized-but-plausible server into "no models
+        # endpoint" and hide a chat-capable host from discovery.
+        return None
     return tuple(model_ids)
 
 
@@ -292,6 +373,11 @@ async def _get_models_payload(
         return None, f"No models endpoint at {display} (not a JSON API)."
     model_ids = _model_ids_from_payload(payload)
     if model_ids is None:
+        if _payload_lists_only_non_chat_models(payload):
+            # Honest, specific copy: this IS a working model API, it just cannot
+            # serve chat. Saying "unrecognized payload" would send the user
+            # hunting for the wrong problem.
+            return None, f"{display} serves no chat models (non-chat engine)."
         return None, f"No models endpoint at {display} (unrecognized API payload)."
     return model_ids, ""
 

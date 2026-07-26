@@ -140,13 +140,17 @@ class ConsoleStatusChips(Horizontal):
             classes += " console-chip-dim"
         elif emphasis is True:
             classes += " console-chip-alert"
-        chip = chip_class(label, id=id, classes=classes)
+        # markup=False: chip labels carry user data (character and profile
+        # names, model ids). A name containing `[red]...[/]` would otherwise
+        # restyle the chip strip, or raise MarkupError when unbalanced.
+        chip = chip_class(label, id=id, classes=classes, markup=False)
         chip.tooltip = label
         return chip
 
     def compose(self) -> ComposeResult:
         yield self._chip(self.state.provider_label, id="console-provider-chip")
         yield self._chip(self.state.model_label, id="console-model-chip")
+        yield self._chip(self.state.character_label, id="console-character-chip")
         yield self._chip(self.state.user_profile_label, id="console-persona-chip")
         yield self._chip(self.state.rag_label, id="console-rag-chip")
         yield self._chip(
@@ -266,6 +270,7 @@ class ConsoleStatusChips(Horizontal):
         label_values = {
             "#console-provider-chip": state.provider_label,
             "#console-model-chip": state.model_label,
+            "#console-character-chip": state.character_label,
             "#console-persona-chip": state.user_profile_label,
             "#console-rag-chip": state.rag_label,
             "#console-sources-chip": state.sources_label,

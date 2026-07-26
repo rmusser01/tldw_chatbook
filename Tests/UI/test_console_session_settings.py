@@ -4113,7 +4113,16 @@ async def test_console_settings_modal_save_as_default_writes_through_config(
     # Streaming persists on the canonical chat_defaults key (bridged legacy key),
     # and the provider itself becomes the default (PR #606 review finding:
     # chat_defaults.provider is the ONLY source of the default provider).
-    assert sections["chat_defaults"] == {"streaming": False, "provider": "llama_cpp"}
+    # The model is written here as well as into api_settings: chat_defaults.model
+    # is what `resolve_effective_provider_model` feeds to the session builder as
+    # an explicit override, so omitting it left a stale model winning in every
+    # new session (roleplay UAT: character "Start Chat" silently reverted to the
+    # model onboarding had auto-picked).
+    assert sections["chat_defaults"] == {
+        "streaming": False,
+        "provider": "llama_cpp",
+        "model": "model-a",
+    }
     # Never persist None-valued optionals.
     assert "min_p" not in saved_section
     assert "seed" not in saved_section
@@ -4675,3 +4684,53 @@ async def test_console_settings_modal_discover_rejects_invalid_endpoint_url() ->
         await _wait_for_discover_status(app, pilot, MODEL_DISCOVER_INVALID_URL_COPY)
 
     assert prober.calls == []
+
+
+# --- Roleplay UAT regression: Save as default must not leave a stale model ---
+# Live repro (origin/dev @ f384a2807): onboarding auto-selected a wrong model and
+# wrote it to [chat_defaults].model. Correcting the model in Console Settings and
+# pressing "Save as default" wrote the new model ONLY to
+# [api_settings.<provider>].model, leaving [chat_defaults].model stale. Because
+# `resolve_effective_provider_model` reads chat_defaults.model and passes it as an
+# explicit override into `build_default_console_session_settings` (where it
+# outranks api_settings), every NEW session -- new tab, character "Start Chat",
+# app relaunch -- silently reverted to the old model.
+
+
+def test_save_as_default_persists_model_to_chat_defaults() -> None:
+    """The chosen model must land in chat_defaults, the section Console reads."""
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="good-model"),
+        app_config={},
+        providers_models={"llama_cpp": ["good-model"]},
+        context_estimate=ConsoleSettingsContextEstimate(
+            used_tokens=10, token_limit=16384, label="10 / 16k"
+        ),
+        can_save=True,
+    )
+    sections = modal._default_persist_sections(
+        ConsoleSessionSettings(provider="llama_cpp", model="good-model")
+    )
+
+    assert sections["chat_defaults"]["model"] == "good-model"
+
+
+def test_save_as_default_model_agrees_across_config_sections() -> None:
+    """chat_defaults and api_settings must not disagree about the active model."""
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="good-model"),
+        app_config={},
+        providers_models={"llama_cpp": ["good-model"]},
+        context_estimate=ConsoleSettingsContextEstimate(
+            used_tokens=10, token_limit=16384, label="10 / 16k"
+        ),
+        can_save=True,
+    )
+    sections = modal._default_persist_sections(
+        ConsoleSessionSettings(provider="llama_cpp", model="good-model")
+    )
+
+    assert (
+        sections["chat_defaults"]["model"]
+        == sections["api_settings.llama_cpp"]["model"]
+    )

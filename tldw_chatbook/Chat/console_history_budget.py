@@ -135,7 +135,18 @@ def bound_messages_to_window(
         )
     )
     win = window if window is not None else get_model_token_limit(model, provider)
-    budget = win - response_reservation - max(_MIN_SAFETY_MARGIN, win // 50)
+    margin = max(_MIN_SAFETY_MARGIN, win // 50)
+    # The reply reservation may never consume the whole window. `max_tokens` is
+    # user-facing and routinely set to the full context size (Console's own
+    # default did exactly that), which made `budget` negative and silently
+    # dropped ALL history on EVERY send -- the model then had no memory of the
+    # conversation while still sounding in-character, because the system prefix
+    # is always preserved. Clamping to half the usable window guarantees history
+    # always keeps a share; a caller asking to reserve more just gets less reply
+    # room than requested, which is recoverable, unlike total amnesia.
+    usable = max(0, win - margin)
+    effective_reservation = min(max(0, response_reservation), usable // 2)
+    budget = win - effective_reservation - margin
 
     # System prefix = contiguous leading system rows.
     sys_end = 0

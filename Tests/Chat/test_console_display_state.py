@@ -25,14 +25,14 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
 
     assert state.provider_label == "Provider: OpenAI"
     assert state.model_label == "Model: gpt-5.5"
-    assert state.user_profile_label == "As: Researcher"
+    assert state.user_profile_label == "You: Researcher"
     assert state.rag_label == "RAG: on"
     assert state.sources_label == "Sources: 3 staged"
     assert state.tools_label == "Tools: 4 ready"
     assert state.approvals_label == "Approvals: 1 pending"
 
 
-def test_console_control_state_preserves_falsy_labels_and_general_assistant_fallback():
+def test_console_control_state_preserves_falsy_labels_and_default_profile_fallback():
     state = ConsoleControlState.from_values(
         provider=0,
         model=False,
@@ -41,7 +41,7 @@ def test_console_control_state_preserves_falsy_labels_and_general_assistant_fall
 
     assert state.provider_label == "Provider: 0"
     assert state.model_label == "Model: False"
-    assert state.user_profile_label == "Assistant: General"
+    assert state.user_profile_label == "You: default"
 
 
 def test_console_control_state_counter_activity_flags():
@@ -261,3 +261,40 @@ def test_console_inspector_state_enables_pending_approval_tools_and_chatbook_act
     assert actions_by_id[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID].enabled is True
     rows_by_label = {row.label: row for row in state.rows}
     assert rows_by_label["Approvals"].status == "blocked"
+
+
+# --- Roleplay UAT: the "Assistant" chip named neither the assistant nor a truth ---
+# Live repro (origin/dev @ f384a2807): the chip read "Assistant: General" in every
+# session, including while actively roleplaying with a character. It was built
+# from the USER-PROFILE label (`persona`), which Console always passed as None,
+# so it was a constant that described nothing. For a roleplay user the AI side
+# (the character) is the thing that must be visible; the user profile is a
+# separate fact and gets its own chip.
+
+
+def test_character_chip_names_the_active_character():
+    state = ConsoleControlState.from_values(
+        provider="llama_cpp", model="m", character="Seraphina"
+    )
+
+    assert state.character_label == "Character: Seraphina"
+
+
+def test_character_chip_reports_none_without_a_character():
+    state = ConsoleControlState.from_values(provider="llama_cpp", model="m")
+
+    assert state.character_label == "Character: none"
+
+
+def test_user_profile_chip_is_labelled_for_the_user_not_the_assistant():
+    state = ConsoleControlState.from_values(
+        provider="llama_cpp", model="m", persona="Corvin"
+    )
+
+    assert state.user_profile_label == "You: Corvin"
+
+
+def test_user_profile_chip_defaults_without_claiming_an_assistant():
+    state = ConsoleControlState.from_values(provider="llama_cpp", model="m")
+
+    assert state.user_profile_label == "You: default"

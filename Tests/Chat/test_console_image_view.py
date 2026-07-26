@@ -310,3 +310,50 @@ def test_resolve_show_character_avatar_live_shape():
     assert resolve_show_character_avatar(
         {"COMPREHENSIVE_CONFIG_RAW": {"chat": {"images": {"show_character_avatar": False}}}}
     ) is False
+
+
+# --- Roleplay UAT regression: the chat character avatar showed only its corner ---
+# Live repro (origin/dev @ f384a2807): the avatar spec reused the shared
+# transcript render cache, which builds Pixels at PIXELS_MAX_COLS x
+# PIXELS_MAX_LINES (80x40 cells). That renderable was then placed in the rail's
+# 16x8 avatar box, so Rich simply clipped it -- the user saw the top-left ~1/5
+# of their character's portrait instead of a scaled-down whole image.
+
+
+def test_scale_image_for_cell_box_fits_avatar_box():
+    """A large portrait must be scaled to fit the box, never left oversized."""
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.Chat.console_image_view import scale_image_for_cell_box
+
+    source = PILImage.new("RGB", (512, 512))
+    scaled = scale_image_for_cell_box(source, 16, 8)
+
+    # A terminal cell is ~2x taller than wide, so an N-line box shows 2N pixel
+    # rows. Anything larger than the box in either axis gets clipped, not fitted.
+    assert scaled.width <= 16
+    assert scaled.height <= 16
+
+
+def test_scale_image_for_cell_box_preserves_aspect_ratio():
+    """Scaling must not distort the portrait."""
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.Chat.console_image_view import scale_image_for_cell_box
+
+    source = PILImage.new("RGB", (400, 200))
+    scaled = scale_image_for_cell_box(source, 16, 8)
+
+    assert scaled.width / scaled.height == 400 / 200
+
+
+def test_scale_image_for_cell_box_leaves_source_unmodified():
+    """The cached source image must not be mutated in place by scaling."""
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.Chat.console_image_view import scale_image_for_cell_box
+
+    source = PILImage.new("RGB", (512, 512))
+    scale_image_for_cell_box(source, 16, 8)
+
+    assert source.size == (512, 512)

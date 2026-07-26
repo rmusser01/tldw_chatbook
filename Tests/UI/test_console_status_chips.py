@@ -14,7 +14,8 @@ def _state(**overrides) -> ConsoleControlState:
     base = dict(
         provider_label="Provider: Anthropic",
         model_label="Model: claude-3-haiku",
-        user_profile_label="Assistant: General",
+        character_label="Character: none",
+        user_profile_label="You: default",
         rag_label="RAG: off",
         sources_label="Sources: 0 staged",
         tools_label="Tools: 0 ready",
@@ -37,14 +38,15 @@ class _ChipsApp(App):
 
 
 @pytest.mark.asyncio
-async def test_status_chips_render_all_seven_labels():
+async def test_status_chips_render_all_eight_labels():
     app = _ChipsApp(_state())
     async with app.run_test(size=(160, 6)) as pilot:
         await pilot.pause()
         for selector, expected in (
             ("#console-provider-chip", "Provider:"),
             ("#console-model-chip", "Model:"),
-            ("#console-persona-chip", "Assistant:"),
+            ("#console-character-chip", "Character:"),
+            ("#console-persona-chip", "You:"),
             ("#console-rag-chip", "RAG:"),
             ("#console-sources-chip", "Sources:"),
             ("#console-tools-chip", "Tools:"),
@@ -94,3 +96,52 @@ async def test_approvals_chip_posts_review_requested():
         assert any(
             isinstance(m, ConsoleApprovalsChip.ReviewRequested) for m in posted
         )
+
+
+@pytest.mark.asyncio
+async def test_status_chips_sync_updates_character_chip():
+    """The character chip must refresh on sync, not stay at its compose value.
+
+    Live repro: starting a chat from a character rendered "Character: none"
+    forever, because the chip was painted once at compose (before any character
+    existed) and `sync_state` never touched it again.
+    """
+    app = _ChipsApp(_state())
+    async with app.run_test(size=(160, 6)) as pilot:
+        await pilot.pause()
+        chips = app.query_one("#console-status-chips", ConsoleStatusChips)
+        chips.sync_state(
+            ConsoleControlState.from_values(
+                provider="llama_cpp", model="m", character="Seraphina"
+            )
+        )
+        await pilot.pause()
+
+        chip = app.query_one("#console-character-chip")
+        assert "Seraphina" in str(chip.render())
+
+
+@pytest.mark.asyncio
+async def test_status_chips_do_not_parse_markup_in_names():
+    """A character or profile name must never be parsed as Rich markup.
+
+    Names are user data (imported cards included). Rendering them through a
+    markup-enabled Static lets `[red]...[/]` restyle the chip strip, or raise
+    MarkupError on an unbalanced tag, from nothing more than a character name.
+    """
+    app = _ChipsApp(
+        ConsoleControlState.from_values(
+            provider="llama_cpp",
+            model="m",
+            character="[red]Seraphina[/]",
+            persona="[bold]Corvin[/]",
+        )
+    )
+    async with app.run_test(size=(200, 6)) as pilot:
+        await pilot.pause()
+
+        character_chip = app.query_one("#console-character-chip")
+        profile_chip = app.query_one("#console-persona-chip")
+
+        assert "[red]Seraphina[/]" in str(character_chip.render())
+        assert "[bold]Corvin[/]" in str(profile_chip.render())

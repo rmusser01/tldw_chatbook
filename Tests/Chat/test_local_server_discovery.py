@@ -331,3 +331,120 @@ async def test_probe_sanitizes_hostile_model_ids() -> None:
         assert len(model_id) <= 120
         assert all(ch.isprintable() for ch in model_id)
         assert "\x1b" not in model_id
+
+
+# --- Roleplay UAT regression: non-chat engines must not register as chat servers ---
+# Live repro (origin/dev @ f384a2807): a TTS-only engine was listening on the
+# hardcoded llama.cpp discovery port (127.0.0.1:8080) and answered /v1/models
+# with a 2xx payload. Discovery treated any 2xx models listing as a chat-capable
+# llama.cpp, so first-run onboarding offered "Use detected llama.cpp
+# (127.0.0.1:8080)", declared the app Ready, and the user's first message failed
+# with HTTP 404 (unknown endpoint: /v1/chat/completions). The payload itself
+# declared `"task": "tts"` -- the data needed to reject it was already present.
+
+
+def _tts_models_payload() -> dict:
+    """The real payload shape served by the TTS engine seen in the UAT."""
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": "supertonic-3",
+                "object": "model",
+                "owned_by": "engine",
+                "family": "supertonic",
+                "task": "tts",
+                "mode": "offline",
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_probe_rejects_tts_only_server() -> None:
+    """A models listing whose every entry declares a non-chat task is not a hit."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_tts_models_payload())
+
+    async with _client(handler) as client:
+        result = await probe_models_endpoint(
+            "http://127.0.0.1:8080", provider_key="llama_cpp", http_client=client
+        )
+
+    assert result.ok is False
+    assert result.model_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_probe_keeps_server_whose_models_declare_no_task() -> None:
+    """llama.cpp does not declare `task`; absence must never mean 'not chat'."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_openai_models_payload("gemma-4-26B.gguf"))
+
+    async with _client(handler) as client:
+        result = await probe_models_endpoint(
+            "http://127.0.0.1:9099", provider_key="llama_cpp", http_client=client
+        )
+
+    assert result.ok is True
+    assert result.model_ids == ("gemma-4-26B.gguf",)
+
+
+@pytest.mark.asyncio
+async def test_probe_keeps_only_chat_capable_models_from_mixed_server() -> None:
+    """A server serving both chat and non-chat models offers only the chat ones."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [
+                    {"id": "voice-1", "task": "tts"},
+                    {"id": "embed-1", "task": "embedding"},
+                    {"id": "chat-1"},
+                ],
+            },
+        )
+
+    async with _client(handler) as client:
+        result = await probe_models_endpoint(
+            "http://127.0.0.1:9099", provider_key="llama_cpp", http_client=client
+        )
+
+    assert result.ok is True
+    assert result.model_ids == ("chat-1",)
+
+
+@pytest.mark.asyncio
+async def test_probe_keeps_a_server_whose_other_entries_are_merely_unrecognized() -> None:
+    """A non-chat entry beside odd-shaped entries must not condemn the server.
+
+    Review finding: the reject condition was "no ids AND saw a non-chat entry",
+    which also rejected listings whose remaining entries simply failed to yield
+    an id (non-string ids, unexpected shapes). That turned an
+    unrecognized-but-plausible server into "no models endpoint" and hid a
+    possibly chat-capable host. Only an ALL-non-chat listing is a rejection.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [
+                    {"id": "voice-1", "task": "tts"},
+                    {"id": 12345},  # non-string id: unrecognized, not non-chat
+                ],
+            },
+        )
+
+    async with _client(handler) as client:
+        result = await probe_models_endpoint(
+            "http://127.0.0.1:9099", provider_key="llama_cpp", http_client=client
+        )
+
+    assert result.ok is True
+    assert result.model_ids == ()

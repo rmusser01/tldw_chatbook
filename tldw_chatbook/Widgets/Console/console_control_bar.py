@@ -62,6 +62,7 @@ def _summary_line(state: ConsoleControlState) -> str:
         (
             state.provider_label,
             state.model_label,
+            state.character_label,
             state.user_profile_label,
             state.rag_label,
             state.sources_label,
