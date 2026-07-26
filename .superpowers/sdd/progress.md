@@ -358,3 +358,16 @@ Task 9b: complete (commit 535fea515) -- OWNER DECISION APPLIED, legacy widening 
   `is not None`, never truthiness. Deleted test_either_legacy_flag_enables_the_whole_
   files_pack (asserted the reversed behaviour). 785 tests green.
 OWNER DECISION 2: do Tasks 12 AND 13 now, accepting rebase conflict surface vs TASK-656.
+Task 12: complete (commit below). Tool ABC -> Tools/base.py, all 6 members incl.
+  risk_tags + timeout_seconds; tool_executor re-exports (identity verified: base.Tool
+  IS tool_executor.Tool); 9 importers repointed; `import tldw_chatbook.app` clean.
+  NOTE: implementer stalled TWICE on a backgrounded pytest (known SDD failure mode);
+  work was complete but uncommitted -- verified and committed by the controller.
+BASELINE ENV NOTE 2: `pytest Tests/` cannot fully collect in this venv -- 21 collection
+  errors from missing numpy (Tests/TTS, Tests/Transcription). Neither dir imports Tools,
+  so unrelated. Use --continue-on-collection-errors.
+OPEN QUESTION for final review: a full run (--continue-on-collection-errors) gave
+  74 failed / 15593 passed / 54 errors in 4h17m, but the captured output was truncated
+  to the tail so the failure list was lost and could NOT be attributed. Task 12's
+  importers are all green in targeted runs (785 Agents/Tools/Utils + 82 Chat bridge).
+  MUST re-run once at end of branch with `-rf --tb=line` and full capture.
