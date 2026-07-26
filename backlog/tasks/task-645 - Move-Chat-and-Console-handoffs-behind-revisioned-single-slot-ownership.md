@@ -30,5 +30,6 @@ Replace the raw Chat and Console pending application fields with typed, memory-o
 - [ ] #2 A claim is exclusive, and acknowledge or release affects only the exact claimed revision so a newer replacement cannot be cleared
 - [ ] #3 The pending_chat_handoff, pending_console_launch, and pending_console_prompt_insert application fields are migrated to the owner
 - [ ] #4 Success, terminal rejection, and transient failure semantics preserve current mount, setup, tab-creation, and retry behavior
-- [ ] #5 Deterministic concurrency, privacy-redaction, mounted-flow, static, and ownership-guard tests pass
+- [ ] #5 Failure or cancellation after creating an exact ephemeral Chat handoff tab closes that tab before releasing; cleanup failure terminally acknowledges with bounded recovery so retry cannot create duplicate partial tabs
+- [ ] #6 Deterministic concurrency, off-owner mutation, cancellation/rollback injection, privacy-redaction, mounted-flow, static, and ownership-guard tests pass
 <!-- AC:END -->

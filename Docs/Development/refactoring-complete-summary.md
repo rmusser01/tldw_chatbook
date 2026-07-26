@@ -1,5 +1,14 @@
 # TldwChatbook Refactoring - Complete Summary
 
+> [!WARNING]
+> **Historical document — do not implement.** Its root reactive state,
+> mirrored-write, persistence, and screen-caching claims are superseded by
+> [ADR-026](../../backlog/decisions/026-application-session-state-ownership.md)
+> and the
+> [application session state ownership design](../superpowers/specs/2026-07-26-application-session-state-ownership-design.md).
+> The alternate refactored app entry point described here was retired under
+> TASK-105.
+
 ## Project Overview
 Successfully refactored the tldw_chatbook application from a 5,857-line monolithic structure to a clean 514-line implementation following Textual framework best practices.
 

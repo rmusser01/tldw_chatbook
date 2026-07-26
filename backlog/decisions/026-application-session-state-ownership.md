@@ -35,7 +35,16 @@ compatibility attributes. A stale asynchronous server-capability result is
 discarded instead of overwriting a newer source or server selection.
 Application compatibility projections are updated by a non-throwing
 publication callback owned by the context boundary; they have no independent
-production writers.
+production writers. Context state is read-only; there is no public state setter
+or standalone persistence escape hatch.
+
+Runtime-policy persistence is part of the ADR-022 private-data boundary. Its
+default path is resolved from the effective config path when the context is
+constructed, including `TLDW_CONFIG_PATH` overrides. Existing files are
+descriptor-verified before parsing, and writes use the random-name,
+descriptor-verified private atomic writer. Unsafe paths fail closed. The
+application neither falls back to nor migrates from the ordinary default
+runtime-policy path while a config override is active.
 
 Screen snapshots remain memory-only. The store records a canonical route,
 detached outer snapshot mapping, and private runtime identity in an internal
@@ -62,12 +71,27 @@ clear a newer value. Successful and terminally rejected handoffs are
 acknowledged. Transient failures release the claim for a later existing
 lifecycle or user-triggered retry; they do not start an automatic retry loop.
 
+Runtime commits, snapshot-store mutation, and handoff-store mutation are
+affine to the application thread captured when each owner is created. Foreign
+workers marshal mutations to the app event-loop boundary; a different thread
+identity rejects. This does not require an event-loop object to exist during
+construction. Revisions are process-local coordination tokens, not
+cross-process merge guarantees.
+
+A Chat handoff that creates an ephemeral tab must close that exact tab before
+releasing after later failure or cancellation. If cleanup itself fails, the
+claim is terminally acknowledged with bounded recovery so retries cannot create
+duplicate partial tabs. Artifact handoffs use exact canonical
+`local:chatbook:<id>` lookup and never substitute a latest record for a missing
+target.
+
 The ACP session-target handoff will be completed without inventing an
 arbitrary-session repository. ACP compares the requested target with the
 current runtime session by reconstructing the same canonical
 `local:acp_session:<session_id>` record ID used by the producer. A match
-focuses the current session details; a malformed, missing, or mismatched target
-produces explicit stale/unsupported recovery and is terminally acknowledged.
+keeps the current session row selected and scrolls its existing detail pane
+into view; a malformed, missing, or mismatched target produces explicit
+stale/unsupported recovery and is terminally acknowledged.
 
 ## Context
 
@@ -89,7 +113,9 @@ atomic: the current setter publishes a new state before persistence succeeds.
 Capability discovery captures state, awaits network work, then publishes the
 derived result unconditionally. A source or server change during that await
 can therefore be overwritten by stale capability data. Media Ingest and Study
-also write app-level runtime projections directly.
+also write app-level runtime projections directly. The current runtime-policy
+store uses ordinary path I/O, predictable temporary names, ambient modes, and
+an import-time default path that ignores the effective config override.
 
 Navigation currently keeps a raw `_screen_states` dictionary on `TldwCli` and
 adds `runtime_policy_snapshot` to domain-owned dictionaries. Home, Workflows,
@@ -98,8 +124,10 @@ and Schedules read the private dictionary to infer recent work.
 Seven raw pending fields coordinate Chat, Console, Study, Artifacts, and ACP.
 Several consumers await work before clearing the field, allowing an older
 consumer to clear a newer replacement. The ACP target is staged but has no
-consumer. `pending_notes_workspace_context` is initialized but never read or
-written.
+consumer. Chat can retain a failed pending handoff after creating a partial
+ephemeral tab, and Artifacts can replace an absent requested target with the
+latest record from a limited first page. `pending_notes_workspace_context` is
+initialized but never read or written.
 
 These are application-lifetime, runtime-boundary, privacy, and cross-module
 interface decisions, so they require one canonical ADR before implementation.
@@ -131,6 +159,10 @@ interface decisions, so they require one canonical ADR before implementation.
   state.
 - Private handoff and snapshot payloads stay out of disk persistence and
   diagnostics.
+- Runtime-policy metadata is read and written through the private-file
+  boundary at the effective configuration location.
+- Failed Chat delivery cannot accumulate duplicate partial handoff tabs, and
+  Artifact delivery cannot silently select a different record.
 - Static ownership guards can protect small, precise boundaries instead of
   relying on broad repository-wide string searches.
 
@@ -140,10 +172,12 @@ interface decisions, so they require one canonical ADR before implementation.
 - The compatibility state classes remain importable even though the
   application does not use them; removal, if ever desired, requires a separate
   compatibility decision.
-- `RuntimePolicyContext` may retain a direct `state` assignment compatibility
-  seam for tests, but production code is guarded to use revisioned commits.
+- Runtime-policy tests use revisioned commits or fakes rather than a direct
+  mutable-state compatibility seam.
 - A transiently failed handoff waits for an existing lifecycle or user action;
   there is no background retry scheduler.
+- Revisions coordinate one application process; concurrent processes may
+  detect a changed private target and fail, but they do not merge state.
 - ACP can recover only the current runtime session until a separately designed
   session repository exists.
 - Service construction and shutdown remain outside this tranche, including the
@@ -162,3 +196,5 @@ interface decisions, so they require one canonical ADR before implementation.
 - [Historical migration guide](../../Docs/Development/app-refactoring-migration.md)
 - [Historical review](../../Docs/Development/refactoring-issues-review.md)
 - [Historical review v2](../../Docs/Development/refactoring-issues-review-v2.md)
+- [Historical refactoring complete summary](../../Docs/Development/refactoring-complete-summary.md)
+- [Historical refactoring fixes summary](../../Docs/Development/refactoring-fixes-summary.md)

@@ -1,7 +1,7 @@
 # Application Session State Ownership Design
 
 Date: 2026-07-26
-Status: Independently reviewed and approved; awaiting user approval for implementation planning
+Status: Post-approval adversarial findings reconciled and re-reviewed; awaiting user approval for implementation planning
 ADR:
 [ADR-026](../../../backlog/decisions/026-application-session-state-ownership.md)
 Backlog:
@@ -53,6 +53,15 @@ specification was written.
 - `set_authoritative_runtime_source()` assigns `context.state` before calling
   persistence. A storage failure leaves memory and projections capable of
   disagreeing with disk.
+- `RuntimeSourceStateStore` reads and writes `runtime_policy.json` with
+  ordinary `Path.open()` calls, a predictable `.tmp` sibling, and ambient file
+  modes. It does not verify ownership, mode, or symlink safety before reading
+  a file that can contain local server identifiers, labels, and status
+  metadata.
+- `DEFAULT_RUNTIME_POLICY_PATH` is derived from the ordinary default config
+  path at import time. It ignores the effective `TLDW_CONFIG_PATH`, so an
+  overridden config can silently split config and runtime-policy storage
+  across directories.
 - `ActiveServerCapabilityService.refresh()` captures state, awaits up to three
   discovery calls, then directly assigns and persists a candidate based on the
   old state. A runtime-source or server switch during the await can be reverted
@@ -113,18 +122,30 @@ the field. If another producer stages a replacement during that await, the
 older consumer can clear the newer value. Clearing before work would avoid that
 race but would lose the established retry behavior on transient failure.
 
+Chat context has an additional partial-application boundary: it creates a new
+ephemeral tab before awaited switching and handoff application complete. A
+failure or cancellation after tab creation can retain the old pending value
+while leaving the partial tab behind, so a later retry can create a duplicate.
+
+Artifacts currently searches only the first 25 local Chatbooks. When an exact
+requested target is absent from that page, it silently selects the most recent
+record instead. The service already provides exact-ID lookup, so this fallback
+can acknowledge the wrong target.
+
 ACP exposes the current runtime process/session state but no repository for
 arbitrary historical or concurrent session IDs. The missing ACP consumer must
 therefore be repaired against the current runtime session, not by inventing a
-lookup source.
+lookup source. The current ACP surface already has one selected current-session
+row and a `#acp-detail-pane`; successful target recovery therefore needs a
+specific focus/visibility behavior rather than a new session selector.
 
 ### Adjacent issue intentionally separated
 
 `TldwCli.__init__` calls `_wire_writing_services()` twice and
 `_wire_chat_conversation_services()` twice. This is a verified service
 lifecycle problem, but combining construction/shutdown ownership with state
-ownership would make the first tranche too broad. It must receive a separate
-task and design after this state foundation is complete.
+ownership would make the first tranche too broad. It remains outside this
+state-ownership contract.
 
 ## Goals
 
@@ -134,11 +155,17 @@ task and design after this state foundation is complete.
   or serialization behavior.
 - Make runtime publication persist-before-publish and resistant to stale async
   results.
+- Keep runtime-policy persistence inside the ADR-022 private-file boundary and
+  colocated with the effective configuration path.
 - Preserve fresh-screen construction and current navigation order.
 - Keep snapshots and handoffs memory-only.
 - Preserve single-slot, consume-once, last-write-wins handoff semantics.
 - Prevent a stale consumer from acknowledging or releasing a newer handoff.
 - Complete the missing ACP target behavior honestly.
+- Prevent failed or cancelled Chat handoffs from leaving duplicate partial
+  ephemeral tabs.
+- Resolve Artifact handoffs by exact canonical target without substituting the
+  latest record.
 - Remove the dead Notes handoff field.
 - Keep private payloads out of persistent diagnostics.
 - Add narrow ownership guards and behavioral regression tests.
@@ -173,6 +200,15 @@ task and design after this state foundation is complete.
 derived compatibility projections where existing screens require them, but it
 must not become a second owner.
 
+All three mutable owners capture the creating application thread. Production
+mutation occurs on that thread through the app's event loop. A worker or
+foreign thread must marshal mutation through `app.call_from_thread()` or the
+existing app-loop boundary; a mutation whose thread identity differs from the
+captured owner rejects instead of racing. The contract deliberately uses thread
+identity rather than an event-loop object because owners may be constructed
+before Textual starts its loop. Revisions are process-local coordination tokens
+and do not claim cross-process merge or rebase semantics.
+
 ## Runtime Policy Contract
 
 ### Context interface
@@ -206,12 +242,16 @@ Storage exceptions propagate. They leave the prior in-memory state, revision,
 and app projections unchanged. Runtime state values remain immutable
 dataclasses, so a snapshot cannot be mutated in place.
 
-Direct `context.state = ...` may remain as a compatibility seam for focused
-tests during migration, but production modules may not use it. If retained,
-that test-only setter advances the revision so it cannot defeat stale-result
-detection; it does not imply persistence. A scoped AST guard enforces that
-production mutation goes through `commit_state()` or a higher-level
-runtime-policy operation.
+`state` is a read-only property. The context exposes no public setter or
+standalone `persist()` escape hatch; focused tests use revisioned commits or
+test fakes. A scoped AST guard enforces that production mutation and storage
+writes go through `commit_state()` or a higher-level runtime-policy operation.
+
+`snapshot()` may be read from ordinary production callers because it returns
+an immutable value. `commit_state()` and all higher-level mutation methods are
+owner-thread-affine and reject off-owner calls. The revision protects
+in-process asynchronous work; it is not a cross-process compare-and-swap
+protocol.
 
 The context accepts an optional non-throwing publication callback when
 constructed by `load_runtime_policy_for_app()`. After durable state publication
@@ -219,6 +259,37 @@ the callback updates the app's compatibility projections. A projection
 failure is contained and logged without private values; it cannot roll back a
 durable authoritative commit. Production readers use the context rather than
 depending on those projections for authority.
+
+### Persistence boundary
+
+Unless an explicit runtime-policy path is injected,
+`load_runtime_policy_for_app()` resolves the path when the context is
+constructed as `get_cli_config_path().parent / "runtime_policy.json"`. An
+active `TLDW_CONFIG_PATH` therefore colocates the runtime policy with the
+effective configuration. The application does not migrate, merge, or fall
+back to the ordinary default runtime-policy file while an override is active.
+
+ADR-022 private-path rules apply before parsing:
+
+- On POSIX, existing files are opened through the descriptor-verified private
+  reader, rejecting symlinks, wrong ownership, or unsafe file type and
+  hardening eligible excessive permissions before any JSON is consumed.
+- Writes use the random-name, descriptor-verified private atomic writer rather
+  than a predictable sibling temp file.
+- The default application config directory is app-owned and hardened to mode
+  `0700`. A caller-supplied/custom parent must already exist; runtime-policy
+  code does not create or chmod that parent.
+- Unsafe targets fail closed. Malformed JSON retains the existing safe-default
+  recovery only after the file passes privacy verification.
+- Diagnostics report only operation and exception category. They do not log a
+  custom path, server identifier, label, endpoint, or serialized state.
+
+On Windows, the same privacy primitives return and surface
+`UNVERIFIED_PLATFORM` without claiming that native ACLs were verified, matching
+ADR-022.
+
+The private atomic writer can detect a target changed by another process and
+fail the commit. There is deliberately no cross-process merge/rebase promise.
 
 ### Source changes
 
@@ -232,10 +303,15 @@ current state. A request for server mode with no configured server continues
 to resolve to local mode. A persistence failure is reported to the caller and
 does not publish a false selection.
 
-Compatibility projections such as `current_runtime_backend` and
-`runtime_backend` are written only by the runtime-policy projection boundary.
-Media Ingest, Study, and the no-policy branch in
-`handle_runtime_backend_changed()` stop writing them independently.
+`TldwCli.handle_runtime_backend_changed()` contains that failure at the
+application boundary: it emits a bounded metadata-only warning and keeps the
+prior authoritative source, selected screen, revision, and compatibility
+projections.
+
+The exact compatibility projections `current_runtime_backend`,
+`runtime_backend`, and `active_server_id` are written only by the
+runtime-policy projection boundary. Media Ingest, Study, and the no-policy
+branch in `handle_runtime_backend_changed()` stop writing them independently.
 
 ### Capability refresh
 
@@ -288,6 +364,11 @@ canonical route, an outer copy of the screen snapshot, and runtime identity.
 It does not add policy keys to the domain mapping or expose the backing mapping
 to consumers.
 
+The store captures the creating application thread. Off-owner `save()`,
+`restore()`, `discard()`, and mutation-capable `has_snapshots()` calls reject.
+Screens treat the mapping passed to `restore_state()` as read-only and copy any
+nested mutable value they retain or mutate.
+
 For this store, "canonical route" means exactly the `canonical_tab` returned
 by `resolve_screen_target()`, not the requested route, the resolver's
 `screen_name`, or `BaseAppScreen.screen_name`.
@@ -331,7 +412,9 @@ unable to restore.
 The store makes an outer mapping copy at save and restore boundaries. It does
 not blindly deep-copy payloads such as large Console histories. Screen owners
 remain responsible under ADR-011 for returning detached snapshot values whose
-subsequent mutation will not alter live widget/domain state.
+subsequent mutation will not alter live widget/domain state. Focused checks
+cover Settings draft containers and a large Console snapshot so shallow
+storage does not become either aliasing or accidental deep-copy cost.
 
 ### Navigation sequence
 
@@ -367,8 +450,8 @@ view state.
 - Console prompt insert: non-empty `str`
 - Study scope: normalized `StudyScopeContext`
 - Study initial section: validated section identifier
-- Artifact Chatbook target: non-empty target ID
-- ACP session target: non-empty target ID
+- Artifact Chatbook target: canonical `local:chatbook:<chatbook_id>` record ID
+- ACP session target: canonical `local:acp_session:<session_id>` record ID
 
 Producers stage through channel-specific typed methods or a typed generic
 boundary. Values are validated, normalized, and detached before they become
@@ -423,6 +506,10 @@ replacement remains the single next value.
 Claims never escape into logs or persistence. A claim exposes its typed value
 and opaque channel/revision identity only to the destination consumer.
 
+The handoff store captures the creating application thread. Off-owner stage,
+claim, acknowledge, and release operations reject. Workers marshal producer
+changes to that owner boundary before touching a channel.
+
 ### Settlement
 
 Consumers settle claims by outcome:
@@ -445,6 +532,20 @@ Chat context continues to honor the tabs-enabled gate before staging.
 Consumption waits for the same Chat mount/setup prerequisites. A handoff is
 acknowledged only after its context is actually applied or terminally rejected.
 
+Creating the handoff's ephemeral Chat tab is part of the same settlement
+transaction:
+
+- Before an exact new tab ID exists, cancellation or retryable failure releases
+  the claim.
+- After that tab exists, any later cancellation or failure first closes that
+  exact ephemeral tab and then releases the claim.
+- If cleanup succeeds, the claim is released and a later retry may create one
+  replacement tab. If cleanup itself fails, the claim is terminally
+  acknowledged and a bounded warning is shown so the same intent cannot create
+  duplicate partial tabs.
+- On success, the claim is acknowledged immediately after the context is
+  applied, before unrelated awaited UI work.
+
 Console live-work launch keeps its current normalized screen-local context and
 inspector behavior. The app-level claim is acknowledged after ownership has
 been transferred to that screen-local context.
@@ -459,10 +560,19 @@ Study scope and section are separate channels so either may be staged alone.
 Each is claimed and settled independently. Applying explicit incoming values
 after restored screen state preserves their higher precedence.
 
-Artifacts acknowledges after the target is selected or after lookup proves the
-target no longer exists. A temporarily unavailable repository or unready
-screen releases the claim. A newer target staged while lookup awaits cannot be
-cleared by the older claim.
+The Artifact channel accepts only
+`local:chatbook:<chatbook_id>` with a non-empty suffix. The consumer performs
+exact lookup through `LocalChatbookService.get_chatbook(chatbook_id)`:
+
+- Exact lookup and selection success acknowledges.
+- `KeyError` produces explicit missing-target recovery and acknowledges.
+- An unavailable service, unready screen, or other lookup failure releases.
+- The first-page listing and its "latest record" fallback cannot settle a
+  requested target. Ordinary no-handoff latest-record rendering remains
+  unchanged.
+
+A newer target staged while exact lookup awaits cannot be cleared by the older
+claim.
 
 ### ACP target recovery
 
@@ -475,7 +585,9 @@ session ID. The consumer reconstructs the current canonical record ID from
 does not compare the staged record ID directly with the bare session ID.
 
 - When the reconstructed current record ID exactly matches the claimed target,
-  ACP focuses or opens the existing current-session detail and acknowledges.
+  ACP keeps the existing current-session row selected, scrolls
+  `#acp-detail-pane` into view after mount, emits a bounded informational
+  notification, and acknowledges.
 - When no runtime session exists, the target does not match, or the current ACP
   surface cannot focus session details, ACP shows an explicit
   stale/unsupported recovery message and acknowledges.
@@ -519,6 +631,8 @@ reviewable tasks.
 ### TASK-643: Runtime authority and legacy-state detachment
 
 - Add revision snapshots and persist-before-publish compare-and-swap commits.
+- Make runtime-policy persistence follow the effective config path and ADR-022
+  private-file boundary.
 - Make capability refresh discard stale results.
 - Remove `TldwCli`'s `AppState` dependency and correct compatibility docs.
 - Remove independent runtime projection writers.
@@ -548,6 +662,7 @@ Reason: This defines application-lifetime view-state ownership.
 
 - Add the typed revisioned single-slot store.
 - Migrate Chat context, Console launch, and Console prompt insert.
+- Roll back exact partially created Chat tabs before releasing a failed claim.
 - Verify replacement, cancellation, transient failure, and mounted-screen
   behavior before expanding to other destinations.
 
@@ -560,7 +675,7 @@ Reason: This defines a new cross-screen delivery and settlement interface.
 ### TASK-646: Remaining handoffs and final ownership gate
 
 - Migrate Study, Artifacts, and ACP.
-- Complete ACP target recovery.
+- Resolve Artifact targets exactly and complete visible ACP target recovery.
 - Remove the dead Notes slot and every old raw app pending field.
 - Add the final AST guard and run integrated release gates once.
 
@@ -578,6 +693,11 @@ barriers rather than timing sleeps.
 ### TASK-643 focused proof
 
 - Persistence failure leaves state, revision, and projections unchanged.
+- Default and overridden runtime-policy paths are colocated with the effective
+  config path; no fallback read crosses between them.
+- Symlink, ownership, and type violations fail closed before JSON parsing;
+  eligible excessive file modes are hardened before parsing; atomic writes use
+  private random temporary files and emit no path or state sentinel.
 - Successful commit persists before observers can see the new state.
 - A capability probe blocked on an event cannot commit after a source/server
   change advances the revision.
@@ -585,13 +705,20 @@ barriers rather than timing sleeps.
 - Media Ingest and Study use the authoritative runtime operation.
 - Compatibility state imports and serialization still work.
 - A scoped AST guard rejects production assignments to
-  `RuntimePolicyContext.state` and app runtime projections outside their owner.
+  `RuntimePolicyContext.state`, direct store persistence, and the exact app
+  runtime projections outside their owner.
+- Off-owner runtime mutations reject; a worker-marshalled app-loop mutation
+  succeeds.
+- Runtime-change persistence failure leaves the prior screen and runtime
+  selection active and produces only bounded metadata-only recovery.
 
 ### TASK-644 focused proof
 
 - Save and restore make outer copies and never mutate the caller's mapping.
 - Source/server identity mismatches and corrupt envelopes are discarded.
 - A large nested Console snapshot is not blindly deep-copied by the store.
+- Settings copies nested restored draft containers before retaining or
+  mutating them.
 - `ccp`/`personas`, retired Library aliases, and other aliases sharing a
   canonical tab use the same snapshot, while distinct canonical tabs remain
   isolated even when their screen-owned names match.
@@ -603,6 +730,7 @@ barriers rather than timing sleeps.
   context precedence are mounted and verified.
 - Recent-work consumers use `has_snapshots()`.
 - Failure logs omit a staged sentinel payload.
+- Off-owner snapshot mutations reject.
 - An AST guard rejects app `_screen_states` ownership and direct consumer
   access.
 
@@ -615,17 +743,24 @@ barriers rather than timing sleeps.
 - Mutating a producer's nested Chat or Console mapping after staging cannot
   alter the claimed value.
 - Cancellation releases and propagates.
+- Failure or cancellation after exact ephemeral Chat-tab creation closes that
+  tab before release; injected cleanup failure terminally acknowledges and
+  cannot duplicate the tab on retry.
 - Chat and Console success, terminal rejection, and transient readiness paths
   settle correctly in mounted flows.
 - Failure logs omit unique Chat/Console sentinel content.
+- Off-owner handoff mutations reject while marshalled app-loop producers work.
 
 ### TASK-646 focused proof
 
 - Study scope and section settle independently.
 - Mutating a staged Study source locator after staging cannot alter the claimed
   scope.
-- Artifacts preserves a newer staged target during an awaited lookup.
+- Artifacts resolves only an exact canonical target, never substitutes the
+  first-page latest record, and preserves a newer target during awaited lookup.
+- Artifact lookup failures omit a unique target sentinel from diagnostics.
 - ACP canonical record-ID matching focuses the current session;
+  the matching mounted flow exposes `#acp-detail-pane`, while
   malformed/missing/mismatched targets show explicit recovery and do not
   fabricate lookup.
 - No old app-level `pending_*` handoff fields remain.
@@ -658,6 +793,8 @@ warnings:
 - `Docs/Development/state-decomposition-analysis.md`
 - `Docs/Development/refactoring-issues-review.md`
 - `Docs/Development/refactoring-issues-review-v2.md`
+- `Docs/Development/refactoring-complete-summary.md`
+- `Docs/Development/refactoring-fixes-summary.md`
 - `Docs/Development/app-refactoring-plan.md`
 - `Docs/Development/app-refactoring-plan-v2.md`
 - `Docs/Development/app-refactoring-migration.md`

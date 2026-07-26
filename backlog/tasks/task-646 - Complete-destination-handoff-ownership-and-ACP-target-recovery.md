@@ -27,8 +27,8 @@ Migrate the remaining Study, Artifacts, and ACP navigation handoffs to the revis
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Typed Study, Artifacts, and ACP slots preserve revisioned single-slot replacement semantics
-- [ ] #2 Artifacts transient failures release for later lifecycle or user retry while success and terminal missing-target outcomes acknowledge
-- [ ] #3 ACP consumes its canonical local:acp_session record target by reconstructing the same identifier from the current runtime session and provides explicit malformed, stale, or unsupported recovery instead of silently losing the target
+- [ ] #2 Artifacts resolves only an exact canonical local:chatbook target, never substitutes the latest first-page record, releases transient failures for later lifecycle or user retry, and acknowledges success or terminal missing-target outcomes
+- [ ] #3 ACP consumes its canonical local:acp_session record target by reconstructing the same identifier from the current runtime session; an exact match keeps that row selected and exposes the mounted detail pane, while malformed, stale, or unsupported targets receive explicit recovery
 - [ ] #4 All listed raw application pending fields and the dead pending_notes_workspace_context slot are removed and an AST ownership guard prevents their return
-- [ ] #5 Focused and static checks plus the installed-wheel gate, product-maturity UI sentinel, and full suite pass after the integrated tranche
+- [ ] #5 Focused exact-target, replacement-race, privacy-sentinel, mounted-flow, and static checks plus the installed-wheel gate, product-maturity UI sentinel, and full suite pass after the integrated tranche
 <!-- AC:END -->
