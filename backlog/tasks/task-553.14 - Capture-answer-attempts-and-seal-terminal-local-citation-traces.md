@@ -1,10 +1,10 @@
 ---
 id: TASK-553.14
 title: Capture answer attempts and seal terminal local citation traces
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-26 18:18'
-updated_date: '2026-07-26 18:26'
+updated_date: '2026-07-26 19:03'
 labels:
   - rag
   - citations
@@ -37,3 +37,20 @@ Complete one eligible marker-free local RAG generation by binding its exact fina
 - [ ] #5 Failed, stopped, canceled, empty, retry, and regenerate paths do not seal or inherit unfinished builders.
 - [ ] #6 Focused tests cover builder atomicity, production repository wiring, persistence-capability gating, direct and agent completion, exact-body fidelity, transient-finalizer cleanup, atomic persistence, fallback, idempotent retry, and content-free diagnostics.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/024-rag-citation-provenance-and-source-resolution.md
+Reason: Direct implementation of ADR-024’s accepted request-scoped builder, terminal seal, governed answer body, message ownership, and atomic persistence contracts; no new architectural decision.
+
+Detailed plan: Docs/superpowers/plans/2026-07-26-local-answer-attempt-terminal-sealing.md
+
+1. Add repository-owned local seal policy, bounded initial answer attempts, closed-run chronology, and one-shot builder sealing.
+2. Return the exact prompt-evidence-set identity from every successful local capture path.
+3. Expose fail-closed canonical-write readiness and wire the app’s exact citation repository into Console persistence.
+4. Add transient terminal finalization, early-write deferral, stable identity, deterministic fallback, and one ambiguous same-write retry to ConsoleChatStore.
+5. Install finalizers only for initial direct-provider and agent sends; clear them on every non-success, empty, retry, regenerate, replacement, and outer-exit path.
+6. Prove exact-body atomic persistence and rollback with real SQLite integration tests, then run only the touched-code verification listed in the detailed plan.
+<!-- SECTION:PLAN:END -->
