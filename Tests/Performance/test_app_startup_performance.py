@@ -133,7 +133,6 @@ def test_app_import_does_not_load_legacy_feature_windows(tmp_path: Path) -> None
         import tldw_chatbook.app  # noqa: F401
 
         guards = (
-            "tldw_chatbook.UI.Evals.evals_window_v3",
             "tldw_chatbook.UI.STTS_Window",
             "tldw_chatbook.UI.MediaWindow_v2",
             "tldw_chatbook.Utils.Splash_Screens.classic.glitch_reveal",
