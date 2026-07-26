@@ -20,6 +20,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderDescriptor,
     TTSProviderSpec,
     TTSRequest,
+    TTSRegistryClosedError,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.legacy_bridge import (
@@ -506,21 +507,296 @@ class _PauseOnceService(TTSService):
         self._pause_next_admission = True
         super().__init__(registry, preferences_snapshot=snapshot)
 
+    async def _pause_admission(self, request: TTSRequest) -> None:
+        if self._pause_next_admission:
+            self._pause_next_admission = False
+            self.frozen_requests.append(request)
+            self.admission_started.set()
+            await self.allow_admission.wait()
+
     async def admit(
         self,
         request: TTSRequest,
         *,
         expected_configuration_revision: int | None = None,
     ) -> Any:
-        if self._pause_next_admission:
-            self._pause_next_admission = False
-            self.frozen_requests.append(request)
-            self.admission_started.set()
-            await self.allow_admission.wait()
+        await self._pause_admission(request)
         return await super().admit(
             request,
             expected_configuration_revision=expected_configuration_revision,
         )
+
+    async def _admit_reserved(
+        self,
+        request: TTSRequest,
+        reservation: Any,
+        *,
+        expected_configuration_revision: int | None = None,
+    ) -> Any:
+        await self._pause_admission(request)
+        return await super()._admit_reserved(
+            request,
+            reservation,
+            expected_configuration_revision=expected_configuration_revision,
+        )
+
+
+class _CountingRecordingRegistry(_RecordingRegistry):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.release_calls = 0
+
+    async def _release(self, slot: Any, record: Any) -> None:
+        self.release_calls += 1
+        await super()._release(slot, record)
+
+
+def _counting_native_registry(
+    adapter: _CapturingAdapter,
+    *,
+    shutdown_timeout_seconds: float = 10.0,
+) -> _CountingRecordingRegistry:
+    return _CountingRecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=lambda _config: adapter,
+                initial_config={"generation": "initial"},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+        shutdown_timeout_seconds=shutdown_timeout_seconds,
+    )
+
+
+class _GateExitPauseService(TTSService):
+    def __init__(
+        self,
+        registry: TTSAdapterRegistry,
+        snapshot: TTSPreferencesSnapshot,
+    ) -> None:
+        self.operation_admitted = asyncio.Event()
+        self.allow_admit_return = asyncio.Event()
+        self._admit_return_paused = False
+        super().__init__(
+            registry,
+            max_concurrent_operations=1,
+            preferences_snapshot=snapshot,
+        )
+
+    async def _pause_admit_return(self, operation: Any) -> Any:
+        if self._admit_return_paused:
+            return operation
+        self._admit_return_paused = True
+        self.operation_admitted.set()
+        await self.allow_admit_return.wait()
+        return operation
+
+    async def admit(
+        self,
+        request: TTSRequest,
+        *,
+        expected_configuration_revision: int | None = None,
+    ) -> Any:
+        operation = await super().admit(
+            request,
+            expected_configuration_revision=expected_configuration_revision,
+        )
+        return await self._pause_admit_return(operation)
+
+    async def _admit_reserved(
+        self,
+        request: TTSRequest,
+        reservation: Any,
+        *,
+        expected_configuration_revision: int | None = None,
+    ) -> Any:
+        operation = await super()._admit_reserved(
+            request,
+            reservation,
+            expected_configuration_revision=expected_configuration_revision,
+        )
+        return await self._pause_admit_return(operation)
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_read_gate_exit_closes_claimed_operation() -> None:
+    adapter = _CapturingAdapter("audio_cpp")
+    registry = _counting_native_registry(adapter)
+    service = _GateExitPauseService(registry, _snapshot())
+    generation = asyncio.create_task(
+        service.synthesize_default(text="Character response")
+    )
+    await asyncio.wait_for(service.operation_admitted.wait(), timeout=_WAIT_SECONDS)
+
+    try:
+        async with service._request_admission._gate._condition:
+            service.allow_admit_return.set()
+            await asyncio.sleep(0)
+            assert not generation.done()
+            generation.cancel("cancelled during read-gate exit")
+            await asyncio.sleep(0)
+            assert not generation.done()
+
+        with pytest.raises(asyncio.CancelledError) as cancellation:
+            await generation
+        assert cancellation.value.args == ("cancelled during read-gate exit",)
+        assert adapter.synthesize_calls == 0
+        assert service._admitted_operations == set()
+        assert service._operation_limit._value == 1
+        assert registry._total_leases() == 0
+        assert registry.release_calls == 1
+    finally:
+        if not generation.done():
+            generation.cancel()
+            await asyncio.gather(generation, return_exceptions=True)
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_during_read_gate_exit_cannot_consume_claimed_operation() -> (
+    None
+):
+    adapter = _CapturingAdapter("audio_cpp")
+    registry = _counting_native_registry(
+        adapter,
+        shutdown_timeout_seconds=0,
+    )
+    service = _GateExitPauseService(registry, _snapshot())
+    generation = asyncio.create_task(
+        service.synthesize_default(text="Character response")
+    )
+    await asyncio.wait_for(service.operation_admitted.wait(), timeout=_WAIT_SECONDS)
+    close_task: asyncio.Task[None] | None = None
+
+    try:
+        async with service._request_admission._gate._condition:
+            service.allow_admit_return.set()
+            await asyncio.sleep(0)
+            assert not generation.done()
+            close_task = asyncio.create_task(service.close())
+            await asyncio.wait_for(
+                service._close_signal.wait(),
+                timeout=_WAIT_SECONDS,
+            )
+            await asyncio.sleep(0)
+
+        with pytest.raises(TTSRegistryClosedError, match="service is closed"):
+            await generation
+        assert adapter.synthesize_calls == 0
+        assert service._admitted_operations == set()
+        assert service._operation_limit._value == 1
+        assert registry._total_leases() == 0
+        assert registry.release_calls == 1
+    finally:
+        if not generation.done():
+            generation.cancel()
+        tasks: list[asyncio.Future[Any]] = [generation]
+        if close_task is not None:
+            tasks.append(close_task)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await service.close()
+        await service.wait_closed()
+
+
+class _CapacityObservedService(TTSService):
+    def __init__(
+        self,
+        registry: TTSAdapterRegistry,
+        snapshot: TTSPreferencesSnapshot,
+    ) -> None:
+        self.capacity_acquisitions = 0
+        self.second_capacity_wait_started = asyncio.Event()
+        super().__init__(
+            registry,
+            max_concurrent_operations=1,
+            preferences_snapshot=snapshot,
+        )
+
+    async def _acquire_operation_slot(self) -> None:
+        self.capacity_acquisitions += 1
+        if self.capacity_acquisitions == 2:
+            self.second_capacity_wait_started.set()
+        await super()._acquire_operation_slot()
+
+
+@pytest.mark.asyncio
+async def test_saturated_capacity_waiter_does_not_block_waiting_writer() -> None:
+    adapter = _CapturingAdapter("audio_cpp")
+    registry = _counting_native_registry(adapter)
+    service = _CapacityObservedService(registry, _snapshot())
+    first_response = await service.synthesize_default(text="First response")
+    second_generation = asyncio.create_task(
+        service.synthesize_default(text="Second response")
+    )
+    await asyncio.wait_for(
+        service.second_capacity_wait_started.wait(),
+        timeout=_WAIT_SECONDS,
+    )
+    writer_entered = asyncio.Event()
+    release_writer = asyncio.Event()
+
+    async def publish() -> None:
+        async with service._request_admission._gate.write():
+            writer_entered.set()
+            await release_writer.wait()
+
+    publication = asyncio.create_task(publish())
+    try:
+        for _ in range(3):
+            await asyncio.sleep(0)
+        assert writer_entered.is_set()
+        assert adapter.response_close_calls == 0
+        assert not second_generation.done()
+    finally:
+        second_generation.cancel()
+        release_writer.set()
+        await first_response.aclose()
+        await asyncio.gather(
+            second_generation,
+            publication,
+            return_exceptions=True,
+        )
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_capacity_reservation_does_not_leak_or_overrelease() -> None:
+    adapter = _CapturingAdapter("audio_cpp")
+    registry = _counting_native_registry(adapter)
+    service = _CapacityObservedService(registry, _snapshot())
+    first_response = await service.synthesize_default(text="First response")
+    waiting_generation = asyncio.create_task(
+        service.synthesize_default(text="Waiting response")
+    )
+    await asyncio.wait_for(
+        service.second_capacity_wait_started.wait(),
+        timeout=_WAIT_SECONDS,
+    )
+
+    waiting_generation.cancel("cancelled while reserving capacity")
+    with pytest.raises(asyncio.CancelledError) as cancellation:
+        await waiting_generation
+    assert cancellation.value.args == ("cancelled while reserving capacity",)
+    assert service._operation_limit._value == 0
+    assert registry._total_leases() == 1
+
+    await first_response.aclose()
+    next_response = await service.synthesize_default(text="Next response")
+    await next_response.aclose()
+
+    assert service._operation_limit._value == 1
+    assert registry._total_leases() == 0
+    assert registry.release_calls == 2
+    await service.close()
+    await service.wait_closed()
 
 
 @pytest.mark.asyncio

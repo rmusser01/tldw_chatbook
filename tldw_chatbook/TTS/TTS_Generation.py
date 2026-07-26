@@ -81,14 +81,44 @@ async def _cleanup_preserving_primary(
         _record_cleanup_failure(primary_error, cleanup_error)
 
 
+class _OperationCapacityReservation:
+    """One idempotent reservation of a service concurrency slot."""
+
+    def __init__(self, operation_limit: asyncio.Semaphore) -> None:
+        self._operation_limit = operation_limit
+        self._transferred = False
+        self._released = False
+
+    def transfer_to_resources(self) -> None:
+        if self._released or self._transferred:
+            raise RuntimeError("The TTS operation capacity is not transferable")
+        self._transferred = True
+
+    def release_if_untransferred(self) -> None:
+        if not self._transferred:
+            self._release()
+
+    def release_from_resources(self) -> None:
+        if not self._transferred:
+            raise RuntimeError("The TTS operation capacity was not transferred")
+        self._release()
+
+    def _release(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        self._operation_limit.release()
+
+
 class _OperationResources:
     def __init__(
         self,
         lease: TTSAdapterLease,
-        operation_limit: asyncio.Semaphore,
+        capacity: _OperationCapacityReservation,
     ) -> None:
         self._lease = lease
-        self._operation_limit = operation_limit
+        self._capacity = capacity
+        self._capacity.transfer_to_resources()
         self._cleanup_task: asyncio.Task[None] | None = None
 
     async def close(self) -> None:
@@ -103,7 +133,7 @@ class _OperationResources:
         try:
             await self._lease.release()
         finally:
-            self._operation_limit.release()
+            self._capacity.release_from_resources()
 
 
 class _ManagedAudioResponse(TTSAudioResponse):
@@ -176,9 +206,16 @@ class _AdmittedTTSOperation:
         self._on_finished = on_finished
         self._manage_response = manage_response
         self._observe_cleanup = observe_cleanup
+        self._claimed = False
         self._used = False
         self._executing = False
         self._close_task: asyncio.Task[None] | None = None
+
+    def claim(self) -> None:
+        """Transfer a pending operation to its immediate execution owner."""
+        if self._used or self._claimed:
+            raise RuntimeError("The admitted TTS operation cannot be claimed")
+        self._claimed = True
 
     async def synthesize(
         self,
@@ -187,6 +224,7 @@ class _AdmittedTTSOperation:
         """Execute the admitted request exactly once."""
         if self._used:
             raise RuntimeError("The admitted TTS operation has already been used")
+        self._claimed = True
         self._used = True
         self._executing = True
 
@@ -253,12 +291,14 @@ class _AdmittedTTSOperation:
 
     def start_close_if_pending(self) -> asyncio.Task[None] | None:
         """Start cleanup only when synthesis has not begun."""
-        if self._executing:
+        if self._executing or self._claimed:
             return None
         return self.start_close()
 
-    def start_shutdown_cleanup(self) -> asyncio.Task[None]:
+    def start_shutdown_cleanup(self) -> asyncio.Task[None] | None:
         """Release resources for an operation still tracked after the drain."""
+        if self._claimed and not self._used:
+            return None
         if self._close_task is None:
             self._used = True
             self._close_task = asyncio.create_task(self._close())
@@ -319,17 +359,44 @@ class TTSService:
         Returns:
             A single-use operation that owns its admitted resources.
         """
+        reservation: _OperationCapacityReservation | None = None
+        try:
+            reservation = await self._reserve_operation_capacity()
+            return await self._admit_reserved(
+                request,
+                reservation,
+                expected_configuration_revision=expected_configuration_revision,
+            )
+        except BaseException:
+            if reservation is not None:
+                reservation.release_if_untransferred()
+            raise
+
+    async def _reserve_operation_capacity(
+        self,
+    ) -> _OperationCapacityReservation:
+        """Reserve service capacity before entering request-selection gates."""
         await self._acquire_operation_slot()
+        return _OperationCapacityReservation(self._operation_limit)
+
+    async def _admit_reserved(
+        self,
+        request: TTSRequest,
+        reservation: _OperationCapacityReservation,
+        *,
+        expected_configuration_revision: int | None = None,
+    ) -> _AdmittedTTSOperation:
+        """Acquire a provider lease using capacity reserved by this service."""
         try:
             lease = await self.registry.acquire(
                 request.provider_id,
                 expected_revision=expected_configuration_revision,
             )
         except BaseException:
-            self._operation_limit.release()
+            reservation.release_if_untransferred()
             raise
 
-        resources = _OperationResources(lease, self._operation_limit)
+        resources = _OperationResources(lease, reservation)
         if self._close_signal.is_set():
             closed_error = TTSRegistryClosedError("The TTS service is closed")
             await _cleanup_preserving_primary(resources.close, closed_error)
@@ -349,6 +416,14 @@ class TTSService:
             await _cleanup_preserving_primary(operation.close, closed_error)
             raise closed_error
         return operation
+
+    async def _close_admitted_operation_preserving_primary(
+        self,
+        operation: _AdmittedTTSOperation,
+        primary_error: BaseException,
+    ) -> None:
+        """Close a claimed operation without replacing its primary failure."""
+        await _cleanup_preserving_primary(operation.close, primary_error)
 
     async def synthesize(
         self,
@@ -598,8 +673,8 @@ class TTSService:
         late_operation_tasks = tuple(
             cleanup_task
             for operation in tuple(self._admitted_operations)
-            if (cleanup_task := operation.start_shutdown_cleanup())
-            not in operation_tasks
+            if (cleanup_task := operation.start_shutdown_cleanup()) is not None
+            and cleanup_task not in operation_tasks
         )
         responses = tuple(self._responses)
         response_tasks = [response.start_close() for response in responses]

@@ -19,7 +19,11 @@ from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 
 if TYPE_CHECKING:
-    from tldw_chatbook.TTS.TTS_Generation import TTSService
+    from tldw_chatbook.TTS.TTS_Generation import (
+        TTSService,
+        _AdmittedTTSOperation,
+        _OperationCapacityReservation,
+    )
 
 _AudioFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
 _VALID_AUDIO_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav", "pcm"})
@@ -125,21 +129,38 @@ class TTSRequestAdmissionCoordinator:
         progress_sink: ProgressSink | None = None,
     ) -> TTSAudioResponse:
         """Resolve and admit one coherent default request, then execute it."""
-        async with self._gate.read():
-            preferences = self._preferences
-            model_id = await self._resolve_model(preferences)
-            revision = self._service.configuration_revision(preferences.provider_id)
-            request = self._build_request(
-                preferences,
-                model_id=model_id,
-                text=text,
-                voice_override=voice_override,
-            )
-            operation = await self._service.admit(
-                request,
-                expected_configuration_revision=revision,
-            )
+        reservation: _OperationCapacityReservation | None = None
+        operation: _AdmittedTTSOperation | None = None
+        try:
+            reservation = await self._service._reserve_operation_capacity()
+            async with self._gate.read():
+                preferences = self._preferences
+                model_id = await self._resolve_model(preferences)
+                revision = self._service.configuration_revision(preferences.provider_id)
+                request = self._build_request(
+                    preferences,
+                    model_id=model_id,
+                    text=text,
+                    voice_override=voice_override,
+                )
+                operation = await self._service._admit_reserved(
+                    request,
+                    reservation,
+                    expected_configuration_revision=revision,
+                )
+                operation.claim()
+        except BaseException as error:
+            if operation is None:
+                if reservation is not None:
+                    reservation.release_if_untransferred()
+            else:
+                await self._service._close_admitted_operation_preserving_primary(
+                    operation,
+                    error,
+                )
+            raise
 
+        assert operation is not None
         return await operation.synthesize(progress_sink)
 
     async def _resolve_model(
