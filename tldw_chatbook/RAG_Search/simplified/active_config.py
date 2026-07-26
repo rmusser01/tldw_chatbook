@@ -83,10 +83,27 @@ def _mark_first_run_import_done() -> None:
     ``imported_settings`` (a fresh import, and healing a half-done run) so
     that, from then on, the pointer is never second-guessed again -- even if
     the user later switches to a different profile, or back to the default
-    builtin itself. Best-effort: a failure here is logged and swallowed, same
-    as the rest of ``ensure_imported_profile`` -- it must never block RAG
-    service creation. A failed write just means the next call may re-evaluate
-    the healing branch once more, which is safe (idempotent), not corrupting.
+    builtin itself.
+
+    Callers on a path that just called ``set_active_profile(_IMPORTED_ID)``
+    MUST re-read ``_active_profile_id()`` and only call this when it now
+    reads ``_IMPORTED_ID``, confirming the pointer write actually took
+    effect, before calling this (task-639 review): ``set_active_profile``
+    swallows a failed write (``save_setting_to_cli_config`` returning
+    ``False`` just logs a warning and returns -- see its docstring), so
+    marking unconditionally right after it would record "done" even though
+    the pointer was never actually updated. Since the marker is what stops
+    the healing branch from ever retrying, that combination would
+    permanently strand the user on the default profile with no way to
+    recover. A path that never attempted a pointer write in the first place
+    (the "adopt an already-settled pointer as-is" branch) has nothing to
+    confirm and calls this unconditionally.
+
+    Best-effort: a failure here (the marker write itself failing) is logged
+    and swallowed, same as the rest of ``ensure_imported_profile`` -- it must
+    never block RAG service creation. A failed write just means the next
+    call may re-evaluate the healing branch once more, which is safe
+    (idempotent), not corrupting.
     """
     try:
         save_setting_to_cli_config("rag.service", "first_run_import_done", True)
@@ -415,18 +432,27 @@ def ensure_imported_profile() -> Optional[str]:
     - Pointer still names the default builtin (``DEFAULT_PROFILE`` ==
       ``hybrid_basic``, i.e. it was never successfully written by anyone) --
       this is the one condition a genuine half-done first run and "the
-      marker predates this profile" share, so the healing here always
-      completes the activation and sets the marker.
+      marker predates this profile" share, so the healing here attempts the
+      activation and, ONLY if ``_active_profile_id()`` reads back as
+      ``_IMPORTED_ID`` afterward (the write is confirmed, not assumed),
+      records the marker. A failed pointer write (``set_active_profile``
+      swallows it -- logs a warning, leaves the pointer untouched) leaves
+      the marker unset too, so the very next call retries instead of being
+      permanently stuck: marking on an unconfirmed write would otherwise
+      strand the user on the default profile forever, since the marker is
+      exactly what stops this branch from ever running again.
     - Pointer already names anything else (``imported_settings`` from a
       pre-635/pre-marker activation, or a different profile entirely) -- the
-      pointer is left completely untouched (never deleted, never repointed)
-      and the marker is simply set, adopting whatever is already active as
-      confirmed going forward. Deliberately does NOT delete the profile even
-      when it happens to look identical to the default: unlike a marker, no
-      finite content comparison can prove a Settings-screen customization is
-      absent, so guessing "safe to delete" risks real, irreversible data
-      loss -- doing nothing here has no such risk and reaches the same
-      settled state (the marker stops any further automatic handling).
+      pointer is left completely untouched (never deleted, never repointed,
+      no write attempted) and the marker is simply set unconditionally
+      (nothing to confirm when nothing was written), adopting whatever is
+      already active as confirmed going forward. Deliberately does NOT
+      delete the profile even when it happens to look identical to the
+      default: unlike a marker, no finite content comparison can prove a
+      Settings-screen customization is absent, so guessing "safe to delete"
+      risks real, irreversible data loss -- doing nothing here has no such
+      risk and reaches the same settled state (the marker stops any further
+      automatic handling).
 
     One inherent, bounded gap: for a config that predates the marker (an
     existing pointer that happens to already read as the default builtin,
@@ -458,14 +484,25 @@ def ensure_imported_profile() -> Optional[str]:
             if not _first_run_import_done():
                 if _active_profile_id() == DEFAULT_PROFILE:
                     # Never successfully written by anyone -- heal a
-                    # half-done first run.
+                    # half-done first run. Only record the marker once the
+                    # pointer write is CONFIRMED to have taken effect
+                    # (task-639 review): set_active_profile() swallows a
+                    # failed write (save_setting_to_cli_config returning
+                    # False just logs a warning and returns -- see its
+                    # docstring), so marking unconditionally here could
+                    # permanently strand the user on the default profile
+                    # with the marker now blocking every future retry.
                     set_active_profile(_IMPORTED_ID)
-                # else: pointer already names imported_settings (a
-                # pre-marker activation, possibly pre-635 damage) or some
-                # other profile entirely -- leave it exactly as-is (never
-                # delete, never repoint; see docstring for why) and just
-                # adopt it as settled.
-                _mark_first_run_import_done()
+                    if _active_profile_id() == _IMPORTED_ID:
+                        _mark_first_run_import_done()
+                else:
+                    # Pointer already names imported_settings (a pre-marker
+                    # activation, possibly pre-635 damage) or some other
+                    # profile entirely -- leave it exactly as-is (never
+                    # delete, never repoint; see docstring for why). No
+                    # write is attempted on this path, so there is nothing
+                    # to confirm -- adopt it as settled unconditionally.
+                    _mark_first_run_import_done()
             return None
         if not _has_legacy_rag_config_material():
             # task-635: nothing legacy to preserve continuity for -- leave a
@@ -495,7 +532,12 @@ def ensure_imported_profile() -> Optional[str]:
                 profile.reranking_config.top_k_to_rerank = int(reranker_top_k)
         mgr.save_profile(profile)
         set_active_profile(_IMPORTED_ID)
-        _mark_first_run_import_done()
+        if _active_profile_id() == _IMPORTED_ID:
+            # Only confirmed pointer writes get the marker (see the healing
+            # branch above for why) -- if this fails, the next call falls
+            # through to the healing branch (existing is not None, no
+            # marker, pointer still the default) and retries.
+            _mark_first_run_import_done()
         return _IMPORTED_ID
     except Exception as e:
         logger.warning(f"ensure_imported_profile: first-run import failed, continuing without it: {e}")

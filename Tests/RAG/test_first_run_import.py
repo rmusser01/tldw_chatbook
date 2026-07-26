@@ -636,3 +636,112 @@ def test_ensure_imported_profile_adopts_preexisting_imported_pointer_without_del
     assert ac.ensure_imported_profile() is None
     assert ptr["v"] == ac._IMPORTED_ID
     assert mgr.get_profile(ac._IMPORTED_ID) is not None
+
+
+# --- Task-639 review round 3: don't mark "done" on an unconfirmed pointer --
+# --- write (set_active_profile swallows a failed write) --------------------
+
+
+def _wire_pointer_write_fails(monkeypatch, ac, ptr):
+    """Make the pointer write ([rag.service].profile) always fail (return
+    False, as save_setting_to_cli_config does on an I/O failure -- see its
+    real implementation) while the marker write
+    ([rag.service].first_run_import_done) keeps succeeding normally. Models
+    set_active_profile()'s documented failure mode: it swallows a failed
+    write (logs a warning, leaves the pointer untouched) instead of raising."""
+
+    def _fake_save_setting(section, key, value):
+        if section == "rag.service" and key == "profile":
+            return False  # simulated failure -- ptr["v"] deliberately NOT updated
+        if section == "rag.service" and key == "first_run_import_done":
+            ptr["marker"] = value
+            return True
+        return True
+
+    monkeypatch.setattr(ac, "save_setting_to_cli_config", _fake_save_setting, raising=False)
+
+
+def _wire_pointer_write_succeeds(monkeypatch, ac, ptr):
+    """Restore normal (successful) writes for both keys -- the same routing
+    _wire()'s own fake uses, exposed here so a test can flip a previously-
+    failing pointer write back to succeeding mid-test."""
+
+    def _fake_save_setting(section, key, value):
+        if section == "rag.service" and key == "profile":
+            ptr["v"] = value
+        elif section == "rag.service" and key == "first_run_import_done":
+            ptr["marker"] = value
+        return True
+
+    monkeypatch.setattr(ac, "save_setting_to_cli_config", _fake_save_setting, raising=False)
+
+
+def test_ensure_imported_profile_does_not_mark_when_healing_pointer_write_fails(monkeypatch, tmp_path):
+    """Important (task-639 review round 3, reviewer-reproduced): the healing
+    branch used to call _mark_first_run_import_done() unconditionally right
+    after set_active_profile(_IMPORTED_ID), but set_active_profile() itself
+    swallows a failed pointer write (logs a warning and returns without
+    resetting the shared service -- see its docstring). If the pointer write
+    fails while the marker write succeeds, the user would be permanently
+    parked on the default profile with NO future retry: the marker is
+    exactly what stops this branch from ever running again. Must instead
+    only mark once _active_profile_id() is confirmed to read back as
+    _IMPORTED_ID, and a later call (once the write starts succeeding) must
+    retry the activation rather than being permanently blocked."""
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    half_done = ProfileConfig(id=ac._IMPORTED_ID,
+                              name="Imported settings",
+                              description="Captured from your existing RAG configuration on first run.",
+                              profile_type="custom",
+                              rag_config=ac.resolve_active_rag_config())
+    mgr.save_profile(half_done)
+    assert ptr["v"] is None  # pointer still resolves to the default builtin
+
+    _wire_pointer_write_fails(monkeypatch, ac, ptr)
+
+    result = ac.ensure_imported_profile()
+
+    assert result is None
+    assert ptr["v"] is None  # pointer write failed -- never actually activated
+    assert ptr["marker"] is False  # MUST NOT be set: the activation never actually happened
+
+    # A later call, once the pointer write starts succeeding again, must
+    # RETRY the activation -- not be permanently blocked by a marker that
+    # was never legitimately earned.
+    _wire_pointer_write_succeeds(monkeypatch, ac, ptr)
+
+    result2 = ac.ensure_imported_profile()
+
+    assert result2 is None
+    assert ptr["v"] == ac._IMPORTED_ID  # retried and succeeded this time
+    assert ptr["marker"] is True
+
+
+def test_ensure_imported_profile_does_not_mark_when_fresh_import_pointer_write_fails(monkeypatch, tmp_path):
+    """Mirrors the fix at the fresh-import call site (task-639 review round
+    3): if set_active_profile() fails right after a brand-new "Imported
+    settings" profile is created, the marker must not be set either --
+    otherwise the next process's first RAG touch would see `existing is not
+    None`, the marker already True, and skip retrying the failed activation
+    forever, even though the pointer was never actually updated."""
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    _wire_legacy_rag_config(monkeypatch, {"search": {"default_top_k": 10}})
+    _wire_pointer_write_fails(monkeypatch, ac, ptr)
+
+    new_id = ac.ensure_imported_profile()
+
+    assert new_id == ac._IMPORTED_ID  # the profile WAS created
+    assert ptr["v"] is None  # but the pointer write failed -- never activated
+    assert ptr["marker"] is False  # MUST NOT be set
+
+    # A later call must retry activation via the healing branch (the profile
+    # already exists now), not skip it because of a falsely-set marker.
+    _wire_pointer_write_succeeds(monkeypatch, ac, ptr)
+
+    result2 = ac.ensure_imported_profile()
+
+    assert result2 is None  # profile already exists -- this is the healing path now
+    assert ptr["v"] == ac._IMPORTED_ID
+    assert ptr["marker"] is True
