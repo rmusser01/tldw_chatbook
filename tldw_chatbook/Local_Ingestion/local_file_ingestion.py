@@ -811,6 +811,49 @@ def parse_local_file_for_ingest(
         raise FileIngestionError(f"Failed to ingest {file_type} file: {str(e)}")
 
 
+def _reject_empty_extraction(payload: Dict[str, Any], file_type: str) -> None:
+    """Fail a parse that produced no text, rather than storing an empty row.
+
+    An import that extracts nothing used to be written as a media row with
+    empty content, reported as done in the queue and counted in the library
+    total -- an entry that looks imported but silently returns nothing from
+    search and RAG, with no signal to the user that anything went wrong.
+
+    An empty *source* is reported differently from a failed extraction: the
+    first is the file being what it is, the second means the content is there
+    but this install could not read it (often missing optional tooling).
+
+    Args:
+        payload: The dict returned by ``parse_local_file_for_ingest``.
+        file_type: Detected type, used in the message.
+
+    Raises:
+        FileIngestionError: When the payload carries no usable content.
+    """
+    if (payload.get("content") or "").strip():
+        return
+
+    source = payload.get("file_path") or ""
+    name = Path(source).name or source or "this source"
+
+    # URL sources never touch the filesystem, so only stat real local paths.
+    if source and not is_http_url(source):
+        try:
+            if Path(source).stat().st_size == 0:
+                raise FileIngestionError(
+                    f"{name} is empty; there was nothing to ingest."
+                )
+        except OSError:
+            # Unreadable/vanished: treat as an extraction failure below.
+            pass
+
+    raise FileIngestionError(
+        f"No text could be extracted from {name}. The {file_type} content may "
+        "be scanned images, or the tooling for this file type may not be "
+        "installed."
+    )
+
+
 def persist_parsed_media(
     payload: Dict[str, Any],
     media_db: MediaDatabase,
@@ -842,6 +885,7 @@ def persist_parsed_media(
             text regardless of which stage failed.
     """
     file_type = payload["file_type"]
+    _reject_empty_extraction(payload, file_type)
     try:
         logger.debug(f"Storing {file_type} content in database...")
         # Note: add_media_with_keywords returns tuple: (media_id, media_uuid, message)
