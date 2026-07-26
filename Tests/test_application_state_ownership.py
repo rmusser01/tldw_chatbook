@@ -31,6 +31,8 @@ PROJECTION_NAMES = (
 PROJECTION_SNAPSHOT = "_runtime_policy_projection_snapshot"
 PROJECTION_PUBLISHER = "_publish_runtime_policy_projection"
 PROJECTION_BOUNDARY = "_apply_runtime_policy_to_app"
+PRIVATE_CONTEXT_STORE = "__runtime_policy_state_store"
+PRIVATE_CONTEXT_CALLBACK = "__runtime_policy_projection_callback"
 
 
 def _parse(path: Path) -> ast.Module:
@@ -168,6 +170,18 @@ def _class_definition(path: Path, name: str) -> ast.ClassDef:
         node
         for node in _parse(path).body
         if isinstance(node, ast.ClassDef) and node.name == name
+    )
+
+
+def _method_definition(
+    class_node: ast.ClassDef,
+    name: str,
+) -> ast.FunctionDef | ast.AsyncFunctionDef:
+    return next(
+        node
+        for node in class_node.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == name
     )
 
 
@@ -345,6 +359,148 @@ def test_runtime_policy_context_has_no_public_mutation_or_persistence_escape(
     assert not hasattr(context, "store")
     with pytest.raises(AttributeError):
         alias.state = RuntimeSourceState(active_source="server")
+
+
+def test_runtime_policy_context_private_fields_have_exact_structural_shape() -> None:
+    relative_bootstrap = str(BOOTSTRAP_PATH.relative_to(PROJECT_ROOT))
+    context_class = _class_definition(BOOTSTRAP_PATH, "RuntimePolicyContext")
+    slots_assignment = next(
+        node
+        for node in context_class.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "__slots__"
+    )
+    assert ast.literal_eval(slots_assignment.value) == (
+        "_owner_thread_id",
+        "_snapshot",
+        PRIVATE_CONTEXT_CALLBACK,
+        PRIVATE_CONTEXT_STORE,
+    )
+
+    store_occurrences = [
+        (path, kind, scopes)
+        for path, kind, scopes, _line in _production_occurrences(PRIVATE_CONTEXT_STORE)
+    ]
+    assert store_occurrences == [
+        (
+            relative_bootstrap,
+            "attribute_store",
+            ("RuntimePolicyContext", "__init__"),
+        ),
+        (
+            relative_bootstrap,
+            "attribute_load",
+            ("RuntimePolicyContext", "commit_state"),
+        ),
+    ]
+
+    callback_occurrences = [
+        (path, kind, scopes)
+        for path, kind, scopes, _line in _production_occurrences(
+            PRIVATE_CONTEXT_CALLBACK
+        )
+    ]
+    assert callback_occurrences == [
+        (
+            relative_bootstrap,
+            "attribute_store",
+            ("RuntimePolicyContext", "__init__"),
+        ),
+        (
+            relative_bootstrap,
+            "attribute_load",
+            ("RuntimePolicyContext", "commit_state"),
+        ),
+        (
+            relative_bootstrap,
+            "attribute_load",
+            ("RuntimePolicyContext", "commit_state"),
+        ),
+    ]
+
+    assert (
+        _production_occurrences("_RuntimePolicyContext__runtime_policy_state_store")
+        == []
+    )
+    assert (
+        _production_occurrences(
+            "_RuntimePolicyContext__runtime_policy_projection_callback"
+        )
+        == []
+    )
+
+
+def test_runtime_policy_context_commit_has_one_immediate_private_store_save() -> None:
+    context_class = _class_definition(BOOTSTRAP_PATH, "RuntimePolicyContext")
+    commit = _method_definition(context_class, "commit_state")
+    direct_saves = [
+        statement
+        for statement in commit.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Attribute)
+        and statement.value.func.attr == "save"
+        and isinstance(statement.value.func.value, ast.Attribute)
+        and statement.value.func.value.attr == PRIVATE_CONTEXT_STORE
+    ]
+
+    assert len(direct_saves) == 1
+    assert isinstance(direct_saves[0].value.args[0], ast.Name)
+    assert direct_saves[0].value.args[0].id == "candidate"
+
+
+def test_runtime_policy_preparation_precedes_single_direct_app_attachment() -> None:
+    loader = _top_level_function(BOOTSTRAP_PATH, "load_runtime_policy_for_app")
+    prepare_indices = [
+        index
+        for index, statement in enumerate(loader.body)
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == "_prepare_runtime_policy_context"
+    ]
+    attach_indices = [
+        index
+        for index, statement in enumerate(loader.body)
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+            and target.value.id == "app"
+            and target.attr == "runtime_policy"
+            for target in statement.targets
+        )
+    ]
+
+    assert len(prepare_indices) == 1
+    assert len(attach_indices) == 1
+    assert prepare_indices[0] < attach_indices[0]
+
+
+def test_tldw_cli_constructor_invokes_runtime_loader_as_standalone_expression() -> None:
+    app_class = _class_definition(APP_PATH, "TldwCli")
+    constructor = _method_definition(app_class, "__init__")
+    standalone_calls = [
+        statement
+        for statement in constructor.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == "load_runtime_policy_for_app"
+    ]
+    assigned_calls = [
+        statement
+        for statement in constructor.body
+        if isinstance(statement, (ast.Assign, ast.AnnAssign))
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == "load_runtime_policy_for_app"
+    ]
+
+    assert len(standalone_calls) == 1
+    assert assigned_calls == []
 
 
 def test_runtime_source_state_store_references_are_confined_to_owner_modules() -> None:

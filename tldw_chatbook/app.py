@@ -3053,7 +3053,7 @@ class TldwCli(
         self.acp_runtime_session_state = (
             self.acp_runtime_process_manager.session_state()
         )
-        self.runtime_policy = load_runtime_policy_for_app(self)
+        load_runtime_policy_for_app(self)
         self.service_policy_enforcer = (
             ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
         )

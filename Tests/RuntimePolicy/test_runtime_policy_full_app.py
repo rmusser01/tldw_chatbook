@@ -7,6 +7,7 @@ import pytest
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.runtime_policy.bootstrap import (
     _apply_runtime_policy_to_app,
+    load_runtime_policy_for_app,
     set_authoritative_runtime_source,
 )
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -25,6 +26,36 @@ async def test_full_app_wires_one_runtime_context_to_long_lived_consumers(
     assert app.server_context_provider.target_store is app.unified_mcp_target_store
     assert app.server_context_provider.credential_store is app.server_credential_store
     assert app.server_context_provider.app_config is app.app_config
+
+
+@pytest.mark.asyncio
+async def test_full_app_rejects_second_runtime_context_install_before_store_io(
+    app_with_cleanup: TldwCli,
+) -> None:
+    app = app_with_cleanup
+    installed_context = app.runtime_policy
+
+    class NeverLoadStore:
+        def __init__(self) -> None:
+            self.load_calls = 0
+            self.save_calls = 0
+
+        def load(self) -> RuntimeSourceState:
+            self.load_calls += 1
+            raise AssertionError("installed context must reject before load")
+
+        def save(self, state: RuntimeSourceState) -> None:
+            self.save_calls += 1
+            raise AssertionError("installed context must reject before save")
+
+    store = NeverLoadStore()
+
+    with pytest.raises(RuntimeError, match="already installed"):
+        load_runtime_policy_for_app(app, store=store)
+
+    assert app.runtime_policy is installed_context
+    assert store.load_calls == 0
+    assert store.save_calls == 0
 
 
 @pytest.mark.asyncio

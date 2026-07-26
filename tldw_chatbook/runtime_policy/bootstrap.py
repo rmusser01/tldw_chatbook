@@ -27,9 +27,9 @@ _VALID_RUNTIME_SOURCES = {"local", "server"}
 class RuntimePolicyContext:
     __slots__ = (
         "_owner_thread_id",
-        "_publish",
         "_snapshot",
-        "_store",
+        "__runtime_policy_projection_callback",
+        "__runtime_policy_state_store",
     )
 
     def __init__(
@@ -41,8 +41,8 @@ class RuntimePolicyContext:
     ) -> None:
         self._snapshot = (state, 0)
         self._owner_thread_id = threading.get_ident()
-        self._publish = publish
-        self._store = store
+        self.__runtime_policy_projection_callback = publish
+        self.__runtime_policy_state_store = store
 
     @property
     def state(self) -> RuntimeSourceState:
@@ -62,11 +62,11 @@ class RuntimePolicyContext:
         if expected_revision != current_revision:
             return False
 
-        self._store.save(candidate)
+        self.__runtime_policy_state_store.save(candidate)
         self._snapshot = (candidate, current_revision + 1)
-        if self._publish is not None:
+        if self.__runtime_policy_projection_callback is not None:
             try:
-                self._publish(candidate)
+                self.__runtime_policy_projection_callback(candidate)
             except Exception as exc:
                 logger.warning(
                     "Runtime policy projection failed after durable commit "
@@ -243,7 +243,7 @@ def load_runtime_policy_for_app(
         store=store,
         path=path,
     )
-    setattr(app, "runtime_policy", context)
+    app.runtime_policy = context
     return context
 
 
