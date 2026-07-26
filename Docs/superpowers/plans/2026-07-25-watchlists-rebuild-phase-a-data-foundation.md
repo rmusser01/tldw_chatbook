@@ -11,14 +11,14 @@
 ## Global Constraints
 
 - Spec: `Docs/superpowers/specs/2026-07-25-watchlists-console-rebuild-design.md`. Every requirement below is traceable to it.
-- All schema changes go through `SubscriptionsDB._ensure_watchlists_schema` and must be **idempotent** — running twice is a no-op.
+- All schema changes are **idempotent** — running twice is a no-op — and live in `SubscriptionsDB`: table creation in `_initialize_schema`, additive migration in `_ensure_watchlists_schema`. No table is created lazily from a service. (Ruling, 2026-07-25: this is why Task 2 relocates `local_watchlist_runs`.)
 - `PRAGMA foreign_keys = ON` is already set (`Subscriptions_DB.py:82`). Cascades are live; do not disable.
 - `SubscriptionsDB` uses `threading.local()` connections (`:75`, `:368-370`). Never share a connection across threads.
 - Use `db.transaction()` (`:373`) for writes; it commits on success and rolls back on exception.
 - `subscriptions.tags` is **comma-joined**, not JSON (`:422`). `watchlists.tags` matches.
 - `subscription_items.status` CHECK allows only `new`, `reviewed`, `ingested`, `ignored`, `error` (`:156`). Do not add values. "read" means `reviewed`; flag is the separate `is_flagged` column.
 - Tests run from the venv: `source .venv/bin/activate && pytest`. The `timeout` command is unavailable in this environment.
-- Parameterized queries only. Never interpolate values into SQL.
+- Parameterized queries only for **values in production code**. `PRAGMA` statements cannot take parameters; test helpers may interpolate a hardcoded, non-user-derived identifier. (Ruling, 2026-07-25.)
 
 ## Phase Map
 
@@ -238,38 +238,86 @@ git commit -m "feat(watchlists): add watchlist tables and item content columns"
 
 ---
 
-### Task 2: batch_id on the lazily-created run table
+### Task 2: Relocate the run table and add batch_id
 
 **Files:**
-- Modify: `tldw_chatbook/Subscriptions/local_watchlists_service.py:949-968` (`_ensure_run_schema`)
-- Modify: `tldw_chatbook/DB/Subscriptions_DB.py` — `_ensure_watchlists_schema`
+- Modify: `tldw_chatbook/DB/Subscriptions_DB.py` — `_initialize_schema` executescript, and `_ensure_watchlists_schema`
+- Modify: `tldw_chatbook/Subscriptions/local_watchlists_service.py` — delete `_ensure_run_schema` (`:948-968`) and its seven call sites (`:176`, `:202`, `:261`, `:288`, `:304`, `:319`, `:347`)
 - Test: `Tests/DB/test_subscriptions_db_watchlists.py`
 
 **Interfaces:**
 - Consumes: Task 1's `_ensure_watchlists_schema` block.
-- Produces: `local_watchlist_runs.batch_id TEXT`, present whether the table is created fresh or already exists.
+- Produces: `local_watchlist_runs` owned by `SubscriptionsDB`, with `batch_id TEXT`. `LocalWatchlistsService._ensure_run_schema` no longer exists.
 
-**Why this is delicate:** `local_watchlist_runs` is created **lazily** by `LocalWatchlistsService._ensure_run_schema`, not by `SubscriptionsDB._initialize_schema`. An unconditional `ALTER TABLE local_watchlist_runs` inside `_ensure_watchlists_schema` fails on a fresh database because the table does not exist yet. The column must therefore be added in **both** places: the lazy `CREATE TABLE` for new databases, and a **conditional** `ALTER` for databases where the table already exists.
+**Why this changed shape (ruling, 2026-07-25):** `local_watchlist_runs` was created **lazily** by `LocalWatchlistsService._ensure_run_schema`, which meant an `ALTER TABLE` in `_ensure_watchlists_schema` would fail on a fresh database. The original plan worked around that with a conditional `ALTER`. The ruling was to fix the cause instead: move table creation into `SubscriptionsDB._initialize_schema` so one place owns schema.
+
+`BaseDB.__init__` calls `_initialize_schema()` (`base_db.py:76`) before anything else can touch the database, and `_initialize_schema` calls `_ensure_watchlists_schema` at its end. So by the time the migration runs, the table always exists — the existence guard is unnecessary. Only the column-presence check remains, for databases created before `batch_id`.
+
+All seven `_ensure_run_schema` call sites are inside `local_watchlists_service.py`; nothing outside it, and no test, calls it.
 
 - [ ] **Step 1: Write the failing test**
 
 Append to `Tests/DB/test_subscriptions_db_watchlists.py`:
 
 ```python
-def test_batch_id_migration_skips_missing_run_table(db):
-    # Fresh DB: local_watchlist_runs does not exist yet. The migration must not raise.
-    assert "local_watchlist_runs" not in _tables(db)
-    db._ensure_watchlists_schema()
+def test_run_table_owned_by_db_with_batch_id(db):
+    # No service call needed — SubscriptionsDB owns this table now.
+    assert "local_watchlist_runs" in _tables(db)
+    assert "batch_id" in _columns(db, "local_watchlist_runs")
 
 
-def test_batch_id_added_to_existing_run_table(db):
-    # Simulate a DB created before batch_id existed.
-    with db.transaction() as conn:
-        conn.execute("""
-            CREATE TABLE local_watchlist_runs (
+def test_batch_id_added_to_preexisting_run_table(tmp_path):
+    import sqlite3
+
+    # A database created before batch_id existed, with the old table shape.
+    path = tmp_path / "legacy.db"
+    legacy_conn = sqlite3.connect(path)
+    legacy_conn.executescript("""
+        CREATE TABLE local_watchlist_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id INTEGER NOT NULL,
+            job_id INTEGER,
+            status TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            stats_json TEXT,
+            error_msg TEXT,
+            log_text TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+    """)
+    legacy_conn.commit()
+    legacy_conn.close()
+
+    migrated = SubscriptionsDB(str(path), client_id="test")
+    assert "batch_id" in _columns(migrated, "local_watchlist_runs")
+
+
+def test_lazy_run_schema_helper_is_gone():
+    from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
+
+    assert not hasattr(LocalWatchlistsService, "_ensure_run_schema")
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `source .venv/bin/activate && pytest Tests/DB/test_subscriptions_db_watchlists.py -k "run_table or batch_id or lazy_run" -v`
+Expected: FAIL — all three fail: the table is not created by `SubscriptionsDB`, `batch_id` does not exist, and `_ensure_run_schema` is still present.
+
+- [ ] **Step 3: Move the table into `_initialize_schema`**
+
+In `tldw_chatbook/DB/Subscriptions_DB.py`, inside the `conn.executescript(...)` block in `_initialize_schema`, add this **after** the `subscription_templates` table and **before** the `CREATE INDEX` statements (it references `subscriptions`, which must already be declared):
+
+```sql
+            -- Local watchlist run history. Owned here rather than created
+            -- lazily by LocalWatchlistsService, so one place owns schema and
+            -- additive migrations can ALTER it unconditionally.
+            CREATE TABLE IF NOT EXISTS local_watchlist_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_id INTEGER NOT NULL,
                 job_id INTEGER,
+                batch_id TEXT,
                 status TEXT NOT NULL,
                 started_at TEXT,
                 finished_at TEXT,
@@ -277,79 +325,56 @@ def test_batch_id_added_to_existing_run_table(db):
                 error_msg TEXT,
                 log_text TEXT,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
-
-    db._ensure_watchlists_schema()
-    assert "batch_id" in _columns(db, "local_watchlist_runs")
-
-
-def test_batch_id_present_on_lazily_created_run_table(db):
-    from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
-
-    LocalWatchlistsService._ensure_run_schema(db)
-    assert "batch_id" in _columns(db, "local_watchlist_runs")
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (source_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+            );
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 4: Add the batch_id migration for pre-existing databases**
 
-Run: `source .venv/bin/activate && pytest Tests/DB/test_subscriptions_db_watchlists.py -k batch_id -v`
-Expected: FAIL — `test_batch_id_added_to_existing_run_table` and `test_batch_id_present_on_lazily_created_run_table` fail because `batch_id` does not exist.
-
-- [ ] **Step 3: Add the column to the lazy CREATE TABLE**
-
-In `tldw_chatbook/Subscriptions/local_watchlists_service.py`, in `_ensure_run_schema`, add `batch_id` after `job_id`:
+`CREATE TABLE IF NOT EXISTS` will not add a column to a table that already exists, so databases created before `batch_id` still need an `ALTER`. In `_ensure_watchlists_schema`, immediately before the final `conn.commit()` added in Task 1:
 
 ```python
-                CREATE TABLE IF NOT EXISTS local_watchlist_runs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_id INTEGER NOT NULL,
-                    job_id INTEGER,
-                    batch_id TEXT,
-                    status TEXT NOT NULL,
-                    started_at TEXT,
-                    finished_at TEXT,
-                    stats_json TEXT,
-                    error_msg TEXT,
-                    log_text TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY (source_id) REFERENCES subscriptions(id) ON DELETE CASCADE
-                )
+        # local_watchlist_runs is guaranteed to exist: BaseDB.__init__ runs
+        # _initialize_schema (base_db.py:76), which creates it and then calls
+        # this method. Only the column needs checking, for databases created
+        # before batch_id existed.
+        run_cols = {row[1] for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")}
+        if "batch_id" not in run_cols:
+            cursor.execute("ALTER TABLE local_watchlist_runs ADD COLUMN batch_id TEXT")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_local_watchlist_runs_batch "
+            "ON local_watchlist_runs(batch_id)"
+        )
 ```
 
-- [ ] **Step 4: Add the conditional ALTER**
+- [ ] **Step 5: Delete the lazy helper and its call sites**
 
-In `tldw_chatbook/DB/Subscriptions_DB.py`, inside `_ensure_watchlists_schema`, immediately before the final `conn.commit()` added in Task 1:
+In `tldw_chatbook/Subscriptions/local_watchlists_service.py`:
 
-```python
-        # local_watchlist_runs is created lazily by LocalWatchlistsService, so it
-        # may not exist yet. ALTER only when it does; new databases get batch_id
-        # from that service's CREATE TABLE instead.
-        run_table_exists = cursor.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='local_watchlist_runs'"
-        ).fetchone()
-        if run_table_exists:
-            run_cols = {row[1] for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")}
-            if "batch_id" not in run_cols:
-                cursor.execute("ALTER TABLE local_watchlist_runs ADD COLUMN batch_id TEXT")
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_local_watchlist_runs_batch "
-                "ON local_watchlist_runs(batch_id)"
-            )
+1. Delete the `_ensure_run_schema` staticmethod entirely (`:948-968`, the `@staticmethod` decorator line through the closing of its `CREATE TABLE` block).
+2. Delete all seven `self._ensure_run_schema(db)` call lines: `:176`, `:202`, `:261`, `:288`, `:304`, `:319`, `:347`. Delete the whole line each time — none is part of a larger expression.
+
+Work bottom-up (highest line number first) so earlier deletions do not shift the line numbers of later ones. After editing, confirm nothing remains:
+
+```bash
+grep -rn "_ensure_run_schema" tldw_chatbook Tests
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+Expected: no output.
 
-Run: `source .venv/bin/activate && pytest Tests/DB/test_subscriptions_db_watchlists.py -v && pytest Tests/Watchlists -v`
-Expected: PASS, no failures.
+Leave `_ensure_alert_rule_schema` alone. Relocating `local_watchlist_alert_rules` is the same pattern but is out of scope for this task.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Run tests to verify they pass**
+
+Run: `source .venv/bin/activate && pytest Tests/DB/test_subscriptions_db_watchlists.py -v && pytest Tests/Watchlists -v && pytest Tests/Subscriptions -v`
+Expected: PASS, no failures. The watchlists and subscriptions suites exercise run creation and listing, which is what the relocation could break.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add tldw_chatbook/DB/Subscriptions_DB.py tldw_chatbook/Subscriptions/local_watchlists_service.py Tests/DB/test_subscriptions_db_watchlists.py
-git commit -m "feat(watchlists): add batch_id to run table with conditional migration"
+git commit -m "refactor(watchlists): move run table into SubscriptionsDB, add batch_id"
 ```
 
 ---
