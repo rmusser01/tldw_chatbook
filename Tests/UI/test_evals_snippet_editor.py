@@ -275,8 +275,11 @@ async def test_snippet_editor_mounts_with_summary_and_labelled_char_column(
 
         summary = screen.query_one("#evals-snippet-editor-summary")
         summary_text = str(summary.renderable)
-        assert "2" in summary_text
-        assert "2" in summary_text  # snippet count and group count both 2
+        # Two distinct clauses, independently pinned: a regression in
+        # len(groups) (e.g. always 1, or double-counting) must not be
+        # masked by the snippet-count clause also containing "2".
+        assert "2 snippets" in summary_text
+        assert "2 groups" in summary_text
 
         header = screen.query_one("#evals-snippet-table-header")
         header_text = str(header.renderable)
