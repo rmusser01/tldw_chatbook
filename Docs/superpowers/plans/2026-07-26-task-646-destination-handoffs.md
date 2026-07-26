@@ -534,7 +534,7 @@ Expected: PASS.
 
 ```bash
 pytest Tests/UI/test_product_maturity_phase1_harness.py -q
-pytest Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py -q -k product_maturity
+pytest Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py -q -k "valid_chat_producer_navigates_to_production_screen or console_launch_consumer_transfers_and_acknowledges or chat_native_transfer_acknowledges_after_local_ownership or study_handoff_overrides_restored_scope_and_section"
 ```
 
 Expected: PASS with existing visible Chat/Console and Study flows preserved.
