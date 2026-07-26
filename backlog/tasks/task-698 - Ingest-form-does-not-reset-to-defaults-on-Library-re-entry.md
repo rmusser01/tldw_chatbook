@@ -1,5 +1,5 @@
 ---
-id: TASK-686
+id: TASK-698
 title: Ingest form does not reset to defaults on Library re-entry
 status: To Do
 assignee: []
