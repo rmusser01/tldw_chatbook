@@ -1723,6 +1723,49 @@ def test_shadowed_mcp_names_reports_what_the_filter_drops():
     assert _non_colliding_mcp_names(mcp_provider, collision_names) == ("weather",)
 
 
+def test_compose_run_registry_and_allowed_warns_when_mcp_tool_is_shadowed():
+    """``shadowed_mcp_names`` itself is a silent pure partition -- the
+    user-visible half of this behavior is the warning logged from
+    ``_compose_run_registry_and_allowed`` for each dropped name. Without it
+    a user whose configured MCP tool stopped being offered has no way to
+    discover a built-in silently claimed the name.
+
+    caplog does not intercept loguru (this project's logger); attach a
+    temporary loguru sink instead (mirrors
+    ``Tests/Chat/test_console_chat_store.py``'s pattern).
+    """
+    from loguru import logger as loguru_logger
+
+    mcp_provider = _FakeMCPProvider(
+        [("calculator", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
+    )
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert any("calculator" in message for message in messages), messages
+
+
+def test_compose_run_registry_and_allowed_no_warning_without_mcp_collisions():
+    """No MCP name collided with a builtin, so nothing should be logged --
+    guards against a future refactor that logs unconditionally instead of
+    only when a name is actually dropped."""
+    from loguru import logger as loguru_logger
+
+    mcp_provider = _FakeMCPProvider([("mcp__srv_a__search", "Search")])
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert messages == []
+
+
 def test_run_reply_routes_fence_call_to_mcp_provider(tmp_path):
     """End-to-end: a run with no skills service still registers an eligible
     MCP provider fresh (not the shared, construction-time registry) and
