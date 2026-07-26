@@ -183,7 +183,7 @@ closed repository may not.
 - Create: `backlog/tasks/task-761 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md`
 - Create: `Docs/superpowers/plans/2026-07-26-tts-profile-domain-repository-lifecycle.md`
 
-- [ ] **Step 1: Commit the approved planning boundary**
+- [x] **Step 1: Commit the approved planning boundary**
 
 ```bash
 git add \
@@ -194,7 +194,9 @@ git add \
 git commit -m "docs(tts): plan generation profile repository lifecycle"
 ```
 
-- [ ] **Step 2: Rebase and verify the isolated base**
+Completed as planning commit `af16c04db` after the clean rebase below.
+
+- [x] **Step 2: Rebase and verify the isolated base**
 
 Run:
 
@@ -212,7 +214,10 @@ changes, and the ancestor check exits `0`. Record the exact rebased base SHA;
 do not rely on the pre-plan `60241b2` base because `dev` may advance while the
 plan is reviewed.
 
-- [ ] **Step 3: Record the focused rebased baseline**
+Recorded 2026-07-26 base: `origin/dev` at `6095fade8`; the ancestor check
+passed and the branch contained only the planning commit.
+
+- [x] **Step 3: Record the focused rebased baseline**
 
 Run:
 
@@ -225,7 +230,11 @@ skip, and failure counts. The pre-rebase reference at `60241b2` was
 `929 passed, 14 skipped` with one environment warning, but that count is not a
 substitute for the rebased gate.
 
-- [ ] **Step 4: Verify ADR and task hygiene**
+Recorded rebased result: `929 passed, 14 skipped, 1 warning in 210.58s`. The
+warning is the existing Requests dependency-version warning in the shared
+virtual environment.
+
+- [x] **Step 4: Verify ADR and task hygiene**
 
 Run:
 
@@ -239,6 +248,9 @@ rg -n "ADR-02(7|8)|027-character|028-character" \
 
 Expected: TASK-761 is In Progress; every profile-ownership reference uses
 ADR-028; unrelated ADR-027 remains untouched.
+
+Verified: TASK-761 is In Progress, ADR-028 is linked consistently, and
+unrelated ADR-027 was not modified.
 
 ## Task 2: Add safe errors and immutable profile-domain validation
 
