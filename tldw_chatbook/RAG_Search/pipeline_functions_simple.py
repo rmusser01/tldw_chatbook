@@ -175,7 +175,7 @@ async def search_media_fts5(
     if not app.media_db:
         return []
 
-    logger.debug(f"Searching media for: {query}")
+    logger.debug("RAG retrieval starting; source=media; search=fts5")
 
     search_kwargs: Dict[str, Any] = dict(
         search_query=query,
@@ -313,7 +313,7 @@ async def search_conversations_fts5(
     if db is None:
         return []
 
-    logger.debug(f"Searching conversations for: {query}")
+    logger.debug("RAG retrieval starting; source=conversations; search=fts5")
     conv_results = await asyncio.to_thread(
         db.search_conversations_by_content, search_query=query, limit=limit * 2
     )
@@ -406,7 +406,7 @@ async def search_notes_fts5(
     if db is None:
         return []
 
-    logger.debug(f"Searching notes for: {query}")
+    logger.debug("RAG retrieval starting; source=notes; search=fts5")
 
     note_results = await asyncio.to_thread(
         db.search_notes, search_term=query, limit=limit, id_allowlist=id_allowlist
@@ -494,7 +494,7 @@ async def search_semantic(
         record_semantic_unavailable(diagnostics, unavailable_reason)
         return []
 
-    logger.debug(f"Performing semantic search for: {query}")
+    logger.debug("RAG retrieval starting; source=selected; search=semantic")
 
     allowlists = build_semantic_allowlists(scope) if scope is not None else None
 

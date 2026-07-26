@@ -73,6 +73,82 @@ def _result(
     )
 
 
+@pytest.mark.asyncio
+async def test_lower_level_retrieval_logs_omit_query_without_changing_search_input():
+    query = "PRIVATE-LOWER-RETRIEVAL-QUERY-SENTINEL"
+
+    class MediaSearchDouble:
+        def __init__(self):
+            self.queries = []
+
+        def search_media_db(self, **kwargs):
+            self.queries.append(kwargs["search_query"])
+            return []
+
+    class ChaChaSearchDouble:
+        def __init__(self):
+            self.conversation_queries = []
+            self.note_queries = []
+
+        def search_conversations_by_content(self, *, search_query, limit):
+            self.conversation_queries.append(search_query)
+            return []
+
+        def get_messages_for_conversations_batch(self, **kwargs):
+            return {}
+
+        def search_notes(self, *, search_term, limit, id_allowlist):
+            self.note_queries.append(search_term)
+            return []
+
+    class SemanticSearchDouble:
+        def __init__(self):
+            self.queries = []
+
+        async def search(self, **kwargs):
+            self.queries.append(kwargs["query"])
+            return [
+                SimpleNamespace(
+                    id="semantic-1",
+                    source="media",
+                    title="Semantic result",
+                    document="Semantic body",
+                    content="Semantic body",
+                    score=0.5,
+                    metadata={},
+                    citations=[],
+                )
+            ]
+
+    media_db = MediaSearchDouble()
+    chacha_db = ChaChaSearchDouble()
+    semantic_service = SemanticSearchDouble()
+    app = SimpleNamespace(
+        media_db=media_db,
+        chachanotes_db=chacha_db,
+        _rag_service=semantic_service,
+    )
+    captured_logs = []
+    sink_id = loguru_logger.add(
+        captured_logs.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        await pfs.search_media_fts5(app, query)
+        await pfs.search_conversations_fts5(app, query)
+        await pfs.search_notes_fts5(app, query)
+        await pfs.search_semantic(app, query, {"media": True})
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert media_db.queries == [query]
+    assert chacha_db.conversation_queries == [query]
+    assert chacha_db.note_queries == [query]
+    assert semantic_service.queries == [query]
+    assert query not in "".join(str(message) for message in captured_logs)
+
+
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
