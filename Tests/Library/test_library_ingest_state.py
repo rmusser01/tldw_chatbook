@@ -7,7 +7,6 @@ from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIng
 from tldw_chatbook.Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
     MEDIA_DB_UNAVAILABLE_COPY,
-    SERVER_QUIET_LINE_COPY,
     LibraryIngestFormState,
     _human_size,
     build_estimate_line,
@@ -40,11 +39,20 @@ def test_queue_heading_is_queue():
     assert state.queue_heading == "Queue"
 
 
-def test_server_runtime_shows_quiet_line():
+def test_browse_scope_no_longer_drives_the_ingest_line():
+    """Browsing server-side says nothing about where an import will run.
+
+    This test previously asserted the old "ingest runs on Local" warning, which
+    existed because ingest ignored the browse scope. Ingest now has its own
+    explicit target and never keys off browse scope, so on a local-only install
+    the line is silent rather than warning about a coupling that no longer
+    exists (task-684.1).
+    """
     state = build_library_ingest_state(
         (), form=LibraryIngestFormState(), runtime_source="server"
     )
-    assert state.server_quiet_line == SERVER_QUIET_LINE_COPY
+    assert state.server_quiet_line == ""
+    assert state.ingest_backend == "local"
 
 
 def test_local_runtime_hides_quiet_line():
@@ -906,3 +914,319 @@ def test_chunking_is_on_by_default_and_analysis_is_off() -> None:
     assert form.chunk is True
     assert form.chunk_size == "1000"
     assert form.analyze is False
+
+
+# --- queue row origin (task-684.2) ------------------------------------------
+
+
+def _row_for(job: LibraryIngestJob):
+    from tldw_chatbook.Library.library_ingest_state import _build_queue_row
+
+    return _build_queue_row(job, now=100.0)
+
+
+def test_queue_row_marks_a_server_job():
+    """A row has to say where the job runs, or two backends look identical.
+
+    Once local and server ingests share one queue, "done · notes.txt" alone
+    cannot tell the user which machine did the work (task-684.2).
+    """
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/notes.txt",
+        state=IngestJobState.QUEUED,
+        origin="server",
+    )
+
+    row = _row_for(job)
+
+    assert row.origin == "server"
+    assert "server" in row.line.lower()
+
+
+def test_queue_row_does_not_clutter_a_local_job():
+    """Local is the overwhelmingly common case and stays unannotated."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/notes.txt",
+        state=IngestJobState.QUEUED,
+    )
+
+    row = _row_for(job)
+
+    assert row.origin == "local"
+    assert "server" not in row.line.lower()
+    assert row.line == "● queued · notes.txt"
+
+
+def test_server_origin_is_marked_in_every_state():
+    """The marker cannot depend on which state branch built the row."""
+    for state in (
+        IngestJobState.QUEUED,
+        IngestJobState.PARSING,
+        IngestJobState.WRITING,
+        IngestJobState.DONE,
+        IngestJobState.FAILED,
+    ):
+        job = LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/notes.txt",
+            state=state,
+            origin="server",
+            media_id=1 if state == IngestJobState.DONE else None,
+            error="boom" if state == IngestJobState.FAILED else "",
+        )
+        row = _row_for(job)
+        assert "server" in row.line.lower(), f"{state.value} row lost the marker"
+        assert row.origin == "server"
+
+
+# --- cancelled row rendering (task-684.2) -----------------------------------
+
+
+def test_cancelled_row_reads_as_stopped_not_failed():
+    """A cancellation must not wear the failure glyph.
+
+    The user stopped this deliberately; showing ✗ would read as an error they
+    caused, and would sit beside a Retry the registry refuses anyway.
+    """
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/talk.mp3",
+        state=IngestJobState.CANCELLED,
+        origin="server",
+        error="Cancelled on the server.",
+        finished_at=50.0,
+    )
+
+    row = _row_for(job)
+
+    assert row.glyph not in {"✓", "✗"}
+    assert "cancelled" in row.line.lower()
+    assert "talk.mp3" in row.line
+    assert row.can_open is False
+    assert row.can_retry is False, "requeue is FAILED-only; Retry would be dead bait"
+    assert row.can_dismiss is True, "a cancelled row is clearable"
+
+
+def test_cancelled_counts_line_segment_is_rendered():
+    """A cancelled job has to appear in the queue's per-state summary."""
+    from tldw_chatbook.Library.library_ingest_state import _queue_counts_line
+
+    jobs = [
+        LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/a.mp3",
+            state=IngestJobState.CANCELLED,
+        ),
+        LibraryIngestJob(
+            job_id="ingest-job-2",
+            source_path="/tmp/b.txt",
+            state=IngestJobState.DONE,
+            media_id=1,
+        ),
+    ]
+
+    line = _queue_counts_line(jobs)
+
+    assert "1 cancelled" in line
+    assert "1 done" in line
+
+
+# --- cancel affordance (task-684.2) -----------------------------------------
+
+
+def test_a_running_server_job_can_be_cancelled():
+    """Only a server job offers Cancel: the local pipeline has no cancel seam.
+
+    ``cancel_media_ingest_jobs_batch`` exists on the server service; there is no
+    local equivalent, so offering Cancel on a local job would be dead bait.
+    """
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/a.mp3",
+        state=IngestJobState.PARSING,
+        origin="server",
+        batch_id="batch-1",
+        remote_job_id="11",
+    )
+
+    assert _row_for(job).can_cancel is True
+
+
+def test_a_running_local_job_offers_no_cancel():
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/a.txt",
+        state=IngestJobState.PARSING,
+    )
+
+    assert _row_for(job).can_cancel is False
+
+
+def test_a_settled_server_job_offers_no_cancel():
+    """There is nothing left to stop once the server has finished."""
+    for state in (
+        IngestJobState.DONE,
+        IngestJobState.FAILED,
+        IngestJobState.CANCELLED,
+    ):
+        job = LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/a.mp3",
+            state=state,
+            origin="server",
+            batch_id="batch-1",
+            remote_job_id="11",
+            error="boom" if state is IngestJobState.FAILED else "",
+        )
+        assert _row_for(job).can_cancel is False, f"{state.value} offered Cancel"
+
+
+def test_a_server_job_without_a_batch_offers_no_cancel():
+    """Cancel goes by batch id; without one there is nothing to address."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/a.mp3",
+        state=IngestJobState.QUEUED,
+        origin="server",
+    )
+
+    assert _row_for(job).can_cancel is False
+
+
+# --- backend target + switch (task-684.1 slice 3) ---------------------------
+
+
+def test_local_only_install_says_nothing_about_backends():
+    """With no server configured there is no choice to explain.
+
+    The old "ingest runs on Local" line existed to warn that ingest ignored your
+    browse scope. Ingest no longer keys off browse scope at all, so on a
+    local-only install the line is just noise.
+    """
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(), runtime_source="server"
+    )
+
+    assert state.server_quiet_line == ""
+    assert state.show_backend_switch is False
+    assert state.ingest_backend == "local"
+
+
+def test_a_configured_server_names_the_target_and_offers_the_switch():
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        ingest_backend="local",
+        runtime_source="server",
+        server_ingest_available=True,
+    )
+
+    assert "this machine" in state.server_quiet_line.lower()
+    assert state.show_backend_switch is True
+    assert state.ingest_backend == "local"
+
+
+def test_targeting_the_server_says_so_plainly():
+    """A user must be able to see that their files will leave the machine."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        ingest_backend="server",
+        runtime_source="server",
+        server_ingest_available=True,
+    )
+
+    assert "server" in state.server_quiet_line.lower()
+    assert state.ingest_backend == "server"
+    assert state.show_backend_switch is True
+
+
+def test_canvas_and_submit_agree_when_the_precondition_is_unmet():
+    """An unmet precondition must show local, because submit will be local.
+
+    This test previously asserted the opposite -- that a server target stays
+    named even when unusable -- to stop the canvas claiming local while submit
+    tried the server. That mismatch no longer exists: ``_resolve_ingest_backend``
+    applies the same runtime-policy gate, so an opted-in user whose runtime is
+    local really does get a local ingest. The canvas saying "this machine" is
+    now the truth, not a lie, and the line explains how to enable server
+    imports.
+    """
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        ingest_backend="server",
+        runtime_source="local",
+        server_ingest_available=True,
+    )
+
+    assert state.ingest_backend == "local"
+    assert state.show_backend_switch is False
+    assert "server mode" in state.server_quiet_line.lower()
+
+
+def test_server_ingest_needs_server_mode_not_just_a_configured_server():
+    """Server ingest is gated by runtime policy, so the UI must say so.
+
+    ``media.ingestion_jobs.launch.server`` declares ``required_source="server"``
+    in the runtime-policy registry, so the service refuses the launch outright
+    when the Library runtime is local -- the same rule that makes the retired
+    ingest window disable its server panels in local mode. Offering the switch
+    regardless produced a job that failed with
+    "media.ingestion_jobs.launch.server requires server mode" (seen live).
+    """
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        runtime_source="local",
+        server_ingest_available=True,
+    )
+
+    assert state.show_backend_switch is False
+    assert "server mode" in state.server_quiet_line.lower()
+
+
+def test_server_mode_plus_a_configured_server_offers_the_switch():
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        runtime_source="server",
+        server_ingest_available=True,
+    )
+
+    assert state.show_backend_switch is True
+    assert "this machine" in state.server_quiet_line.lower()
+
+
+def test_a_page_source_offers_its_scope_settings_in_the_canvas_state():
+    """AC#3: the clipper's scope settings survive the move into the canvas.
+
+    The canvas renders one option group per pre-flight type group, reading each
+    group's fields from the capability schema -- so a page source has to reach
+    the state as the ``web`` group, and that group has to declare the scope
+    settings the retired window exposed (scrape_method plus the page/depth
+    limits). Asserting on the schema the canvas actually consults is what keeps
+    this from passing while the screen shows nothing.
+    """
+    from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+    from tldw_chatbook.Library.ingest_preflight import analyze_path
+    from unittest.mock import MagicMock, patch
+
+    response = MagicMock()
+    response.__enter__ = MagicMock(return_value=response)
+    response.__exit__ = MagicMock(return_value=False)
+    with patch(
+        "tldw_chatbook.Library.ingest_preflight.urlopen", return_value=response
+    ):
+        preflight = analyze_path("https://example.com/some-post")
+
+    assert list(preflight.type_groups) == ["web"], (
+        "a page must reach the canvas as the web group, not as an unsupported file"
+    )
+
+    # get_capabilities is exactly what the canvas calls per group; a group it
+    # cannot answer for raises rather than rendering (task-673).
+    fields = {f.name for f in get_capabilities("web").fields}
+    assert {"scrape_method", "max_pages", "max_depth"} <= fields

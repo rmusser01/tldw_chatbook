@@ -105,7 +105,12 @@ class LibraryIngestCanvas(VerticalScroll):
                     field.enabled_when,
                     gate.default if gate is not None else False,
                 )
-                disabled = not bool(gate_value)
+                if field.enabled_when_values:
+                    # A select gate: every non-empty choice is truthy, so the
+                    # field must name the choices that actually enable it.
+                    disabled = gate_value not in field.enabled_when_values
+                else:
+                    disabled = not bool(gate_value)
             widget_id = f"opt-{group}-{field.name}"
 
             if field.type == "checkbox":
@@ -170,12 +175,27 @@ class LibraryIngestCanvas(VerticalScroll):
             classes="destination-section",
             markup=False,
         )
+        # State before action: "Imports run on this machine." then the button
+        # that changes it. Rendering the button first read as a contradiction
+        # top-to-bottom -- "Import on the server / Imports run on this machine"
+        # (spotted on screen, not in a test).
         if state.server_quiet_line:
             yield Static(
                 state.server_quiet_line,
                 id="library-ingest-server-line",
                 classes="library-ingest-quiet-line",
                 markup=False,
+            )
+        if state.show_backend_switch:
+            # Only offered when a server is actually configured; otherwise there
+            # is no choice to make and a dead toggle would be worse than none.
+            yield Button(
+                "Import on this machine"
+                if state.ingest_backend == "server"
+                else "Import on the server",
+                id="library-ingest-backend-switch",
+                classes="library-canvas-action",
+                compact=True,
             )
         if state.unavailable_line:
             yield Static(
@@ -364,6 +384,7 @@ class LibraryIngestCanvas(VerticalScroll):
                 row.can_open
                 or row.can_retry
                 or row.can_dismiss
+                or row.can_cancel
                 or bool(row.error_detail)
             )
             if has_actions:
@@ -438,6 +459,16 @@ class LibraryIngestCanvas(VerticalScroll):
                             id=f"library-ingest-retry-{row.job_id}",
                             classes=(
                                 "library-canvas-action library-ingest-retry "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if row.can_cancel:
+                        yield Button(
+                            "Cancel",
+                            id=f"library-ingest-cancel-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-cancel "
                                 "library-ingest-row-action"
                             ),
                             compact=True,

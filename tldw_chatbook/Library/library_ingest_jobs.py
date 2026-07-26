@@ -94,6 +94,27 @@ class IngestJobState(str, Enum):
     WRITING = "writing"
     DONE = "done"
     FAILED = "failed"
+    #: Stopped deliberately rather than succeeding or erroring. Only a
+    #: server-origin job reaches this today: the server reports it for a
+    #: job the user cancelled.
+    CANCELLED = "cancelled"
+
+
+#: States a job never leaves. Kept as one definition so "is this finished?"
+#: cannot drift between the places that ask -- ``clear_finished``, the
+#: cancellation guard, and the queue's terminal-row rendering.
+_TERMINAL_STATES: frozenset[IngestJobState] = frozenset(
+    {IngestJobState.DONE, IngestJobState.FAILED, IngestJobState.CANCELLED}
+)
+
+
+#: States whose rows a user may clear individually. A cancellation is
+#: dismissible for the same reason a failure is -- the row has served its
+#: purpose -- but Retry stays withheld, since ``requeue`` is FAILED-only and
+#: offering a dead action is worse than offering none.
+_DISMISSIBLE_STATES: frozenset[IngestJobState] = frozenset(
+    {IngestJobState.FAILED, IngestJobState.CANCELLED}
+)
 
 
 @dataclass
@@ -200,6 +221,12 @@ class LibraryIngestJob:
     progress: dict[str, Any] | None = None
     error_detail: dict[str, Any] | None = None
     content_hash: str | None = None
+    #: Where this job runs. ``"local"`` uses the in-process parse/write
+    #: pipeline; ``"server"`` was submitted to the tldw server's ingest-jobs
+    #: API, so it has no local ``media_id`` and is tracked by the ids below.
+    origin: str = "local"
+    remote_job_id: str | None = None
+    batch_id: str | None = None
 
 
 class IngestJobStore(Protocol):
@@ -378,6 +405,7 @@ class LibraryIngestJobRegistry:
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         detected_type: str = "",
         ingest_options: dict[str, Any] | None = None,
+        origin: str = "local",
     ) -> LibraryIngestJob:
         """Append a new ``QUEUED`` job.
 
@@ -393,6 +421,10 @@ class LibraryIngestJobRegistry:
                 already known at submission time. Optional; defaults to
                 ``""`` when not yet known.
             ingest_options: Per-type ingestion options snapshot.
+            origin: ``"local"`` for the in-process pipeline, ``"server"`` for
+                a submission to the server's ingest-jobs API. A server job
+                carries no local ``media_id``; call ``attach_remote`` once
+                the server has issued its ids.
 
         Returns:
             The newly created ``QUEUED`` job (a registry-owned copy).
@@ -410,6 +442,7 @@ class LibraryIngestJobRegistry:
             submitted_at=time.monotonic(),
             detected_type=detected_type,
             ingest_options=ingest_options or {},
+            origin=origin,
         )
         self._jobs.append(job)
         self._notify_listeners()
@@ -445,6 +478,41 @@ class LibraryIngestJobRegistry:
             if job.job_id == job_id:
                 return index
         return None
+
+    def attach_remote(
+        self,
+        job_id: str,
+        *,
+        remote_job_id: str | None = None,
+        batch_id: str | None = None,
+    ) -> LibraryIngestJob | None:
+        """Record the server-side ids for a submitted ``server``-origin job.
+
+        The ids only exist once the server has accepted the submission, so they
+        arrive after ``submit``. Kept separate from the state transitions
+        because attaching ids is not itself a lifecycle change -- the job stays
+        in whatever state it was in.
+
+        Args:
+            job_id: The job to annotate.
+            remote_job_id: The server's job id, when it issued one.
+            batch_id: The server's batch id, when it issued one.
+
+        Returns:
+            The updated job (a copy), or ``None`` when ``job_id`` is unknown.
+            Unknown ids never raise, matching the other registry mutators.
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        job = self._jobs[index]
+        if remote_job_id is not None:
+            job.remote_job_id = str(remote_job_id)
+        if batch_id is not None:
+            job.batch_id = str(batch_id)
+        self._notify_listeners()
+        self._persist(job)
+        return replace(job)
 
     def mark_parsing(
         self, job_id: str, *, detected_type: str = ""
@@ -630,6 +698,134 @@ class LibraryIngestJobRegistry:
         self._persist(updated)
         return replace(updated)
 
+    def mark_remote_done(self, job_id: str) -> LibraryIngestJob | None:
+        """Finish a ``server``-origin job that has no local media row.
+
+        ``mark_done`` requires a ``media_id`` because a *local* completion that
+        wrote nothing is a bug (task-677). A server completion has no row in
+        *this* machine's media DB, so it needs its own terminal path rather than
+        weakening that invariant for everyone.
+
+        The resulting job has ``media_id`` unset, so the queue row's "Open in
+        Library" stays withheld: the content lives in the server's library, not
+        this machine's.
+
+        Note that a completed job's ``result`` *does* carry a ``media_id``
+        (confirmed live: ``{"status": "Success", "media_id": 1125, ...}``) -- an
+        earlier version of this docstring claimed the response held only counts,
+        which came from ``MediaIngestJobStatus.result`` being mistyped as the
+        reading-list import model. It is deliberately still not stored here:
+        that id addresses a row in the *server's* library, and ``media_id`` on a
+        job means a row in the local one. Conflating them would point "Open in
+        Library" at a wrong or absent local row. Opening a server-ingested item
+        needs a server-aware affordance instead (task-700).
+
+        Args:
+            job_id: The job to finish.
+
+        Returns:
+            The updated job (a copy), or ``None`` when ``job_id`` is unknown,
+            hidden, not ``server``-origin, or already finished.
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        current = self._jobs[index]
+        if current.superseded or current.dismissed:
+            return None
+        if current.origin != "server":
+            logger.warning(
+                f"mark_remote_done called for local job {job_id}; ignoring "
+                "(a local completion must record a media_id)."
+            )
+            return None
+        if current.state in _TERMINAL_STATES:
+            return None
+        updated = replace(
+            current,
+            state=IngestJobState.DONE,
+            finished_at=time.monotonic(),
+            finished_at_wall=datetime.now(timezone.utc).isoformat(),
+        )
+        self._jobs[index] = updated
+        self._notify_listeners()
+        self._persist(updated)
+        return replace(updated)
+
+    def update_progress(
+        self, job_id: str, *, progress: dict[str, Any] | None
+    ) -> LibraryIngestJob | None:
+        """Attach in-flight progress to a running job.
+
+        Local jobs only ever report progress at completion; a server job
+        reports it *while* running (a long transcription, say), which is why
+        this exists as its own seam rather than a ``mark_*`` argument.
+
+        Args:
+            job_id: The job to annotate.
+            progress: Structured progress payload, or ``None`` to clear it.
+
+        Returns:
+            The updated job (a copy), or ``None`` when ``job_id`` is unknown,
+            hidden, or already finished (late progress must not reopen a
+            settled row).
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        current = self._jobs[index]
+        if current.superseded or current.dismissed:
+            return None
+        if current.state in _TERMINAL_STATES:
+            return None
+        updated = replace(current, progress=progress)
+        self._jobs[index] = updated
+        self._notify_listeners()
+        self._persist(updated)
+        return replace(updated)
+
+    def mark_cancelled(
+        self, job_id: str, *, reason: str = ""
+    ) -> LibraryIngestJob | None:
+        """Transition a still-running job to ``CANCELLED``.
+
+        A cancellation is neither a success nor an error: recording it as
+        ``FAILED`` would offer Retry for something nobody wants retried, and
+        would read as a problem the user did not cause. Unlike ``mark_failed``
+        this *is* guarded -- a job that already reached ``DONE``, ``FAILED`` or
+        ``CANCELLED`` is finished, and a late cancellation must not rewrite its
+        outcome.
+
+        Args:
+            job_id: The job to transition.
+            reason: Optional human-readable reason, stored in ``error`` since
+                that is the field the queue row already surfaces.
+
+        Returns:
+            The updated job (a copy), or ``None`` when ``job_id`` is unknown,
+            hidden, or already finished. Unknown ids never raise, matching the
+            other registry mutators.
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        current = self._jobs[index]
+        if current.superseded or current.dismissed:
+            return None
+        if current.state in _TERMINAL_STATES:
+            return None
+        updated = replace(
+            current,
+            state=IngestJobState.CANCELLED,
+            error=reason,
+            finished_at=time.monotonic(),
+            finished_at_wall=datetime.now(timezone.utc).isoformat(),
+        )
+        self._jobs[index] = updated
+        self._notify_listeners()
+        self._persist(updated)
+        return replace(updated)
+
     def requeue(self, job_id: str) -> LibraryIngestJob | None:
         """Append a fresh ``QUEUED`` copy of a ``FAILED`` job, superseding it.
 
@@ -706,9 +902,10 @@ class LibraryIngestJobRegistry:
         return replace(new_job)
 
     def dismiss(self, job_id: str) -> LibraryIngestJob | None:
-        """Hide a ``FAILED`` job from ``jobs()``/``counts()``.
+        """Hide a ``FAILED`` or ``CANCELLED`` job from ``jobs()``/``counts()``.
 
-        (L3b AB wave, B2) Valid ONLY for a ``FAILED``, not-yet-hidden job --
+        (L3b AB wave, B2; widened for cancellations in task-684.2.) Valid
+        ONLY for a ``FAILED``/``CANCELLED``, not-yet-hidden job --
         calling this on a job in any other state, an unknown id, or an
         already ``superseded``/``dismissed`` id is a no-op that returns
         ``None`` and does not fire the listener. On success the job is
@@ -724,7 +921,8 @@ class LibraryIngestJobRegistry:
 
         Returns:
             The dismissed job (a copy, ``dismissed=True``), or ``None``
-            when ``job_id`` is unknown, not currently ``FAILED``, or
+            when ``job_id`` is unknown, not currently ``FAILED``/
+            ``CANCELLED``, or
             already hidden.
         """
         index = self._find_index(job_id)
@@ -732,7 +930,7 @@ class LibraryIngestJobRegistry:
             return None
         current = self._jobs[index]
         if (
-            current.state != IngestJobState.FAILED
+            current.state not in _DISMISSIBLE_STATES
             or current.superseded
             or current.dismissed
         ):
@@ -758,16 +956,8 @@ class LibraryIngestJobRegistry:
             The number of jobs actually removed (0 when there was nothing
             to clear -- a no-op that does not fire the listener).
         """
-        removed_jobs = [
-            job
-            for job in self._jobs
-            if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
-        ]
-        self._jobs = [
-            job
-            for job in self._jobs
-            if job.state not in (IngestJobState.DONE, IngestJobState.FAILED)
-        ]
+        removed_jobs = [job for job in self._jobs if job.state in _TERMINAL_STATES]
+        self._jobs = [job for job in self._jobs if job.state not in _TERMINAL_STATES]
         removed = len(removed_jobs)
         if removed:
             self._notify_listeners()
@@ -925,6 +1115,9 @@ def _job_from_row(row: dict) -> "LibraryIngestJob":
         error_detail=json.loads(row["error_detail"]) if row.get("error_detail") else None,
         progress=json.loads(row["progress"]) if row.get("progress") else None,
         content_hash=row.get("content_hash"),
+        origin=row.get("origin") or "local",
+        remote_job_id=row.get("remote_job_id"),
+        batch_id=row.get("batch_id"),
         # monotonic fields are not round-trippable -- leave defaults.
         submitted_at=0.0,
         started_at=None,

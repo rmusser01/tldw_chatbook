@@ -19,7 +19,7 @@ from .base_db import BaseDB
 
 
 class LibraryIngestJobsDB(BaseDB):
-    _CURRENT_SCHEMA_VERSION = 2
+    _CURRENT_SCHEMA_VERSION = 3
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         self._conn: sqlite3.Connection | None = None
@@ -81,6 +81,71 @@ class LibraryIngestJobsDB(BaseDB):
             conn.execute("DELETE FROM schema_version")
             conn.execute("INSERT INTO schema_version (version) VALUES (2)")
 
+    def _migrate_v2_to_v3(self) -> None:
+        """Add remote-job columns and admit the ``cancelled`` state.
+
+        A server-side ingest has no local ``media_id`` and does have a remote
+        job id and batch id, so the queue could not represent one at all
+        (task-684.2). The ``state`` CHECK also has to admit ``cancelled``,
+        which the server reports and SQLite cannot add to a constraint in
+        place -- hence the table rebuild rather than a bare ``ADD COLUMN``.
+
+        The rebuild copies by explicit column list (not ``SELECT *``) so a
+        column added by some future migration cannot silently shift into the
+        wrong position.
+        """
+        with self.transaction() as conn:
+            conn.executescript(
+                """
+                CREATE TABLE ingest_jobs_v3 (
+                    seq INTEGER PRIMARY KEY,
+                    job_id TEXT UNIQUE NOT NULL,
+                    source_path TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    author TEXT NOT NULL DEFAULT '',
+                    keywords TEXT NOT NULL DEFAULT '[]',
+                    perform_analysis INTEGER NOT NULL DEFAULT 0,
+                    chunk_enabled INTEGER NOT NULL DEFAULT 0,
+                    chunk_size INTEGER NOT NULL DEFAULT 0,
+                    state TEXT NOT NULL CHECK (state IN ('queued','parsing','writing','done','failed','cancelled')),
+                    retry_count INTEGER NOT NULL DEFAULT 0,
+                    detected_type TEXT NOT NULL DEFAULT '',
+                    error TEXT NOT NULL DEFAULT '',
+                    finished_at_wall TEXT NOT NULL DEFAULT '',
+                    media_id INTEGER,
+                    superseded INTEGER NOT NULL DEFAULT 0,
+                    dismissed INTEGER NOT NULL DEFAULT 0,
+                    permanent INTEGER NOT NULL DEFAULT 0,
+                    ingest_options TEXT DEFAULT '{}',
+                    error_detail TEXT DEFAULT NULL,
+                    progress TEXT DEFAULT NULL,
+                    content_hash TEXT DEFAULT NULL,
+                    origin TEXT NOT NULL DEFAULT 'local' CHECK (origin IN ('local','server')),
+                    remote_job_id TEXT DEFAULT NULL,
+                    batch_id TEXT DEFAULT NULL
+                );
+
+                INSERT INTO ingest_jobs_v3
+                  (seq, job_id, source_path, title, author, keywords,
+                   perform_analysis, chunk_enabled, chunk_size, state,
+                   retry_count, detected_type, error, finished_at_wall,
+                   media_id, superseded, dismissed, permanent, ingest_options,
+                   error_detail, progress, content_hash)
+                SELECT
+                   seq, job_id, source_path, title, author, keywords,
+                   perform_analysis, chunk_enabled, chunk_size, state,
+                   retry_count, detected_type, error, finished_at_wall,
+                   media_id, superseded, dismissed, permanent, ingest_options,
+                   error_detail, progress, content_hash
+                FROM ingest_jobs;
+
+                DROP TABLE ingest_jobs;
+                ALTER TABLE ingest_jobs_v3 RENAME TO ingest_jobs;
+                """
+            )
+            conn.execute("DELETE FROM schema_version")
+            conn.execute("INSERT INTO schema_version (version) VALUES (3)")
+
     def _initialize_schema(self) -> None:
         conn = self._get_connection()
         conn.executescript(
@@ -98,7 +163,7 @@ class LibraryIngestJobsDB(BaseDB):
                 perform_analysis INTEGER NOT NULL DEFAULT 0,
                 chunk_enabled INTEGER NOT NULL DEFAULT 0,
                 chunk_size INTEGER NOT NULL DEFAULT 0,
-                state TEXT NOT NULL CHECK (state IN ('queued','parsing','writing','done','failed')),
+                state TEXT NOT NULL CHECK (state IN ('queued','parsing','writing','done','failed','cancelled')),
                 retry_count INTEGER NOT NULL DEFAULT 0,
                 detected_type TEXT NOT NULL DEFAULT '',
                 error TEXT NOT NULL DEFAULT '',
@@ -110,7 +175,10 @@ class LibraryIngestJobsDB(BaseDB):
                 ingest_options TEXT DEFAULT '{}',
                 error_detail TEXT DEFAULT NULL,
                 progress TEXT DEFAULT NULL,
-                content_hash TEXT DEFAULT NULL
+                content_hash TEXT DEFAULT NULL,
+                origin TEXT NOT NULL DEFAULT 'local' CHECK (origin IN ('local','server')),
+                remote_job_id TEXT DEFAULT NULL,
+                batch_id TEXT DEFAULT NULL
             );
             """
         )
@@ -118,8 +186,11 @@ class LibraryIngestJobsDB(BaseDB):
 
         row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
         current_version = row["version"] if row else 0
-        if current_version < self._CURRENT_SCHEMA_VERSION:
+        if current_version < 2:
             self._migrate_v1_to_v2()
+            current_version = 2
+        if current_version < 3:
+            self._migrate_v2_to_v3()
 
     @staticmethod
     def _seq_of(job_id: str) -> int:
@@ -134,8 +205,9 @@ class LibraryIngestJobsDB(BaseDB):
               (seq, job_id, source_path, title, author, keywords, perform_analysis,
                chunk_enabled, chunk_size, state, retry_count, detected_type, error,
                finished_at_wall, media_id, superseded, dismissed, permanent,
-               ingest_options, error_detail, progress, content_hash)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ingest_options, error_detail, progress, content_hash,
+               origin, remote_job_id, batch_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(job_id) DO UPDATE SET
               source_path=excluded.source_path, title=excluded.title, author=excluded.author,
               keywords=excluded.keywords, perform_analysis=excluded.perform_analysis,
@@ -145,7 +217,9 @@ class LibraryIngestJobsDB(BaseDB):
               finished_at_wall=excluded.finished_at_wall, media_id=excluded.media_id,
               superseded=excluded.superseded, dismissed=excluded.dismissed, permanent=excluded.permanent,
               ingest_options=excluded.ingest_options, error_detail=excluded.error_detail,
-              progress=excluded.progress, content_hash=excluded.content_hash
+              progress=excluded.progress, content_hash=excluded.content_hash,
+              origin=excluded.origin, remote_job_id=excluded.remote_job_id,
+              batch_id=excluded.batch_id
             """,
             (
                 self._seq_of(job.job_id),
@@ -170,6 +244,9 @@ class LibraryIngestJobsDB(BaseDB):
                 json.dumps(job.error_detail) if job.error_detail is not None else None,
                 json.dumps(job.progress) if job.progress is not None else None,
                 job.content_hash,
+                job.origin,
+                job.remote_job_id,
+                job.batch_id,
             ),
         )
         conn.commit()

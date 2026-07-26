@@ -35,6 +35,7 @@ from unittest.mock import patch
 import pytest
 from textual.app import App
 
+import tldw_chatbook.app as _app_module
 from tldw_chatbook.app import LibraryIngestQueueMixin
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Library.library_ingest_jobs import (
@@ -1711,3 +1712,888 @@ async def test_reingest_of_unchanged_file_still_resolves_media_id(
 
         assert second_done.media_id == first_done.media_id
         await _wait_for_runner_idle(app, pilot)
+
+
+# --- remote poller (task-684.2) ---------------------------------------------
+
+
+class _FakeServerMediaService:
+    """Records batch lookups and replays scripted status responses."""
+
+    def __init__(self, responses: list[dict]) -> None:
+        self._responses = responses
+        self.batch_calls: list[str] = []
+
+    async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100):
+        self.batch_calls.append(batch_id)
+        if self._responses:
+            return self._responses.pop(0)
+        return {"batch_id": batch_id, "jobs": []}
+
+
+def _queued_server_job(app, *, remote_job_id: str, batch_id: str = "batch-1"):
+    job = app.library_ingest_jobs.submit(source_path="/tmp/a.mp3", origin="server")
+    return app.library_ingest_jobs.attach_remote(
+        job.job_id, remote_job_id=remote_job_id, batch_id=batch_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_remote_poll_settles_a_server_job_then_stops(tmp_path: Path) -> None:
+    """The poller applies a terminal status and then stops polling.
+
+    A finished batch that kept being fetched would hit the server forever for an
+    answer that cannot change.
+    """
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+    service = _FakeServerMediaService(
+        [{"batch_id": "batch-1", "jobs": [{"id": 11, "status": "completed"}]}]
+    )
+    app.server_media_reading_service = service
+
+    async with app.run_test() as pilot:
+        _queued_server_job(app, remote_job_id="11")
+        app.poll_remote_ingest_jobs()
+
+        for _ in range(_POLL_ATTEMPTS):
+            if app.library_ingest_jobs.jobs()[0].state == IngestJobState.DONE:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        else:
+            raise AssertionError("the server job never settled")
+
+        calls_after_settle = len(service.batch_calls)
+        for _ in range(5):
+            await pilot.pause(_POLL_INTERVAL)
+        assert len(service.batch_calls) == calls_after_settle, (
+            "poller kept fetching a settled batch"
+        )
+
+
+@pytest.mark.asyncio
+async def test_remote_poll_does_not_start_without_outstanding_batches(
+    tmp_path: Path,
+) -> None:
+    """A library with only local jobs must never touch the server."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    service = _FakeServerMediaService([])
+    app.server_media_reading_service = service
+
+    async with app.run_test() as pilot:
+        app.library_ingest_jobs.submit(source_path="/tmp/local.txt")
+        app.poll_remote_ingest_jobs()
+        await pilot.pause(_POLL_INTERVAL)
+
+    assert service.batch_calls == []
+
+
+@pytest.mark.asyncio
+async def test_remote_poll_survives_a_server_error(tmp_path: Path) -> None:
+    """A transient failure must not kill the poller or the job."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+
+    class _FlakyService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("connection reset")
+            return {"batch_id": batch_id, "jobs": [{"id": 11, "status": "completed"}]}
+
+    service = _FlakyService()
+    app.server_media_reading_service = service
+
+    async with app.run_test() as pilot:
+        _queued_server_job(app, remote_job_id="11")
+        app.poll_remote_ingest_jobs()
+
+        for _ in range(_POLL_ATTEMPTS):
+            if app.library_ingest_jobs.jobs()[0].state == IngestJobState.DONE:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        else:
+            raise AssertionError("the poller did not recover from the error")
+
+    assert service.calls >= 2
+
+
+@pytest.mark.asyncio
+async def test_remote_poll_stops_on_shutdown(tmp_path: Path) -> None:
+    """The quit flag ends the loop rather than leaving it fetching."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+    service = _FakeServerMediaService([])
+    app.server_media_reading_service = service
+
+    async with app.run_test() as pilot:
+        _queued_server_job(app, remote_job_id="11")
+        app.poll_remote_ingest_jobs()
+        await pilot.pause(_POLL_INTERVAL)
+
+        app._ingest_shutdown = True
+        await pilot.pause(_POLL_INTERVAL)
+        calls_at_shutdown = len(service.batch_calls)
+        for _ in range(5):
+            await pilot.pause(_POLL_INTERVAL)
+
+    assert len(service.batch_calls) == calls_at_shutdown, "poller ignored shutdown"
+
+
+@pytest.mark.asyncio
+async def test_remote_poll_without_a_server_service_is_a_noop(tmp_path: Path) -> None:
+    """No configured server backend means nothing to poll, not a crash."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.server_media_reading_service = None
+
+    async with app.run_test() as pilot:
+        _queued_server_job(app, remote_job_id="11")
+        app.poll_remote_ingest_jobs()
+        await pilot.pause(_POLL_INTERVAL)
+
+        assert app.library_ingest_jobs.jobs()[0].state == IngestJobState.QUEUED
+
+
+@pytest.mark.asyncio
+async def test_cancel_remote_batch_asks_the_server_and_resumes_polling(
+    tmp_path: Path,
+) -> None:
+    """Cancelling asks the server; the local job is NOT pre-emptively marked.
+
+    The request is asynchronous and may be refused, so the queue must not claim
+    an outcome the server has not confirmed. The poller records the real state.
+    """
+    cancelled_batches: list[str] = []
+
+    class _CancellableService:
+        async def cancel_media_ingest_jobs_batch(
+            self, *, batch_id: str | None = None, session_id: str | None = None,
+            reason: str | None = None,
+        ):
+            # Keyword-only, mirroring the real client/service signature --
+            # a fake with a positional parameter would happily accept a
+            # positional call that fails against the real one.
+            cancelled_batches.append(batch_id)
+            return {"batch_id": batch_id, "cancelled": 1}
+
+        async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100):
+            return {
+                "batch_id": batch_id,
+                "jobs": [{"id": 11, "status": "cancelled",
+                          "cancellation_reason": "user asked"}],
+            }
+
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+    app.server_media_reading_service = _CancellableService()
+
+    async with app.run_test() as pilot:
+        job = _queued_server_job(app, remote_job_id="11")
+        app.cancel_remote_ingest_batch("batch-1")
+
+        # The request alone must not move the local job.
+        await pilot.pause(_POLL_INTERVAL)
+        assert cancelled_batches == ["batch-1"]
+
+        for _ in range(_POLL_ATTEMPTS):
+            if app.library_ingest_jobs.jobs()[0].state == IngestJobState.CANCELLED:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        else:
+            raise AssertionError("the poller never recorded the cancellation")
+
+        assert "user asked" in app.library_ingest_jobs.jobs()[0].error
+
+
+@pytest.mark.asyncio
+async def test_cancel_remote_batch_without_a_server_seam_is_quiet(
+    tmp_path: Path,
+) -> None:
+    """No server backend means no cancel request, and no crash."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.server_media_reading_service = None
+
+    async with app.run_test() as pilot:
+        _queued_server_job(app, remote_job_id="11")
+        app.cancel_remote_ingest_batch("batch-1")
+        await pilot.pause(_POLL_INTERVAL)
+
+        assert app.library_ingest_jobs.jobs()[0].state == IngestJobState.QUEUED
+
+
+@pytest.mark.asyncio
+async def test_cancel_remote_batch_ignores_an_empty_batch_id(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    class _Service:
+        async def cancel_media_ingest_jobs_batch(
+            self, *, batch_id: str | None = None, session_id: str | None = None,
+            reason: str | None = None,
+        ):
+            calls.append(batch_id)
+
+        async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100):
+            return {"batch_id": batch_id, "jobs": []}
+
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.server_media_reading_service = _Service()
+
+    async with app.run_test() as pilot:
+        app.cancel_remote_ingest_batch("")
+        await pilot.pause(_POLL_INTERVAL)
+
+    assert calls == []
+
+
+# --- backend routing (task-684.1 slice 2) -----------------------------------
+
+
+class _RecordingServerService:
+    """Captures submissions and returns a scripted batch/job id pair."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.submissions: list[dict] = []
+        self.fail = fail
+
+    async def submit_ingest_jobs(self, **kwargs):
+        self.submissions.append(kwargs)
+        if self.fail:
+            raise RuntimeError("server said no")
+        return {"batch_id": "batch-7", "jobs": [{"id": 42, "source": "/tmp/a.mp3"}]}
+
+    async def submit_media_ingest_jobs(self, **kwargs):
+        return await self.submit_ingest_jobs(**kwargs)
+
+    async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100):
+        return {"batch_id": batch_id, "jobs": []}
+
+
+def _server_ingest_preference():
+    """Patch the ingest backend preference to "server" for a test's duration.
+
+    Sending an ingest to a server is an explicit opt-in stored under
+    ``[library.ingest] backend``; the browse scope deliberately does not decide
+    it. The opt-in alone is not enough, though -- runtime policy requires the
+    runtime to be in server mode as well -- so tests that want a server route
+    must ALSO call ``_use_server_runtime`` (see ``_resolve_ingest_backend``).
+    """
+    real = _app_module.get_cli_setting
+
+    def _fake(*args, **kwargs):
+        if args[:2] == ("library.ingest", "backend"):
+            return "server"
+        return real(*args, **kwargs)
+
+    return patch("tldw_chatbook.app.get_cli_setting", side_effect=_fake)
+
+
+def _use_server_runtime(app) -> None:
+    """Put the harness's runtime policy in server mode.
+
+    Required alongside the opt-in: ``media.ingestion_jobs.launch.server`` is
+    declared ``required_source="server"``, so the service refuses the launch in
+    local mode -- verified live, where it failed with "requires server mode".
+    """
+    from types import SimpleNamespace
+
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_source="server")
+    )
+
+
+@pytest.mark.asyncio
+async def test_local_backend_still_ingests_locally(tmp_path: Path) -> None:
+    """The default path must be untouched by server routing."""
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "note.txt", "Local body.")
+    app = _IngestRunnerHarness(db)
+    service = _RecordingServerService()
+    app.server_media_reading_service = service
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(source_path=str(source))
+        assert job.origin == "local"
+        done = await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
+        assert done.media_id is not None
+        await _wait_for_runner_idle(app, pilot)
+
+    assert service.submissions == [], "local ingest must not contact the server"
+
+
+@pytest.mark.asyncio
+async def test_server_backend_submits_remotely_and_attaches_ids(
+    tmp_path: Path,
+) -> None:
+    """A server-backend submit goes to the server and records its ids."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+    service = _RecordingServerService()
+    app.server_media_reading_service = service
+    source = _write_text_file(tmp_path, "note.txt", "Body.")
+
+    _use_server_runtime(app)
+    with _server_ingest_preference():
+      async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(source_path=str(source), title="A title")
+        assert job.origin == "server"
+
+        for _ in range(_POLL_ATTEMPTS):
+            current = app.library_ingest_jobs.get_job(job.job_id)
+            if current is not None and current.batch_id:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        else:
+            raise AssertionError("the remote ids were never attached")
+
+    assert len(service.submissions) == 1
+    submitted = service.submissions[0]
+    # "document" not "plaintext": the live server accepts only video/audio/
+    # document/pdf/ebook, enforced by a runtime validator not its OpenAPI spec.
+    assert submitted["media_type"] == "document"
+    assert submitted["file_paths"] == [str(source)]
+    assert submitted["title"] == "A title"
+
+    current = app.library_ingest_jobs.get_job(job.job_id)
+    assert current.batch_id == "batch-7"
+    assert current.remote_job_id == "42"
+
+
+@pytest.mark.asyncio
+async def test_server_backend_without_a_service_fails_the_job_clearly(
+    tmp_path: Path,
+) -> None:
+    """Choosing a server with none configured must explain itself, not hang."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.server_media_reading_service = None
+    source = _write_text_file(tmp_path, "note.txt", "Body.")
+
+    _use_server_runtime(app)
+    with _server_ingest_preference():
+      async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(source_path=str(source))
+        failed = await _wait_for_job_state(
+            app, pilot, job.job_id, IngestJobState.FAILED
+        )
+
+    assert "server" in failed.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_server_backend_refuses_a_source_it_cannot_send(tmp_path: Path) -> None:
+    """A plain web page belongs to the clipper, and says so rather than failing late."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.server_media_reading_service = _RecordingServerService()
+
+    _use_server_runtime(app)
+    with _server_ingest_preference():
+      async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(source_path="https://example.com/a-post")
+        failed = await _wait_for_job_state(
+            app, pilot, job.job_id, IngestJobState.FAILED
+        )
+
+    assert "clip" in failed.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_server_submit_failure_marks_the_job_failed(tmp_path: Path) -> None:
+    """A refused submission must surface, not sit queued forever."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.server_media_reading_service = _RecordingServerService(fail=True)
+    source = _write_text_file(tmp_path, "note.txt", "Body.")
+
+    _use_server_runtime(app)
+    with _server_ingest_preference():
+      async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(source_path=str(source))
+        failed = await _wait_for_job_state(
+            app, pilot, job.job_id, IngestJobState.FAILED
+        )
+
+    assert failed.error
+
+
+@pytest.mark.asyncio
+async def test_an_unrecognised_backend_falls_back_to_local(tmp_path: Path) -> None:
+    """Anything that is not exactly "server" must mean local.
+
+    Local is the backend that always works, so a typo'd or newly-added value
+    must not silently start shipping the user's files to a server.
+
+    Uses a raw stand-in rather than ``MediaRuntimeState``: that dataclass
+    normalises in ``__post_init__``, so a test going through it would exercise
+    the dataclass's guarantee instead of this fallback, and would pass even if
+    the fallback were inverted.
+    """
+    from types import SimpleNamespace
+
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "note.txt", "Body.")
+    app = _IngestRunnerHarness(db)
+    service = _RecordingServerService()
+    app.server_media_reading_service = service
+
+    async with app.run_test() as pilot:
+        for value in ("", "  ", "remote", "Server-ish", "cloud", None):
+            with patch(
+                "tldw_chatbook.app.get_cli_setting",
+                side_effect=lambda *a, v=value, **k: (
+                    v if a[:2] == ("library.ingest", "backend") else None
+                ),
+            ):
+                assert app._resolve_ingest_backend() == "local", repr(value)
+
+        # And end-to-end: with no preference set, ingest stays local.
+        job = app.submit_library_ingest_job(source_path=str(source))
+        assert job.origin == "local"
+        await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
+        await _wait_for_runner_idle(app, pilot)
+
+    assert service.submissions == []
+
+
+@pytest.mark.asyncio
+async def test_server_backend_is_matched_case_insensitively(tmp_path: Path) -> None:
+    """A raw "Server"/" SERVER " value should still route remotely."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    _use_server_runtime(app)
+    async with app.run_test():
+        for value in ("server", "Server", " SERVER "):
+            with patch(
+                "tldw_chatbook.app.get_cli_setting",
+                side_effect=lambda *a, v=value, **k: (
+                    v if a[:2] == ("library.ingest", "backend") else None
+                ),
+            ):
+                assert app._resolve_ingest_backend() == "server", repr(value)
+
+
+@pytest.mark.asyncio
+async def test_media_runtime_state_already_normalises_the_backend() -> None:
+    """Defence in depth: the shared dataclass narrows the value first.
+
+    Documented as its own test so the two layers are not confused -- this one
+    is about ``MediaRuntimeState``'s guarantee, not the ingest fallback above.
+    """
+    from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
+
+    assert MediaRuntimeState(runtime_backend="remote").runtime_backend == "local"
+    assert MediaRuntimeState(runtime_backend="SERVER").runtime_backend == "server"
+
+
+@pytest.mark.asyncio
+async def test_browse_scope_alone_never_sends_files_to_a_server(
+    tmp_path: Path,
+) -> None:
+    """Browsing in server scope must not silently upload a local file.
+
+    ``build_library_ingest_state``'s own contract says ingest "always targets
+    the local media store regardless of browsing scope". Letting the browse
+    scope decide would mean a user who switched scope to look at server media
+    then imported a file would have it leave their machine without ever asking
+    for that -- so the ingest target is its own explicit preference, defaulting
+    to local.
+    """
+    from types import SimpleNamespace
+
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "note.txt", "Body.")
+    app = _IngestRunnerHarness(db)
+    service = _RecordingServerService()
+    app.server_media_reading_service = service
+    # Browsing server-side, with no ingest preference expressed.
+    app.media_runtime_state = SimpleNamespace(runtime_backend="server")
+
+    async with app.run_test() as pilot:
+        assert app._resolve_ingest_backend() == "local"
+        job = app.submit_library_ingest_job(source_path=str(source))
+        assert job.origin == "local"
+        await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
+        await _wait_for_runner_idle(app, pilot)
+
+    assert service.submissions == [], "browse scope must not route ingest remotely"
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_server_preference_routes_remotely(tmp_path: Path) -> None:
+    """Opting in -- and only opting in -- sends the ingest to the server."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+    service = _RecordingServerService()
+    app.server_media_reading_service = service
+    _use_server_runtime(app)
+    source = _write_text_file(tmp_path, "note.txt", "Body.")
+
+    with patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=lambda *a, **k: (
+            "server" if a and a[0] == "library.ingest" and a[1:2] == ("backend",) else None
+        ),
+    ):
+        async with app.run_test() as pilot:
+            assert app._resolve_ingest_backend() == "server"
+            job = app.submit_library_ingest_job(source_path=str(source))
+            assert job.origin == "server"
+            await pilot.pause(_POLL_INTERVAL)
+
+    assert len(service.submissions) == 1
+
+
+@pytest.mark.asyncio
+async def test_remote_poll_follows_pagination(tmp_path: Path) -> None:
+    """A batch larger than one page must be reconciled in full.
+
+    The live server's MediaIngestJobListResponse carries has_more/next_offset
+    (confirmed from its OpenAPI spec). Reading only the first page would leave
+    later jobs unreconciled -- and because they stay unsettled, the poller would
+    keep fetching that batch forever, which is exactly what the stop condition
+    exists to prevent.
+    """
+    class _PagedService:
+        def __init__(self) -> None:
+            self.offsets: list[int] = []
+
+        async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100,
+                                         offset: int = 0):
+            self.offsets.append(offset)
+            if offset == 0:
+                return {
+                    "batch_id": batch_id,
+                    "jobs": [{"id": 11, "status": "completed"}],
+                    "has_more": True,
+                    "next_offset": 1,
+                }
+            return {
+                "batch_id": batch_id,
+                "jobs": [{"id": 12, "status": "completed"}],
+                "has_more": False,
+            }
+
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+    service = _PagedService()
+    app.server_media_reading_service = service
+
+    async with app.run_test() as pilot:
+        _queued_server_job(app, remote_job_id="11")
+        _queued_server_job(app, remote_job_id="12")
+        app.poll_remote_ingest_jobs()
+
+        for _ in range(_POLL_ATTEMPTS):
+            states = {j.state for j in app.library_ingest_jobs.jobs()}
+            if states == {IngestJobState.DONE}:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        else:
+            raise AssertionError(
+                f"second page never reconciled; states={states}, offsets={service.offsets}"
+            )
+
+    assert 1 in service.offsets, "the poller never asked for the second page"
+
+
+def test_the_real_service_accepts_the_offset_the_poller_sends() -> None:
+    """Pin the poller's paging against the REAL service, not a fake.
+
+    ``test_remote_poll_follows_pagination`` passed while pagination was dead in
+    production: its fake declared ``offset`` because I wrote it to match my call
+    site, but ``ServerMediaReadingService.list_media_ingest_jobs`` took only
+    ``limit``. Every real call raised ``TypeError`` and fell into a one-page
+    fallback, so the poller never read past page one.
+
+    A fake can agree with a wrong assumption; the real signature cannot. Same
+    failure mode as the keyword-only ``cancel`` call whose fake took it
+    positionally (task-684.2).
+    """
+    from tldw_chatbook.app import _accepts_keyword
+    from tldw_chatbook.Media.server_media_reading_service import (
+        ServerMediaReadingService,
+    )
+
+    for method_name in ("list_media_ingest_jobs", "list_ingest_jobs"):
+        method = getattr(ServerMediaReadingService, method_name)
+        assert _accepts_keyword(method, "offset"), (
+            f"{method_name} takes no offset, so the poller cannot page"
+        )
+
+
+def test_accepts_keyword_does_not_mistake_an_internal_typeerror_for_absence() -> None:
+    """The signature check must not be fooled the way ``except TypeError`` was.
+
+    Catching ``TypeError`` around the call conflated "no such parameter" with
+    "the callable raised TypeError internally", silently degrading a real bug
+    into a missing feature.
+    """
+    from tldw_chatbook.app import _accepts_keyword
+
+    async def raises_internally(batch_id: str, *, offset: int = 0):
+        raise TypeError("something inside blew up")
+
+    assert _accepts_keyword(raises_internally, "offset") is True
+
+    async def no_offset(batch_id: str, *, limit: int = 100):
+        return {}
+
+    assert _accepts_keyword(no_offset, "offset") is False
+
+    async def takes_kwargs(batch_id: str, **kwargs):
+        return {}
+
+    assert _accepts_keyword(takes_kwargs, "offset") is True
+
+
+@pytest.mark.asyncio
+async def test_a_service_without_offset_reads_one_page_instead_of_looping(
+    tmp_path: Path,
+) -> None:
+    """An offset-less service must stop, not re-read page one to the cap.
+
+    ``has_more`` stays true on a first page, so continuing the loop without a
+    way to advance would re-fetch the same page ``REMOTE_INGEST_MAX_PAGES``
+    times per pass, every pass.
+    """
+    class _UnpagedService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100):
+            self.calls += 1
+            return {
+                "batch_id": batch_id,
+                "jobs": [{"id": 11, "status": "completed"}],
+                "has_more": True,
+                "next_offset": 1,
+            }
+
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    service = _UnpagedService()
+    app.server_media_reading_service = service
+
+    async with app.run_test():
+        _queued_server_job(app, remote_job_id="11")
+        await app._reconcile_remote_batch(service, "batch-1")
+
+    assert service.calls == 1, (
+        f"re-read page one {service.calls} times with no way to advance"
+    )
+    assert {j.state for j in app.library_ingest_jobs.jobs()} == {IngestJobState.DONE}
+
+
+@pytest.mark.asyncio
+async def test_opting_in_without_server_mode_still_ingests_locally(
+    tmp_path: Path,
+) -> None:
+    """The opt-in alone must not route remotely; policy requires server mode.
+
+    Runtime policy declares ``media.ingestion_jobs.launch.server`` as
+    ``required_source="server"``, so the service refuses the launch in local
+    mode. Verified live: it failed with "media.ingestion_jobs.launch.server
+    requires server mode". Falling back to a local ingest keeps the file where
+    it is and lets the canvas explain the precondition, rather than handing the
+    user a failed job.
+    """
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "note.txt", "Body.")
+    app = _IngestRunnerHarness(db)
+    service = _RecordingServerService()
+    app.server_media_reading_service = service
+    # Opted in, but the runtime is still local.
+
+    with _server_ingest_preference():
+        async with app.run_test() as pilot:
+            assert app._resolve_ingest_backend() == "local"
+            job = app.submit_library_ingest_job(source_path=str(source))
+            assert job.origin == "local"
+            await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
+            await _wait_for_runner_idle(app, pilot)
+
+    assert service.submissions == []
+
+
+class _RecordingClipService:
+    """Captures web clips and returns a live-shaped clip response."""
+
+    def __init__(self, *, extracted: bool = True, fail: bool = False) -> None:
+        self.clips: list[dict] = []
+        self.submissions: list[dict] = []
+        self.extracted = extracted
+        self.fail = fail
+
+    async def ingest_web_content(self, **kwargs):
+        self.clips.append(kwargs)
+        if self.fail:
+            raise RuntimeError("scraper unavailable")
+        return {
+            "status": "success",
+            "message": "Web content processed",
+            "count": 1,
+            "results": [
+                {
+                    "url": kwargs["urls"][0],
+                    "title": "Untitled",
+                    "author": "Unknown",
+                    "content": "Body" if self.extracted else "",
+                    "extraction_successful": self.extracted,
+                }
+            ],
+        }
+
+    async def submit_ingest_jobs(self, **kwargs):
+        self.submissions.append(kwargs)
+        return {"batch_id": "batch-9", "jobs": [{"id": 1}]}
+
+    async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100, offset: int = 0):
+        return {"batch_id": batch_id, "jobs": []}
+
+
+@pytest.mark.asyncio
+async def test_a_page_goes_to_the_clipper_and_a_file_does_not(tmp_path: Path) -> None:
+    """Routing must split on what the source *is*, not on the backend alone.
+
+    The ingest-jobs API has no media type for a web page -- ``server_media_type_for``
+    refuses one deliberately -- so sending a page there fails. A page belongs to
+    the clipper endpoint and a file to the jobs API, with one backend switch
+    covering both (task-684.3).
+    """
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    service = _RecordingClipService()
+    app.server_media_reading_service = service
+    audio = _write_text_file(tmp_path, "talk.mp3", "not really audio")
+
+    with _server_ingest_preference():
+        async with app.run_test() as pilot:
+            _use_server_runtime(app)
+            app.submit_library_ingest_job(source_path="https://example.com/post")
+            app.submit_library_ingest_job(source_path=str(audio))
+            for _ in range(_POLL_ATTEMPTS):
+                if service.clips and service.submissions:
+                    break
+                await pilot.pause(_POLL_INTERVAL)
+
+    assert [c["urls"] for c in service.clips] == [["https://example.com/post"]]
+    assert service.submissions, "the file never reached the ingest-jobs API"
+    assert "urls" not in service.submissions[0] or service.submissions[0].get(
+        "file_paths"
+    ), "a local file must be sent as a file, not a url"
+
+
+@pytest.mark.asyncio
+async def test_a_clipped_page_finishes_in_the_queue(tmp_path: Path) -> None:
+    """A clip settles on the synchronous answer -- there is no job to poll."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.server_media_reading_service = _RecordingClipService()
+
+    with _server_ingest_preference():
+        async with app.run_test() as pilot:
+            _use_server_runtime(app)
+            app.submit_library_ingest_job(source_path="https://example.com/post")
+            for _ in range(_POLL_ATTEMPTS):
+                states = {j.state for j in app.library_ingest_jobs.jobs()}
+                if states == {IngestJobState.DONE}:
+                    break
+                await pilot.pause(_POLL_INTERVAL)
+            else:
+                raise AssertionError(f"clip never finished; states={states}")
+
+    job = app.library_ingest_jobs.jobs()[0]
+    assert job.origin == "server"
+    # No media id comes back from the clipper, so "Open in Library" stays
+    # withheld: the content is in the server's library, not this machine's.
+    assert not job.media_id
+
+
+@pytest.mark.asyncio
+async def test_a_clip_that_extracted_nothing_fails_rather_than_reporting_done(
+    tmp_path: Path,
+) -> None:
+    """A 200 is not a captured page.
+
+    The endpoint answers 200 with its outcome in the body, so an extraction that
+    found nothing arrives as transport-level success. Recording it as done would
+    repeat the empty-ingest bug guarded against in task-677.
+    """
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.server_media_reading_service = _RecordingClipService(extracted=False)
+
+    with _server_ingest_preference():
+        async with app.run_test() as pilot:
+            _use_server_runtime(app)
+            app.submit_library_ingest_job(source_path="https://example.com/post")
+            for _ in range(_POLL_ATTEMPTS):
+                states = {j.state for j in app.library_ingest_jobs.jobs()}
+                if states == {IngestJobState.FAILED}:
+                    break
+                await pilot.pause(_POLL_INTERVAL)
+            else:
+                raise AssertionError(f"empty clip was not failed; states={states}")
+
+    job = app.library_ingest_jobs.jobs()[0]
+    assert "extracted" in (job.error or "").lower()
+
+
+class _IdlessSubmitService:
+    """Accepts a submission but answers without usable tracking ids."""
+
+    def __init__(self, response: dict) -> None:
+        self.response = response
+        self.list_calls = 0
+
+    async def submit_ingest_jobs(self, **kwargs):
+        return self.response
+
+    async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100, offset: int = 0):
+        self.list_calls += 1
+        return {"batch_id": batch_id, "jobs": []}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "why"),
+    [
+        ({"jobs": [{"id": 7}], "errors": []}, "no batch_id to poll"),
+        ({"batch_id": "b-1", "jobs": [], "errors": []}, "no job to reconcile against"),
+        ({"batch_id": "b-1", "jobs": [{"source": "/tmp/a.mp3"}]}, "job carries no id"),
+        ({}, "nothing usable at all"),
+    ],
+)
+async def test_a_submission_we_cannot_track_fails_instead_of_queueing_forever(
+    tmp_path: Path, response: dict, why: str
+) -> None:
+    """Reconciliation needs both ids, so without them the job can never settle.
+
+    ``pending_remote_batches`` keys off ``batch_id`` and
+    ``reconcile_remote_ingest_jobs`` keys off ``remote_job_id``. Missing the
+    former means the job is never polled at all; missing the latter means the
+    batch is polled forever while no status can ever be matched to the job.
+    Either way the queue row sits at "queued" indefinitely -- the same
+    never-resolves failure as the mistyped ``result`` field, which is exactly
+    what a queue must not do silently.
+
+    Failing says so out loud. The message admits the server may still be working,
+    because it accepted the submission; what is lost is our ability to follow it.
+    """
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    service = _IdlessSubmitService(response)
+    app.server_media_reading_service = service
+    source = _write_text_file(tmp_path, "note.txt", "Body.")
+
+    with _server_ingest_preference():
+        async with app.run_test() as pilot:
+            _use_server_runtime(app)
+            app.submit_library_ingest_job(source_path=str(source))
+            for _ in range(_POLL_ATTEMPTS):
+                states = {j.state for j in app.library_ingest_jobs.jobs()}
+                if states == {IngestJobState.FAILED}:
+                    break
+                await pilot.pause(_POLL_INTERVAL)
+            else:
+                raise AssertionError(
+                    f"{why}: job was not failed; states={states}"
+                )
+
+    job = app.library_ingest_jobs.jobs()[0]
+    assert "track" in (job.error or "").lower(), job.error
+    assert service.list_calls == 0, "an untrackable batch must not be polled"

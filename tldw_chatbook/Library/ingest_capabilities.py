@@ -15,6 +15,7 @@ from typing import Any
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     FileIngestionError,
     detect_file_type,
+    is_http_url as _is_http_url,
 )
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE, OPTIONAL_FEATURES
 
@@ -38,6 +39,12 @@ class OptionField:
             packaging one. Kept separate from ``depends_on`` because resolving
             a sibling field name through the installed-feature lookup silently
             disabled the field forever (no package is ever named "chunk").
+        enabled_when_values: Optional allowed values for the ``enabled_when``
+            sibling. Empty means the plain truthiness of the sibling decides,
+            which is the right test for a checkbox but not for a select: every
+            non-empty choice is truthy, so a select-gated field would always
+            read as editable. Naming the values that actually enable it keeps
+            the form from offering an input the run will ignore.
     """
 
     name: str
@@ -47,6 +54,7 @@ class OptionField:
     options: tuple[str, ...] = ()
     depends_on: str | None = None
     enabled_when: str | None = None
+    enabled_when_values: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -287,6 +295,11 @@ def _install_hint(feature_id: str) -> dict[str, str]:
 #: the pre-flight summary can count them separately.
 UNSUPPORTED_GROUP = "unsupported"
 
+#: Scrape methods that fetch more than the one page they are given, and so make
+#: the page/depth limits meaningful. ``individual`` is the single-page case, and
+#: the only one the local article extractor implements.
+MULTI_PAGE_SCRAPE_METHODS = frozenset({"sitemap", "url_level", "recursive_scraping"})
+
 _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
     "pdf": TypeGroupCapabilities(
         group="pdf",
@@ -427,6 +440,44 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
             ),
         ),
     ),
+    "web": TypeGroupCapabilities(
+        group="web",
+        label="Web pages",
+        # No local packages are required: the article extractor is part of the
+        # app, and a server-backed clip runs entirely on the server.
+        required_features=(),
+        optional_features=(),
+        fields=(
+            OptionField(
+                name="scrape_method",
+                label="What to fetch",
+                type="select",
+                default="individual",
+                # The server's ScrapeMethod enum, read from its OpenAPI
+                # document. The local extractor only does the single-page case,
+                # which is why that is the default for both backends.
+                options=("individual", "sitemap", "url_level", "recursive_scraping"),
+                depends_on=None,
+            ),
+            OptionField(
+                name="max_pages",
+                label="Maximum pages",
+                type="number",
+                default=3,
+                # Only meaningful once more than one page is being fetched.
+                enabled_when="scrape_method",
+                enabled_when_values=tuple(sorted(MULTI_PAGE_SCRAPE_METHODS)),
+            ),
+            OptionField(
+                name="max_depth",
+                label="Maximum depth",
+                type="number",
+                default=3,
+                enabled_when="scrape_method",
+                enabled_when_values=tuple(sorted(MULTI_PAGE_SCRAPE_METHODS)),
+            ),
+        ),
+    ),
 }
 
 
@@ -443,17 +494,32 @@ def list_type_groups() -> list[str]:
 def get_type_group(path_or_url: str) -> str:
     """Map a file path or URL to a capability group.
 
+    A URL is grouped by what it addresses, not merely by whether its path
+    happens to carry a file extension. An extension still wins when there is
+    one -- a link to a PDF or an ebook should be parsed as that, not scraped as
+    HTML -- but an extension-less URL is a video if it points at a video host
+    and otherwise a web page.
+
+    This used to consult ``detect_file_type`` alone, so every extension-less URL
+    landed in ``unsupported``: a YouTube link, the archetypal import, pre-flighted
+    as an unsupported *file* even though the pipeline's own
+    ``classify_ingest_source`` called it ``video`` and would have ingested it
+    (task-702).
+
     Args:
-        path_or_url: Local path or URL-like string ending in a filename.
+        path_or_url: Local path, or an http(s) URL.
 
     Returns:
-        One of ``pdf``, ``audio_video``, ``ebook``, ``generic``, or
+        One of ``pdf``, ``audio_video``, ``ebook``, ``web``, ``generic``, or
         ``unsupported``. Unsupported file types are mapped to ``unsupported``
         so the pre-flight summary can surface them separately.
     """
     try:
         file_type = detect_file_type(path_or_url)
     except FileIngestionError:
+        # No usable extension. For a URL that is normal, not a failure.
+        if _is_http_url(path_or_url):
+            return _url_type_group(path_or_url)
         return UNSUPPORTED_GROUP
 
     if file_type == "pdf":
@@ -462,6 +528,30 @@ def get_type_group(path_or_url: str) -> str:
         return "audio_video"
     if file_type == "ebook":
         return "ebook"
+    if _is_http_url(path_or_url) and file_type in ("plaintext", "html", "xml"):
+        # A bare ".html"/".htm" URL is a page to fetch, not a local file to
+        # read; the extension says how it is written, not where it lives.
+        return _url_type_group(path_or_url)
+    return "generic"
+
+
+def _url_type_group(url: str) -> str:
+    """Group an http(s) URL, deferring to the pipeline's own classification.
+
+    Asking ``classify_ingest_source`` rather than re-deriving the rules keeps the
+    canvas's verdict and the pipeline's behaviour from drifting apart -- they
+    disagreed before, and the screen was the one that lied.
+    """
+    from ..Local_Ingestion.local_file_ingestion import classify_ingest_source
+
+    try:
+        classified = classify_ingest_source(url)
+    except FileIngestionError:
+        return UNSUPPORTED_GROUP
+    if classified in ("audio", "video"):
+        return "audio_video"
+    if classified == "article":
+        return "web"
     return "generic"
 
 

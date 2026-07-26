@@ -10,7 +10,7 @@ booting the TUI, mirroring ``library_notes_sync_state.py``.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import PurePath
 from typing import Any, Sequence
 
@@ -39,7 +39,17 @@ def _generic_default(name: str, fallback: Any) -> Any:
 
 # Exact copy values (binding -- see the L3b plan's Global Constraints).
 INGEST_HEADER_COPY = "Import media"
+# Retired: the old scope-warning line ("ingest runs on Local") existed to say
+# that ingest ignored the Library's browse scope. Ingest never keys off browse
+# scope now -- it has its own explicit target -- so the line is replaced by one
+# that names that target. Kept as a name for any external reference.
 SERVER_QUIET_LINE_COPY = "ingest runs on Local"
+INGEST_TARGET_LOCAL_COPY = "Imports run on this machine."
+INGEST_TARGET_SERVER_COPY = "Imports run on the server."
+INGEST_SERVER_NEEDS_SERVER_MODE_COPY = (
+    "Imports run on this machine. Switch the Library to server mode to "
+    "import on the server."
+)
 MEDIA_DB_UNAVAILABLE_COPY = "Media database is unavailable."
 INGEST_UNAVAILABLE_COPY = "Ingest is unavailable in this runtime."
 QUEUE_HEADING_COPY = "Queue"
@@ -69,6 +79,7 @@ MAX_CHUNK_SIZE = 5000
 _GLYPH_ACTIVE = "●"  # "●" -- queued, parsing, or writing
 _GLYPH_DONE = "✓"  # "✓"
 _GLYPH_FAILED = "✗"  # "✗"
+_GLYPH_CANCELLED = "⊘"  # "⊘" -- stopped deliberately, not an error
 
 # L4: the marker `local_file_ingestion.py`'s "Unsupported file type" error
 # copy uses to separate the offending extension from its own supported-list
@@ -341,6 +352,15 @@ class IngestQueueRow:
     can_dismiss: bool = False
     media_id: int | None = None
     state: IngestJobState | None = None
+    #: Where the job runs, mirrored from ``LibraryIngestJob.origin``, so the
+    #: widget layer can style or filter by backend without reaching past
+    #: this state object into the registry.
+    origin: str = "local"
+    #: Whether this row offers Cancel. Server-only and in-flight-only:
+    #: ``cancel_media_ingest_jobs_batch`` addresses a batch on the server,
+    #: and the local pipeline has no cancel seam at all, so offering it
+    #: anywhere else would be dead bait.
+    can_cancel: bool = False
     source_path: str = ""
     progress: dict[str, Any] | None = None
     error_detail: dict[str, Any] | None = None
@@ -442,6 +462,11 @@ class LibraryIngestCanvasState:
     type_groups: list[str]
     unsupported_files: list[str]
     recent_jobs: list[LibraryIngestJob]
+    #: Which backend a new ingest will target, so the canvas can say so.
+    ingest_backend: str = "local"
+    #: Whether to offer switching backends -- only meaningful when a
+    #: server is actually configured.
+    show_backend_switch: bool = False
 
 
 def _basename(source_path: str) -> str:
@@ -480,7 +505,7 @@ def _format_elapsed(
     return f"{minutes}m {seconds}s"
 
 
-def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
+def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
     """Build one ``IngestQueueRow`` from a registry job snapshot.
 
     Binding row-line formats (see the L3b plan; F3 splits the old single
@@ -563,6 +588,27 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
         )
     # FAILED -- the only remaining IngestJobState member.
     short_error = short_ingest_error(job.error)
+    if job.state == IngestJobState.CANCELLED:
+        # Neither ✓ nor ✗: the user stopped this on purpose, so it is not an
+        # error they caused. Retry is withheld because ``requeue`` is
+        # FAILED-only and would no-op; dismissing the row is still offered.
+        line = f"{_GLYPH_CANCELLED} cancelled · {basename}"
+        if job.error:
+            line += f" · {short_ingest_error(job.error)}"
+        return IngestQueueRow(
+            job_id=job.job_id,
+            glyph=_GLYPH_CANCELLED,
+            line=line,
+            can_open=False,
+            can_retry=False,
+            can_dismiss=True,
+            media_id=job.media_id,
+            state=job.state,
+            source_path=job.source_path,
+            progress=job.progress,
+            error_detail=job.error_detail,
+        )
+
     is_unsupported = (
         job.error_detail is not None
         and job.error_detail.get("category") == "unsupported_file_type"
@@ -595,6 +641,7 @@ _COUNTS_LINE_ORDER: tuple[IngestJobState, ...] = (
     IngestJobState.QUEUED,
     IngestJobState.DONE,
     IngestJobState.FAILED,
+    IngestJobState.CANCELLED,
 )
 
 
@@ -621,6 +668,48 @@ def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
     )
 
 
+
+#: Suffix appended to a queue row for a job that runs on the server. Local is
+#: the overwhelmingly common case, so it stays unannotated rather than every
+#: row carrying a backend tag.
+_SERVER_ROW_SUFFIX = " · on server"
+
+#: States a row can no longer be acted on to stop. Mirrors the registry's
+#: own terminal set; kept local rather than importing a private name.
+_TERMINAL_ROW_STATES = (
+    IngestJobState.DONE,
+    IngestJobState.FAILED,
+    IngestJobState.CANCELLED,
+)
+
+
+def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
+    """Build a queue row, then stamp where the job runs.
+
+    The per-state builder returns from one of several branches; annotating the
+    origin here rather than in each of them means a new state cannot silently
+    ship without the marker. Once local and server ingests share one queue,
+    "done · notes.txt" alone cannot tell the user which machine did the work.
+
+    Args:
+        job: The job to render.
+        now: The "current" monotonic time, for elapsed-time formatting.
+
+    Returns:
+        The rendered row, with ``origin`` mirrored and the line marked when the
+        job is not local.
+    """
+    row = _build_queue_row_for_state(job, now=now)
+    if job.origin == "local":
+        return replace(row, origin=job.origin, can_cancel=False)
+    can_cancel = bool(job.batch_id) and job.state not in _TERMINAL_ROW_STATES
+    return replace(
+        row,
+        origin=job.origin,
+        can_cancel=can_cancel,
+        line=f"{row.line}{_SERVER_ROW_SUFFIX}",
+    )
+
 def build_library_ingest_state(
     jobs: Sequence[LibraryIngestJob],
     *,
@@ -631,6 +720,8 @@ def build_library_ingest_state(
     now: float | None = None,
     preflight: PreflightResult | None = None,
     preflight_checking: bool | None = None,
+    ingest_backend: str = "local",
+    server_ingest_available: bool = False,
 ) -> LibraryIngestCanvasState:
     """Build the ingest canvas's full display state.
 
@@ -666,11 +757,31 @@ def build_library_ingest_state(
     active_preflight_checking = (
         form.preflight_checking if preflight_checking is None else preflight_checking
     )
-    server_quiet_line = (
-        SERVER_QUIET_LINE_COPY
-        if str(runtime_source or "local").strip().lower() == "server"
-        else ""
+    # The line names the *ingest target*, not the browse scope. On a local-only
+    # install there is no choice to explain, so it stays silent; a server target
+    # is always named, even if the seam has since gone away, so the canvas can
+    # never claim local while submit would still try the server.
+    # Server ingest is gated by runtime policy, not just by a configured
+    # server: ``media.ingestion_jobs.launch.server`` declares
+    # ``required_source="server"``, so the service refuses the launch outright
+    # while the Library runtime is local -- the same rule that makes the retired
+    # ingest window disable its server panels in local mode. Offering the switch
+    # regardless produced a job that failed with "requires server mode".
+    in_server_mode = str(runtime_source or "local").strip().lower() == "server"
+    server_ingest_offerable = bool(server_ingest_available) and in_server_mode
+    targets_server = (
+        str(ingest_backend or "local").strip().lower() == "server"
+        and server_ingest_offerable
     )
+    if targets_server:
+        server_quiet_line = INGEST_TARGET_SERVER_COPY
+    elif server_ingest_available and not in_server_mode:
+        # Explain the precondition instead of letting the submit fail later.
+        server_quiet_line = INGEST_SERVER_NEEDS_SERVER_MODE_COPY
+    elif server_ingest_offerable:
+        server_quiet_line = INGEST_TARGET_LOCAL_COPY
+    else:
+        server_quiet_line = ""
     if not registry_available:
         unavailable_line = INGEST_UNAVAILABLE_COPY
     elif not media_db_available:
@@ -739,6 +850,8 @@ def build_library_ingest_state(
     return LibraryIngestCanvasState(
         header=INGEST_HEADER_COPY,
         server_quiet_line=server_quiet_line,
+        ingest_backend="server" if targets_server else "local",
+        show_backend_switch=server_ingest_offerable,
         unavailable_line=unavailable_line,
         form=form,
         start_enabled=start_enabled,

@@ -30,7 +30,7 @@ import sys
 import threading
 import time
 import traceback
-from typing import TYPE_CHECKING, Union, Optional, Any, Dict, List, Callable
+from typing import TYPE_CHECKING, Union, Optional, Any, Dict, List, Callable, Mapping
 from textual.widget import Widget
 
 #
@@ -166,6 +166,20 @@ from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
 from tldw_chatbook.Library.ingest_capabilities import get_type_group
 from tldw_chatbook.Library.ingest_preflight import collect_directory_files
+from tldw_chatbook.Library.server_ingest_reconcile import (
+    pending_remote_batches,
+    reconcile_remote_ingest_jobs,
+)
+from tldw_chatbook.Library.server_ingest_request import (
+    ServerIngestUnsupported,
+    build_server_ingest_kwargs,
+)
+from tldw_chatbook.Library.web_clip_request import (
+    NotAWebClipSource,
+    build_web_clip_kwargs,
+    clip_failure_reason,
+    is_web_clip_source,
+)
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
     IngestJobState,
@@ -1710,6 +1724,47 @@ def _ingest_pool_real_stderr():
     return _INGEST_POOL_STDERR_FALLBACK
 
 
+def _response_field(payload: Any, name: str) -> Any:
+    """Read ``name`` from a pydantic model or a plain dict response.
+
+    The tldw client returns models, but its own tests exercise the same paths
+    with dicts, so both shapes are accepted.
+    """
+    if isinstance(payload, Mapping):
+        return payload.get(name)
+    return getattr(payload, name, None)
+
+
+def _accepts_keyword(func: Any, name: str) -> bool:
+    """Report whether ``func`` can be called with the ``name`` keyword.
+
+    Asked up front instead of calling and catching ``TypeError``: that pattern
+    cannot tell "this callable has no such parameter" from "a ``TypeError`` was
+    raised inside it", so a genuine bug downstream reads as a missing feature
+    and degrades silently. That is exactly how the remote ingest poller shipped
+    asking for an ``offset`` the client did not yet accept, and paginated
+    nothing for it (task-684.2).
+
+    A callable whose signature cannot be read (a C builtin, an exotic mock) is
+    reported as accepting the keyword, so real services are not downgraded by
+    an unreadable signature; ``**kwargs`` counts as accepting it.
+    """
+    try:
+        parameters = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return True
+    if any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    ):
+        return True
+    parameter = parameters.get(name)
+    return parameter is not None and parameter.kind in {
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    }
+
+
 class LibraryIngestQueueMixin:
     """Library ingest job submission seam + parallel-parse coordinator + writer.
 
@@ -1921,6 +1976,25 @@ class LibraryIngestQueueMixin:
             # ``expanded`` is non-empty here, so the loop always assigns.
             assert first_job is not None
             return first_job
+
+        if self._resolve_ingest_backend() == "server":
+            # A web page goes to the clipper, not the ingest-jobs API: that API
+            # has no media type for one. A local ingest needs no such branch --
+            # classify_ingest_source already routes an article through the
+            # pipeline's own extractor.
+            submit_remote = (
+                self._submit_web_clip_job
+                if is_web_clip_source(source_path)
+                else self._submit_server_ingest_job
+            )
+            return submit_remote(
+                source_path=source_path,
+                ingest_options=ingest_options or {},
+                title=title,
+                author=author,
+                keywords=keywords,
+                perform_analysis=perform_analysis,
+            )
 
         try:
             detected_type = classify_ingest_source(source_path) or ""
@@ -2571,6 +2645,445 @@ class LibraryIngestQueueMixin:
         if pool is None:
             return None
         return self._terminate_ingest_parse_pool_off_thread(pool)
+
+    # -- Remote poller (server-origin jobs) --------------------------------
+
+    #: Seconds between remote status polls. Server ingests are minutes-long
+    #: (transcription, OCR), so a slow cadence is plenty and keeps this off the
+    #: server's back.
+    REMOTE_INGEST_POLL_SECONDS: float = 5.0
+
+    #: Cap on status pages fetched per batch per pass, so a server
+    #: reporting has_more forever cannot pin the loop.
+    REMOTE_INGEST_MAX_PAGES: int = 20
+
+    def _resolve_ingest_backend(self) -> str:
+        """Return the backend a new ingest should run on: ``local`` or ``server``.
+
+        Deliberately its **own** preference rather than the Library's browse
+        scope (``media_runtime_state.runtime_backend``). Reusing the browse
+        scope looked tidier -- one notion of "which backend am I on" -- but it
+        would mean a user who switched scope to look at server-side media and
+        then imported a file had that file leave their machine without ever
+        asking for it. ``build_library_ingest_state``'s own contract is explicit
+        that ingest "always targets the local media store regardless of browsing
+        scope", and quietly inverting that is not a change to make on the user's
+        behalf.
+
+        So sending an ingest to a server is an explicit opt-in, and anything
+        unrecognised or unset means local -- the backend that always works and
+        keeps the file where it already is.
+        """
+        raw = get_cli_setting("library.ingest", "backend", "local")
+        if str(raw or "local").strip().lower() != "server":
+            return "local"
+        # The opt-in is necessary but not sufficient. Runtime policy declares
+        # ``media.ingestion_jobs.launch.server`` as ``required_source="server"``,
+        # so the service refuses the launch while the Library runtime is local.
+        # Honouring that here means an opted-in user whose runtime is local gets
+        # a local ingest -- the file stays put and the canvas explains how to
+        # enable server imports -- rather than a job that fails with "requires
+        # server mode" (seen live against a real server).
+        runtime_state = getattr(
+            getattr(self, "runtime_policy", None), "state", None
+        )
+        active_source = str(
+            getattr(runtime_state, "active_source", "local") or "local"
+        ).strip().lower()
+        return "server" if active_source == "server" else "local"
+
+    def _submit_server_ingest_job(
+        self,
+        *,
+        source_path: str,
+        ingest_options: dict[str, Any],
+        title: str,
+        author: str,
+        keywords: tuple[str, ...],
+        perform_analysis: bool,
+    ) -> LibraryIngestJob:
+        """Queue a ``server``-origin job and send it to the server.
+
+        The registry row is created synchronously so the queue shows the job the
+        moment the user starts it, then an async worker performs the submission
+        and records the ids the server issues. A source the server has no
+        handler for fails immediately, with the reason, rather than being sent
+        and rejected later.
+
+        Returns:
+            The queued job, or an already-``FAILED`` one when the source cannot
+            be sent at all.
+        """
+        try:
+            kwargs = build_server_ingest_kwargs(
+                source_path,
+                options=ingest_options,
+                title=title,
+                author=author,
+                keywords=keywords,
+                perform_analysis=perform_analysis,
+            )
+        except ServerIngestUnsupported as exc:
+            job = self.library_ingest_jobs.submit(
+                source_path=source_path,
+                title=title,
+                author=author,
+                keywords=keywords,
+                perform_analysis=perform_analysis,
+                origin="server",
+                ingest_options=ingest_options,
+            )
+            failed = self.library_ingest_jobs.mark_failed(
+                job.job_id, error=str(exc), permanent=True
+            )
+            return failed if failed is not None else job
+
+        job = self.library_ingest_jobs.submit(
+            source_path=source_path,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            detected_type=str(kwargs.get("media_type") or ""),
+            origin="server",
+            ingest_options=ingest_options,
+        )
+        self._send_server_ingest_job(job.job_id, kwargs)
+        return job
+
+    def _submit_web_clip_job(
+        self,
+        *,
+        source_path: str,
+        ingest_options: dict[str, Any],
+        title: str,
+        author: str,
+        keywords: tuple[str, ...],
+        perform_analysis: bool,
+    ) -> LibraryIngestJob:
+        """Queue a ``server``-origin job that clips a web page.
+
+        A page cannot go through the ingest-jobs API -- it has no media type for
+        one -- so this uses the clipper endpoint instead. That endpoint is
+        synchronous and issues no job or batch id, so unlike a server file
+        ingest there is nothing to attach or poll: the job settles when the call
+        returns (task-684.3).
+
+        Returns:
+            The queued job, or an already-``FAILED`` one when the source cannot
+            be clipped at all.
+        """
+        try:
+            kwargs = build_web_clip_kwargs(
+                source_path,
+                options=ingest_options,
+                title=title,
+                author=author,
+                keywords=keywords,
+            )
+        except NotAWebClipSource as exc:
+            job = self.library_ingest_jobs.submit(
+                source_path=source_path,
+                title=title,
+                author=author,
+                keywords=keywords,
+                perform_analysis=perform_analysis,
+                origin="server",
+                ingest_options=ingest_options,
+            )
+            failed = self.library_ingest_jobs.mark_failed(
+                job.job_id, error=str(exc), permanent=True
+            )
+            return failed if failed is not None else job
+
+        job = self.library_ingest_jobs.submit(
+            source_path=source_path,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            detected_type="web",
+            origin="server",
+            ingest_options=ingest_options,
+        )
+        self._send_web_clip_job(job.job_id, kwargs)
+        return job
+
+    @work(group="library_ingest_remote_submit")
+    async def _send_web_clip_job(self, job_id: str, kwargs: dict[str, Any]) -> None:
+        """Clip a page on the server and settle the job on the answer.
+
+        Shares the submit worker group with ``_send_server_ingest_job``: both are
+        one-shot submissions on the user's behalf, and neither should be able to
+        pile up.
+        """
+        service = getattr(self, "server_media_reading_service", None)
+        clip = getattr(service, "ingest_web_content", None)
+        if not callable(clip):
+            self.library_ingest_jobs.mark_failed(
+                job_id,
+                error=(
+                    "No server backend is configured, so this page cannot be "
+                    "clipped on the server. Configure one in Settings, or switch "
+                    "this Library to Local."
+                ),
+                permanent=True,
+            )
+            return
+
+        self.library_ingest_jobs.mark_parsing(job_id, detected_type="web")
+        try:
+            response = await clip(**kwargs)
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Web clip failed for job {job_id}."
+            )
+            self.library_ingest_jobs.mark_failed(
+                job_id, error=f"The server could not clip the page: {exc}"
+            )
+            return
+
+        # A 200 is not a captured page: the endpoint reports its outcome in the
+        # body, so an extraction that found nothing arrives as success.
+        reason = clip_failure_reason(response)
+        if reason is not None:
+            self.library_ingest_jobs.mark_failed(job_id, error=reason)
+            return
+
+        # No media id comes back, so this finishes like a remote job: done, with
+        # "Open in Library" withheld because the content is in the server's.
+        self.library_ingest_jobs.mark_remote_done(job_id)
+
+    @work(group="library_ingest_remote_submit")
+    async def _send_server_ingest_job(
+        self, job_id: str, kwargs: dict[str, Any]
+    ) -> None:
+        """Submit to the server, then attach the ids it issued.
+
+        Async for the same reason the poller is: the service call is a
+        coroutine, so staying on the event loop keeps every registry mutation
+        on the UI thread without marshalling.
+        """
+        service = getattr(self, "server_media_reading_service", None)
+        submit = getattr(service, "submit_ingest_jobs", None) or getattr(
+            service, "submit_media_ingest_jobs", None
+        )
+        if not callable(submit):
+            self.library_ingest_jobs.mark_failed(
+                job_id,
+                error=(
+                    "No server backend is configured, so this ingest cannot run "
+                    "on the server. Configure one in Settings, or switch this "
+                    "Library to Local."
+                ),
+                permanent=True,
+            )
+            return
+
+        try:
+            response = await submit(**kwargs)
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Server ingest submission failed for job {job_id}."
+            )
+            self.library_ingest_jobs.mark_failed(
+                job_id, error=f"The server refused the ingest: {exc}"
+            )
+            return
+
+        batch_id = _response_field(response, "batch_id")
+        jobs = _response_field(response, "jobs") or []
+        remote_job_id = None
+        if jobs:
+            remote_job_id = _response_field(jobs[0], "id")
+        self.library_ingest_jobs.attach_remote(
+            job_id,
+            remote_job_id=None if remote_job_id is None else str(remote_job_id),
+            batch_id=None if batch_id is None else str(batch_id),
+        )
+        errors = _response_field(response, "errors") or []
+        if errors and not jobs:
+            self.library_ingest_jobs.mark_failed(
+                job_id, error=f"The server rejected the ingest: {errors[0]}"
+            )
+            return
+
+        # Following a remote job needs BOTH ids: ``pending_remote_batches``
+        # decides what to poll from ``batch_id``, and the reconciler matches
+        # statuses to jobs by ``remote_job_id``. Without the first, the job is
+        # never polled; without the second, the batch is polled forever while no
+        # status can ever be matched to it. Either way the row sits at "queued"
+        # indefinitely -- the same never-resolves failure the mistyped ``result``
+        # field caused, and not something a queue may do quietly.
+        if not batch_id or remote_job_id is None:
+            self.library_ingest_jobs.mark_failed(
+                job_id,
+                error=(
+                    "The server accepted this import but did not return the ids "
+                    "needed to track it, so its progress cannot be followed. It "
+                    "may still be running on the server; check there before "
+                    "importing again."
+                ),
+                permanent=True,
+            )
+            return
+
+        self.poll_remote_ingest_jobs()
+
+    async def _reconcile_remote_batch(self, service: Any, batch_id: str) -> None:
+        """Fetch every page of ``batch_id``'s statuses and reconcile them.
+
+        The server's list response is paginated (``has_more``/``next_offset``,
+        per its OpenAPI schema). Reading only the first page would leave later
+        jobs unreconciled -- and since they stay unsettled, the poller would
+        keep re-fetching that batch forever, which is what the stop condition
+        exists to prevent.
+
+        A transient failure is logged and left for the next pass rather than
+        killing the poller; the jobs stay visibly unfinished meanwhile, which is
+        the recoverable direction.
+        """
+        lister = service.list_media_ingest_jobs
+        supports_offset = _accepts_keyword(lister, "offset")
+
+        offset = 0
+        for _ in range(self.REMOTE_INGEST_MAX_PAGES):
+            if self._ingest_shutdown:
+                return
+            try:
+                response = (
+                    await lister(batch_id, offset=offset)
+                    if supports_offset
+                    else await lister(batch_id)
+                )
+            except Exception:
+                logger.opt(exception=True).debug(
+                    f"Remote ingest poll failed for batch {batch_id!r}; "
+                    "will retry on the next pass."
+                )
+                return
+
+            self._reconcile_page(response)
+            if not _response_field(response, "has_more"):
+                return
+            if not supports_offset:
+                # Without an offset there is no way to ask for page two, and
+                # re-asking would just re-read page one until the cap.
+                logger.debug(
+                    f"Batch {batch_id!r} has more statuses but "
+                    f"{type(service).__name__}.list_media_ingest_jobs takes no "
+                    "offset; reconciled the first page only."
+                )
+                return
+            next_offset = _response_field(response, "next_offset")
+            if next_offset is None or next_offset == offset:
+                # Server says there is more but gives no way forward; stop
+                # rather than spin on the same page.
+                logger.debug(
+                    f"Batch {batch_id!r} reports has_more with no usable "
+                    "next_offset; stopping pagination."
+                )
+                return
+            offset = int(next_offset)
+        else:
+            logger.warning(
+                f"Batch {batch_id!r} exceeded {self.REMOTE_INGEST_MAX_PAGES} "
+                "pages of statuses; the rest will be picked up next pass."
+            )
+
+    def _reconcile_page(self, response: Any) -> None:
+        """Hand one page of statuses to the reconciler, if it has any."""
+        statuses = _response_field(response, "jobs")
+        if statuses:
+            reconcile_remote_ingest_jobs(self.library_ingest_jobs, statuses)
+
+    def cancel_remote_ingest_batch(self, batch_id: str) -> None:
+        """Ask the server to cancel every job in ``batch_id``.
+
+        UI-thread entry point. Deliberately does *not* mark the local jobs
+        cancelled: the request is asynchronous and may be refused, so the queue
+        must not claim an outcome the server has not confirmed. The poller
+        records the real state when the server reports it -- which is also why
+        polling is (re)started here, so a batch cancelled while nothing was
+        being watched still gets its outcome.
+
+        Args:
+            batch_id: The server batch to cancel. An empty value is ignored, so
+                a queue row that never received a batch id cannot send a cancel
+                for every job on the server.
+        """
+        if not batch_id:
+            return
+        self._request_remote_ingest_cancel(batch_id)
+        self.poll_remote_ingest_jobs()
+
+    @work(group="library_ingest_remote_cancel")
+    async def _request_remote_ingest_cancel(self, batch_id: str) -> None:
+        """Send the cancel request. Async for the same reason the poller is."""
+        service = getattr(self, "server_media_reading_service", None)
+        cancel = getattr(service, "cancel_media_ingest_jobs_batch", None)
+        if not callable(cancel):
+            logger.debug(
+                "Remote ingest cancel requested but no server seam is available."
+            )
+            return
+        try:
+            # Keyword-only on both the client and the service wrapper; a
+            # positional call raises TypeError at runtime.
+            await cancel(batch_id=batch_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to cancel remote ingest batch {batch_id!r}."
+            )
+            self.notify(
+                "Could not reach the server to cancel that ingest.",
+                severity="warning",
+            )
+
+    def poll_remote_ingest_jobs(self) -> None:
+        """Start watching server-origin ingest jobs, if any are outstanding.
+
+        Idempotent: the worker is ``exclusive`` within its own group, so calling
+        this again while a poll loop is already running is a no-op rather than a
+        second poller.
+        """
+        if not pending_remote_batches(self.library_ingest_jobs):
+            return
+        self._run_remote_ingest_poll()
+
+    @work(exclusive=True, group="library_ingest_remote_poll")
+    async def _run_remote_ingest_poll(self) -> None:
+        """Poll server ingest batches until none are outstanding.
+
+        Deliberately an **async** worker rather than a thread worker. The
+        service calls are already coroutines, and running on the event loop
+        means every registry mutation here is already on the UI thread -- so
+        this needs no ``call_from_thread`` at all, and therefore cannot hit the
+        quit-path deadlock documented on ``_ingest_pool_callback`` (that
+        marshal blocks the calling thread and does not observe loop shutdown).
+        The ``await`` points are network I/O and a sleep, neither of which
+        blocks the loop.
+
+        Exits when every server batch has settled, on shutdown, or when the
+        server seam is unavailable -- never spins on an answer that cannot
+        change.
+        """
+        service = getattr(self, "server_media_reading_service", None)
+        if service is None:
+            logger.debug("Remote ingest poll: no server media service; not polling.")
+            return
+
+        while not self._ingest_shutdown:
+            batches = pending_remote_batches(self.library_ingest_jobs)
+            if not batches:
+                return
+
+            for batch_id in batches:
+                if self._ingest_shutdown:
+                    return
+                await self._reconcile_remote_batch(service, batch_id)
+
+            await asyncio.sleep(self.REMOTE_INGEST_POLL_SECONDS)
 
     # -- Writer (claim-or-release loop, narrowed to the write stage) -------
 

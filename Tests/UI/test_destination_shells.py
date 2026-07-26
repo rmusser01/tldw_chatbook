@@ -3935,3 +3935,38 @@ async def test_legacy_tools_settings_route_opens_mcp_not_global_settings():
         assert "MCP servers" in visible_text
         assert "scoped tools" in visible_text
         assert "global preferences" not in visible_text
+
+
+@pytest.mark.asyncio
+async def test_workspace_import_sources_mounts_the_ingest_canvas_in_place():
+    """The Workspaces "Import sources" action must not leave the Library.
+
+    Every other way into ingest mounts the canvas here -- the rail row (see
+    ``test_library_ingest_import_media_row_mounts_ingest_canvas``), the rail-top
+    button, and Home's ingest deep link. This action was the last one still
+    posting ``NavigateToScreen("ingest")`` to the standalone Ingest screen, so
+    the same job took the user to a different screen depending on which button
+    they found -- and once that screen is retired (task-684.4) it would lead
+    nowhere.
+    """
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    seen_routes = []
+    host = DestinationHarness(app, "library", seen_routes)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        from types import SimpleNamespace
+
+        await screen.open_workspace_import_sources(
+            SimpleNamespace(stop=lambda: None)
+        )
+        await _wait_for_selector(screen, pilot, "#library-ingest-canvas")
+
+        assert getattr(screen, "_library_selected_row_id") == "ingest-import-media"
+
+    assert seen_routes == [], "Import sources must not hand off to another screen"
