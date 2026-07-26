@@ -44,6 +44,64 @@ def test_legacy_tools_flags_enable_the_files_pack(cli_setting):
     assert enabled_packs() == frozenset({"files"})
 
 
+def test_legacy_read_file_flag_restricts_to_read_file_only(cli_setting):
+    """Owner ruling: legacy flags grant exactly the tool they name.
+
+    The `files` pack contributes four tools, but `read_file_enabled` is a
+    per-tool flag from before the pack grew -- it must not widen to the
+    whole pack.
+    """
+    from tldw_chatbook.Agents.builtin_pack_config import resolve_enabled_packs
+
+    cli_setting[("tools", "read_file_enabled")] = True
+    resolution = resolve_enabled_packs()
+    assert resolution.packs == frozenset({"files"})
+    assert resolution.only_tools == frozenset({"read_file"})
+
+
+def test_legacy_list_directory_flag_restricts_to_list_directory_only(cli_setting):
+    from tldw_chatbook.Agents.builtin_pack_config import resolve_enabled_packs
+
+    cli_setting[("tools", "list_directory_enabled")] = True
+    resolution = resolve_enabled_packs()
+    assert resolution.packs == frozenset({"files"})
+    assert resolution.only_tools == frozenset({"list_directory"})
+
+
+def test_legacy_both_flags_restrict_to_both_named_tools(cli_setting):
+    from tldw_chatbook.Agents.builtin_pack_config import resolve_enabled_packs
+
+    cli_setting[("tools", "read_file_enabled")] = True
+    cli_setting[("tools", "list_directory_enabled")] = True
+    resolution = resolve_enabled_packs()
+    assert resolution.packs == frozenset({"files"})
+    assert resolution.only_tools == frozenset({"read_file", "list_directory"})
+
+
+def test_modern_pack_list_has_no_tool_restriction(cli_setting):
+    """The modern path is pack-level only: `only_tools` is always `None`,
+    never an empty frozenset, even though both look "falsy" -- only `None`
+    means unrestricted."""
+    from tldw_chatbook.Agents.builtin_pack_config import resolve_enabled_packs
+
+    cli_setting[("agent_tools", "enabled_packs")] = ["files"]
+    resolution = resolve_enabled_packs()
+    assert resolution.packs == frozenset({"files"})
+    assert resolution.only_tools is None
+
+
+def test_explicit_empty_pack_list_has_no_tool_restriction(cli_setting):
+    """An explicitly empty modern list still resolves `only_tools=None`:
+    there are no packs to restrict within, and legacy flags never run."""
+    from tldw_chatbook.Agents.builtin_pack_config import resolve_enabled_packs
+
+    cli_setting[("agent_tools", "enabled_packs")] = []
+    cli_setting[("tools", "read_file_enabled")] = True
+    resolution = resolve_enabled_packs()
+    assert resolution.packs == frozenset()
+    assert resolution.only_tools is None
+
+
 def test_legacy_flags_warn_once_across_calls(cli_setting):
     """BuiltinToolProvider (and enabled_packs()) rebuilds every agent turn.
 

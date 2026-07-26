@@ -200,17 +200,31 @@ class BuiltinToolProvider:
         # the pack. Import is local so `tool_catalog` stays importable
         # without the packs' own dependencies.
         try:
-            from .builtin_pack_config import enabled_packs
+            from .builtin_pack_config import resolve_enabled_packs
             from .builtin_packs import pack_tool_classes
 
-            packs = enabled_packs()
+            resolution = resolve_enabled_packs()
             # Pack availability varies per machine (optional deps), so the
             # resolved set is logged: without it, whether progressive
             # disclosure even engages differs between users and bug reports
             # become unreproducible (spec 4.1).
-            logger.info("Built-in packs resolved for run: {packs}", packs=sorted(packs))
-            for cls in pack_tool_classes(packs):
+            logger.info(
+                "Built-in packs resolved for run: {packs}",
+                packs=sorted(resolution.packs),
+            )
+            only_tools = resolution.only_tools
+            for cls in pack_tool_classes(resolution.packs):
                 tool = cls(services=services)
+                # `only_tools is None` means "no restriction" (the modern
+                # `enabled_packs` path always sets it this way); a
+                # non-None frozenset -- only ever produced by the legacy
+                # per-tool `[tools]` fallback -- restricts to exactly the
+                # tool names it names, even within a pack that otherwise
+                # contributes more tools than that. Testing `is None`
+                # rather than truthiness matters: an empty frozenset is a
+                # real "grant nothing" instruction, not "unrestricted".
+                if only_tools is not None and tool.name not in only_tools:
+                    continue
                 self._tools[tool.name] = tool
         except Exception as exc:  # noqa: BLE001 — an unavailable pack is just absent
             logger.warning(f"Built-in pack resolution failed; packs unavailable: {exc}")
