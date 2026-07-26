@@ -77,11 +77,23 @@ class LibraryIngestCanvas(VerticalScroll):
         scope_label = f"These options apply to all {cap.label} files in this selection."
         children: list[Any] = [Static(scope_label, classes="type-group-scope")]
         summary_parts: list[str] = []
+        cap_fields_by_name = {f.name: f for f in cap.fields}
 
         for field in cap.fields:
             value = values.get(field.name, field.default)
             summary_parts.append(f"{field.name}={value}")
-            disabled = field.depends_on is not None and not _is_installed(field.depends_on)
+            # Two independent reasons a field can be uneditable: its tooling
+            # is not installed, or the sibling field that gates it is off.
+            disabled = field.depends_on is not None and not _is_installed(
+                field.depends_on
+            )
+            if not disabled and field.enabled_when is not None:
+                gate = cap_fields_by_name.get(field.enabled_when)
+                gate_value = values.get(
+                    field.enabled_when,
+                    gate.default if gate is not None else False,
+                )
+                disabled = not bool(gate_value)
             widget_id = f"opt-{group}-{field.name}"
 
             if field.type == "checkbox":

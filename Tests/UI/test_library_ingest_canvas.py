@@ -779,3 +779,34 @@ async def test_mounting_option_panels_posts_no_option_changes():
         "mounting option panels emitted "
         f"{[(e.group, e.name, e.value) for e in app.option_changes]}"
     )
+
+
+@pytest.mark.asyncio
+async def test_chunk_size_enabled_when_chunk_checked():
+    """Chunk size and overlap become editable once Chunk is on.
+
+    They were gated through the installed-feature lookup on the name
+    "chunk", which is a sibling field rather than a package, so they were
+    disabled no matter what the user did (task-663).
+    """
+    form = _default_form()
+    form.chunk = True
+    form.type_options = {"generic": {"chunk": True}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#opt-generic-chunk_size", Input).disabled is False
+        assert (
+            pilot.app.query_one("#opt-generic-chunk_overlap", Input).disabled is False
+        )
