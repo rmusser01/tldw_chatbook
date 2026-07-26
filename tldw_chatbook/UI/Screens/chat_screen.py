@@ -3127,6 +3127,16 @@ class ChatScreen(BaseAppScreen):
             persistence = None
             db = getattr(self.app_instance, "chachanotes_db", None)
             if db is not None:
+                citation_repository = getattr(
+                    self.app_instance,
+                    "citation_trace_repository",
+                    None,
+                )
+                if (
+                    citation_repository is not None
+                    and getattr(citation_repository, "db", None) is not db
+                ):
+                    citation_repository = None
                 persistence = ChatPersistenceService(
                     db,
                     workspace_registry=getattr(
@@ -3134,6 +3144,7 @@ class ChatScreen(BaseAppScreen):
                         "workspace_registry_service",
                         None,
                     ),
+                    citation_repository=citation_repository,
                 )
             self._console_chat_store = ConsoleChatStore(
                 persistence=persistence,

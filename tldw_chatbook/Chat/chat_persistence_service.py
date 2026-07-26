@@ -26,6 +26,17 @@ class ChatPersistenceService:
         self.workspace_registry = workspace_registry
         self.citation_repository = citation_repository
 
+    @property
+    def canonical_citation_writes_ready(self) -> bool:
+        """Return whether this service can persist canonical local citations."""
+
+        repository = self.citation_repository
+        return bool(
+            repository is not None
+            and repository.db is self.db
+            and repository.local_citation_writes_ready
+        )
+
     @staticmethod
     def derive_conversation_title(
         *,

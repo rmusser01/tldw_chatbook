@@ -3,6 +3,7 @@ import inspect
 import pytest
 
 from Tests.Chat.test_citation_trace_repository import (
+    _TrackingKeyProvider,
     _exact_governed_payload_write,
     _identity as citation_identity,
     _repository as citation_repository,
@@ -65,6 +66,124 @@ class TestChatPersistenceService:
         )
         conversation = db_instance.get_conversation_by_id(conversation_id)
         assert conversation["assistant_id"] == "char.local.alice"
+
+    def test_canonical_citation_writes_ready_requires_matching_ready_repository(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        repository = citation_repository(db_instance)
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=repository,
+        )
+
+        assert service.canonical_citation_writes_ready is True
+        assert service.citation_repository is repository
+        assert service.db is repository.db
+
+    def test_canonical_citation_writes_ready_is_false_without_repository(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        service = ChatPersistenceService(db_instance)
+
+        assert service.canonical_citation_writes_ready is False
+
+    def test_canonical_citation_writes_ready_rejects_repository_database_mismatch(
+        self,
+        db_instance: CharactersRAGDB,
+        tmp_path,
+    ):
+        other_db = CharactersRAGDB(
+            tmp_path / "readiness-other.sqlite",
+            client_id="readiness-other",
+        )
+        try:
+            service = ChatPersistenceService(
+                db_instance,
+                citation_repository=citation_repository(other_db),
+            )
+
+            assert service.canonical_citation_writes_ready is False
+        finally:
+            other_db.close_connection()
+
+    @pytest.mark.parametrize(
+        "unready_reason",
+        (
+            "disabled",
+            "missing_identity",
+            "missing_codec",
+            "missing_persisted_identity",
+            "mismatched_identity",
+        ),
+    )
+    def test_canonical_citation_writes_ready_fails_closed_for_unready_repository(
+        self,
+        db_instance: CharactersRAGDB,
+        unready_reason: str,
+    ):
+        identity = citation_identity(db_instance)
+        repository = CitationTraceRepository(
+            db_instance,
+            policy=CitationProvenanceRuntimePolicy(
+                canonical_writes_enabled=unready_reason != "disabled",
+            ),
+            identity_context=(
+                None
+                if unready_reason == "missing_identity"
+                else identity.model_copy(
+                    update={"local_authority_id": "mismatched-local-authority"}
+                )
+                if unready_reason == "mismatched_identity"
+                else identity
+            ),
+            fingerprint_codec=(
+                None
+                if unready_reason == "missing_codec"
+                else CitationFingerprintCodec(b"k" * 32)
+            ),
+        )
+        if unready_reason == "missing_persisted_identity":
+            with db_instance.transaction() as cursor:
+                cursor.execute(
+                    "DELETE FROM rag_identity_context WHERE context_name = 'default'"
+                )
+
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=repository,
+        )
+
+        assert service.canonical_citation_writes_ready is False
+
+    def test_canonical_citation_writes_ready_is_read_only_and_side_effect_free(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        identity = citation_identity(db_instance)
+        provider = _TrackingKeyProvider(b"k" * 32)
+        repository = CitationTraceRepository.from_key_provider(
+            db_instance,
+            policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+            identity_context=identity,
+            key_provider=provider,
+        )
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=repository,
+        )
+        expected_key_calls = [identity.fingerprint_key_id]
+        original_policy = repository.policy.model_dump()
+
+        readiness = service.canonical_citation_writes_ready
+
+        assert type(readiness) is bool
+        assert readiness is True
+        assert provider.calls == expected_key_calls
+        assert repository.policy.model_dump() == original_policy
+        with pytest.raises(AttributeError):
+            service.canonical_citation_writes_ready = False  # type: ignore[misc]
 
     def test_citation_write_requires_an_explicit_available_repository_before_transaction(
         self,

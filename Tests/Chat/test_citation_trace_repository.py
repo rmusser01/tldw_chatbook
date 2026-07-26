@@ -361,6 +361,112 @@ def test_repository_composition_never_loads_a_key_while_writes_are_disabled(
     assert provider.calls == []
 
 
+def test_local_citation_writes_ready_requires_matching_persisted_identity(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+
+    assert repository.local_citation_writes_ready is True
+    with pytest.raises(AttributeError):
+        repository.local_citation_writes_ready = False  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    "unready_reason",
+    (
+        "disabled",
+        "missing_identity",
+        "missing_codec",
+        "missing_persisted_identity",
+        "mismatched_identity",
+    ),
+)
+def test_local_citation_writes_ready_fails_closed_for_unready_composition(
+    db: CharactersRAGDB,
+    unready_reason: str,
+) -> None:
+    identity = _identity(db)
+    enabled = unready_reason != "disabled"
+    injected_identity = (
+        None
+        if unready_reason == "missing_identity"
+        else identity.model_copy(
+            update={"local_authority_id": "mismatched-local-authority"}
+        )
+        if unready_reason == "mismatched_identity"
+        else identity
+    )
+    codec = None if unready_reason == "missing_codec" else TEST_FINGERPRINT_CODEC
+    repository = CitationTraceRepository(
+        db,
+        policy=CitationProvenanceRuntimePolicy(
+            canonical_writes_enabled=enabled,
+        ),
+        identity_context=injected_identity,
+        fingerprint_codec=codec,
+    )
+    if unready_reason == "missing_persisted_identity":
+        with db.transaction() as cursor:
+            cursor.execute(
+                "DELETE FROM rag_identity_context WHERE context_name = 'default'"
+            )
+
+    assert repository.local_citation_writes_ready is False
+
+
+def test_local_citation_writes_ready_identity_read_failure_is_content_free(
+    db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repository = _repository(db)
+    governed_identity = "governed-authority-do-not-log"
+    exception_text = "identity-read-exception-do-not-log"
+
+    def fail_identity_read(_db: CharactersRAGDB) -> None:
+        raise sqlite3.DatabaseError(f"{exception_text}: {governed_identity}")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.citation_trace_repository."
+        "load_local_citation_identity_context",
+        fail_identity_read,
+    )
+
+    assert repository.local_citation_writes_ready is False
+    captured = capsys.readouterr()
+    output = f"{captured.out}\n{captured.err}"
+    assert governed_identity not in output
+    assert exception_text not in output
+
+
+def test_create_local_trace_builder_uses_local_citation_writes_ready_contract(
+    db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(db)
+    readiness_reads = 0
+
+    def unready(_repository: CitationTraceRepository) -> bool:
+        nonlocal readiness_reads
+        readiness_reads += 1
+        return False
+
+    monkeypatch.setattr(
+        CitationTraceRepository,
+        "local_citation_writes_ready",
+        property(unready),
+    )
+
+    assert (
+        repository.create_local_trace_builder(
+            request_id="request-shared-readiness",
+            generation_id="generation-shared-readiness",
+        )
+        is None
+    )
+    assert readiness_reads == 1
+
+
 def test_local_trace_builder_disabled_returns_before_identity_read(
     db: CharactersRAGDB,
     monkeypatch: pytest.MonkeyPatch,

@@ -79,6 +79,47 @@ def _configure_native_ready_console(app, model: str = "local-model") -> None:
     app.chat_api_model_value = model
 
 
+def test_console_store_uses_app_citation_repository_for_matching_database():
+    app = _build_test_app()
+    db = Mock(name="chachanotes-db")
+    repository = SimpleNamespace(db=db)
+    app.chachanotes_db = db
+    app.citation_trace_repository = repository
+    screen = ChatScreen(app)
+
+    store = screen._ensure_console_chat_store()
+
+    assert store.persistence is not None
+    assert store.persistence.citation_repository is repository
+    assert store.persistence.db is repository.db
+
+
+def test_console_store_rejects_mismatched_citation_repository():
+    app = _build_test_app()
+    db = Mock(name="chachanotes-db")
+    repository = SimpleNamespace(db=Mock(name="other-chachanotes-db"))
+    app.chachanotes_db = db
+    app.citation_trace_repository = repository
+    screen = ChatScreen(app)
+
+    store = screen._ensure_console_chat_store()
+
+    assert store.persistence is not None
+    assert store.persistence.db is db
+    assert store.persistence.citation_repository is None
+
+
+def test_console_store_uses_app_citation_repository_only_with_database():
+    app = _build_test_app()
+    app.chachanotes_db = None
+    app.citation_trace_repository = SimpleNamespace(db=Mock(name="unused-db"))
+    screen = ChatScreen(app)
+
+    store = screen._ensure_console_chat_store()
+
+    assert store.persistence is None
+
+
 def test_console_workspace_conversation_titles_wrap_instead_of_truncating():
     """Long workspace conversation titles wrap at the rail budget."""
     from tldw_chatbook.Widgets.Console.console_workspace_context import (

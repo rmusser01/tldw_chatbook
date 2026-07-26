@@ -490,6 +490,21 @@ class CitationTraceRepository:
 
         return self._fingerprint_codec is not None and self.identity_context is not None
 
+    @property
+    def local_citation_writes_ready(self) -> bool:
+        """Return whether local canonical writes have an exact persisted identity."""
+
+        if not self.policy.canonical_writes_enabled:
+            return False
+        identity = self.identity_context
+        if identity is None or self._fingerprint_codec is None:
+            return False
+        try:
+            persisted = load_local_citation_identity_context(self.db)
+        except Exception:
+            return False
+        return persisted == identity
+
     def create_local_trace_builder(
         self,
         *,
@@ -498,21 +513,11 @@ class CitationTraceRepository:
     ) -> CitationTraceBuilder | None:
         """Create request-scoped local capture when canonical writes are enabled."""
 
-        if not self.policy.canonical_writes_enabled:
+        if not self.local_citation_writes_ready:
             return None
         identity = self.identity_context
-        if identity is None:
-            return None
         codec = self._fingerprint_codec
-        if codec is None:
-            return None
-        try:
-            persisted = load_local_citation_identity_context(self.db)
-        except Exception:
-            return None
-        if persisted is None:
-            return None
-        if persisted != identity:
+        if identity is None or codec is None:
             return None
         return CitationTraceBuilder.local(
             request_id=request_id,
