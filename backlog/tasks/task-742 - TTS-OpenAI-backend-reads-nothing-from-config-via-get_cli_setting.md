@@ -1,5 +1,5 @@
 ---
-id: TASK-717
+id: TASK-742
 title: TTS OpenAI backend reads nothing from config via get_cli_setting
 status: To Do
 assignee: []

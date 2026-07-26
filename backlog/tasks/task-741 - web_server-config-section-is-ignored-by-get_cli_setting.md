@@ -1,5 +1,5 @@
 ---
-id: TASK-716
+id: TASK-741
 title: '[web_server] config section is ignored by get_cli_setting'
 status: To Do
 assignee: []
@@ -16,7 +16,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-`Web_Server/serve.py:331` calls `get_cli_setting("web_server", default={})` — a bare section name with no `key` argument (only a keyword `default`). This hits the same bug class as TASK-547/TASK-658/TASK-715: `get_cli_setting`'s fallback branch returns the supplied default unconditionally when it isn't given a real key, so the `[web_server]` TOML section is never actually read. Confirmed against a real config where `[web_server]` exists and is populated — the values are discarded.
+`Web_Server/serve.py:331` calls `get_cli_setting("web_server", default={})` — a bare section name with no `key` argument (only a keyword `default`). This hits the same bug class as TASK-547/TASK-658/TASK-740: `get_cli_setting`'s fallback branch returns the supplied default unconditionally when it isn't given a real key, so the `[web_server]` TOML section is never actually read. Confirmed against a real config where `[web_server]` exists and is populated — the values are discarded.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
