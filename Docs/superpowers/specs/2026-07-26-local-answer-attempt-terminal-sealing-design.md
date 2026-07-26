@@ -144,7 +144,8 @@ The initial attempt records:
 - a `MESSAGE_BODY` domain fingerprint in `body_integrity_hmac`
 - no occurrence mappings yet
 - structural and semantic summaries derived by the existing model contracts
-- an aware completion timestamp
+- an aware completion timestamp that is not earlier than the selected prompt
+  evidence set's `created_at`
 
 The exact body and its integrity fingerprint remain governed payload fields and
 must not appear in immutable trace JSON, logs, exceptions, or diagnostics.
@@ -202,7 +203,7 @@ Today an empty assistant placeholder is queued for persistence, and any UI
 poll that materializes the first stream chunk can persist it immediately.
 That behavior would make a later message-plus-trace transaction impossible.
 
-Citation-bearing initial assistant placeholders therefore opt into
+Provenance-eligible initial assistant placeholders therefore opt into
 terminal-deferred persistence:
 
 - stream chunks and UI polling may materialize visible content in memory
