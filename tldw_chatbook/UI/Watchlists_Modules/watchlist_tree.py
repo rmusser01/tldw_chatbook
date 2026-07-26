@@ -73,8 +73,13 @@ class WatchlistTree(Vertical):
         tags = self._all_tags()
         if tags:
             yield Static("", classes="watchlist-tree-spacer")
-            for tag in tags:
-                button = Button(f"#{escape_markup(tag)}", id=f"wl-tree-tag-{tag}", compact=True)
+            for index, tag in enumerate(tags):
+                # Tag text is free-form (spaces, slashes, non-ASCII) and
+                # Textual ids are restricted to [a-zA-Z_-][a-zA-Z0-9_-]*, so
+                # the id is the tag's position in the ordered tag list, not
+                # the tag text itself. The visible label still shows the
+                # (escaped) tag text.
+                button = Button(f"#{escape_markup(tag)}", id=f"wl-tree-tag-{index}", compact=True)
                 button.add_class("watchlist-tree-tag")
                 if tag == self.active_tag:
                     button.add_class("is-active")
@@ -106,9 +111,14 @@ class WatchlistTree(Vertical):
 
         if is_open:
             for row in self._source_rows(watchlist_id):
+                # A source can belong to more than one watchlist, so the id
+                # is qualified by watchlist — otherwise two expanded
+                # watchlists sharing a source would mount two buttons with
+                # the same id (a MountError) and the scope would be
+                # ambiguous besides.
                 source = Button(
                     f"  {escape_markup(str(row['name']))}",
-                    id=f"wl-tree-node-source-{row['id']}",
+                    id=f"wl-tree-node-source-{watchlist_id}-{row['id']}",
                     compact=True,
                 )
                 source.add_class("watchlist-tree-source")
@@ -135,12 +145,6 @@ class WatchlistTree(Vertical):
             self._source_cache[watchlist_id] = list(self._load_source_rows(watchlist_id))
         return self._source_cache[watchlist_id]
 
-    def _watchlist_of_source(self, source_id: int) -> int | None:
-        for watchlist_id, rows in self._source_cache.items():
-            if any(int(row["id"]) == source_id for row in rows):
-                return watchlist_id
-        return None
-
     # --- interaction ---
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -156,8 +160,11 @@ class WatchlistTree(Vertical):
 
         if button_id.startswith("wl-tree-tag-"):
             event.stop()
-            tag = button_id[len("wl-tree-tag-"):]
-            self.active_tag = None if tag == self.active_tag else tag
+            index = int(button_id[len("wl-tree-tag-"):])
+            tags = self._all_tags()
+            if 0 <= index < len(tags):
+                tag = tags[index]
+                self.active_tag = None if tag == self.active_tag else tag
             return
 
         scope: TreeScope | None = None
@@ -168,11 +175,12 @@ class WatchlistTree(Vertical):
         elif button_id.startswith("wl-tree-node-watchlist-"):
             scope = TreeScope(kind="watchlist", watchlist_id=int(button_id.rsplit("-", 1)[1]))
         elif button_id.startswith("wl-tree-node-source-"):
-            source_id = int(button_id.rsplit("-", 1)[1])
+            remainder = button_id[len("wl-tree-node-source-"):]
+            watchlist_part, _, source_part = remainder.partition("-")
             scope = TreeScope(
                 kind="source",
-                watchlist_id=self._watchlist_of_source(source_id),
-                source_id=source_id,
+                watchlist_id=int(watchlist_part),
+                source_id=int(source_part),
             )
 
         if scope is not None:
