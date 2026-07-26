@@ -1,4 +1,14 @@
 # State Decomposition Analysis
+
+> [!WARNING]
+> **Historical document — do not implement.** Its root reactive state,
+> mirrored-write, persistence, and screen-caching proposals are superseded by
+> [ADR-026](../../backlog/decisions/026-application-session-state-ownership.md)
+> and the
+> [application session state ownership design](../superpowers/specs/2026-07-26-application-session-state-ownership-design.md).
+> Alternate refactored app entry points described by this document were retired
+> under TASK-105.
+
 ## App Class Reactive Attributes Refactoring
 
 **Date:** August 15, 2025  

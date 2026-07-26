@@ -1,0 +1,154 @@
+# ADR-026: Application Session State Ownership
+
+Status: Accepted
+Date: 2026-07-26
+Related Tasks:
+[TASK-643](../tasks/task-643%20-%20Make-runtime-policy-the-sole-application-runtime-source-authority.md),
+[TASK-644](../tasks/task-644%20-%20Move-cross-visit-screen-snapshots-behind-an-in-memory-owner.md),
+[TASK-645](../tasks/task-645%20-%20Move-Chat-and-Console-handoffs-behind-revisioned-single-slot-ownership.md),
+[TASK-646](../tasks/task-646%20-%20Complete-destination-handoff-ownership-and-ACP-target-recovery.md)
+Supersedes: the application-state architecture proposed by the historical
+documents listed under Links
+
+## Decision
+
+Chatbook will not introduce another root application-state object. State will
+remain with the narrow owner whose lifecycle and consistency rules it follows:
+
+- `RuntimePolicyContext` is the sole authority for the active runtime source,
+  active server binding, and server capability status.
+- A process-memory `ScreenStateStore` owns only cross-visit screen snapshots.
+- A process-memory `PendingHandoffStore` owns only destination handoffs.
+- Destination screens continue to own their domain and view state, consistent
+  with ADR-011.
+
+`TldwCli` will coordinate these owners but will not mirror their values into a
+root `AppState`. The exported `AppState`, `ChatState`, `NotesState`,
+`NavigationState`, and `UIState` types remain importable compatibility
+containers. Their documentation must not call them the application's single
+source of truth, and `TldwCli` will not depend on them.
+
+Runtime-policy changes use a monotonic revision. A caller reads a state and
+revision snapshot, derives a candidate, and commits only against that revision.
+The candidate is persisted before it is published in memory or projected onto
+compatibility attributes. A stale asynchronous server-capability result is
+discarded instead of overwriting a newer source or server selection.
+Application compatibility projections are updated by a non-throwing
+publication callback owned by the context boundary; they have no independent
+production writers.
+
+Screen snapshots remain memory-only. The store records a canonical route,
+detached outer snapshot mapping, and private runtime identity in an internal
+envelope. Runtime metadata is not inserted into a screen's domain dictionary.
+A source or active-server mismatch invalidates the snapshot. Navigation always
+constructs a fresh screen and applies any explicit navigation context after a
+compatible snapshot is restored.
+
+Destination handoffs remain memory-only and preserve the existing single-slot,
+consume-once, last-write-wins behavior. Each typed channel has a monotonic
+revision and supports atomic claim, acknowledge, and release. At most one
+claim may be in flight for a channel, and at most the latest replacement may
+wait behind it; this is not a queue. A stale acknowledge or release cannot
+clear a newer value. Successful and terminally rejected handoffs are
+acknowledged. Transient failures release the claim for a later existing
+lifecycle or user-triggered retry; they do not start an automatic retry loop.
+
+The ACP session-target handoff will be completed without inventing an
+arbitrary-session repository. ACP compares the requested target with the
+current runtime session. A match focuses the current session details; a
+missing or mismatched target produces explicit stale/unsupported recovery and
+is terminally acknowledged.
+
+## Context
+
+`tldw_chatbook/app.py` is a large coordination surface with many reactive and
+ordinary instance attributes. Earlier refactoring documents proposed a
+reactive root dataclass or dictionary, mirrored writes, disk persistence, and
+cached screen instances. Those approaches conflict with the current
+destination-ownership rule and with the application's fresh-screen navigation
+behavior.
+
+The live `AppState` integration consists of an import and an otherwise unused
+construction in `TldwCli`. Its component models are not the authority for
+active screen, chat, Notes, UI, or runtime policy, while its class docstring
+claims it is the single source of truth. Keeping that object in the app would
+preserve a false architectural contract.
+
+Runtime policy already supplies the effective source, but mutation is not
+atomic: the current setter publishes a new state before persistence succeeds.
+Capability discovery captures state, awaits network work, then publishes the
+derived result unconditionally. A source or server change during that await
+can therefore be overwritten by stale capability data. Media Ingest and Study
+also write app-level runtime projections directly.
+
+Navigation currently keeps a raw `_screen_states` dictionary on `TldwCli` and
+adds `runtime_policy_snapshot` to domain-owned dictionaries. Home, Workflows,
+and Schedules read the private dictionary to infer recent work.
+
+Seven raw pending fields coordinate Chat, Console, Study, Artifacts, and ACP.
+Several consumers await work before clearing the field, allowing an older
+consumer to clear a newer replacement. The ACP target is staged but has no
+consumer. `pending_notes_workspace_context` is initialized but never read or
+written.
+
+These are application-lifetime, runtime-boundary, privacy, and cross-module
+interface decisions, so they require one canonical ADR before implementation.
+
+## Alternatives Considered
+
+| Option | Why rejected |
+| --- | --- |
+| Make `AppState` or a new `AppSessionState` the root authority | It would duplicate active domain owners, require mirrored writes, and create another broad mutable object rather than remove ambiguity. |
+| Store complex state in reactive root dictionaries | In-place mutation and notification semantics are easy to misuse, type contracts weaken, and every feature becomes coupled to the root app. |
+| Replace handoffs entirely with Textual messages | Messages do not by themselves preserve a value across fresh screen construction, mount timing, or transient destination failure. |
+| Persist screen snapshots or handoffs to disk | These values can contain private prompt, context, target, and UI data; restart recovery is not required for this tranche. |
+| Cache and remount screen instances | It conflicts with established navigation behavior and risks retaining workers, timers, widget trees, and stale domain services. |
+| Queue every handoff | Existing behavior is single-slot and last-write-wins; a queue would be a product behavior change and could replay stale intent. |
+| Clear a handoff before doing destination work | It prevents an older consumer from deleting a replacement but loses transient failures and existing retry behavior. |
+| Add an ACP arbitrary-session lookup repository | No such runtime authority exists. Fabricating one would broaden the ACP storage and lifecycle contract beyond this repair. |
+| Rewrite all application state in one change | The surface is too broad to verify atomically. Runtime policy, snapshots, core handoffs, and remaining handoffs need dependency-ordered tasks. |
+
+## Consequences
+
+### Benefits
+
+- Each mutable value has one truthful owner and an explicit lifecycle.
+- Persistence failure cannot publish runtime state that was not durably saved.
+- Slow capability probes cannot revert a newer runtime choice.
+- Snapshot compatibility metadata is separated from domain-owned screen state.
+- Concurrent handoff staging cannot be erased by a stale consumer.
+- Navigation context keeps its current higher precedence over restored view
+  state.
+- Private handoff and snapshot payloads stay out of disk persistence and
+  diagnostics.
+- Static ownership guards can protect small, precise boundaries instead of
+  relying on broad repository-wide string searches.
+
+### Accepted Trade-offs
+
+- Screen continuity and pending handoffs are lost when the process exits.
+- The compatibility state classes remain importable even though the
+  application does not use them; removal, if ever desired, requires a separate
+  compatibility decision.
+- `RuntimePolicyContext` may retain a direct `state` assignment compatibility
+  seam for tests, but production code is guarded to use revisioned commits.
+- A transiently failed handoff waits for an existing lifecycle or user action;
+  there is no background retry scheduler.
+- ACP can recover only the current runtime session until a separately designed
+  session repository exists.
+- Service construction and shutdown remain outside this tranche, including the
+  duplicated writing and chat-conversation wiring calls in `TldwCli.__init__`.
+
+## Links
+
+- [Application session state ownership design](../../Docs/superpowers/specs/2026-07-26-application-session-state-ownership-design.md)
+- [ADR-011: Chatbook Workbench UI System](011-chatbook-workbench-ui-system.md)
+- [ADR-022: Local Private Data Boundary](022-local-private-data-boundary.md)
+- [ADR-024: Bounded Evaluation and Tool Worker Execution](024-bounded-evaluation-and-tool-worker-execution.md)
+- [ADR-025: Immutable Installed Distribution Assets](025-immutable-installed-distribution-assets.md)
+- [Historical state decomposition analysis](../../Docs/Development/state-decomposition-analysis.md)
+- [Historical app refactoring plan](../../Docs/Development/app-refactoring-plan.md)
+- [Historical app refactoring plan v2](../../Docs/Development/app-refactoring-plan-v2.md)
+- [Historical migration guide](../../Docs/Development/app-refactoring-migration.md)
+- [Historical review](../../Docs/Development/refactoring-issues-review.md)
+- [Historical review v2](../../Docs/Development/refactoring-issues-review-v2.md)
