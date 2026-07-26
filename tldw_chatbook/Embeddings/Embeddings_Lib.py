@@ -133,6 +133,35 @@ def _current_dependencies_available() -> Dict[str, bool]:
     return DEPENDENCIES_AVAILABLE
 
 
+def _embeddings_rag_available() -> bool:
+    """Resolve real embeddings/RAG dependency availability, checking lazily.
+
+    ``DEPENDENCIES_AVAILABLE["embeddings_rag"]`` starts False and, under the
+    default lazy dependency-checking mode (optional_deps.py), is only ever
+    populated by ``check_embeddings_rag_deps()`` -- a function nothing in the
+    app calls automatically before this constructor runs (task-628). Without
+    this, the flag stays at its pristine False default for the app's entire
+    lifetime even when the packages are genuinely importable, so
+    EmbeddingFactory refuses every construction with a misleading
+    "install the dependencies" error.
+
+    This constructor is a genuine "first real use", so a False reading here
+    triggers the real (deep-import) probe now, resolved reload-safely
+    (mirroring ``_current_dependencies_available()``) so it keeps working
+    across the module reloads some tests perform. A True reading is trusted
+    without re-probing -- callers that explicitly reset the registry (e.g.
+    ``reset_dependency_checks()``/``force_recheck_embeddings()``) get a fresh
+    check on the next construction, same as today.
+    """
+    if _current_dependencies_available().get("embeddings_rag", False):
+        return True
+    optional_deps_module = sys.modules.get("tldw_chatbook.Utils.optional_deps")
+    check_fn = getattr(optional_deps_module, "check_embeddings_rag_deps", None)
+    if not callable(check_fn):
+        from ..Utils.optional_deps import check_embeddings_rag_deps as check_fn
+    return bool(check_fn())
+
+
 # `Tensor` is only used for type annotations (deferred at runtime by
 # `from __future__ import annotations`, at the top of this module) and in the
 # `PoolingFn` alias just below, so a plain `Any` placeholder is sufficient
@@ -186,6 +215,42 @@ def protect_file_descriptors():
 
     This fixes the "bad value(s) in fds_to_keep" error on macOS when the
     transformers library spawns subprocesses for model downloads.
+
+    task-641 round 3: when ``sys.stdout``/``sys.stderr`` are non-fd-backed
+    (e.g. Textual redirects BOTH to non-fd capture objects for the ENTIRE
+    ``App.run()`` lifetime, on every thread -- see ``textual/app.py``'s
+    ``with redirect_stdout(self._capture_stdout): with
+    redirect_stderr(self._capture_stderr): await run_process_messages()``),
+    the except-branch below used to do
+    ``sys.stdout = os.fdopen(1, "w")`` / ``sys.stderr = os.fdopen(2, "w")``
+    with ``os.fdopen``'s default ``closefd=True``. Those temporary wrapper
+    objects OWNED the real, process-shared fd 1/2; the very next statement
+    in the ``finally`` below (``sys.stdout = original_stdout``) dropped the
+    only reference to them, CPython's refcounting GC finalized them
+    synchronously right there, and their ``__del__``/``close()`` closed the
+    shared fd 1/2 for the WHOLE PROCESS -- including whatever else (like
+    Textual's own output ``WriterThread``, which writes to
+    ``sys.__stderr__``, captured once at driver init and never
+    re-resolved) still depended on that fd staying open. A single RAG
+    Backfill worker thread loading a HuggingFace embedding model
+    (``_HuggingFaceEmbedder``) through here was enough to silently kill
+    Textual's ``WriterThread`` (an unguarded ``OSError`` on its next
+    ``write()``) and permanently deadlock the main thread on its next
+    (bounded, 30-slot) output-queue write -- a live re-UAT 100%-reproducible
+    freeze traced via ``faulthandler`` all-threads dumps, confirmed
+    empirically. ``closefd=False`` is the fix: a throwaway text wrapper
+    around a fd it does not own must never be allowed to close that fd.
+
+    task-641 round-3 review: the ``finally`` block must never close
+    "whatever is currently in ``sys.stdout``/``sys.stderr``" -- if code
+    inside the protected ``yield`` (e.g. a nested library call) reassigns
+    ``sys.stdout``/``sys.stderr`` itself and leaves it there (for example
+    ``sys.stdout = sys.__stdout__``), that would hand the SAME cleanup
+    logic a REAL, fd-owning stream to close -- reopening the exact
+    WriterThread-killing hazard through a different door. Only the wrapper
+    objects THIS function itself creates (tracked via ``created_out``/
+    ``created_err``, assigned once at creation and never re-read from
+    ``sys.stdout``/``sys.stderr``) are ever closed here.
     """
     # Save original file descriptors
     original_stdout = sys.stdout
@@ -195,7 +260,12 @@ def protect_file_descriptors():
     # Save original environment
     env_backup = os.environ.copy()
 
-    # Save original subprocess.Popen to restore later
+    # Tracks ONLY the wrapper object(s) this function itself creates below
+    # -- never read back from sys.stdout/sys.stderr at cleanup time (see
+    # docstring). A single shared devnull (the fallback path) is assigned
+    # to both; closing it twice is harmless.
+    created_out = None
+    created_err = None
 
     try:
         # Ensure we have real file descriptors, not wrapped objects
@@ -208,14 +278,24 @@ def protect_file_descriptors():
             os.fstat(stdout_fd)
             os.fstat(stderr_fd)
         except (AttributeError, ValueError, OSError):
-            # stdout/stderr are wrapped/captured or invalid, create new ones
-            # Use the original file descriptors 1 and 2 directly
+            # stdout/stderr are wrapped/captured or invalid, create new ones.
+            # Use the original file descriptors 1 and 2 directly --
+            # closefd=False: these text wrappers do NOT own fd 1/2 (the
+            # process's shared stdout/stderr), so they must never close
+            # them, whether explicitly or via GC finalization. See this
+            # function's docstring (task-641 round 3).
             try:
-                sys.stdout = os.fdopen(1, "w")
-                sys.stderr = os.fdopen(2, "w")
+                created_out = os.fdopen(1, "w", closefd=False)
+                created_err = os.fdopen(2, "w", closefd=False)
+                sys.stdout = created_out
+                sys.stderr = created_err
             except OSError:
-                # If that fails, use devnull as a fallback
+                # If that fails, use devnull as a fallback. This process
+                # DOES fully own this file, so it's fine (and correct) to
+                # close it in the finally below.
                 devnull = open(os.devnull, "w")
+                created_out = devnull
+                created_err = devnull
                 sys.stdout = devnull
                 sys.stderr = devnull
 
@@ -234,20 +314,25 @@ def protect_file_descriptors():
         yield
 
     finally:
-        # Restore original file descriptors
+        # Always restore the TRUE originals, regardless of what code inside
+        # `yield` may have reassigned sys.stdout/sys.stderr to.
         sys.stdout = original_stdout
         sys.stderr = original_stderr
         sys.stdin = original_stdin
 
-        # Close any temporary files we created
-        if sys.stdout != original_stdout and hasattr(sys.stdout, "close"):
+        # Close ONLY the wrapper(s) this function created -- NEVER whatever
+        # currently sits in sys.stdout/sys.stderr (task-641 round-3 review;
+        # see docstring). closefd=False already makes the fdopen(1/2) case
+        # harmless either way, but this also correctly closes the devnull
+        # fallback, which this process does fully own.
+        if created_out is not None:
             try:
-                sys.stdout.close()
+                created_out.close()
             except Exception:
                 pass
-        if sys.stderr != original_stderr and hasattr(sys.stderr, "close"):
+        if created_err is not None and created_err is not created_out:
             try:
-                sys.stderr.close()
+                created_err.close()
             except Exception:
                 pass
 
@@ -661,8 +746,10 @@ class EmbeddingFactory:
         idle_seconds: int = 900,
         allow_dynamic_hf: bool = True,
     ) -> None:
-        # Check if embeddings/RAG dependencies are available
-        if not _current_dependencies_available().get("embeddings_rag", False):
+        # Check if embeddings/RAG dependencies are available (lazily checking
+        # for real on first use if nothing has populated the registry yet --
+        # see _embeddings_rag_available, task-628).
+        if not _embeddings_rag_available():
             raise ImportError(
                 "EmbeddingFactory requires embeddings/RAG dependencies. "
                 "Install with: pip install tldw_chatbook[embeddings_rag]"

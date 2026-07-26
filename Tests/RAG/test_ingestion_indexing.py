@@ -781,3 +781,161 @@ class TestSharedRagService:
             assert app._rag_service is fake
         finally:
             ingestion_indexing.reset_shared_rag_service()
+
+
+@pytest.mark.unit
+class TestSharedRagServiceLockDeadlock:
+    """task-641: get_shared_rag_service() must never hold
+    ``_shared_service_lock`` across the blocking ``create_rag_service()``
+    call (which can trigger real network I/O, e.g. a HuggingFace model
+    download) -- otherwise any concurrent lock-taking caller
+    (``reset_shared_rag_service`` / ``set_shared_rag_service``, both
+    reachable from the main/UI thread via
+    ``active_config.set_active_profile`` and the Settings-screen
+    save/Backfill/Clone paths) blocks for the full duration of the stalled
+    construction, which is exactly the 6+ minute total-app-freeze the UAT
+    ``sample(1)`` stack capture showed (main thread parked in
+    ``PyThread_acquire_lock_timed`` while a worker thread sat in a raw
+    ``select()`` on a stalled socket).
+    """
+
+    def _patch_construction(self, monkeypatch, build_fn):
+        import tldw_chatbook.RAG_Search.simplified as simplified_pkg
+        import tldw_chatbook.RAG_Search.simplified.active_config as active_config
+
+        monkeypatch.setattr(simplified_pkg, "create_rag_service", build_fn)
+        # resolve_active_rag_config() is evaluated as part of resolving what
+        # to build -- fake it so this test never touches a real
+        # ConfigProfileManager / on-disk profiles dir (same rationale as
+        # Tests/RAG/test_first_run_import.py's lock-ordering regression test).
+        monkeypatch.setattr(active_config, "resolve_active_rag_config", lambda **kwargs: object())
+
+    def test_reset_does_not_block_on_in_flight_construction(self, monkeypatch):
+        """RED for task-641: a reset/set-active call concurrent with a slow
+        (simulated stalled-network) construction must complete promptly
+        instead of waiting on the lock construction currently holds."""
+        ingestion_indexing.reset_shared_rag_service()
+        entered_construction = threading.Event()
+        release_construction = threading.Event()
+
+        def _slow_create_rag_service(**kwargs):
+            entered_construction.set()
+            # Stand-in for the stalled HuggingFace CloudFront socket read
+            # the UAT sample(1) capture showed.
+            release_construction.wait(timeout=5)
+            return FakeRAGService()
+
+        self._patch_construction(monkeypatch, _slow_create_rag_service)
+
+        builder = threading.Thread(
+            target=ingestion_indexing.get_shared_rag_service, daemon=True
+        )
+        builder.start()
+        try:
+            assert entered_construction.wait(timeout=5), (
+                "construction never started"
+            )
+
+            # While construction is still blocked "mid-download", a
+            # concurrent reset (as fired from the main/UI thread by
+            # Backfill's save path / Clone / Set active) must not queue
+            # up behind it.
+            start = time.monotonic()
+            ingestion_indexing.reset_shared_rag_service()
+            elapsed = time.monotonic() - start
+            assert elapsed < 1.0, (
+                f"reset_shared_rag_service() blocked for {elapsed:.2f}s on "
+                "in-flight construction -- this is the task-641 deadlock"
+            )
+        finally:
+            release_construction.set()
+            builder.join(timeout=5)
+            assert not builder.is_alive()
+            ingestion_indexing.reset_shared_rag_service()
+
+    def test_concurrent_callers_construct_exactly_once(self, monkeypatch):
+        """Task-249 invariant preserved by the task-641 fix: two threads
+        racing get_shared_rag_service() with no service yet installed must
+        still trigger construction at most once -- the second caller waits
+        for (and reuses) the first's result rather than paying the
+        construction cost twice. This is what
+        ``_shared_service_build_lock`` (separate from ``_shared_service_
+        lock``, so it never blocks reset/set) is for."""
+        ingestion_indexing.reset_shared_rag_service()
+        calls = []
+        calls_lock = threading.Lock()
+
+        def _counting_create_rag_service(**kwargs):
+            with calls_lock:
+                calls.append(1)
+            time.sleep(0.05)
+            return FakeRAGService()
+
+        self._patch_construction(monkeypatch, _counting_create_rag_service)
+
+        results = []
+
+        def _call():
+            results.append(ingestion_indexing.get_shared_rag_service())
+
+        t1 = threading.Thread(target=_call, daemon=True)
+        t2 = threading.Thread(target=_call, daemon=True)
+        t1.start()
+        t2.start()
+        try:
+            t1.join(timeout=5)
+            t2.join(timeout=5)
+            assert not t1.is_alive() and not t2.is_alive()
+            assert len(calls) == 1, f"construction ran {len(calls)} times, expected 1"
+            assert len(results) == 2
+            assert results[0] is not None and results[0] is results[1]
+        finally:
+            ingestion_indexing.reset_shared_rag_service()
+
+    def test_reset_racing_in_flight_construction_discards_the_stale_build(
+        self, monkeypatch
+    ):
+        """task-641 AC#3 (no double-construction leak on a construction/reset
+        race): if reset_shared_rag_service() lands while a build is already
+        past the lock and mid-``create_rag_service()``, that build must be
+        discarded at swap time rather than quietly resurrecting a since-
+        superseded profile immediately after the reset -- so at most one
+        instance is EVER installed as the shared singleton, and it is never
+        the stale, pre-reset one."""
+        ingestion_indexing.reset_shared_rag_service()
+        entered_construction = threading.Event()
+        release_construction = threading.Event()
+
+        def _slow_create_rag_service(**kwargs):
+            entered_construction.set()
+            release_construction.wait(timeout=5)
+            return FakeRAGService()
+
+        self._patch_construction(monkeypatch, _slow_create_rag_service)
+
+        results = []
+        builder = threading.Thread(
+            target=lambda: results.append(ingestion_indexing.get_shared_rag_service()),
+            daemon=True,
+        )
+        builder.start()
+        try:
+            assert entered_construction.wait(timeout=5), (
+                "construction never started"
+            )
+
+            # Reset while the build above is still in flight.
+            ingestion_indexing.reset_shared_rag_service()
+
+            release_construction.set()
+            builder.join(timeout=5)
+            assert not builder.is_alive()
+
+            # The in-flight build's own result was discarded (it reflects a
+            # since-superseded generation): its caller sees None, and the
+            # stale instance was NEVER installed as the shared singleton.
+            assert results == [None]
+            assert ingestion_indexing.peek_shared_rag_service() is None
+        finally:
+            release_construction.set()
+            ingestion_indexing.reset_shared_rag_service()

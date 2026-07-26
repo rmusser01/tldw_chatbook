@@ -119,7 +119,32 @@ def semantic_indexing_available() -> bool:
 # =============================================================================
 
 _shared_service: Optional[Any] = None
+# Guards ONLY reads/writes of _shared_service (and _shared_service_
+# generation) -- NEVER held across the blocking create_rag_service() call
+# (task-641). This is deliberately separate from _shared_service_build_lock
+# below so reset_shared_rag_service()/set_shared_rag_service() (reachable
+# from the main/UI thread via active_config.set_active_profile() and the
+# Settings screen's save/Backfill/Clone paths) can always acquire it
+# immediately, no matter how long a concurrent construction is taking.
 _shared_service_lock = threading.Lock()
+# Serializes actual construction ATTEMPTS so at most one create_rag_
+# service() call is ever in flight at a time (task-249's "exactly one
+# shared service gets built under concurrent first-touch" invariant,
+# Tests/Library/test_library_local_rag_search_service.py::
+# test_concurrent_rag_queries_initialize_one_shared_service). Deliberately
+# a SEPARATE lock from _shared_service_lock: reset/set never take this one,
+# so they're never blocked by an in-flight build (task-641), while two
+# concurrent get_shared_rag_service() builders still queue behind each
+# other here instead of both paying the (possibly network-bound)
+# construction cost redundantly.
+_shared_service_build_lock = threading.Lock()
+# Bumped by every set_shared_rag_service() call (including
+# reset_shared_rag_service()'s set_shared_rag_service(None)). A builder
+# captures this before releasing _shared_service_lock to build (task-641)
+# and re-checks it at swap time, so a reset that lands WHILE a build is in
+# flight invalidates that build instead of letting it silently resurrect a
+# since-superseded profile immediately after the reset already ran.
+_shared_service_generation = 0
 
 _first_run_import_attempted = False
 # Dedicated lock guarding ONLY the _first_run_import_attempted check-and-set,
@@ -197,19 +222,52 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
     one collection, and one embedding model. The first caller's profile wins;
     subsequent profile arguments are ignored.
 
+    Two-lock construction (task-641): building the service (which can
+    trigger real network I/O, e.g. a HuggingFace model download, and
+    therefore block for an unbounded amount of time) happens under
+    ``_shared_service_build_lock`` -- NEVER under ``_shared_service_lock``.
+    The original implementation held ``_shared_service_lock`` across the
+    entire construction, so any concurrent lock-taking caller --
+    ``reset_shared_rag_service()`` / ``set_shared_rag_service()``, both
+    reachable from the main/UI thread via ``active_config.
+    set_active_profile()`` and the Settings screen's save/Backfill/Clone
+    paths -- blocked for the full duration of a stalled construction. A live
+    UAT session hit exactly this: Backfill -> Clone froze the whole app for
+    6+ minutes at 0% CPU, with the main thread parked in a lock-acquire
+    while a worker thread sat in a stalled HuggingFace socket read.
+
+    ``_shared_service_build_lock`` still serializes actual construction
+    ATTEMPTS -- two concurrent first-touch callers queue behind each other
+    here rather than both paying the (possibly network-bound) construction
+    cost, preserving the "exactly one shared service gets built" invariant
+    (task-249). But reset/set only ever take the separate, always-fast
+    ``_shared_service_lock``, so they can never be blocked by however long a
+    build under ``_shared_service_build_lock`` takes.
+
+    ``_shared_service_generation`` closes the remaining race: if a reset/set
+    lands while a build is in flight (past ``_shared_service_lock``, mid-
+    ``create_rag_service()``), the generation captured before that build
+    started no longer matches at swap time, so the (now-stale) build is
+    discarded entirely rather than quietly resurrecting a superseded profile
+    immediately after the reset that was meant to clear it.
+
     Args:
         profile_name: Optional profile override for the first construction.
 
     Returns:
         The shared RAG service, or None when it cannot be created (e.g.
-        embeddings dependencies missing).
+        embeddings dependencies missing) or when a since-superseded build
+        lost the race (the next call rebuilds fresh).
     """
     _maybe_run_first_run_import()
     global _shared_service
     if _shared_service is not None:
         return _shared_service
-    with _shared_service_lock:
-        if _shared_service is None:
+    with _shared_service_build_lock:
+        with _shared_service_lock:
+            if _shared_service is not None:
+                return _shared_service
+            generation = _shared_service_generation
             try:
                 from .simplified import create_rag_service
                 # Function-level import: active_config is consumed by
@@ -220,17 +278,45 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
                 active = _configured_profile()
                 if profile_name is None or profile_name == active:
                     profile = active
-                    _shared_service = create_rag_service(
-                        profile_name=profile, config=resolve_active_rag_config()
-                    )
+                    build_kwargs = {
+                        "profile_name": profile,
+                        "config": resolve_active_rag_config(),
+                    }
                 else:
                     profile = profile_name
-                    _shared_service = create_rag_service(profile_name=profile_name)
-                logger.info(f"Created shared RAG service (profile={profile})")
+                    build_kwargs = {"profile_name": profile_name}
             except Exception as e:
-                logger.error(f"Failed to create shared RAG service: {e}")
+                logger.error(f"Failed to resolve config for shared RAG service: {e}")
                 return None
-    return _shared_service
+
+        # Build OUTSIDE _shared_service_lock (but still inside
+        # _shared_service_build_lock) -- see docstring above for why this
+        # must never happen while _shared_service_lock is held.
+        try:
+            built = create_rag_service(**build_kwargs)
+        except Exception as e:
+            logger.error(f"Failed to create shared RAG service: {e}")
+            return None
+
+        with _shared_service_lock:
+            if _shared_service is not None:
+                # An injected set_shared_rag_service() call already won
+                # while we were building; discard ours and agree with it.
+                return _shared_service
+            if generation != _shared_service_generation:
+                # A reset/set landed while we were building outside the
+                # lock -- this build reflects a since-superseded profile.
+                # Discard it so the NEXT caller rebuilds fresh rather than
+                # silently resurrecting stale config right after a reset
+                # cleared it.
+                logger.debug(
+                    "Discarding shared RAG service build superseded by a "
+                    "concurrent reset/set"
+                )
+                return None
+            _shared_service = built
+            logger.info(f"Created shared RAG service (profile={profile})")
+        return _shared_service
 
 
 def peek_shared_rag_service() -> Optional[Any]:
@@ -248,14 +334,35 @@ def peek_shared_rag_service() -> Optional[Any]:
 
 
 def set_shared_rag_service(service: Optional[Any]) -> None:
-    """Inject a shared RAG service instance (primarily for tests)."""
-    global _shared_service
+    """Directly install (or clear) the shared RAG service instance.
+
+    Used both by tests (injection) and production (``reset_shared_rag_
+    service()``, called from the main/UI thread by ``active_config.
+    set_active_profile()`` and the Settings screen's save path). Always
+    completes promptly -- ``_shared_service_lock`` is never held across
+    blocking construction (task-641), so this never queues up behind an
+    in-flight ``get_shared_rag_service()`` build.
+
+    Bumps ``_shared_service_generation`` so any build already in flight
+    (past the lock, mid-``create_rag_service()``) discards its result at
+    swap time instead of resurrecting a since-superseded profile right
+    after this call cleared/replaced the singleton.
+    """
+    global _shared_service, _shared_service_generation
     with _shared_service_lock:
         _shared_service = service
+        _shared_service_generation += 1
 
 
 def reset_shared_rag_service() -> None:
-    """Drop the shared RAG service instance (primarily for tests)."""
+    """Drop the shared RAG service instance.
+
+    Called from production code (not just tests): ``active_config.
+    set_active_profile()`` and ``settings_rag_profile_adapter.
+    save_rag_defaults_to_active_profile()`` both call this from the main/UI
+    thread on a successful profile pointer change / in-place save, so it
+    must never block on another thread's in-flight construction (task-641).
+    """
     set_shared_rag_service(None)
 
 

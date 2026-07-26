@@ -913,6 +913,79 @@ def test_cached_default_manager_sees_mutations_from_other_default_dir_callers():
     assert mgr_b.get_profile(p.id) is not None
 
 
+# --- task-641 round-2 review: get_profile_manager()'s lazy singleton has no
+# lock guarding its check-and-create, so two concurrent first-touch callers
+# (e.g. the Settings screen's Clone-modal-open handler calling
+# active_profile_info() on the main thread, racing the RAG shared-service
+# construction path's rag_factory.create_rag_service() -> get_profile_manager()
+# on a worker thread -- exactly the ~7ms-apart race a live UAT session
+# exercised) can each construct their OWN ConfigProfileManager instance
+# instead of sharing one. The module's own docstring above states "sharing
+# one instance keeps writes visible to every default-dir caller" -- a race
+# that installs two instances breaks that invariant: whichever caller's
+# construction loses the race holds an orphaned manager that never sees
+# profile CRUD the other one does. ---
+
+
+import threading
+import time
+
+
+def test_concurrent_first_touch_constructs_exactly_one_manager(monkeypatch):
+    """RED for the task-641 round-2 review finding: two threads racing
+    get_profile_manager() on a genuinely first (uncached) touch must
+    construct ConfigProfileManager exactly once and agree on the same
+    instance -- not race past an unsynchronized None check."""
+    import tldw_chatbook.RAG_Search.config_profiles as cp
+
+    construction_count = []
+    real_init = cp.ConfigProfileManager.__init__
+    both_entered = threading.Event()
+    release_construction = threading.Event()
+    entered = []
+    entered_lock = threading.Lock()
+
+    def _slow_init(self, profiles_dir=None):
+        with entered_lock:
+            entered.append(1)
+            if len(entered) == 2:
+                both_entered.set()
+        release_construction.wait(timeout=5)
+        construction_count.append(1)
+        real_init(self, profiles_dir)
+
+    monkeypatch.setattr(cp.ConfigProfileManager, "__init__", _slow_init)
+
+    results = []
+
+    def _call():
+        results.append(cp.get_profile_manager())
+
+    t1 = threading.Thread(target=_call, daemon=True)
+    t2 = threading.Thread(target=_call, daemon=True)
+    t1.start()
+    t2.start()
+    try:
+        # Give both threads a moment to reach construction; whether they
+        # overlap or not, the assertion below is what actually matters.
+        both_entered.wait(timeout=2)
+        release_construction.set()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+        assert not t1.is_alive() and not t2.is_alive()
+        assert len(results) == 2
+        assert len(construction_count) == 1, (
+            f"ConfigProfileManager was constructed {len(construction_count)} "
+            "times by concurrent first-touch callers -- expected exactly 1"
+        )
+        assert results[0] is results[1], (
+            "concurrent callers ended up with two different profile-manager "
+            "instances instead of sharing one"
+        )
+    finally:
+        release_construction.set()
+
+
 # --- PR #829 review finding 5(b): save_profile must be transactional -- a
 # failed disk write must never leave the in-memory registry pointing at a
 # profile object that was never actually persisted. Before the fix,

@@ -11,12 +11,23 @@ def _wire(monkeypatch, tmp_path):
     monkeypatch.setattr(ac, "save_setting_to_cli_config",
                         lambda s, k, v: ptr.update(v=v) or True, raising=False)
     monkeypatch.setattr(ac, "reset_shared_rag_service", lambda: None, raising=False)
+    # task-635: ensure_imported_profile() now only imports when there is
+    # genuine hand-set [AppRAGSearchConfig.rag.*] material (see
+    # _has_legacy_rag_config_material). Default every test to the
+    # no-legacy-material baseline (deterministic, not incidentally-empty via
+    # the real isolated test config.toml) -- tests that need to exercise the
+    # "legacy upgrader" path call `_wire_legacy_rag_config` themselves,
+    # afterwards, to override this with real content.
+    _wire_legacy_rag_config(monkeypatch, {})
     return mgr, ptr
 
 
 def test_first_run_creates_imported_profile_and_sets_active(monkeypatch, tmp_path):
+    """A legacy upgrader (has hand-set [AppRAGSearchConfig.rag.*] material)
+    gets the first-run "Imported settings" profile created and activated."""
     from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, resolve_active_rag_config
     mgr, ptr = _wire(monkeypatch, tmp_path)
+    _wire_legacy_rag_config(monkeypatch, {"search": {"default_top_k": 10}})
     new_id = ensure_imported_profile()
     assert new_id is not None
     imported = mgr.get_profile(new_id)
@@ -44,6 +55,9 @@ def test_imported_fingerprint_matches_sp1_adoption(monkeypatch, tmp_path):
     from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, resolve_active_rag_config
     from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import fingerprint_collection
     mgr, ptr = _wire(monkeypatch, tmp_path)
+    # task-635: fingerprint continuity is only meaningful for a legacy
+    # upgrader (a fresh install has no pre-profile collection to preserve).
+    _wire_legacy_rag_config(monkeypatch, {"search": {"default_top_k": 10}})
     # Capture what SP1 would adopt the legacy collection under, resolved via
     # the ORIGINAL active pointer, BEFORE ensure_imported_profile() mutates it.
     pre_fp = fingerprint_collection(resolve_active_rag_config())
@@ -75,6 +89,9 @@ def test_imported_fingerprint_matches_sp1_adoption_with_env_override(
     from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, resolve_active_rag_config
     from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import fingerprint_collection
     mgr, ptr = _wire(monkeypatch, tmp_path)
+    # task-635: fingerprint continuity is only meaningful for a legacy
+    # upgrader (a fresh install has no pre-profile collection to preserve).
+    _wire_legacy_rag_config(monkeypatch, {"search": {"default_top_k": 10}})
     monkeypatch.setenv(env_var, env_value)
     # Capture BEFORE ensure_imported_profile() repoints the active pointer --
     # same ordering rationale as test_imported_fingerprint_matches_sp1_adoption.
@@ -117,6 +134,10 @@ def test_ensure_imported_profile_swallows_save_failure(monkeypatch, tmp_path):
     creation, and must not leave a half-activated pointer behind."""
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
     mgr, ptr = _wire(monkeypatch, tmp_path)
+    # task-635: exercise the real save_profile attempt, which only happens
+    # for a legacy upgrader (fresh installs short-circuit before ever
+    # calling save_profile, see test_fresh_user_* below).
+    _wire_legacy_rag_config(monkeypatch, {"search": {"default_top_k": 10}})
 
     def _boom(profile):
         raise RuntimeError("disk full")
@@ -334,20 +355,61 @@ def test_imported_profile_fingerprint_invariant_with_legacy_query_keys_set(monke
     assert imported_fp == pre_fp
 
 
-def test_imported_profile_unchanged_when_no_legacy_keys_set(monkeypatch, tmp_path):
-    """No hand-set legacy keys -> the imported snapshot is byte-equal to
-    today's plain resolve_active_rag_config() capture (no regression when
-    there's nothing to merge)."""
+def test_imported_profile_unchanged_when_no_legacy_query_time_keys_set(monkeypatch, tmp_path):
+    """A legacy upgrader with SOME hand-set [AppRAGSearchConfig.rag.*]
+    material (so import still happens, task-635), but none of it in the
+    query-time allow-list -> the imported snapshot is byte-equal to today's
+    plain resolve_active_rag_config() capture (no regression when there's
+    nothing to merge). Uses a non-query-time legacy key (embedding) purely
+    as a "genuine legacy user" presence signal -- it is never merged, so it
+    must not affect the captured snapshot either."""
     from dataclasses import asdict
     from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, resolve_active_rag_config
     mgr, ptr = _wire(monkeypatch, tmp_path)
-    _wire_legacy_rag_config(monkeypatch, {})
+    _wire_legacy_rag_config(monkeypatch, {"embedding": {"model": "all-MiniLM-L6-v2"}})
     expected = resolve_active_rag_config()
 
     new_id = ensure_imported_profile()
 
     imported = mgr.get_profile(new_id).rag_config
     assert asdict(imported) == asdict(expected)
+
+
+def test_fresh_user_no_legacy_rag_config_stays_on_default_builtin(monkeypatch, tmp_path):
+    """task-635: a truly fresh install (no [AppRAGSearchConfig.rag.*]
+    material at all) must NOT get an auto-created + auto-activated
+    "Imported settings" profile. There is no legacy pre-profile collection
+    to preserve continuity for, so ensure_imported_profile() is a no-op and
+    the active pointer is never written."""
+    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, _IMPORTED_ID
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    # _wire() already defaults to no legacy material; assert that
+    # explicitly so this test documents the exact scenario it covers.
+    _wire_legacy_rag_config(monkeypatch, {})
+
+    result = ensure_imported_profile()
+
+    assert result is None
+    assert mgr.get_profile(_IMPORTED_ID) is None
+    assert ptr["v"] is None  # pointer never written -- stays on the default builtin
+
+
+def test_fresh_user_unreadable_legacy_section_stays_on_default_builtin(monkeypatch, tmp_path):
+    """Exception-safety parity with _hand_set_legacy_query_time_keys: if the
+    legacy section can't be read at all (e.g. a non-dict value under
+    [AppRAGSearchConfig.rag], or get_cli_setting raising), that must be
+    treated the same as "no legacy material" -- never as a reason to import
+    anyway -- so a fresh user is never surprised by a profile creation
+    triggered by a config-read failure."""
+    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, _IMPORTED_ID
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    _wire_legacy_rag_config(monkeypatch, "not-a-dict")
+
+    result = ensure_imported_profile()
+
+    assert result is None
+    assert mgr.get_profile(_IMPORTED_ID) is None
+    assert ptr["v"] is None
 
 
 def test_imported_profile_does_not_merge_legacy_index_determining_keys(monkeypatch, tmp_path):

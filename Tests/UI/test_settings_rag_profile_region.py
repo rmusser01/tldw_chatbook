@@ -1385,9 +1385,13 @@ def test_rag_backfill_worker_failure_notifies_and_clears_in_flight_without_raisi
         settings_screen_module, "semantic_indexing_available", lambda: True
     )
     # M5's pre-resolve call must never be the real (potentially heavy/
-    # network-touching) service construction in a unit test.
+    # network-touching) service construction in a unit test -- a cheap
+    # non-None sentinel stand-in instead (task-641 review: None now has its
+    # OWN dedicated early-return guard, tested separately in
+    # test_rag_backfill_worker_guards_against_none_pre_resolved_service, so
+    # it must not also be used here to reach backfill_semantic_index).
     monkeypatch.setattr(
-        settings_screen_module, "get_shared_rag_service", lambda: None
+        settings_screen_module, "get_shared_rag_service", lambda: object()
     )
 
     def _boom(*, media_db, chachanotes_db, rag_service=None):
@@ -1457,6 +1461,61 @@ def test_rag_backfill_worker_pre_resolves_the_shared_service_outside_the_loop(
 
     assert resolve_calls == [True]
     assert captured_kwargs.get("rag_service") is sentinel_service
+
+
+# --- task-641 review (Important): get_shared_rag_service() can now return
+# None not only on a genuine construction failure but also when a
+# concurrent reset/set-active discarded an in-flight build (the two-lock
+# construction in ingestion_indexing.py -- see _shared_service_generation).
+# Falling through to backfill_semantic_index's own default arg
+# (`rag_service or get_shared_rag_service()`) would retry construction for
+# the FIRST time INSIDE the transient asyncio.run loop below -- exactly the
+# PR #700 hazard the pre-resolution above exists to prevent. Mirrors
+# SearchRAGWindow._run_index_backfill's explicit None guard (~:1005): notify
+# + return, never fall through. ---
+
+
+def test_rag_backfill_worker_guards_against_none_pre_resolved_service(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module, "semantic_indexing_available", lambda: True
+    )
+    # Simulates a build discarded by a concurrent reset (task-641) -- not a
+    # deps/config problem, just a since-superseded construction attempt.
+    monkeypatch.setattr(
+        settings_screen_module, "get_shared_rag_service", lambda: None
+    )
+    backfill_calls: list = []
+
+    async def _fake_backfill(**kwargs):
+        backfill_calls.append(kwargs)
+        return {"status": "ok", "indexed": 0, "skipped": 0, "failed": 0, "errors": []}
+
+    monkeypatch.setattr(
+        settings_screen_module, "backfill_semantic_index", _fake_backfill
+    )
+
+    app_instance = SimpleNamespace(
+        app_config={}, media_db=object(), chachanotes_db=None
+    )
+    screen = SettingsScreen(app_instance)
+    screen._library_rag_backfill_in_flight = True
+
+    worker = SettingsScreen.__dict__["_rag_backfill_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen)  # invoke the thread-body directly, bypassing @work dispatch
+
+    # The transient asyncio.run loop must never even start -- backfill_
+    # semantic_index's own default-arg re-resolution never gets a chance to
+    # run inside it.
+    assert backfill_calls == []
+    # The in-flight flag must still be cleared (finally-block contract).
+    assert screen._library_rag_backfill_in_flight is False
+    message, severity = fake_app.notifications[-1]
+    assert severity == "error"
+    assert "backfill" in message.lower()
 
 
 # --- Task 4 review Finding 2: _rag_after_set_active must not misreport a
@@ -3028,6 +3087,66 @@ async def test_normal_state_status_refresh_never_reopens_a_deliberately_collapse
 
 
 @pytest.mark.asyncio
+async def test_index_status_refresh_resyncs_stale_active_profile_identity_text(
+    monkeypatch, tmp_path
+):
+    """task-629 (live UAT Bug 3): Backfill's ``get_shared_rag_service()``
+    call, on its first-ever invocation in the process, silently imports and
+    ACTIVATES a new "Imported settings" profile as a side effect
+    (``ensure_imported_profile``, ``RAG_Search/simplified/active_config.py``)
+    -- an active-profile-pointer flip this screen has NO dedicated resync
+    path for. Before the fix, the "Active: .../Editing: ..." rows and the
+    editor card's border_title kept showing whatever was active at mount
+    ("Hybrid Basic") until an UNRELATED direct profile action (Clone/Set
+    active) next happened to call ``_sync_library_rag_profile_widgets`` and
+    exposed the new name for the first time -- exactly the "a third profile
+    name never shown anywhere in the UI up to that point" symptom from the
+    live UAT report. This simulates the flip landing via the SAME
+    ``_apply_library_rag_index_status`` completion path Backfill's own
+    worker calls, without needing the real (heavy) embeddings machinery."""
+    mgr, state = _wire_rag_profile_adapter_no_user_profiles(
+        monkeypatch, tmp_path, active_id="hybrid_basic"
+    )
+    _stub_index_status(monkeypatch, "absent")
+    # The exact real-world shape of ensure_imported_profile()'s side effect:
+    # a NEW writable profile appears, unrelated to anything the user did.
+    imported = mgr.clone_profile("hybrid_basic", "Imported settings")
+    mgr.save_profile(imported)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "Editing: Hybrid Basic." in _visible_text(screen)
+        assert "Active: Hybrid Basic (built-in)" in _visible_text(screen)
+
+        # Simulate the silent active-pointer flip a Backfill's first
+        # get_shared_rag_service() call performs mid-session, entirely
+        # independent of anything the profile Select or the user did.
+        state["active"] = imported.id
+
+        # Simulate the Backfill worker's completion landing (exactly what
+        # `_rag_backfill_worker`'s finally-block triggers today via
+        # `_refresh_library_rag_index_status` -> `_rag_index_status_worker`
+        # -> this same method).
+        screen._apply_library_rag_index_status(
+            {"state": "built", "count": 3, "provenance": {}}
+        )
+        await pilot.pause()
+
+        assert "Editing: Imported settings." in _visible_text(screen)
+        assert "Active: Imported settings" in _visible_text(screen)
+        assert (
+            screen.query_one("#settings-library-rag-editor-card").border_title
+            == "Editing: Imported settings"
+        )
+
+
+@pytest.mark.asyncio
 async def test_preview_started_while_starter_panel_visible_leaves_panel_state_coherent(
     monkeypatch, tmp_path
 ):
@@ -3591,3 +3710,164 @@ async def test_stale_active_profile_pointer_composes_blank_instead_of_crashing(
         # Mount survived and the picker sits on the blank sentinel.
         assert select.value is Select.NULL
         assert "Active: (missing)" in _visible_text(screen)
+
+
+# --- task-627 (live UAT CRITICAL bug): Settings > RAG mouse-capture leak
+# breaks app-wide clicks. ---
+
+
+@pytest.mark.asyncio
+async def test_recompose_releases_a_capture_that_lands_in_the_deferred_teardown_window():
+    """A REAL, exploitable gap in ``BaseAppScreen.refresh``'s mouse-capture
+    guard, found while root-causing the live UAT's Settings > RAG hang/
+    click-swallow report.
+
+    ``Widget.refresh(recompose=True)`` -- what changing ``active_category``
+    (entering/leaving the RAG category, among every other category) always
+    does -- only *schedules* the actual teardown via
+    ``self.call_next(self._check_recompose)``: it runs on a LATER
+    message-loop iteration, not synchronously. ``BaseAppScreen.refresh``'s
+    pre-existing guard (added for a prior, DIFFERENT trigger -- see
+    ``test_opening_skill_editor_does_not_break_tab_bar_click_activation`` in
+    ``test_library_skills_canvas.py``) releases whatever is captured at the
+    moment ``refresh()`` is CALLED, but never re-checks before the deferred
+    teardown actually fires. So a genuine MouseDown that captures an
+    Input/TextArea/ScrollBar arriving in that window -- entirely plausible
+    over a laggy transport where down/up travel as independently-timed
+    messages, exactly the live UAT's textual-serve session -- leaks exactly
+    like the original, already-"fixed" bug: ``App.mouse_captured`` is left
+    referencing a widget the recompose is about to tear down, and every
+    mouse click anywhere in the app (including the top nav bar) is silently
+    swallowed forever after.
+
+    Empirically confirmed RED against the pre-fix code (git-stashed
+    ``base_app_screen.py``): after the sequence below, ``mouse_captured``
+    stayed stuck on the torn-down widget and the subsequent real nav-bar
+    click produced NO route change at all (``seen_routes == []`` --
+    matching live session 2's "clicking '1 Home' did nothing" finding
+    exactly).
+
+    This simulates the window deterministically (no real network/websocket
+    delay needed): set the recompose-triggering reactive, then -- before
+    yielding control back to the event loop even once, landing in the same
+    gap a genuinely-later-arriving MouseDown message would -- capture a
+    widget the recompose is about to remove, the same way
+    ``Input._on_mouse_down`` captures internally.
+
+    Fixed by also overriding ``BaseAppScreen.recompose()`` (not just
+    ``refresh()``): it releases capture as the coroutine's first
+    synchronous statement, immediately before ``super().recompose()``
+    performs the actual removal -- narrowing the window to the teardown
+    drain itself (an EARLIER draft of this docstring overclaimed "closing
+    it entirely"; a code-review probe proved a residual gap during the
+    drain -- see ``test_post_recompose_sweep_releases_a_capture_dispatched_during_the_teardown_drain``
+    immediately below, and ``recompose()``'s own docstring, for that
+    narrower window and its separate post-recompose sweep fix).
+    """
+    app = _build_test_app()
+    seen_routes: list[str] = []
+    host = DestinationHarness(app, "settings", seen_routes)
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        victim = screen.query_one("#settings-category-search", Input)
+
+        # Trigger a recompose (active_category rebuilds the WHOLE screen
+        # content, nav bar included -- BaseAppScreen.refresh's early guard
+        # fires synchronously here; nothing is captured yet, so it's a
+        # no-op today).
+        screen.active_category = "overview"
+
+        # Immediately -- same synchronous stack, no `await` yet -- simulate
+        # a MouseDown capturing a widget the just-scheduled (but not yet
+        # run) recompose is about to tear down.
+        pilot.app.capture_mouse(victim)
+        assert pilot.app.mouse_captured is victim, (
+            "test setup didn't actually capture the victim widget"
+        )
+
+        # Let the deferred recompose (and everything else queued) run.
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.active_category == "overview"
+        assert pilot.app.mouse_captured is None, (
+            "mouse_captured is still referencing a widget the deferred "
+            "recompose already tore down -- every mouse click anywhere in "
+            "the app is now silently swallowed (task-627)"
+        )
+
+        # A real click on the top nav bar must still be delivered.
+        nav_button = screen.query_one("#nav-console", Button)
+        await pilot.click(nav_button)
+        await pilot.pause()
+        await pilot.pause()
+        assert seen_routes, (
+            "top nav bar click produced no route change -- clicks are "
+            "still being swallowed app-wide (task-627)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_post_recompose_sweep_releases_a_capture_dispatched_during_the_teardown_drain():
+    """task-627 code-review finding (Important, confirmed reproducible at
+    the reviewed commit): a RESIDUAL capture-leak window survives the
+    ``recompose()`` override above, one level deeper than the
+    call_next-scheduling gap that override closes.
+
+    ``BaseAppScreen.recompose()``'s pre-teardown release (this file's
+    other task-627 test) runs once, as the very first synchronous
+    statement of the coroutine -- but ``super().recompose()`` itself then
+    ``await``s ``query_children("*")...remove()``, and Textual lets each
+    child's OWN message pump drain during that removal (a separate asyncio
+    task per widget). A message ALREADY queued on a CHILD's pump BEFORE
+    that pre-teardown release even ran -- e.g. a MouseDown
+    ``Screen._forward_event`` posted to an Input, not yet dispatched when
+    the screen's recompose starts -- can still be processed DURING the
+    drain: ``Input._on_mouse_down`` calls ``capture_mouse()``
+    unconditionally, and ``Widget.capture_mouse``/``App.capture_mouse``
+    have no attachment guard, so the widget is re-captured while it is
+    mid-removal. By the time ``recompose()`` returns, ``App.mouse_captured``
+    is left pointing at that now-detached widget -- the exact same
+    app-wide click-swallowing symptom, from a narrower but still-real
+    window.
+
+    Reproduced deterministically here with ``call_later`` on the VICTIM's
+    own message pump (not the screen's) -- mechanism-equivalent to a
+    forwarded MouseDown whose dispatch is still pending on the widget's
+    pump when the enclosing screen's teardown begins.
+
+    Fixed by a post-``super().recompose()`` sweep in
+    ``BaseAppScreen.recompose()``: once the ENTIRE recompose (removal AND
+    remount) has finished, any still-captured widget that is NOT
+    ``is_attached`` is by definition stale (nothing legitimately captured
+    during remount would already be detached) and is released again.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        victim = screen.query_one("#settings-category-search", Input)
+
+        # Schedule the recompose first (screen next-callback), then queue a
+        # capture-inducing message on the VICTIM's own pump -- modelling a
+        # MouseDown forwarded to the Input but not yet dispatched when the
+        # teardown starts.
+        screen.active_category = "overview"
+        victim.call_later(lambda: pilot.app.capture_mouse(victim))
+
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+
+        captured = pilot.app.mouse_captured
+        assert captured is None, (
+            f"stale capture survived the teardown drain: {captured!r} "
+            f"(attached={getattr(captured, 'is_attached', None)}) -- clicks "
+            "anywhere in the app are silently swallowed again (task-627 "
+            "review finding)"
+        )
