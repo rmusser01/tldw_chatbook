@@ -33,6 +33,7 @@ from tldw_chatbook.Image_Generation.config import (
     get_image_generation_config,
     reset_image_generation_config_cache,
 )
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     ImageGenProbeResult,
@@ -1166,3 +1167,93 @@ enabled_backends = ["swarmui"]
     cfg = get_image_generation_config(reload=True)
     assert cfg.swarmui_swarm_token == "fake-swarm-token"
     assert cfg.key_sources["swarmui"] == "config"
+
+
+# ---------------------------------------------------------------------------
+# Live-CSS layout regression (whole-branch review): DestinationHarness (used
+# by every other test in this file) has no CSS_PATH, so it structurally
+# cannot exercise the real app-tier TCSS bundle -- it never caught that a
+# bare `Checkbox { width: 100%; height: 2; }` type selector living in
+# _conversations.tcss (unscoped, app-wide) was stretching every Enabled
+# checkbox to its row's full width, clipping the default marker + Test
+# button off the visible/clickable area entirely, or that the whole panel's
+# implicit `height: 1fr` (Vertical's own default, uncontested by any
+# `#settings-imagegen-panel` rule) starved its nested backend-editor
+# VerticalScroll down to ~1 row, hiding Backend settings/Generation
+# defaults/Save/Revert below the fold with nothing able to scroll them into
+# view. These two tests run against the REAL `TldwCli` app directly (the
+# same pattern `test_screen_navigation.py`'s real-app tests use) specifically
+# so the real CSS bundle is exercised -- confirmed live via a tmux capture
+# at 235 and 120 columns before writing this pin (see task-5-report.md).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("size", [(235, 52), (120, 45)])
+@pytest.mark.asyncio
+async def test_backend_row_controls_visible_and_clickable_under_real_css(
+    scratch_config, size
+):
+    scratch_config(
+        """
+[image_generation]
+default_backend = "openrouter"
+enabled_backends = ["openrouter", "swarmui"]
+"""
+    )
+    app = _build_test_app()
+    async with app.run_test(size=size) as pilot:
+        # The splash screen (1.5s) must close before handle_screen_
+        # navigation's switch_screen call is valid -- calling it while the
+        # splash is still the top screen raises IndexError from Textual's
+        # own result-callback bookkeeping.
+        await pilot.pause(2.0)
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        await pilot.pause(0.3)
+        screen = app.screen
+        screen._select_category("image_generation")
+        await pilot.pause(0.2)
+
+        for backend_id in (
+            "stable_diffusion_cpp",
+            "swarmui",
+            "openrouter",
+            "novita",
+            "together",
+            "modelstudio",
+        ):
+            row = screen.query_one(f"#settings-imagegen-backend-{backend_id}")
+            test_btn = screen.query_one(f"#settings-imagegen-test-{backend_id}", Button)
+            cb = screen.query_one(
+                f"#settings-imagegen-enabled-{backend_id}", Checkbox
+            )
+            row_right = row.region.x + row.region.width
+            test_right = test_btn.region.x + test_btn.region.width
+            assert test_right <= row_right, (
+                f"{backend_id} @ {size}: Test button's right edge "
+                f"({test_right}) is past its row's right edge ({row_right})"
+            )
+            assert cb.region.width < row.region.width, (
+                f"{backend_id} @ {size}: Enabled checkbox claimed the "
+                "row's full width (width:100% leaking in from elsewhere)"
+            )
+            widget, _offset = screen.screen.get_widget_at(*test_btn.region.center)
+            assert widget is test_btn, (
+                f"{backend_id} @ {size}: something else intercepts a click "
+                f"at Test's own center point (got {widget!r} instead)"
+            )
+
+        editor = screen.query_one("#settings-imagegen-editor")
+        assert editor.region.height == editor.virtual_size.height, (
+            f"@ {size}: Backend settings editor region "
+            f"({editor.region.height}) is shorter than its content "
+            f"({editor.virtual_size.height}) -- starved by a competing "
+            "1fr sibling"
+        )
+
+        save_btn = screen.query_one("#settings-imagegen-save", Button)
+        save_btn.scroll_visible(animate=False)
+        await pilot.pause(0.2)
+        widget, _offset = screen.screen.get_widget_at(*save_btn.region.center)
+        assert widget is save_btn, (
+            f"@ {size}: Save button not reachable/clickable via scroll"
+        )

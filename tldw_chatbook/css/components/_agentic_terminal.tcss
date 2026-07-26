@@ -4116,10 +4116,31 @@ RagProfileSwitchConfirmModal {
     background: $ds-surface-panel;
 }
 
-/* Settings > Image Gen (task 4): one row per backend inside the Backends
-   block -- label, status badge, Enabled checkbox, default marker, Test
-   button. height:auto (not the base .settings-input-row's fixed height:1)
-   so the row never clips a wrapped Checkbox/Button. */
+/* Settings > Image Gen: the whole panel and its nested backend-editor
+   scroll region default to Textual's framework-level width/height
+   fallback (1fr) since neither `Vertical`/`VerticalScroll` declares one
+   in DEFAULT_CSS for a widget shaped like this -- fine for a SINGLE
+   dominant 1fr child (see InternalPromptsPanel's #internal-prompts-list),
+   but this panel has MANY siblings (Backends block, the backend-editor
+   region, Generation defaults, Style templates, Save/Revert) all
+   competing for the SAME bounded 1fr height, which starved the backend-
+   editor region down to ~1 row (verified live: region height 1 vs
+   virtual_size height 46) and clipped everything below it (Generation
+   defaults, Save/Revert) off the bottom entirely -- `settings-detail-
+   pane` (the ancestor Settings already scrolls the WHOLE category
+   through) is the one and only scroll owner here. */
+#settings-imagegen-panel {
+    height: auto;
+}
+
+#settings-imagegen-editor {
+    height: auto;
+}
+
+/* One row per backend inside the Backends block -- label, status badge,
+   Enabled checkbox, default marker, Test button. height:auto (not the
+   base .settings-input-row's fixed height:1) so the row never clips a
+   wrapped Checkbox/Button. */
 .settings-imagegen-backend-row {
     width: 100%;
     height: auto;
@@ -4128,22 +4149,65 @@ RagProfileSwitchConfirmModal {
     align: left middle;
 }
 
+/* min-width 6 (not Button's own default 16) + no left margin: at a
+   120-column launch the "Preference Detail" pane is only ~53 columns
+   wide, and this row packs 5 pieces (label, badge, checkbox, default
+   marker, Test) -- every column here is contested (verified live:
+   without this, the DEFAULT backend's row -- the one carrying "★
+   Default" -- clipped Test entirely off the visible/clickable area). */
 .settings-imagegen-backend-row Button {
     height: 1;
     min-height: 1;
-    margin: 0 0 0 1;
+    min-width: 6;
+    margin: 0;
 }
 
+/* _conversations.tcss's bare `Checkbox { width: 100%; height: 2; }` is an
+   unscoped TYPE selector that reaches every Checkbox app-wide (verified
+   live: region.width computed to the ROW's full width, overlapping/
+   clipping the marker and Test button that come after it in the SAME
+   row) -- override both Enabled checkboxes (one per backend row) and the
+   standalone "Context LLM enabled" checkbox back to a natural, single-
+   line size within this panel specifically; never touching that shared
+   global rule, which other screens may rely on. The backend-row Checkbox
+   also drops its horizontal padding (unlike the roomier standalone
+   context_llm_enabled one) -- same narrow-terminal column budget as the
+   Button rule above. */
+.settings-imagegen-backend-row Checkbox {
+    width: auto;
+    height: 1;
+    min-height: 1;
+    margin-bottom: 0;
+    border: none;
+    padding: 0;
+}
+
+
+
+#settings-imagegen-context_llm_enabled {
+    width: auto;
+    height: 1;
+    min-height: 1;
+    margin-bottom: 0;
+    border: none;
+    padding: 0 1;
+}
+
+/* No horizontal padding (final review): "Not configured" (14 chars) is
+   the longest value this ever holds -- padding just wasted 2 more
+   contested columns in the narrow-terminal row budget above. */
 .settings-imagegen-badge {
     width: auto;
-    min-width: 16;
-    padding: 0 1;
+    min-width: 14;
     color: $ds-text-muted;
 }
 
+/* No min-width (final review): reserving 10 columns even when this row
+   isn't the default (the common case -- 5 of 6 rows) was pure waste on a
+   narrow terminal, where every column in a backend row is contested; let
+   it shrink to 0 for an empty marker and grow only for "★ Default". */
 .settings-imagegen-default-marker {
     width: auto;
-    min-width: 10;
     color: $ds-status-info;
     text-style: bold;
 }
