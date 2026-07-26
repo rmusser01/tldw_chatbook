@@ -506,7 +506,88 @@ class SubscriptionsDB(BaseDB):
             "CREATE INDEX IF NOT EXISTS idx_local_watchlist_runs_batch "
             "ON local_watchlist_runs(batch_id)"
         )
+
+        # External-content FTS over items, matching the pattern used by
+        # character_cards_fts / conversations_fts / media_fts. Triggers rather
+        # than explicit index writes, so every INSERT path stays indexed.
+        cursor.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS subscription_items_fts USING fts5(
+                title,
+                content,
+                author,
+                content='subscription_items',
+                content_rowid='id'
+            )
+        """)
+        cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS subscription_items_fts_ai
+            AFTER INSERT ON subscription_items BEGIN
+                INSERT INTO subscription_items_fts(rowid, title, content, author)
+                VALUES (new.id, new.title, new.content, new.author);
+            END
+        """)
+        cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS subscription_items_fts_ad
+            AFTER DELETE ON subscription_items BEGIN
+                INSERT INTO subscription_items_fts(subscription_items_fts, rowid, title, content, author)
+                VALUES ('delete', old.id, old.title, old.content, old.author);
+            END
+        """)
+        cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS subscription_items_fts_au
+            AFTER UPDATE ON subscription_items BEGIN
+                INSERT INTO subscription_items_fts(subscription_items_fts, rowid, title, content, author)
+                VALUES ('delete', old.id, old.title, old.content, old.author);
+                INSERT INTO subscription_items_fts(rowid, title, content, author)
+                VALUES (new.id, new.title, new.content, new.author);
+            END
+        """)
+
         conn.commit()
+
+    def backfill_items_fts(self, chunk_size: int = 500) -> int:
+        """Index one chunk of items that are missing from the FTS table.
+
+        Runs in a background worker, never inline in migration — a synchronous
+        backfill of a large subscription_items table would block app boot.
+        Resumes by rowid, so an interrupted backfill continues rather than
+        restarting.
+
+        The "not yet indexed" check reads ``subscription_items_fts_docsize``
+        rather than ``subscription_items_fts`` itself. For an external-content
+        FTS5 table (``content='subscription_items'``), an unfiltered/no-MATCH
+        query against the fts5 table is satisfied straight from the external
+        content table's rowids -- it does not reflect the actual state of the
+        FTS index. ``%_docsize`` is the shadow table SQLite documents for this
+        purpose: it is populated only by real writes into the fts5 table (the
+        insert/update triggers, or this method), so it is the only place that
+        truthfully answers "has this rowid been indexed yet".
+
+        Args:
+            chunk_size: Maximum rows to index in this call.
+
+        Returns:
+            Number of rows indexed. ``0`` means the backfill is complete.
+        """
+        with self.transaction() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, title, content, author
+                FROM subscription_items
+                WHERE id NOT IN (SELECT rowid FROM subscription_items_fts_docsize)
+                ORDER BY id
+                LIMIT ?
+                """,
+                (chunk_size,),
+            ).fetchall()
+            if not rows:
+                return 0
+            conn.executemany(
+                "INSERT INTO subscription_items_fts(rowid, title, content, author) "
+                "VALUES (?, ?, ?, ?)",
+                [(row[0], row[1], row[2], row[3]) for row in rows],
+            )
+            return len(rows)
 
     @property
     def conn(self):

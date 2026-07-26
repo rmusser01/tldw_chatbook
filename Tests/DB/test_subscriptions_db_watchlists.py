@@ -114,3 +114,88 @@ def test_lazy_run_schema_helper_is_gone():
     from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
 
     assert not hasattr(LocalWatchlistsService, "_ensure_run_schema")
+
+
+def _insert_item(db, subscription_id, url, title, content):
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO subscription_items "
+            "(subscription_id, url, title, content, content_kind, content_format) "
+            "VALUES (?, ?, ?, ?, 'article', 'text')",
+            (subscription_id, url, title, content),
+        )
+
+
+def test_fts_table_created(db):
+    assert "subscription_items_fts" in _tables(db)
+
+
+def test_fts_indexes_inserted_items(db):
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    _insert_item(db, source_id, "https://a.example/1", "RAG Evaluation", "retrieval quality rubric")
+
+    rows = db.conn.execute(
+        "SELECT rowid FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
+        ("rubric",),
+    ).fetchall()
+    assert len(rows) == 1
+
+
+def test_fts_follows_updates_and_deletes(db):
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    _insert_item(db, source_id, "https://a.example/1", "First", "alpha content")
+
+    with db.transaction() as conn:
+        conn.execute("UPDATE subscription_items SET content = 'beta content' WHERE url = ?",
+                     ("https://a.example/1",))
+
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
+        ("alpha",),
+    ).fetchone()[0] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
+        ("beta",),
+    ).fetchone()[0] == 1
+
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM subscription_items WHERE url = ?", ("https://a.example/1",))
+
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
+        ("beta",),
+    ).fetchone()[0] == 0
+
+
+def test_backfill_is_chunked_and_resumable(db):
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    with db.transaction() as conn:
+        conn.execute("DROP TRIGGER subscription_items_fts_ai")
+        for index in range(7):
+            conn.execute(
+                "INSERT INTO subscription_items (subscription_id, url, title, content) "
+                "VALUES (?, ?, ?, ?)",
+                (source_id, f"https://a.example/{index}", f"Item {index}", "searchable body"),
+            )
+
+    # A bare (non-MATCH) query against an external-content FTS5 table is
+    # satisfied straight from the content table's rowids, not the FTS index --
+    # so it would read 7 here regardless of indexing state. `_docsize` is the
+    # SQLite-documented shadow table populated only by real writes into the
+    # fts5 table, so it is what actually reflects "nothing indexed yet".
+    assert db.conn.execute("SELECT COUNT(*) FROM subscription_items_fts_docsize").fetchone()[0] == 0
+
+    first = db.backfill_items_fts(chunk_size=3)
+    assert first == 3
+    total = first
+    while True:
+        indexed = db.backfill_items_fts(chunk_size=3)
+        if indexed == 0:
+            break
+        total += indexed
+    assert total == 7
+
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
+        ("searchable",),
+    ).fetchone()[0] == 7
