@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import pickle
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta, timezone, tzinfo
@@ -13,6 +14,7 @@ import pytest
 
 import tldw_chatbook.TTS as tts_package
 import tldw_chatbook.TTS.profile_errors as profile_errors
+import tldw_chatbook.TTS.profile_types as profile_types
 from tldw_chatbook.TTS.profile_errors import (
     ProfileRepositoryError,
     ProfileValidationError,
@@ -458,20 +460,27 @@ def test_options_reject_mutable_hash_string_keys_before_retaining_them() -> None
         _draft(options=options)
 
 
-def test_options_normalize_second_serialization_failures() -> None:
-    class StatefulSortKey(str):
-        comparisons = 0
+def test_canonical_options_returns_a_safe_error_when_encoding_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
 
-        def __lt__(self, other: object) -> bool:
-            type(self).comparisons += 1
-            if type(self).comparisons > 1:
-                raise RuntimeError("secret second serialization failure")
-            return super().__lt__(other)
+    def fail_only_during_public_encoding(_: Mapping[str, object]) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("secret encoding failure")
+        return "{}"
 
+    monkeypatch.setattr(
+        profile_types,
+        "_canonical_json_from_frozen",
+        fail_only_during_public_encoding,
+    )
     with pytest.raises(
         ProfileValidationError, match=r"^TTS profile validation failed: options$"
     ):
-        canonical_json_options({"safe": False, StatefulSortKey("bad"): True})
+        canonical_json_options({"safe": False})
 
 
 def test_options_reject_excessive_nesting_and_canonical_size() -> None:
@@ -676,6 +685,88 @@ def test_repository_values_are_frozen_and_minimal() -> None:
         assignment.profile_id = uuid4()
 
 
+def test_composite_values_reject_unvalidated_subclasses() -> None:
+    class UnsafeCharacterRef(CharacterRef):
+        def __post_init__(self) -> None:
+            pass
+
+    class UnsafeAssignment(CharacterTTSAssignment):
+        def __post_init__(self) -> None:
+            pass
+
+    class UnsafeProfile(TTSGenerationProfile):
+        def __post_init__(self) -> None:
+            pass
+
+    unsafe_ref = UnsafeCharacterRef(
+        source=[],
+        authority_id=[],
+        character_id=[],  # type: ignore[arg-type]
+    )
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: assignment$"
+    ):
+        CharacterTTSAssignment(character_ref=unsafe_ref, profile_id=uuid4())
+
+    profile = _profile()
+    unsafe_assignment = UnsafeAssignment(
+        character_ref=object(),
+        profile_id="not-a-uuid",  # type: ignore[arg-type]
+    )
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: assignment$"
+    ):
+        AssignedTTSProfileSnapshot(assignment=unsafe_assignment, profile=profile)
+
+    unsafe_profile = UnsafeProfile(
+        profile_id="not-a-uuid",  # type: ignore[arg-type]
+        display_name=[],  # type: ignore[arg-type]
+        normalized_name=[],  # type: ignore[arg-type]
+        provider_id=[],  # type: ignore[arg-type]
+        model_id=[],  # type: ignore[arg-type]
+        voice_id=[],  # type: ignore[arg-type]
+        response_format=[],  # type: ignore[arg-type]
+        speed=[],  # type: ignore[arg-type]
+        options={"mutable": []},
+        revision=[],  # type: ignore[arg-type]
+        created_at=[],  # type: ignore[arg-type]
+        updated_at=[],  # type: ignore[arg-type]
+    )
+    assignment = CharacterTTSAssignment(
+        character_ref=CharacterRef(
+            source="local", authority_id="main", character_id="card"
+        ),
+        profile_id=uuid4(),
+    )
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: assignment$"
+    ):
+        AssignedTTSProfileSnapshot(assignment=assignment, profile=unsafe_profile)
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: profiles$"
+    ):
+        TTSProfilePage(profiles=[unsafe_profile], total=1)
+
+
+@pytest.mark.parametrize("field_name", ["model_id", "voice_id"])
+def test_opaque_generation_ids_reject_lone_surrogates(field_name: str) -> None:
+    with pytest.raises(
+        ProfileValidationError, match=rf"^TTS profile validation failed: {field_name}$"
+    ):
+        _draft(**{field_name: "\ud800"})
+
+
+def test_profile_page_requires_a_total_covering_every_profile() -> None:
+    profile = _profile()
+
+    assert TTSProfilePage(profiles=[], total=0).total == 0
+    assert TTSProfilePage(profiles=[profile], total=1).profiles == (profile,)
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: total$"
+    ):
+        TTSProfilePage(profiles=[profile], total=0)
+
+
 def test_restore_receipt_validates_its_own_timestamp_field() -> None:
     with pytest.raises(
         ProfileValidationError, match=r"^TTS profile validation failed: restored_at$"
@@ -708,6 +799,16 @@ def test_safe_profile_errors_reject_non_string_codes_without_raw_exceptions() ->
 
     assert str(validation) == "TTS profile validation failed: options"
     assert str(repository) == "TTS profile repository failed: operation_failed"
+
+
+def test_safe_profile_errors_preserve_codes_when_pickled() -> None:
+    validation = pickle.loads(pickle.dumps(ProfileValidationError("model_id")))
+    repository = pickle.loads(pickle.dumps(ProfileRepositoryError("unavailable")))
+
+    assert validation.code == "model_id"
+    assert str(validation) == "TTS profile validation failed: model_id"
+    assert repository.code == "unavailable"
+    assert str(repository) == "TTS profile repository failed: unavailable"
 
 
 def test_profile_error_base_cannot_be_constructed_with_arbitrary_payloads() -> None:

@@ -71,6 +71,9 @@ class ProfileValidationError(_ProfileError, ValueError):
         )
         super().__init__(safe_code, f"TTS profile validation failed: {safe_code}")
 
+    def __reduce__(self) -> tuple[type["ProfileValidationError"], tuple[str]]:
+        return (ProfileValidationError, (self.code,))
+
 
 class ProfileRepositoryError(_ProfileError, RuntimeError):
     """A value-independent profile repository failure."""
@@ -82,3 +85,6 @@ class ProfileRepositoryError(_ProfileError, RuntimeError):
             else "operation_failed"
         )
         super().__init__(safe_code, f"TTS profile repository failed: {safe_code}")
+
+    def __reduce__(self) -> tuple[type["ProfileRepositoryError"], tuple[str]]:
+        return (ProfileRepositoryError, (self.code,))

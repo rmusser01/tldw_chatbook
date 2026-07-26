@@ -6,19 +6,27 @@ import json
 import math
 import re
 import unicodedata
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Generic, TypeAlias, TypeVar
+from typing import Generic, Literal, TypeAlias, TypeVar, cast
 from uuid import UUID
 
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 
 
+# JSON boundaries deliberately admit only exact built-in scalar types. Caller
+# arrays are mutable lists; validated arrays are immutable tuples.
 JsonScalar: TypeAlias = str | int | float | bool | None
+JsonInputValue: TypeAlias = (
+    JsonScalar | Mapping[str, "JsonInputValue"] | list["JsonInputValue"]
+)
 JsonValue: TypeAlias = JsonScalar | Mapping[str, "JsonValue"] | tuple["JsonValue", ...]
+JsonOptionsInput: TypeAlias = Mapping[str, JsonInputValue]
+FrozenJsonOptions: TypeAlias = Mapping[str, JsonValue]
+JsonOptions: TypeAlias = JsonOptionsInput | FrozenJsonOptions
 
 _FROZEN_ARRAY_TOKEN = object()
 
@@ -30,7 +38,7 @@ class _FrozenJSONArray(tuple):
 
     def __new__(
         cls,
-        values: tuple[JsonValue, ...] | list[JsonValue] | object,
+        values: Iterable[JsonValue],
         *,
         token: object,
     ) -> "_FrozenJSONArray":
@@ -93,6 +101,10 @@ def _validate_opaque_id(
         return None
     if type(value) is not str or not value or len(value) > _MAX_OPAQUE_ID_CHARACTERS:
         raise ProfileValidationError(field_name)
+    try:
+        value.encode("utf-8", errors="strict")
+    except UnicodeError:
+        raise ProfileValidationError(field_name) from None
     return value
 
 
@@ -107,10 +119,13 @@ def _validate_canonical_opaque_id(value: object, field_name: str) -> str:
 
 
 def _validate_speed(value: object) -> float:
-    if type(value) not in (int, float):
-        raise ProfileValidationError("speed")
     try:
-        speed = float(value)
+        if type(value) is int:
+            speed = float(cast(int, value))
+        elif type(value) is float:
+            speed = cast(float, value)
+        else:
+            raise ProfileValidationError("speed")
     except (OverflowError, TypeError, ValueError):
         raise ProfileValidationError("speed") from None
     if not math.isfinite(speed) or not 0.25 <= speed <= 4.0:
@@ -134,12 +149,17 @@ def _freeze_json_value(
 ) -> JsonValue:
     if value is None:
         return value
-    if type(value) in (str, bool, int):
-        return value
+    if type(value) is str:
+        return cast(str, value)
+    if type(value) is bool:
+        return cast(bool, value)
+    if type(value) is int:
+        return cast(int, value)
     if type(value) is float:
-        if not math.isfinite(value):
+        scalar = cast(float, value)
+        if not math.isfinite(scalar):
             raise ProfileValidationError("options")
-        return value
+        return scalar
     if not isinstance(value, (Mapping, list, _FrozenJSONArray)):
         raise ProfileValidationError("options")
     if depth > _MAX_OPTIONS_CONTAINER_LEVELS or id(value) in active:
@@ -183,7 +203,7 @@ def _json_ready(value: JsonValue) -> object:
     return value
 
 
-def _canonical_json_from_frozen(options: Mapping[str, JsonValue]) -> str:
+def _canonical_json_from_frozen(options: FrozenJsonOptions) -> str:
     return json.dumps(
         _json_ready(options),
         sort_keys=True,
@@ -193,7 +213,7 @@ def _canonical_json_from_frozen(options: Mapping[str, JsonValue]) -> str:
     )
 
 
-def _freeze_options(value: object) -> Mapping[str, JsonValue]:
+def _freeze_options(value: object) -> FrozenJsonOptions:
     if not isinstance(value, Mapping):
         raise ProfileValidationError("options")
     frozen = _freeze_json_value(
@@ -212,7 +232,7 @@ def _freeze_options(value: object) -> Mapping[str, JsonValue]:
     return frozen
 
 
-def canonical_json_options(options: Mapping[str, JsonValue]) -> str:
+def canonical_json_options(options: JsonOptions) -> str:
     """Return validated options as a stable compact UTF-8 JSON document."""
 
     frozen = _freeze_options(options)
@@ -226,7 +246,7 @@ def _validate_audio_cpp(
     provider_id: str,
     response_format: str,
     speed: float,
-    options: Mapping[str, JsonValue],
+    options: FrozenJsonOptions,
 ) -> None:
     if provider_id == "audio_cpp" and (
         response_format != "wav" or speed != 1.0 or bool(options)
@@ -274,7 +294,7 @@ class TTSProfileDraft:
     voice_id: str | None
     response_format: str
     speed: float
-    options: Mapping[str, JsonValue] = field(default_factory=dict)
+    options: JsonOptions = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         display_name = _validate_display_name(self.display_name)
@@ -312,7 +332,7 @@ class TTSGenerationProfile:
     voice_id: str | None
     response_format: str
     speed: float
-    options: Mapping[str, JsonValue]
+    options: FrozenJsonOptions
     revision: int
     created_at: datetime
     updated_at: datetime
@@ -358,7 +378,7 @@ class TTSGenerationProfile:
 class CharacterRef:
     """A full authority-scoped character identity for a profile assignment."""
 
-    source: str
+    source: Literal["local", "server"]
     authority_id: str
     character_id: str
 
@@ -385,7 +405,7 @@ class CharacterTTSAssignment:
     profile_id: UUID
 
     def __post_init__(self) -> None:
-        if not isinstance(self.character_ref, CharacterRef):
+        if type(self.character_ref) is not CharacterRef:
             raise ProfileValidationError("assignment")
         object.__setattr__(
             self, "profile_id", _validate_uuid(self.profile_id, "profile_id")
@@ -400,8 +420,9 @@ class AssignedTTSProfileSnapshot:
     profile: TTSGenerationProfile
 
     def __post_init__(self) -> None:
-        if not isinstance(self.assignment, CharacterTTSAssignment) or not isinstance(
-            self.profile, TTSGenerationProfile
+        if (
+            type(self.assignment) is not CharacterTTSAssignment
+            or type(self.profile) is not TTSGenerationProfile
         ):
             raise ProfileValidationError("assignment")
         if self.assignment.profile_id != self.profile.profile_id:
@@ -420,12 +441,13 @@ class TTSProfilePage:
             profiles = tuple(self.profiles)
         except Exception:
             raise ProfileValidationError("profiles") from None
-        if not all(isinstance(profile, TTSGenerationProfile) for profile in profiles):
+        if not all(type(profile) is TTSGenerationProfile for profile in profiles):
             raise ProfileValidationError("profiles")
+        total = _validate_nonnegative_integer(self.total, "total")
+        if total < len(profiles):
+            raise ProfileValidationError("total")
         object.__setattr__(self, "profiles", profiles)
-        object.__setattr__(
-            self, "total", _validate_nonnegative_integer(self.total, "total")
-        )
+        object.__setattr__(self, "total", total)
 
 
 @dataclass(frozen=True, slots=True)
