@@ -8,8 +8,8 @@ estimated size, tooling warnings, and any errors that would prevent ingestion.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
-from urllib.error import URLError
+from typing import Any, NamedTuple
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from tldw_chatbook.Library.ingest_capabilities import (
@@ -104,25 +104,68 @@ def _collect_files(p: Path, scan_limit: int) -> tuple[list[Path], bool]:
     return files, truncated
 
 
-def _probe_url(url: str) -> str | None:
+#: HTTP statuses that mean "this resource is not there", as distinct from "the
+#: host answered but would not confirm it for us". Only the former justifies
+#: refusing to start.
+_ABSENT_STATUSES = frozenset({404, 410})
+
+
+class UrlProbe(NamedTuple):
+    """The outcome of probing a URL before ingest.
+
+    Attributes:
+        error: A reason to refuse the source outright. ``None`` when the source
+            should be attempted.
+        note: A reason the probe could not confirm the URL, worth telling the
+            user without blocking them. ``None`` when there is nothing to say.
+    """
+
+    error: str | None = None
+    note: str | None = None
+
+
+def _probe_url(url: str) -> UrlProbe:
     """Probe ``url`` with a HEAD request.
+
+    A probe that cannot verify a URL must not get to veto it. Any HTTP response
+    -- including a refusal -- proves the host resolved and answered, and the
+    configured backend may well fetch what the probe could not: sites commonly
+    refuse ``HEAD`` (405) or unrecognised clients (403), and a tldw server's
+    browser-based clipper succeeds on pages our own client is refused (verified
+    on a Wikipedia article that answers 403 to us even with a browser
+    User-Agent, and that the server clipped at 200). Blocking those was task-697.
+
+    A 404/410 is different in kind: the host is telling us the resource is not
+    there, so refusing is right. A failure to *fetch* during ingest is reported
+    as a failed job, where it carries a real reason.
 
     Args:
         url: URL to probe.
 
     Returns:
-        ``None`` when the URL is reachable, otherwise an error message.
+        A ``UrlProbe``. An empty one means the URL verified cleanly.
     """
     try:
         request = Request(url, method="HEAD")
         with urlopen(request, timeout=5):
-            return None
+            return UrlProbe()
     except TimeoutError:
-        return "URL probe timed out after 5 seconds"
+        return UrlProbe(error="URL probe timed out after 5 seconds")
+    except HTTPError as exc:
+        # An HTTP status means the host answered.
+        if exc.code in _ABSENT_STATUSES:
+            return UrlProbe(error=f"URL unreachable: {exc}")
+        return UrlProbe(
+            note=(
+                f"The site answered {exc.code} to our check, so it could not be "
+                "confirmed ahead of time. The import will still be attempted."
+            )
+        )
     except URLError as exc:
-        return f"URL unreachable: {exc}"
+        # No HTTP response at all: DNS failure, refused connection, bad TLS.
+        return UrlProbe(error=f"URL unreachable: {exc}")
     except Exception as exc:
-        return f"URL probe failed: {exc}"
+        return UrlProbe(error=f"URL probe failed: {exc}")
 
 
 def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
@@ -151,13 +194,15 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
     path_invalid = False
 
     if is_http_url(path_or_url):
-        error = _probe_url(path_or_url)
-        if error:
-            errors.append(error)
+        probe = _probe_url(path_or_url)
+        if probe.error:
+            errors.append(probe.error)
         else:
             group = get_type_group(path_or_url)
             type_groups.setdefault(group, []).append(path_or_url)
             total_files = 1
+            if probe.note:
+                warnings.append({"label": "Could not check the link", "hint": probe.note})
             warnings.extend(get_tooling_warnings(group))
     else:
         try:

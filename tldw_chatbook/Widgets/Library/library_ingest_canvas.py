@@ -105,7 +105,12 @@ class LibraryIngestCanvas(VerticalScroll):
                     field.enabled_when,
                     gate.default if gate is not None else False,
                 )
-                disabled = not bool(gate_value)
+                if field.enabled_when_values:
+                    # A select gate: every non-empty choice is truthy, so the
+                    # field must name the choices that actually enable it.
+                    disabled = gate_value not in field.enabled_when_values
+                else:
+                    disabled = not bool(gate_value)
             widget_id = f"opt-{group}-{field.name}"
 
             if field.type == "checkbox":

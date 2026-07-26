@@ -108,34 +108,36 @@ class TestProbeUrl:
         mock_response.__exit__ = MagicMock(return_value=False)
 
         with patch("tldw_chatbook.Library.ingest_preflight.urlopen", return_value=mock_response):
-            assert _probe_url("https://example.com/doc.pdf") is None
+            probe = _probe_url("https://example.com/doc.pdf")
+        assert probe.error is None
+        assert probe.note is None
 
     def test_returns_error_on_url_error(self) -> None:
         with patch(
             "tldw_chatbook.Library.ingest_preflight.urlopen",
             side_effect=URLError("connection refused"),
         ):
-            result = _probe_url("https://example.com/doc.pdf")
-        assert result is not None
-        assert "unreachable" in result.lower()
+            probe = _probe_url("https://example.com/doc.pdf")
+        assert probe.error is not None
+        assert "unreachable" in probe.error.lower()
 
     def test_returns_error_on_timeout(self) -> None:
         with patch(
             "tldw_chatbook.Library.ingest_preflight.urlopen",
             side_effect=TimeoutError(),
         ):
-            result = _probe_url("https://example.com/doc.pdf")
-        assert result is not None
-        assert "timed out" in result.lower()
+            probe = _probe_url("https://example.com/doc.pdf")
+        assert probe.error is not None
+        assert "timed out" in probe.error.lower()
 
     def test_returns_error_on_unexpected_exception(self) -> None:
         with patch(
             "tldw_chatbook.Library.ingest_preflight.urlopen",
             side_effect=ValueError("boom"),
         ):
-            result = _probe_url("https://example.com/doc.pdf")
-        assert result is not None
-        assert "failed" in result.lower()
+            probe = _probe_url("https://example.com/doc.pdf")
+        assert probe.error is not None
+        assert "failed" in probe.error.lower()
 
     def test_returns_error_on_http_404(self) -> None:
         error = HTTPError("https://example.com/doc.pdf", 404, "Not Found", {}, None)
@@ -143,9 +145,37 @@ class TestProbeUrl:
             "tldw_chatbook.Library.ingest_preflight.urlopen",
             side_effect=error,
         ):
-            result = _probe_url("https://example.com/doc.pdf")
-        assert result is not None
-        assert "unreachable" in result.lower()
+            probe = _probe_url("https://example.com/doc.pdf")
+        assert probe.error is not None
+        assert "unreachable" in probe.error.lower()
+
+    @pytest.mark.parametrize("status", [401, 403, 405, 429, 500])
+    def test_a_status_the_probe_cannot_interpret_does_not_veto(self, status: int) -> None:
+        """The probe may report doubt; it may not refuse the source.
+
+        Any HTTP status proves the host resolved and answered. Sites routinely
+        refuse HEAD (405) or unrecognised clients (403) while serving the page
+        perfectly well to whoever actually fetches it -- verified on a Wikipedia
+        article that answers 403 to our client even with a browser User-Agent,
+        and that a tldw server clipped at 200 (task-697).
+        """
+        error = HTTPError("https://example.com/page", status, "Nope", {}, None)
+        with patch(
+            "tldw_chatbook.Library.ingest_preflight.urlopen", side_effect=error
+        ):
+            probe = _probe_url("https://example.com/page")
+
+        assert probe.error is None, f"{status} must not block the source"
+        assert probe.note is not None and str(status) in probe.note
+
+    def test_a_gone_resource_is_still_refused(self) -> None:
+        """410 is the host stating the resource is not there, like 404."""
+        error = HTTPError("https://example.com/page", 410, "Gone", {}, None)
+        with patch(
+            "tldw_chatbook.Library.ingest_preflight.urlopen", side_effect=error
+        ):
+            probe = _probe_url("https://example.com/page")
+        assert probe.error is not None
 
 
 class TestAnalyzePath:
