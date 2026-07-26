@@ -55,6 +55,95 @@ ADR path: backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-bound
 Reason: the task strengthens the accepted provider/runtime service contract and configuration lifecycle.
 <!-- SECTION:PLAN:END -->
 
+## Pre-implementation Static-analysis Baseline
+
+The following commands ran at task base commit
+`5ac4e6299992bf9b7dd7d7a6c6bdc33dd55f9b5b` before any production Python
+changes. Each command returned the expected nonzero status. These results are
+baseline evidence only and do not authorize fixes to unrelated pre-existing
+debt.
+
+### Ruff check
+
+Command (exit 1):
+
+```text
+../../.venv/bin/python -m ruff check tldw_chatbook/config.py
+```
+
+Exact result:
+
+```text
+F841 Local variable `file_validation_section` is assigned to but never used
+   --> tldw_chatbook/config.py:757:5
+    |
+755 |     web_scraper_section = get_toml_section('WebScraper')
+756 |     confluence_section = get_toml_section('Confluence')
+757 |     file_validation_section = get_toml_section('FileValidation')
+    |     ^^^^^^^^^^^^^^^^^^^^^^^
+758 |     providers_section_from_toml = get_toml_section('providers')  # Get the [providers] table
+759 |     library_section = get_toml_section('library')
+    |
+help: Remove assignment to unused variable `file_validation_section`
+
+F841 Local variable `providers_section_from_toml` is assigned to but never used
+   --> tldw_chatbook/config.py:758:5
+    |
+756 |     confluence_section = get_toml_section('Confluence')
+757 |     file_validation_section = get_toml_section('FileValidation')
+758 |     providers_section_from_toml = get_toml_section('providers')  # Get the [providers] table
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+759 |     library_section = get_toml_section('library')
+    |
+help: Remove assignment to unused variable `providers_section_from_toml`
+
+Found 2 errors.
+No fixes available (2 hidden fixes can be enabled with the `--unsafe-fixes` option).
+```
+
+### Ruff format check
+
+Command (exit 1):
+
+```text
+../../.venv/bin/python -m ruff format --check tldw_chatbook/config.py
+```
+
+Exact result:
+
+```text
+Would reformat: tldw_chatbook/config.py
+1 file would be reformatted
+```
+
+### Mypy
+
+Command (exit 1):
+
+```text
+../../.venv/bin/python -m mypy tldw_chatbook/config.py tldw_chatbook/TTS/adapter_types.py tldw_chatbook/TTS/adapter_registry.py tldw_chatbook/TTS/TTS_Generation.py tldw_chatbook/TTS/adapter_bootstrap.py tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py tldw_chatbook/Event_Handlers/STTS_Events/stts_events.py tldw_chatbook/UI/STTS_Window.py
+```
+
+Exact result:
+
+```text
+tldw_chatbook/config.py:76: error: Need type annotation for "DEFAULT_DATABASE_CONFIG" (hint: "DEFAULT_DATABASE_CONFIG: dict[<type>, <type>] = ...")  [var-annotated]
+tldw_chatbook/config.py:3965: error: Incompatible default for parameter "key" (default has type "None", parameter has type "str")  [assignment]
+tldw_chatbook/config.py:3965: note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+tldw_chatbook/config.py:3965: note: Use https://github.com/hauntsaninja/no_implicit_optional to automatically upgrade your codebase
+tldw_chatbook/config.py:4081: error: Argument 1 to "deep_merge_dicts" has incompatible type "Collection[str]"; expected "dict[Any, Any]"  [arg-type]
+tldw_chatbook/config.py:4086: error: Incompatible return value type (got "Collection[str]", expected "dict[str, Any]")  [return-value]
+tldw_chatbook/config.py:4145: error: Argument 1 to "deep_merge_dicts" has incompatible type "object"; expected "dict[Any, Any]"  [arg-type]
+tldw_chatbook/config.py:4150: error: Incompatible return value type (got "object", expected "dict[str, Any]")  [return-value]
+tldw_chatbook/config.py:4857: error: Name "API_MODELS_BY_PROVIDER" already defined on line 1997  [no-redef]
+tldw_chatbook/config.py:4858: error: Name "LOCAL_PROVIDERS" already defined on line 2090  [no-redef]
+tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py:706: error: "TTSEventHandler" has no attribute "notify"  [attr-defined]
+tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py:739: error: "TTSEventHandler" has no attribute "notify"  [attr-defined]
+tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py:743: error: "TTSEventHandler" has no attribute "notify"  [attr-defined]
+tldw_chatbook/UI/STTS_Window.py:5612: error: Name "_get_model_for_provider" already defined on line 5358  [no-redef]
+Found 12 errors in 3 files (checked 8 source files)
+```
+
 ## Definition of Done
 <!-- DOD:BEGIN -->
 - [ ] #1 Automated unit, integration, Textual, race, and cleanup tests cover every acceptance criterion and pass.

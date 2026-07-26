@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Tasks: TASK-561, TASK-560, TASK-569
+Related Tasks: TASK-561, TASK-560, TASK-569, TASK-660
 Supersedes: N/A
 
 ## Decision
@@ -138,6 +138,14 @@ policy, and a cross-module interface.
 
 - `TTSService` and `TTSAdapterRegistry` become application-owned lifecycle
   objects.
+- Global TTS preferences are published together as one immutable snapshot.
+  Under one application-owned shared admission gate, each request freezes its
+  complete selection and acquires a provider lease carrying the same
+  configuration revision.
+- Settings publication holds the exclusive side of that admission gate.
+  Requests observe either the old coherent preference-and-lease pair, the new
+  coherent pair, or a structured reconfiguring/unavailable state; they never
+  combine selection from one configuration revision with a lease from another.
 - Registration at the app boundary is explicit and sealed. Legacy wildcard
   matching is quarantined inside `LegacyBackendHost`, reset deterministically
   in tests, closed to new providers, and removed with the bridge.
@@ -160,10 +168,14 @@ policy, and a cross-module interface.
   drain, and independently releases service-owned leases and concurrency slots.
   Definitive service shutdown leaves no admission waiter blocked and does not
   wait indefinitely for a provider finalizer that ignores cancellation.
-- audio.cpp reconfiguration is an exclusive handoff: new operations are blocked
-  while active leases drain, the old adapter closes before the new
-  configuration becomes active, and the replacement remains lazy. Future
-  managed mode applies the same rule to an owned child.
+- audio.cpp reconfiguration is an exclusive handoff. The foreground settings
+  wait is finite, and an admitted request keeps its old provider lease until it
+  completes; that lease is never silently cancelled. Configuration pending
+  handoff is inert, superseded pending generations cannot become active, and
+  only the latest pending generation is eligible for activation. New
+  operations are blocked while active leases drain, the old adapter closes
+  before a replacement adapter can be created, and the replacement remains
+  lazy. Future managed mode applies the same rule to an owned child.
 - Provider-scoped legacy hosts preserve current implementations while isolating
   configuration replacement and backend caches. The quarantined class registry
   is their only shared legacy state.
@@ -263,6 +275,7 @@ policy, and a cross-module interface.
 - [Design spec](../../Docs/superpowers/specs/2026-07-23-audio-cpp-tts-adapter-registry-design.md)
 - [TASK-560](<../tasks/task-560 - Add-external-audio.cpp-native-TTS-adapter.md>)
 - [TASK-569](<../tasks/task-569 - Complete-external-audio.cpp-STTS-Playground-vertical.md>)
+- [TASK-660](<../tasks/task-660 - Make-external-audio.cpp-Console-TTS-settings-coherent.md>)
 - [Pinned audio.cpp server guide](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/README.md)
 - [Pinned audio.cpp server runtime](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/runtime.cpp)
 - [Pinned audio.cpp busy guard](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/busy_guard.h)
