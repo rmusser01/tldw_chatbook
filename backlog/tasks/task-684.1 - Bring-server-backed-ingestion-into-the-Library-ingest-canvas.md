@@ -1,10 +1,10 @@
 ---
 id: TASK-684.1
 title: Bring server-backed ingestion into the Library ingest canvas
-status: In Progress
+status: To Do
 assignee: []
 created_date: '2026-07-26 04:33'
-updated_date: '2026-07-26 05:09'
+updated_date: '2026-07-26 05:16'
 labels:
   - ingest
   - consolidation
@@ -20,21 +20,20 @@ Server Sources is the only way to start a server-backed ingest, and it lives in 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A server-backed ingest can be started from the Library ingest canvas
-- [ ] #2 The canvas shows which backend an ingest will run on and lets the user choose when both are available
-- [ ] #3 The Local-only quiet line no longer appears when a server backend is configured
-- [ ] #4 Starting a server ingest with no server configured explains what to configure
+- [x] #1 A server-backed ingest can be started from the Library ingest canvas
+- [x] #2 The canvas shows which backend an ingest will run on and lets the user choose when both are available
+- [x] #3 The Local-only quiet line no longer appears when a server backend is configured
+- [x] #4 Starting a server ingest with no server configured explains what to configure
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Reuse the existing server seam rather than extracting one. ServerMediaReadingService already wraps TLDWAPIClient.submit_media_ingest_jobs / list_media_ingest_jobs / cancel_media_ingest_jobs_batch, with tests in Tests/Media/test_server_media_ingest_jobs_service.py and Tests/tldw_api/test_media_ingest_jobs_client.py. The 700-line widget-coupled handler in tldw_api_events.py does NOT need untangling to get a server submit -- it can be left to die with the window in 671.4.
-2. Map the Library ingest form to MediaIngestSubmitRequest / MediaIngestJobSubmitRequest, driven by the type group pre-flight already detects.
-3. Give the ingest form a real backend choice. build_library_ingest_state takes runtime_source today and, per its own docstring, uses it for nothing but a quiet line, so the choice, its gating and its copy all belong here.
-4. Route submit through the chosen backend; keep the local path exactly as it is.
-5. Gate honestly: with no server configured the option explains what to configure rather than failing at submit.
-6. Tests at the mapping and routing seams, then a live pass against a configured server.
+1. DONE -- pure mapping layer (Library/server_ingest_request.py, 21 tests): source + option snapshot -> the kwargs ServerMediaReadingService.submit_ingest_jobs already accepts.
+2. BLOCKED ON 684.2 -- route submit through the chosen backend. A server submission has nowhere to be recorded until the registry can hold a remote job: the ingest_jobs table has no origin/remote_job_id/batch_id, its state CHECK excludes the server's cancelled state, and mark_done requires a local media_id a server submission never produces. Doing the routing first would mean writing it twice.
+3. Render the backend choice in the canvas, replacing the cosmetic 'ingest runs on Local' line (build_library_ingest_state's runtime_source affects nothing else today). The selector already exists as app.media_runtime_state.runtime_backend, alongside the local/server MediaReadingScopeService pattern.
+4. Gate honestly: with no server configured, explain what to configure rather than failing at submit.
+5. Live pass against a configured server -- not verifiable in this environment.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

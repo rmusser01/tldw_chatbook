@@ -4,7 +4,7 @@ title: Show remote ingest jobs in the Library ingest queue
 status: To Do
 assignee: []
 created_date: '2026-07-26 04:33'
-updated_date: '2026-07-26 04:45'
+updated_date: '2026-07-26 05:16'
 labels:
   - ingest
   - consolidation
@@ -29,10 +29,14 @@ Remote ingest jobs are monitored in a separate window from local ones, so a user
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Use the existing client APIs: list_media_ingest_jobs(batch_id), get_media_ingest_job(job_id) and cancel_media_ingest_jobs_batch already exist on TLDWAPIClient and are surfaced by ServerMediaReadingService.
-2. Mirror remote jobs into LibraryIngestJobRegistry rather than merging two sources at render time, so queue rows, counts and Home's active-work adapter keep one source of truth.
-3. Give LibraryIngestJob an origin (local/server) and surface it on the row.
-4. Poll remote state on a worker and marshal updates onto the UI thread the way the parse-pool coordinator already does.
-5. Map queue actions: cancel maps to cancel_media_ingest_jobs_batch; hide the ones with no remote equivalent.
-6. Tests for row rendering, origin labelling and state transitions.
+SEQUENCING: this task now comes BEFORE 684.1's routing slice. 684.1's mapping layer landed, but routing a submission has nowhere to record it -- see the registry constraints below -- so the registry work has to precede it.
+
+1. Migrate the ingest_jobs table (DB/Library_Ingest_Jobs_DB.py, currently schema v2) to v3:
+   - add origin ('local'/'server'), remote_job_id and batch_id
+   - relax the state CHECK, which today allows only queued/parsing/writing/done/failed; the server also reports cancelled and carries a cancellation_reason
+   - media_id stays local-only and must become nullable in practice: LibraryIngestJobRegistry.mark_done currently *requires* media_id: int, which a server submission never produces, so it needs a server-shaped completion path
+2. Give LibraryIngestJob the matching fields and surface origin on the queue row.
+3. Poll remote state with the existing client APIs (list_media_ingest_jobs(batch_id), get_media_ingest_job(job_id)) on a worker, marshalling updates onto the UI thread the way the parse-pool coordinator already does. MediaIngestJobStatus already carries status, progress_percent, progress_message, error_message, source and batch_id.
+4. Map queue actions: cancel -> cancel_media_ingest_jobs_batch; hide the ones with no remote equivalent.
+5. Tests for row rendering, origin labelling, state transitions and the migration.
 <!-- SECTION:PLAN:END -->
