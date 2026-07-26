@@ -161,7 +161,7 @@ class _AdmittedTTSOperation:
         request: TTSRequest,
         resources: _OperationResources,
         close_signal: asyncio.Event,
-        on_started: Callable[["_AdmittedTTSOperation"], None],
+        on_finished: Callable[["_AdmittedTTSOperation"], None],
         manage_response: Callable[
             [TTSAudioResponse, _OperationResources],
             _ManagedAudioResponse,
@@ -171,10 +171,11 @@ class _AdmittedTTSOperation:
         self._request = request
         self._resources = resources
         self._close_signal = close_signal
-        self._on_started = on_started
+        self._on_finished = on_finished
         self._manage_response = manage_response
         self._observe_cleanup = observe_cleanup
         self._used = False
+        self._executing = False
         self._close_task: asyncio.Task[None] | None = None
 
     async def synthesize(
@@ -185,11 +186,14 @@ class _AdmittedTTSOperation:
         if self._used:
             raise RuntimeError("The admitted TTS operation has already been used")
         self._used = True
-        self._on_started(self)
+        self._executing = True
 
         if self._close_signal.is_set():
             closed_error = TTSRegistryClosedError("The TTS service is closed")
-            await _cleanup_preserving_primary(self._resources.close, closed_error)
+            try:
+                await _cleanup_preserving_primary(self._resources.close, closed_error)
+            finally:
+                self._finish_tracking()
             raise closed_error
 
         lease = self._resources._lease
@@ -198,7 +202,10 @@ class _AdmittedTTSOperation:
             await lease.adapter.ensure_ready()
             response = await lease.adapter.synthesize(self._request, safe_sink)
         except BaseException as error:
-            await _cleanup_preserving_primary(self._resources.close, error)
+            try:
+                await _cleanup_preserving_primary(self._resources.close, error)
+            finally:
+                self._finish_tracking()
             raise
 
         try:
@@ -211,9 +218,13 @@ class _AdmittedTTSOperation:
                 finally:
                     await self._resources.close()
 
-            await _cleanup_preserving_primary(close_unmanaged_response, error)
+            try:
+                await _cleanup_preserving_primary(close_unmanaged_response, error)
+            finally:
+                self._finish_tracking()
             raise
 
+        self._finish_tracking()
         if self._close_signal.is_set():
             closed_error = TTSRegistryClosedError("The TTS service is closed")
             cleanup_tasks = (
@@ -235,12 +246,31 @@ class _AdmittedTTSOperation:
             if self._used:
                 raise RuntimeError("The admitted TTS operation has already been used")
             self._used = True
-            self._on_started(self)
+            self._close_task = asyncio.create_task(self._close())
+        return self._close_task
+
+    def start_close_if_pending(self) -> asyncio.Task[None] | None:
+        """Start cleanup only when synthesis has not begun."""
+        if self._executing:
+            return None
+        return self.start_close()
+
+    def start_shutdown_cleanup(self) -> asyncio.Task[None]:
+        """Release resources for an operation still tracked after the drain."""
+        if self._close_task is None:
+            self._used = True
             self._close_task = asyncio.create_task(self._close())
         return self._close_task
 
     async def _close(self) -> None:
-        await self._resources.close()
+        try:
+            await self._resources.close()
+        finally:
+            self._finish_tracking()
+
+    def _finish_tracking(self) -> None:
+        self._executing = False
+        self._on_finished(self)
 
 
 class TTSService:
@@ -297,7 +327,7 @@ class TTSService:
             request=request,
             resources=resources,
             close_signal=self._close_signal,
-            on_started=self._admitted_operations.discard,
+            on_finished=self._admitted_operations.discard,
             manage_response=self._manage_response,
             observe_cleanup=self._observe_shutdown_result,
         )
@@ -509,8 +539,9 @@ class TTSService:
         if self._registry_close_task is None:
             self._close_signal.set()
             operation_tasks = tuple(
-                operation.start_close()
+                cleanup_task
                 for operation in tuple(self._admitted_operations)
+                if (cleanup_task := operation.start_close_if_pending()) is not None
             )
             self._registry_close_task = asyncio.create_task(self.registry.close())
             self._shutdown_task = asyncio.create_task(
@@ -534,18 +565,33 @@ class TTSService:
         except BaseException as error:
             failures.append(error)
 
+        late_operation_tasks = tuple(
+            cleanup_task
+            for operation in tuple(self._admitted_operations)
+            if (cleanup_task := operation.start_shutdown_cleanup())
+            not in operation_tasks
+        )
         responses = tuple(self._responses)
         response_tasks = [response.start_close() for response in responses]
         resource_tasks = [response.start_resource_release() for response in responses]
         registry_wait_task = asyncio.create_task(self.registry.wait_closed())
-        results = await asyncio.gather(
+        terminal_shutdown_tasks = (
             registry_wait_task,
             *operation_tasks,
             *resource_tasks,
+        )
+        results = await asyncio.gather(
+            *terminal_shutdown_tasks,
+            *late_operation_tasks,
             return_exceptions=True,
         )
+        # A still-executing operation may later produce the primary failure.
+        # Its joined resource error remains available to that cleanup path and
+        # must not be promoted ahead of the unfinished execution.
         failures.extend(
-            result for result in results if isinstance(result, BaseException)
+            result
+            for result in results[: len(terminal_shutdown_tasks)]
+            if isinstance(result, BaseException)
         )
         await asyncio.sleep(0)
         for response_task in response_tasks:

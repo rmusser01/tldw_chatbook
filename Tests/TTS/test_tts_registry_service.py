@@ -515,6 +515,87 @@ async def test_shutdown_releases_abandoned_operation_and_response_resources() ->
 
 
 @pytest.mark.asyncio
+async def test_shutdown_owns_executing_admission_cleanup_after_drain_deadline() -> None:
+    synthesis_started = asyncio.Event()
+    allow_synthesis = asyncio.Event()
+    response_cleanup_finished = asyncio.Event()
+
+    class BlockingAdapter(FakeAdapter):
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: ProgressSink | None = None,
+        ) -> TTSAudioResponse:
+            del progress_sink
+            self.synthesize_calls += 1
+            synthesis_started.set()
+            await allow_synthesis.wait()
+
+            async def stream() -> AsyncGenerator[bytes, None]:
+                yield b"audio"
+
+            async def cleanup() -> None:
+                self.response_close_calls += 1
+                response_cleanup_finished.set()
+
+            return TTSAudioResponse(
+                provider_id=self.provider_id,
+                model_id=request.model_id,
+                audio_format=request.response_format,
+                content_type="audio/wav",
+                byte_stream=stream(),
+                cleanup=cleanup,
+            )
+
+    class CountingReleaseRegistry(TTSAdapterRegistry):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.release_calls = 0
+
+        async def _release(self, slot: Any, record: Any) -> None:
+            self.release_calls += 1
+            await super()._release(slot, record)
+
+    adapter = BlockingAdapter("openai")
+    registry = registry_for_adapter(
+        adapter,
+        shutdown_timeout_seconds=0,
+        registry_type=CountingReleaseRegistry,
+    )
+    assert isinstance(registry, CountingReleaseRegistry)
+    service = TTSService(registry, max_concurrent_operations=1)
+    operation = await service.admit(tts_request())
+    execution = asyncio.create_task(operation.synthesize())
+    await synthesis_started.wait()
+
+    tracked_during_execution = operation in service._admitted_operations
+    await service.close()
+    await asyncio.wait_for(service.wait_closed(), timeout=1)
+    shutdown_semaphore_value = service._operation_limit._value
+    shutdown_lease_count = sum(record.leases for record in registry._closing_records)
+    execution_pending_at_shutdown = not execution.done()
+
+    allow_synthesis.set()
+    with pytest.raises(TTSRegistryClosedError):
+        await asyncio.wait_for(execution, timeout=1)
+    await asyncio.wait_for(response_cleanup_finished.wait(), timeout=1)
+    await asyncio.wait_for(operation._resources.close(), timeout=1)
+    await asyncio.sleep(0)
+
+    assert tracked_during_execution is True
+    assert execution_pending_at_shutdown is True
+    assert shutdown_semaphore_value == 1
+    assert shutdown_lease_count == 0
+    assert registry.release_calls == 1
+    assert service._operation_limit._value == 1
+    assert all(record.leases == 0 for record in registry._closing_records)
+    assert service._admitted_operations == set()
+    assert service._responses == set()
+    assert adapter.response_close_calls == 1
+    assert adapter.close_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_real_audio_cpp_concurrent_cold_catalog_coalesces_factory_and_refresh() -> (
     None
 ):
