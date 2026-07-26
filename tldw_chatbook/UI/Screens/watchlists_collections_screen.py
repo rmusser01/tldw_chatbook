@@ -360,8 +360,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _resolve_breadcrumb_labels(self, scope: TreeScope) -> list[str]:
         """Display names for `scope`'s ancestor chain, for the Inspector.
 
-        Called once from `_on_tree_scope_changed` -- a discrete, user-driven
-        event -- never from a render path, so this is not a query-per-render:
+        Called once from `_apply_tree_scope` -- itself invoked from a real
+        tree click (`_on_tree_scope_changed`) and a breadcrumb promotion
+        (`handle_breadcrumb_scope_selected`), both discrete, user-driven
+        events -- never from a render path, so this is not a query-per-render:
         the watchlist name costs nothing (`_tree_watchlists` is already
         loaded by `_load_tree_data`), and a source name costs exactly the one
         `list_source_rows` JOIN the tree itself already uses to expand a
@@ -1032,9 +1034,27 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         the tree means navigating away from that entity, full stop; there is
         no "keep both in sync" reading of `_resolve_levels` appending
         `selected_entity` as deepest that survives this.
+
+        Also clears `selected_source`/`selected_run`/`selected_notification`
+        (Task 5 fix round 3, Finding 1's remaining gap): these three are not
+        independent state -- they are persisted shadows of the same
+        selection `selected_entity` represents, one per pane, kept around so
+        a highlighted row survives that pane's own reactive-recompose. If a
+        tree click clears `selected_entity` but leaves its shadow standing,
+        a later re-derive (`_load_notifications` re-deriving `selected_entity`
+        from `self.selected_notification` is the one measured; a pane
+        re-selecting its own surviving `selected_source`/`selected_run` on
+        rebuild is the visual half of the same gap) resurrects the entity, or
+        the pane's highlighted row, under a scope the tree has since moved
+        away from. Clearing all three here, alongside the entity itself,
+        keeps "navigating the tree means navigating away from the
+        selection" true for its persisted form as well as its live one.
         """
         self._breadcrumb_labels = self._resolve_breadcrumb_labels(scope)
         self.selected_entity = None
+        self.selected_source = None
+        self.selected_run = None
+        self.selected_notification = None
         self.selected_scope = scope
 
     @on(TreeScopeChanged)
@@ -1569,7 +1589,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             ),
             None,
         )
-        self.selected_entity = (
+        # Route through `_select_entity` (Task 5 fix round 3) rather than
+        # assigning `self.selected_entity` directly: this re-derive is a new
+        # selection exactly like a pane row click whenever a notification
+        # actually survives the reload, so it must reconcile `selected_scope`
+        # the same way. `_select_entity(None)` is a no-op for scope by
+        # design (fix round 2), so this only matters on that surviving
+        # branch -- but routing it through the one reconciliation point
+        # keeps the invariant true even if a mirror is repopulated by a
+        # future code path that does not go through `_apply_tree_scope`.
+        self._select_entity(
             {
                 **self.selected_notification,
                 "entity_kind": "client_notification",

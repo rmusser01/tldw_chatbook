@@ -1,6 +1,7 @@
 """Tests for the Watchlists inspector pane wiring."""
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from textual.widgets import Button, Static
@@ -10,6 +11,10 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import BreadcrumbScopeSelected, InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
+from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import (
+    NotificationSelected,
+    RefreshNotificationsRequested,
+)
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
 
@@ -462,3 +467,92 @@ async def test_clicking_breadcrumb_actually_promotes_the_scope():
         # Promoted to the deepest level now -- it is the whole breadcrumb,
         # not a collapsed ancestor of something deeper anymore.
         assert not inspector.query("#inspector-breadcrumb-0")
+
+
+@pytest.mark.asyncio
+async def test_stale_notification_mirror_does_not_resurrect_under_a_new_scope():
+    """Task 5 fix round 3, Finding 1's remaining gap.
+
+    `_apply_tree_scope` cleared `selected_entity` but left
+    `selected_notification` standing -- a persisted shadow of that same
+    selection. Reachable path: select a notification (scope reconciles to
+    "all"), click a tree node for a watchlist (scope moves, entity cleared,
+    `selected_notification` left set), then anything that reruns
+    `_load_notifications` (Refresh, mark-read, dismiss, a section
+    round-trip) re-derives `selected_entity` from the surviving mirror
+    without touching `selected_scope` -- the breadcrumb names the watchlist
+    while the detail/actions belong to the notification again.
+    """
+    row = {
+        "id": 7,
+        "title": "Research complete",
+        "message": "The synthesis is ready.",
+        "category": "research",
+        "severity": "info",
+        "is_read": False,
+    }
+    app = _app_with_watchlists([])
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen._tree_watchlists = [{"id": 1, "name": "Morning AI Brief"}]
+        screen._notifications_controller.load_rows = AsyncMock(return_value=[row])
+
+        screen.post_message(NotificationSelected(row))
+        await pilot.pause()
+        assert screen.selected_scope == TreeScope(kind="all"), (
+            "selecting a notification reconciles scope to 'all', same as "
+            "any other pane-selected entity"
+        )
+
+        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1)))
+        await pilot.pause()
+
+        screen.post_message(RefreshNotificationsRequested())
+        for _ in range(20):
+            await pilot.pause()
+            if screen._notifications_controller.load_rows.await_count:
+                break
+
+        assert screen.selected_scope == TreeScope(kind="watchlist", watchlist_id=1), (
+            "the tree scope the user navigated to must not be clobbered by "
+            "the notifications reload"
+        )
+        assert screen.selected_entity is None, (
+            "the notification mirror must not resurrect selected_entity "
+            "under a scope the tree has since moved away from -- the "
+            "breadcrumb and the detail/actions must agree"
+        )
+
+
+@pytest.mark.asyncio
+async def test_apply_tree_scope_clears_all_persisted_selection_shadows():
+    """Pins Task 5 fix round 3's core change directly.
+
+    `selected_source`/`selected_run`/`selected_notification` are persisted
+    shadows of the same selection `selected_entity` represents -- one per
+    pane, kept so a highlighted row survives that pane's own
+    reactive-recompose. `_apply_tree_scope` must clear all three alongside
+    the entity, or a surviving mirror can repopulate the selection under a
+    scope the tree has since moved away from (see the notifications
+    resurrection test above; the sources/runs panes reselecting a stale row
+    on rebuild are the visual half of the same gap).
+    """
+    app = _app_with_watchlists([])
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen._tree_watchlists = [{"id": 1, "name": "Morning AI Brief"}]
+
+        screen.selected_source = {"id": "source-1", "name": "AI News RSS"}
+        screen.selected_run = {"id": "run-1", "status": "completed"}
+        screen.selected_notification = {"id": 7, "title": "Research complete"}
+
+        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1)))
+        await pilot.pause()
+
+        assert screen.selected_source is None
+        assert screen.selected_run is None
+        assert screen.selected_notification is None
