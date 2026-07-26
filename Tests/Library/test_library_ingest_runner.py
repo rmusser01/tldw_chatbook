@@ -30,6 +30,7 @@ import textwrap
 import threading
 from pathlib import Path
 from typing import Any, Callable, Optional
+from unittest.mock import patch
 
 import pytest
 from textual.app import App
@@ -253,6 +254,98 @@ async def test_submit_reaches_done_with_real_media_id(tmp_path: Path) -> None:
         assert "moon's gravity" in row["content"]
 
         await _wait_for_runner_idle(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_submitting_a_directory_queues_one_job_per_file(
+    tmp_path: Path,
+) -> None:
+    """A folder must expand into per-file jobs, not one job for the folder.
+
+    Pre-flight happily reports "4 plain text files" for a directory and lets
+    the user start it, but the runner used to classify the directory itself
+    and fail the whole submission with "Unsupported file type: ." -- so the
+    batch import the UI advertises never worked at all (task-662).
+    """
+    db = _make_db(tmp_path)
+    folder = tmp_path / "batch"
+    folder.mkdir()
+    for index in range(3):
+        _write_text_file(folder, f"doc-{index}.txt", f"Body of document {index}.")
+    app = _IngestRunnerHarness(db, worker_count=2)
+
+    async with app.run_test() as pilot:
+        app.submit_library_ingest_job(source_path=str(folder))
+
+        jobs = app.library_ingest_jobs.jobs()
+        assert len(jobs) == 3, f"expected one job per file, got {len(jobs)}"
+        assert {Path(job.source_path).name for job in jobs} == {
+            "doc-0.txt",
+            "doc-1.txt",
+            "doc-2.txt",
+        }
+
+        for job in jobs:
+            await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
+
+        await _wait_for_runner_idle(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_directory_unsupported_file_fails_alone(tmp_path: Path) -> None:
+    """One unsupported file in a folder fails on its own row.
+
+    The supported siblings must still reach DONE rather than being taken
+    down with it.
+    """
+    db = _make_db(tmp_path)
+    folder = tmp_path / "mixed"
+    folder.mkdir()
+    _write_text_file(folder, "good.txt", "A perfectly ingestible document.")
+    (folder / "cover.jpg").write_bytes(b"not really a jpeg")
+    app = _IngestRunnerHarness(db, worker_count=2)
+
+    async with app.run_test() as pilot:
+        app.submit_library_ingest_job(source_path=str(folder))
+
+        jobs = {Path(j.source_path).name: j for j in app.library_ingest_jobs.jobs()}
+        assert set(jobs) == {"good.txt", "cover.jpg"}
+
+        await _wait_for_job_state(
+            app, pilot, jobs["good.txt"].job_id, IngestJobState.DONE
+        )
+        await _wait_for_job_state(
+            app, pilot, jobs["cover.jpg"].job_id, IngestJobState.FAILED
+        )
+
+        await _wait_for_runner_idle(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_directory_submission_honours_scan_limit(tmp_path: Path) -> None:
+    """The folder expansion respects the configured directory scan limit."""
+    db = _make_db(tmp_path)
+    folder = tmp_path / "many"
+    folder.mkdir()
+    for index in range(6):
+        _write_text_file(folder, f"doc-{index}.txt", f"Body {index}.")
+    app = _IngestRunnerHarness(db, worker_count=2)
+
+    from tldw_chatbook.app import get_cli_setting as _real_get_cli_setting
+
+    def _limited(*args: Any, **kwargs: Any) -> Any:
+        if args and args[0] == "library.ingest_directory_scan_limit":
+            return 2
+        return _real_get_cli_setting(*args, **kwargs)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_limited):
+        async with app.run_test() as pilot:
+            app.submit_library_ingest_job(source_path=str(folder))
+            assert len(app.library_ingest_jobs.jobs()) == 2
+
+            for job in app.library_ingest_jobs.jobs():
+                await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
+            await _wait_for_runner_idle(app, pilot)
 
 
 @pytest.mark.asyncio

@@ -165,6 +165,7 @@ from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
 from tldw_chatbook.Library.ingest_capabilities import get_type_group
+from tldw_chatbook.Library.ingest_preflight import collect_directory_files
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
     IngestJobState,
@@ -1803,6 +1804,42 @@ class LibraryIngestQueueMixin:
                 "Failed to restore persisted ingest job history; starting empty."
             )
 
+    def _expand_library_ingest_source(self, source_path: str) -> list[str] | None:
+        """Expand a directory source into the files it contains.
+
+        Args:
+            source_path: The submitted source: a file path, a URL, or a
+                directory.
+
+        Returns:
+            ``None`` when ``source_path`` is not a directory (URLs and files
+            are submitted as-is), otherwise the list of contained file paths
+            -- which is empty when the directory holds nothing ingestible.
+        """
+        try:
+            candidate = Path(source_path).expanduser()
+            if not candidate.is_dir():
+                return None
+        except OSError:
+            # An unreadable/oversized path is not a directory we can expand;
+            # let the normal single-source path report the failure.
+            return None
+
+        raw_limit = get_cli_setting("library.ingest_directory_scan_limit", 1000)
+        try:
+            scan_limit = int(raw_limit)
+        except (TypeError, ValueError):
+            scan_limit = 1000
+
+        files, truncated = collect_directory_files(candidate, scan_limit)
+        if truncated:
+            logger.warning(
+                f"Library ingest directory {source_path!r} exceeded the scan "
+                f"limit of {scan_limit}; only the first {len(files)} files "
+                "were queued."
+            )
+        return [str(path) for path in files]
+
     def submit_library_ingest_job(
         self,
         *,
@@ -1837,8 +1874,53 @@ class LibraryIngestQueueMixin:
 
         Returns:
             The newly created job: ``QUEUED`` normally, or immediately
-            ``FAILED`` when ``media_db`` is unavailable.
+            ``FAILED`` when ``media_db`` is unavailable. A directory source
+            queues one job per contained file and returns the first of them,
+            so each file gets its own queue row, its own outcome and its own
+            retry -- one unsupported file no longer fails its siblings.
         """
+        expanded = self._expand_library_ingest_source(source_path)
+        if expanded is not None:
+            if not expanded:
+                empty_job = self.library_ingest_jobs.submit(
+                    source_path=source_path,
+                    title=title,
+                    author=author,
+                    keywords=keywords,
+                    perform_analysis=perform_analysis,
+                    chunk_enabled=chunk_enabled,
+                    chunk_size=chunk_size,
+                    detected_type="",
+                    ingest_options=ingest_options or {},
+                )
+                failed = self.library_ingest_jobs.mark_failed(
+                    empty_job.job_id,
+                    error="No files to ingest were found in this folder.",
+                )
+                return failed if failed is not None else empty_job
+            first_job: LibraryIngestJob | None = None
+            for expanded_path in expanded:
+                job = self.submit_library_ingest_job(
+                    source_path=expanded_path,
+                    ingest_options=ingest_options,
+                    # Title is per-file (the ingest form clears it on submit
+                    # for exactly this reason), so a folder's files each take
+                    # their own filename-derived title rather than all
+                    # sharing one. Author and keywords are batch metadata and
+                    # do carry across.
+                    title="",
+                    author=author,
+                    keywords=keywords,
+                    perform_analysis=perform_analysis,
+                    chunk_enabled=chunk_enabled,
+                    chunk_size=chunk_size,
+                )
+                if first_job is None:
+                    first_job = job
+            # ``expanded`` is non-empty here, so the loop always assigns.
+            assert first_job is not None
+            return first_job
+
         try:
             detected_type = classify_ingest_source(source_path) or ""
         except FileIngestionError:

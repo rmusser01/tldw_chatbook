@@ -30,6 +30,26 @@ def _safe_size(path: Path) -> int:
         return 0
 
 
+def collect_directory_files(directory: Path, scan_limit: int) -> tuple[list[Path], bool]:
+    """Expand a directory into the files an ingest submission should cover.
+
+    The public seam over :func:`_collect_files`, so that submitting a folder
+    and pre-flighting a folder walk it identically -- same recursion, same
+    symlink/hidden-entry skipping, same ``scan_limit``. A summary that
+    promises N files and a submission that queues a different N would be
+    worse than either alone.
+
+    Args:
+        directory: Directory to walk.
+        scan_limit: Maximum number of files to collect.
+
+    Returns:
+        A tuple of ``(files, truncated)``; ``truncated`` is ``True`` when
+        files beyond ``scan_limit`` were left uncollected.
+    """
+    return _collect_files(directory, scan_limit)
+
+
 def _collect_files(p: Path, scan_limit: int) -> tuple[list[Path], bool]:
     """Recursively collect files under ``p`` up to ``scan_limit``.
 
