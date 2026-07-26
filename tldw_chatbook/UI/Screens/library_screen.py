@@ -15135,7 +15135,13 @@ class LibraryScreen(BaseAppScreen):
         self.refresh(recompose=True)
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
-            notify(f"Created local workspace {workspace_name}.", severity="information")
+            # TASK-713: creation also makes the workspace active, which
+            # retargets Console's context from another screen - say so.
+            notify(
+                f"Created local workspace {workspace_name} and made it active; "
+                "Console now targets it.",
+                severity="information",
+            )
 
     def _open_study_section(self, initial_section: str = "dashboard") -> None:
         open_study_screen = getattr(self.app_instance, "open_study_screen", None)

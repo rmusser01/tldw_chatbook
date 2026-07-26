@@ -494,3 +494,28 @@ async def test_library_details_section_renders_grouped_headers_and_drops_policy_
         handoff_text = handoff_row.renderable.plain
         assert "2 eligible" in handoff_text
         assert "2 blocked" in handoff_text
+
+
+@pytest.mark.asyncio
+async def test_library_create_workspace_notification_names_console_retarget() -> None:
+    """TASK-713: the Library create toast must say the new workspace became
+    active and that Console now targets it - the cross-screen side effect was
+    previously unstated."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+        await _open_library_details(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+        screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause(0.3)
+
+        assert any(
+            "made it active" in message and "Console" in message
+            for message in notifications
+        ), f"expected an activation-aware creation toast, got {notifications!r}"

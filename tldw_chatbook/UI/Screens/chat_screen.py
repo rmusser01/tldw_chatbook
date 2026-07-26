@@ -1678,6 +1678,13 @@ class ChatScreen(BaseAppScreen):
         self.run_worker(
             self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
         )
+        # TASK-713: creation also activates the workspace and opens a tab;
+        # without a notification the whole sequence is invisible when the
+        # Workspace status row is scrolled out of view.
+        self.app_instance.notify(
+            f"Created {workspace_name} and switched Console to it.",
+            severity="information",
+        )
 
     @on(Button.Pressed, "#console-workspace-rag-scope-open")
     def on_console_workspace_rag_scope_open(self, event: Button.Pressed) -> None:
@@ -5029,6 +5036,18 @@ class ChatScreen(BaseAppScreen):
                 or active_workspace.workspace_id != workspace_id
             ):
                 registry_service.set_active_workspace(workspace_id)
+                # TASK-713: opening a row from another workspace's group
+                # retargets the whole Console context; the Workspace status
+                # row is usually scrolled out of view at that moment, so the
+                # side effect needs an explicit announcement.
+                switched = registry_service.get_active_workspace()
+                switched_name = (
+                    switched.name if switched is not None else workspace_id
+                )
+                self.app_instance.notify(
+                    f"Switched Console to {switched_name}.",
+                    severity="information",
+                )
             self._ensure_console_chat_store().set_workspace_context(
                 self._current_console_workspace_context()
             )
