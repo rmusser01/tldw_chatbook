@@ -6,7 +6,11 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Widgets.destination_rail import DestinationRailHandle
+from tldw_chatbook.Widgets.destination_rail import (
+    RAIL_SECTION_TOGGLE_PREFIX,
+    DestinationRailHandle,
+    DestinationRailSectionHeader,
+)
 
 
 class _HandleHarness(App[None]):
@@ -110,3 +114,79 @@ def test_shared_glyphs_match_the_console_originals():
 
     assert GLYPH_EXPANDED == console_glyphs.GLYPH_EXPANDED
     assert GLYPH_COLLAPSED == console_glyphs.GLYPH_COLLAPSED
+
+
+from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_INSPECTOR_LABEL
+from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
+
+
+def _console_handle(**overrides) -> ConsoleRailHandle:
+    kwargs = dict(
+        label="Context",
+        badge="",
+        button_id="console-rail-open",
+        badge_id="console-rail-badge",
+        side="left",
+    )
+    kwargs.update(overrides)
+    return ConsoleRailHandle(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_console_handle_is_a_destination_rail_handle():
+    assert issubclass(ConsoleRailHandle, DestinationRailHandle)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("side", "expected"), [
+    ("left", "Open Context rail"),
+    ("right", "Open Inspector rail"),
+])
+async def test_console_handle_keeps_its_fixed_tooltips(side, expected):
+    """Console's tooltips are fixed strings, not derived from the label."""
+    app = _HandleHarness(_console_handle(side=side, label="Anything"))
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#console-rail-open", Button).tooltip == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("badge", "expected"), [
+    ("1 approval", "1 appr"),
+    ("3 approvals", "3 appr"),
+    ("artifact", "art"),
+    ("something else", "something else"),
+])
+async def test_console_handle_abbreviates_right_side_badges(badge, expected):
+    app = _HandleHarness(_console_handle(side="right", badge=badge))
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        assert str(app.query_one("#console-rail-badge", Static).renderable) == expected
+
+
+@pytest.mark.asyncio
+async def test_console_handle_renames_the_inspector_label_on_the_right():
+    app = _HandleHarness(
+        _console_handle(side="right", label=CONSOLE_RAIL_INSPECTOR_LABEL)
+    )
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        assert str(app.query_one("#console-rail-open", Button).label) == "Inspector"
+
+
+@pytest.mark.asyncio
+async def test_console_handle_leaves_left_side_text_alone():
+    app = _HandleHarness(_console_handle(side="left", badge="1 approval"))
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        assert str(app.query_one("#console-rail-badge", Static).renderable) == "1 approval"
+
+
+def test_console_section_header_is_the_shared_widget():
+    from tldw_chatbook.Widgets.Console.console_rail_section import (
+        CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
+        ConsoleRailSectionHeader,
+    )
+
+    assert ConsoleRailSectionHeader is DestinationRailSectionHeader
+    assert CONSOLE_RAIL_SECTION_TOGGLE_PREFIX == RAIL_SECTION_TOGGLE_PREFIX
