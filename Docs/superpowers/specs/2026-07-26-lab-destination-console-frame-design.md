@@ -138,7 +138,28 @@ applied passes today, with the label invisible.
 | `#mcp-hub-rail Button.mcp-rail-row.is-active` | bundle 5906 | OK |
 | MCP audit-mode buttons | none — **deliberate**, documented at `mcp_audit_mode.py:209-212` | Intended |
 | `.workbench-mode.is-active` | bundle 6292 | OK |
-| `.library-collection-row` + `is-active` | **none anywhere** — only `library_collections_panel.py:153` and an `@on` at `library_screen.py:13326` | **SUSPECT** — needs a live look; not fixed blind |
+| `.library-collection-row` + `is-active` | **none anywhere** — only `library_collections_panel.py:153` and an `@on` at `library_screen.py:13326` | **RESOLVED — not the Lab defect.** Investigated live (see below) |
+
+### `.library-collection-row` — investigated, no fix
+
+`LibraryCollectionsPanel` was mounted with the production bundle and a selected row. The selected
+row does pick up the global `.is-active { border: round }`:
+
+```
+'Alpha - 1 item'    is-active=False  border=['','','','']              size=(16, 1)
+'Bravo - 1 item'    is-active=True   border=['round','round','round','round']  size=(16, 1)
+'Charlie - 1 item'  is-active=False  border=['','','','']              size=(18, 1)
+```
+
+But the rendered result is **not** the Lab defect. Lab's mode strip is height-constrained to one
+row, so the border's box clipped the label away entirely. The collections list has vertical room,
+so the bordered row simply grows to three rows and its label stays fully readable — it reads as a
+deliberate selection box.
+
+The one real observation is that a selected row is three rows tall while its siblings are one, so
+the list reflows as selection moves. That is a cosmetic inconsistency, not a defect, and changing
+it would alter Library's appearance to fix nothing. **No change made.** If Library's own design
+work later wants uniform row heights, this is where to start.
 
 ## Goals
 
