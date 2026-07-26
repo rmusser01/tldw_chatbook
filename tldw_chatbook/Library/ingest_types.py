@@ -26,6 +26,11 @@ class PreflightResult:
             is not known from the probe.
         truncated: ``True`` when a directory scan reached ``scan_limit``.
         total_files: Number of files discovered (``1`` for a reachable URL).
+        path_invalid: ``True`` when the errors are about the *path itself* --
+            missing, malformed, or neither a file nor a directory. Those are
+            not worth retrying: the same path will fail the same way, and the
+            fix is to correct it. A URL that failed to respond, by contrast,
+            may well succeed on a second attempt.
     """
 
     type_groups: dict[str, list[str]]
@@ -34,3 +39,4 @@ class PreflightResult:
     total_size: int
     truncated: bool
     total_files: int
+    path_invalid: bool = False

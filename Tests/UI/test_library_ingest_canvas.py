@@ -294,7 +294,9 @@ async def test_error_and_warning_markup_is_escaped():
         assert error_static.visual.plain == "[bold]not bold[/bold]"
 
         warning_static = pilot.app.query_one("#ingest-preflight-warning-0", Static)
-        assert warning_static.visual.plain == "⚠ Hint: [/bracket]"
+        assert warning_static.visual.plain == (
+            "⚠ Hint isn't installed — needed for [/bracket]."
+        )
 
 
 # --- Per-type options panels ------------------------------------------------
@@ -323,12 +325,14 @@ async def test_type_group_panels_render_for_detected_groups():
         pdf_panel = pilot.app.query_one("#type-group-pdf", Collapsible)
         generic_panel = pilot.app.query_one("#type-group-generic", Collapsible)
         assert "PDF documents" in str(pdf_panel.title)
-        assert "pdf_engine=" in str(pdf_panel.title)
+        assert "PDF engine: pymupdf4llm" in str(pdf_panel.title)
         assert "Plain text / documents / HTML" in str(generic_panel.title)
-        assert "chunk_size=" in str(generic_panel.title)
+        assert "Chunk size: 1000" in str(generic_panel.title)
 
         scope = pilot.app.query_one("#type-group-pdf .type-group-scope", Static)
-        assert "These options apply to all PDF documents files" in str(scope.renderable)
+        assert "Applies to all PDF documents in this import." in str(
+            scope.renderable
+        )
 
         assert pilot.app.query_one("#opt-pdf-reset", Button)
         assert pilot.app.query_one("#opt-generic-reset", Button)
@@ -411,7 +415,11 @@ async def test_non_dependent_controls_stay_enabled():
 async def test_chunk_size_disabled_when_chunk_unchecked():
     """Chunk size and overlap inputs are disabled until Chunk is checked."""
     form = _default_form()
+    # The panel renders from ``type_options``; the screen writes the scalar
+    # ``form.chunk`` mirror and this dict together on every toggle. Chunking
+    # is on by default now, so the off case has to be stated explicitly.
     form.chunk = False
+    form.type_options = {"generic": {"chunk": False}}
     state = build_library_ingest_state(
         (),
         form=form,
@@ -810,3 +818,160 @@ async def test_chunk_size_enabled_when_chunk_checked():
         assert (
             pilot.app.query_one("#opt-generic-chunk_overlap", Input).disabled is False
         )
+
+
+@pytest.mark.asyncio
+async def test_path_error_offers_a_way_to_pick_a_file_not_retry():
+    """A path that cannot be found offers correction, not Retry.
+
+    Re-running the same analysis against the same bad path fails identically,
+    so Retry was the wrong verb for the most common pre-flight error a
+    first-time user hits (task-666).
+    """
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=["Path not found: /tmp/nope.txt"],
+            total_size=0,
+            truncated=False,
+            total_files=0,
+            path_invalid=True,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        assert len(pilot.app.query("#ingest-preflight-retry")) == 0
+        assert pilot.app.query_one("#ingest-preflight-choose", Button)
+
+
+@pytest.mark.asyncio
+async def test_retryable_error_still_offers_retry():
+    """A URL that failed to respond is worth another attempt."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=["URL unreachable: timed out"],
+            total_size=0,
+            truncated=False,
+            total_files=0,
+            path_invalid=False,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#ingest-preflight-retry", Button)
+        assert len(pilot.app.query("#ingest-preflight-choose")) == 0
+
+
+@pytest.mark.asyncio
+async def test_option_panel_title_reads_as_plain_language():
+    """The collapsed panel title describes settings, not internal field names."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"pdf": ["/tmp/a.pdf"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            title = str(pilot.app.query_one("#type-group-pdf", Collapsible).title)
+
+    assert "pdf_engine=" not in title
+    assert "ocr=False" not in title
+    assert "PDF engine: pymupdf4llm" in title
+    assert "Enable OCR: off" in title
+
+
+def test_warning_line_does_not_repeat_itself():
+    """Warning copy names the gap once, then how to close it."""
+    from tldw_chatbook.Library.library_ingest_state import build_warning_lines
+
+    lines = build_warning_lines(
+        [
+            {
+                "feature": "pdf_processing",
+                "label": "PDF processing",
+                "hint": "PDF ingestion",
+                "command": 'pip install -e ".[pdf]"',
+            },
+            {
+                "feature": "audio_processing",
+                "label": "Audio processing",
+                "hint": "Audio processing",
+                "command": 'pip install -e ".[audio]"',
+            },
+        ]
+    )
+
+    assert lines[0] == (
+        "PDF processing isn't installed — needed for PDF ingestion. "
+        'Install it with: pip install -e ".[pdf]"'
+    )
+    # The label and the capability are the same words here, so say it once.
+    assert lines[1] == (
+        'Audio processing isn\'t installed. Install it with: pip install -e ".[audio]"'
+    )
+
+
+@pytest.mark.asyncio
+async def test_first_visit_explains_what_can_be_imported():
+    """An untouched form orients the user instead of showing blank space."""
+    state = build_library_ingest_state((), form=LibraryIngestFormState())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        first = str(pilot.app.query_one("#library-ingest-intro-0", Static).renderable)
+        second = str(pilot.app.query_one("#library-ingest-intro-1", Static).renderable)
+
+    assert "folder" in first and "URL" in first
+    assert "PDF documents" in first and "e-books" in first
+    assert "searchable" in second
+
+
+@pytest.mark.asyncio
+async def test_intro_gives_way_to_the_real_summary():
+    """Orientation never competes with an actual pre-flight result."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=10,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        assert len(pilot.app.query("#library-ingest-intro-0")) == 0
+
+
+@pytest.mark.asyncio
+async def test_clear_button_appears_only_with_a_path():
+    """The path field can be emptied in one press once it has content."""
+    empty = build_library_ingest_state((), form=LibraryIngestFormState())
+    app = _CanvasHost(empty)
+    async with app.run_test() as pilot:
+        assert len(pilot.app.query("#library-ingest-clear-path")) == 0
+
+    filled = build_library_ingest_state((), form=_default_form())
+    app = _CanvasHost(filled)
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#library-ingest-clear-path", Button)

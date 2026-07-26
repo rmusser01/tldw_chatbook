@@ -22,6 +22,18 @@ from tldw_chatbook.Library.library_ingest_state import (
 )
 
 
+def _summarise_option(field: Any, value: Any) -> str:
+    """Describe one option for the collapsed panel title, in plain language.
+
+    The title used to be a dump of internal field names and repr'd values
+    (``analyze=False, chunk=False, chunk_size=500, chunk_overlap=100``), which
+    told a first-time user nothing about what any of it does.
+    """
+    if field.type == "checkbox":
+        return f"{field.label}: {'on' if value else 'off'}"
+    return f"{field.label}: {value}"
+
+
 def _toggle_label(*, enabled: bool, text: str) -> str:
     """Return a toggle Button's visible label, ``✓``/``○`` convention."""
     marker = "✓" if enabled else "○"
@@ -74,14 +86,14 @@ class LibraryIngestCanvas(VerticalScroll):
         expanded: bool,
     ) -> Collapsible:
         """Build a collapsible options panel for one detected type group."""
-        scope_label = f"These options apply to all {cap.label} files in this selection."
+        scope_label = f"Applies to all {cap.label} in this import."
         children: list[Any] = [Static(scope_label, classes="type-group-scope")]
         summary_parts: list[str] = []
         cap_fields_by_name = {f.name: f for f in cap.fields}
 
         for field in cap.fields:
             value = values.get(field.name, field.default)
-            summary_parts.append(f"{field.name}={value}")
+            summary_parts.append(_summarise_option(field, value))
             # Two independent reasons a field can be uneditable: its tooling
             # is not installed, or the sibling field that gates it is off.
             disabled = field.depends_on is not None and not _is_installed(
@@ -178,12 +190,27 @@ class LibraryIngestCanvas(VerticalScroll):
             id="library-ingest-path",
             classes="library-ingest-field",
         )
-        yield Button(
-            "Browse…",
-            id="library-ingest-browse",
-            classes="library-canvas-action",
-            compact=True,
-        )
+        with Horizontal(classes="library-ingest-path-actions"):
+            yield Button(
+                "Browse…",
+                id="library-ingest-browse",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            if state.show_clear_path:
+                yield Button(
+                    "Clear",
+                    id="library-ingest-clear-path",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+        for index, line in enumerate(state.intro_lines):
+            yield Static(
+                line,
+                id=f"library-ingest-intro-{index}",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
         # Pre-flight summary replaces the old always-visible supported-types
         # line. All copy is taken straight from ``state``; this widget stays
         # render-only and does not compute pre-flight results itself.
@@ -202,12 +229,22 @@ class LibraryIngestCanvas(VerticalScroll):
                         id=f"ingest-preflight-error-{index}",
                         classes="library-ingest-quiet-line",
                     )
-                yield Button(
-                    "Retry",
-                    id="ingest-preflight-retry",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
+                if state.errors_are_path_problem:
+                    # Re-running the same analysis on the same bad path fails
+                    # identically; the useful action is picking a real one.
+                    yield Button(
+                        "Choose a file…",
+                        id="ingest-preflight-choose",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                else:
+                    yield Button(
+                        "Retry",
+                        id="ingest-preflight-retry",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
             if state.warning_lines:
                 for index, warning in enumerate(state.warning_lines):
                     yield Static(

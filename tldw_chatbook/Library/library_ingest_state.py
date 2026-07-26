@@ -14,12 +14,28 @@ from dataclasses import dataclass, field
 from pathlib import PurePath
 from typing import Any, Sequence
 
+from tldw_chatbook.Library.ingest_capabilities import get_capabilities
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
     IngestJobState,
     LibraryIngestJob,
 )
+
+
+def _generic_default(name: str, fallback: Any) -> Any:
+    """Return the ``generic`` group's declared default for ``name``.
+
+    The capability schema is the single source of ingest option defaults.
+    This form echo used to hard-code its own, which disagreed with it
+    (``analyze``, ``chunk_size``) and with the other ingest surface
+    (``chunk``) -- three answers to the same question, so a user's actual
+    defaults depended on which screen they happened to open.
+    """
+    for field_spec in get_capabilities("generic").fields:
+        if field_spec.name == name:
+            return field_spec.default
+    return fallback
 
 # Exact copy values (binding -- see the L3b plan's Global Constraints).
 INGEST_HEADER_COPY = "Import media"
@@ -29,6 +45,17 @@ INGEST_UNAVAILABLE_COPY = "Ingest is unavailable in this runtime."
 QUEUE_HEADING_COPY = "Queue"
 QUEUE_EMPTY_COPY = "No ingest jobs yet."
 START_QUIET_LINE_COPY = "Enter a file path to start."
+
+# First-visit orientation. Shown only while the form is untouched, so it fills
+# the otherwise-blank pane a new user lands on without ever competing with a
+# real pre-flight summary.
+INGEST_INTRO_WHAT_COPY = (
+    "Import a file, a whole folder, or a URL. Supported: {types}."
+)
+INGEST_INTRO_NEXT_COPY = (
+    "Imported items are searchable in your Library and can be used as "
+    "context in chat."
+)
 
 # Re-exported from library_ingest_jobs.py (the lowest-level pure module in
 # the Library ingest stack) rather than redefined here -- kept as a module
@@ -153,6 +180,20 @@ def build_estimate_line(total_files: int, total_size: int, truncated: bool) -> s
     return line
 
 
+def build_intro_lines() -> tuple[str, ...]:
+    """Return the first-visit orientation lines for the ingest canvas.
+
+    The supported-type list is derived from the same labels the pre-flight
+    breakdown uses, so what the empty state promises and what the analysis
+    reports cannot drift apart.
+    """
+    types = ", ".join(plural for _singular, plural in _TYPE_GROUP_LABELS.values())
+    return (
+        INGEST_INTRO_WHAT_COPY.format(types=types),
+        INGEST_INTRO_NEXT_COPY,
+    )
+
+
 def build_warning_lines(warnings: list[dict[str, Any]]) -> list[str]:
     """Build human-readable warning lines from pre-flight warning dicts.
 
@@ -162,21 +203,40 @@ def build_warning_lines(warnings: list[dict[str, Any]]) -> list[str]:
             and optionally ``command``.
 
     Returns:
-        A list of display strings such as ``"PDF processing: PyMuPDF is not
-        installed."``.
+        A list of display strings such as ``"PDF processing isn't installed —
+        needed for PDF ingestion. Install it with: pip install -e \\".[pdf]\\""``.
+
+        Each line names the missing thing, what it costs the user, and the
+        command that fixes it. The old shape pasted a label in front of a hint
+        that already contained it, producing "PDF processing: PDF processing is
+        unavailable: PDF ingestion." -- so the "needed for" clause is dropped
+        whenever it would merely repeat the label.
     """
     lines: list[str] = []
     for warning in warnings:
-        label = warning.get("label", "")
-        hint = warning.get("hint", "")
-        if label and hint:
-            lines.append(f"{label}: {hint}")
+        label = (warning.get("label") or "").strip()
+        hint = (warning.get("hint") or "").strip()
+        command = (warning.get("command") or "").strip()
+
+        # ``hint`` is normally a noun phrase ("PDF ingestion"), but a caller
+        # may hand over a whole sentence; trimming the terminator keeps the
+        # composed line from ending in "..".
+        hint = hint.rstrip(".").strip()
+
+        if label:
+            sentence = f"{label} isn't installed"
+            if hint and hint.casefold() != label.casefold():
+                sentence += f" — needed for {hint}"
+            sentence += "."
         elif hint:
-            lines.append(hint)
-        elif label:
-            lines.append(label)
+            sentence = f"{hint}."
         else:
             lines.append(str(warning))
+            continue
+
+        if command:
+            sentence += f" Install it with: {command}"
+        lines.append(sentence)
     return lines
 
 
@@ -227,9 +287,13 @@ class LibraryIngestFormState:
     title: str = ""
     author: str = ""
     keywords: str = ""
-    analyze: bool = False
-    chunk: bool = False
-    chunk_size: str = str(DEFAULT_CHUNK_SIZE)
+    analyze: bool = field(
+        default_factory=lambda: bool(_generic_default("analyze", False))
+    )
+    chunk: bool = field(default_factory=lambda: bool(_generic_default("chunk", False)))
+    chunk_size: str = field(
+        default_factory=lambda: str(_generic_default("chunk_size", DEFAULT_CHUNK_SIZE))
+    )
     advanced_open: bool = False
     expanded_type_groups: set[str] = field(default_factory=set)
     type_options: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -361,6 +425,15 @@ class LibraryIngestCanvasState:
     queue_rows: tuple[IngestQueueRow, ...]
     queue_show_clear_finished: bool
     errors: list[str]
+    #: ``True`` when the errors are about the path itself, so the canvas
+    #: offers a way to pick a different one instead of a Retry that would
+    #: fail identically.
+    errors_are_path_problem: bool
+    #: Orientation copy for a first visit; empty once the user has
+    #: typed a path or an analysis has produced a summary.
+    intro_lines: tuple[str, ...]
+    #: Whether to offer a one-press way to empty the path field.
+    show_clear_path: bool
     type_breakdown_line: str
     estimate_line: str
     warning_lines: list[str]
@@ -632,11 +705,15 @@ def build_library_ingest_state(
             active_preflight.truncated,
         )
         warning_lines = build_warning_lines(active_preflight.warnings)
+        errors_are_path_problem = bool(
+            errors and getattr(active_preflight, "path_invalid", False)
+        )
         type_groups_list = list(type_groups.keys())
     else:
         type_groups = {}
         unsupported_files = []
         errors = []
+        errors_are_path_problem = False
         type_breakdown_line = ""
         estimate_line = ""
         warning_lines = []
@@ -646,6 +723,12 @@ def build_library_ingest_state(
     # reachable even when no plain-text files are in the selection.
     if "generic" not in type_groups_list:
         type_groups_list.append("generic")
+
+    # Orientation is for an untouched form only: once there is a path or a
+    # summary to read, it would just be noise above the real content.
+    intro_lines: tuple[str, ...] = ()
+    if not form.path.strip() and active_preflight is None:
+        intro_lines = build_intro_lines()
 
     recent_jobs = [
         job
@@ -665,6 +748,9 @@ def build_library_ingest_state(
         queue_rows=queue_rows,
         queue_show_clear_finished=queue_show_clear_finished,
         errors=errors,
+        errors_are_path_problem=errors_are_path_problem,
+        intro_lines=intro_lines,
+        show_clear_path=bool(form.path.strip()),
         type_breakdown_line=type_breakdown_line,
         estimate_line=estimate_line,
         warning_lines=warning_lines,

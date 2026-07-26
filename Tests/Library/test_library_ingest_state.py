@@ -675,7 +675,9 @@ def test_build_warning_lines_empty():
 
 def test_build_warning_lines_label_and_hint():
     warnings = [{"label": "PDF processing", "hint": "PyMuPDF is not installed."}]
-    assert build_warning_lines(warnings) == ["PDF processing: PyMuPDF is not installed."]
+    assert build_warning_lines(warnings) == [
+        "PDF processing isn't installed — needed for PyMuPDF is not installed."
+    ]
 
 
 def test_build_warning_lines_falls_back_to_hint_only():
@@ -683,9 +685,35 @@ def test_build_warning_lines_falls_back_to_hint_only():
     assert build_warning_lines(warnings) == ["Something is missing."]
 
 
+def test_build_warning_lines_names_the_gap_and_the_fix():
+    """The composed line says what is missing, why it matters, and the fix.
+
+    The old shape pasted the label in front of a hint that already repeated
+    it, producing "PDF processing: PDF processing is unavailable: PDF
+    ingestion." (task-666).
+    """
+    warnings = [
+        {
+            "label": "PDF processing",
+            "hint": "PDF ingestion",
+            "command": 'pip install -e ".[pdf]"',
+        }
+    ]
+    assert build_warning_lines(warnings) == [
+        "PDF processing isn't installed — needed for PDF ingestion. "
+        'Install it with: pip install -e ".[pdf]"'
+    ]
+
+
+def test_build_warning_lines_does_not_repeat_the_label():
+    """When the label and the capability are the same words, say them once."""
+    warnings = [{"label": "Audio processing", "hint": "Audio processing"}]
+    assert build_warning_lines(warnings) == ["Audio processing isn't installed."]
+
+
 def test_build_warning_lines_label_only():
     warnings = [{"label": "PDF processing"}]
-    assert build_warning_lines(warnings) == ["PDF processing"]
+    assert build_warning_lines(warnings) == ["PDF processing isn't installed."]
 
 
 def test_build_warning_lines_empty_dict():
@@ -693,9 +721,12 @@ def test_build_warning_lines_empty_dict():
     assert build_warning_lines(warnings) == ["{}"]
 
 
-def test_build_warning_lines_ignores_command_key():
+def test_build_warning_lines_includes_the_install_command():
+    """The command is the actionable half; it belongs in the line."""
     warnings = [{"label": "PDF", "hint": "missing", "command": "pip install x"}]
-    assert build_warning_lines(warnings) == ["PDF: missing"]
+    assert build_warning_lines(warnings) == [
+        "PDF isn't installed — needed for missing. Install it with: pip install x"
+    ]
 
 
 # --- _human_size -----------------------------------------------------------
@@ -727,7 +758,7 @@ def test_canvas_state_preflight_fields_populated_from_parameter():
     state = build_library_ingest_state((), form=LibraryIngestFormState(), preflight=preflight)
     assert state.type_breakdown_line == "2 PDF documents"
     assert state.estimate_line == "2 files · 2.0 KB"
-    assert state.warning_lines == ["PDF: missing"]
+    assert state.warning_lines == ["PDF isn't installed — needed for missing."]
     assert state.errors == ["Path not found"]
     assert state.type_groups == ["pdf", "generic"]
     assert state.unsupported_files == []
@@ -842,3 +873,36 @@ def test_recent_jobs_limits_to_ten():
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     assert len(state.recent_jobs) == 10
+
+
+def test_form_defaults_come_from_the_capability_declaration() -> None:
+    """One declaration of defaults, not two that disagree.
+
+    The capability layer declared ``analyze=True, chunk_size=1000`` while the
+    form shipped ``analyze=False, chunk=False, chunk_size=500``, and the two
+    ingest surfaces disagreed about chunking on top of that. Whichever was
+    authoritative, they could not both be (task-667).
+    """
+    from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+
+    generic = {f.name: f.default for f in get_capabilities("generic").fields}
+    form = LibraryIngestFormState()
+
+    assert form.analyze is generic["analyze"]
+    assert form.chunk is generic["chunk"]
+    assert form.chunk_size == str(generic["chunk_size"])
+
+
+def test_chunking_is_on_by_default_and_analysis_is_off() -> None:
+    """Imports are chunked for retrieval; nothing calls an LLM unasked.
+
+    Chunking off by default meant imported documents were never chunked for
+    retrieval, quietly undermining search and RAG for anyone who never opened
+    the advanced panel. Analysis stays off because it costs an LLM call per
+    document at ingest time.
+    """
+    form = LibraryIngestFormState()
+
+    assert form.chunk is True
+    assert form.chunk_size == "1000"
+    assert form.analyze is False
