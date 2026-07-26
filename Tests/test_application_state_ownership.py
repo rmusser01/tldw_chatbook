@@ -136,7 +136,7 @@ class ScopedVisitor(ast.NodeVisitor):
         self.path = path
         self.classes: list[str] = []
         self.functions: list[str] = []
-        self.alias_scopes: list[dict[str, str | None]] = [{}]
+        self.alias_scopes: list[dict[str, frozenset[str]]] = [{}]
         self.alias_scope_kinds = ["module"]
 
     @property
@@ -159,72 +159,337 @@ class ScopedVisitor(ast.NodeVisitor):
             self.classes.pop()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self.functions.append(node.name)
-        self.alias_scopes.append({})
-        self.alias_scope_kinds.append("function")
-        try:
-            self.generic_visit(node)
-        finally:
-            self.alias_scope_kinds.pop()
-            self.alias_scopes.pop()
-            self.functions.pop()
+        self._visit_function_definition(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_function_definition(node)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self._visit_argument_expressions(node.args)
+        self.alias_scopes.append({})
+        self.alias_scope_kinds.append("function")
+        self._bind_arguments(node.args)
+        try:
+            self.visit(node.body)
+        finally:
+            self.alias_scope_kinds.pop()
+            self.alias_scopes.pop()
+
+    def _visit_function_definition(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> None:
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self._visit_argument_expressions(node.args)
+        if node.returns is not None:
+            self.visit(node.returns)
+        for type_parameter in getattr(node, "type_params", ()):
+            self.visit(type_parameter)
+
         self.functions.append(node.name)
         self.alias_scopes.append({})
         self.alias_scope_kinds.append("function")
+        self._bind_arguments(node.args)
         try:
-            self.generic_visit(node)
+            for statement in node.body:
+                self.visit(statement)
         finally:
             self.alias_scope_kinds.pop()
             self.alias_scopes.pop()
             self.functions.pop()
 
-    def visit_Lambda(self, node: ast.Lambda) -> None:
-        self.alias_scopes.append({})
-        self.alias_scope_kinds.append("function")
-        try:
-            self.generic_visit(node)
-        finally:
-            self.alias_scope_kinds.pop()
-            self.alias_scopes.pop()
+    def _visit_argument_expressions(self, arguments: ast.arguments) -> None:
+        for default in arguments.defaults:
+            self.visit(default)
+        for default in arguments.kw_defaults:
+            if default is not None:
+                self.visit(default)
+        for parameter in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+        ):
+            if parameter.annotation is not None:
+                self.visit(parameter.annotation)
+        if arguments.vararg is not None and arguments.vararg.annotation is not None:
+            self.visit(arguments.vararg.annotation)
+        if arguments.kwarg is not None and arguments.kwarg.annotation is not None:
+            self.visit(arguments.kwarg.annotation)
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        alias_kind = self._expression_alias_kind(node.value)
+        alias_kinds = self._expression_alias_kinds(node.value)
         self.visit(node.value)
         for target in node.targets:
             self.visit(target)
 
         if all(isinstance(target, ast.Name) for target in node.targets):
             for target in node.targets:
-                self.alias_scopes[-1][target.id] = alias_kind
+                self._bind_target(target, alias_kinds)
+        else:
+            for target in node.targets:
+                self._bind_target(target, frozenset())
 
-    def _expression_alias_kind(self, node: ast.AST) -> str | None:
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        alias_kinds = (
+            self._expression_alias_kinds(node.value)
+            if node.value is not None and isinstance(node.target, ast.Name)
+            else frozenset()
+        )
+        self.visit(node.annotation)
+        if node.value is not None:
+            self.visit(node.value)
+        self.visit(node.target)
+        self._bind_target(node.target, alias_kinds)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        alias_kinds = self._expression_alias_kinds(node.value)
+        self.visit(node.value)
+        self.visit(node.target)
+        self._bind_target(node.target, alias_kinds)
+
+    def visit_If(self, node: ast.If) -> None:
+        self.visit(node.test)
+        entry = dict(self.alias_scopes[-1])
+        body_environment = self._visit_statements_from_environment(node.body, entry)
+        else_environment = (
+            self._visit_statements_from_environment(node.orelse, entry)
+            if node.orelse
+            else entry
+        )
+        self.alias_scopes[-1] = self._join_environments(
+            entry,
+            body_environment,
+            else_environment,
+        )
+
+    def visit_For(self, node: ast.For) -> None:
+        self._visit_loop(node)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+        self._visit_loop(node)
+
+    def visit_While(self, node: ast.While) -> None:
+        self.visit(node.test)
+        entry = dict(self.alias_scopes[-1])
+        body_environment = self._visit_statements_from_environment(node.body, entry)
+        completed_body_environment = self._visit_statements_from_environment(
+            node.orelse,
+            body_environment,
+        )
+        zero_iteration_environment = self._visit_statements_from_environment(
+            node.orelse,
+            entry,
+        )
+        self.alias_scopes[-1] = self._join_environments(
+            entry,
+            body_environment,
+            completed_body_environment,
+            zero_iteration_environment,
+        )
+
+    def visit_With(self, node: ast.With) -> None:
+        self._visit_with(node)
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
+        self._visit_with(node)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.type is not None:
+            self.visit(node.type)
+        if node.name is not None:
+            self.alias_scopes[-1][node.name] = frozenset()
+        for statement in node.body:
+            self.visit(statement)
+
+    def visit_Try(self, node: ast.Try) -> None:
+        self._visit_try(node)
+
+    def visit_TryStar(self, node: ast.TryStar) -> None:
+        self._visit_try(node)
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        self._visit_comprehension(node.generators, [node.elt])
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        self._visit_comprehension(node.generators, [node.elt])
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        self._visit_comprehension(node.generators, [node.elt])
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        self._visit_comprehension(node.generators, [node.key, node.value])
+
+    def _bind_arguments(self, arguments: ast.arguments) -> None:
+        parameters = [
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+        ]
+        if arguments.vararg is not None:
+            parameters.append(arguments.vararg)
+        if arguments.kwarg is not None:
+            parameters.append(arguments.kwarg)
+        for parameter in parameters:
+            self.alias_scopes[-1][parameter.arg] = self._seed_alias_kinds(parameter.arg)
+
+    def _bind_target(
+        self,
+        target: ast.AST,
+        alias_kinds: frozenset[str],
+    ) -> None:
+        if isinstance(target, ast.Name):
+            self.alias_scopes[-1][target.id] = alias_kinds
+            return
+        if isinstance(target, ast.Starred):
+            self._bind_target(target.value, frozenset())
+            return
+        if isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                self._bind_target(element, frozenset())
+
+    def _visit_loop(self, node: ast.For | ast.AsyncFor) -> None:
+        self.visit(node.iter)
+        entry = dict(self.alias_scopes[-1])
+        original = self.alias_scopes[-1]
+        self.alias_scopes[-1] = dict(entry)
+        try:
+            self.visit(node.target)
+            self._bind_target(node.target, frozenset())
+            for statement in node.body:
+                self.visit(statement)
+            body_environment = dict(self.alias_scopes[-1])
+        finally:
+            self.alias_scopes[-1] = original
+        completed_body_environment = self._visit_statements_from_environment(
+            node.orelse,
+            body_environment,
+        )
+        zero_iteration_environment = self._visit_statements_from_environment(
+            node.orelse,
+            entry,
+        )
+        self.alias_scopes[-1] = self._join_environments(
+            entry,
+            body_environment,
+            completed_body_environment,
+            zero_iteration_environment,
+        )
+
+    def _visit_with(self, node: ast.With | ast.AsyncWith) -> None:
+        for item in node.items:
+            self.visit(item.context_expr)
+            if item.optional_vars is not None:
+                self.visit(item.optional_vars)
+                self._bind_target(item.optional_vars, frozenset())
+        for statement in node.body:
+            self.visit(statement)
+
+    def _visit_comprehension(
+        self,
+        generators: list[ast.comprehension],
+        result_expressions: list[ast.expr],
+    ) -> None:
+        self.alias_scopes.append({})
+        self.alias_scope_kinds.append("function")
+        try:
+            for generator in generators:
+                self.visit(generator.iter)
+                self.visit(generator.target)
+                self._bind_target(generator.target, frozenset())
+                for condition in generator.ifs:
+                    self.visit(condition)
+            for expression in result_expressions:
+                self.visit(expression)
+        finally:
+            self.alias_scope_kinds.pop()
+            self.alias_scopes.pop()
+
+    def _visit_try(self, node: ast.Try | ast.TryStar) -> None:
+        entry = dict(self.alias_scopes[-1])
+        original = self.alias_scopes[-1]
+        self.alias_scopes[-1] = dict(entry)
+        body_snapshots = [entry]
+        try:
+            for statement in node.body:
+                self.visit(statement)
+                body_snapshots.append(dict(self.alias_scopes[-1]))
+            body_environment = dict(self.alias_scopes[-1])
+        finally:
+            self.alias_scopes[-1] = original
+
+        normal_environment = self._visit_statements_from_environment(
+            node.orelse,
+            body_environment,
+        )
+        handler_entry = self._join_environments(entry, *body_snapshots)
+        handler_environments = [
+            self._visit_statements_from_environment([handler], handler_entry)
+            for handler in node.handlers
+        ]
+        continuing_environment = self._join_environments(
+            entry,
+            normal_environment,
+            *handler_environments,
+        )
+        self.alias_scopes[-1] = self._visit_statements_from_environment(
+            node.finalbody,
+            continuing_environment,
+        )
+
+    def _visit_statements_from_environment(
+        self,
+        statements: list[ast.AST],
+        environment: dict[str, frozenset[str]],
+    ) -> dict[str, frozenset[str]]:
+        original = self.alias_scopes[-1]
+        self.alias_scopes[-1] = dict(environment)
+        try:
+            for statement in statements:
+                self.visit(statement)
+            return dict(self.alias_scopes[-1])
+        finally:
+            self.alias_scopes[-1] = original
+
+    def _join_environments(
+        self,
+        entry: dict[str, frozenset[str]],
+        *alternatives: dict[str, frozenset[str]],
+    ) -> dict[str, frozenset[str]]:
+        names = set(entry)
+        for alternative in alternatives:
+            names.update(alternative)
+        return {
+            name: frozenset().union(
+                *(
+                    self._alias_kinds_in_environment(name, alternative)
+                    for alternative in alternatives
+                )
+            )
+            for name in names
+        }
+
+    def _alias_kinds_in_environment(
+        self,
+        name: str,
+        environment: dict[str, frozenset[str]],
+    ) -> frozenset[str]:
+        if name in environment:
+            return environment[name]
+        return self._outer_or_seed_alias_kinds(name)
+
+    def _expression_alias_kinds(self, node: ast.AST) -> frozenset[str]:
+        if isinstance(node, ast.NamedExpr):
+            return self._expression_alias_kinds(node.value)
+
         if isinstance(node, ast.Name):
-            for index in range(len(self.alias_scopes) - 1, -1, -1):
-                scope = self.alias_scopes[index]
-                if (
-                    self.alias_scope_kinds[index] == "class"
-                    and "function" in (self.alias_scope_kinds[index + 1 :])
-                ):
-                    continue
-                if node.id in scope:
-                    return scope[node.id]
-            if node.id == "app" or node.id == "app_instance":
-                return APP_ALIAS
-            if node.id in CONTEXT_RECEIVER_NAMES:
-                return CONTEXT_ALIAS
-            if node.id in {"runtime_store", "runtime_policy_store"}:
-                return STORE_ALIAS
-            if node.id == RUNTIME_STORE_TYPE:
-                return STORE_TYPE_ALIAS
-            if self.path == APP_PATH and node.id == "self":
-                return APP_ALIAS
-            return None
+            if node.id in self.alias_scopes[-1]:
+                return self.alias_scopes[-1][node.id]
+            return self._outer_or_seed_alias_kinds(node.id)
 
         if isinstance(node, ast.Attribute):
-            return self._attribute_alias_kind(
-                self._expression_alias_kind(node.value),
+            return self._attribute_alias_kinds(
+                self._expression_alias_kinds(node.value),
                 node.attr,
                 chain=_chain(node),
             )
@@ -237,42 +502,66 @@ class ScopedVisitor(ast.NodeVisitor):
         ):
             attribute = _constant_attribute_name(node)
             if attribute is None:
-                return None
-            return self._attribute_alias_kind(
-                self._expression_alias_kind(node.args[0]),
+                return frozenset()
+            return self._attribute_alias_kinds(
+                self._expression_alias_kinds(node.args[0]),
                 attribute,
                 chain=_chain(node),
             )
 
-        if (
-            isinstance(node, ast.Call)
-            and self._expression_alias_kind(node.func) == STORE_TYPE_ALIAS
-        ):
-            return STORE_ALIAS
-        return None
+        if isinstance(
+            node, ast.Call
+        ) and STORE_TYPE_ALIAS in self._expression_alias_kinds(node.func):
+            return frozenset({STORE_ALIAS})
+        return frozenset()
+
+    def _outer_or_seed_alias_kinds(self, name: str) -> frozenset[str]:
+        for index in range(len(self.alias_scopes) - 2, -1, -1):
+            scope = self.alias_scopes[index]
+            if (
+                self.alias_scope_kinds[index] == "class"
+                and "function" in (self.alias_scope_kinds[index + 1 :])
+            ):
+                continue
+            if name in scope:
+                return scope[name]
+        return self._seed_alias_kinds(name)
+
+    def _seed_alias_kinds(self, name: str) -> frozenset[str]:
+        if name in {"app", "app_instance"}:
+            return frozenset({APP_ALIAS})
+        if name in CONTEXT_RECEIVER_NAMES:
+            return frozenset({CONTEXT_ALIAS})
+        if name in {"runtime_store", "runtime_policy_store"}:
+            return frozenset({STORE_ALIAS})
+        if name == RUNTIME_STORE_TYPE:
+            return frozenset({STORE_TYPE_ALIAS})
+        if self.path == APP_PATH and name == "self":
+            return frozenset({APP_ALIAS})
+        return frozenset()
 
     @staticmethod
-    def _attribute_alias_kind(
-        base_kind: str | None,
+    def _attribute_alias_kinds(
+        base_kinds: frozenset[str],
         attribute: str,
         *,
         chain: str,
-    ) -> str | None:
+    ) -> frozenset[str]:
         if attribute == RUNTIME_STORE_TYPE:
-            return STORE_TYPE_ALIAS
+            return frozenset({STORE_TYPE_ALIAS})
         if attribute == "app" and chain == "self.app":
-            return APP_ALIAS
+            return frozenset({APP_ALIAS})
         if attribute == "app_instance":
-            return APP_ALIAS
+            return frozenset({APP_ALIAS})
         if attribute in CONTEXT_RECEIVER_NAMES:
-            return CONTEXT_ALIAS
+            return frozenset({CONTEXT_ALIAS})
         if chain == "self._store":
-            return STORE_ALIAS
-        if attribute in {"store", "_store"} and base_kind == CONTEXT_ALIAS:
-            return STORE_ALIAS
+            return frozenset({STORE_ALIAS})
+        if attribute in {"store", "_store"} and CONTEXT_ALIAS in base_kinds:
+            return frozenset({STORE_ALIAS})
         if attribute in {"runtime_store", "runtime_policy_store"}:
-            return STORE_ALIAS
-        return None
+            return frozenset({STORE_ALIAS})
+        return frozenset()
 
 
 class ProjectionWriteVisitor(ScopedVisitor):
@@ -284,7 +573,7 @@ class ProjectionWriteVisitor(ScopedVisitor):
         if (
             node.attr in PROJECTION_NAMES
             and isinstance(node.ctx, (ast.Store, ast.Del))
-            and self._expression_alias_kind(node.value) == APP_ALIAS
+            and APP_ALIAS in self._expression_alias_kinds(node.value)
         ):
             self.writes.append(self._describe(node, node.attr))
         self.generic_visit(node)
@@ -296,9 +585,8 @@ class ProjectionWriteVisitor(ScopedVisitor):
             and node.args
         ):
             name = _constant_attribute_name(node)
-            if (
-                name in PROJECTION_NAMES
-                and self._expression_alias_kind(node.args[0]) == APP_ALIAS
+            if name in PROJECTION_NAMES and APP_ALIAS in self._expression_alias_kinds(
+                node.args[0]
             ):
                 self.writes.append(self._describe(node, name))
         self.generic_visit(node)
@@ -318,14 +606,14 @@ class ContextOwnershipVisitor(ScopedVisitor):
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         receiver = _chain(node.value)
-        receiver_kind = self._expression_alias_kind(node.value)
+        receiver_kinds = self._expression_alias_kinds(node.value)
         if (
             node.attr == RUNTIME_STORE_TYPE
             and isinstance(node.ctx, ast.Load)
             and self.path not in RUNTIME_STORE_OWNER_PATHS
         ):
             self._record(node, "runtime source-state store reference")
-        if node.attr in {"store", "_store"} and receiver_kind == CONTEXT_ALIAS:
+        if node.attr in {"store", "_store"} and CONTEXT_ALIAS in receiver_kinds:
             self._record(node, "context-store access")
         if (
             node.attr == "_store"
@@ -337,7 +625,7 @@ class ContextOwnershipVisitor(ScopedVisitor):
             ) or id(node) in self.allowed_owner_store_loads
             if not allowed:
                 self._record(node, "owner private-store access outside commit")
-        if node.attr == "persist" and receiver_kind == CONTEXT_ALIAS:
+        if node.attr == "persist" and CONTEXT_ALIAS in receiver_kinds:
             self._record(node, "removed persist access")
         if (
             node.attr == "store"
@@ -349,7 +637,7 @@ class ContextOwnershipVisitor(ScopedVisitor):
             node.attr == "state"
             and isinstance(node.ctx, (ast.Store, ast.Del))
             and (
-                receiver_kind == CONTEXT_ALIAS
+                CONTEXT_ALIAS in receiver_kinds
                 or (self.class_name == "RuntimePolicyContext" and receiver == "self")
             )
         ):
@@ -357,22 +645,32 @@ class ContextOwnershipVisitor(ScopedVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
+        function_kinds = self._expression_alias_kinds(node.func)
+        if self.path not in RUNTIME_STORE_OWNER_PATHS:
+            if (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and _constant_attribute_name(node) == RUNTIME_STORE_TYPE
+            ):
+                self._record(node, "runtime source-state store reference")
+            if STORE_TYPE_ALIAS in function_kinds:
+                self._record(node, "runtime source-state store construction")
         if isinstance(node.func, ast.Attribute):
             receiver = _chain(node.func.value)
-            receiver_kind = self._expression_alias_kind(node.func.value)
+            receiver_kinds = self._expression_alias_kinds(node.func.value)
             direct_owner_store_save = (
                 node.func.attr == "save"
                 and isinstance(node.func.value, ast.Attribute)
                 and receiver == "self._store"
                 and id(node.func.value) in self.allowed_owner_store_loads
             )
-            if node.func.attr == "save" and receiver_kind == STORE_ALIAS:
+            if node.func.attr == "save" and STORE_ALIAS in receiver_kinds:
                 if not direct_owner_store_save:
                     self._record(node, "runtime store save outside commit")
         if isinstance(node.func, ast.Name) and node.args:
             attribute_name = _constant_attribute_name(node)
             target = node.args[0]
-            context_target = self._expression_alias_kind(target) == CONTEXT_ALIAS or (
+            context_target = CONTEXT_ALIAS in self._expression_alias_kinds(target) or (
                 self.class_name == "RuntimePolicyContext" and _chain(target) == "self"
             )
             if (
@@ -604,6 +902,321 @@ class UnrelatedDomain:
 
 
 @pytest.mark.parametrize(
+    "definition",
+    [
+        "def f(authority):\n    authority.state = candidate",
+        "def f(authority, /):\n    authority.state = candidate",
+        "def f(*authority):\n    authority.state = candidate",
+        "def f(*, authority):\n    authority.state = candidate",
+        "def f(**authority):\n    authority.state = candidate",
+        "async def f(authority):\n    authority.state = candidate",
+    ],
+)
+def test_context_aliases_are_shadowed_by_all_function_parameter_kinds(
+    definition: str,
+) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            f"""
+authority = runtime_context
+{definition}
+"""
+        )
+    )
+
+    assert visitor.violations == []
+
+
+@pytest.mark.parametrize("parameter", ["app", "app_instance"])
+def test_projection_guard_seeds_recognized_app_parameter_names(
+    parameter: str,
+) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ProjectionWriteVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            f"""
+def update({parameter}):
+    {parameter}.runtime_backend = "server"
+"""
+        )
+    )
+
+    assert visitor.writes
+
+
+@pytest.mark.parametrize(
+    ("parameter", "operation"),
+    [
+        ("ctx", "ctx.state = candidate"),
+        ("runtime_context", "runtime_context.state = candidate"),
+        ("runtime_store", "runtime_store.save(candidate)"),
+        ("runtime_policy_store", "runtime_policy_store.save(candidate)"),
+        ("RuntimeSourceStateStore", "RuntimeSourceStateStore(path)"),
+    ],
+)
+def test_context_guard_seeds_recognized_context_and_store_parameter_names(
+    parameter: str,
+    operation: str,
+) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            f"""
+def update({parameter}):
+    {operation}
+"""
+        )
+    )
+
+    assert visitor.violations
+
+
+def test_context_alias_is_shadowed_by_lambda_parameter() -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            """
+authority = runtime_context
+callback = lambda authority: authority._store.save(candidate)
+"""
+        )
+    )
+
+    assert visitor.violations == []
+
+
+@pytest.mark.parametrize(
+    "definition",
+    [
+        """
+def update(authority=getattr(authority, "persist")):
+    authority.state = candidate
+""",
+        """
+callback = lambda authority=getattr(authority, "persist"): authority.state
+""",
+    ],
+)
+def test_parameter_defaults_use_outer_alias_before_shadowing(
+    definition: str,
+) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            f"""
+authority = runtime_context
+{definition}
+"""
+        )
+    )
+
+    assert len(visitor.violations) == 1
+    assert visitor.violations[0].endswith(":dynamic context-sensitive access")
+
+
+def test_context_alias_survives_if_without_else_at_branch_join() -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            """
+authority = runtime_context
+if condition:
+    authority = widget
+authority.state = candidate
+"""
+        )
+    )
+
+    assert visitor.violations
+
+
+def test_context_alias_is_forgotten_when_both_if_branches_are_unrelated() -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            """
+authority = runtime_context
+if condition:
+    authority = widget
+else:
+    authority = other_widget
+authority.state = candidate
+"""
+        )
+    )
+
+    assert visitor.violations == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+authority = runtime_context
+authority: object = widget
+authority.state = candidate
+""",
+        """
+authority = runtime_context
+(authority := widget)
+authority.state = candidate
+""",
+        """
+authority = runtime_context
+with manager as authority:
+    authority.state = candidate
+""",
+        """
+authority = runtime_context
+try:
+    operation()
+except Exception as authority:
+    authority.state = candidate
+""",
+        """
+authority = runtime_context
+authority, other = widget, item
+authority.state = candidate
+""",
+    ],
+)
+def test_context_alias_bindings_tombstone_unrelated_values(source: str) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(_parse_snippet(source))
+
+    assert visitor.violations == []
+
+
+def test_exception_target_tombstone_joins_with_normal_path() -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            """
+authority = runtime_context
+try:
+    operation()
+except Exception as authority:
+    pass
+authority.state = candidate
+"""
+        )
+    )
+
+    assert visitor.violations
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+authority: object = runtime_context
+authority.state = candidate
+""",
+        """
+(authority := runtime_context)
+authority.state = candidate
+""",
+    ],
+)
+def test_context_alias_bindings_propagate_recognized_values(source: str) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(_parse_snippet(source))
+
+    assert visitor.violations
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+authority = runtime_context
+for item in items:
+    authority = widget
+authority.state = candidate
+""",
+        """
+authority = runtime_context
+while condition:
+    authority = widget
+authority.state = candidate
+""",
+        """
+async def check():
+    authority = runtime_context
+    async for item in items:
+        authority = widget
+    authority.state = candidate
+""",
+    ],
+)
+def test_context_alias_survives_possible_zero_iteration_loop(source: str) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(_parse_snippet(source))
+
+    assert visitor.violations
+
+
+def test_loop_target_is_unknown_inside_loop_but_outer_alias_survives() -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            """
+authority = runtime_context
+for authority in items:
+    getattr(authority, "persist")
+authority.state = candidate
+"""
+        )
+    )
+
+    assert len(visitor.violations) == 1
+    assert visitor.violations[0].endswith(":context-state mutation")
+
+
+def test_comprehension_target_shadows_without_leaking_context_alias() -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet(
+            """
+authority = runtime_context
+callbacks = [getattr(authority, "persist") for authority in widgets]
+authority.state = candidate
+"""
+        )
+    )
+
+    assert len(visitor.violations) == 1
+    assert visitor.violations[0].endswith(":context-state mutation")
+
+
+@pytest.mark.parametrize(
     "source",
     [
         """
@@ -626,6 +1239,49 @@ def test_context_guard_rejects_runtime_store_type_references_and_aliases(
     visitor.visit(_parse_snippet(source))
 
     assert visitor.violations
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'factory = getattr(source_state, "RuntimeSourceStateStore")',
+        'getattr(source_state, "RuntimeSourceStateStore")(path)',
+        (
+            'getattr(getattr(runtime_policy, "source_state"), '
+            '"RuntimeSourceStateStore")(path)'
+        ),
+        ('register_store(getattr(source_state, "RuntimeSourceStateStore")(path))'),
+    ],
+)
+def test_context_guard_rejects_constant_getattr_runtime_store_access(
+    source: str,
+) -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(_parse_snippet(source))
+
+    assert visitor.violations
+
+
+@pytest.mark.parametrize("path", [SOURCE_STATE_PATH, BOOTSTRAP_PATH])
+def test_runtime_store_owner_modules_may_use_constant_getattr(path: Path) -> None:
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(
+        _parse_snippet('store = getattr(source_state, "RuntimeSourceStateStore")(path)')
+    )
+
+    assert visitor.violations == []
+
+
+def test_context_guard_ignores_unrelated_constant_getattr_construction() -> None:
+    path = PROJECT_ROOT / "tldw_chatbook" / "ownership_guard_probe.py"
+    visitor = ContextOwnershipVisitor(path)
+
+    visitor.visit(_parse_snippet('getattr(source_state, "WidgetStore")(path)'))
+
+    assert visitor.violations == []
 
 
 def test_context_guard_rejects_non_owner_self_store_save() -> None:
