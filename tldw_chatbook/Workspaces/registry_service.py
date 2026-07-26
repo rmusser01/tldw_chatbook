@@ -78,6 +78,7 @@ class LocalWorkspaceRegistryService:
             created_at=now,
             updated_at=now,
         )
+        self._reject_duplicate_name(record.name)
         try:
             with self.db.transaction() as conn:
                 conn.execute(
@@ -183,6 +184,7 @@ class LocalWorkspaceRegistryService:
         safe_name = str(name or "").strip()
         if not safe_name:
             raise WorkspaceRegistryServiceError("Workspace name cannot be blank.")
+        self._reject_duplicate_name(safe_name, exclude_workspace_id=safe_workspace_id)
         if safe_workspace_id == DEFAULT_WORKSPACE_ID:
             raise WorkspaceRegistryServiceError(
                 "The Default workspace cannot be renamed."
@@ -256,6 +258,53 @@ class LocalWorkspaceRegistryService:
         if archived is None:
             raise WorkspaceRegistryServiceError("Workspace archive failed.")
         return archived
+
+    def unarchive_workspace(self, workspace_id: str) -> WorkspaceRecord:
+        """Restore an archived workspace to listings (spec §2).
+
+        Never auto-activates: the user chooses when to switch.
+
+        Raises:
+            WorkspaceNotFound: Unknown or not-archived workspace.
+            WorkspaceRegistryServiceError: Storage failure.
+        """
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        record = self.get_workspace(safe_workspace_id)
+        if record is None or not record.archived:
+            raise WorkspaceNotFound(safe_workspace_id)
+        now = self._now_factory()
+        try:
+            with self.db.transaction() as conn:
+                conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET archived = 0, updated_at = ?
+                    WHERE workspace_id = ?
+                    """,
+                    (now, safe_workspace_id),
+                )
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        restored = self.get_workspace(safe_workspace_id)
+        if restored is None:
+            raise WorkspaceRegistryServiceError("Workspace unarchive failed.")
+        return restored
+
+    def _reject_duplicate_name(
+        self, name: str, *, exclude_workspace_id: str | None = None
+    ) -> None:
+        """Raise when a non-archived workspace already uses ``name``.
+
+        Case-insensitive; archived workspaces do not block reuse (spec §2).
+        """
+        needle = name.strip().casefold()
+        for record in self.list_workspaces():
+            if exclude_workspace_id and record.workspace_id == exclude_workspace_id:
+                continue
+            if str(record.name or "").strip().casefold() == needle:
+                raise WorkspaceRegistryServiceError(
+                    f"A workspace named {name} already exists."
+                )
 
     def set_active_workspace(self, workspace_id: str) -> WorkspaceRecord:
         """Set exactly one active workspace."""

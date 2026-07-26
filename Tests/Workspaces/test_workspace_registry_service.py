@@ -509,3 +509,56 @@ def test_archive_workspace_protects_default_and_unknown(tmp_path: Path) -> None:
         service.archive_workspace(DEFAULT_WORKSPACE_ID)
     with pytest.raises(WorkspaceNotFound):
         service.archive_workspace("ws-missing")
+
+
+# --- TASK-1: unarchive + duplicate-name guard --------------------------------
+
+
+def test_unarchive_workspace_restores_listing_without_activating(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+    service.create_workspace(workspace_id="ws-a", name="Workspace 1")
+    service.set_active_workspace("ws-a")
+    service.archive_workspace("ws-a")
+
+    restored = service.unarchive_workspace("ws-a")
+
+    assert restored.archived is False
+    assert restored.active is False  # never auto-activates
+    listed = {record.workspace_id for record in service.list_workspaces()}
+    assert "ws-a" in listed
+    active = service.get_active_workspace()
+    assert active is not None and active.workspace_id == DEFAULT_WORKSPACE_ID
+
+
+def test_unarchive_workspace_rejects_unknown_and_unarchived(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace 1")
+
+    with pytest.raises(WorkspaceNotFound):
+        service.unarchive_workspace("ws-missing")
+    with pytest.raises(WorkspaceNotFound):
+        service.unarchive_workspace("ws-a")  # not archived
+
+
+def test_duplicate_names_rejected_case_insensitively(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Client A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace 2")
+
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.rename_workspace("ws-b", "client a")
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.create_workspace(workspace_id="ws-c", name="CLIENT A")
+    # Renaming to its own current name (case-changed) is allowed.
+    renamed = service.rename_workspace("ws-a", "client A")
+    assert renamed.name == "client A"
+
+
+def test_archived_names_do_not_block_reuse(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Client A")
+    service.archive_workspace("ws-a")
+
+    created = service.create_workspace(workspace_id="ws-b", name="Client A")
+    assert created.name == "Client A"
