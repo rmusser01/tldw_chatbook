@@ -10,7 +10,7 @@ booting the TUI, mirroring ``library_notes_sync_state.py``.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import PurePath
 from typing import Any, Sequence
 
@@ -341,6 +341,10 @@ class IngestQueueRow:
     can_dismiss: bool = False
     media_id: int | None = None
     state: IngestJobState | None = None
+    #: Where the job runs, mirrored from ``LibraryIngestJob.origin``, so the
+    #: widget layer can style or filter by backend without reaching past
+    #: this state object into the registry.
+    origin: str = "local"
     source_path: str = ""
     progress: dict[str, Any] | None = None
     error_detail: dict[str, Any] | None = None
@@ -480,7 +484,7 @@ def _format_elapsed(
     return f"{minutes}m {seconds}s"
 
 
-def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
+def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
     """Build one ``IngestQueueRow`` from a registry job snapshot.
 
     Binding row-line formats (see the L3b plan; F3 splits the old single
@@ -620,6 +624,34 @@ def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
         if counts[state.value]
     )
 
+
+
+#: Suffix appended to a queue row for a job that runs on the server. Local is
+#: the overwhelmingly common case, so it stays unannotated rather than every
+#: row carrying a backend tag.
+_SERVER_ROW_SUFFIX = " · on server"
+
+
+def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
+    """Build a queue row, then stamp where the job runs.
+
+    The per-state builder returns from one of several branches; annotating the
+    origin here rather than in each of them means a new state cannot silently
+    ship without the marker. Once local and server ingests share one queue,
+    "done · notes.txt" alone cannot tell the user which machine did the work.
+
+    Args:
+        job: The job to render.
+        now: The "current" monotonic time, for elapsed-time formatting.
+
+    Returns:
+        The rendered row, with ``origin`` mirrored and the line marked when the
+        job is not local.
+    """
+    row = _build_queue_row_for_state(job, now=now)
+    if job.origin == "local":
+        return replace(row, origin=job.origin)
+    return replace(row, origin=job.origin, line=f"{row.line}{_SERVER_ROW_SUFFIX}")
 
 def build_library_ingest_state(
     jobs: Sequence[LibraryIngestJob],

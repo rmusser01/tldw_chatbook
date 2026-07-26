@@ -906,3 +906,68 @@ def test_chunking_is_on_by_default_and_analysis_is_off() -> None:
     assert form.chunk is True
     assert form.chunk_size == "1000"
     assert form.analyze is False
+
+
+# --- queue row origin (task-684.2) ------------------------------------------
+
+
+def _row_for(job: LibraryIngestJob):
+    from tldw_chatbook.Library.library_ingest_state import _build_queue_row
+
+    return _build_queue_row(job, now=100.0)
+
+
+def test_queue_row_marks_a_server_job():
+    """A row has to say where the job runs, or two backends look identical.
+
+    Once local and server ingests share one queue, "done · notes.txt" alone
+    cannot tell the user which machine did the work (task-684.2).
+    """
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/notes.txt",
+        state=IngestJobState.QUEUED,
+        origin="server",
+    )
+
+    row = _row_for(job)
+
+    assert row.origin == "server"
+    assert "server" in row.line.lower()
+
+
+def test_queue_row_does_not_clutter_a_local_job():
+    """Local is the overwhelmingly common case and stays unannotated."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/notes.txt",
+        state=IngestJobState.QUEUED,
+    )
+
+    row = _row_for(job)
+
+    assert row.origin == "local"
+    assert "server" not in row.line.lower()
+    assert row.line == "● queued · notes.txt"
+
+
+def test_server_origin_is_marked_in_every_state():
+    """The marker cannot depend on which state branch built the row."""
+    for state in (
+        IngestJobState.QUEUED,
+        IngestJobState.PARSING,
+        IngestJobState.WRITING,
+        IngestJobState.DONE,
+        IngestJobState.FAILED,
+    ):
+        job = LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/notes.txt",
+            state=state,
+            origin="server",
+            media_id=1 if state == IngestJobState.DONE else None,
+            error="boom" if state == IngestJobState.FAILED else "",
+        )
+        row = _row_for(job)
+        assert "server" in row.line.lower(), f"{state.value} row lost the marker"
+        assert row.origin == "server"
