@@ -10,18 +10,22 @@ general rationale). This matters here specifically because
 ``WebSearchTool`` used to be imported eagerly here, which pulls in
 ``Article_Extractor_Lib.py``'s module-scope playwright + trafilatura
 imports (~197ms, see task-257) even though ``web_search_enabled`` defaults
-to ``False`` and no user session had touched web search yet. The actual
-tool-registration path (``tool_executor.get_tool_executor()``) already
-imports each optional tool class directly from its own submodule, gated
-by per-tool config flags -- it never goes through this package's names.
-The remaining optional tool classes (file ops, RAG search, note
-management) are made lazy too, for consistency and because there is no
-reason to pay any submodule's import cost for a tool nobody asked for.
+to ``False`` and no user session had touched web search yet. Some of
+these optional tools (file ops, note management) are wired into the
+agent runtime through ``Agents/tool_catalog.py``'s gateable builtins
+(see ``build_gateable_tool``), which already imports each one directly
+from its own submodule, gated by a per-tool config flag -- it never
+goes through this package's names. The remaining optional tool classes
+(``WebSearchTool``, ``RAGSearchTool``, ``SearchNotesTool``) are made
+lazy too, for consistency and because there is no reason to pay any
+submodule's import cost for a tool nobody asked for.
 
-``Tool``/``ToolExecutor``/``DateTimeTool``/``CalculatorTool``/
-``get_tool_executor``/``reload_tool_executor`` stay eager: they are
+``Tool``/``DateTimeTool``/``CalculatorTool`` stay eager: they are
 lightweight (defined directly in ``tool_executor.py``, no heavy
 transitive deps) and are the framework's core, always-needed surface.
+A now-deleted execution-framework class used to live here too, along
+with its two module-level accessor functions; that framework had no
+production callers and was retired in TASK-545 P3.
 """
 
 from typing import Any
@@ -30,20 +34,14 @@ from loguru import logger
 
 from .tool_executor import (
     Tool,
-    ToolExecutor,
     DateTimeTool,
     CalculatorTool,
-    get_tool_executor,
-    reload_tool_executor,
 )
 
 __all__ = [
     "Tool",
-    "ToolExecutor",
     "DateTimeTool",
     "CalculatorTool",
-    "get_tool_executor",
-    "reload_tool_executor",
     "WebSearchTool",
     "ReadFileTool",
     "ListDirectoryTool",
