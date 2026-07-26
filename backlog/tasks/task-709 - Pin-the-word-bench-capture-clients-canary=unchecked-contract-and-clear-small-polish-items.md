@@ -27,8 +27,7 @@ Polish items deferred from the same review:
 - `capture_client` builds a fresh `httpx.AsyncClient` per request — no keep-alive across a 100+ cell grid. Hold one on the instance.
 - Preflight sends the canary through the target's steering prefix, so a legitimate prefix warns `degenerate` on that column. Defensible, but needs a docstring sentence so PR 3's callout does not over-claim.
 - `test_canary_expectation_is_a_widely_agreed_continuation` restates a constant and cannot fail meaningfully.
-- `_cell_from_payload` has no docstring.
-- A storage test still uses a literal `dataset_id="d1"`; inert today, but a live FK failure if TASK-705 makes the edit path persist it.
+- A storage test still uses a literal `dataset_id="d1"`. TASK-705 resolved by making the dataset immutable on edit, so this stays inert — but it still violates the "no literal ids" rule the fixtures established.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

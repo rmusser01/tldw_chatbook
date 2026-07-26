@@ -2,7 +2,7 @@
 id: TASK-706
 title: >-
   Word bench run rows never leave status='pending'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-26 14:30'
 labels:
@@ -25,7 +25,15 @@ Consequences: `list_runs(status='completed')` can never return a word bench run,
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] Run rows move to `running` at launch, `completed` at the end, and `cancelled` on the cancel path
-- [ ] `end_time` is set on all terminal transitions
-- [ ] A test asserts a cancelled run group's rows read `cancelled`, not `pending`
+- [x] Run rows move to `running` at launch, `completed` at the end, and `cancelled` on the cancel path
+- [x] `end_time` is set on all terminal transitions
+- [x] A test asserts a cancelled run group's rows read `cancelled`, not `pending`
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in PR #924. Runs now transition `running` at launch, `completed` at the end, and `cancelled` on the cancel path, with `end_time` set on terminal transitions.
+
+One gap remains and is deliberately not closed here: an uncaught exception mid-run leaves the row at `running` — there is no `failed` transition. Worth a follow-up.
+<!-- SECTION:NOTES:END -->

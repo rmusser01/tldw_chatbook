@@ -2,7 +2,7 @@
 id: TASK-704
 title: >-
   Remove the silent row limits in word bench load_grid and use the run_group_id index
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-26 14:30'
 labels:
@@ -30,8 +30,16 @@ Two limits in `storage.load_grid`, both silent:
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] `Evals_DB.list_runs` accepts a `run_group_id` filter that uses `idx_eval_runs_group`
-- [ ] `load_grid` no longer scans-and-filters client-side
-- [ ] Cell loading pages or passes an explicit limit, so a bench with more than 1,000 snippets renders every captured cell
-- [ ] A test proves a >1,000-cell grid loads completely
+- [x] `Evals_DB.list_runs` accepts a `run_group_id` filter that uses `idx_eval_runs_group`
+- [x] `load_grid` no longer scans-and-filters client-side
+- [x] Cell loading pages or passes an explicit limit, so a bench with more than 1,000 snippets renders every captured cell
+- [x] A test proves a >1,000-cell grid loads completely
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in PR #924 rather than deferred, after Qodo's review raised both halves independently.
+
+`load_grid` now pages `get_run_results` until exhausted, so a bench larger than one page loads every captured cell. `Evals_DB.list_runs` gained an optional `run_group_id` filter that filters in SQL, so `idx_eval_runs_group` — added by this same PR — is now actually used, and an older run group can no longer fall off the end of a newest-first LIMIT.
+<!-- SECTION:NOTES:END -->

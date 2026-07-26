@@ -2,7 +2,7 @@
 id: TASK-705
 title: >-
   Word bench save_bench silently drops description and dataset_id on edit
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-26 14:30'
 labels:
@@ -27,7 +27,15 @@ The spec says the bench editor sets "name, description, dataset, prompt mode, to
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] `save_bench`'s edit path persists `description`
-- [ ] Either `dataset_id` is persisted on edit, or the docstring states the dataset is immutable after creation so PR 3 can disable the control
-- [ ] A test round-trips an edited description
+- [x] `save_bench`'s edit path persists `description`
+- [x] Either `dataset_id` is persisted on edit, or the docstring states the dataset is immutable after creation so PR 3 can disable the control
+- [x] A test round-trips an edited description
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in PR #924. `save_bench`'s edit path now persists `description`.
+
+`dataset_id` was made explicitly **immutable after creation** rather than editable. Extending `update_task` to accept it looked trivial but broke existing edit-path tests with a real foreign-key failure, so the constraint is documented in `save_bench`'s docstring instead of half-implemented. PR 3 should disable the dataset control on an existing bench.
+<!-- SECTION:NOTES:END -->
