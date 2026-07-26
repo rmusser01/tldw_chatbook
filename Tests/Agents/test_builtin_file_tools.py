@@ -7,6 +7,15 @@ written under the file-tool sandbox root precisely so those tools can reach it.
 
 They stay behind the SAME config gates that already govern them, which default
 to disabled — wiring them in changes reachability, not the default posture.
+
+task-545 P2 later replaced the direct `[tools]` gating in
+`BuiltinToolProvider.__init__` with pack resolution (see
+`Agents/builtin_pack_config.py` and `Agents/builtin_packs/`). The two
+`[tools]` flags tested here still work, but only as a deprecated fallback
+that enables the whole `files` pack together -- see
+`test_either_legacy_flag_enables_the_whole_files_pack` below, which replaces
+the old "gates are independent" assertion that this restructuring made
+false by design.
 """
 
 import pytest
@@ -16,16 +25,25 @@ from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 
 @pytest.fixture
 def tools_config(monkeypatch):
-    """Drive the existing [tools] gates."""
+    """Drive the legacy [tools] gates through the pack-config surface.
+
+    task-545 P2 moved enablement from these per-tool `[tools]` flags to
+    `builtin_pack_config.enabled_packs()`, which still honours them as a
+    deprecated fallback (see `builtin_pack_config._LEGACY_FILE_FLAGS`).
+    Patching `builtin_pack_config.get_cli_setting` -- not
+    `tldw_chatbook.config.get_cli_setting` -- is required: that module
+    binds its own `get_cli_setting` name via `from ... import`, so a patch
+    on the origin module would not be seen there.
+    """
     values = {}
-    import tldw_chatbook.config as config_module
+    import tldw_chatbook.Agents.builtin_pack_config as pack_config_module
 
     def fake(section, key=None, default=None):
         if section != "tools" or not isinstance(key, str):
             return default
         return values.get(key, default)
 
-    monkeypatch.setattr(config_module, "get_cli_setting", fake)
+    monkeypatch.setattr(pack_config_module, "get_cli_setting", fake)
     return values
 
 
@@ -51,11 +69,21 @@ def test_list_directory_appears_when_enabled(tools_config):
     assert "list_directory" in _names(BuiltinToolProvider())
 
 
-def test_each_gate_is_independent(tools_config):
+def test_either_legacy_flag_enables_the_whole_files_pack(tools_config):
+    """The two `[tools]` gates are no longer independent (task-545 P2).
+
+    Both `read_file` and `list_directory` are contributed by the single
+    `files` pack (`Agents/builtin_packs/files.py`), and
+    `builtin_pack_config.enabled_packs()`'s legacy fallback enables that
+    whole pack the moment either old flag is set -- there is no per-tool
+    granularity to fall back to anymore. This replaces the pre-restructure
+    `test_each_gate_is_independent`, whose "list_directory stays absent"
+    assertion the pack model makes false by design.
+    """
     tools_config["read_file_enabled"] = True
     names = _names(BuiltinToolProvider())
     assert "read_file" in names
-    assert "list_directory" not in names
+    assert "list_directory" in names
 
 
 def test_gated_tool_names_are_covered_by_the_shadow_guard(tools_config):

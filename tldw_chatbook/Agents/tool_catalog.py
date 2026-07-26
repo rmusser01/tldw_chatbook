@@ -12,6 +12,8 @@ import asyncio
 import json
 from typing import Any, Iterable, Mapping, Protocol
 
+from loguru import logger
+
 from tldw_chatbook.Tools.tool_executor import CalculatorTool, DateTimeTool
 
 from .agent_models import (
@@ -192,27 +194,26 @@ class BuiltinToolProvider:
     def __init__(self, gate: Any | None = None, services: Any | None = None) -> None:
         self.services = services
         self._tools = {t.name: t for t in (CalculatorTool(), DateTimeTool())}
-        # task-584: surface the app's existing sandbox-rooted file tools to the
-        # agent loop. They were registered on the global ToolExecutor but never
-        # reachable from here, so retained script output -- deliberately written
-        # under the file-tool sandbox root -- had no consumer. Behind the SAME
-        # [tools] gates that already govern them, which default to DISABLED:
-        # this changes reachability, not the default posture.
-        for gate_key, factory_name in (
-            ("read_file_enabled", "ReadFileTool"),
-            ("list_directory_enabled", "ListDirectoryTool"),
-        ):
-            try:
-                from ..config import get_cli_setting
+        # task-545 P2: pack-resolved built-ins replace TASK-584's per-tool
+        # [tools] gating. Same tools, same sandbox root, same
+        # disabled-by-default posture -- the enablement moved up a level to
+        # the pack. Import is local so `tool_catalog` stays importable
+        # without the packs' own dependencies.
+        try:
+            from .builtin_pack_config import enabled_packs
+            from .builtin_packs import pack_tool_classes
 
-                if not get_cli_setting("tools", gate_key, False):
-                    continue
-                from ..Tools import file_operation_tools as _file_tools
-
-                tool = getattr(_file_tools, factory_name)()
-            except Exception:  # noqa: BLE001 — an unavailable tool is just absent
-                continue
-            self._tools[tool.name] = tool
+            packs = enabled_packs()
+            # Pack availability varies per machine (optional deps), so the
+            # resolved set is logged: without it, whether progressive
+            # disclosure even engages differs between users and bug reports
+            # become unreproducible (spec 4.1).
+            logger.info("Built-in packs resolved for run: {packs}", packs=sorted(packs))
+            for cls in pack_tool_classes(packs):
+                tool = cls(services=services)
+                self._tools[tool.name] = tool
+        except Exception:  # noqa: BLE001 — an unavailable pack is just absent
+            logger.warning("Built-in pack resolution failed; packs unavailable")
         # `None` means "build the real gate on first use" -- NOT "ungated".
         # Every construction site (console_agent_bridge's default registry
         # and its per-run registry) passes nothing today, so an ungated
