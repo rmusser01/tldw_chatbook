@@ -76,3 +76,17 @@
 .action-buttons Button {
     margin: 0 1;
 }
+
+/* Generic window heading. Relocated from features/_ingest_tldw_api_tabs.tcss
+   when that sheet was retired with the standalone ingest window (task-745):
+   the rule is unscoped and was the ONLY bundled definition of .window-title,
+   while ChatbookExportManagementWindow, ChatbookTemplatesWindow and
+   Voice_Cloning_Window all mount it. Deleting the sheet without moving this
+   would have silently unstyled three live windows. */
+.window-title {
+    text-style: bold;
+    text-align: center;
+    padding: 1 0;
+    background: $primary;
+    color: $text;
+}
