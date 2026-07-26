@@ -8128,7 +8128,9 @@ class SettingsScreen(BaseAppScreen):
         """Apply the modal decision: persist, rebind, switch, enroll Sync v2."""
         app = self.app_instance
         if result.get("action") == "local":
-            await app.handle_runtime_backend_changed("local")
+            switched = await app.handle_runtime_backend_changed("local")
+            if not switched:
+                return
             self.app.notify("Runtime source set to local.", severity="information")
             self._refresh_manual_sync_rows()
             return
@@ -8136,8 +8138,6 @@ class SettingsScreen(BaseAppScreen):
         base_url = str(result.get("base_url") or "").strip()
         if not base_url:
             return
-        from tldw_chatbook.config import load_settings, save_setting_to_cli_config
-        from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
 
         from tldw_chatbook.Utils.input_validation import validate_url
 
@@ -8146,14 +8146,44 @@ class SettingsScreen(BaseAppScreen):
                 "Rejected server URL; nothing was changed.", severity="error"
             )
             return
-        save_setting_to_cli_config("tldw_api", "base_url", base_url)
-        # Persist the token unconditionally so clearing it in the modal
-        # actually removes the stored credential.
         auth_token = str(result.get("auth_token") or "").strip()
-        save_setting_to_cli_config("tldw_api", "auth_token", auth_token)
-        app.app_config = load_settings(force_reload=True)
-        load_runtime_policy_for_app(app)
-        await app.handle_runtime_backend_changed("server")
+        saved = save_settings_to_cli_config(
+            {
+                "tldw_api": {
+                    "base_url": base_url,
+                    "auth_token": auth_token,
+                }
+            }
+        )
+        if not saved:
+            self.app.notify(
+                "Server settings could not be saved; "
+                "the previous source remains active.",
+                severity="error",
+            )
+            return
+
+        try:
+            refreshed_config = load_settings(force_reload=True)
+        except Exception as exc:
+            logger.warning(
+                "Saved server settings could not be loaded "
+                "(exception_category=%s).",
+                type(exc).__name__,
+            )
+            self.app.notify(
+                "Server settings were saved but could not be activated; "
+                "the previous source remains active.",
+                severity="error",
+            )
+            return
+
+        switched = await app.handle_runtime_backend_changed(
+            "server",
+            app_config_override=refreshed_config,
+        )
+        if not switched:
+            return
 
         state = self._runtime_source_state()
         server_id = str(getattr(state, "active_server_id", "") or "").strip()
@@ -8176,12 +8206,12 @@ class SettingsScreen(BaseAppScreen):
                 )
             except Exception as exc:
                 logger.warning(
-                    "Sync v2 profile preparation failed (server_profile_id={}, mode=local_first_sync).",
-                    server_id,
-                    exc_info=True,
+                    "Sync v2 profile preparation failed "
+                    "(mode=local_first_sync, exception_category=%s).",
+                    type(exc).__name__,
                 )
                 self.app.notify(
-                    f"Server activated, but Sync v2 setup failed: {exc}",
+                    "Server activated, but Sync v2 setup could not be completed.",
                     severity="warning",
                 )
             else:

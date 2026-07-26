@@ -36,6 +36,7 @@ PROJECTION_PUBLISHER = "_publish_runtime_policy_projection"
 PROJECTION_BOUNDARY = "_apply_runtime_policy_to_app"
 PRIVATE_CONTEXT_STORE = "__runtime_policy_state_store"
 PRIVATE_CONTEXT_CALLBACK = "__runtime_policy_projection_callback"
+RUNTIME_POLICY_LOADER = "load_runtime_policy_for_app"
 
 
 def _parse(path: Path) -> ast.Module:
@@ -504,6 +505,36 @@ def test_tldw_cli_constructor_invokes_runtime_loader_as_standalone_expression() 
 
     assert len(standalone_calls) == 1
     assert assigned_calls == []
+
+
+def test_runtime_policy_loader_has_exact_production_reference_allowlist() -> None:
+    relative_app = str(APP_PATH.relative_to(PROJECT_ROOT))
+    relative_bootstrap = str(BOOTSTRAP_PATH.relative_to(PROJECT_ROOT))
+    observed = sorted(
+        (path, kind, scopes)
+        for path, kind, scopes, _line in _production_occurrences(RUNTIME_POLICY_LOADER)
+    )
+
+    assert observed == sorted(
+        [
+            (relative_app, "import_name", ()),
+            (
+                relative_app,
+                "name_load",
+                ("TldwCli", "__init__"),
+            ),
+            (
+                relative_bootstrap,
+                "function_definition",
+                (),
+            ),
+            (
+                relative_bootstrap,
+                "name_load",
+                ("ensure_runtime_policy_for_app",),
+            ),
+        ]
+    )
 
 
 def test_schedules_calls_authoritative_runtime_source_with_context_and_config() -> None:
