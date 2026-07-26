@@ -102,3 +102,13 @@ cross-module contract changes; the user-facing copy is deliberately unchanged.
   conversation holds ≥2 messages (verified: greeting + user + assistant = 3),
   replacing the `conversations or provider_calls` tautology and the
   nonexistent `list_conversations` probe.
+- **Rebase onto dev after task-577 retirement**: while this branch was in
+  review, dev retired the entire `ChatWindowEnhanced` family as dead code
+  (commit `0659f103b`, "never instantiated since 8ea71071f") and removed
+  `Tests/UI/test_chat_approvals_and_resume.py` with it. The rebase therefore
+  dropped the `Chat_Window_Enhanced.py` markup escape as moot (the crash it
+  fixed only ever manifested in those now-removed tests, never in live code)
+  and removed `Tests/UI/test_first_run_orientation_markup.py` (its subject
+  module no longer exists). What survives on the rebased branch: the
+  `ChatApprovalCard` mount-order fix (live Console code), the first-run
+  character-chat UAT, and the stacked task-109 character-card import fixes.
