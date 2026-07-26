@@ -39,7 +39,10 @@ class FakeClient:
         self._order.append((snippet, target.name))
         if target.name == self._fail_target:
             return CellError(reason="unreachable", detail="x")
-        return _cap(self._canary)
+        # The real client always returns "unchecked"; turning that into the
+        # real verdict is _stamp_canary's job. Baking the answer in here
+        # would let a deleted stamp pass unnoticed.
+        return _cap("unchecked")
 
 
 @pytest.mark.asyncio
@@ -118,6 +121,18 @@ async def test_degenerate_canary_propagates_onto_every_cell(db, config, targets,
 
     grid = load_grid(db, group_id)
     assert all(c.canary == "degenerate" for c in grid["cells"].values())
+
+
+@pytest.mark.asyncio
+async def test_canary_pass_verdict_is_also_stamped_onto_every_cell(db, config, targets, snippets):
+    """The stamp is unconditional: a verified target's cells must say 'pass',
+    not the client's placeholder 'unchecked'."""
+    task_id = save_bench(db, config)
+    runner = WordBenchRunner(db, lambda t: FakeClient([], canary="pass"))
+    group_id = await runner.run(config, targets, snippets, task_id)
+
+    grid = load_grid(db, group_id)
+    assert all(c.canary == "pass" for c in grid["cells"].values())
 
 
 @pytest.mark.asyncio
