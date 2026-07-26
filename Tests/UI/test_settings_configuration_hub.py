@@ -1465,6 +1465,14 @@ async def test_settings_storage_surfaces_check_action_before_long_path_editor(tm
 
         assert text.index("Draft path check") < text.index("Database paths")
 
+        # TASK-720: configured config values and runtime-resolved files must
+        # not read as two conflicting current locations - the inputs are
+        # labeled configured, the resolved list is labeled active, and a note
+        # explains why they can differ (per-profile resolution).
+        assert "Database paths (configured)" in text
+        assert "Active files (resolved this session)" in text
+        assert "can differ when a user profile is set" in text
+
 
 @pytest.mark.asyncio
 async def test_settings_storage_save_and_revert_defaults(monkeypatch, tmp_path):

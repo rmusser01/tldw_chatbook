@@ -10274,7 +10274,22 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-storage-save-result",
                     classes="settings-status-row",
                 )
-                yield Static("Database paths", classes="destination-section")
+                yield Static(
+                    "Database paths (configured)", classes="destination-section"
+                )
+                # TASK-720: the inputs edit config.toml values; the files a
+                # session actually uses are resolved at runtime (a profile
+                # from [general].users_name relocates defaults under a
+                # per-profile directory). Without this note the configured
+                # default and the resolved path read as two conflicting
+                # current locations.
+                yield Static(
+                    "These are the configured config.toml values. The files "
+                    "actually in use this session are listed under Active "
+                    "files below and can differ when a user profile is set.",
+                    id="settings-storage-configured-note",
+                    classes="settings-status-row",
+                )
                 for key, label in STORAGE_FIELD_LABELS.items():
                     selector = self._storage_field_selector(key)
                     if selector is None:
@@ -10287,7 +10302,10 @@ class SettingsScreen(BaseAppScreen):
                             classes="settings-compact-input",
                             placeholder="~/path/to/database.db",
                         )
-                yield Static("Runtime local paths", classes="destination-section")
+                yield Static(
+                    "Active files (resolved this session)",
+                    classes="destination-section",
+                )
                 for path_summary in self._known_storage_paths():
                     yield self._split_detail_row(path_summary)
                 yield self._detail_row(
