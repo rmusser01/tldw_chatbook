@@ -3,8 +3,12 @@
 Date: 2026-07-25
 Status: Draft (pending spec review)
 Related: [Master shell design system contract](../../Design/master-shell-design-system-contract.md),
-[Chatbook workbench UI system](../../Design/chatbook-workbench-ui-system.md),
-[Watchlists console-style rebuild](2026-07-25-watchlists-console-rebuild-design.md)
+[Chatbook workbench UI system](../../Design/chatbook-workbench-ui-system.md)
+
+A sibling Console-style rebuild exists for Watchlists
+(`Docs/superpowers/specs/2026-07-25-watchlists-console-rebuild-design.md`), but it lives on the
+unmerged `docs/watchlists-console-rebuild-spec` branch and is deliberately not linked here — the
+link would not resolve on `dev`.
 
 ## Summary
 
@@ -27,14 +31,15 @@ added to one table.
 - Give a user four working paths: run an existing bench, author or import a snippet set, configure
   a bench, and browse historical runs and their results.
 - Ship word bench end-to-end, with capture, analysis, storage, and a results grid.
-- Keep every pre-existing `eval_tasks` and `eval_run` reachable and readable.
+- Keep every pre-existing `eval_tasks` and `eval_run` reachable and readable. Readable, not runnable
+  — see [Classic tasks](#classic-tasks).
 - Retire the unreachable Evals UI, which is larger than the reachable one.
 
 ## Non-goals
 
-- Wiring the remaining orchestrator task types (`question_answer`, `generation`, `classification`)
-  into the new authoring surface. They list, run through the untouched orchestrator path, and their
-  results open read-only.
+- **Running** classic orchestrator task types (`question_answer`, `generation`, `classification`)
+  from the new screen. They list and their results open read-only; launching one is deferred. See
+  [Classic tasks](#classic-tasks).
 - A/B testing. `ab_tests` and `ab_test_runs` stay in the schema, unused by this screen.
 - Server-scope evaluations. `EvaluationScopeService` remains wired in `app.py`; this slice targets
   the local backend and does not add a scope switcher.
@@ -64,15 +69,21 @@ Visual language predates the design system: widget-local `DEFAULT_CSS` against `
 
 A complete second-generation Evals UI is imported by nothing. `UI/ResultsDashboardWindow.py`,
 `UI/ModelManagementWindow.py`, `UI/DatasetManagementWindow.py`, `UI/Views/evals_views.py`, and
-`Event_Handlers/eval_events.py` reference only each other, plus eleven files in `Widgets/Evals/`
-that no reachable code imports.
+`Event_Handlers/eval_events.py` reference only each other, plus twelve of the fourteen files in
+`Widgets/Evals/` that no reachable code imports. The remaining two — `eval_dialogs.py` and
+`sample_browser_dialog.py` — are imported by tests only.
 
 ### The backend
 
 Real and complete enough to build on. `Evals_DB` (`SCHEMA_VERSION = 3`, `Evals_DB.py:39`) holds
 `eval_tasks`, `eval_datasets`, `eval_models`, `eval_runs`, `eval_results`, `eval_run_metrics`,
 `ab_tests`, `ab_test_runs`. `EvaluationOrchestrator` runs tasks. `Evaluations_Interop/` normalizes
-local and server records and is wired at `app.py:3933`.
+local and server records and is wired by `_wire_evaluation_services` (`app.py:4130`, called from
+`app.py:3407`).
+
+All line references in this document are against `origin/dev` at `8242a5b58`. The `app.py` and
+`skills_screen.py` numbers in particular drift quickly; re-resolve by symbol rather than by line if
+they do not match.
 
 ### Why word bench cannot reuse the existing logprob path
 
@@ -91,7 +102,7 @@ logprobs parameter at all.
 is already occupied** by the Lab strip (Models | Speech | Evals), so Evals-internal navigation must
 not be a second strip.
 
-Below the strip, the house three-pane workbench established by `skills_screen.py:742-1042`:
+Below the strip, the house three-pane workbench established by `skills_screen.py:764-1064`:
 
 ```
 Vertical#evals-shell
@@ -135,8 +146,8 @@ per target. It groups by bench and caps at a recent window with an explicit "sho
 Each of `Benches` and `Datasets` carries its own creation affordance in the section header — a new
 bench and a new snippet set are reachable without first finding an empty state.
 
-**Detail pane.** Swaps on selection kind: bench → bench editor, dataset → snippet editor, run group
-→ results grid.
+**Detail pane.** Swaps on selection kind: word bench → bench editor, classic task → read-only detail
+plus run history, dataset → snippet editor, run group → results grid.
 
 **Inspector pane.** Also swaps: bench → per-target readiness, estimate, and the run action; dataset
 → snippet-set statistics; run group → run metadata and export; **focused grid cell → that cell's
@@ -558,6 +569,38 @@ through the current `DatasetLoader` rather than a second path.
 Datasets soft-delete via the existing `deleted_at`. Historical runs survive because their snapshot
 carries snippet text.
 
+## Classic tasks
+
+Pre-existing `eval_tasks` of type `question_answer`, `generation`, and `classification` appear in a
+labelled subgroup under Benches. Selecting one gives a **read-only** detail pane and its run history:
+
+```
+ mmlu-subset                                          question_answer
+ ─────────────────────────────────────────────────────────────────────
+ Dataset    mmlu-500                    Metric    exact_match
+ Config     read-only
+
+ RUNS  3
+  ✓ 2026-07-04   gpt-4o-mini    0.71
+  ✓ 2026-06-28   llama-3-8b     0.55
+  ✗ 2026-06-28   llama-3-8b     failed
+
+ Running classic tasks is not available in this slice.
+```
+
+Their historical runs and results open read-only through `EvaluationOrchestrator.get_run_summary`
+and `get_run_results`. Metrics render from `eval_run_metrics`; there is no grid, because a classic
+run has scored samples rather than distributions.
+
+**Launching a classic task is deliberately out of scope.** Doing it properly needs a model picker, a
+sample cap, a second progress surface, and a second set of failure states — a parallel execution
+path through `EvaluationOrchestrator` alongside the word bench runner. That is its own slice. The
+capability being deferred is one the current screen barely delivers: `quick_test.py`, the only place
+it exists today, is in the deletion list.
+
+The empty-state copy and the detail pane both say so plainly. A stated "not yet" is honest; a run
+button that produces a dead-end toast is what this rebuild exists to remove.
+
 ## Bench configuration and portability
 
 The bench editor sets name, description, dataset, prompt mode, top-K, probe list, and targets.
@@ -601,9 +644,13 @@ and behaviour-neutral on its own.
 | Orphan gen-2 UI | `ResultsDashboardWindow.py`, `ModelManagementWindow.py`, `DatasetManagementWindow.py`, `Views/evals_views.py`, `Event_Handlers/eval_events.py`, and the 12 `Widgets/Evals/` files only they import | ~8,770 |
 | Card hub | `UI/Evals/navigation/`, `evals_window_v3.py`, `UI/Evals/screens/`, `widgets/progress_dashboard.py`, `UI/evals_window_v2.py` | ~2,640 |
 | Legacy stylesheet | `css/features/_evaluation_unified.tcss` | 288 |
-| Dead wiring | `evals_sidebar_collapsed` (`app.py:2807`) and its handler (`app.py:5181`), `EvalsWindowV3` in the container list (`app.py:1484`), `1`-`6` and `escape` bindings in `evals_screen.py` | — |
+| Dead wiring | `evals_sidebar_collapsed` reactive (`app.py:2923`) and its orphaned watcher `watch_evals_sidebar_collapsed` (`app.py:8125`), `EvalsWindowV3` in the container list (`app.py:1520`), the `"evals-window"` entry in the window-id list (`app.py:2847`), `1`-`6` and `escape` bindings in `evals_screen.py:31-37` | — |
 
 Approximately **11,700 lines retired**. Everything under `Evals/` and `Evaluations_Interop/` stays.
+
+The `toggle-evals-sidebar` handler that used to accompany the `evals_sidebar_collapsed` reactive is
+already gone on `dev`; only the reactive and its watcher remain, which is why the watcher is listed
+and the handler is not.
 
 **Test collateral to handle, not discover.** Three test files use widgets in the deletion set as
 their subjects: `Tests/UI/test_non_obscuring_focus_contract.py`,
@@ -653,7 +700,7 @@ neutral; lands first so the rebuild starts from a clean baseline.
 **PR 3 — Screen rebuild.** Consumes the engine.
 
 5. Screen shell: three panes, library rail, empty states.
-6. Bench editor, snippet editor, import.
+6. Bench editor, snippet editor, import, classic-task read-only detail.
 7. Results grid, lenses, inspector cell detail.
 8. Sample bench, export, cost estimate.
 
