@@ -5,14 +5,14 @@ status: To Do
 assignee: []
 created_date: '2026-07-25'
 labels: [tools, security, agents, ux]
-dependencies: [TASK-545, TASK-627, TASK-635]
+dependencies: [TASK-545, TASK-627, TASK-659]
 priority: low
 ---
 
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Filed from the comparative spike behind TASK-627 (`Docs/superpowers/specs/2026-07-25-builtin-tool-permissions-ui-design.md`). Today's permission surface is entirely per-tool: a user sets `allow`/`ask`/`deny` per tool (or per server, or a global default) via the MCP workbench's Permissions mode, one row at a time. CheetahClaws (`SafeRL-Lab/cheetahclaws`) instead exposes a small **mode** axis — `auto`, `accept-edits`, `manual`, `plan` — that a user switches as one unit, changing how *every* tool call is decided for the duration of that mode. That is a better UX shape for the common case ("I trust this session, stop asking me") than clicking through N per-tool toggles, and it is a natural home for TASK-635's agent-settings surface, which currently has no single "how cautious should this run be" control.
+Filed from the comparative spike behind TASK-627 (`Docs/superpowers/specs/2026-07-25-builtin-tool-permissions-ui-design.md`). Today's permission surface is entirely per-tool: a user sets `allow`/`ask`/`deny` per tool (or per server, or a global default) via the MCP workbench's Permissions mode, one row at a time. CheetahClaws (`SafeRL-Lab/cheetahclaws`) instead exposes a small **mode** axis — `auto`, `accept-edits`, `manual`, `plan` — that a user switches as one unit, changing how *every* tool call is decided for the duration of that mode. That is a better UX shape for the common case ("I trust this session, stop asking me") than clicking through N per-tool toggles, and it is a natural home for TASK-659's agent-settings surface, which currently has no single "how cautious should this run be" control.
 
 **This must not be built by copying CheetahClaws' actual decision mechanism** — the spike exists specifically because that mechanism is broken in a way directly relevant to this repo:
 

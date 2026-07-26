@@ -108,7 +108,7 @@ The built-in section is labelled distinctly from the built-in MCP server (AC#3).
 
 - Changing MCP's resolver, hash guard for MCP keys, or `effective_tool_states`.
 - Permission **modes** (CheetahClaws' `auto`/`accept-edits`/`plan` axis) — a larger idea worth its own task; see below.
-- Porting tools (TASK-545/P2), agent budget settings (TASK-635).
+- Porting tools (TASK-545/P2), agent budget settings (TASK-659).
 
 ## Follow-ups to file
 
@@ -116,6 +116,6 @@ The built-in section is labelled distinctly from the built-in MCP server (AC#3).
 
    **This repo already has the pattern**, added by task-582 (PR #893): `local_skills_service.MAX_SCRIPT_WALL_CLOCK_SECONDS = 600.0` with `overrides["wall_clock_seconds"] = min(wall, MAX_SCRIPT_WALL_CLOCK_SECONDS)` — a ceiling configuration cannot exceed, justified in-comment because "an unbounded override would strand the turn". Any hard-floor work should follow that shape rather than inventing one.
 
-   Task-582 is also the reference for TASK-635's config surface: three-argument `get_cli_setting("skills", key, None)` per knob, invalid values falling back to the default rather than producing a zero/unbounded budget, and a documented max. Note its own comment records that the section-dict form "silently returns {} for any section name without a dot" — i.e. new code is already working *around* TASK-547's bug rather than being blocked by it, which is worth knowing when P3 revisits that task.
-2. **Permission modes.** A mode axis (`auto`/`accept-edits`/`manual`/`plan`) is better UX than per-tool toggles and a natural home for TASK-635. If ever built: it must be driven by `risk_tags`, not tool-name lists, and must fail closed for unrecognized tools — the two things CheetahClaws got wrong.
+   Task-582 is also the reference for TASK-659's config surface: three-argument `get_cli_setting("skills", key, None)` per knob, invalid values falling back to the default rather than producing a zero/unbounded budget, and a documented max. Note its own comment records that the section-dict form "silently returns {} for any section name without a dot" — i.e. new code is already working *around* TASK-547's bug rather than being blocked by it, which is worth knowing when P3 revisits that task.
+2. **Permission modes.** A mode axis (`auto`/`accept-edits`/`manual`/`plan`) is better UX than per-tool toggles and a natural home for TASK-659. If ever built: it must be driven by `risk_tags`, not tool-name lists, and must fail closed for unrecognized tools — the two things CheetahClaws got wrong.
 3. **Never let the model change its own permission posture.** CheetahClaws' `EnterPlanMode`/`ExitPlanMode` are always-auto-approved and mutate `permission_mode` directly, letting the LLM widen its own authority. Record this as a standing constraint before any mode work.

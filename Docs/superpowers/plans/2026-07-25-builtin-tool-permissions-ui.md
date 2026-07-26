@@ -424,7 +424,7 @@ git commit -m "feat(ui): flag approval rows a bulk action could not apply to [TA
 
 - [ ] **Step 1: Close TASK-627** — tick its ACs, add Implementation Notes, set status Done via `backlog task edit 627 -s Done --notes "..."` (or edit the file if the CLI is unavailable). Record that persistent built-in decisions are now available, unblocking TASK-545/P2 from session-scope-only.
 
-- [ ] **Step 2: Update TASK-545's P2 section** to note the persistent-decision prerequisite is satisfied, and TASK-635's description to reference this UI as the permissions half of the agent settings surface.
+- [ ] **Step 2: Update TASK-545's P2 section** to note the persistent-decision prerequisite is satisfied, and TASK-659's description to reference this UI as the permissions half of the agent settings surface.
 
 - [ ] **Step 3: File the spike follow-ups** named in the spec — hard-floor category, permission modes, and the "model must never change its own permission posture" constraint. **Run an ID sweep first** against BOTH `origin/dev` and the working tree; note that a `task-634` duplicate already exists on dev (another session's renumber to 635 is in flight), so re-verify the range at merge time, not just at file time.
 
