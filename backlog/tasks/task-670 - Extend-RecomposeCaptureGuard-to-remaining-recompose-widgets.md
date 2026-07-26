@@ -1,5 +1,5 @@
 ---
-id: TASK-663
+id: TASK-670
 title: Extend RecomposeCaptureGuard to remaining recompose widgets
 status: To Do
 assignee: []
