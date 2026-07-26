@@ -21,6 +21,14 @@ from tldw_chatbook.Library.ingest_capabilities import (
 from tldw_chatbook.Utils.optional_deps import OPTIONAL_FEATURES
 
 
+@pytest.fixture(autouse=True)
+def _clear_installed_probe_cache():
+    """Keep memoised dependency probes from leaking between tests."""
+    tldw_chatbook.Library.ingest_capabilities.reset_installed_probe_cache()
+    yield
+    tldw_chatbook.Library.ingest_capabilities.reset_installed_probe_cache()
+
+
 @pytest.mark.parametrize(
     ("path", "expected_group"),
     [
@@ -207,6 +215,106 @@ def test_is_installed_uses_dependencies_available(monkeypatch) -> None:
     assert _is_installed("__test_feature__") is False
 
 
+def test_is_installed_probes_when_registry_says_unchecked(monkeypatch) -> None:
+    """A ``False`` in the registry means "not checked yet", not "not installed".
+
+    ``DEPENDENCIES_AVAILABLE`` is pre-seeded with every key set to ``False``
+    and only filled in when something resolves it, which under the default
+    lazy mode never happened. Treating that placeholder as authoritative made
+    every optional feature look missing: users were told to install packages
+    they already had, and every dependent advanced option was permanently
+    disabled (task-676).
+    """
+    from types import SimpleNamespace
+
+    monkeypatch.setitem(
+        tldw_chatbook.Library.ingest_capabilities.DEPENDENCIES_AVAILABLE,
+        "__probe_feature__",
+        False,
+    )
+    monkeypatch.setitem(
+        tldw_chatbook.Library.ingest_capabilities.OPTIONAL_FEATURES,
+        "__probe_feature__",
+        SimpleNamespace(package_dependencies=["loguru"]),
+    )
+    tldw_chatbook.Library.ingest_capabilities.reset_installed_probe_cache()
+
+    assert _is_installed("__probe_feature__") is True
+
+
+def test_is_installed_still_false_when_package_absent(monkeypatch) -> None:
+    """A genuinely missing package stays missing after the probe."""
+    from types import SimpleNamespace
+
+    monkeypatch.setitem(
+        tldw_chatbook.Library.ingest_capabilities.DEPENDENCIES_AVAILABLE,
+        "__absent_feature__",
+        False,
+    )
+    monkeypatch.setitem(
+        tldw_chatbook.Library.ingest_capabilities.OPTIONAL_FEATURES,
+        "__absent_feature__",
+        SimpleNamespace(package_dependencies=["definitely_not_installed_xyz"]),
+    )
+    tldw_chatbook.Library.ingest_capabilities.reset_installed_probe_cache()
+
+    assert _is_installed("__absent_feature__") is False
+
+
+def test_installed_feature_produces_no_tooling_warning(monkeypatch) -> None:
+    """An installed feature must not be advertised as missing tooling."""
+    from types import SimpleNamespace
+
+    monkeypatch.setitem(
+        tldw_chatbook.Library.ingest_capabilities.DEPENDENCIES_AVAILABLE,
+        "pdf_processing",
+        False,
+    )
+    monkeypatch.setitem(
+        tldw_chatbook.Library.ingest_capabilities.OPTIONAL_FEATURES,
+        "pdf_processing",
+        SimpleNamespace(package_dependencies=["loguru"]),
+    )
+    tldw_chatbook.Library.ingest_capabilities.reset_installed_probe_cache()
+
+    warnings = get_tooling_warnings("pdf")
+
+    assert not any(w["feature"] == "pdf_processing" for w in warnings)
+
+
+def test_repeated_is_installed_calls_probe_once(monkeypatch) -> None:
+    """The per-field render path must not re-probe the filesystem each time."""
+    from types import SimpleNamespace
+
+    calls: list[str] = []
+
+    def counting_find_spec(name: str):
+        calls.append(name)
+        return object()
+
+    monkeypatch.setitem(
+        tldw_chatbook.Library.ingest_capabilities.DEPENDENCIES_AVAILABLE,
+        "__counted_feature__",
+        False,
+    )
+    monkeypatch.setitem(
+        tldw_chatbook.Library.ingest_capabilities.OPTIONAL_FEATURES,
+        "__counted_feature__",
+        SimpleNamespace(package_dependencies=["loguru"]),
+    )
+    monkeypatch.setattr(
+        tldw_chatbook.Library.ingest_capabilities.importlib.util,
+        "find_spec",
+        counting_find_spec,
+    )
+    tldw_chatbook.Library.ingest_capabilities.reset_installed_probe_cache()
+
+    for _ in range(5):
+        assert _is_installed("__counted_feature__") is True
+
+    assert len(calls) == 1, f"probed {len(calls)} times, expected 1"
+
+
 def test_is_installed_falls_back_to_find_spec(monkeypatch) -> None:
     # Ensure the feature is not in the cached registry.
     monkeypatch.delitem(
@@ -221,6 +329,11 @@ def test_is_installed_falls_back_to_find_spec(monkeypatch) -> None:
     ):
         assert _is_installed("soundfile") is True
 
+    # The probe result is memoised (it is asked once per dependent field on
+    # every option-panel render), so flipping what ``find_spec`` reports
+    # mid-test needs the cache dropped to observe the new answer.
+    tldw_chatbook.Library.ingest_capabilities.reset_installed_probe_cache()
+
     with patch(
         "tldw_chatbook.Library.ingest_capabilities.importlib.util.find_spec",
         return_value=None,
@@ -230,3 +343,72 @@ def test_is_installed_falls_back_to_find_spec(monkeypatch) -> None:
 
 def test_is_installed_unknown_feature_returns_false() -> None:
     assert _is_installed("__not_a_real_feature_12345__") is False
+
+
+def test_no_group_feature_is_hardwired_unavailable(monkeypatch) -> None:
+    """Every feature must be *able* to report installed.
+
+    A feature the lookup cannot resolve is stuck at ``False`` forever, which
+    is what permanently disabled the advanced options and produced install
+    hints for packages that were already present (task-676). With everything
+    importable, every feature the type groups use must come back installed --
+    any that does not is resolved by no route at all.
+
+    Only ``depends_on`` is checked: ``enabled_when`` names a sibling form
+    field, and routing that through the installed-feature lookup is precisely
+    the confusion that disabled chunk size and overlap.
+    """
+    monkeypatch.setattr(
+        tldw_chatbook.Library.ingest_capabilities.importlib.util,
+        "find_spec",
+        lambda name: object(),
+    )
+    tldw_chatbook.Library.ingest_capabilities.reset_installed_probe_cache()
+
+    stuck = []
+    for caps in _TYPE_GROUPS.values():
+        features = set(caps.required_features + caps.optional_features)
+        features.update(f.depends_on for f in caps.fields if f.depends_on)
+        for feature in features:
+            if not _is_installed(feature):
+                stuck.append(feature)
+
+    assert not stuck, (
+        f"features that can never resolve as installed: {sorted(set(stuck))}"
+    )
+
+
+def test_umbrella_feature_packages_match_optional_deps() -> None:
+    """The mirrored package lists must stay in step with the real checks.
+
+    ``_FEATURE_REQUIRED_PACKAGES`` duplicates what ``optional_deps``'
+    ``check_*_deps`` functions establish, because those do real imports that
+    are far too expensive for a render path. This guards the duplication: each
+    mirrored flag must at least be a flag ``optional_deps`` actually tracks.
+    """
+    from tldw_chatbook.Library.ingest_capabilities import _FEATURE_REQUIRED_PACKAGES
+    from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
+
+    for feature in _FEATURE_REQUIRED_PACKAGES:
+        assert feature in DEPENDENCIES_AVAILABLE, (
+            f"{feature!r} is mirrored here but optional_deps does not track it"
+        )
+
+
+def test_enabled_when_never_names_a_feature() -> None:
+    """``enabled_when`` must reference a sibling field, not a package.
+
+    The two were conflated: ``chunk_size``/``chunk_overlap`` declared
+    ``depends_on="chunk"``, which the canvas resolved through the
+    installed-feature lookup. No package is named "chunk", so both inputs
+    were disabled permanently -- even with chunking switched on.
+    """
+    for caps in _TYPE_GROUPS.values():
+        names = set(caps.field_names)
+        for field in caps.fields:
+            if field.enabled_when is None:
+                continue
+            assert field.enabled_when in names, (
+                f"{caps.group}.{field.name} is gated on {field.enabled_when!r}, "
+                "which is not a field in the same group"
+            )

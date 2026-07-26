@@ -12,7 +12,11 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from tldw_chatbook.Library.ingest_capabilities import get_tooling_warnings, get_type_group
+from tldw_chatbook.Library.ingest_capabilities import (
+    UNSUPPORTED_GROUP,
+    get_tooling_warnings,
+    get_type_group,
+)
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import is_http_url
 from tldw_chatbook.Utils.path_validation import validate_path_simple
@@ -24,6 +28,26 @@ def _safe_size(path: Path) -> int:
         return path.stat().st_size
     except OSError:
         return 0
+
+
+def collect_directory_files(directory: Path, scan_limit: int) -> tuple[list[Path], bool]:
+    """Expand a directory into the files an ingest submission should cover.
+
+    The public seam over :func:`_collect_files`, so that submitting a folder
+    and pre-flighting a folder walk it identically -- same recursion, same
+    symlink/hidden-entry skipping, same ``scan_limit``. A summary that
+    promises N files and a submission that queues a different N would be
+    worse than either alone.
+
+    Args:
+        directory: Directory to walk.
+        scan_limit: Maximum number of files to collect.
+
+    Returns:
+        A tuple of ``(files, truncated)``; ``truncated`` is ``True`` when
+        files beyond ``scan_limit`` were left uncollected.
+    """
+    return _collect_files(directory, scan_limit)
 
 
 def _collect_files(p: Path, scan_limit: int) -> tuple[list[Path], bool]:
@@ -163,6 +187,11 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
                 type_groups.setdefault(group, []).append(str(file_path))
                 total_size += _safe_size(file_path)
             for group in type_groups:
+                if group == UNSUPPORTED_GROUP:
+                    # No amount of installing makes these ingestible, so there
+                    # is no tooling warning to raise for them -- they are
+                    # counted separately in the summary instead.
+                    continue
                 warnings.extend(get_tooling_warnings(group))
         else:
             errors.append(f"Path is neither a file nor a directory: {path_or_url}")

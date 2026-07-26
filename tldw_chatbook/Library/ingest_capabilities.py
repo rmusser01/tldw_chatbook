@@ -30,9 +30,14 @@ class OptionField:
             ``number``.
         default: Default value when the field is first rendered.
         options: Allowed values for ``select`` fields; empty for other types.
-        depends_on: Optional dependency feature ID that must be installed for
-            this field to be editable. ``None`` means the field is always
-            available.
+        depends_on: Optional dependency feature ID that must be *installed*
+            for this field to be editable. ``None`` means the field needs no
+            optional tooling.
+        enabled_when: Optional sibling field name whose value must be truthy
+            for this field to be editable -- a within-form relationship, not a
+            packaging one. Kept separate from ``depends_on`` because resolving
+            a sibling field name through the installed-feature lookup silently
+            disabled the field forever (no package is ever named "chunk").
     """
 
     name: str
@@ -41,6 +46,7 @@ class OptionField:
     default: Any = None
     options: tuple[str, ...] = ()
     depends_on: str | None = None
+    enabled_when: str | None = None
 
 
 @dataclass(frozen=True)
@@ -144,13 +150,91 @@ _FEATURE_LABELS: dict[str, str] = {
 }
 
 
+#: Packages that must all be importable for an umbrella *feature flag* to be
+#: considered installed. These flags are not package names, so ``find_spec``
+#: cannot resolve them directly, and the authoritative checks in
+#: ``optional_deps`` establish them with a real ``__import__`` of torch,
+#: chromadb, transformers and friends -- far too expensive to run from a
+#: render path. The entries below mirror those checks without importing
+#: anything; keep them in step with ``check_pdf_processing_deps``,
+#: ``check_ebook_processing_deps``, ``check_audio_processing_deps`` and
+#: ``check_video_processing_deps``.
+_FEATURE_REQUIRED_PACKAGES: dict[str, tuple[str, ...]] = {
+    "pdf_processing": ("pymupdf",),
+    "ebook_processing": ("ebooklib", "defusedxml"),
+    "audio_processing": ("soundfile", "scipy"),
+    # Video reuses the audio stack; ``check_video_processing_deps`` sets it
+    # straight from ``audio_processing``.
+    "video_processing": ("soundfile", "scipy"),
+}
+
+#: Memoised results of the ``find_spec`` fallback in :func:`_is_installed`.
+#: The option panels ask about every dependent field on every render, so the
+#: probe must not hit the import system each time.
+_INSTALLED_PROBE_CACHE: dict[str, bool] = {}
+
+
+def reset_installed_probe_cache() -> None:
+    """Forget memoised probe results.
+
+    Intended for tests that change what is importable; production code has no
+    reason to call it, since installing a package mid-session is not something
+    a running app observes.
+    """
+    _INSTALLED_PROBE_CACHE.clear()
+
+
+def _module_present(package: str) -> bool:
+    """Return whether ``package`` is importable, without importing it."""
+    import_name = _PYPI_TO_IMPORT.get(package, package.replace("-", "_"))
+    try:
+        return importlib.util.find_spec(import_name) is not None
+    except Exception:
+        return False
+
+
+def _probe_installed(feature_id: str) -> bool:
+    """Probe the import system for ``feature_id``, memoising the answer."""
+    cached = _INSTALLED_PROBE_CACHE.get(feature_id)
+    if cached is not None:
+        return cached
+
+    required = _FEATURE_REQUIRED_PACKAGES.get(feature_id)
+    if required is not None:
+        result = all(_module_present(package) for package in required)
+    else:
+        # A feature is installed only when every package it depends on imports.
+        info = OPTIONAL_FEATURES.get(feature_id)
+        if info is not None:
+            result = all(
+                _module_present(package) for package in info.package_dependencies
+            )
+        else:
+            # Several feature IDs are simply the import name (``yt_dlp``,
+            # ``faster_whisper``, ``parakeet_mlx`` ...). ``_module_present``
+            # routes through the PyPI-to-import mapping first, so a PyPI name
+            # is still never handed to ``find_spec`` unmapped.
+            result = _module_present(feature_id)
+
+    _INSTALLED_PROBE_CACHE[feature_id] = result
+    return result
+
+
 def _is_installed(feature_id: str) -> bool:
     """Return whether ``feature_id`` is available.
 
-    Checks the cached ``DEPENDENCIES_AVAILABLE`` registry first, then falls
-    back to a cheap ``importlib.util.find_spec`` probe using the explicit
-    PyPI-name-to-import-name mapping. PyPI names are never passed directly to
-    ``find_spec``.
+    ``DEPENDENCIES_AVAILABLE`` is pre-seeded with every key set to ``False``
+    and only filled in once something resolves it, so a ``False`` there means
+    "nobody has checked yet" just as often as it means "not installed". Under
+    the default lazy mode nothing ever resolved it, so trusting that
+    placeholder reported every optional feature as missing: users were told to
+    install packages they already had, and every dependent option was
+    permanently disabled.
+
+    So only a ``True`` in the registry is authoritative -- that one was
+    positively established. Anything else falls through to a memoised
+    ``find_spec`` probe using the explicit PyPI-name-to-import-name mapping.
+    PyPI names are never passed directly to ``find_spec``.
 
     Args:
         feature_id: Dependency flag from ``optional_deps`` or a PyPI package
@@ -159,30 +243,9 @@ def _is_installed(feature_id: str) -> bool:
     Returns:
         True when the feature appears to be installed.
     """
-    if feature_id in DEPENDENCIES_AVAILABLE:
-        return bool(DEPENDENCIES_AVAILABLE[feature_id])
-
-    # Check OPTIONAL_FEATURES: a feature is installed only when every package
-    # it depends on is importable.
-    info = OPTIONAL_FEATURES.get(feature_id)
-    if info is not None:
-        for package in info.package_dependencies:
-            import_name = _PYPI_TO_IMPORT.get(package, package.replace("-", "_"))
-            try:
-                if importlib.util.find_spec(import_name) is None:
-                    return False
-            except Exception:
-                return False
+    if DEPENDENCIES_AVAILABLE.get(feature_id):
         return True
-
-    import_name = _PYPI_TO_IMPORT.get(feature_id)
-    if import_name is None:
-        return False
-
-    try:
-        return importlib.util.find_spec(import_name) is not None
-    except Exception:
-        return False
+    return _probe_installed(feature_id)
 
 
 def _install_hint(feature_id: str) -> dict[str, str]:
@@ -210,6 +273,12 @@ def _install_hint(feature_id: str) -> dict[str, str]:
         "command": f'pip install -e ".[{feature_id}]"',
     }
 
+
+#: Sentinel group returned by :func:`get_type_group` for files this app has no
+#: handler for. It is deliberately *not* a key of ``_TYPE_GROUPS``: it has no
+#: capabilities, options or tooling of its own. Callers group these files so
+#: the pre-flight summary can count them separately.
+UNSUPPORTED_GROUP = "unsupported"
 
 _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
     "pdf": TypeGroupCapabilities(
@@ -326,14 +395,14 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 label="Chunk size",
                 type="number",
                 default=1000,
-                depends_on="chunk",
+                enabled_when="chunk",
             ),
             OptionField(
                 name="chunk_overlap",
                 label="Chunk overlap",
                 type="number",
                 default=100,
-                depends_on="chunk",
+                enabled_when="chunk",
             ),
             OptionField(
                 name="encoding",
@@ -371,7 +440,7 @@ def get_type_group(path_or_url: str) -> str:
     try:
         file_type = detect_file_type(path_or_url)
     except FileIngestionError:
-        return "unsupported"
+        return UNSUPPORTED_GROUP
 
     if file_type == "pdf":
         return "pdf"
@@ -405,8 +474,16 @@ def get_tooling_warnings(group: str) -> list[dict[str, Any]]:
 
     Returns:
         List of warning dictionaries with ``feature``, ``label``, ``hint``,
-        and ``command`` keys.
+        and ``command`` keys. Empty for :data:`UNSUPPORTED_GROUP`, which has
+        no tooling to be missing -- installing something would not make those
+        files ingestible.
+
+    Raises:
+        KeyError: If ``group`` is neither a known type group nor the
+            unsupported sentinel.
     """
+    if group == UNSUPPORTED_GROUP:
+        return []
     capabilities = get_capabilities(group)
     warnings: list[dict[str, Any]] = []
 

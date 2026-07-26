@@ -60,6 +60,11 @@ class LibraryIngestCanvas(VerticalScroll):
         self.state = state
         self.styles.width = "1fr"
         self.styles.min_width = 40
+        # Value each option widget was last rendered/reported with, keyed by
+        # ``(group, field name)``. Seeded by ``_compose_type_group`` so that a
+        # widget announcing the value we just gave it is recognised as mount
+        # noise rather than a user edit -- see ``_handle_option_value_changed``.
+        self._reported_option_values: dict[tuple[str, str], Any] = {}
 
     def _compose_type_group(
         self,
@@ -72,14 +77,27 @@ class LibraryIngestCanvas(VerticalScroll):
         scope_label = f"These options apply to all {cap.label} files in this selection."
         children: list[Any] = [Static(scope_label, classes="type-group-scope")]
         summary_parts: list[str] = []
+        cap_fields_by_name = {f.name: f for f in cap.fields}
 
         for field in cap.fields:
             value = values.get(field.name, field.default)
             summary_parts.append(f"{field.name}={value}")
-            disabled = field.depends_on is not None and not _is_installed(field.depends_on)
+            # Two independent reasons a field can be uneditable: its tooling
+            # is not installed, or the sibling field that gates it is off.
+            disabled = field.depends_on is not None and not _is_installed(
+                field.depends_on
+            )
+            if not disabled and field.enabled_when is not None:
+                gate = cap_fields_by_name.get(field.enabled_when)
+                gate_value = values.get(
+                    field.enabled_when,
+                    gate.default if gate is not None else False,
+                )
+                disabled = not bool(gate_value)
             widget_id = f"opt-{group}-{field.name}"
 
             if field.type == "checkbox":
+                self._reported_option_values[(group, field.name)] = bool(value)
                 children.append(
                     Checkbox(
                         field.label,
@@ -93,6 +111,7 @@ class LibraryIngestCanvas(VerticalScroll):
                 select_value = value if value in field.options else field.default
                 if select_value not in field.options and field.options:
                     select_value = field.options[0]
+                self._reported_option_values[(group, field.name)] = select_value
                 children.append(
                     Select(
                         select_options,
@@ -103,6 +122,7 @@ class LibraryIngestCanvas(VerticalScroll):
                     )
                 )
             else:
+                self._reported_option_values[(group, field.name)] = str(value)
                 children.append(
                     Input(
                         value=str(value),
@@ -419,7 +439,19 @@ class LibraryIngestCanvas(VerticalScroll):
         self,
         event: Checkbox.Changed | Select.Changed | Input.Changed,
     ) -> None:
-        """Parse an option widget id and bubble the change up as a message."""
+        """Bubble a genuine option edit up as a message.
+
+        Textual posts ``Changed`` when a ``Select`` mounts, and when an
+        ``Input`` mounts with a non-empty ``value=``. Those announce the value
+        this canvas just handed the widget, not a user edit, so they are
+        dropped here: forwarding them made the screen recompose, which
+        remounted the widgets, which posted again -- an unbounded recompose
+        cycle that pinned the UI at 100% CPU for every pdf/audio/ebook
+        pre-flight (task-673). Comparing against the last value we rendered
+        *or* forwarded (rather than a "still mounting" flag) keeps this free
+        of event-ordering assumptions, and still lets a user return a field
+        to its original value: the previous edit updated the record.
+        """
         widget = getattr(
             event,
             "checkbox",
@@ -437,6 +469,12 @@ class LibraryIngestCanvas(VerticalScroll):
         name = "-".join(parts[2:])
         if name == "reset":
             return
+        key = (group, name)
+        if key in self._reported_option_values and (
+            self._reported_option_values[key] == event.value
+        ):
+            return
+        self._reported_option_values[key] = event.value
         self.post_message(self.OptionValueChanged(group, name, event.value))
 
     @on(Collapsible.Expanded)
