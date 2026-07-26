@@ -2126,3 +2126,41 @@ async def test_console_conversation_row_loading_cleared_when_resume_raises() -> 
             console.query_one("#console-workspace-conversation-0", Button).loading
             is False
         )
+
+
+def test_conversation_search_input_is_tall_enough_to_show_its_value() -> None:
+    """The rail search box must have room for its text, not just its border.
+
+    Roleplay UAT regression: the app-tier rule styled this Input `height: 1`
+    while it kept Textual's default `tall` border, which needs one row of
+    chrome above and below. The content row was squeezed out, so the compiled
+    bundle rendered only the border's top edge -- typing "Seraphina" filtered
+    the list to "1 match" while the query itself stayed invisible, with no way
+    to see, verify or correct the active filter.
+
+    Asserted against the authored component stylesheet because the compiled
+    bundle is what the running app loads and it outranks widget DEFAULT_CSS;
+    a mounted harness resolves the widget default (height 3) and stays green
+    even when the shipped rule is broken.
+    """
+    css = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "components"
+        / "_agentic_terminal.tcss"
+    ).read_text()
+
+    block_start = css.index("#console-workspace-conversation-search {")
+    block = css[block_start : css.index("}", block_start)]
+    heights = [
+        line.split(":", 1)[1].strip().rstrip(";")
+        for line in block.splitlines()
+        if line.strip().startswith("height:")
+    ]
+
+    assert heights, "search input declares no height"
+    # A bordered Input needs 3 rows: border, content, border.
+    assert heights[0] == "3", (
+        f"search input height {heights[0]!r} leaves no content row for its value"
+    )

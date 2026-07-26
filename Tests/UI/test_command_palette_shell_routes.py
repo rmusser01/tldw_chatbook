@@ -94,7 +94,7 @@ def test_legacy_routes_are_searchable_alias_terms_on_their_destination():
         "characters",
         "roleplay",
     } <= alias_terms["personas"]
-    assert "RP&CD" in alias_terms["personas"]  # TAB_CCP display label, deduped to one command
+    assert "Roleplay" in alias_terms["personas"]  # TAB_CCP display label, deduped to one command
     assert "Roleplay & Chat Dictionaries" in alias_terms["personas"]
     assert "personas" in alias_terms["personas"]  # still searchable via id/primary_route
     assert {"subscriptions", "subscription", "Subscriptions"} <= alias_terms[

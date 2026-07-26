@@ -575,6 +575,12 @@ def get_character_list_for_ui(
         return []
 
 
+#: Description budget per library row. The row renders a single truncated
+#: line, so a page never needs more than this and must not haul whole
+#: character sheets (which run to thousands of characters) into the list.
+CHARACTER_PAGE_DESCRIPTION_MAX_CHARS = 200
+
+
 def get_character_page_for_ui(
     db: CharactersRAGDB,
     *,
@@ -584,7 +590,13 @@ def get_character_page_for_ui(
     search_term: Optional[str] = None,
     tag: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """UI-shaped page of characters: id/name/last_modified/created_at/tags."""
+    """UI-shaped page of characters: id/name/description/dates/tags.
+
+    The description is included (bounded to
+    ``CHARACTER_PAGE_DESCRIPTION_MAX_CHARS``) because the library row shows a
+    description snippet to make characters recognizable; projecting only the
+    dates left every row identified by an identical last-modified stamp.
+    """
     try:
         rows = db.list_character_cards_page(
             limit=limit, offset=offset, order_by=order_by,
@@ -597,6 +609,9 @@ def get_character_page_for_ui(
         {
             "id": c.get("id"),
             "name": c.get("name"),
+            "description": str(c.get("description") or "")[
+                :CHARACTER_PAGE_DESCRIPTION_MAX_CHARS
+            ],
             "last_modified": c.get("last_modified"),
             "created_at": c.get("created_at"),
             "tags": c.get("tags") if isinstance(c.get("tags"), list) else [],

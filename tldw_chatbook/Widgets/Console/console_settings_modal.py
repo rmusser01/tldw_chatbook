@@ -368,6 +368,17 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         model_discover.styles.max_width = MODEL_DISCOVER_BUTTON_WIDTH
                         model_discover.display = supports_discovery
                         yield model_discover
+                    # Directly under the button that produces it. Rendering this
+                    # below the Base URL row put four rows and an unrelated field
+                    # between action and feedback, which read as a dead button.
+                    discover_status = Static(
+                        "",
+                        id=MODEL_DISCOVER_STATUS_ID,
+                        classes="console-settings-modal-row",
+                        markup=False,
+                    )
+                    discover_status.display = False
+                    yield discover_status
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Base URL")
                         base_url_input = ConsoleSettingsInput(
@@ -378,14 +389,6 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         )
                         base_url_input.display = uses_base_url
                         yield base_url_input
-                    discover_status = Static(
-                        "",
-                        id=MODEL_DISCOVER_STATUS_ID,
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
-                    discover_status.display = False
-                    yield discover_status
 
                 with Vertical(classes="console-settings-modal-section"):
                     yield Static("Sampling", classes="destination-section")
@@ -932,10 +935,21 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             self._set_model_discover_status(f"No models reported at {display}.")
             return
         self._discovered_model_ids[provider] = tuple(result.model_ids)
-        self._sync_model_controls(provider, self._current_model_value())
         count = len(result.model_ids)
-        noun = "model" if count == 1 else "models"
-        self._set_model_discover_status(f"Found {count} {noun} at {display}.")
+        # With exactly one model there is nothing to choose, so choose it. The
+        # previous behaviour kept whatever was already selected -- which is how
+        # a TTS model stayed active against a chat endpoint after a successful
+        # discovery, with only a status line hinting anything had changed.
+        selected_model = self._current_model_value()
+        if count == 1:
+            selected_model = result.model_ids[0]
+        self._sync_model_controls(provider, selected_model)
+        if count == 1:
+            self._set_model_discover_status(
+                f"Found 1 model at {display} — selected {result.model_ids[0]}."
+            )
+        else:
+            self._set_model_discover_status(f"Found {count} models at {display}.")
         self._sync_readiness_display()
 
     def _set_model_discover_status(self, text: str) -> None:

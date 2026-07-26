@@ -2194,11 +2194,14 @@ ConsoleSystemPromptModal {
     background: $ds-surface-panel;
 }
 
+/* The row is 3 rows tall so the bordered Input inside it can show its value:
+   a `tall` border spends one row above and one below the text, so a 1-row
+   input paints its top edge and nothing else. */
 #console-workspace-conversation-search-row {
     width: 100%;
     min-width: 0;
-    height: 1;
-    min-height: 1;
+    height: 3;
+    min-height: 3;
     margin: 0 0 1 0;
     layout: horizontal;
     align: left middle;
@@ -2207,8 +2210,8 @@ ConsoleSystemPromptModal {
 #console-workspace-conversation-search {
     width: 1fr;
     min-width: 0;
-    height: 1;
-    min-height: 1;
+    height: 3;
+    min-height: 3;
     margin: 0 1 0 0;
 }
 

@@ -5894,3 +5894,108 @@ async def test_character_import_filters_helper_accepts_webp_not_md():
     assert character_cards(Path("x.json")) is True
     assert character_cards(Path("README.md")) is False
     assert character_cards(Path("x.markdown")) is False
+
+
+# --- Roleplay UAT: character rows were identified only by a date ---
+# Live repro (origin/dev @ f384a2807): every character row carried a
+# YYYY-MM-DD last-modified line and nothing else. Both characters in the
+# library showed the SAME date, so the only secondary information on the row
+# discriminated nothing. In a roleplay library that grows to dozens of
+# characters, a one-line description is what makes a row recognizable.
+
+
+async def test_character_row_meta_prefers_a_description_snippet_over_the_date() -> None:
+    """A character row should say who the character is, not when it was touched."""
+    rows = personas_screen_module.PersonasScreen._build_library_rows(
+        [
+            {
+                "id": 2,
+                "name": "Seraphina",
+                "last_modified": "2026-07-26T10:00:00",
+                "description": (
+                    "Seraphina is the last archivist of a drowned library. "
+                    "She is guarded, dryly funny, and speaks in careful, "
+                    "deliberate sentences."
+                ),
+            }
+        ],
+        "character",
+    )
+
+    assert len(rows) == 1
+    assert "archivist of a drowned library" in rows[0].meta
+
+
+async def test_character_row_meta_falls_back_to_the_date_without_a_description() -> None:
+    """Characters with no description keep their previous date meta line."""
+    rows = personas_screen_module.PersonasScreen._build_library_rows(
+        [{"id": 3, "name": "Blank", "last_modified": "2026-07-26T10:00:00"}],
+        "character",
+    )
+
+    assert rows[0].meta == "2026-07-26"
+
+
+async def test_character_row_meta_is_a_single_bounded_line() -> None:
+    """A long description must not blow the row height out."""
+    rows = personas_screen_module.PersonasScreen._build_library_rows(
+        [{"id": 4, "name": "Verbose", "description": "word " * 200}],
+        "character",
+    )
+
+    assert "\n" not in rows[0].meta
+    assert len(rows[0].meta) <= 80
+
+
+# --- Roleplay UAT: the inspector never showed the character's portrait ---
+# Selecting a character surfaced its name, type, validation, conversations and
+# actions, but no picture -- for a roleplay user the portrait is a primary
+# identifying attribute, and the machinery to render one already existed for
+# the editor thumbnail.
+
+
+async def test_inspector_pane_exposes_an_avatar_thumbnail_holder() -> None:
+    """The inspector must have somewhere to render the selected portrait."""
+    from textual.containers import Container
+
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
+        PersonasInspectorPane,
+    )
+
+    class _Host(App):
+        def compose(self):
+            yield PersonasInspectorPane()
+
+    app = _Host()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        holder = app.query_one("#personas-inspector-avatar-thumb", Container)
+        assert holder is not None
+
+
+async def test_inspector_avatar_thumbnail_mounts_and_clears() -> None:
+    """A prepared renderable mounts; None clears it back to empty."""
+    from textual.containers import Container
+    from textual.widgets import Static as _S
+
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
+        PersonasInspectorPane,
+    )
+
+    class _Host(App):
+        def compose(self):
+            yield PersonasInspectorPane()
+
+    app = _Host()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        pane = app.query_one(PersonasInspectorPane)
+
+        pane.set_avatar_thumbnail(_S("portrait"))
+        await pilot.pause()
+        holder = app.query_one("#personas-inspector-avatar-thumb", Container)
+        assert len(holder.children) == 1
+
+        pane.set_avatar_thumbnail(None)
+        await pilot.pause()
+        assert len(holder.children) == 0

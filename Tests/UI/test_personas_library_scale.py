@@ -304,3 +304,49 @@ async def test_import_offpage_name_conflict_message(
         message = notes[-1][0].lower()
         assert "already existed" in message
         assert "imported" not in message or "already" in message
+
+
+# --- Roleplay UAT: library rows must carry the description they display ---
+# The row builder was taught to prefer a description snippet over the
+# last-modified date, but the UI page shaper projected only
+# id/name/last_modified/created_at/tags -- so every row silently fell back to
+# the date and the change had no visible effect. Caught by live verification,
+# not by the row-builder unit tests, which fed records that already had a
+# description.
+
+
+async def test_character_page_for_ui_includes_a_description(scaled_db):
+    """The UI page must project the description the library row renders."""
+    from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+        get_character_page_for_ui,
+    )
+
+    scaled_db.add_character_card(
+        {
+            "name": "zz-described",
+            "description": "The last archivist of a drowned library.",
+            "tags": [],
+        }
+    )
+
+    page = get_character_page_for_ui(scaled_db, limit=200, offset=0)
+    record = next(r for r in page if r["name"] == "zz-described")
+
+    assert record["description"] == "The last archivist of a drowned library."
+
+
+async def test_character_page_for_ui_bounds_long_descriptions(scaled_db):
+    """A page of rows must not haul whole character sheets into memory."""
+    from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+        CHARACTER_PAGE_DESCRIPTION_MAX_CHARS,
+        get_character_page_for_ui,
+    )
+
+    scaled_db.add_character_card(
+        {"name": "zz-verbose", "description": "word " * 5000, "tags": []}
+    )
+
+    page = get_character_page_for_ui(scaled_db, limit=200, offset=0)
+    record = next(r for r in page if r["name"] == "zz-verbose")
+
+    assert len(record["description"]) <= CHARACTER_PAGE_DESCRIPTION_MAX_CHARS

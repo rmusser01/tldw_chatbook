@@ -12,7 +12,7 @@ def test_master_shell_destination_order_matches_spec():
         "Console",
         "Library",
         "Artifacts",
-        "RP&CD",
+        "Roleplay",
         "Watchlists",
         "Schedules",
         "Workflows",
@@ -24,14 +24,21 @@ def test_master_shell_destination_order_matches_spec():
     ]
 
 
-def test_personas_destination_renamed_to_rpcd_with_roleplay_alias():
-    """The nav destination is renamed to "RP&CD" / "Roleplay & Chat Dictionaries".
+def test_personas_destination_labelled_roleplay_with_aliases():
+    """The nav destination reads "Roleplay", expanding to "Roleplay & Chat Dictionaries".
 
     "Personas" stays reserved for the in-screen user-identity mode
     (``MODE_LABELS["personas"]``), which this test does not touch (task-435).
+
+    The label was "RP&CD" until a roleplay UAT found that a newcomer -- whose
+    whole goal is roleplay -- could not decode the abbreviation from the nav
+    bar, which is exactly where the decision to navigate gets made. The
+    expansion was only visible as the screen title, i.e. after guessing right.
+    Every legacy route alias below still resolves, so muscle memory and links
+    are unaffected.
     """
     dest = get_shell_destination("personas")
-    assert dest.label == "RP&CD"
+    assert dest.label == "Roleplay"
     assert dest.full_label == "Roleplay & Chat Dictionaries"
     assert dest.accessible_label == "Roleplay & Chat Dictionaries"
     assert "roleplay" in dest.legacy_routes
@@ -45,15 +52,15 @@ def test_personas_destination_renamed_to_rpcd_with_roleplay_alias():
         assert resolve_shell_route(route).destination_id == "personas"
 
 
-def test_tab_display_labels_use_rpcd_for_personas_and_ccp_tabs():
+def test_tab_display_labels_use_roleplay_for_personas_and_ccp_tabs():
     """Both Personas-seating tab ids show the renamed destination label.
 
-    Covers the top-level tab chrome for the RP&CD rename (task-435).
+    Covers the top-level tab chrome for the Roleplay rename.
     """
     from tldw_chatbook.Constants import TAB_CCP, TAB_PERSONAS, get_tab_display_label
 
-    assert get_tab_display_label(TAB_CCP) == "RP&CD"
-    assert get_tab_display_label(TAB_PERSONAS) == "RP&CD"
+    assert get_tab_display_label(TAB_CCP) == "Roleplay"
+    assert get_tab_display_label(TAB_PERSONAS) == "Roleplay"
 
 
 def test_legacy_routes_resolve_to_master_destinations():
