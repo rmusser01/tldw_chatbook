@@ -649,8 +649,9 @@ Each slice adds the narrowest relevant checks:
   without root sidebar fields;
 - Personas, Library, Search, rebuilt Ingest, MCP, and Evals continue through
   registered production routes;
-- two interleaved TLDW API worker result envelopes retain their own request
-  model and overwrite flag;
+- two interleaved TLDW API worker result envelopes retain their own detached
+  keywords, author, custom-prompt fallback, and overwrite flag without
+  retaining either mutable request model;
 - invalid or stale async completion settles resources/claims without applying
   stale UI.
 
