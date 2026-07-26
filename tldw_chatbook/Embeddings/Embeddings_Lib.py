@@ -31,7 +31,6 @@ import asyncio  # noqa: E402
 import random  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
-import os  # noqa: E402
 import sys  # noqa: E402
 from collections import OrderedDict  # noqa: E402
 from typing import (  # noqa: E402
