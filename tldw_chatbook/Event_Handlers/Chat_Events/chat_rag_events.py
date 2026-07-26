@@ -66,7 +66,10 @@ logger = logger.bind(module="chat_rag_events_simplified")
 
 @dataclass(frozen=True)
 class LocalRagContextResult:
-    """RAG context plus an optional request-scoped canonical capture."""
+    """RAG context with optional request-scoped builder and prompt-set identity.
+
+    The optional ID is the authoritative prompt-evidence-set identity.
+    """
 
     context: str | None
     citation_builder: CitationTraceBuilder | None
@@ -1542,7 +1545,10 @@ async def capture_console_staged_evidence_for_chat(
             has no retrieval query.
 
     Returns:
-        Exact provider context plus an optional request-local citation builder.
+        Exact provider context, an optional request-local citation builder,
+        and its authoritative prompt-evidence-set ID. The ID is present only
+        after a non-empty prompt evidence set is recorded successfully;
+        otherwise it is ``None``.
     """
 
     payload = getattr(launch, "payload", None)
