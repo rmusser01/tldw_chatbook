@@ -1711,3 +1711,146 @@ async def test_reingest_of_unchanged_file_still_resolves_media_id(
 
         assert second_done.media_id == first_done.media_id
         await _wait_for_runner_idle(app, pilot)
+
+
+# --- remote poller (task-684.2) ---------------------------------------------
+
+
+class _FakeServerMediaService:
+    """Records batch lookups and replays scripted status responses."""
+
+    def __init__(self, responses: list[dict]) -> None:
+        self._responses = responses
+        self.batch_calls: list[str] = []
+
+    async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100):
+        self.batch_calls.append(batch_id)
+        if self._responses:
+            return self._responses.pop(0)
+        return {"batch_id": batch_id, "jobs": []}
+
+
+def _queued_server_job(app, *, remote_job_id: str, batch_id: str = "batch-1"):
+    job = app.library_ingest_jobs.submit(source_path="/tmp/a.mp3", origin="server")
+    return app.library_ingest_jobs.attach_remote(
+        job.job_id, remote_job_id=remote_job_id, batch_id=batch_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_remote_poll_settles_a_server_job_then_stops(tmp_path: Path) -> None:
+    """The poller applies a terminal status and then stops polling.
+
+    A finished batch that kept being fetched would hit the server forever for an
+    answer that cannot change.
+    """
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+    service = _FakeServerMediaService(
+        [{"batch_id": "batch-1", "jobs": [{"id": 11, "status": "completed"}]}]
+    )
+    app.server_media_reading_service = service
+
+    async with app.run_test() as pilot:
+        _queued_server_job(app, remote_job_id="11")
+        app.poll_remote_ingest_jobs()
+
+        for _ in range(_POLL_ATTEMPTS):
+            if app.library_ingest_jobs.jobs()[0].state == IngestJobState.DONE:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        else:
+            raise AssertionError("the server job never settled")
+
+        calls_after_settle = len(service.batch_calls)
+        for _ in range(5):
+            await pilot.pause(_POLL_INTERVAL)
+        assert len(service.batch_calls) == calls_after_settle, (
+            "poller kept fetching a settled batch"
+        )
+
+
+@pytest.mark.asyncio
+async def test_remote_poll_does_not_start_without_outstanding_batches(
+    tmp_path: Path,
+) -> None:
+    """A library with only local jobs must never touch the server."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    service = _FakeServerMediaService([])
+    app.server_media_reading_service = service
+
+    async with app.run_test() as pilot:
+        app.library_ingest_jobs.submit(source_path="/tmp/local.txt")
+        app.poll_remote_ingest_jobs()
+        await pilot.pause(_POLL_INTERVAL)
+
+    assert service.batch_calls == []
+
+
+@pytest.mark.asyncio
+async def test_remote_poll_survives_a_server_error(tmp_path: Path) -> None:
+    """A transient failure must not kill the poller or the job."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+
+    class _FlakyService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("connection reset")
+            return {"batch_id": batch_id, "jobs": [{"id": 11, "status": "completed"}]}
+
+    service = _FlakyService()
+    app.server_media_reading_service = service
+
+    async with app.run_test() as pilot:
+        _queued_server_job(app, remote_job_id="11")
+        app.poll_remote_ingest_jobs()
+
+        for _ in range(_POLL_ATTEMPTS):
+            if app.library_ingest_jobs.jobs()[0].state == IngestJobState.DONE:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        else:
+            raise AssertionError("the poller did not recover from the error")
+
+    assert service.calls >= 2
+
+
+@pytest.mark.asyncio
+async def test_remote_poll_stops_on_shutdown(tmp_path: Path) -> None:
+    """The quit flag ends the loop rather than leaving it fetching."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+    service = _FakeServerMediaService([])
+    app.server_media_reading_service = service
+
+    async with app.run_test() as pilot:
+        _queued_server_job(app, remote_job_id="11")
+        app.poll_remote_ingest_jobs()
+        await pilot.pause(_POLL_INTERVAL)
+
+        app._ingest_shutdown = True
+        await pilot.pause(_POLL_INTERVAL)
+        calls_at_shutdown = len(service.batch_calls)
+        for _ in range(5):
+            await pilot.pause(_POLL_INTERVAL)
+
+    assert len(service.batch_calls) == calls_at_shutdown, "poller ignored shutdown"
+
+
+@pytest.mark.asyncio
+async def test_remote_poll_without_a_server_service_is_a_noop(tmp_path: Path) -> None:
+    """No configured server backend means nothing to poll, not a crash."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.server_media_reading_service = None
+
+    async with app.run_test() as pilot:
+        _queued_server_job(app, remote_job_id="11")
+        app.poll_remote_ingest_jobs()
+        await pilot.pause(_POLL_INTERVAL)
+
+        assert app.library_ingest_jobs.jobs()[0].state == IngestJobState.QUEUED

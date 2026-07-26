@@ -199,3 +199,61 @@ def test_a_settled_job_is_not_re_stamped_by_a_repeat_poll():
     reconcile_remote_ingest_jobs(registry, [_status(11, "completed")])
 
     assert registry.jobs()[0].finished_at_wall == first_finish
+
+
+# --- which batches still need watching -------------------------------------
+
+
+def test_pending_batches_lists_only_unfinished_server_batches():
+    """Polling must stop once a batch has nothing left to watch.
+
+    A finished batch that kept being polled would hit the server forever for an
+    answer that cannot change.
+    """
+    from tldw_chatbook.Library.server_ingest_reconcile import pending_remote_batches
+
+    registry = LibraryIngestJobRegistry()
+    # batch-1: one still running.
+    a = registry.submit(source_path="/tmp/a.mp3", origin="server")
+    registry.attach_remote(a.job_id, remote_job_id="1", batch_id="batch-1")
+    # batch-2: everything settled.
+    b = registry.submit(source_path="/tmp/b.mp3", origin="server")
+    registry.attach_remote(b.job_id, remote_job_id="2", batch_id="batch-2")
+    registry.mark_remote_done(b.job_id)
+    # A local job has no batch at all.
+    registry.submit(source_path="/tmp/c.txt")
+
+    assert pending_remote_batches(registry) == ("batch-1",)
+
+
+def test_pending_batches_is_empty_when_nothing_is_outstanding():
+    from tldw_chatbook.Library.server_ingest_reconcile import pending_remote_batches
+
+    registry = LibraryIngestJobRegistry()
+    registry.submit(source_path="/tmp/local.txt")
+
+    assert pending_remote_batches(registry) == ()
+
+
+def test_pending_batches_ignores_hidden_jobs():
+    """A dismissed job must not keep its batch alive."""
+    from tldw_chatbook.Library.server_ingest_reconcile import pending_remote_batches
+
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.mp3", origin="server")
+    registry.attach_remote(job.job_id, remote_job_id="1", batch_id="batch-1")
+    registry.mark_cancelled(job.job_id)
+    registry.dismiss(job.job_id)
+
+    assert pending_remote_batches(registry) == ()
+
+
+def test_pending_batches_deduplicates_and_keeps_submission_order():
+    from tldw_chatbook.Library.server_ingest_reconcile import pending_remote_batches
+
+    registry = LibraryIngestJobRegistry()
+    for index, batch in enumerate(("batch-2", "batch-1", "batch-2"), start=1):
+        job = registry.submit(source_path=f"/tmp/{index}.mp3", origin="server")
+        registry.attach_remote(job.job_id, remote_job_id=str(index), batch_id=batch)
+
+    assert pending_remote_batches(registry) == ("batch-2", "batch-1")

@@ -32,6 +32,33 @@ from tldw_chatbook.Library.server_ingest_status import local_state_for_server_st
 _TERMINAL = (IngestJobState.DONE, IngestJobState.FAILED, IngestJobState.CANCELLED)
 
 
+def pending_remote_batches(registry: LibraryIngestJobRegistry) -> tuple[str, ...]:
+    """Return the server batch ids that still have something worth watching.
+
+    The poller's stop condition. A batch whose every job has settled would
+    otherwise be re-fetched forever for an answer that cannot change.
+
+    ``registry.jobs()`` already excludes hidden (``superseded``/``dismissed``)
+    jobs, so a dismissed row does not keep its batch alive.
+
+    Args:
+        registry: The local ingest job registry.
+
+    Returns:
+        Batch ids in first-submission order, de-duplicated. Empty when nothing
+        is outstanding -- the signal to stop polling.
+    """
+    batches: list[str] = []
+    for job in registry.jobs():
+        if job.origin != "server" or not job.batch_id:
+            continue
+        if job.state in _TERMINAL:
+            continue
+        if job.batch_id not in batches:
+            batches.append(job.batch_id)
+    return tuple(batches)
+
+
 def _field(status: Any, name: str) -> Any:
     """Read ``name`` from a model or a plain dict.
 

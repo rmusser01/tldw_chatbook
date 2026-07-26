@@ -166,6 +166,10 @@ from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
 from tldw_chatbook.Library.ingest_capabilities import get_type_group
 from tldw_chatbook.Library.ingest_preflight import collect_directory_files
+from tldw_chatbook.Library.server_ingest_reconcile import (
+    pending_remote_batches,
+    reconcile_remote_ingest_jobs,
+)
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
     IngestJobState,
@@ -2571,6 +2575,74 @@ class LibraryIngestQueueMixin:
         if pool is None:
             return None
         return self._terminate_ingest_parse_pool_off_thread(pool)
+
+    # -- Remote poller (server-origin jobs) --------------------------------
+
+    #: Seconds between remote status polls. Server ingests are minutes-long
+    #: (transcription, OCR), so a slow cadence is plenty and keeps this off the
+    #: server's back.
+    REMOTE_INGEST_POLL_SECONDS: float = 5.0
+
+    def poll_remote_ingest_jobs(self) -> None:
+        """Start watching server-origin ingest jobs, if any are outstanding.
+
+        Idempotent: the worker is ``exclusive`` within its own group, so calling
+        this again while a poll loop is already running is a no-op rather than a
+        second poller.
+        """
+        if not pending_remote_batches(self.library_ingest_jobs):
+            return
+        self._run_remote_ingest_poll()
+
+    @work(exclusive=True, group="library_ingest_remote_poll")
+    async def _run_remote_ingest_poll(self) -> None:
+        """Poll server ingest batches until none are outstanding.
+
+        Deliberately an **async** worker rather than a thread worker. The
+        service calls are already coroutines, and running on the event loop
+        means every registry mutation here is already on the UI thread -- so
+        this needs no ``call_from_thread`` at all, and therefore cannot hit the
+        quit-path deadlock documented on ``_ingest_pool_callback`` (that
+        marshal blocks the calling thread and does not observe loop shutdown).
+        The ``await`` points are network I/O and a sleep, neither of which
+        blocks the loop.
+
+        Exits when every server batch has settled, on shutdown, or when the
+        server seam is unavailable -- never spins on an answer that cannot
+        change.
+        """
+        service = getattr(self, "server_media_reading_service", None)
+        if service is None:
+            logger.debug("Remote ingest poll: no server media service; not polling.")
+            return
+
+        while not self._ingest_shutdown:
+            batches = pending_remote_batches(self.library_ingest_jobs)
+            if not batches:
+                return
+
+            for batch_id in batches:
+                if self._ingest_shutdown:
+                    return
+                try:
+                    response = await service.list_media_ingest_jobs(batch_id)
+                except Exception:
+                    # A transient server/network failure must not kill the
+                    # poller: the next pass retries, and the jobs stay visibly
+                    # unfinished meanwhile.
+                    logger.opt(exception=True).debug(
+                        f"Remote ingest poll failed for batch {batch_id!r}; "
+                        "will retry on the next pass."
+                    )
+                    continue
+                statuses = getattr(response, "jobs", None)
+                if statuses is None and isinstance(response, dict):
+                    statuses = response.get("jobs")
+                if not statuses:
+                    continue
+                reconcile_remote_ingest_jobs(self.library_ingest_jobs, statuses)
+
+            await asyncio.sleep(self.REMOTE_INGEST_POLL_SECONDS)
 
     # -- Writer (claim-or-release loop, narrowed to the write stage) -------
 
