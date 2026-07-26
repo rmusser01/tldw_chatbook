@@ -1,11 +1,11 @@
 ---
 id: TASK-684.4
 title: Delete the retired ingestion window and its dead wiring
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-26 04:33'
-updated_date: '2026-07-26 17:33'
+updated_date: '2026-07-26 17:54'
 labels:
   - ingest
   - cleanup
