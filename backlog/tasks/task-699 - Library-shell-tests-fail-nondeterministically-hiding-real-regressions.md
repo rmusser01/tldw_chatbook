@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-07-26 15:02'
-updated_date: '2026-07-26 18:18'
+updated_date: '2026-07-26 22:20'
 labels:
   - testing
   - library
@@ -26,26 +26,17 @@ The Library shell test file fails around six tests on every run, but not the sam
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Reduced this file from 9 failures on dev to 0-1, by fixing what turned out not to be flakiness at all.
+Reduced this file from 9 failures to a low-rate intermittent, and ruled out two candidate causes. NOT closed.
 
-Three of the failures were STABLE across every run and were misfiled as nondeterminism. They were two over-broad precedence traps (task-687) and one assertion that compared a mounted form against a never-mounted one (task-698). Both are fixed; the screen was correct in all three cases. Full-file runs after those fixes: 1 failed / 256 passed, then 0 failed / 257 passed.
+WHAT WAS FIXED. Three of the original nine were STABLE, not flaky, and were misfiled here as nondeterminism: two over-broad config-precedence traps (task-687) and one assertion comparing a mounted form against a never-mounted one (task-698). Both merged in PR #933. The screen was correct in all three cases.
 
-What remains is a genuinely order-dependent tail, currently one test:
-test_library_shell_note_conflict_shows_overwrite_reload_and_keeps_user_text. It
-passes alone, passes alongside its siblings, and fails only in a full-file run --
-and not on every full-file run. Its wait carries a 15-second timeout, so simple
-slowness does not explain it; the cause is accumulated state across 257 Textual
-app instances rather than a slow machine.
+WHAT WAS RULED OUT. The wait helpers were bounded by a count of pilot.pause(0.02) calls rather than wall clock, which is genuinely wrong -- a pause takes as long as the loop needs, so under contention the budget silently shrinks. Fixed, and worth keeping. But it is NOT the cause of the remaining tail: the very next full-file run still failed, in 289s against an earlier 520s, i.e. under LESS load. Do not re-litigate load sensitivity; it has been tested.
 
-Measurement conditions matter for anyone picking this up: this machine was
-running fourteen concurrent pytest processes from other agents at load ~12
-throughout. That is enough to change which tests lose a race, so compare failure
-SETS from identical commands in parallel worktrees, never counts between
-different invocations -- a 3-vs-4 count difference across two different commands
-briefly looked like a regression during the 684 work and was not one.
+Also ruled out: cross-contamination inside the notes suite. All 81 notes tests pass together, and each failing test passes in isolation. So the polluter, if there is one, is outside that set.
 
-Remaining scope for this task: the note-conflict tail, plus the pool observed
-earlier under load (note_save_result_after_switch_is_discarded,
-export_registry_failure_*, ingest_canvas_different_canvas_isolation), all of
-which pass in isolation.
+OBSERVED RATES, so the next attempt starts from data. Before the helper change: 4 failed, 2, 0, 1, 0. After: 1, 0. Every failure has been in the notes/note-conflict family -- note_conflict_shows_overwrite_reload_and_keeps_user_text, note_conflict_during_preview_reads_live_text, note_conflict_reload_discards_local_edits, note_save_result_after_switch_is_discarded, notes_sync_now_calls_recording_service_with_chosen_enums -- plus export_registry_failure_* and ingest_canvas_different_canvas_isolation seen earlier.
+
+WHAT I NEVER GOT. The assertion text. Every encounter was a bare FAILED line, and the two runs where I set out to capture the traceback both passed. That is the single most useful next step: run the full file repeatedly with -rf until one fails and the message is captured, since the failing tests have several await points where a prior test's pending autosave or a stale preview snapshot could interfere -- a far better fit for 'passes alone, fails in a full file' than timing.
+
+Suggested approach next time: rather than bisecting 257 tests by hand, run the file under pytest-repeat or in a loop capturing -rf output, get one real traceback, and work back from the assertion. A rate this low makes single-run bisection unreliable.
 <!-- SECTION:NOTES:END -->
