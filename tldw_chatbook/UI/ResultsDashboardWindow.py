@@ -35,10 +35,18 @@ from tldw_chatbook.Widgets.Evals.eval_results_widgets import (
 # from ..Widgets.eval_visualizations import MetricsChart, ConfusionMatrixWidget
 # TODO: Import when visualization widgets are implemented
 from ..Event_Handlers.eval_events import get_evaluation_results, get_run_history
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
-class ResultsDashboardWindow(BaseEvaluationWindow):
-    """Window for viewing evaluation results and metrics."""
+class ResultsDashboardWindow(RecomposeCaptureGuard, BaseEvaluationWindow):
+    """Window for viewing evaluation results and metrics.
+
+    ``comparison_runs`` below is a ``recompose=True`` reactive;
+    ``RecomposeCaptureGuard`` (task-637) keeps a stale mouse capture from
+    leaking app-wide when that recompose fires (same bug class as task-627's
+    ``BaseAppScreen`` fix -- this window isn't a screen, so it never
+    inherited that guard).
+    """
 
     # Reactive state
     current_run_id = reactive(None)

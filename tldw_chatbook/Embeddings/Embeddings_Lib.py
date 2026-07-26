@@ -124,42 +124,26 @@ def _ensure_numpy():
     return numpy
 
 
-def _current_dependencies_available() -> Dict[str, bool]:
-    """Resolve the live optional-deps registry even after test/module reloads."""
-    optional_deps_module = sys.modules.get("tldw_chatbook.Utils.optional_deps")
-    current_registry = getattr(optional_deps_module, "DEPENDENCIES_AVAILABLE", None)
-    if isinstance(current_registry, dict):
-        return current_registry
-    return DEPENDENCIES_AVAILABLE
-
-
 def _embeddings_rag_available() -> bool:
     """Resolve real embeddings/RAG dependency availability, checking lazily.
 
-    ``DEPENDENCIES_AVAILABLE["embeddings_rag"]`` starts False and, under the
-    default lazy dependency-checking mode (optional_deps.py), is only ever
-    populated by ``check_embeddings_rag_deps()`` -- a function nothing in the
-    app calls automatically before this constructor runs (task-657). Without
-    this, the flag stays at its pristine False default for the app's entire
-    lifetime even when the packages are genuinely importable, so
-    EmbeddingFactory refuses every construction with a misleading
-    "install the dependencies" error.
-
-    This constructor is a genuine "first real use", so a False reading here
-    triggers the real (deep-import) probe now, resolved reload-safely
-    (mirroring ``_current_dependencies_available()``) so it keeps working
-    across the module reloads some tests perform. A True reading is trusted
-    without re-probing -- callers that explicitly reset the registry (e.g.
-    ``reset_dependency_checks()``/``force_recheck_embeddings()``) get a fresh
-    check on the next construction, same as today.
+    This constructor's gate is a genuine "first real use" of the
+    embeddings/RAG optional dependencies, so it delegates to
+    ``optional_deps.lazy_embeddings_rag_available()`` (task-657, lifted to a
+    shared public seam in task-638 so ``UI/Views/RAGSearch/search_rag_window.py``
+    can reuse the exact same re-probe-on-False semantics instead of reading
+    ``DEPENDENCIES_AVAILABLE["embeddings_rag"]`` directly and getting stuck on
+    a stale pristine-False default). Resolved via ``sys.modules`` rather than
+    a static import so it keeps working across the module reloads some tests
+    perform, and so tests that monkeypatch
+    ``optional_deps.check_embeddings_rag_deps`` (which the shared helper
+    calls internally) are honored.
     """
-    if _current_dependencies_available().get("embeddings_rag", False):
-        return True
     optional_deps_module = sys.modules.get("tldw_chatbook.Utils.optional_deps")
-    check_fn = getattr(optional_deps_module, "check_embeddings_rag_deps", None)
-    if not callable(check_fn):
-        from ..Utils.optional_deps import check_embeddings_rag_deps as check_fn
-    return bool(check_fn())
+    lazy_available_fn = getattr(optional_deps_module, "lazy_embeddings_rag_available", None)
+    if not callable(lazy_available_fn):
+        from ..Utils.optional_deps import lazy_embeddings_rag_available as lazy_available_fn
+    return bool(lazy_available_fn())
 
 
 # `Tensor` is only used for type annotations (deferred at runtime by

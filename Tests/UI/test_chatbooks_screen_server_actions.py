@@ -1,7 +1,7 @@
 import pytest
 
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.UI.Chatbooks_Window_Improved import (
     ChatbooksWindowImproved,
@@ -157,3 +157,68 @@ async def test_server_import_action_uses_server_mode(monkeypatch):
         await window.action_import_chatbook_server()
 
         assert recorded["mode"] == "server"
+
+
+# -- task-637: mouse-capture guard for widget-level (non-screen) recompose --
+# `chatbooks` is a `reactive([], recompose=True)` field; changing it drives
+# the same `Widget.recompose()` teardown/remount as `self.refresh(
+# recompose=True)`. `ChatbooksWindowImproved` is a `Screen` subclass but is
+# embedded as a plain child widget of `ChatbooksScreen` (a `BaseAppScreen`),
+# not pushed via the screen stack -- it never inherited task-627's guard.
+# The tests below drive `refresh(recompose=True)` directly rather than
+# through `chatbooks =` -- a non-empty `chatbooks` list hits an unrelated,
+# pre-existing bug in `_update_content()` (`grid.mount(card)`/
+# `list_view.mount(item)` called before `grid`/`list_view` is itself
+# mounted); calling `refresh(recompose=True)` exercises the exact same
+# `Widget.recompose()` teardown/remount path task-637 guards, without
+# tripping that unrelated bug.
+
+
+@pytest.mark.asyncio
+async def test_post_recompose_sweep_releases_a_capture_dispatched_during_the_teardown_drain(
+    monkeypatch,
+):
+    """Residual-window regression (mirrors ``test_post_recompose_sweep_
+    releases_a_capture_dispatched_during_the_teardown_drain`` in
+    ``test_settings_rag_profile_region.py``, the task-627 code-review finding
+    for ``BaseAppScreen``): a capture that lands on the VICTIM's own message
+    pump -- queued before the recompose's pre-teardown release even ran, but
+    processed DURING ``super().recompose()``'s own ``remove()`` drain -- must
+    still be swept once the recompose fully completes.
+
+    Reproduced deterministically with ``call_later`` on the victim's own
+    pump, mechanism-equivalent to a forwarded ``MouseDown`` whose dispatch is
+    still pending on the widget's pump when the enclosing recompose begins.
+    """
+
+    async def no_refresh(self):
+        self.chatbooks = []
+
+    monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
+
+    class ChatbooksWindowApp(App):
+        def compose(self) -> ComposeResult:
+            yield ChatbooksWindowImproved(self)
+
+    app = ChatbooksWindowApp()
+    async with app.run_test() as pilot:
+        window = app.query_one(ChatbooksWindowImproved)
+        victim = window.query_one("#chatbook-search", Input)
+
+        # Schedule the recompose first (the widget's own next-callback),
+        # then queue a capture-inducing message on the VICTIM's own pump --
+        # modelling a MouseDown forwarded to the Input but not yet
+        # dispatched when the teardown starts.
+        window.refresh(recompose=True)
+        victim.call_later(lambda: pilot.app.capture_mouse(victim))
+
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+
+        captured = pilot.app.mouse_captured
+        assert captured is None, (
+            f"stale capture survived the teardown drain: {captured!r} "
+            f"(attached={getattr(captured, 'is_attached', None)}) -- clicks "
+            "anywhere in the app are silently swallowed again (task-637)"
+        )

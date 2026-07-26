@@ -749,6 +749,40 @@ def check_embeddings_rag_deps() -> bool:
     return all_available
 
 
+def lazy_embeddings_rag_available() -> bool:
+    """Resolve real embeddings/RAG dependency availability, checking lazily.
+
+    ``DEPENDENCIES_AVAILABLE["embeddings_rag"]`` starts False and, under the
+    default lazy dependency-checking mode (see the module docstring/
+    ``initialize_dependency_checks()``), is only ever populated by
+    ``check_embeddings_rag_deps()`` -- a function nothing calls automatically
+    before a caller's first real use (task-657). Without a lazy re-probe
+    here, the flag stays at its pristine False default for the app's entire
+    lifetime even when the packages are genuinely importable, so any caller
+    that reads the raw flag directly refuses/hides functionality that is
+    actually available (``EmbeddingFactory`` construction -- task-657 --
+    and the Search/RAG window's missing-deps banner plus Start Indexing
+    guard -- task-638).
+
+    Callers with a genuine "first real use" moment should call this instead
+    of reading ``DEPENDENCIES_AVAILABLE["embeddings_rag"]`` directly: a False
+    reading triggers the real (deep-import) probe now. A True reading is
+    trusted without re-probing -- callers that explicitly reset the registry
+    (``reset_dependency_checks()``) or force a fresh probe
+    (``force_recheck_embeddings()``) get a fresh check on the next call. An
+    explicit False determination reached by actually running the checker
+    (e.g. a genuine failed probe) is honored, not silently overridden --
+    this function re-runs ``check_embeddings_rag_deps()`` on every False
+    reading rather than trusting a stale negative.
+
+    Returns:
+        True when the embeddings/RAG optional dependencies are available.
+    """
+    if DEPENDENCIES_AVAILABLE.get("embeddings_rag", False):
+        return True
+    return bool(check_embeddings_rag_deps())
+
+
 def check_websearch_deps() -> bool:
     """Check dependencies needed for web search functionality."""
     # Based on pyproject.toml websearch optional dependencies

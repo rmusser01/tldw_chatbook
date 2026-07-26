@@ -542,6 +542,137 @@ async def test_source_a_b_a_round_trip_still_dispatches_after_echo_consumed():
         assert changed == ["server", "local"]
 
 
+# -- task-637: mouse-capture guard for widget-level (non-screen) recompose --
+# MCPRail.sync_state() drives `self.refresh(recompose=True)` (mcp_rail.py);
+# a capture landing in the deferred-teardown window used to leak exactly
+# like BaseAppScreen's own pre-task-627 bug, one level down: the rail is a
+# plain `Vertical`, not a `BaseAppScreen`, so it never inherited that
+# screen-level guard.
+
+
+@pytest.mark.asyncio
+async def test_sync_state_recompose_releases_a_capture_that_lands_in_the_deferred_teardown_window():
+    """A capture that lands after ``sync_state()`` schedules the rail's
+    recompose (``self.refresh(recompose=True)``) but before the deferred
+    teardown actually runs must not survive it.
+
+    ``Widget.refresh(recompose=True)`` only *schedules* the real teardown via
+    ``self.call_next(self._check_recompose)`` -- it runs on a LATER
+    message-loop iteration, not synchronously. This simulates a MouseDown
+    capturing a rail descendant (the source ``Select``) landing in that same
+    window, the same way a real one arriving over a laggy transport would.
+    Without ``RecomposeCaptureGuard`` (task-637), ``App.mouse_captured`` is
+    left referencing the removed ``Select`` forever, and every mouse click
+    anywhere in the app -- not just inside the rail -- is silently swallowed
+    from then on (``Screen._forward_event``/``_handle_mouse_move`` both
+    special-case ``if self.app.mouse_captured: ...``).
+    """
+    app = RailApp()
+    async with app.run_test() as pilot:
+        rail = app.query_one(MCPRail)
+        victim = app.query_one("#mcp-rail-source", Select)
+
+        rail.sync_state(
+            source="server",
+            snapshots=[_snap("server:main", "Main Server")],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+        )
+        # Same synchronous stack, no `await` yet: simulate a MouseDown
+        # capturing a widget the just-scheduled (but not yet run) recompose
+        # is about to tear down.
+        pilot.app.capture_mouse(victim)
+        assert pilot.app.mouse_captured is victim, (
+            "test setup didn't actually capture the victim widget"
+        )
+
+        # Let the deferred recompose (and everything else queued) run.
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pilot.app.mouse_captured is None, (
+            "mouse_captured is still referencing a widget MCPRail's "
+            "deferred recompose already tore down -- every mouse click "
+            "anywhere in the app is now silently swallowed (task-637)"
+        )
+
+        # A real click elsewhere in the rail must still be delivered.
+        rail.sync_state(
+            source="server",
+            snapshots=[_snap("server:main", "Main Server")],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+        )
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}0")
+        await pilot.pause()
+        selected = [e for e in app.events if isinstance(e, MCPRail.ServerSelected)]
+        assert selected, "rail row click produced no event -- clicks are still swallowed"
+
+
+class RailWithSiblingApp(App):
+    """MCPRail alongside a genuine sibling widget outside its subtree --
+    mirrors the real MCP workbench layout, where the rail is only one part
+    of a larger screen (see ``mcp_workbench.py``)."""
+
+    def compose(self) -> ComposeResult:
+        yield MCPRail(
+            source="local",
+            snapshots=[],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+            id="mcp-rail",
+        )
+        from textual.widgets import Static
+
+        yield Static("sibling content", id="sibling")
+
+
+@pytest.mark.asyncio
+async def test_recompose_does_not_release_a_legitimate_capture_outside_the_rail():
+    """AC3: a still-attached capture that belongs to a widget OUTSIDE the
+    rail's own subtree must survive the rail's recompose untouched.
+
+    A non-screen widget is typically only one part of a larger, otherwise-
+    untouched screen -- unlike ``BaseAppScreen``, whose recompose tears down
+    its ENTIRE content (so any current capture must belong to what's about
+    to be removed), a sibling widget's capture has nothing to do with this
+    rail recomposing and must not be dropped.
+    """
+    app = RailWithSiblingApp()
+    async with app.run_test() as pilot:
+        rail = app.query_one(MCPRail)
+        bystander = app.query_one("#sibling")
+        pilot.app.capture_mouse(bystander)
+        assert pilot.app.mouse_captured is bystander
+
+        rail.sync_state(
+            source="server",
+            snapshots=[_snap("server:main", "Main Server")],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pilot.app.mouse_captured is bystander, (
+            "the rail's own recompose released an unrelated, still-attached "
+            "capture that belongs to a sibling widget (task-637 AC3)"
+        )
+
+
 @pytest.mark.asyncio
 async def test_scope_a_b_a_dispatches_three_changes_and_mount_echo_zero():
     app = RailApp()
