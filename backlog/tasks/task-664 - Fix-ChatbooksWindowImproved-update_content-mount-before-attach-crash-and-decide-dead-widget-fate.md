@@ -1,5 +1,5 @@
 ---
-id: TASK-661
+id: TASK-664
 title: Fix ChatbooksWindowImproved update_content mount before attach crash and decide dead widget fate
 status: To Do
 assignee: []
