@@ -361,6 +361,16 @@ class IngestQueueRow:
     #: and the local pipeline has no cancel seam at all, so offering it
     #: anywhere else would be dead bait.
     can_cancel: bool = False
+    #: Whether this row offers "View on server". Server-only and done-only, and
+    #: additionally requires an id: the server does not always report one, and
+    #: an action that cannot resolve anything is worse than no action.
+    #: Distinct from ``can_open``, which resolves a LOCAL media row -- a server
+    #: ingest has none, so the two are never both true (task-700).
+    can_open_on_server: bool = False
+    #: The id of the media row the SERVER created, mirrored from the job. Kept
+    #: apart from ``media_id`` for the same reason it is on the job: the two id
+    #: spaces are unrelated.
+    remote_media_id: str | None = None
     source_path: str = ""
     progress: dict[str, Any] | None = None
     error_detail: dict[str, Any] | None = None
@@ -580,6 +590,13 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
             line=f"{_GLYPH_DONE} done · {basename} · {elapsed}",
             can_open=job.media_id is not None,
             can_retry=False,
+            # A server ingest wrote to the server's library, so there is no
+            # local row to open; its own action stands in, when the server told
+            # us which row it made.
+            can_open_on_server=(
+                job.origin == "server" and bool(job.remote_media_id)
+            ),
+            remote_media_id=job.remote_media_id,
             media_id=job.media_id,
             state=job.state,
             source_path=job.source_path,

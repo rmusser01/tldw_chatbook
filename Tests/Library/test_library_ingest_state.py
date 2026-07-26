@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
 from tldw_chatbook.Library.library_ingest_state import (
@@ -1230,3 +1232,109 @@ def test_a_page_source_offers_its_scope_settings_in_the_canvas_state():
     # cannot answer for raises rather than rendering (task-673).
     fields = {f.name for f in get_capabilities("web").fields}
     assert {"scrape_method", "max_pages", "max_depth"} <= fields
+
+
+class TestOpenAServerIngestedItem:
+    """A finished server job must offer a route to what it produced.
+
+    Its content lives in the server's library, so "Open in Library" -- which
+    resolves a local media row -- stays withheld. The server does report the id
+    of the row it created, so the item is addressable; it just needs its own
+    affordance (task-700).
+    """
+
+    def _server_job(self, **kwargs):
+        from tldw_chatbook.Library.library_ingest_jobs import (
+            IngestJobState,
+            LibraryIngestJob,
+        )
+
+        defaults = dict(
+            job_id="ingest-job-1",
+            source_path="/tmp/paper.pdf",
+            state=IngestJobState.DONE,
+            origin="server",
+            remote_media_id="1125",
+            started_at=1.0,
+            finished_at=2.0,
+        )
+        defaults.update(kwargs)
+        return LibraryIngestJob(**defaults)
+
+    def test_a_finished_server_job_offers_the_server_view(self):
+        from tldw_chatbook.Library.library_ingest_state import (
+            _build_queue_row as build_ingest_queue_row,
+        )
+
+        row = build_ingest_queue_row(self._server_job(), now=3.0)
+
+        assert row.can_open_on_server is True
+        assert row.remote_media_id == "1125"
+        # The local action stays withheld: there is no local row to open.
+        assert row.can_open is False
+
+    def test_a_server_job_without_an_id_offers_nothing(self):
+        """AC#3. The server does not always report an id, and an action that
+        cannot resolve anything is worse than no action."""
+        from tldw_chatbook.Library.library_ingest_state import (
+            _build_queue_row as build_ingest_queue_row,
+        )
+
+        row = build_ingest_queue_row(self._server_job(remote_media_id=None), now=3.0)
+
+        assert row.can_open_on_server is False
+
+    def test_a_local_job_never_offers_the_server_view(self):
+        """Even holding an id, a local job's content is local."""
+        from tldw_chatbook.Library.library_ingest_state import (
+            _build_queue_row as build_ingest_queue_row,
+        )
+
+        row = build_ingest_queue_row(
+            self._server_job(origin="local", media_id=7, remote_media_id="1125"),
+            now=3.0,
+        )
+
+        assert row.can_open_on_server is False
+        assert row.can_open is True
+
+    def test_an_unfinished_server_job_offers_nothing_yet(self):
+        from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
+        from tldw_chatbook.Library.library_ingest_state import (
+            _build_queue_row as build_ingest_queue_row,
+        )
+
+        row = build_ingest_queue_row(
+            self._server_job(state=IngestJobState.PARSING), now=3.0
+        )
+
+        assert row.can_open_on_server is False
+
+
+def test_the_view_on_server_action_cannot_be_caught_by_the_local_open_handler():
+    """The two row actions must not collide on id prefix or class.
+
+    "Open in Library" matches ``.library-ingest-open`` and recovers a job id by
+    stripping the prefix ``library-ingest-open-``. An id like
+    ``library-ingest-open-server-<job>`` would therefore be caught by that
+    handler and parsed into the bogus job id ``server-<job>`` -- opening
+    nothing, from the wrong handler. Both the id prefix and the class are
+    deliberately distinct (task-700).
+    """
+    import inspect
+
+    from tldw_chatbook.Widgets.Library import library_ingest_canvas
+
+    source = inspect.getsource(library_ingest_canvas)
+    assert 'id=f"library-ingest-view-server-{row.job_id}"' in source
+    # Check the id CONSTRUCTIONS, not the raw source: the comment above that
+    # button deliberately names the colliding form to explain why it is avoided.
+    ids = re.findall(r'id=f"([a-z-]+)\{row\.job_id\}"', source)
+    assert not [i for i in ids if i.startswith("library-ingest-open-") and i != "library-ingest-open-"], (
+        f"an action id shadows the local open prefix: {ids}"
+    )
+    # The class the local handler selects on must not be on the server button.
+    server_button = source[source.index('"View on server"'):]
+    server_button = server_button[: server_button.index("compact=True")]
+    assert "library-ingest-view-server" in server_button
+    assert "library-ingest-open " not in server_button

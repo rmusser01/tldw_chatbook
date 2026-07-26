@@ -4126,7 +4126,10 @@ class LibraryScreen(BaseAppScreen):
         try:
             detail = await self._run_library_service_call(
                 get_media_item,
-                mode="local",
+                # A media item opened from a finished SERVER ingest lives in the
+                # server's library, so resolving it locally would find nothing
+                # (task-700). Every other route into this viewer is local.
+                mode="server" if self._library_media_detail_is_remote else "local",
                 media_id=media_id,
                 include_content=True,
                 include_versions=True,
@@ -4405,6 +4408,10 @@ class LibraryScreen(BaseAppScreen):
                 pass
             self._library_ingest_preflight_worker = None
         self._library_ingest_form = LibraryIngestFormState()
+        #: Whether the media currently open in the viewer lives on the server.
+        #: Set only by the ingest queue's "View on server" action; every other
+        #: route into the viewer opens a local row and clears it.
+        self._library_media_detail_is_remote = False
 
     # ----- Export canvas -------------------------------------------------
 
@@ -12202,6 +12209,35 @@ class LibraryScreen(BaseAppScreen):
             return
         self._open_job_in_library(job)
 
+
+    @on(Button.Pressed, ".library-ingest-view-server")
+    def handle_library_ingest_view_on_server(self, event: Button.Pressed) -> None:
+        """Open the item a finished SERVER ingest created, in the server view.
+
+        Distinct from "Open in Library": that resolves a row in this machine's
+        media DB, and a server ingest never wrote one. The server reports the id
+        of the row it made, so the item is addressable -- against the server
+        (task-700).
+
+        Args:
+            event: Button press event emitted by a "View on server" row action.
+        """
+        event.stop()
+        job_id = self._ingest_job_id_from_button(
+            event.button.id, "library-ingest-view-server-"
+        )
+        if job_id is None:
+            return
+        job = self._library_ingest_job_by_id(job_id)
+        remote_media_id = getattr(job, "remote_media_id", None) if job else None
+        if not remote_media_id:
+            # The row only offers this action when the id is present, so this is
+            # a stale-press guard rather than an expected path.
+            self.notify("The server did not report which item it created.")
+            return
+        self._library_media_detail_is_remote = True
+        self.run_worker(self._open_library_item_by_id("media", str(remote_media_id)))
+
     @on(Button.Pressed, ".library-ingest-retry")
     def handle_library_ingest_retry(self, event: Button.Pressed) -> None:
         """Requeue a failed ingest job.
@@ -14591,6 +14627,7 @@ class LibraryScreen(BaseAppScreen):
             # Mirrors handle_library_media_row's full state-set EXACTLY so
             # the recomposed canvas lands on a clean viewer, never a stale
             # one carried over from a previously opened item.
+            self._library_media_detail_is_remote = False
             self._selected_media_id = record_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
             self._library_media_view = "viewer"

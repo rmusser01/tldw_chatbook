@@ -382,6 +382,7 @@ class LibraryIngestCanvas(VerticalScroll):
             row_classes = "library-ingest-row"
             has_actions = (
                 row.can_open
+                or row.can_open_on_server
                 or row.can_retry
                 or row.can_dismiss
                 or row.can_cancel
@@ -439,6 +440,28 @@ class LibraryIngestCanvas(VerticalScroll):
                             id=f"library-ingest-open-{row.job_id}",
                             classes=(
                                 "library-canvas-action library-ingest-open "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if row.can_open_on_server:
+                        # Its own action rather than a reworded "Open in
+                        # Library": that one resolves a LOCAL media row, and a
+                        # server ingest has none. The label says where the
+                        # content actually is.
+                        yield Button(
+                            "View on server",
+                            # Neither the id prefix nor the class may collide
+                            # with "Open in Library": that handler matches
+                            # ``.library-ingest-open`` and strips the prefix
+                            # ``library-ingest-open-`` to recover a job id, so
+                            # an id of ``library-ingest-open-server-<job>``
+                            # would be caught by it and parsed into the bogus
+                            # job id ``server-<job>``.
+                            id=f"library-ingest-view-server-{row.job_id}",
+                            classes=(
+                                "library-canvas-action "
+                                "library-ingest-view-server "
                                 "library-ingest-row-action"
                             ),
                             compact=True,
