@@ -92,6 +92,7 @@ The module defines these non-configurable limits:
 | `REPAIR_EVIDENCE_CONTEXT_UTF8_BYTES_MAX` | `SNAPSHOT_TEXT_UTF8_BYTES_MAX` (`64 * 1024`) | Exact evidence context retained for repair |
 | `REPAIR_ALLOWED_ORDINALS_MAX` | `EVIDENCE_ENTRIES_PER_PROMPT_MAX` (`64`) | Allowed ordinal count and maximum ordinal value |
 | `REPAIR_MARKERS_MAX` | `CITATION_OCCURRENCES_MAX` (`512`) | Total eligible well-formed and malformed marker-like tokens scanned in either body |
+| `REPAIR_MARKER_CHARACTERS_MAX` | `MARKER_CHARACTERS_MAX` (`32`) | Maximum ASCII characters in one eligible citation-like token |
 | `REPAIR_ANSWER_BODY_UTF8_BYTES_MAX` | `ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX` (`1024 * 1024`) | Initial and repaired body buffer |
 | `REPAIR_FIXED_OVERHEAD_UTF8_BYTES_MAX` | `8 * 1024` | Fixed instruction and literal delimiter content |
 | `REPAIR_REQUEST_UTF8_BYTES_MAX` | `REPAIR_ANSWER_BODY_UTF8_BYTES_MAX + REPAIR_EVIDENCE_CONTEXT_UTF8_BYTES_MAX + REPAIR_FIXED_OVERHEAD_UTF8_BYTES_MAX` (`1,122,304`) | Sum of UTF-8 bytes in the canonical system and user message content before provider adaptation |
@@ -110,10 +111,10 @@ The local capture boundary returns an optional immutable contract containing:
 - the exact prompt evidence context already sent to the initial provider
 - a schema version
 
-The contract accepts only ordinals in the inclusive range `1..64`, validates
-sorted uniqueness, applies the hard limits above, and contains no builder,
-database handle, source primary key, credential, provider object, or mutable
-request state.
+The contract requires one contiguous ordinal tuple exactly equal to
+`(1, 2, ..., N)` for `1 <= N <= 64`, applies the hard limits above, and contains
+no builder, database handle, source primary key, credential, provider object,
+or mutable request state.
 
 `LocalRagContextResult` carries this contract independently of its optional
 canonical `CitationTraceBuilder`. A successfully formatted non-empty local
@@ -137,6 +138,18 @@ escaped literals, a citation-like token is the exact bracket form matched by
 `[S1,S2]`, and TAB-or-U+0020-SPACE variants are malformed. A well-formed
 positive ordinal absent from the contract is unknown. Both malformed and
 unknown tokens are invalid.
+
+The scanner applies the 32-character token bound before ordinal
+classification. Overlong citation-like tokens are invalid. It never converts
+untrusted decimal text to an integer: known ordinals are compared against the
+precomputed ASCII strings `{"1", ..., str(N)}`. This keeps arbitrarily long
+digit sequences bounded and avoids interpreter-dependent integer parsing.
+
+Repair scanning and the existing canonical span scanner must share the same
+Markdown-code and escape exclusion traversal. The implementation may promote
+that traversal to one package-private helper consumed by both modules; it must
+not duplicate fenced-code, inline-code, or preceding-backslash logic in
+`citation_repair.py`.
 
 It returns one of:
 
@@ -248,11 +261,12 @@ contains:
 It is not stored in the message/session serialization model.
 
 Repair eligibility is independent of canonical builder readiness. The store
-therefore gains an explicit terminal-defer flag for an empty persisted
-assistant placeholder. The flag:
+therefore gains an explicit `defer_terminal_persistence` argument for an empty
+assistant placeholder requested with `persist=True`. The argument:
 
 - is valid only for an empty, attachment-free assistant placeholder
-- arms terminal persistence even when no citation finalizer is installed
+- arms terminal persistence whenever a persistence backend exists, even when
+  no citation finalizer is installed
 - does not consult canonical-write readiness
 - prevents streaming materialization or UI polling from writing the initial
   body
@@ -261,9 +275,18 @@ assistant placeholder. The flag:
 
 When a builder is ready, the same placeholder may carry both the citation
 finalizer and the repair defer flag; the store keeps only one deferral entry.
-When no builder is ready, terminal completion performs one ordinary stable-ID
-write of the selected body. A no-op citation finalizer must not be used to
-simulate repair deferral.
+When no builder is ready and persistence exists, terminal completion performs
+one ordinary stable-ID write of the selected body. A no-op citation finalizer
+must not be used to simulate repair deferral.
+
+The store also gains one atomic
+`replace_deferred_terminal_body(message_id, selected_body)` operation. It
+accepts only a deferred, attachment-free assistant message still in
+`pending`/`streaming` state and a non-empty bounded body. In one synchronous
+mutation it replaces `message.content`, collapses the stream buffer to exactly
+that body, updates the materialization count, and leaves status and persistence
+unchanged. Only successful repaired selection calls it. The UI can therefore
+never observe an empty or partially replaced body between reset and append.
 
 The lifecycle is:
 
@@ -284,20 +307,67 @@ Both direct-provider and agent-generated initial answers enter the same
 post-generation boundary. Agent repair is still a direct, tool-free provider
 request; it does not resume or supersede the agent run.
 
+### Shared post-generation selection seam
+
+Only the initial send receives a `ConsoleCitationRepairSession`; retry,
+regenerate, edit/resend, continue, and recovered-draft paths pass `None`.
+Direct generation invokes one async selection coordinator after the provider
+stream ends and before `mark_message_complete`. An agent run invokes the same
+coordinator only after a genuine `RUN_DONE` outcome and before
+`_complete_agent_message` or run-to-message anchoring.
+
+The coordinator always materializes and reads the exact initial body from the
+store-owned assistant placeholder. It does not use `outcome.final_text`, which
+can diverge from the body after tool-turn resets or streamed normalization.
+Provider failure, agent failure/cancellation, empty output, and synthesized
+fallback copy keep their existing terminal behavior and never dispatch citation
+repair.
+
+When repair is required, the coordinator first publishes
+`CHECKING_CITATIONS` and the safe checking presentation, then yields to the
+event loop once before provider dispatch. It rechecks message/session ownership
+and the stop request after that yield. This makes the transition paintable and
+gives Stop a real pre-dispatch boundary rather than a state that exists only
+inside one uninterrupted callback.
+
+The outer `_stream_assistant_response` call remains the sole owner of the
+active asyncio task and assistant-message identity across direct dispatch,
+agent dispatch, checking, repair, and terminal selection. Nested direct and
+agent helpers must not clear active-run ownership in their own `finally`
+blocks. Agent thread cancellation retains its existing per-run
+`threading.Event`; the citation repair phase uses the outer asyncio task and
+the controller's stop flag.
+
 ### Active-run ownership
 
-The same active asyncio task and cancellation signal remain authoritative from
-initial dispatch through terminal selection. Existing direct and agent
+The same active asyncio task and controller stop request remain authoritative
+from initial dispatch through terminal selection. During the agent phase, its
+existing per-run thread event mirrors that stop request for the worker thread;
+it does not replace the outer task's ownership. Existing direct and agent
 `finally` blocks must not clear active-run state before repair resolves.
 
 Stop behavior is:
 
 - stop during initial generation: preserve existing stopped-response behavior
-- stop after the initial body but before repair dispatch: select the original
-  with `Citation repair canceled`
-- stop during repair: cancel collection, select the original, and show the
-  same cancellation copy
+- stop after the initial body but before repair dispatch: signal and cancel the
+  repair phase without synchronously terminalizing the message
+- stop during repair: cancel collection without calling
+  `mark_message_stopped`; the coordinator selects the original, calls
+  `mark_message_complete`, sets run status `STOPPED`, and shows
+  `Citation repair canceled`
 - a late repair chunk after cancellation is discarded
+
+The linearization point is the coordinator's synchronous selection commit. A
+stop observed before that commit wins and selects the original. A stop arriving
+after the commit sees no active run and is a no-op. Because initial generation
+already completed, a canceled repair leaves the assistant message itself
+`complete`, not `stopped`, so normal actions and future provider history remain
+honest. `stop_active_run` does not append its durable system row while the
+assistant is still deferred. After `mark_message_complete` persists the
+selected original, the coordinator appends the existing durable user-stop
+record with phase-specific copy `Citation repair canceled by user.` rather
+than the inaccurate `Response stopped by user.`. This ordering keeps the
+persisted parent chain and active leaf correct.
 
 Closing the owning session cancels the active request, discards repair output,
 clears its preview entry, and never recreates the session or message.
@@ -321,7 +391,8 @@ Visible copy is:
 
 - while checking or repairing: `Checking citations…`
 - successful selection: `Citations repaired · View original attempt`
-- failed or invalid repair: a concise citation-warning notice
+- unavailable, failed, or invalid repair:
+  `Citation repair unavailable · Original response kept`
 - canceled repair: `Citation repair canceled`
 
 The repaired notice is structural. Every notice test asserts that it does not
@@ -335,10 +406,16 @@ answer body limit. The map retains at most eight entries; inserting a ninth
 evicts the least recently used entry and removes that message's
 `original_available` presentation flag.
 
-The transcript action service exposes `View original attempt` only while the
-controller reports that the body is available. Activation retrieves the body
-through the controller and stores it in screen-local ephemeral preview state.
-The transcript renders a clearly labeled:
+The transcript passes `original_attempt_available` as an explicit optional
+context argument to `ConsoleMessageActionService.available_actions`; the
+service exposes `View original attempt` only when that argument is true.
+Existing callers, `plain_action_row`, and exports omit the argument and remain
+byte-identical. Availability may also ride on the safe transient message
+presentation metadata for row signatures, but the original body never does.
+
+Activation retrieves the body through the controller and stores it in
+screen-local ephemeral preview state. The transcript renders a clearly
+labeled:
 
 ```text
 Original attempt (not selected)
@@ -349,8 +426,8 @@ The preview never changes `ConsoleChatMessage.content`, variants, persistence,
 copy action output, TTS input, export data, or provider history.
 
 Session close, controller shutdown, message deletion, cache eviction, or
-starting a replacement lifecycle for that message clears the preview. Restart
-does not restore it in this task.
+starting a replacement lifecycle for that message clears both the controller
+entry and any screen-local preview. Restart does not restore it in this task.
 
 ## Persistence and provenance honesty
 
@@ -373,13 +450,13 @@ All repair failures retain the initial body:
 | Failure | Result |
 |---|---|
 | Missing repair contract | Existing completion behavior |
-| Exact repair request does not fit | Original + warning |
-| Provider unavailable or raises | Original + warning |
-| Empty repair output | Original + warning |
-| Output exceeds byte limit | Original + warning |
-| Output changes non-marker text | Original + warning |
-| Output still has missing/invalid markers | Original + warning |
-| User cancels repair | Original + canceled notice |
+| Exact repair request does not fit | Original + `Citation repair unavailable · Original response kept` |
+| Provider unavailable or raises | Original + unavailable notice |
+| Empty repair output | Original + unavailable notice |
+| Output exceeds byte limit | Original + unavailable notice |
+| Output changes non-marker text | Original + unavailable notice |
+| Output still has missing/invalid markers | Original + unavailable notice |
+| User cancels repair | Complete original + `Citation repair canceled`; run status `STOPPED` |
 | Session closes | Discard result; no resurrection |
 
 Unexpected errors log only operation, reason code, provider family when safe,
@@ -401,9 +478,12 @@ evidence, source identity, locator, prompt, exception text, or traceback.
 
 ### Pure contract tests
 
-- contract schema, ordinal uniqueness, count, and byte limits
+- contract schema, contiguous `1..N` ordinals, count, marker-length, and byte
+  limits
 - valid, missing, unknown, zero, leading-zero, comma-grouped, repeated,
   space-separated, adjacent, and reordered markers
+- exact 32-character marker acceptance, overlong-marker invalidity, and a
+  body-sized decimal marker that never enters integer parsing
 - escaped, inline-code, and fenced-code literals
 - projection equality for insert, replace, remove, adjacent, space-separated,
   malformed, and unknown markers, including the exact one-U+0020 deletion rule
@@ -420,10 +500,20 @@ evidence, source identity, locator, prompt, exception text, or traceback.
 - valid direct answer completes without repair
 - missing/invalid direct answer repairs once with the same resolution
 - agent answer uses direct tool-free repair rather than re-entering the agent
+- direct and agent paths both read the initial body from the store and cross the
+  same async selection seam before any completion or agent-run anchoring
+- empty provider output, agent failure/cancellation, and synthesized fallback
+  copy never dispatch repair
 - repair remains active and defers persistence when no builder is available
 - one repair maximum even when repaired output remains invalid
-- checking state remains stoppable and send-blocking
-- stop before dispatch, during repair, and after the last chunk
+- checking state is published before an event-loop yield, remains stoppable and
+  send-blocking, and a stop at that yield prevents provider dispatch
+- stop before dispatch and during repair select the original as a complete
+  message, then set run state `STOPPED` and append
+  `Citation repair canceled by user.` as the durable stop record after the
+  assistant write
+- stop after the synchronous selection commit is a no-op; a late repair chunk
+  cannot overwrite the original
 - session close and late-chunk races
 - repair failure selects the original
 - successful repair passes only the repaired body to terminal persistence
@@ -434,12 +524,18 @@ evidence, source identity, locator, prompt, exception text, or traceback.
 - the same assistant row remains visible throughout the transition
 - no terminal write occurs before selection, including builder-unavailable
   repair sessions
+- atomic deferred-body replacement exposes neither an empty intermediate body
+  nor a partial repaired body and performs no write
+- valid, repaired, failed-repair, and canceled-repair completion each perform
+  one stable-ID terminal write when persistence exists
 - presentation metadata contains no governed text
 - notice and action-row signatures update without remounting unrelated rows
 - all checking, success, failure, and canceled notices remain structural and
   never claim semantic support, verification, grounding, or canonical
   association
 - original preview toggles with mouse and keyboard
+- the original-attempt action is absent from default action-service calls,
+  plain rows, and exports unless the transcript passes explicit availability
 - preview does not alter message content, copy, TTS, export, or provider history
 - eight-entry LRU eviction and all cleanup paths
 
