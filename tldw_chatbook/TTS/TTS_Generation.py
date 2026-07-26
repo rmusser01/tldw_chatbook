@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from typing import Any
+from copy import deepcopy
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Any, Literal
 
 from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.adapter_registry import (
     ReconfigureResult,
     TTSAdapterLease,
     TTSAdapterRegistry,
+    TTSReconfigurationTicket,
 )
 from tldw_chatbook.TTS.adapter_types import (
     CleanupCallback,
@@ -29,6 +34,74 @@ from tldw_chatbook.TTS.request_admission import TTSRequestAdmissionCoordinator
 logger = logging.getLogger(__name__)
 
 _CLEANUP_FAILURE_NOTE = "TTS cleanup also failed while preserving the original error"
+_TTS_SETTINGS_FOREGROUND_TIMEOUT_SECONDS = 2.0
+
+TTSSettingsProviderStatus = Literal[
+    "applied",
+    "pending",
+    "unchanged",
+    "superseded",
+    "unavailable",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class TTSSettingsPersistenceOutcome:
+    """Structured result of atomic settings replacement and cache refresh."""
+
+    file_replaced: bool
+    caches_reloaded: bool
+    failure_phase: Literal["before_replace", "cache_reload"] | None
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.file_replaced) is not bool
+            or type(self.caches_reloaded) is not bool
+        ):
+            raise TypeError("TTS settings persistence flags must be booleans")
+        if self.failure_phase not in {None, "before_replace", "cache_reload"}:
+            raise ValueError("Unknown TTS settings persistence failure phase")
+        if self.caches_reloaded and not self.file_replaced:
+            raise ValueError("Caches cannot reload before settings replacement")
+        if self.failure_phase == "before_replace" and self.file_replaced:
+            raise ValueError("Pre-replacement failure cannot replace the settings file")
+        if self.failure_phase == "cache_reload" and (
+            not self.file_replaced or self.caches_reloaded
+        ):
+            raise ValueError("Cache-reload failure requires a replaced settings file")
+
+
+@dataclass(frozen=True, slots=True)
+class TTSSettingsPublication:
+    """One safe settings-publication result for foreground or final observers."""
+
+    generation: int
+    preferences: TTSPreferencesSnapshot
+    persistence: TTSSettingsPersistenceOutcome
+    provider_statuses: Mapping[str, TTSSettingsProviderStatus]
+    provider_revisions: Mapping[str, int]
+    published: bool
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "provider_statuses",
+            MappingProxyType(dict(self.provider_statuses)),
+        )
+        object.__setattr__(
+            self,
+            "provider_revisions",
+            MappingProxyType(dict(self.provider_revisions)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TTSSettingsPublicationTicket:
+    """Service-owned settings operation with bounded and definitive views."""
+
+    generation: int
+    foreground: asyncio.Future[TTSSettingsPublication]
+    completion: asyncio.Task[TTSSettingsPublication]
 
 
 def _sanitized_shutdown_error(*failures: BaseException) -> RuntimeError:
@@ -334,6 +407,10 @@ class TTSService:
         self._shutdown_task: asyncio.Task[None] | None = None
         self._responses: set[_ManagedAudioResponse] = set()
         self._admitted_operations: set[_AdmittedTTSOperation] = set()
+        self._settings_generation = 0
+        self._settings_publication_tasks: set[asyncio.Task[TTSSettingsPublication]] = (
+            set()
+        )
         initial_preferences = (
             TTSPreferencesSnapshot.from_settings({})
             if preferences_snapshot is None
@@ -445,6 +522,10 @@ class TTSService:
     def preferences_snapshot(self) -> TTSPreferencesSnapshot:
         """Return the current immutable default TTS preference snapshot."""
         return self._request_admission.preferences_snapshot()
+
+    def preferences_generation(self) -> int:
+        """Return the latest saved settings generation published in memory."""
+        return self._request_admission.preferences_generation()
 
     async def synthesize_default(
         self,
@@ -571,6 +652,307 @@ class TTSService:
         """
         return await self.registry.reconfigure_provider(provider_id, config)
 
+    def begin_preferences_publication(
+        self,
+        preferences: TTSPreferencesSnapshot,
+        provider_configs: Mapping[str, Mapping[str, Any]],
+        persistence: Callable[[], TTSSettingsPersistenceOutcome],
+        *,
+        foreground_timeout_seconds: float = (_TTS_SETTINGS_FOREGROUND_TIMEOUT_SECONDS),
+    ) -> TTSSettingsPublicationTicket:
+        """Start one retained settings persistence and runtime publication.
+
+        Args:
+            preferences: Complete immutable preferences to publish after the
+                settings file is replaced.
+            provider_configs: Complete replacement configurations keyed by
+                canonical provider ID.
+            persistence: Blocking atomic persistence operation.
+            foreground_timeout_seconds: Maximum foreground wait for provider
+                handoffs after persistence succeeds.
+
+        Returns:
+            A service-owned ticket with bounded foreground and final views.
+
+        Raises:
+            TTSRegistryClosedError: If service shutdown has started.
+            TypeError: If an input does not match the publication contract.
+            ValueError: If provider IDs or the timeout are invalid.
+        """
+        if self._close_signal.is_set():
+            raise TTSRegistryClosedError("The TTS service is closed")
+        if not isinstance(preferences, TTSPreferencesSnapshot):
+            raise TypeError("preferences must be a TTSPreferencesSnapshot")
+        if not isinstance(provider_configs, Mapping):
+            raise TypeError("provider_configs must be a mapping")
+        if not callable(persistence):
+            raise TypeError("persistence must be callable")
+        if (
+            isinstance(foreground_timeout_seconds, bool)
+            or not isinstance(foreground_timeout_seconds, (int, float))
+            or not math.isfinite(foreground_timeout_seconds)
+            or foreground_timeout_seconds < 0
+        ):
+            raise ValueError("foreground timeout must be finite and non-negative")
+
+        canonical_ids = tuple(
+            descriptor.provider_id for descriptor in self.registry.descriptors()
+        )
+        canonical_id_set = frozenset(canonical_ids)
+        validated_configs: dict[str, dict[str, Any]] = {}
+        for provider_id, config in provider_configs.items():
+            if not isinstance(provider_id, str) or provider_id not in canonical_id_set:
+                raise ValueError("provider_configs must use canonical provider IDs")
+            if not isinstance(config, Mapping):
+                raise TypeError("Each TTS provider config must be a mapping")
+            validated_configs[provider_id] = deepcopy(dict(config))
+        copied_configs = {
+            provider_id: validated_configs[provider_id]
+            for provider_id in canonical_ids
+            if provider_id in validated_configs
+        }
+
+        self._settings_generation += 1
+        generation = self._settings_generation
+        foreground: asyncio.Future[TTSSettingsPublication] = (
+            asyncio.get_running_loop().create_future()
+        )
+        completion = asyncio.create_task(
+            self._run_preferences_publication(
+                generation=generation,
+                preferences=preferences,
+                provider_configs=copied_configs,
+                persistence=persistence,
+                foreground_timeout_seconds=float(foreground_timeout_seconds),
+                foreground=foreground,
+            ),
+            name=f"tts_settings_publication_{generation}",
+        )
+        self._settings_publication_tasks.add(completion)
+        completion.add_done_callback(self._settings_publication_tasks.discard)
+        completion.add_done_callback(self._observe_settings_publication)
+        return TTSSettingsPublicationTicket(
+            generation=generation,
+            foreground=foreground,
+            completion=completion,
+        )
+
+    async def _run_preferences_publication(
+        self,
+        *,
+        generation: int,
+        preferences: TTSPreferencesSnapshot,
+        provider_configs: Mapping[str, Mapping[str, Any]],
+        persistence: Callable[[], TTSSettingsPersistenceOutcome],
+        foreground_timeout_seconds: float,
+        foreground: asyncio.Future[TTSSettingsPublication],
+    ) -> TTSSettingsPublication:
+        tickets: dict[str, TTSReconfigurationTicket] = {}
+        provider_statuses: dict[str, TTSSettingsProviderStatus] = {}
+        provider_revisions: dict[str, int] = {}
+        persistence_outcome = TTSSettingsPersistenceOutcome(
+            file_replaced=False,
+            caches_reloaded=False,
+            failure_phase="before_replace",
+        )
+
+        async with self._request_admission._publication_lock:
+            try:
+                persisted = await asyncio.to_thread(persistence)
+                if not isinstance(persisted, TTSSettingsPersistenceOutcome):
+                    raise TypeError("Unexpected TTS settings persistence result")
+                persistence_outcome = persisted
+            except BaseException:
+                persistence_outcome = TTSSettingsPersistenceOutcome(
+                    file_replaced=False,
+                    caches_reloaded=False,
+                    failure_phase="before_replace",
+                )
+
+            if not persistence_outcome.file_replaced:
+                provider_statuses.update(
+                    {provider_id: "unchanged" for provider_id in provider_configs}
+                )
+                provider_revisions.update(
+                    self._safe_provider_revisions(provider_configs)
+                )
+                result = self._settings_publication_result(
+                    generation=generation,
+                    preferences=preferences,
+                    persistence=persistence_outcome,
+                    provider_statuses=provider_statuses,
+                    provider_revisions=provider_revisions,
+                    published=False,
+                )
+                self._resolve_settings_foreground(foreground, result)
+                return result
+
+            async with self._request_admission._gate.write():
+                transition_failed = False
+                for provider_id, config in provider_configs.items():
+                    try:
+                        ticket = await self.registry.begin_reconfigure_provider(
+                            provider_id,
+                            config,
+                            generation=generation,
+                        )
+                        tickets[provider_id] = ticket
+                    except BaseException:
+                        transition_failed = True
+                        break
+
+                if transition_failed:
+                    await self._seal_provider_configs(provider_configs)
+                    provider_statuses.update(
+                        {provider_id: "unavailable" for provider_id in provider_configs}
+                    )
+                else:
+                    provider_statuses.update(
+                        await self._bounded_reconfiguration_statuses(
+                            tickets,
+                            timeout_seconds=foreground_timeout_seconds,
+                        )
+                    )
+
+                self._request_admission._publish_preferences(
+                    preferences,
+                    generation,
+                )
+                provider_revisions.update(
+                    self._safe_provider_revisions(provider_configs)
+                )
+                foreground_result = self._settings_publication_result(
+                    generation=generation,
+                    preferences=preferences,
+                    persistence=persistence_outcome,
+                    provider_statuses=provider_statuses,
+                    provider_revisions=provider_revisions,
+                    published=True,
+                )
+                self._resolve_settings_foreground(foreground, foreground_result)
+
+        final_statuses = dict(provider_statuses)
+        for provider_id, ticket in tickets.items():
+            if final_statuses.get(provider_id) == "pending":
+                final_statuses[provider_id] = await self._reconfiguration_status(
+                    provider_id,
+                    ticket,
+                )
+                continue
+            try:
+                await asyncio.shield(ticket.completion)
+            except BaseException:
+                pass
+        final_revisions = self._safe_provider_revisions(provider_configs)
+        return self._settings_publication_result(
+            generation=generation,
+            preferences=preferences,
+            persistence=persistence_outcome,
+            provider_statuses=final_statuses,
+            provider_revisions=final_revisions,
+            published=True,
+        )
+
+    async def _bounded_reconfiguration_statuses(
+        self,
+        tickets: Mapping[str, TTSReconfigurationTicket],
+        *,
+        timeout_seconds: float,
+    ) -> dict[str, TTSSettingsProviderStatus]:
+        if not tickets:
+            return {}
+        completion_to_provider = {
+            ticket.completion: provider_id for provider_id, ticket in tickets.items()
+        }
+        done, pending = await asyncio.wait(
+            completion_to_provider,
+            timeout=timeout_seconds,
+        )
+        statuses: dict[str, TTSSettingsProviderStatus] = {}
+        for completion in done:
+            provider_id = completion_to_provider[completion]
+            statuses[provider_id] = await self._reconfiguration_status(
+                provider_id,
+                tickets[provider_id],
+            )
+        for completion in pending:
+            statuses[completion_to_provider[completion]] = "pending"
+        return {provider_id: statuses[provider_id] for provider_id in tickets}
+
+    async def _reconfiguration_status(
+        self,
+        provider_id: str,
+        ticket: TTSReconfigurationTicket,
+    ) -> TTSSettingsProviderStatus:
+        try:
+            result = await asyncio.shield(ticket.completion)
+        except BaseException:
+            await self._seal_provider_configs((provider_id,))
+            return "unavailable"
+        if result is ReconfigureResult.CHANGED:
+            return "applied"
+        if result is ReconfigureResult.UNCHANGED:
+            return "unchanged"
+        return "superseded"
+
+    async def _seal_provider_configs(
+        self,
+        provider_configs: Mapping[str, object] | tuple[str, ...],
+    ) -> None:
+        for provider_id in reversed(tuple(provider_configs)):
+            try:
+                await self.registry.seal_provider_unavailable(provider_id)
+            except BaseException:
+                pass
+
+    def _safe_provider_revisions(
+        self,
+        provider_configs: Mapping[str, object],
+    ) -> dict[str, int]:
+        revisions: dict[str, int] = {}
+        for provider_id in provider_configs:
+            try:
+                revisions[provider_id] = self.configuration_revision(provider_id)
+            except BaseException:
+                continue
+        return revisions
+
+    @staticmethod
+    def _settings_publication_result(
+        *,
+        generation: int,
+        preferences: TTSPreferencesSnapshot,
+        persistence: TTSSettingsPersistenceOutcome,
+        provider_statuses: Mapping[str, TTSSettingsProviderStatus],
+        provider_revisions: Mapping[str, int],
+        published: bool,
+    ) -> TTSSettingsPublication:
+        return TTSSettingsPublication(
+            generation=generation,
+            preferences=preferences,
+            persistence=persistence,
+            provider_statuses=provider_statuses,
+            provider_revisions=provider_revisions,
+            published=published,
+        )
+
+    @staticmethod
+    def _resolve_settings_foreground(
+        foreground: asyncio.Future[TTSSettingsPublication],
+        result: TTSSettingsPublication,
+    ) -> None:
+        if not foreground.done():
+            foreground.set_result(result)
+
+    @staticmethod
+    def _observe_settings_publication(
+        task: asyncio.Task[TTSSettingsPublication],
+    ) -> None:
+        try:
+            task.exception()
+        except BaseException:
+            pass
+
     async def close(self) -> None:
         """Seal admission and begin bounded provider shutdown."""
         registry_close_task, _ = self._start_close()
@@ -643,6 +1025,7 @@ class TTSService:
     def _start_close(self) -> tuple[asyncio.Task[None], asyncio.Task[None]]:
         if self._registry_close_task is None:
             self._close_signal.set()
+            publication_tasks = tuple(self._settings_publication_tasks)
             operation_tasks = tuple(
                 cleanup_task
                 for operation in tuple(self._admitted_operations)
@@ -653,6 +1036,7 @@ class TTSService:
                 self._complete_shutdown(
                     self._registry_close_task,
                     operation_tasks,
+                    publication_tasks,
                 )
             )
             self._shutdown_task.add_done_callback(self._observe_shutdown_result)
@@ -663,6 +1047,7 @@ class TTSService:
         self,
         registry_close_task: asyncio.Task[None],
         operation_tasks: tuple[asyncio.Task[None], ...],
+        publication_tasks: tuple[asyncio.Task[TTSSettingsPublication], ...],
     ) -> None:
         failures: list[BaseException] = []
         try:
@@ -684,6 +1069,7 @@ class TTSService:
             registry_wait_task,
             *operation_tasks,
             *resource_tasks,
+            *publication_tasks,
         )
         results = await asyncio.gather(
             *terminal_shutdown_tasks,

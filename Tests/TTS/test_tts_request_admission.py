@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
@@ -18,7 +19,9 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSModelInfo,
     TTSProviderCatalog,
     TTSProviderDescriptor,
+    TTSProviderReconfiguringError,
     TTSProviderSpec,
+    TTSProviderUnavailableError,
     TTSRequest,
     TTSRegistryClosedError,
 )
@@ -29,6 +32,7 @@ from tldw_chatbook.TTS.legacy_bridge import (
     legacy_provider_specs,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS import TTS_Generation as generation_module
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 
 _WAIT_SECONDS = 1.0
@@ -874,6 +878,413 @@ async def test_default_request_never_mixes_preference_and_adapter_generations() 
         await second_response.aclose()
         await service.close()
         await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_settings_publication_times_out_without_cancelling_old_speech() -> None:
+    adapters: list[_CapturingAdapter] = []
+
+    def factory(config: Mapping[str, Any]) -> _CapturingAdapter:
+        adapter = _CapturingAdapter(
+            "audio_cpp",
+            generation=str(config["generation"]),
+        )
+        adapters.append(adapter)
+        return adapter
+
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=factory,
+                initial_config={"generation": "one"},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+    old_snapshot = _snapshot(model_id="Old/Model")
+    new_snapshot = _snapshot(model_id="New/Model")
+    service = TTSService(registry, preferences_snapshot=old_snapshot)
+    response = await service.synthesize_default(text="Generation one")
+
+    outcome_type = getattr(
+        generation_module,
+        "TTSSettingsPersistenceOutcome",
+        None,
+    )
+    assert outcome_type is not None, "settings persistence outcome is missing"
+    ticket = service.begin_preferences_publication(
+        new_snapshot,
+        {"audio_cpp": {"generation": "two"}},
+        lambda: outcome_type(True, True, None),
+        foreground_timeout_seconds=0,
+    )
+    foreground = await asyncio.shield(ticket.foreground)
+
+    assert foreground.generation == ticket.generation
+    assert foreground.persistence.file_replaced is True
+    assert foreground.provider_statuses == {"audio_cpp": "pending"}
+    assert service.preferences_snapshot() == new_snapshot
+    assert registry.configuration_revision("audio_cpp") == 1
+    with pytest.raises(TTSProviderReconfiguringError):
+        await registry.acquire("audio_cpp")
+    assert len(adapters) == 1
+    assert adapters[0].close_calls == 0
+
+    chunks = [chunk async for chunk in response.byte_stream]
+    assert chunks == [b"audio"]
+    await response.aclose()
+    completion = await asyncio.shield(ticket.completion)
+
+    assert completion.provider_statuses == {"audio_cpp": "applied"}
+    assert registry.configuration_revision("audio_cpp") == 2
+    assert adapters[0].close_calls == 1
+    assert len(adapters) == 1
+
+    replacement = await service.synthesize_default(text="Generation two")
+    assert adapters[1].generation == "two"
+    assert adapters[1].requests[0].model_id == "New/Model"
+    await replacement.aclose()
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_pre_replacement_failure_changes_no_preferences_or_provider() -> None:
+    adapter = _CapturingAdapter("audio_cpp", generation="one")
+    old_snapshot = _snapshot(model_id="Model/One")
+    service, registry = _native_service(adapter, old_snapshot)
+    lease = await registry.acquire("audio_cpp")
+    await lease.release()
+    outcome_type = generation_module.TTSSettingsPersistenceOutcome
+
+    ticket = service.begin_preferences_publication(
+        _snapshot(model_id="Model/Two"),
+        {"audio_cpp": {"generation": "two"}},
+        lambda: outcome_type(False, False, "before_replace"),
+        foreground_timeout_seconds=0,
+    )
+    foreground = await asyncio.shield(ticket.foreground)
+    completion = await asyncio.shield(ticket.completion)
+
+    assert foreground == completion
+    assert foreground.published is False
+    assert foreground.provider_statuses == {"audio_cpp": "unchanged"}
+    assert service.preferences_snapshot() == old_snapshot
+    assert service.preferences_generation() == 0
+    assert registry.configuration_revision("audio_cpp") == 1
+    assert adapter.close_calls == 0
+
+    response = await service.synthesize_default(text="Still generation one")
+    assert adapter.requests[-1].model_id == "Model/One"
+    await response.aclose()
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_newer_settings_publication_supersedes_pending_handoff() -> None:
+    adapters: list[_CapturingAdapter] = []
+
+    def factory(config: Mapping[str, Any]) -> _CapturingAdapter:
+        adapter = _CapturingAdapter(
+            "audio_cpp",
+            generation=str(config["generation"]),
+        )
+        adapters.append(adapter)
+        return adapter
+
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=factory,
+                initial_config={"generation": "one"},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(
+        registry,
+        preferences_snapshot=_snapshot(model_id="Model/One"),
+    )
+    response = await service.synthesize_default(text="Generation one")
+    outcome_type = generation_module.TTSSettingsPersistenceOutcome
+
+    generation_two = service.begin_preferences_publication(
+        _snapshot(model_id="Model/Two"),
+        {"audio_cpp": {"generation": "two"}},
+        lambda: outcome_type(True, True, None),
+        foreground_timeout_seconds=0,
+    )
+    assert (await asyncio.shield(generation_two.foreground)).provider_statuses == {
+        "audio_cpp": "pending"
+    }
+    generation_three = service.begin_preferences_publication(
+        _snapshot(model_id="Model/Three"),
+        {"audio_cpp": {"generation": "three"}},
+        lambda: outcome_type(True, True, None),
+        foreground_timeout_seconds=0,
+    )
+    assert (await asyncio.shield(generation_three.foreground)).provider_statuses == {
+        "audio_cpp": "pending"
+    }
+
+    assert registry.configuration_revision("audio_cpp") == 1
+    assert len(adapters) == 1
+    await response.aclose()
+    second, third = await asyncio.gather(
+        asyncio.shield(generation_two.completion),
+        asyncio.shield(generation_three.completion),
+    )
+
+    assert second.provider_statuses == {"audio_cpp": "superseded"}
+    assert third.provider_statuses == {"audio_cpp": "applied"}
+    assert service.preferences_snapshot().model_id == "Model/Three"
+    assert service.preferences_generation() == generation_three.generation
+    assert registry.configuration_revision("audio_cpp") == 2
+    assert adapters[0].close_calls == 1
+    assert len(adapters) == 1
+
+    replacement = await service.synthesize_default(text="Generation three")
+    assert adapters[1].generation == "three"
+    await replacement.aclose()
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_persistence_runs_off_loop_and_publications_remain_serialized() -> None:
+    adapter = _CapturingAdapter("audio_cpp")
+    service, _registry = _native_service(
+        adapter,
+        _snapshot(model_id="Model/One"),
+    )
+    first_started = threading.Event()
+    release_first = threading.Event()
+    second_started = threading.Event()
+    release_second = threading.Event()
+    outcome_type = generation_module.TTSSettingsPersistenceOutcome
+    heartbeat_ticks = 0
+    stop_heartbeat = asyncio.Event()
+
+    async def heartbeat() -> None:
+        nonlocal heartbeat_ticks
+        while not stop_heartbeat.is_set():
+            heartbeat_ticks += 1
+            await asyncio.sleep(0)
+
+    def first_persistence() -> Any:
+        first_started.set()
+        release_first.wait()
+        return outcome_type(True, True, None)
+
+    def second_persistence() -> Any:
+        second_started.set()
+        release_second.wait()
+        return outcome_type(True, True, None)
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    first = service.begin_preferences_publication(
+        _snapshot(model_id="Model/Two"),
+        {},
+        first_persistence,
+        foreground_timeout_seconds=0,
+    )
+    while not first_started.is_set():
+        await asyncio.sleep(0)
+    observed_ticks = heartbeat_ticks
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert heartbeat_ticks > observed_ticks
+
+    async def wait_for_foreground() -> Any:
+        return await asyncio.shield(first.foreground)
+
+    initiating_waiter = asyncio.create_task(wait_for_foreground())
+    initiating_waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await initiating_waiter
+    assert first.completion.cancelled() is False
+
+    second = service.begin_preferences_publication(
+        _snapshot(model_id="Model/Three"),
+        {},
+        second_persistence,
+        foreground_timeout_seconds=0,
+    )
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert second_started.is_set() is False
+
+    release_first.set()
+    await asyncio.shield(first.completion)
+    while not second_started.is_set():
+        await asyncio.sleep(0)
+    release_second.set()
+    await asyncio.shield(second.completion)
+
+    stop_heartbeat.set()
+    await heartbeat_task
+    assert service.preferences_snapshot().model_id == "Model/Three"
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_service_shutdown_joins_retained_settings_publication() -> None:
+    adapter = _CapturingAdapter("audio_cpp")
+    service, _registry = _native_service(
+        adapter,
+        _snapshot(model_id="Model/One"),
+    )
+    persistence_started = threading.Event()
+    release_persistence = threading.Event()
+    outcome_type = generation_module.TTSSettingsPersistenceOutcome
+
+    def persistence() -> Any:
+        persistence_started.set()
+        release_persistence.wait()
+        return outcome_type(True, True, None)
+
+    ticket = service.begin_preferences_publication(
+        _snapshot(model_id="Model/Two"),
+        {},
+        persistence,
+        foreground_timeout_seconds=0,
+    )
+    while not persistence_started.is_set():
+        await asyncio.sleep(0)
+
+    await service.close()
+    wait_closed = asyncio.create_task(service.wait_closed())
+    try:
+        for _ in range(50):
+            if wait_closed.done():
+                break
+            await asyncio.sleep(0)
+
+        assert wait_closed.done() is False
+        assert ticket.completion.done() is False
+    finally:
+        release_persistence.set()
+    await asyncio.shield(ticket.completion)
+    await wait_closed
+
+
+@pytest.mark.asyncio
+async def test_failed_multi_provider_begin_seals_in_reverse_and_joins_started_work() -> (
+    None
+):
+    events: list[str] = []
+    alpha_started = asyncio.Event()
+    allow_alpha = asyncio.Event()
+    secret = "PRIVATE_TRANSITION_VALUE"
+
+    class OrderedFailingRegistry(TTSAdapterRegistry):
+        async def begin_reconfigure_provider(
+            self,
+            provider_id: str,
+            config: Mapping[str, Any],
+            *,
+            generation: int | None = None,
+        ) -> Any:
+            events.append(f"begin-{provider_id}")
+            if provider_id == "beta":
+                if events[:2] != ["begin-alpha", "begin-beta"]:
+                    raise RuntimeError("providers started out of canonical order")
+                await alpha_started.wait()
+                raise RuntimeError(secret)
+            return await super().begin_reconfigure_provider(
+                provider_id,
+                config,
+                generation=generation,
+            )
+
+        async def _reconfigure_retiring(
+            self,
+            slot: Any,
+            new_config: dict[str, Any],
+        ) -> Any:
+            alpha_started.set()
+            await allow_alpha.wait()
+            return await super()._reconfigure_retiring(slot, new_config)
+
+        async def seal_provider_unavailable(self, provider_id: str) -> None:
+            events.append(f"seal-{provider_id}")
+            await super().seal_provider_unavailable(provider_id)
+
+    registry = OrderedFailingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor("alpha", "alpha", True),
+                factory=lambda _config: _CapturingAdapter("alpha"),
+                initial_config={"generation": "one"},
+            ),
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor("beta", "beta", True),
+                factory=lambda _config: _CapturingAdapter("beta"),
+                initial_config={"generation": "one"},
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(
+        registry,
+        preferences_snapshot=_snapshot(
+            provider_id="alpha",
+            model_id="Model/One",
+            voice_mode="exact",
+            voice_id="voice",
+        ),
+    )
+    outcome_type = generation_module.TTSSettingsPersistenceOutcome
+    publication = service.begin_preferences_publication(
+        _snapshot(
+            provider_id="alpha",
+            model_id="Model/Two",
+            voice_mode="exact",
+            voice_id="voice",
+        ),
+        {
+            "beta": {"generation": "two"},
+            "alpha": {"generation": "two"},
+        },
+        lambda: outcome_type(True, True, None),
+        foreground_timeout_seconds=0,
+    )
+    foreground = await asyncio.shield(publication.foreground)
+
+    assert foreground.provider_statuses == {
+        "alpha": "unavailable",
+        "beta": "unavailable",
+    }
+    assert events[:4] == [
+        "begin-alpha",
+        "begin-beta",
+        "seal-beta",
+        "seal-alpha",
+    ]
+    assert publication.completion.done() is False
+
+    allow_alpha.set()
+    completion = await asyncio.shield(publication.completion)
+    assert completion.provider_statuses == foreground.provider_statuses
+    with pytest.raises(TTSProviderUnavailableError):
+        await registry.acquire("alpha")
+    assert secret not in repr(completion)
+    await service.close()
+    await service.wait_closed()
 
 
 @pytest.mark.asyncio

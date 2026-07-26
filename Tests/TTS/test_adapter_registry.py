@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import Any
 
 import pytest
@@ -11,6 +12,7 @@ from Tests.TTS.adapter_fakes import (
     FakeAdapterFactory,
     provider_spec,
 )
+from tldw_chatbook.TTS import adapter_registry as adapter_registry_module
 from tldw_chatbook.TTS.adapter_registry import (
     ReconfigureResult,
     TTSAdapterRegistry,
@@ -269,6 +271,202 @@ async def test_exclusive_reconfigure_blocks_until_old_lease_releases() -> None:
     await old_lease.release()
     assert await reconfigure is ReconfigureResult.CHANGED
     assert old_lease.adapter.close_calls == 1
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_exclusive_handoff_ticket_retains_old_lease_and_replaces_lazily() -> None:
+    events: list[str] = []
+    adapters: list[FakeAdapter] = []
+
+    class OrderedAdapter(FakeAdapter):
+        async def close(self) -> None:
+            await super().close()
+            events.append("old-closed")
+
+    def factory(config: Mapping[str, Any]) -> FakeAdapter:
+        events.append(f"factory-{config['revision']}")
+        adapter = OrderedAdapter("audio_cpp")
+        adapters.append(adapter)
+        return adapter
+
+    spec = TTSProviderSpec(
+        descriptor=provider_spec(
+            "audio_cpp",
+            FakeAdapterFactory("unused"),
+        ).descriptor,
+        factory=factory,
+        initial_config={"revision": 1},
+        exclusive_reconfigure=True,
+    )
+    registry = TTSAdapterRegistry(specs=(spec,), aliases={})
+    old_lease = await registry.acquire("audio_cpp")
+
+    ticket_type = getattr(
+        adapter_registry_module,
+        "TTSReconfigurationTicket",
+        None,
+    )
+    assert ticket_type is not None, "generation-aware handoff ticket is missing"
+    ticket = await registry.begin_reconfigure_provider(
+        "audio_cpp",
+        {"revision": 2},
+        generation=2,
+    )
+    await asyncio.sleep(0)
+
+    assert isinstance(ticket, ticket_type)
+    assert ticket.provider_id == "audio_cpp"
+    assert ticket.generation == 2
+    assert ticket.completion.done() is False
+    with pytest.raises(TTSProviderReconfiguringError):
+        await registry.acquire("audio_cpp")
+    assert events == ["factory-1"]
+    assert adapters[0].close_calls == 0
+
+    await old_lease.release()
+    assert await ticket.completion is ReconfigureResult.CHANGED
+    assert registry.configuration_revision("audio_cpp") == 2
+    assert events == ["factory-1", "old-closed"]
+
+    replacement = await registry.acquire("audio_cpp", expected_revision=2)
+    assert replacement.adapter is adapters[1]
+    assert events == ["factory-1", "old-closed", "factory-2"]
+    await replacement.release()
+    await registry.close()
+    await registry.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_exclusive_handoff_applies_only_latest_pending_generation() -> None:
+    configs: list[dict[str, Any]] = []
+
+    def factory(config: Mapping[str, Any]) -> FakeAdapter:
+        configs.append(deepcopy(dict(config)))
+        return FakeAdapter("audio_cpp")
+
+    spec = TTSProviderSpec(
+        descriptor=provider_spec(
+            "audio_cpp",
+            FakeAdapterFactory("unused"),
+        ).descriptor,
+        factory=factory,
+        initial_config={"revision": 1},
+        exclusive_reconfigure=True,
+    )
+    registry = TTSAdapterRegistry(specs=(spec,), aliases={})
+    old_lease = await registry.acquire("audio_cpp")
+
+    generation_two = await registry.begin_reconfigure_provider(
+        "audio_cpp",
+        {"revision": 2},
+        generation=2,
+    )
+    generation_three = await registry.begin_reconfigure_provider(
+        "audio_cpp",
+        {"revision": 3},
+        generation=3,
+    )
+    await asyncio.sleep(0)
+
+    assert registry.configuration_revision("audio_cpp") == 1
+    assert configs == [{"revision": 1}]
+    assert generation_two.completion is not generation_three.completion
+
+    await old_lease.release()
+    assert await generation_two.completion is ReconfigureResult.SUPERSEDED
+    assert await generation_three.completion is ReconfigureResult.CHANGED
+    assert registry.configuration_revision("audio_cpp") == 2
+    assert configs == [{"revision": 1}]
+
+    replacement = await registry.acquire("audio_cpp", expected_revision=2)
+    assert configs == [{"revision": 1}, {"revision": 3}]
+    assert old_lease.adapter.close_calls == 1
+    await replacement.release()
+    await registry.close()
+    await registry.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_new_generation_recovers_one_sealed_pending_exclusive_handoff() -> None:
+    configs: list[dict[str, Any]] = []
+
+    def factory(config: Mapping[str, Any]) -> FakeAdapter:
+        configs.append(deepcopy(dict(config)))
+        return FakeAdapter("audio_cpp")
+
+    spec = TTSProviderSpec(
+        descriptor=provider_spec(
+            "audio_cpp",
+            FakeAdapterFactory("unused"),
+        ).descriptor,
+        factory=factory,
+        initial_config={"revision": 1},
+        exclusive_reconfigure=True,
+    )
+    registry = TTSAdapterRegistry(specs=(spec,), aliases={})
+    old_lease = await registry.acquire("audio_cpp")
+    generation_two = await registry.begin_reconfigure_provider(
+        "audio_cpp",
+        {"revision": 2},
+        generation=2,
+    )
+    await asyncio.sleep(0)
+
+    await registry.seal_provider_unavailable("audio_cpp")
+    with pytest.raises(TTSProviderUnavailableError):
+        await registry.acquire("audio_cpp")
+
+    generation_three = await registry.begin_reconfigure_provider(
+        "audio_cpp",
+        {"revision": 3},
+        generation=3,
+    )
+    await old_lease.release()
+
+    assert await generation_two.completion is ReconfigureResult.SUPERSEDED
+    assert await generation_three.completion is ReconfigureResult.CHANGED
+    assert registry.configuration_revision("audio_cpp") == 2
+    assert old_lease.adapter.close_calls == 1
+    assert configs == [{"revision": 1}]
+
+    replacement = await registry.acquire("audio_cpp")
+    assert configs == [{"revision": 1}, {"revision": 3}]
+    await replacement.release()
+    await registry.close()
+    await registry.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_failed_retained_handoff_seals_exclusive_provider_unavailable() -> None:
+    factory = _FailingCloseFactory("audio_cpp")
+    spec = TTSProviderSpec(
+        descriptor=provider_spec(
+            "audio_cpp",
+            FakeAdapterFactory("unused"),
+        ).descriptor,
+        factory=factory,
+        initial_config={"revision": 1},
+        exclusive_reconfigure=True,
+    )
+    registry = TTSAdapterRegistry(specs=(spec,), aliases={})
+    lease = await registry.acquire("audio_cpp")
+    await lease.release()
+
+    ticket = await registry.begin_reconfigure_provider(
+        "audio_cpp",
+        {"revision": 2},
+        generation=2,
+    )
+    with pytest.raises(RuntimeError, match="adapter close failed"):
+        await asyncio.shield(ticket.completion)
+
+    with pytest.raises(TTSProviderUnavailableError):
+        await registry.acquire("audio_cpp")
+    assert registry.configuration_revision("audio_cpp") == 1
+    assert factory.calls == 1
+    with pytest.raises(RuntimeError, match="adapter close failed"):
+        await registry.close()
     await registry.close()
 
 
@@ -798,7 +996,7 @@ async def test_failed_exclusive_cleanup_keeps_admission_sealed() -> None:
         await registry.reconfigure_provider("exclusive", {"revision": 2})
     except RuntimeError as error:
         retry_error = error
-    with pytest.raises(TTSProviderReconfiguringError):
+    with pytest.raises(TTSProviderUnavailableError):
         await registry.acquire("exclusive")
 
     await registry.seal_provider_unavailable("exclusive")

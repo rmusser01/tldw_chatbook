@@ -28,7 +28,6 @@ from tldw_chatbook.TTS import (
     TTSRequest,
     get_tts_service,
 )
-from tldw_chatbook.TTS.adapter_registry import ReconfigureResult
 from tldw_chatbook.TTS.adapter_types import (
     ProgressSink,
     TTSOperationError,
@@ -38,7 +37,13 @@ from tldw_chatbook.TTS.adapter_types import (
 )
 from tldw_chatbook.TTS.audio_cpp_config import project_audio_cpp_config
 from tldw_chatbook.TTS.legacy_bridge import legacy_provider_config
-from tldw_chatbook.TTS.TTS_Generation import _join_retained_task
+from tldw_chatbook.TTS.TTS_Generation import (
+    TTSService,
+    TTSSettingsPersistenceOutcome,
+    TTSSettingsPublication,
+    TTSSettingsPublicationTicket,
+    _join_retained_task,
+)
 from tldw_chatbook.Utils.secure_temp_files import (
     create_secure_temp_file,
     secure_delete_file,
@@ -269,6 +274,62 @@ def _effective_provider_config(
     if provider_id == "audio_cpp":
         return project_audio_cpp_config(effective_settings).to_mapping()
     return legacy_provider_config(provider_id, effective_settings)
+
+
+def _merge_section_mutations(
+    destination: dict[str, dict[str, Any]],
+    additions: Mapping[str, Mapping[str, object]],
+) -> None:
+    """Merge copied section values, with later additions authoritative."""
+    for section, values in additions.items():
+        destination.setdefault(section, {}).update(deepcopy(dict(values)))
+
+
+def _prospective_effective_settings(
+    current_settings: Mapping[str, Any],
+    section_values: Mapping[str, Mapping[str, object]],
+    delete_keys: Mapping[str, tuple[str, ...]],
+) -> dict[str, Any]:
+    """Project the in-memory effective settings after one proposed mutation."""
+    prospective = deepcopy(dict(current_settings))
+    current_raw = current_settings.get("COMPREHENSIVE_CONFIG_RAW", {})
+    raw = deepcopy(dict(current_raw)) if isinstance(current_raw, Mapping) else {}
+
+    for section, keys in delete_keys.items():
+        current: Any = raw
+        for part in section.split("."):
+            if not isinstance(current, dict):
+                current = None
+                break
+            current = current.get(part)
+        if not isinstance(current, dict):
+            continue
+        for key in keys:
+            current.pop(key, None)
+
+    for section, values in section_values.items():
+        current = raw
+        parts = section.split(".")
+        for part in parts:
+            nested = current.get(part)
+            if not isinstance(nested, dict):
+                nested = {}
+                current[part] = nested
+            current = nested
+        current.update(deepcopy(dict(values)))
+
+    prospective["COMPREHENSIVE_CONFIG_RAW"] = raw
+    raw_app_tts = raw.get("app_tts")
+    if isinstance(raw_app_tts, Mapping):
+        normalized_app_tts = prospective.get("APP_TTS_CONFIG", {})
+        merged_app_tts = (
+            deepcopy(dict(normalized_app_tts))
+            if isinstance(normalized_app_tts, Mapping)
+            else {}
+        )
+        merged_app_tts.update(deepcopy(dict(raw_app_tts)))
+        prospective["APP_TTS_CONFIG"] = merged_app_tts
+    return prospective
 
 
 class STTSPlaygroundGenerateEvent(Message):
@@ -942,12 +1003,9 @@ class STTSEventHandler:
             await self._persist_settings(event)
 
     async def _persist_settings(self, event: STTSSettingsSaveEvent) -> None:
-        """Persist one settings event and refresh its affected providers."""
+        """Persist and publish one validated, service-owned settings proposal."""
         try:
-            from tldw_chatbook.config import (
-                load_settings,
-                save_settings_to_cli_config,
-            )
+            from tldw_chatbook import config as config_module
 
             section_values: dict[str, dict[str, Any]] = {}
             saved_destinations: list[tuple[str, str, str]] = []
@@ -964,64 +1022,177 @@ class STTSEventHandler:
                 if binding.provider_id is not None:
                     candidate_provider_ids.add(binding.provider_id)
 
-            if section_values and save_settings_to_cli_config(section_values) is False:
-                raise RuntimeError("STTS settings batch save failed")
-            for key, section, setting_name in saved_destinations:
-                logger.info(f"Saved {key} to [{section}].{setting_name}")
+            current_settings = getattr(config_module, "settings", {})
+            if not isinstance(current_settings, Mapping):
+                raise ValueError("Current settings are unavailable")
+            provisional_settings = _prospective_effective_settings(
+                current_settings,
+                section_values,
+                {},
+            )
+            preferences = (
+                event.preferences
+                if event.preferences is not None
+                else TTSPreferencesSnapshot.from_settings(provisional_settings)
+            )
+            if not isinstance(preferences, TTSPreferencesSnapshot):
+                raise TypeError("Invalid TTS preferences proposal")
+            preference_mutation = preferences.config_mutation()
+            _merge_section_mutations(section_values, preference_mutation.sets)
+            delete_keys = {
+                section: tuple(keys)
+                for section, keys in preference_mutation.deletes.items()
+            }
+            for section, keys in delete_keys.items():
+                values = section_values.get(section)
+                if values is None:
+                    continue
+                for key in keys:
+                    values.pop(key, None)
 
-            effective_settings = load_settings()
+            effective_settings = _prospective_effective_settings(
+                current_settings,
+                section_values,
+                delete_keys,
+            )
             candidate_providers = [
                 provider_id
                 for provider_id in _TTS_PROVIDER_ORDER
                 if provider_id in candidate_provider_ids
             ]
-            if candidate_providers:
-                service = self._stts_service
-                if service is None:
-                    service = await get_tts_service()
-                    self._stts_service = service
-                results = await asyncio.gather(
-                    *(
-                        service.reconfigure_provider(
-                            provider_id,
-                            _effective_provider_config(
-                                provider_id,
-                                effective_settings,
-                            ),
-                        )
-                        for provider_id in candidate_providers
-                    ),
-                    return_exceptions=True,
+            provider_configs = {
+                provider_id: _effective_provider_config(
+                    provider_id,
+                    effective_settings,
                 )
-                failed_providers = [
-                    provider_id
-                    for provider_id, result in zip(candidate_providers, results)
-                    if isinstance(result, BaseException)
-                ]
-                for provider_id, result in zip(candidate_providers, results):
-                    if result is ReconfigureResult.CHANGED:
-                        self.app.post_message(
-                            STTSProviderConfigurationChanged(
-                                provider_id,
-                                service.configuration_revision(provider_id),
-                            )
-                        )
-                if failed_providers:
-                    logger.error(
-                        "Failed to reconfigure TTS providers: {}",
-                        ", ".join(failed_providers),
-                    )
-                    self.app.notify(
-                        "Settings saved, but some TTS providers could not be updated",
-                        severity="error",
-                    )
-                    return
+                for provider_id in candidate_providers
+            }
 
-            self.app.notify("Settings saved successfully!", severity="information")
+            service = self._stts_service
+            if service is None:
+                service = await get_tts_service()
+                self._stts_service = service
+            if not isinstance(service, TTSService) and not callable(
+                getattr(service, "begin_preferences_publication", None)
+            ):
+                raise RuntimeError("The TTS service cannot publish settings")
+
+            frozen_sections = deepcopy(section_values)
+            frozen_deletes = deepcopy(delete_keys)
+
+            def persist() -> TTSSettingsPersistenceOutcome:
+                result = config_module.apply_settings_mutation_to_cli_config(
+                    frozen_sections,
+                    delete_keys=frozen_deletes,
+                )
+                return TTSSettingsPersistenceOutcome(
+                    file_replaced=result.file_replaced,
+                    caches_reloaded=result.caches_reloaded,
+                    failure_phase=result.failure_phase,
+                )
+
+            ticket = service.begin_preferences_publication(
+                preferences,
+                provider_configs,
+                persist,
+            )
+            publication = await asyncio.shield(ticket.foreground)
+            if publication.persistence.file_replaced:
+                for key, section, setting_name in saved_destinations:
+                    logger.info(
+                        "Saved {} to [{}].{}",
+                        key,
+                        section,
+                        setting_name,
+                    )
+
+            self._post_applied_settings_changes(
+                service,
+                publication,
+            )
+            if "pending" in publication.provider_statuses.values():
+                self._observe_pending_settings_publication(service, ticket)
+            self._notify_settings_publication(publication)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             message = "Failed to save settings"
             logger.error(message)
             self.app.notify(message, severity="error")
+
+    def _post_applied_settings_changes(
+        self,
+        service: TTSService,
+        publication: TTSSettingsPublication,
+    ) -> None:
+        """Post only applied results from the latest published generation."""
+        if service.preferences_generation() != publication.generation:
+            return
+        for provider_id, status in publication.provider_statuses.items():
+            if status != "applied":
+                continue
+            revision = publication.provider_revisions.get(provider_id)
+            if revision is None:
+                continue
+            self.app.post_message(
+                STTSProviderConfigurationChanged(provider_id, revision)
+            )
+
+    def _observe_pending_settings_publication(
+        self,
+        service: TTSService,
+        ticket: TTSSettingsPublicationTicket,
+    ) -> None:
+        """Observe a service-owned completion without assuming task ownership."""
+
+        async def observe() -> None:
+            try:
+                completion = await asyncio.shield(ticket.completion)
+            except asyncio.CancelledError:
+                raise
+            except BaseException:
+                return
+            self._post_applied_settings_changes(service, completion)
+            if "unavailable" in completion.provider_statuses.values():
+                self.app.notify(
+                    "TTS settings are unavailable. Retry/Reconnect.",
+                    severity="error",
+                )
+
+        self._start_event_task(observe())
+
+    def _notify_settings_publication(
+        self,
+        publication: TTSSettingsPublication,
+    ) -> None:
+        """Render bounded, value-independent settings publication copy."""
+        persistence = publication.persistence
+        statuses = publication.provider_statuses
+        if not persistence.file_replaced:
+            if persistence.failure_phase == "before_replace":
+                self.app.notify("Failed to save settings", severity="error")
+            else:
+                self.app.notify("Settings unchanged", severity="information")
+            return
+        if "unavailable" in statuses.values():
+            self.app.notify(
+                "Settings saved, but TTS is unavailable. Retry/Reconnect.",
+                severity="error",
+            )
+            return
+        if not persistence.caches_reloaded:
+            self.app.notify(
+                "Settings saved and TTS runtime updated; restart recommended.",
+                severity="warning",
+            )
+            return
+        if statuses.get("audio_cpp") == "pending":
+            self.app.notify(
+                "Saved — applying after current speech",
+                severity="information",
+            )
+            return
+        self.app.notify("Settings saved successfully!", severity="information")
 
     async def _convert_audio_format(
         self, input_file: Path, output_format: str

@@ -115,11 +115,28 @@ class TTSRequestAdmissionCoordinator:
     ) -> None:
         self._service = service
         self._preferences = preferences
+        self._preferences_generation = 0
         self._gate = _WriterPreferredGate()
+        self._publication_lock = asyncio.Lock()
 
     def preferences_snapshot(self) -> TTSPreferencesSnapshot:
         """Return the current immutable global TTS preference snapshot."""
         return self._preferences
+
+    def preferences_generation(self) -> int:
+        """Return the latest saved settings generation published in memory."""
+        return self._preferences_generation
+
+    def _publish_preferences(
+        self,
+        preferences: TTSPreferencesSnapshot,
+        generation: int,
+    ) -> None:
+        """Publish one already-persisted immutable snapshot exactly once."""
+        if generation <= self._preferences_generation:
+            return
+        self._preferences = preferences
+        self._preferences_generation = generation
 
     async def synthesize_default(
         self,
