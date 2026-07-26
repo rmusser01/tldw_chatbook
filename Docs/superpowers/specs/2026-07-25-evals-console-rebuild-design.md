@@ -259,9 +259,10 @@ Declared per bench.
 | Mode | Request | Measured token | Targets |
 |---|---|---|---|
 | `raw` | `POST /v1/completions`, snippet as literal prompt | the literal next token | local servers only |
-| `chat` | `POST /v1/chat/completions`, snippet as user message | first token of the reply | local + OpenAI |
+| `chat` | `POST /v1/chat/completions`, snippet as user message | first **content** token of the reply | local + OpenAI |
 
-Both modes send `max_tokens=1`.
+Both modes send `max_tokens=1` — except in chat mode against a template that emits control tokens
+first; see below.
 
 Raw mode is the textbook reading of "logits for the next token to each snippet" and is right for
 directional-prompting work on mid-sentence fragments. Chat mode measures how a model *opens* a
@@ -271,6 +272,45 @@ different measurement points, so the bench supports both rather than forcing one
 OpenAI retired raw completions except `gpt-3.5-turbo-instruct`, and legacy completions cap
 `logprobs` at 5 rather than 20. Preflight reports the K actually returned, so no special case is
 needed.
+
+#### Amendment: chat mode must skip control tokens
+
+Verified against llama.cpp `b8795` serving a Gemma-derived model. Asking for the first token of the
+assistant turn returned:
+
+```
+token "<|channel>"   logprob  0.0      <- probability 1.0
+      "<"            logprob -21.3
+      "Subject"      logprob -23.2
+```
+
+The first token of a reply is frequently a **chat-template control token**, deterministic at
+probability 1.0, carrying no information about content, refusal, or steering. Measuring it would
+produce a grid of identical zero-entropy cells and read as "no difference between any of these
+prompts."
+
+Chat mode therefore measures **the first non-control token**: request a small number of tokens
+rather than one, walk the returned `logprobs.content[]` array, and take the first position whose
+token is not a special/control token. Control tokens are identified structurally — a token whose
+text is bracketed in the model's special-token markers (`<|…|>`, `<…>`) and which the server
+reports at nil-or-near-nil logprob — not by a hardcoded list, since every template differs. If no
+content token appears within the window, the cell records `no_content_token` rather than a number.
+
+#### Amendment: raw mode is out-of-distribution on some chat-tuned models
+
+Same server, raw `/v1/completions`:
+
+```
+"The protestors were met with"  ->  " a" -0.70, " much" -0.79     (sane)
+"The capital of France is"      ->  "thought" -0.44, "mol" -3.53  (degenerate)
+```
+
+A model fine-tuned hard enough on its chat template can have genuinely degraded plain-text
+continuation behaviour. This is not a bug to fix — it is a property of the target, and one that
+silently poisons a whole column if undetected: a user would read the resulting divergence as a
+finding about censorship.
+
+Preflight therefore includes a **distribution sanity canary** (see Preflight below).
 
 ### Sampler neutrality
 
@@ -332,16 +372,26 @@ Stored in the existing `eval_results.logprobs` TEXT column:
   "prompt_mode": "raw",
   "k_requested": 20,
   "k_returned": 20,
+  "content_offset": 0,
   "top_k": [
-    {"token": " a",   "logprob": -0.82, "bytes": [32, 97]},
-    {"token": " the", "logprob": -1.51, "bytes": [32, 116, 104, 101]}
+    {"id": 4775, "token": " a",   "logprob": -0.82, "bytes": [32, 97]},
+    {"id": 1063, "token": " the", "logprob": -1.51, "bytes": [32, 116, 104, 101]}
   ],
   "entropy": 2.71,
   "top1_mass": 0.44,
   "truncated_mass": 0.031,
+  "canary": "pass",
   "captured_at": "2026-07-25T14:31:07Z"
 }
 ```
+
+`id` is the provider's token id, present on llama.cpp and absent on OpenAI. It is recorded for
+provenance but is **not** the identity key: ids are model-local, and the grid's whole purpose is
+comparing across models. `bytes` is the identity key. `content_offset` records which position in the
+returned sequence was measured — `0` in raw mode, and in chat mode the index of the first
+non-control token, so a reader can tell how many template tokens were skipped. `canary` carries the
+target's preflight sanity verdict (`pass` | `degenerate` | `unchecked`) onto every cell, so a
+warning cannot be lost between preflight and the grid.
 
 `truncated_mass` is `1 − Σexp(top-K logprobs)`: the probability that was not observed. When it is
 large, the top-K is telling you little, and the grid must say so rather than let a confident
@@ -368,16 +418,35 @@ metric, so `EvalSampleResult`'s scoring fields would all be dead weight.
 
 ### The normalizer
 
-Three response shapes must become one `[(token, logprob, bytes)]` list:
+**Amended after live capture. The original prediction was wrong**, which is precisely why the spec
+required fixtures over documentation.
 
-- OpenAI chat: `choices[0].logprobs.content[0].top_logprobs` — list of `{token, logprob, bytes}`
-- OpenAI legacy completions: `choices[0].logprobs.top_logprobs` — list of token→logprob dicts
-- llama.cpp's native variant
+Predicted: two shapes, modern `logprobs.content[]` for chat and a legacy token→logprob dict for raw
+completions. Observed on llama.cpp `b8795`: **both endpoints return the same modern shape**, and it
+carries a token `id` the spec had not accounted for:
 
-**This is the likeliest thing in the design to be silently wrong.** Each shape is pinned by a
-fixture captured from a live server before the parser is written, not asserted from documentation
-afterwards. A wrong assumption here produces plausible-looking garbage that no downstream test
-would catch.
+```json
+"logprobs": {"content": [{
+  "id": 4775, "token": " a", "bytes": [32, 97], "logprob": -0.698,
+  "top_logprobs": [{"id": 4775, "token": " a", "bytes": [32,97], "logprob": -0.698}, …]
+}]}
+```
+
+Captured fixtures live at `Tests/Evals/fixtures/word_bench/llamacpp_raw_completions.json` and
+`llamacpp_chat_completions.json`.
+
+The normalizer produces `[(token, logprob, bytes, token_id)]`. **`bytes` is the identity key** —
+raw UTF-8 of the surface form, which means the same thing in every tokenizer. `token_id` is recorded
+for provenance but deliberately not matched on: ids are model-local, and the grid compares across
+models. The token string is a display fallback for providers that omit bytes.
+
+Shapes still to pin before their providers are claimed as supported:
+
+- OpenAI chat (`top_logprobs` capped at 20; no `id` field — `bytes` becomes the identity key)
+- OpenAI legacy completions (`gpt-3.5-turbo-instruct` only; `logprobs` capped at 5), whose shape
+  really is the older token→logprob dict form
+
+A provider without a captured fixture is not supported. No shape is inferred from documentation.
 
 ### Preflight
 
@@ -386,12 +455,31 @@ contract's required readable labels:
 
 | Preflight result | Badge | Recovery |
 |---|---|---|
-| logprobs returned, K recorded | **Ready** | — |
+| logprobs returned, K recorded, canary sane | **Ready** | — |
 | endpoint unreachable | **Unavailable** | `.ds-recovery-callout`: which endpoint, check the server |
 | reachable, no logprobs in response | **Blocked** | callout: this provider cannot report logprobs |
 | raw mode unsupported by endpoint | **Blocked** | callout: switch the bench to chat mode or change target |
+| logprobs fine, **canary degenerate** | **Ready**, with warning | callout: this target's raw continuation looks out-of-distribution; results may not mean what they appear to |
+| chat mode, no content token in window | **Blocked** | callout: template emits only control tokens within the window |
 
 `k_returned` may be lower than requested; the grid header states the effective K.
+
+#### The distribution sanity canary
+
+Confirming a target *returns* logprobs is not the same as confirming those logprobs *mean anything*.
+A model tuned hard on its chat template can return a perfectly well-formed distribution over
+plain-text continuation that is nonetheless degenerate — verified on a live Gemma-derived model,
+where `"The capital of France is"` yielded `"thought"` at −0.44 rather than `" Paris"`.
+
+Preflight therefore sends one canary prompt per target whose continuation is near-universally
+agreed, and checks whether the expected token appears in the returned top-K at all. Failure does
+**not** block the run — a degenerate target may be exactly what a user wants to study. It downgrades
+the target to a warned state, and every cell in that target's column carries the warning into the
+grid, so a divergence produced by out-of-distribution behaviour is never silently read as a finding
+about censorship.
+
+The canary is per prompt mode: raw mode uses a bare completion, chat mode a user turn. A target may
+pass in one mode and fail in the other, which is itself the finding.
 
 Preflight results carry a check timestamp and go stale when a server restarts or a model is
 swapped, so preflight always re-runs at launch regardless of a cached result.
@@ -465,7 +553,7 @@ Switched to Δ and sorted descending, the benchmark answers its own question:
                           llama-3-8b     qwen-2.5-7b     llama-3-8b
  snippet            group   (base)          (base)       (+prefix)      spread
 ────────────────────────────────────────────────────────────────────────────────
- the rioters were  loaded  baseline       0.31 ▄        ≥0.52 ▆  !       0.52
+ the rioters were  loaded  baseline       0.31 ▄         0.52 ▆  !       0.52
  the regime said   loaded  baseline       0.09 ▁         0.14 ▂          0.14
  the protestors…  neutral  baseline       0.08 ▁         0.11 ▁          0.11
  the government…  neutral  baseline       0.06 ▁         0.07 ▁          0.07
@@ -490,19 +578,28 @@ Jensen–Shannon divergence, computed over the top-K tokens **plus one lumped `o
 `truncated_mass`. That support sums to 1, so the divergence is well-defined; scoring absent tokens at
 their bound would not form a distribution at all.
 
-Two properties the UI must state rather than hide:
+Two properties the UI must state rather than hide (corrected 2026-07-26 during the PR2 whole-branch
+review — the text below originally claimed a guaranteed lower bound; the PR2 engine's own test suite
+now carries a concrete counterexample disproving that, see
+`Tests/Evals/word_bench/test_analysis.py::test_divergence_is_an_estimate_not_a_guaranteed_bound` and
+the corrected module docstring in `tldw_chatbook/Evals/word_bench/analysis.py`):
 
-1. **It is a lower bound.** Lumping unobserved mass into one shared symbol assumes both tails
-   overlap perfectly when they may be disjoint. The error has a known direction, so the value is
-   always a lower bound — but annotating every cell would be noise.
+1. **It is an ESTIMATE, not a certified bound in either direction.** Two approximations pull against
+   each other and neither dominates in general: lumping unobserved mass into one shared symbol assumes
+   both tails overlap perfectly, which pulls the value DOWN relative to genuinely disjoint tails; while
+   crediting a token absent from one cell's top-K with exactly 0 there (when its true probability could
+   be as high as that cell's K-th observed probability) pulls the value UP relative to crediting the
+   feasible overlap. The reported number is comparable and reproducible, but must never be rendered
+   with `≥`.
 2. **Mixed K biases comparison.** A K=100 cell and a K=20 cell have systematically different
    truncated mass, so their divergence would reflect the K difference rather than model behaviour.
-   Both cells are truncated to `min(K)` before comparison.
+   Both cells are truncated to `min(K)` before comparison (and entropy takes the same shared `k` for
+   the same reason, via `effective_k()`).
 
-**One threshold governs both annotations.** When a pair's combined truncated mass exceeds 25%, the
-cell renders `≥ 0.52` *and* carries `!`. Below that threshold it renders a bare value. A single
-threshold means `≥` and `!` always co-occur, so neither can be misread as saying something the other
-doesn't.
+**The truncation threshold flags material extrapolation, not a proven floor.** When a pair's combined
+truncated mass exceeds 25%, the cell carries `!` to mark the reading as resting on a larger-than-usual
+amount of extrapolation. It renders as a bare value either way — `!` is a caution flag, never a `≥`
+guarantee.
 
 The `spread` column is max pairwise divergence across the row: the fastest way to find where targets
 disagree most. **Group mean** rows aggregate divergence by the snippet `group` field, which for a
@@ -709,11 +806,21 @@ even before anything renders it, and it is where the methodological risk is conc
 
 ## Risks
 
-1. **Normalizer shape assumptions.** Three formats verified from documentation rather than
-   observation would produce plausible wrong numbers that no downstream test catches. Mitigated by
-   capturing fixtures first.
+1. **Normalizer shape assumptions — this risk already materialised.** The spec's predicted shapes
+   were wrong: llama.cpp returns the modern `logprobs.content[]` form on *both* endpoints, not a
+   legacy dict on raw completions, and carries a token `id` the spec had not anticipated. Caught by
+   capturing fixtures before writing the parser, exactly as this risk demanded. The remaining
+   exposure is OpenAI's two shapes, still unpinned: **a provider without a captured fixture is not
+   a supported provider.**
 2. **Sampler neutrality cannot be enforced.** Servers may clamp or ignore the requested parameters.
    Recorded and surfaced; not solvable client-side.
+3. **Chat templates emit control tokens first.** Verified: a Gemma-derived model returns
+   `<|channel>` at probability 1.0 as the first assistant token. Measuring it yields a grid of
+   identical zero-entropy cells that reads as "no difference." Mitigated by measuring the first
+   non-control token and recording `content_offset`.
+4. **A target can return well-formed logprobs that mean nothing.** Verified: the same model
+   continues "The capital of France is" with "thought", not " Paris". Mitigated by the preflight
+   canary, which warns rather than blocks and propagates onto every cell in the column.
 3. **Cross-model probe comparison.** Mitigated by the never-observed state and a within-column
    default, but tokenizer differences remain a limitation of the method, not a bug to fix.
 4. **Schema-version collision at merge.** `SCHEMA_VERSION` 3 → 4 while concurrent branches also
