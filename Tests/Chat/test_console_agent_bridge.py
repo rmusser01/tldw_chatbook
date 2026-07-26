@@ -16,6 +16,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     _compose_run_allowed_tools,
     _compose_run_registry_and_allowed,
     _non_colliding_mcp_names,
+    shadowed_mcp_names,
 )
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -1704,6 +1705,22 @@ def test_compose_run_registry_and_allowed_all_mcp_names_colliding_skips_registra
 def test_non_colliding_mcp_names_pure_helper():
     mcp_provider = _FakeMCPProvider([("calculator", "x"), ("mcp__srv__y", "y")])
     assert _non_colliding_mcp_names(mcp_provider, {"calculator"}) == ("mcp__srv__y",)
+
+
+def test_shadowed_mcp_names_reports_what_the_filter_drops():
+    """A user's configured MCP tool must never vanish silently.
+
+    Built-ins keep winning the collision -- inverting that would let a
+    compromised server name-squat an audited built-in -- so the shadowing
+    is surfaced instead. ``shadowed_mcp_names`` and
+    ``_non_colliding_mcp_names`` must partition the same catalog: every
+    entry appears in exactly one of the two results.
+    """
+    mcp_provider = _FakeMCPProvider([("read_file", "x"), ("weather", "y")])
+    collision_names = {"read_file"}
+
+    assert shadowed_mcp_names(mcp_provider, collision_names) == ("read_file",)
+    assert _non_colliding_mcp_names(mcp_provider, collision_names) == ("weather",)
 
 
 def test_run_reply_routes_fence_call_to_mcp_provider(tmp_path):
