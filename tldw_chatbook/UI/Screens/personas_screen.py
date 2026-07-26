@@ -180,6 +180,7 @@ from ..Persona_Modules.personas_conversations_controller import (
     PersonasConversationsController,
 )
 from ...Character_Chat.character_generation import CharacterGenerationError
+from ...Character_Chat.world_book_import import format_imported_lorebook_note
 from ...Character_Chat.character_generation_controller import (
     CharacterGenerationController,
     build_gateway_runner,
@@ -6128,14 +6129,7 @@ class PersonasScreen(BaseAppScreen):
                 ext = {}
         if not isinstance(ext, dict):
             return ""
-        books = ext.get("character_world_books")
-        if not isinstance(books, list) or not books:
-            return ""
-        first = books[0] if isinstance(books[0], dict) else {}
-        name = str(first.get("name") or "lorebook")
-        entries = first.get("entries")
-        n = len(entries) if isinstance(entries, list) else 0
-        return f" Lorebook '{name}' attached ({n} entries)."
+        return format_imported_lorebook_note(ext.get("character_world_books"))
 
     async def _open_lore_import_dialog(self) -> None:
         """Continuation for the guarded lore-import action."""

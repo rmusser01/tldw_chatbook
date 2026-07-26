@@ -1572,6 +1572,15 @@ def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "image_base64": data_node.get("char_image") or data_node.get("image"),
         }
 
+        # Preserve dev's behaviour first: the parsed card carries the legacy
+        # character_book in its extensions. The conversion below removes it
+        # again ONLY once a usable world-book block exists, so a book that
+        # yields nothing keeps this key and still injects the old way.
+        if isinstance(data_node.get("character_book"), dict):
+            parsed_data["extensions"]["character_book"] = parse_character_book(
+                data_node["character_book"]
+            )
+
         # TASK-429: convert an embedded V2 character_book into the app's managed
         # character_world_books snapshot so it is visible/attached and injects
         # ONCE. Handle the top-level V2 field AND the nested legacy key (cards
@@ -1613,8 +1622,13 @@ def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                         f"({_skipped} skipped); leaving any legacy key intact."
                     )
         except Exception as e_book:
+            # Name the card and its declared spec: without an identifier this
+            # line is unactionable in a log covering a bulk import.
             logger.opt(exception=True).error(
-                f"Error converting character_book during V2 card parsing: {e_book}"
+                "Error converting character_book during V2 card parsing "
+                f"(character={parsed_data.get('name') or 'unknown'!r}, "
+                f"spec={card_data_json.get('spec') or 'unknown'!r} "
+                f"{card_data_json.get('spec_version') or ''}): {e_book}"
             )
 
         # Log spec/version from top level if present, for info, but parsing proceeds based on data_node content.

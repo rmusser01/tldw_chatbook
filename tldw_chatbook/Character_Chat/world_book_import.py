@@ -173,6 +173,12 @@ def character_book_to_world_book_block(
     no keys, no content, or an invalid regex pattern) are skipped and counted,
     so one bad entry never sinks the book. Never raises.
 
+    Args:
+        book: The card's ``character_book`` value. Untrusted import data, so
+            any shape is tolerated; a non-dict yields ``(None, 0, 0)``.
+        fallback_name: Name for the produced block when the book carries no
+            usable name of its own.
+
     Returns:
         ``(block_or_None, imported_count, skipped_count)``. ``None`` only when
         ``book`` is not a dict.
@@ -210,3 +216,30 @@ def character_book_to_world_book_block(
         "entries": normalized,
     }
     return block, len(normalized), skipped
+
+
+def format_imported_lorebook_note(books: object) -> str:
+    """Return the toast suffix naming the lorebook an import just attached.
+
+    Args:
+        books: The character's ``extensions["character_world_books"]`` value,
+            straight from an imported record and therefore untrusted -- any
+            shape is tolerated and yields "".
+
+    Returns:
+        A leading-space suffix like ``" Lorebook 'X' attached (2 entries)."``,
+        or ``""`` when there is no usable book to name.
+
+    The LAST block is named, not the first: ``parse_v2_card`` appends the
+    converted book to whatever list the card already carried, so reading the
+    first block announced a pre-existing book instead of the imported one.
+    """
+    if not isinstance(books, list) or not books:
+        return ""
+    block = books[-1]
+    if not isinstance(block, dict):
+        return ""
+    name = str(block.get("name") or "lorebook")
+    entries = block.get("entries")
+    count = len(entries) if isinstance(entries, list) else 0
+    return f" Lorebook '{name}' attached ({count} entries)."
