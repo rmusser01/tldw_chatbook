@@ -644,6 +644,10 @@ class CitationTraceBuilder:
                 "answer_body exceeds "
                 f"{ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX} UTF-8 bytes"
             )
+        if not isinstance(completed_at, datetime):
+            raise TypeError("completed_at must be a datetime")
+        if completed_at.tzinfo is None or completed_at.utcoffset() is None:
+            raise ValueError("completed_at must be timezone-aware")
         matching_prompt_sets = [
             prompt_set
             for prompt_set in self._prompt_evidence_sets

@@ -1190,6 +1190,42 @@ def test_initial_answer_rejects_unknown_prompt_set_atomically() -> None:
     assert builder.answer_attempt_payloads == ()
 
 
+def test_initial_answer_rejects_non_datetime_completion_explicitly_and_atomically() -> (
+    None
+):
+    builder = _builder()
+    prompt_set_id = _record_prompt_set(builder)
+    body_sentinel = "ANSWER_COMPLETION_BODY_SENTINEL"
+
+    with pytest.raises(TypeError, match="completed_at must be a datetime") as captured:
+        builder.record_initial_answer_attempt(
+            prompt_evidence_set_id=prompt_set_id,
+            answer_body=body_sentinel,
+            completed_at="not-a-datetime",  # type: ignore[arg-type]
+        )
+
+    assert body_sentinel not in str(captured.value)
+    assert builder.answer_attempts == ()
+    assert builder.answer_attempt_payloads == ()
+
+
+def test_initial_answer_rejects_naive_completion_explicitly_and_atomically() -> None:
+    builder = _builder()
+    prompt_set_id = _record_prompt_set(builder)
+    body_sentinel = "ANSWER_COMPLETION_BODY_SENTINEL"
+
+    with pytest.raises(ValueError, match="completed_at must be timezone-aware") as captured:
+        builder.record_initial_answer_attempt(
+            prompt_evidence_set_id=prompt_set_id,
+            answer_body=body_sentinel,
+            completed_at=NOW.replace(tzinfo=None),
+        )
+
+    assert body_sentinel not in str(captured.value)
+    assert builder.answer_attempts == ()
+    assert builder.answer_attempt_payloads == ()
+
+
 def test_attempt_completion_cannot_precede_prompt_creation_and_is_atomic() -> None:
     builder = _builder()
     prompt_set_id = _record_prompt_set(builder, created_at=NOW + timedelta(seconds=1))
