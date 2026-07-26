@@ -290,8 +290,10 @@ from ...Widgets.Console import (
     ConsoleStagedContextTray,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
+    ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
 )
+from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
 from ...Widgets.Console.console_generation_card import (
     ConsoleGenerationCardSpec,
@@ -1626,9 +1628,7 @@ class ChatScreen(BaseAppScreen):
             active_workspace.workspace_id if active_workspace is not None else None
         )
 
-        def _apply_workspace_switch(workspace_id: str | None) -> None:
-            if not workspace_id:
-                return
+        def _switch_to(workspace_id: str) -> None:
             try:
                 registry_service.set_active_workspace(workspace_id)
             except Exception:
@@ -1649,12 +1649,141 @@ class ChatScreen(BaseAppScreen):
                 group="console-sync",
             )
 
+        def _apply_workspace_switch(
+            result: tuple[str, str] | None,
+        ) -> None:
+            if not result:
+                return
+            action, workspace_id = result
+            if action == "switch":
+                _switch_to(workspace_id)
+            elif action == "rename":
+                self._open_console_workspace_rename(workspace_id)
+            elif action == "archive":
+                self._confirm_console_workspace_archive(workspace_id)
+
         self.app.push_screen(
             ConsoleWorkspaceSwitcherModal(
                 workspaces=workspaces,
                 active_workspace_id=active_workspace_id,
             ),
             callback=_apply_workspace_switch,
+        )
+
+    def _open_console_workspace_rename(self, workspace_id: str) -> None:
+        """Prompt for and apply a new workspace name (TASK-714)."""
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        if registry_service is None:
+            self.app_instance.notify(
+                "Workspace service is not ready.", severity="warning"
+            )
+            return
+        record = registry_service.get_workspace(workspace_id)
+        if record is None:
+            self.app_instance.notify(
+                "Workspace is no longer available.", severity="warning"
+            )
+            return
+
+        def _apply_rename(new_name: str | None) -> None:
+            if not new_name:
+                return
+            try:
+                renamed = registry_service.rename_workspace(workspace_id, new_name)
+            except WorkspaceRegistryServiceError as exc:
+                self.app_instance.notify(str(exc), severity="warning")
+                return
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Unable to rename Console workspace"
+                )
+                self.app_instance.notify(
+                    "Workspace could not be renamed.", severity="error"
+                )
+                return
+            self._sync_console_chat_core_state()
+            self._sync_console_workspace_context()
+            self.run_worker(
+                self._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            self.app_instance.notify(
+                f"Renamed workspace to {renamed.name}.", severity="information"
+            )
+
+        self.app.push_screen(
+            ConsoleWorkspaceRenameModal(current_name=record.name),
+            callback=_apply_rename,
+        )
+
+    def _confirm_console_workspace_archive(self, workspace_id: str) -> None:
+        """Confirm and archive a workspace (TASK-714)."""
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        if registry_service is None:
+            self.app_instance.notify(
+                "Workspace service is not ready.", severity="warning"
+            )
+            return
+        record = registry_service.get_workspace(workspace_id)
+        if record is None:
+            self.app_instance.notify(
+                "Workspace is no longer available.", severity="warning"
+            )
+            return
+        was_active = bool(record.active)
+
+        # ConfirmationDialog awaits its confirm callback, so this must be a
+        # coroutine function.
+        async def _archive() -> None:
+            try:
+                registry_service.archive_workspace(workspace_id)
+            except WorkspaceRegistryServiceError as exc:
+                self.app_instance.notify(str(exc), severity="warning")
+                return
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Unable to archive Console workspace"
+                )
+                self.app_instance.notify(
+                    "Workspace could not be archived.", severity="error"
+                )
+                return
+            self._sync_console_chat_core_state()
+            if was_active:
+                self._activate_console_session_for_workspace(DEFAULT_WORKSPACE_ID)
+            self._sync_console_workspace_context()
+            self.run_worker(
+                self._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            suffix = (
+                " Console switched to the Default workspace."
+                if was_active
+                else ""
+            )
+            self.app_instance.notify(
+                f"Archived {record.name}. Its conversations stay saved in "
+                f"Library.{suffix}",
+                severity="information",
+            )
+
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Archive workspace?",
+                message=(
+                    f"Archive {record.name}? Its conversations stay saved and "
+                    "remain visible in Library; the workspace disappears from "
+                    "the switcher and the Console browser."
+                ),
+                confirm_label="Archive",
+                confirm_callback=_archive,
+            )
         )
 
     @on(Button.Pressed, "#console-new-workspace")
