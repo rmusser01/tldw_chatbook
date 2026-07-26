@@ -198,3 +198,78 @@ def fetch_json(
             resp.raise_for_status()
             return resp.json()
     raise ImageGenerationError("request failed: too many redirects")
+
+
+def fetch_bytes_via_post(
+    url: str,
+    *,
+    headers: dict | None = None,
+    json: Any = None,
+    timeout: float | None = None,
+    trusted_origins: frozenset = frozenset(),
+    max_bytes: int = 32 * 1024 * 1024,
+) -> tuple[bytes, str]:
+    """Issue a POST request and return the raw response body, not parsed JSON.
+
+    For backends that return image bytes directly from a POST (e.g. Fireworks'
+    image-generation endpoint) rather than a JSON envelope carrying a URL or
+    base64 payload. Mirrors ``fetch_json``'s manual, per-hop-validated
+    redirect loop verbatim: egress is re-validated on every hop,
+    ``Authorization``/``Cookie``/``Proxy-Authorization`` are stripped on any
+    hop whose origin differs from the original request's (see ``fetch_json``'s
+    docstring for the full same-origin rationale), and redirects are never
+    auto-followed by the transport.
+
+    Args:
+        url: Absolute request URL (validated before each hop).
+        headers: Optional request headers; credential headers are dropped on
+            cross-origin hops (see ``fetch_json``).
+        json: Optional JSON body, re-sent on every hop.
+        timeout: Per-request timeout in seconds. ``None`` uses
+            ``_DEFAULT_TIMEOUT``; an explicit ``0`` is honored as given
+            (fail-fast), not silently replaced by the default.
+        trusted_origins: Hostnames trusted to resolve to a private/internal
+            IP (e.g. a configured backend ``base_url``'s host). Leave empty
+            for URLs sourced from a remote API's response body.
+        max_bytes: Maximum allowed response body size in bytes. A response
+            body larger than this raises ``ImageGenerationError`` naming the
+            cap -- the body is never silently truncated and returned partial.
+
+    Returns:
+        A ``(body_bytes, content_type_header_value)`` tuple.
+
+    Raises:
+        ImageGenerationError: On a blocked URL (see
+            ``_validate_egress_or_raise``), a redirect without a
+            ``Location``, exceeding the redirect cap, or the response body
+            exceeding ``max_bytes``.
+    """
+    current = url
+    with create_client(timeout=timeout) as client:
+        for hop in range(DEFAULT_MAX_REDIRECTS + 1):
+            _validate_egress_or_raise(current, trusted_origins=trusted_origins)
+            # Same credential-exfiltration rationale as fetch_json: a
+            # redirect to a still-public (so not SSRF-blocked) different
+            # origin must not carry Authorization/Cookie/Proxy-Authorization
+            # along with it.
+            same_origin = egress.same_origin(url, current)
+            resp = client.request(
+                "POST",
+                current,
+                headers=egress._hop_headers(headers, same_origin),
+                json=json,
+            )
+            if resp.is_redirect:
+                location = resp.headers.get("location") or resp.headers.get("Location")
+                if not location:
+                    raise ImageGenerationError("request failed: redirect without location")
+                current = _resolve_redirect_url(str(resp.url), str(location))
+                continue
+            resp.raise_for_status()
+            content = resp.content
+            if len(content) > max_bytes:
+                raise ImageGenerationError(
+                    f"response body exceeds max_bytes cap ({max_bytes} bytes)"
+                )
+            return content, resp.headers.get("content-type", "")
+    raise ImageGenerationError("request failed: too many redirects")
