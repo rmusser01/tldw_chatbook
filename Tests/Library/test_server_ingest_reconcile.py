@@ -307,3 +307,43 @@ def test_a_real_model_from_a_live_server_settles_the_job():
 
     assert reconcile_remote_ingest_jobs(registry, [status]) == 1
     assert registry.jobs()[0].state is IngestJobState.DONE
+
+
+def test_repeated_running_status_is_not_counted_as_a_transition():
+    """The count is documented as transitions; a re-report of the same state is not.
+
+    ``mark_parsing`` is skipped when the job is already ``PARSING``, but the
+    branch still handed back the job snapshot, and a non-``None`` value was read
+    as "something moved". The snapshot is a ``replace()`` copy taken before the
+    call, so it says nothing about whether the registry changed -- the count
+    silently overstated itself on every poll of a still-running job.
+    """
+    registry = LibraryIngestJobRegistry()
+    _server_job(registry, remote_job_id="1")
+
+    first = reconcile_remote_ingest_jobs(registry, [_status(1, "running")])
+    assert first == 1, "the queued -> parsing transition should count"
+    assert registry.jobs()[0].state is IngestJobState.PARSING
+
+    again = reconcile_remote_ingest_jobs(registry, [_status(1, "running")])
+    assert again == 0, "re-reporting the same state moved nothing"
+
+
+def test_progress_still_lands_while_a_job_stays_running():
+    """Not counting the re-report must not stop progress being recorded.
+
+    The two are separate: a running job that reports 40% has not changed state,
+    but the queue should still show 40%.
+    """
+    registry = LibraryIngestJobRegistry()
+    _server_job(registry, remote_job_id="1")
+    reconcile_remote_ingest_jobs(registry, [_status(1, "running")])
+
+    reconcile_remote_ingest_jobs(
+        registry,
+        [_status(1, "running", progress_percent=40.0, progress_message="Halfway")],
+    )
+
+    job = registry.jobs()[0]
+    assert job.state is IngestJobState.PARSING
+    assert job.progress, "progress from a still-running job must be recorded"

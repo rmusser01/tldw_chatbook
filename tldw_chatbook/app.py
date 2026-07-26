@@ -2907,6 +2907,27 @@ class LibraryIngestQueueMixin:
                 job_id, error=f"The server rejected the ingest: {errors[0]}"
             )
             return
+
+        # Following a remote job needs BOTH ids: ``pending_remote_batches``
+        # decides what to poll from ``batch_id``, and the reconciler matches
+        # statuses to jobs by ``remote_job_id``. Without the first, the job is
+        # never polled; without the second, the batch is polled forever while no
+        # status can ever be matched to it. Either way the row sits at "queued"
+        # indefinitely -- the same never-resolves failure the mistyped ``result``
+        # field caused, and not something a queue may do quietly.
+        if not batch_id or remote_job_id is None:
+            self.library_ingest_jobs.mark_failed(
+                job_id,
+                error=(
+                    "The server accepted this import but did not return the ids "
+                    "needed to track it, so its progress cannot be followed. It "
+                    "may still be running on the server; check there before "
+                    "importing again."
+                ),
+                permanent=True,
+            )
+            return
+
         self.poll_remote_ingest_jobs()
 
     async def _reconcile_remote_batch(self, service: Any, batch_id: str) -> None:
@@ -2985,6 +3006,11 @@ class LibraryIngestQueueMixin:
         records the real state when the server reports it -- which is also why
         polling is (re)started here, so a batch cancelled while nothing was
         being watched still gets its outcome.
+
+        Args:
+            batch_id: The server batch to cancel. An empty value is ignored, so
+                a queue row that never received a batch id cannot send a cancel
+                for every job on the server.
         """
         if not batch_id:
             return

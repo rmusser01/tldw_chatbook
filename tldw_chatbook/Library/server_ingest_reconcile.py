@@ -97,9 +97,10 @@ def reconcile_remote_ingest_jobs(
             at least ``id`` and ``status``.
 
     Returns:
-        The number of jobs actually transitioned. A status for an unknown remote
-        id, for a job already in that terminal state, or with an unrecognised
-        ``status`` string contributes nothing.
+        The number of jobs actually transitioned -- state changes only, so a
+        progress update on a job that is already running is not counted. A status
+        for an unknown remote id, for a job already in the reported state, or
+        with an unrecognised ``status`` string contributes nothing.
     """
     by_remote_id = {
         job.remote_job_id: job
@@ -147,11 +148,17 @@ def reconcile_remote_ingest_jobs(
                 ),
             )
         elif target is IngestJobState.PARSING:
+            # Only a real transition counts. When the job is already PARSING the
+            # server is simply re-reporting it, and handing back ``job`` here
+            # would inflate the count on every poll -- ``job`` is a ``replace()``
+            # copy taken before this call, so it is evidence of nothing.
             updated = (
                 registry.mark_parsing(job.job_id)
                 if job.state is not IngestJobState.PARSING
-                else job
+                else None
             )
+            # Progress is recorded either way: a running job that reports 40%
+            # has not changed state, but the queue should still show 40%.
             if progress is not None:
                 registry.update_progress(job.job_id, progress=progress)
         else:

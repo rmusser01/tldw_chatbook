@@ -2532,3 +2532,68 @@ async def test_a_clip_that_extracted_nothing_fails_rather_than_reporting_done(
 
     job = app.library_ingest_jobs.jobs()[0]
     assert "extracted" in (job.error or "").lower()
+
+
+class _IdlessSubmitService:
+    """Accepts a submission but answers without usable tracking ids."""
+
+    def __init__(self, response: dict) -> None:
+        self.response = response
+        self.list_calls = 0
+
+    async def submit_ingest_jobs(self, **kwargs):
+        return self.response
+
+    async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100, offset: int = 0):
+        self.list_calls += 1
+        return {"batch_id": batch_id, "jobs": []}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "why"),
+    [
+        ({"jobs": [{"id": 7}], "errors": []}, "no batch_id to poll"),
+        ({"batch_id": "b-1", "jobs": [], "errors": []}, "no job to reconcile against"),
+        ({"batch_id": "b-1", "jobs": [{"source": "/tmp/a.mp3"}]}, "job carries no id"),
+        ({}, "nothing usable at all"),
+    ],
+)
+async def test_a_submission_we_cannot_track_fails_instead_of_queueing_forever(
+    tmp_path: Path, response: dict, why: str
+) -> None:
+    """Reconciliation needs both ids, so without them the job can never settle.
+
+    ``pending_remote_batches`` keys off ``batch_id`` and
+    ``reconcile_remote_ingest_jobs`` keys off ``remote_job_id``. Missing the
+    former means the job is never polled at all; missing the latter means the
+    batch is polled forever while no status can ever be matched to the job.
+    Either way the queue row sits at "queued" indefinitely -- the same
+    never-resolves failure as the mistyped ``result`` field, which is exactly
+    what a queue must not do silently.
+
+    Failing says so out loud. The message admits the server may still be working,
+    because it accepted the submission; what is lost is our ability to follow it.
+    """
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    service = _IdlessSubmitService(response)
+    app.server_media_reading_service = service
+    source = _write_text_file(tmp_path, "note.txt", "Body.")
+
+    with _server_ingest_preference():
+        async with app.run_test() as pilot:
+            _use_server_runtime(app)
+            app.submit_library_ingest_job(source_path=str(source))
+            for _ in range(_POLL_ATTEMPTS):
+                states = {j.state for j in app.library_ingest_jobs.jobs()}
+                if states == {IngestJobState.FAILED}:
+                    break
+                await pilot.pause(_POLL_INTERVAL)
+            else:
+                raise AssertionError(
+                    f"{why}: job was not failed; states={states}"
+                )
+
+    job = app.library_ingest_jobs.jobs()[0]
+    assert "track" in (job.error or "").lower(), job.error
+    assert service.list_calls == 0, "an untrackable batch must not be polled"
