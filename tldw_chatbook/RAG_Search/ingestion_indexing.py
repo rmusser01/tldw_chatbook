@@ -121,7 +121,7 @@ def semantic_indexing_available() -> bool:
 _shared_service: Optional[Any] = None
 # Guards ONLY reads/writes of _shared_service (and _shared_service_
 # generation) -- NEVER held across the blocking create_rag_service() call
-# (task-634). This is deliberately separate from _shared_service_build_lock
+# (task-641). This is deliberately separate from _shared_service_build_lock
 # below so reset_shared_rag_service()/set_shared_rag_service() (reachable
 # from the main/UI thread via active_config.set_active_profile() and the
 # Settings screen's save/Backfill/Clone paths) can always acquire it
@@ -133,14 +133,14 @@ _shared_service_lock = threading.Lock()
 # Tests/Library/test_library_local_rag_search_service.py::
 # test_concurrent_rag_queries_initialize_one_shared_service). Deliberately
 # a SEPARATE lock from _shared_service_lock: reset/set never take this one,
-# so they're never blocked by an in-flight build (task-634), while two
+# so they're never blocked by an in-flight build (task-641), while two
 # concurrent get_shared_rag_service() builders still queue behind each
 # other here instead of both paying the (possibly network-bound)
 # construction cost redundantly.
 _shared_service_build_lock = threading.Lock()
 # Bumped by every set_shared_rag_service() call (including
 # reset_shared_rag_service()'s set_shared_rag_service(None)). A builder
-# captures this before releasing _shared_service_lock to build (task-634)
+# captures this before releasing _shared_service_lock to build (task-641)
 # and re-checks it at swap time, so a reset that lands WHILE a build is in
 # flight invalidates that build instead of letting it silently resurrect a
 # since-superseded profile immediately after the reset already ran.
@@ -222,7 +222,7 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
     one collection, and one embedding model. The first caller's profile wins;
     subsequent profile arguments are ignored.
 
-    Two-lock construction (task-634): building the service (which can
+    Two-lock construction (task-641): building the service (which can
     trigger real network I/O, e.g. a HuggingFace model download, and
     therefore block for an unbounded amount of time) happens under
     ``_shared_service_build_lock`` -- NEVER under ``_shared_service_lock``.
@@ -340,7 +340,7 @@ def set_shared_rag_service(service: Optional[Any]) -> None:
     service()``, called from the main/UI thread by ``active_config.
     set_active_profile()`` and the Settings screen's save path). Always
     completes promptly -- ``_shared_service_lock`` is never held across
-    blocking construction (task-634), so this never queues up behind an
+    blocking construction (task-641), so this never queues up behind an
     in-flight ``get_shared_rag_service()`` build.
 
     Bumps ``_shared_service_generation`` so any build already in flight
@@ -361,7 +361,7 @@ def reset_shared_rag_service() -> None:
     set_active_profile()`` and ``settings_rag_profile_adapter.
     save_rag_defaults_to_active_profile()`` both call this from the main/UI
     thread on a successful profile pointer change / in-place save, so it
-    must never block on another thread's in-flight construction (task-634).
+    must never block on another thread's in-flight construction (task-641).
     """
     set_shared_rag_service(None)
 

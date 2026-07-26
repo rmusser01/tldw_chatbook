@@ -1213,7 +1213,7 @@ class ConfigProfileManager:
 # An explicit profiles_dir always bypasses the cache and gets a fresh
 # instance -- tests rely on that for per-test isolation.
 _GLOBAL_PROFILE_MANAGER: Optional["ConfigProfileManager"] = None
-# task-634 round-2 review: guards ONLY the _GLOBAL_PROFILE_MANAGER
+# task-641 round-2 review: guards ONLY the _GLOBAL_PROFILE_MANAGER
 # check-and-create below -- a live UAT session hit a genuine race here: the
 # Settings screen's Clone-modal-open handler (active_profile_info(), main
 # thread) and the RAG shared-service construction path

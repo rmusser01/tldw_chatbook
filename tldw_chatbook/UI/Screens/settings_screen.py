@@ -8421,7 +8421,7 @@ class SettingsScreen(BaseAppScreen):
             # instant this run finishes.
             rag_service = get_shared_rag_service()
             if rag_service is None:
-                # task-634 review: get_shared_rag_service() can return None
+                # task-641 review: get_shared_rag_service() can return None
                 # not only on a genuine construction failure but also when a
                 # concurrent reset/set-active discarded an in-flight build
                 # (the two-lock construction in ingestion_indexing.py). Never

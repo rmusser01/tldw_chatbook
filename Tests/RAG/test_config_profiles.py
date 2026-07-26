@@ -913,7 +913,7 @@ def test_cached_default_manager_sees_mutations_from_other_default_dir_callers():
     assert mgr_b.get_profile(p.id) is not None
 
 
-# --- task-634 round-2 review: get_profile_manager()'s lazy singleton has no
+# --- task-641 round-2 review: get_profile_manager()'s lazy singleton has no
 # lock guarding its check-and-create, so two concurrent first-touch callers
 # (e.g. the Settings screen's Clone-modal-open handler calling
 # active_profile_info() on the main thread, racing the RAG shared-service
@@ -932,7 +932,7 @@ import time
 
 
 def test_concurrent_first_touch_constructs_exactly_one_manager(monkeypatch):
-    """RED for the task-634 round-2 review finding: two threads racing
+    """RED for the task-641 round-2 review finding: two threads racing
     get_profile_manager() on a genuinely first (uncached) touch must
     construct ConfigProfileManager exactly once and agree on the same
     instance -- not race past an unsynchronized None check."""

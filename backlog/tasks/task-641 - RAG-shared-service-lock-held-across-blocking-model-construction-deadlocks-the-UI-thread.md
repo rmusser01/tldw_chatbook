@@ -1,5 +1,5 @@
 ---
-id: TASK-634
+id: TASK-641
 title: >-
   RAG shared-service lock held across blocking model construction deadlocks the
   UI thread
@@ -142,7 +142,7 @@ backward from code instead:
    raced between a background-thread worker (slow fake `create_rag_service`,
    1s) and a coroutine on the real Textual main thread calling
    `get_shared_rag_service()` concurrently: resolved in ~0.95s (bounded by
-   the construction time, not indefinite) -- confirming the task-634 (round
+   the construction time, not indefinite) -- confirming the task-641 (round
    1) two-lock design has no reentrant/indefinite-hang defect under real
    asyncio-thread interaction.
 

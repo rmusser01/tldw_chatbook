@@ -1386,7 +1386,7 @@ def test_rag_backfill_worker_failure_notifies_and_clears_in_flight_without_raisi
     )
     # M5's pre-resolve call must never be the real (potentially heavy/
     # network-touching) service construction in a unit test -- a cheap
-    # non-None sentinel stand-in instead (task-634 review: None now has its
+    # non-None sentinel stand-in instead (task-641 review: None now has its
     # OWN dedicated early-return guard, tested separately in
     # test_rag_backfill_worker_guards_against_none_pre_resolved_service, so
     # it must not also be used here to reach backfill_semantic_index).
@@ -1463,7 +1463,7 @@ def test_rag_backfill_worker_pre_resolves_the_shared_service_outside_the_loop(
     assert captured_kwargs.get("rag_service") is sentinel_service
 
 
-# --- task-634 review (Important): get_shared_rag_service() can now return
+# --- task-641 review (Important): get_shared_rag_service() can now return
 # None not only on a genuine construction failure but also when a
 # concurrent reset/set-active discarded an in-flight build (the two-lock
 # construction in ingestion_indexing.py -- see _shared_service_generation).
@@ -1482,7 +1482,7 @@ def test_rag_backfill_worker_guards_against_none_pre_resolved_service(
     monkeypatch.setattr(
         settings_screen_module, "semantic_indexing_available", lambda: True
     )
-    # Simulates a build discarded by a concurrent reset (task-634) -- not a
+    # Simulates a build discarded by a concurrent reset (task-641) -- not a
     # deps/config problem, just a since-superseded construction attempt.
     monkeypatch.setattr(
         settings_screen_module, "get_shared_rag_service", lambda: None

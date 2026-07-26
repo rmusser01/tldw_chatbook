@@ -216,7 +216,7 @@ def protect_file_descriptors():
     This fixes the "bad value(s) in fds_to_keep" error on macOS when the
     transformers library spawns subprocesses for model downloads.
 
-    task-634 round 3: when ``sys.stdout``/``sys.stderr`` are non-fd-backed
+    task-641 round 3: when ``sys.stdout``/``sys.stderr`` are non-fd-backed
     (e.g. Textual redirects BOTH to non-fd capture objects for the ENTIRE
     ``App.run()`` lifetime, on every thread -- see ``textual/app.py``'s
     ``with redirect_stdout(self._capture_stdout): with
@@ -241,7 +241,7 @@ def protect_file_descriptors():
     empirically. ``closefd=False`` is the fix: a throwaway text wrapper
     around a fd it does not own must never be allowed to close that fd.
 
-    task-634 round-3 review: the ``finally`` block must never close
+    task-641 round-3 review: the ``finally`` block must never close
     "whatever is currently in ``sys.stdout``/``sys.stderr``" -- if code
     inside the protected ``yield`` (e.g. a nested library call) reassigns
     ``sys.stdout``/``sys.stderr`` itself and leaves it there (for example
@@ -283,7 +283,7 @@ def protect_file_descriptors():
             # closefd=False: these text wrappers do NOT own fd 1/2 (the
             # process's shared stdout/stderr), so they must never close
             # them, whether explicitly or via GC finalization. See this
-            # function's docstring (task-634 round 3).
+            # function's docstring (task-641 round 3).
             try:
                 created_out = os.fdopen(1, "w", closefd=False)
                 created_err = os.fdopen(2, "w", closefd=False)
@@ -321,7 +321,7 @@ def protect_file_descriptors():
         sys.stdin = original_stdin
 
         # Close ONLY the wrapper(s) this function created -- NEVER whatever
-        # currently sits in sys.stdout/sys.stderr (task-634 round-3 review;
+        # currently sits in sys.stdout/sys.stderr (task-641 round-3 review;
         # see docstring). closefd=False already makes the fdopen(1/2) case
         # harmless either way, but this also correctly closes the devnull
         # fallback, which this process does fully own.

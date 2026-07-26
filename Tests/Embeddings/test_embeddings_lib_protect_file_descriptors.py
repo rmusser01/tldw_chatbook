@@ -1,4 +1,4 @@
-"""task-634 round 3: protect_file_descriptors() must never close the real,
+"""task-641 round 3: protect_file_descriptors() must never close the real,
 process-shared stdout/stderr file descriptors (1/2).
 
 Root cause (live re-UAT, faulthandler all-threads dump): Textual's App.run()
@@ -35,7 +35,7 @@ nothing left to drain it) then blocks forever -- the exact
 ``queue.py:140 in put`` -> ``threading.Condition.wait()`` freeze reproduced
 in every live re-UAT round on this bug.
 
-Empirically verified directly (see task-634's Implementation Notes, Round 3)
+Empirically verified directly (see task-641's Implementation Notes, Round 3)
 with a throwaway script mimicking Textual's non-fd-backed capture streams:
 calling the real ``protect_file_descriptors()`` under those conditions
 closed the process's real fd 1 AND fd 2 (confirmed via both
@@ -109,7 +109,7 @@ def _fd_usable(fd: int) -> bool:
 def test_protect_file_descriptors_does_not_close_real_stdio_when_sys_streams_are_non_fd_backed(
     monkeypatch,
 ):
-    """RED for task-634 round 3: simulate Textual's redirected, non-fd-backed
+    """RED for task-641 round 3: simulate Textual's redirected, non-fd-backed
     sys.stdout/sys.stderr (the state they're in for the app's entire
     lifetime) and confirm protect_file_descriptors() leaves the real
     process fd 1/2 open and writable afterward."""
@@ -189,7 +189,7 @@ def test_protect_file_descriptors_is_a_noop_when_streams_are_already_fd_backed(t
             real_file.close()
 
 
-# --- task-634 round-3 review: the finally block must close ONLY the
+# --- task-641 round-3 review: the finally block must close ONLY the
 # wrapper(s) protect_file_descriptors() itself created -- never whatever
 # happens to be sitting in sys.stdout/sys.stderr when the context manager
 # exits. If code inside the protected `yield` (e.g. a nested library call)

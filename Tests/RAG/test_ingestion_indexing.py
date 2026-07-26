@@ -785,7 +785,7 @@ class TestSharedRagService:
 
 @pytest.mark.unit
 class TestSharedRagServiceLockDeadlock:
-    """task-634: get_shared_rag_service() must never hold
+    """task-641: get_shared_rag_service() must never hold
     ``_shared_service_lock`` across the blocking ``create_rag_service()``
     call (which can trigger real network I/O, e.g. a HuggingFace model
     download) -- otherwise any concurrent lock-taking caller
@@ -811,7 +811,7 @@ class TestSharedRagServiceLockDeadlock:
         monkeypatch.setattr(active_config, "resolve_active_rag_config", lambda **kwargs: object())
 
     def test_reset_does_not_block_on_in_flight_construction(self, monkeypatch):
-        """RED for task-634: a reset/set-active call concurrent with a slow
+        """RED for task-641: a reset/set-active call concurrent with a slow
         (simulated stalled-network) construction must complete promptly
         instead of waiting on the lock construction currently holds."""
         ingestion_indexing.reset_shared_rag_service()
@@ -845,7 +845,7 @@ class TestSharedRagServiceLockDeadlock:
             elapsed = time.monotonic() - start
             assert elapsed < 1.0, (
                 f"reset_shared_rag_service() blocked for {elapsed:.2f}s on "
-                "in-flight construction -- this is the task-634 deadlock"
+                "in-flight construction -- this is the task-641 deadlock"
             )
         finally:
             release_construction.set()
@@ -854,7 +854,7 @@ class TestSharedRagServiceLockDeadlock:
             ingestion_indexing.reset_shared_rag_service()
 
     def test_concurrent_callers_construct_exactly_once(self, monkeypatch):
-        """Task-249 invariant preserved by the task-634 fix: two threads
+        """Task-249 invariant preserved by the task-641 fix: two threads
         racing get_shared_rag_service() with no service yet installed must
         still trigger construction at most once -- the second caller waits
         for (and reuses) the first's result rather than paying the
@@ -895,7 +895,7 @@ class TestSharedRagServiceLockDeadlock:
     def test_reset_racing_in_flight_construction_discards_the_stale_build(
         self, monkeypatch
     ):
-        """task-634 AC#3 (no double-construction leak on a construction/reset
+        """task-641 AC#3 (no double-construction leak on a construction/reset
         race): if reset_shared_rag_service() lands while a build is already
         past the lock and mid-``create_rag_service()``, that build must be
         discarded at swap time rather than quietly resurrecting a since-
