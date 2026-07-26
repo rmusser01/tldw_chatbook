@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from Tests.UI.test_settings_configuration_hub import (
     DestinationHarness,
     _active_destination_screen,
@@ -155,3 +156,50 @@ async def test_folder_bindings_add_toggle_remove_and_inline_errors(tmp_path) -> 
         ).press()
         await pilot.pause(0.3)
         assert registry.list_folder_bindings("ws-folders") == ()
+
+
+@pytest.mark.asyncio
+async def test_pane_refreshes_after_external_registry_change() -> None:
+    from textual.widgets import Button
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        assert not screen.query("#settings-workspace-row-ws-late")
+
+        registry.create_workspace(workspace_id="ws-late", name="Late Arrival")
+        screen._refresh_settings_workspaces_pane()
+        await pilot.pause(0.3)
+        assert screen.query_one("#settings-workspace-row-ws-late", Button)
+
+
+@pytest.mark.asyncio
+async def test_resume_refreshes_workspaces_pane_only_when_active(monkeypatch) -> None:
+    refresh_calls = 0
+
+    def fake_refresh(self):
+        nonlocal refresh_calls
+        refresh_calls += 1
+
+    monkeypatch.setattr(SettingsScreen, "_refresh_settings_workspaces_pane", fake_refresh)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+
+        # Still on Overview (the default category) -- resuming must not
+        # touch the Workspaces pane.
+        screen.on_screen_resume()
+        await pilot.pause(0.2)
+        assert refresh_calls == 0
+
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.on_screen_resume()
+        await pilot.pause(0.2)
+        assert refresh_calls == 1

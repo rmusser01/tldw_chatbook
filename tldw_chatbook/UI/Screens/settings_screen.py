@@ -1844,10 +1844,21 @@ class SettingsScreen(BaseAppScreen):
     def on_screen_resume(self) -> None:
         self._queue_sync_rows_refresh()
         self._maybe_refresh_rag_index_status_on_show()
+        self._maybe_refresh_workspaces_pane_on_show()
 
     def _maybe_refresh_rag_index_status_on_show(self) -> None:
         if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
             self._refresh_library_rag_index_status()
+
+    def _maybe_refresh_workspaces_pane_on_show(self) -> None:
+        """Task 11: pick up registry changes made while this screen was
+        suspended (e.g. a workspace created/archived from Console) as soon
+        as the user resumes back into the WORKSPACES category -- mirrors
+        `_maybe_refresh_rag_index_status_on_show`'s per-category resume
+        guard above.
+        """
+        if self._active_category_id() is SettingsCategoryId.WORKSPACES:
+            self._refresh_settings_workspaces_pane()
 
     def _queue_sync_rows_refresh(self) -> None:
         if not getattr(self, "is_mounted", False):
@@ -2204,10 +2215,9 @@ class SettingsScreen(BaseAppScreen):
                     value for _, value in SETTINGS_OVERVIEW_BOUNDARY_ROWS
                 ),
                 recovery_copy=(
-                    "Sync and workspace status here is read-only - switch "
-                    "workspaces in Console (Alt+W), manage them in "
-                    "Library > Details > Workspace, and run sync from the "
-                    "owning sync surfaces."
+                    "Sync status here is read-only - manage workspaces in "
+                    "Settings > Workspaces; switch in Console (Alt+W); run "
+                    "sync from the owning sync surfaces."
                 ),
                 read_only_reason="Overview summarizes status and ownership only.",
             ),
