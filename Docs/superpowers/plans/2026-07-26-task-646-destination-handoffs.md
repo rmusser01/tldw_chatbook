@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Complete revisioned ownership for Study, Artifact, and ACP handoffs; repair exact destination recovery; remove the dead Notes slot and every legacy raw pending field; then run the integrated installed-wheel and full-suite gates.
+**Goal:** Complete revisioned ownership for Study, Artifact, and ACP handoffs; repair exact destination recovery; remove the dead Notes slot and every legacy raw pending field; then run the installed-wheel and authorized production-app/function gates.
 
 **Architecture:** Extend the TASK-645 single-slot owner with three domain channels plus independent Study scope/section channels. Study claims after mount so its explicit inputs override restored view state without leaking a claim from an unmounted screen. Artifacts claims on the app thread, performs exact service lookup in its existing worker, and uses an app-thread generation/lifecycle guard to release on restart, cancellation, or unmount before any stale callback can apply or settle; ACP compares one canonical helper-generated target with the current runtime session and never invents session history.
 
@@ -37,6 +37,28 @@ The printed path must be inside
 main checkout or site-packages. The verified environment is Python 3.12.11,
 pytest 8.4.2, and Ruff 0.15.22.
 
+## Mandatory Test Boundary Correction
+
+This section supersedes every earlier test-file or command reference in this
+plan.
+
+- Application behavior must be tested with a normally constructed production
+  `TldwCli`, `app.run_test()`, and the actual production destination screen.
+- App-independent owners, value objects, normalizers, helpers, and static AST
+  contracts may be tested directly as functions/classes.
+- Do not create, construct, inherit, or reuse a test/simplified `App`,
+  `TldwCli`, or destination screen; do not use namespace/mock objects as an
+  application; and do not invoke unbound `TldwCli` methods.
+- Do not modify, run, or cite legacy surrogate suites. Existing product suites
+  that import their harnesses are excluded as well.
+- Put all new mounted Study, Artifact, and ACP coverage in
+  `Tests/UI/test_destination_handoffs_full_app.py`. Extend
+  `Tests/UI/test_pending_handoff_store.py` for direct protocol/helper coverage
+  and `Tests/test_application_state_ownership.py` for static guards.
+- The release gate is the authorized integrated suite named below, not raw
+  repository-wide `pytest`, because raw collection executes prohibited legacy
+  test applications.
+
 ## File Structure
 
 - Modify `tldw_chatbook/UI/Navigation/pending_handoff_store.py`: add Study scope/section, Artifact target, and ACP target normalizers and channels.
@@ -49,9 +71,9 @@ pytest 8.4.2, and Ruff 0.15.22.
 - Modify `tldw_chatbook/UI/Screens/acp_screen.py`: consume current-session targets with visible exact-match or stale/unsupported recovery.
 - Modify `tldw_chatbook/ACP_Interop/runtime_session.py`: add one canonical ACP session record-ID helper used by producer and consumer.
 - Modify `Tests/UI/test_pending_handoff_store.py`: remaining channel normalization, deep-copy, and replacement tests.
-- Modify `Tests/UI/test_study_screen.py`, `Tests/UI/test_study_dashboard.py`, `Tests/UI/test_study_quizzes_screen.py`, `Tests/UI/test_study_flashcards_screen.py`, and Phase 3 product-maturity Study tests: migrate fixtures and preserve mounted precedence.
-- Modify `Tests/UI/test_console_live_work_handoffs.py`: exact Artifact lookup/races, producer routing, and ACP target staging.
-- Modify `Tests/UI/test_destination_shells.py`: mounted Artifact and ACP recovery behavior.
+- Create `Tests/UI/test_destination_handoffs_full_app.py`: full-production-app
+  Study precedence/settlement, exact Artifact lookup/races, producer routing,
+  and mounted ACP recovery.
 - Modify `Tests/test_application_state_ownership.py`: final prohibition of every legacy pending field and owner bypass.
 - Run, but do not weaken, `Tests/Packaging/test_installed_distribution.py`: integrated installed-wheel gate from TASK-545/ADR-025.
 
@@ -64,7 +86,7 @@ pytest 8.4.2, and Ruff 0.15.22.
 - Modify: `tldw_chatbook/UI/Screens/study_scope_models.py`
 - Modify: `tldw_chatbook/ACP_Interop/runtime_session.py`
 - Modify: `Tests/UI/test_pending_handoff_store.py`
-- Modify: `Tests/UI/test_console_live_work_handoffs.py`
+- Create: `Tests/UI/test_destination_handoffs_full_app.py`
 
 - [ ] **Step 1: Write failing remaining-channel tests**
 
@@ -111,7 +133,7 @@ Use this helper in `ACPRuntimeSessionState.to_console_live_work_launch()` instea
 Run:
 
 ```bash
-pytest Tests/UI/test_pending_handoff_store.py Tests/UI/test_console_live_work_handoffs.py -q -k "study or artifact or acp or record_id"
+pytest Tests/UI/test_pending_handoff_store.py Tests/UI/test_destination_handoffs_full_app.py -q -k "study or artifact or acp or record_id"
 ```
 
 Expected: FAIL until the channels and helper exist.
@@ -152,7 +174,7 @@ Do not add a Notes replacement channel: the slot is dead.
 Run:
 
 ```bash
-pytest Tests/UI/test_pending_handoff_store.py Tests/UI/test_console_live_work_handoffs.py -q
+pytest Tests/UI/test_pending_handoff_store.py Tests/UI/test_destination_handoffs_full_app.py -q
 ```
 
 Expected: PASS.
@@ -160,7 +182,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit channel and producer completion**
 
 ```bash
-git add tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/study_scope_models.py tldw_chatbook/ACP_Interop/runtime_session.py tldw_chatbook/app.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_console_live_work_handoffs.py
+git add tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/study_scope_models.py tldw_chatbook/ACP_Interop/runtime_session.py tldw_chatbook/app.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_destination_handoffs_full_app.py
 git commit -m "refactor(handoffs): own remaining destination channels (task-646)"
 ```
 
@@ -169,13 +191,7 @@ git commit -m "refactor(handoffs): own remaining destination channels (task-646)
 **Files:**
 
 - Modify: `tldw_chatbook/UI/Screens/study_screen.py`
-- Modify: `Tests/UI/test_study_screen.py`
-- Modify: `Tests/UI/test_study_dashboard.py`
-- Modify: `Tests/UI/test_study_quizzes_screen.py`
-- Modify: `Tests/UI/test_study_flashcards_screen.py`
-- Modify: `Tests/UI/test_product_maturity_phase3_knowledge_entry.py`
-- Modify: `Tests/UI/test_product_maturity_phase3_library_study_context.py`
-- Modify: `Tests/UI/test_product_maturity_phase3_source_study_generation.py`
+- Modify: `Tests/UI/test_destination_handoffs_full_app.py`
 
 - [ ] **Step 1: Write failing Study settlement and precedence tests**
 
@@ -196,7 +212,7 @@ Prove:
 Run:
 
 ```bash
-pytest Tests/UI/test_study_screen.py Tests/UI/test_product_maturity_phase3_knowledge_entry.py Tests/UI/test_product_maturity_phase3_library_study_context.py Tests/UI/test_product_maturity_phase3_source_study_generation.py -q -k "pending or handoff or scope or initial_section or precedence"
+pytest Tests/UI/test_destination_handoffs_full_app.py -q -k "study and (handoff or scope or initial_section or precedence)"
 ```
 
 Expected: FAIL while Study reads and clears raw fields.
@@ -234,7 +250,7 @@ Never log scope objects, locator mappings, workspace IDs, titles, or summaries.
 Run:
 
 ```bash
-pytest Tests/UI/test_study_screen.py Tests/UI/test_study_dashboard.py Tests/UI/test_study_quizzes_screen.py Tests/UI/test_study_flashcards_screen.py Tests/UI/test_product_maturity_phase3_knowledge_entry.py Tests/UI/test_product_maturity_phase3_library_study_context.py Tests/UI/test_product_maturity_phase3_source_study_generation.py -q
+pytest Tests/UI/test_destination_handoffs_full_app.py -q -k study
 ```
 
 Expected: PASS.
@@ -242,7 +258,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit Study migration**
 
 ```bash
-git add tldw_chatbook/UI/Screens/study_screen.py Tests/UI/test_study_screen.py Tests/UI/test_study_dashboard.py Tests/UI/test_study_quizzes_screen.py Tests/UI/test_study_flashcards_screen.py Tests/UI/test_product_maturity_phase3_knowledge_entry.py Tests/UI/test_product_maturity_phase3_library_study_context.py Tests/UI/test_product_maturity_phase3_source_study_generation.py
+git add tldw_chatbook/UI/Screens/study_screen.py Tests/UI/test_destination_handoffs_full_app.py
 git commit -m "refactor(study): settle owned scope and section handoffs (task-646)"
 ```
 
@@ -251,8 +267,7 @@ git commit -m "refactor(study): settle owned scope and section handoffs (task-64
 **Files:**
 
 - Modify: `tldw_chatbook/UI/Screens/artifacts_screen.py`
-- Modify: `Tests/UI/test_console_live_work_handoffs.py`
-- Modify: `Tests/UI/test_destination_shells.py`
+- Modify: `Tests/UI/test_destination_handoffs_full_app.py`
 
 - [ ] **Step 1: Write failing exact lookup and race tests**
 
@@ -302,7 +317,7 @@ application loop and the worker loop, and do not use timing sleeps.
 Run:
 
 ```bash
-pytest Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_destination_shells.py -q -k "artifact or chatbook"
+pytest Tests/UI/test_destination_handoffs_full_app.py -q -k "artifact or chatbook"
 ```
 
 Expected: new tests FAIL because the current consumer eagerly clears and falls back to the latest first-page record.
@@ -378,7 +393,7 @@ the cancellation safety net when the worker never reaches its callback.
 Run:
 
 ```bash
-pytest Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_destination_shells.py -q -k "artifact or chatbook"
+pytest Tests/UI/test_destination_handoffs_full_app.py -q -k "artifact or chatbook"
 ```
 
 Expected: PASS.
@@ -386,7 +401,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit exact Artifact recovery**
 
 ```bash
-git add tldw_chatbook/UI/Screens/artifacts_screen.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_destination_shells.py
+git add tldw_chatbook/UI/Screens/artifacts_screen.py Tests/UI/test_destination_handoffs_full_app.py
 git commit -m "fix(artifacts): resolve owned Chatbook targets exactly (task-646)"
 ```
 
@@ -396,8 +411,7 @@ git commit -m "fix(artifacts): resolve owned Chatbook targets exactly (task-646)
 
 - Modify: `tldw_chatbook/UI/Screens/acp_screen.py`
 - Modify: `tldw_chatbook/ACP_Interop/runtime_session.py`
-- Modify: `Tests/UI/test_destination_shells.py`
-- Modify: `Tests/UI/test_console_live_work_handoffs.py`
+- Modify: `Tests/UI/test_destination_handoffs_full_app.py`
 
 - [ ] **Step 1: Write failing ACP consumer tests**
 
@@ -418,7 +432,7 @@ Producer tests must prove malformed ACP/Artifact action targets are rejected wit
 Run:
 
 ```bash
-pytest Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py -q -k "acp and (target or session or primary_action)"
+pytest Tests/UI/test_destination_handoffs_full_app.py -q -k "acp and (target or session or primary_action)"
 ```
 
 Expected: FAIL because `pending_acp_session_target_id` is staged but never consumed.
@@ -442,7 +456,7 @@ If the session is absent/mismatched or detail focus is unavailable, notify bound
 Run:
 
 ```bash
-pytest Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py -q -k "acp"
+pytest Tests/UI/test_destination_handoffs_full_app.py -q -k "acp"
 ```
 
 Expected: PASS.
@@ -450,7 +464,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit ACP recovery**
 
 ```bash
-git add tldw_chatbook/UI/Screens/acp_screen.py tldw_chatbook/ACP_Interop/runtime_session.py Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py
+git add tldw_chatbook/UI/Screens/acp_screen.py tldw_chatbook/ACP_Interop/runtime_session.py Tests/UI/test_destination_handoffs_full_app.py
 git commit -m "fix(acp): consume current-session target handoffs (task-646)"
 ```
 
@@ -459,9 +473,7 @@ git commit -m "fix(acp): consume current-session target handoffs (task-646)"
 **Files:**
 
 - Modify: `Tests/UI/test_pending_handoff_store.py`
-- Modify: `Tests/UI/test_study_screen.py`
-- Modify: `Tests/UI/test_console_live_work_handoffs.py`
-- Modify: `Tests/UI/test_destination_shells.py`
+- Modify: `Tests/UI/test_destination_handoffs_full_app.py`
 - Modify: `Tests/test_application_state_ownership.py`
 
 - [ ] **Step 1: Add remaining privacy sentinels**
@@ -489,7 +501,7 @@ Also reject direct `PendingHandoffStore._slots` access, persistence/serializatio
 - [ ] **Step 3: Run the final focused guard**
 
 ```bash
-pytest Tests/UI/test_pending_handoff_store.py Tests/UI/test_study_screen.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_destination_shells.py Tests/test_application_state_ownership.py -q
+pytest Tests/UI/test_pending_handoff_store.py Tests/UI/test_destination_handoffs_full_app.py Tests/test_application_state_ownership.py -q
 ```
 
 Expected: PASS.
@@ -497,7 +509,7 @@ Expected: PASS.
 - [ ] **Step 4: Commit final guards**
 
 ```bash
-git add Tests/UI/test_pending_handoff_store.py Tests/UI/test_study_screen.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_destination_shells.py Tests/test_application_state_ownership.py
+git add Tests/UI/test_pending_handoff_store.py Tests/UI/test_destination_handoffs_full_app.py Tests/test_application_state_ownership.py
 git commit -m "test(state): close destination handoff ownership boundary (task-646)"
 ```
 
@@ -510,7 +522,7 @@ git commit -m "test(state): close destination handoff ownership boundary (task-6
 - [ ] **Step 1: Run all focused application-state suites**
 
 ```bash
-pytest Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_screen_navigation.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_console_command_composer.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_study_screen.py Tests/UI/test_study_dashboard.py Tests/UI/test_study_quizzes_screen.py Tests/UI/test_study_flashcards_screen.py Tests/UI/test_destination_shells.py Tests/UI/test_ux_audit_smoke.py Tests/test_application_state_ownership.py -q
+pytest Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py Tests/test_application_state_ownership.py -q
 ```
 
 Expected: PASS.
@@ -519,7 +531,7 @@ Expected: PASS.
 
 ```bash
 pytest Tests/UI/test_product_maturity_phase1_harness.py -q
-pytest Tests/UI/test_product_maturity_phase1_core_loop.py Tests/UI/test_product_maturity_phase3_knowledge_entry.py Tests/UI/test_product_maturity_phase3_library_study_context.py Tests/UI/test_product_maturity_phase3_source_study_generation.py -q
+pytest Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py -q -k product_maturity
 ```
 
 Expected: PASS with existing visible Chat/Console and Study flows preserved.
@@ -544,21 +556,23 @@ only the verified pre-tranche diagnostics in `config.py` and
 
 ```bash
 python -m compileall -q tldw_chatbook
-python -m ruff check tldw_chatbook/runtime_policy tldw_chatbook/state tldw_chatbook/app.py tldw_chatbook/UI/Navigation tldw_chatbook/UI/Screens/media_ingest_screen.py tldw_chatbook/UI/Screens/study_screen.py tldw_chatbook/UI/Screens/study_scope_models.py tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/UI/Screens/workflows_screen.py tldw_chatbook/UI/Screens/schedules_screen.py tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Screens/artifacts_screen.py tldw_chatbook/UI/Screens/acp_screen.py tldw_chatbook/Chat/console_live_work.py tldw_chatbook/ACP_Interop/runtime_session.py Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_screen_navigation.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_console_command_composer.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_study_screen.py Tests/UI/test_study_dashboard.py Tests/UI/test_study_quizzes_screen.py Tests/UI/test_study_flashcards_screen.py Tests/UI/test_destination_shells.py Tests/UI/test_ux_audit_smoke.py Tests/UI/test_product_maturity_phase1_core_loop.py Tests/UI/test_product_maturity_phase1_harness.py Tests/UI/test_product_maturity_phase3_knowledge_entry.py Tests/UI/test_product_maturity_phase3_library_study_context.py Tests/UI/test_product_maturity_phase3_source_study_generation.py Tests/test_application_state_ownership.py
+python -m ruff check tldw_chatbook/runtime_policy tldw_chatbook/state tldw_chatbook/app.py tldw_chatbook/UI/Navigation tldw_chatbook/UI/Screens/media_ingest_screen.py tldw_chatbook/UI/Screens/study_screen.py tldw_chatbook/UI/Screens/study_scope_models.py tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/UI/Screens/workflows_screen.py tldw_chatbook/UI/Screens/schedules_screen.py tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Screens/artifacts_screen.py tldw_chatbook/UI/Screens/acp_screen.py tldw_chatbook/Chat/console_live_work.py tldw_chatbook/ACP_Interop/runtime_session.py Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py Tests/UI/test_product_maturity_phase1_harness.py Tests/test_application_state_ownership.py
 python -m ruff check --ignore F841 tldw_chatbook/config.py tldw_chatbook/UI/Screens/settings_screen.py
-python -m ruff format --check tldw_chatbook/runtime_policy/source_state.py tldw_chatbook/runtime_policy/bootstrap.py tldw_chatbook/runtime_policy/server_capabilities.py tldw_chatbook/state/app_state.py tldw_chatbook/state/__init__.py tldw_chatbook/UI/Navigation tldw_chatbook/UI/Screens/media_ingest_screen.py tldw_chatbook/UI/Screens/study_screen.py tldw_chatbook/UI/Screens/study_scope_models.py tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/UI/Screens/workflows_screen.py tldw_chatbook/UI/Screens/schedules_screen.py tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py tldw_chatbook/UI/Screens/artifacts_screen.py tldw_chatbook/UI/Screens/acp_screen.py tldw_chatbook/Chat/console_live_work.py tldw_chatbook/ACP_Interop/runtime_session.py Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_screen_navigation.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_console_command_composer.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_study_screen.py Tests/UI/test_study_dashboard.py Tests/UI/test_study_quizzes_screen.py Tests/UI/test_study_flashcards_screen.py Tests/UI/test_destination_shells.py Tests/UI/test_ux_audit_smoke.py Tests/UI/test_product_maturity_phase1_core_loop.py Tests/UI/test_product_maturity_phase1_harness.py Tests/UI/test_product_maturity_phase3_knowledge_entry.py Tests/UI/test_product_maturity_phase3_library_study_context.py Tests/UI/test_product_maturity_phase3_source_study_generation.py Tests/test_application_state_ownership.py
+python -m ruff format --check tldw_chatbook/runtime_policy/source_state.py tldw_chatbook/runtime_policy/bootstrap.py tldw_chatbook/runtime_policy/server_capabilities.py tldw_chatbook/state/app_state.py tldw_chatbook/state/__init__.py tldw_chatbook/UI/Navigation tldw_chatbook/UI/Screens/media_ingest_screen.py tldw_chatbook/UI/Screens/study_screen.py tldw_chatbook/UI/Screens/study_scope_models.py tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/UI/Screens/workflows_screen.py tldw_chatbook/UI/Screens/schedules_screen.py tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py tldw_chatbook/UI/Screens/artifacts_screen.py tldw_chatbook/UI/Screens/acp_screen.py tldw_chatbook/Chat/console_live_work.py tldw_chatbook/ACP_Interop/runtime_session.py Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py Tests/UI/test_product_maturity_phase1_harness.py Tests/test_application_state_ownership.py
 git diff --check
 ```
 
 Expected: all commands exit 0.
 
-- [ ] **Step 5: Run the full suite**
+- [ ] **Step 5: Run the authorized integrated suite**
 
 ```bash
-pytest -q
+pytest Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py Tests/UI/test_product_maturity_phase1_harness.py Tests/Packaging/test_installed_distribution.py Tests/test_application_state_ownership.py -q
 ```
 
-Expected: PASS. Record exact pass/skip/warning counts and duration. Do not mark TASK-646 Done on a partial or stale run.
+Expected: PASS. Record exact pass/skip/warning counts and duration. Raw
+repository-wide `pytest` remains prohibited while it would collect legacy
+test/simplified applications.
 
 ## Task 7: Reconcile the Integrated Tranche
 
@@ -575,13 +589,17 @@ Expected: PASS. Record exact pass/skip/warning counts and duration. Do not mark 
 Run `backlog task 643 --plain` through `backlog task 646 --plain`. Confirm all
 four tasks are still In Progress with unchecked acceptance criteria, and
 verify every criterion against the fresh focused, installed-wheel,
-product-maturity, static, and full-suite results. If an earlier invariant
-regressed, fix it under that task's acceptance criteria before reconciliation;
-never paper over it only in TASK-646 notes.
+product-maturity, static, and authorized integrated-suite results. If an
+earlier invariant regressed, fix it under that task's acceptance criteria
+before reconciliation; never paper over it only in TASK-646 notes.
 
 - [ ] **Step 2: Self-review TASK-646 acceptance criteria**
 
-Confirm exact evidence for independent Study settlement, nested locator detachment, exact Artifact lookup and replacement race, current-only ACP recovery and detail exposure, removal of every raw field/dead Notes slot, AST ownership enforcement, privacy redaction, installed-wheel behavior, product-maturity sentinels, and the full suite.
+Confirm exact evidence for independent Study settlement, nested locator
+detachment, exact Artifact lookup and replacement race, current-only ACP
+recovery and detail exposure, removal of every raw field/dead Notes slot, AST
+ownership enforcement, privacy redaction, installed-wheel behavior,
+product-maturity sentinels, and the authorized integrated suite.
 
 - [ ] **Step 3: Complete Backlog hygiene**
 

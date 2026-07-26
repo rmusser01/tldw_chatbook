@@ -31,7 +31,7 @@ Migrate the remaining Study, Artifacts, and ACP navigation handoffs to the revis
 - [ ] #2 Artifacts resolves only an exact canonical local:chatbook target, never substitutes the latest first-page record, releases transient failures for later lifecycle or user retry, and acknowledges success or terminal missing-target outcomes
 - [ ] #3 ACP consumes its canonical local:acp_session record target by reconstructing the same identifier from the current runtime session; an exact match keeps that row selected and exposes the mounted detail pane, while malformed, stale, or unsupported targets receive explicit recovery
 - [ ] #4 All listed raw application pending fields and the dead pending_notes_workspace_context slot are removed and an AST ownership guard prevents their return
-- [ ] #5 Focused exact-target, replacement-race, privacy-sentinel, mounted-flow, and static checks plus the installed-wheel gate, product-maturity UI sentinel, and full suite pass after the integrated tranche
+- [ ] #5 Focused exact-target, replacement-race, privacy-sentinel, mounted full-production-app, and static checks plus the installed-wheel gate, app-independent product-maturity sentinel, and authorized integrated suite pass without collecting legacy surrogate applications
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -47,5 +47,6 @@ Full plan: Docs/superpowers/plans/2026-07-26-task-646-destination-handoffs.md
 3. Resolve Artifact targets through exact get_chatbook lookup with app-thread generation, restart, cancellation, and unmount settlement guards.
 4. Complete current-only ACP session target recovery.
 5. Remove every raw pending field and close the AST/privacy boundary.
-6. Run focused, product-maturity (including the Phase 1 harness), installed-wheel, static, and full-suite gates before reconciling TASK-643 through TASK-646 together.
+6. Run focused, app-independent product-maturity, installed-wheel, static, and authorized integrated gates before reconciling TASK-643 through TASK-646 together.
+7. Exercise application behavior only through the normal production TldwCli and actual destination screens; use direct tests only for app-independent functions and exclude legacy surrogate applications.
 <!-- SECTION:PLAN:END -->
