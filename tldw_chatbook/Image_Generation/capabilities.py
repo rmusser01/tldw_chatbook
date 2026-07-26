@@ -12,6 +12,23 @@ _DEFAULT_REFERENCE_IMAGE_SUPPORT: dict[str, set[str]] = {
     "modelstudio": {"qwen-image-2.0", "qwen-image-edit"},
 }
 
+#: Backends whose adapters accept a reference image unconditionally (no
+#: per-model gating). This is the *primary* capability gate consulted by the
+#: engine-level choke point (``request_validation.validate_image_generation_request``)
+#: and by :func:`resolve_backend_reference_image_capability` /
+#: :func:`resolve_reference_image_capability` below -- a backend outside this
+#: set is treated as reference-image-incapable regardless of what the dormant
+#: ``reference_image_supported_models`` config map (see
+#: ``_DEFAULT_REFERENCE_IMAGE_SUPPORT`` / ``_resolve_supported_models`` above)
+#: says about it. That per-model map remains intentionally dormant: it is
+#: still exercised directly by the Model Studio adapter (which calls
+#: :func:`resolve_reference_image_capability("modelstudio", model, ...)`
+#: itself to gate specific Qwen model families) but it is *not* wired into
+#: this set and does not grant capability through the functions below for
+#: any backend outside it. Extending reference-image support to another
+#: backend means adding its id here, not repurposing the per-model map.
+REFERENCE_IMAGE_CAPABLE_BACKENDS: frozenset[str] = frozenset({"fal", "gemini"})
+
 
 @dataclass(frozen=True)
 class ResolvedReferenceImage:
@@ -99,16 +116,22 @@ def resolve_backend_reference_image_capability(
     *,
     config: ImageGenerationConfig | None = None,
 ) -> ReferenceImageCapability:
-    """Resolve whether a backend exposes any reference-image support."""
+    """Resolve whether a backend exposes any reference-image support.
+
+    ``REFERENCE_IMAGE_CAPABLE_BACKENDS`` is the primary gate: a backend
+    outside that set is unsupported here even if the dormant
+    ``reference_image_supported_models`` map (consulted only by
+    :func:`resolve_reference_image_capability` below) would otherwise list
+    per-model support for it (e.g. Model Studio's Qwen models) -- that map
+    is kept dormant and does not leak into this backend-level query.
+    """
 
     backend_key = _normalize_key(backend)
     if not backend_key:
         return ReferenceImageCapability(supported=False, reason="unsupported_model")
-    supported_models = _resolve_supported_models(backend_key, config=config)
-    return ReferenceImageCapability(
-        supported=bool(supported_models),
-        reason=None if supported_models else "unsupported_model",
-    )
+    if backend_key not in REFERENCE_IMAGE_CAPABLE_BACKENDS:
+        return ReferenceImageCapability(supported=False, reason="unsupported_backend")
+    return ReferenceImageCapability(supported=True)
 
 
 def resolve_reference_image_capability(
@@ -117,11 +140,26 @@ def resolve_reference_image_capability(
     *,
     config: ImageGenerationConfig | None = None,
 ) -> ReferenceImageCapability:
-    """Resolve whether a backend/model pair supports reference-image input."""
+    """Resolve whether a backend/model pair supports reference-image input.
+
+    Backends in ``REFERENCE_IMAGE_CAPABLE_BACKENDS`` (fal/Gemini)
+    support reference images unconditionally -- these adapters have no
+    per-model restriction, so ``model`` is not consulted for them. Backends
+    outside that set fall back to the dormant per-model
+    ``reference_image_supported_models`` config map (default:
+    ``_DEFAULT_REFERENCE_IMAGE_SUPPORT``), which today only lists Model
+    Studio's Qwen models and is consulted directly by the Model Studio
+    adapter itself.
+    """
 
     backend_key = _normalize_key(backend)
+    if not backend_key:
+        return ReferenceImageCapability(supported=False, reason="unsupported_model")
+    if backend_key in REFERENCE_IMAGE_CAPABLE_BACKENDS:
+        return ReferenceImageCapability(supported=True)
+
     model_key = _normalize_key(model)
-    if not backend_key or not model_key:
+    if not model_key:
         return ReferenceImageCapability(supported=False, reason="unsupported_model")
 
     supported_models = _resolve_supported_models(backend_key, config=config)

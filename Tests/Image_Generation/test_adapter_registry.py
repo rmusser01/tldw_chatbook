@@ -26,6 +26,6 @@ def test_nothing_enabled_by_default():
 def test_default_adapters_point_at_local_package():
     from tldw_chatbook.Image_Generation.adapter_registry import DEFAULT_ADAPTERS
     assert set(DEFAULT_ADAPTERS) == {
-        "stable_diffusion_cpp", "swarmui", "openrouter", "novita", "together", "modelstudio"
+        "stable_diffusion_cpp", "swarmui", "openrouter", "novita", "together", "modelstudio", "gemini", "fal"
     }
     assert all(v.startswith("tldw_chatbook.Image_Generation.adapters.") for v in DEFAULT_ADAPTERS.values())

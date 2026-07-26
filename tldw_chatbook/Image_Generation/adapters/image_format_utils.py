@@ -10,6 +10,9 @@ from typing import Any
 
 from tldw_chatbook.Image_Generation.http_client import (
     DEFAULT_MAX_REDIRECTS,
+    _positive_byte_limit,
+    _read_stream_with_limit,
+    _reject_declared_oversize,
     _resolve_redirect_url,
     _validate_egress_or_raise,
     create_client,
@@ -264,46 +267,14 @@ def _enforce_base64_encoded_limit(encoded: str, max_bytes: int | None) -> None:
         raise ImageGenerationError("image content too large")
 
 
-def _reject_declared_oversize(headers: Any, max_bytes: int | None) -> None:
-    limit = _positive_byte_limit(max_bytes)
-    if limit is None:
-        return
-    content_length = headers.get("content-length") or headers.get("Content-Length")
-    if content_length is None:
-        return
-    try:
-        declared_size = int(str(content_length).strip())
-    except ValueError:
-        return
-    if declared_size > limit:
-        raise ImageGenerationError("image content too large")
-
-
-def _read_stream_with_limit(chunks: Any, max_bytes: int | None) -> bytes:
-    limit = _positive_byte_limit(max_bytes)
-    total = 0
-    parts: list[bytes] = []
-    for chunk in chunks:
-        if not chunk:
-            continue
-        total += len(chunk)
-        if limit is not None and total > limit:
-            raise ImageGenerationError("image content too large")
-        parts.append(chunk)
-    return b"".join(parts)
-
-
 def _enforce_max_bytes(content: bytes, max_bytes: int | None) -> None:
     limit = _positive_byte_limit(max_bytes)
     if limit is not None and len(content) > limit:
         raise ImageGenerationError("image content too large")
 
 
-def _positive_byte_limit(max_bytes: int | None) -> int | None:
-    if max_bytes is None:
-        return None
-    try:
-        limit = int(max_bytes)
-    except (TypeError, ValueError):
-        return None
-    return limit if limit > 0 else None
+# _positive_byte_limit, _reject_declared_oversize, and _read_stream_with_limit
+# used to be defined here; they now live in http_client.py (task-1 fix round
+# 1) so fetch_bytes_via_post's POST byte-fetch path and this module's GET
+# fetch_image_bytes share one implementation instead of duplicating the
+# size-cap logic. Imported at the top of this file.

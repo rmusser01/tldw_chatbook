@@ -22,6 +22,8 @@ class ImageAdapterRegistry:
         "novita": "tldw_chatbook.Image_Generation.adapters.novita_image_adapter.NovitaImageAdapter",
         "together": "tldw_chatbook.Image_Generation.adapters.together_image_adapter.TogetherImageAdapter",
         "modelstudio": "tldw_chatbook.Image_Generation.adapters.modelstudio_image_adapter.ModelStudioImageAdapter",
+        "gemini": "tldw_chatbook.Image_Generation.adapters.gemini_image_adapter.GeminiImageAdapter",
+        "fal": "tldw_chatbook.Image_Generation.adapters.fal_image_adapter.FalImageAdapter",
     }
 
     def __init__(self, config_override: dict[str, Any] | None = None) -> None:

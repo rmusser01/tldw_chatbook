@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+from tldw_chatbook.Image_Generation.capabilities import resolve_backend_reference_image_capability
 from tldw_chatbook.Image_Generation.config import (
     DEFAULT_INLINE_MAX_BYTES,
     DEFAULT_MAX_HEIGHT,
@@ -15,6 +16,14 @@ from tldw_chatbook.Image_Generation.config import (
     DEFAULT_MAX_WIDTH,
     get_image_generation_config,
 )
+
+#: Choke-point bounds for the reference-image seam (task-3 of the
+#: fal/Gemini/Fireworks plan). Adapters (Tasks 4-6) can assume that any
+#: ``ImageGenRequest.reference_image`` that reaches them has already been
+#: validated against these here -- backend capability, allowed mime, size
+#: cap, and non-empty content.
+IMAGE_GEN_REFERENCE_MAX_BYTES = 10 * 1024 * 1024
+REFERENCE_IMAGE_ALLOWED_MIMES = frozenset({"image/png", "image/jpeg", "image/webp"})
 
 
 @dataclass(frozen=True)
@@ -90,6 +99,7 @@ def validate_image_generation_request(
 
     _validate_positive_finite_float(issues, structured.get("cfg_scale"), path="cfg_scale")
     _validate_extra_params(structured, config, issues)
+    _validate_reference_image(structured, config, issues)
     return issues
 
 
@@ -176,3 +186,46 @@ def _validate_extra_params(
         cli_args = extra_params.get("cli_args")
         if not isinstance(cli_args, (list, tuple)):
             issues.append(_issue("cli_args must be a list", "extra_params.cli_args"))
+
+
+def _validate_reference_image(
+    structured: dict[str, Any],
+    config: Any,
+    issues: list[ImageGenerationValidationIssue],
+) -> None:
+    """Choke-point validation for ``ImageGenRequest.reference_image``.
+
+    Runs only when a reference image is actually present on the request, so
+    every existing (non-reference) validation path is untouched. Checks fire
+    independently (they don't short-circuit each other) so a caller sees
+    every problem with the reference image at once, matching the accumulate-
+    all-issues style of the rest of this validator.
+    """
+
+    reference_image = structured.get("reference_image")
+    if reference_image is None:
+        return
+
+    backend = structured.get("backend")
+    capability = resolve_backend_reference_image_capability(backend, config=config)
+    if not capability.supported:
+        issues.append(
+            _issue(f"backend {backend!r} does not support reference images", "reference_image")
+        )
+
+    mime_type = getattr(reference_image, "mime_type", None)
+    if mime_type not in REFERENCE_IMAGE_ALLOWED_MIMES:
+        issues.append(
+            _issue(
+                f"reference image mime {mime_type!r} is not supported (png/jpeg/webp)",
+                "reference_image",
+            )
+        )
+
+    bytes_len = getattr(reference_image, "bytes_len", None)
+    if isinstance(bytes_len, int) and not isinstance(bytes_len, bool) and bytes_len > IMAGE_GEN_REFERENCE_MAX_BYTES:
+        issues.append(_issue("reference image exceeds the 10MB limit", "reference_image"))
+
+    content = getattr(reference_image, "content", None)
+    if content is None:
+        issues.append(_issue("reference image has no content bytes", "reference_image"))

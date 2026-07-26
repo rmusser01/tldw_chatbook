@@ -59,6 +59,13 @@ DEFAULT_MODELSTUDIO_IMAGE_REGION = "sg"
 DEFAULT_MODELSTUDIO_IMAGE_MODE = "auto"
 DEFAULT_MODELSTUDIO_IMAGE_POLL_INTERVAL_SECONDS = 2
 DEFAULT_MODELSTUDIO_IMAGE_TIMEOUT_SECONDS = 180
+DEFAULT_FAL_IMAGE_BASE_URL = "https://queue.fal.run"
+DEFAULT_FAL_IMAGE_MODEL = "fal-ai/flux/schnell"
+DEFAULT_FAL_IMAGE_POLL_INTERVAL_SECONDS = 2
+DEFAULT_FAL_IMAGE_TIMEOUT_SECONDS = 120
+DEFAULT_GEMINI_IMAGE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+DEFAULT_GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
+DEFAULT_GEMINI_IMAGE_TIMEOUT_SECONDS = 120
 
 # Secret fields: backend -> (flat_field_name, [env vars in precedence
 # order], keyring_backend_id, nested [image_generation.<backend>] TOML
@@ -78,6 +85,8 @@ _SECRETS = {
     "novita":      ("novita_image_api_key",       ["NOVITA_API_KEY"],                      "novita",      "api_key"),
     "together":    ("together_image_api_key",     ["TOGETHER_API_KEY"],                    "together",    "api_key"),
     "modelstudio": ("modelstudio_image_api_key",  ["DASHSCOPE_API_KEY", "QWEN_API_KEY"],   "modelstudio", "api_key"),
+    "fal":         ("fal_image_api_key",          ["FAL_KEY"],                             "fal",         "api_key"),
+    "gemini":      ("gemini_image_api_key",       ["GEMINI_API_KEY", "GOOGLE_API_KEY"],    "gemini",      "api_key"),
 }
 # Non-secret nested keys: (backend, toml_key) -> flat_field_name
 # NOTE: `reference_image_supported_models` is intentionally NOT mapped here —
@@ -120,6 +129,13 @@ _NON_SECRET = {
     ("modelstudio", "poll_interval_seconds"): "modelstudio_image_poll_interval_seconds",
     ("modelstudio", "timeout_seconds"):       "modelstudio_image_timeout_seconds",
     ("modelstudio", "allowed_extra_params"):  "modelstudio_image_allowed_extra_params",
+    ("fal", "base_url"):              "fal_image_base_url",
+    ("fal", "default_model"):         "fal_image_default_model",
+    ("fal", "poll_interval_seconds"): "fal_image_poll_interval_seconds",
+    ("fal", "timeout_seconds"):       "fal_image_timeout_seconds",
+    ("gemini", "base_url"):           "gemini_image_base_url",
+    ("gemini", "default_model"):      "gemini_image_default_model",
+    ("gemini", "timeout_seconds"):    "gemini_image_timeout_seconds",
 }
 _GLOBAL_KEYS = [
     "default_backend", "enabled_backends", "max_width", "max_height",
@@ -306,6 +322,15 @@ class ImageGenerationConfig:
     modelstudio_image_poll_interval_seconds: int
     modelstudio_image_timeout_seconds: int
     modelstudio_image_allowed_extra_params: list[str]
+    fal_image_base_url: str | None
+    fal_image_api_key: str | None
+    fal_image_default_model: str | None
+    fal_image_poll_interval_seconds: int
+    fal_image_timeout_seconds: int
+    gemini_image_base_url: str | None
+    gemini_image_api_key: str | None
+    gemini_image_default_model: str | None
+    gemini_image_timeout_seconds: int
     reference_image_supported_models: dict[str, list[str]] = field(default_factory=dict)
     # backend id -> "env:<VAR>" | "config" | "keyring" | "missing" (task-1,
     # Settings ▸ Image Gen plan). Purely additive/read-only metadata about
@@ -538,6 +563,28 @@ def get_image_generation_config(*, reload: bool = False) -> ImageGenerationConfi
             DEFAULT_MODELSTUDIO_IMAGE_TIMEOUT_SECONDS,
         ),
         modelstudio_image_allowed_extra_params=_parse_list(section.get("modelstudio_image_allowed_extra_params")),
+        fal_image_base_url=_get_config_value(section, "fal_image_base_url") or DEFAULT_FAL_IMAGE_BASE_URL,
+        fal_image_api_key=_get_config_value(section, "fal_image_api_key"),
+        fal_image_default_model=_get_config_value(section, "fal_image_default_model") or DEFAULT_FAL_IMAGE_MODEL,
+        fal_image_poll_interval_seconds=max(
+            1,
+            _coerce_int(
+                section.get("fal_image_poll_interval_seconds"),
+                DEFAULT_FAL_IMAGE_POLL_INTERVAL_SECONDS,
+            ),
+        ),
+        fal_image_timeout_seconds=_coerce_int(
+            section.get("fal_image_timeout_seconds"),
+            DEFAULT_FAL_IMAGE_TIMEOUT_SECONDS,
+        ),
+        gemini_image_base_url=_get_config_value(section, "gemini_image_base_url") or DEFAULT_GEMINI_IMAGE_BASE_URL,
+        gemini_image_api_key=_get_config_value(section, "gemini_image_api_key"),
+        gemini_image_default_model=_get_config_value(section, "gemini_image_default_model")
+        or DEFAULT_GEMINI_IMAGE_MODEL,
+        gemini_image_timeout_seconds=_coerce_int(
+            section.get("gemini_image_timeout_seconds"),
+            DEFAULT_GEMINI_IMAGE_TIMEOUT_SECONDS,
+        ),
         reference_image_supported_models=_parse_mapping_of_lists(section.get("reference_image_supported_models")),
         key_sources=key_sources,
         default_batch=default_batch,

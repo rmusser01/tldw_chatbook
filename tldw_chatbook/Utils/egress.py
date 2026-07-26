@@ -237,7 +237,16 @@ async def check_url_or_raise_async(url: str, *, trusted_origins=frozenset()) -> 
 # ---------------------------------------------------------------------------
 # Guarded transport helpers
 # ---------------------------------------------------------------------------
-_STRIP_HEADERS = ("authorization", "cookie", "proxy-authorization")
+#: Header names stripped on any cross-origin redirect hop (see
+#: ``_hop_headers`` / ``guarded_fetch_httpx``). ``x-goog-api-key`` is Gemini's
+#: custom auth header (``Image_Generation/adapters/gemini_image_adapter.py``)
+#: -- the first adapter in this app to authenticate via a header other than
+#: ``Authorization``. Without listing it here, a redirect from the Gemini
+#: base (or any user-configured base_url) to a different public host would
+#: forward the real API key verbatim; every ``Authorization``-based adapter
+#: is already protected by this tuple. There is no legitimate cross-origin
+#: use of this header, so adding it is strictly tightening.
+_STRIP_HEADERS = ("authorization", "cookie", "proxy-authorization", "x-goog-api-key")
 
 
 class EgressFetchError(Exception):

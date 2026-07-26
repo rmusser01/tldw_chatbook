@@ -15,6 +15,16 @@ Env vars, one group per backend:
     modelstudio:            DASHSCOPE_API_KEY
     swarmui:                TLDW_LIVE_SWARMUI_BASE_URL (a reachable SwarmUI server)
     stable_diffusion_cpp:   TLDW_LIVE_SD_CPP_BINARY + TLDW_LIVE_SD_CPP_MODEL_PATH
+    fal:                    TLDW_LIVE_FAL_API_KEY (+ optional TLDW_LIVE_FAL_MODEL)
+    gemini:                 TLDW_LIVE_GEMINI_API_KEY (+ optional TLDW_LIVE_GEMINI_MODEL)
+
+fal/gemini deliberately use their own ``TLDW_LIVE_*`` opt-in var, distinct
+from the production secret env vars their adapters otherwise fall back to
+(``FAL_KEY``, ``GEMINI_API_KEY``/``GOOGLE_API_KEY``) -- so a developer who
+happens to have one of those exported for unrelated reasons never
+accidentally triggers a paid live call just by running the suite. The key is
+fed to the backend via a crafted config section (like the sd.cpp/swarmui
+groups above), never by relying on the adapter's own env fallback.
 """
 from __future__ import annotations
 
@@ -66,11 +76,11 @@ def _enable_backend(monkeypatch, backend: str, *, toml: dict | None = None) -> N
     monkeypatch.setattr(c, "_read_image_generation_toml", lambda: section, raising=False)
 
 
-def _generate(backend: str, **kwargs):
+def _generate(backend: str, *, prompt: str = _PROMPT, **kwargs):
     from tldw_chatbook.Image_Generation.worker import build_request, run_generation
 
     req = build_request(
-        backend=backend, prompt=_PROMPT, seed=1, image_format="png", **kwargs
+        backend=backend, prompt=prompt, seed=1, image_format="png", **kwargs
     )
     return run_generation(req)
 
@@ -79,6 +89,19 @@ def _assert_real_image(res) -> None:
     assert res.bytes_len > 0
     assert res.content_type.startswith("image/")
     assert len(res.content) == res.bytes_len
+
+
+def _tiny_png_bytes() -> bytes:
+    """A real (not merely well-formed-looking) 1x1 PNG, for the gemini
+    reference-image edit test -- Gemini actually decodes the inline data, so
+    an arbitrary placeholder byte string would get rejected server-side
+    (mirrors ``Tests/Image_Generation/test_demo_screen.py``'s own helper)."""
+    import io
+    from PIL import Image as PILImage
+
+    buf = io.BytesIO()
+    PILImage.new("RGB", (1, 1), color=(255, 0, 0)).save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def test_live_openrouter_generates_image(monkeypatch):
@@ -128,3 +151,57 @@ def test_live_stable_diffusion_cpp_generates_image(monkeypatch):
     )
     # Keep the run fast -- this is a smoke test, not a quality check.
     _assert_real_image(_generate("stable_diffusion_cpp", steps=4, width=64, height=64))
+
+
+def test_live_fal_generates_image(monkeypatch):
+    env = _required_env("TLDW_LIVE_FAL_API_KEY")
+    model = os.environ.get("TLDW_LIVE_FAL_MODEL", "").strip()
+    _enable_backend(
+        monkeypatch, "fal", toml={"api_key": env["TLDW_LIVE_FAL_API_KEY"]}
+    )
+    kwargs = {"model": model} if model else {}
+    _assert_real_image(_generate("fal", **kwargs))
+
+
+def test_live_gemini_generates_image(monkeypatch):
+    env = _required_env("TLDW_LIVE_GEMINI_API_KEY")
+    model = os.environ.get("TLDW_LIVE_GEMINI_MODEL", "").strip()
+    _enable_backend(
+        monkeypatch, "gemini", toml={"api_key": env["TLDW_LIVE_GEMINI_API_KEY"]}
+    )
+    kwargs = {"model": model} if model else {}
+    _assert_real_image(_generate("gemini", **kwargs))
+
+
+def test_live_gemini_reference_image_edit(monkeypatch):
+    """gemini additionally supports a reference-image edit request (a tiny
+    in-memory PNG + an edit instruction) -- gated on the same
+    TLDW_LIVE_GEMINI_API_KEY as the plain generation test above."""
+    from tldw_chatbook.Image_Generation.capabilities import ResolvedReferenceImage
+
+    env = _required_env("TLDW_LIVE_GEMINI_API_KEY")
+    model = os.environ.get("TLDW_LIVE_GEMINI_MODEL", "").strip()
+    _enable_backend(
+        monkeypatch, "gemini", toml={"api_key": env["TLDW_LIVE_GEMINI_API_KEY"]}
+    )
+
+    ref_bytes = _tiny_png_bytes()
+    reference_image = ResolvedReferenceImage(
+        file_id=1,
+        filename="ref.png",
+        mime_type="image/png",
+        width=1,
+        height=1,
+        bytes_len=len(ref_bytes),
+        content=ref_bytes,
+        temp_path=None,
+    )
+    kwargs = {"reference_image": reference_image}
+    if model:
+        kwargs["model"] = model
+    result = _generate(
+        "gemini",
+        prompt="Recolor this reference image's background to solid blue.",
+        **kwargs,
+    )
+    _assert_real_image(result)

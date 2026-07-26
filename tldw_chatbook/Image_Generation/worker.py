@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 from tldw_chatbook.Image_Generation.adapter_registry import get_registry
 from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest, ImageGenResult
+from tldw_chatbook.Image_Generation.capabilities import ResolvedReferenceImage
 from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
 from tldw_chatbook.Image_Generation.request_validation import validate_image_generation_request
 
@@ -24,6 +25,7 @@ def build_request(
     model: str | None = None,
     image_format: str = "png",
     extra_params: dict[str, Any] | None = None,
+    reference_image: ResolvedReferenceImage | None = None,
 ) -> ImageGenRequest:
     """Build an :class:`ImageGenRequest` from caller/UI inputs.
 
@@ -40,6 +42,9 @@ def build_request(
         model: Optional model override.
         image_format: Output format (defaults to ``"png"``).
         extra_params: Backend-specific passthrough params (coerced to ``{}`` if None).
+        reference_image: Optional resolved reference image. Validated at the
+            ``run_generation`` choke point (backend capability, mime, size,
+            content) before any adapter sees it.
 
     Returns:
         A frozen :class:`ImageGenRequest`.
@@ -49,6 +54,7 @@ def build_request(
         width=width, height=height, steps=steps, cfg_scale=cfg_scale, seed=seed,
         sampler=sampler, model=model, format=image_format,
         extra_params=dict(extra_params or {}),
+        reference_image=reference_image,
     )
 
 
@@ -56,9 +62,12 @@ def run_generation(request: ImageGenRequest) -> ImageGenResult:
     """Validate, resolve the backend, and invoke its adapter. Blocking.
 
     Enforces the request-validation layer (bounds + per-backend ``extra_params``
-    allowlist) at this single entry point *before* dispatch, so a caller that
-    constructs an :class:`ImageGenRequest` directly cannot bypass it (e.g. the
-    stable-diffusion.cpp ``cli_args`` passthrough).
+    allowlist, plus reference-image backend-capability/mime/size/content
+    checks when ``request.reference_image`` is set) at this single entry
+    point *before* dispatch, so a caller that constructs an
+    :class:`ImageGenRequest` directly cannot bypass it (e.g. the
+    stable-diffusion.cpp ``cli_args`` passthrough, or an unsupported
+    backend receiving a reference image).
 
     Must run on a thread — the adapters are synchronous and blocking.
 
@@ -88,6 +97,7 @@ def run_generation(request: ImageGenRequest) -> ImageGenResult:
             "steps": request.steps,
             "cfg_scale": request.cfg_scale,
             "extra_params": request.extra_params,
+            "reference_image": request.reference_image,
         }
     )
     if issues:

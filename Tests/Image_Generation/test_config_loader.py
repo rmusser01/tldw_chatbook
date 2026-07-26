@@ -178,7 +178,10 @@ def test_key_sources_missing(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     cfg = _load_config_with_section(monkeypatch, {})
     assert cfg.key_sources["openrouter"] == "missing"
-    assert set(cfg.key_sources) == {"stable_diffusion_cpp", "swarmui", "openrouter", "novita", "together", "modelstudio"}
+    assert set(cfg.key_sources) == {
+        "stable_diffusion_cpp", "swarmui", "openrouter", "novita", "together", "modelstudio",
+        "fal", "gemini",
+    }
 
 
 def test_key_sources_modelstudio_names_winning_env(monkeypatch):
@@ -331,3 +334,104 @@ def test_other_backends_config_key_unaffected_by_swarmui_fix(monkeypatch):
     )
     assert cfg.key_sources["openrouter"] == "config"
     assert cfg.openrouter_image_api_key == "fake-openrouter-key"
+
+
+# --- task-2 (fal/Gemini image backends) --------------------------------
+# Fireworks was dropped 2026-07-26 -- vendor deprecated image generation
+# (see Docs/superpowers/specs/2026-07-26-imagegen-fal-gemini-fireworks-design.md
+# and the sibling plan doc for the decision note).
+
+
+def _delenv_new_backend_vars(monkeypatch):
+    for var in ("FAL_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_fal_defaults_when_unset(monkeypatch):
+    from tldw_chatbook.Image_Generation import config as c
+    _delenv_new_backend_vars(monkeypatch)
+    cfg = _load_config_with_section(monkeypatch, {})
+    assert cfg.fal_image_base_url == c.DEFAULT_FAL_IMAGE_BASE_URL == "https://queue.fal.run"
+    assert cfg.fal_image_default_model == c.DEFAULT_FAL_IMAGE_MODEL == "fal-ai/flux/schnell"
+    assert cfg.fal_image_poll_interval_seconds == c.DEFAULT_FAL_IMAGE_POLL_INTERVAL_SECONDS == 2
+    assert cfg.fal_image_timeout_seconds == c.DEFAULT_FAL_IMAGE_TIMEOUT_SECONDS == 120
+    assert cfg.fal_image_api_key in (None, "")
+    assert cfg.key_sources["fal"] == "missing"
+
+
+def test_fal_nested_toml_round_trip(monkeypatch):
+    _delenv_new_backend_vars(monkeypatch)
+    fake = {
+        "fal": {
+            "base_url": "https://queue.example.fal.run",
+            "api_key": "fake-fal-key",
+            "default_model": "fal-ai/other-model",
+            "poll_interval_seconds": 5,
+            "timeout_seconds": 30,
+        }
+    }
+    cfg = _load_config_with_section(monkeypatch, fake)
+    assert cfg.fal_image_base_url == "https://queue.example.fal.run"
+    assert cfg.fal_image_api_key == "fake-fal-key"
+    assert cfg.fal_image_default_model == "fal-ai/other-model"
+    assert cfg.fal_image_poll_interval_seconds == 5
+    assert cfg.fal_image_timeout_seconds == 30
+    assert cfg.key_sources["fal"] == "config"
+
+
+def test_fal_env_key_precedence(monkeypatch):
+    _delenv_new_backend_vars(monkeypatch)
+    monkeypatch.setenv("FAL_KEY", "fake-fal-env-key")
+    cfg = _load_config_with_section(monkeypatch, {"fal": {"api_key": "fake-fal-config-key"}})
+    assert cfg.fal_image_api_key == "fake-fal-env-key"
+    assert cfg.key_sources["fal"] == "env:FAL_KEY"
+
+
+def test_gemini_defaults_when_unset(monkeypatch):
+    from tldw_chatbook.Image_Generation import config as c
+    _delenv_new_backend_vars(monkeypatch)
+    cfg = _load_config_with_section(monkeypatch, {})
+    assert cfg.gemini_image_base_url == c.DEFAULT_GEMINI_IMAGE_BASE_URL == "https://generativelanguage.googleapis.com/v1beta"
+    assert cfg.gemini_image_default_model == c.DEFAULT_GEMINI_IMAGE_MODEL == "gemini-2.5-flash-image"
+    assert cfg.gemini_image_timeout_seconds == c.DEFAULT_GEMINI_IMAGE_TIMEOUT_SECONDS == 120
+    assert cfg.gemini_image_api_key in (None, "")
+    assert cfg.key_sources["gemini"] == "missing"
+
+
+def test_gemini_nested_toml_round_trip(monkeypatch):
+    _delenv_new_backend_vars(monkeypatch)
+    fake = {
+        "gemini": {
+            "base_url": "https://example.googleapis.com/v1beta",
+            "api_key": "fake-gemini-key",
+            "default_model": "gemini-other-model",
+            "timeout_seconds": 45,
+        }
+    }
+    cfg = _load_config_with_section(monkeypatch, fake)
+    assert cfg.gemini_image_base_url == "https://example.googleapis.com/v1beta"
+    assert cfg.gemini_image_api_key == "fake-gemini-key"
+    assert cfg.gemini_image_default_model == "gemini-other-model"
+    assert cfg.gemini_image_timeout_seconds == 45
+    assert cfg.key_sources["gemini"] == "config"
+
+
+def test_gemini_env_precedence_gemini_key_wins_over_google_key(monkeypatch):
+    """GEMINI_API_KEY is listed first in the precedence order, so when both
+    env vars are set it must win over GOOGLE_API_KEY."""
+    _delenv_new_backend_vars(monkeypatch)
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-google-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini-key")
+    cfg = _load_config_with_section(monkeypatch, {})
+    assert cfg.gemini_image_api_key == "fake-gemini-key"
+    assert cfg.key_sources["gemini"] == "env:GEMINI_API_KEY"
+
+
+def test_gemini_env_fallback_to_google_api_key(monkeypatch):
+    """When only GOOGLE_API_KEY is set (no GEMINI_API_KEY), it must be used
+    and named explicitly as the source."""
+    _delenv_new_backend_vars(monkeypatch)
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-google-key")
+    cfg = _load_config_with_section(monkeypatch, {})
+    assert cfg.gemini_image_api_key == "fake-google-key"
+    assert cfg.key_sources["gemini"] == "env:GOOGLE_API_KEY"
