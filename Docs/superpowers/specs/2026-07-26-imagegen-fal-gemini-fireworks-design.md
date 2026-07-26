@@ -23,7 +23,7 @@ One adapter file per service under `Image_Generation/adapters/` implementing the
 
 **fal (`fal_image_adapter.py`)** — queue + poll, the novita/modelstudio precedent:
 1. Submit `POST {base}/{model_path}` with header `Authorization: Key {api_key}`, JSON body: `prompt` (negative prompt appended as a suffix line, the openrouter precedent), `seed` when set, size mapping when width/height set (fal `image_size` enum or `{width,height}` object — implementer verifies exact field from the model schema and uses the generic form).
-2. **Poll URLs are SELF-BUILT, never response-followed**: the submit response's `request_id` is combined with the CONFIGURED base into `{base}/{model_path}/requests/{request_id}/status` and `/requests/{request_id}` (fal's documented deterministic queue shapes). The response's `status_url`/`response_url` fields are IGNORED — following server-provided URLs while attaching `Authorization` is a credential-exfiltration primitive our egress posture exists to prevent. `request_id` is validated (UUID-ish charset) before URL use.
+2. **Poll URLs are SELF-BUILT, never response-followed**: the submit response's `request_id` is combined with the CONFIGURED base into `{base}/{app_id}/requests/{request_id}/status` and `/requests/{request_id}` — where **`app_id` is the first two segments of the model path** (`fal-ai/flux/schnell` → app `fal-ai/flux`; fal's queue addresses requests by app, not full model path — a naive full-path build 404s for our own default model). The response's `status_url`/`response_url` fields are NEVER followed (following server-provided URLs while attaching `Authorization` is a credential-exfiltration primitive) but ARE used as a cross-check: assert the response-provided status_url matches the self-built URL (origin + path); on mismatch fail loudly with a clear "fal queue URL shape changed" error so vendor drift surfaces as a diagnosis, not silent 404s. `request_id` is validated (UUID-ish charset) before URL use.
 3. Poll with the auth header at `poll_interval_seconds` until COMPLETED/timeout; result `images[0].url` (fal CDN, different origin) is fetched via the shared `fetch_image_bytes` as an ENFORCED-untrusted URL (no trusted_origins, no credentials — exactly the openrouter image-link pattern).
 - Self-built submit/poll URLs carry `trusted_origins=origin_set(url)` (allows operator-pointed private bases; metadata IPs still hard-blocked).
 
@@ -34,7 +34,7 @@ One adapter file per service under `Image_Generation/adapters/` implementing the
 4. Response size: the base64 image arrives inside the JSON body (~3MB+ at 1024²). OpenRouter already receives base64 data-URLs through the same guarded `fetch_json` path, so this works today — the implementer CONFIRMS no byte-cap in the guarded path truncates image-sized JSON rather than assuming (and raises a clear error if a cap is hit).
 
 **fireworks (`fireworks_image_adapter.py`)** — single call, bytes back:
-1. `POST {base}/{model}/text_to_image`, `Authorization: Bearer {api_key}`, `Content-Type: application/json`, `Accept: image/png` (or the vendor's documented accept for format selection); body maps `prompt`/`negative_prompt`/`width`/`height`/`steps`/`cfg_scale`/`seed` directly (implementer verifies current field names from the API reference).
+1. `POST {base}/{model}/text_to_image`, `Authorization: Bearer {api_key}`, `Content-Type: application/json`, `Accept` derived from `ImageGenRequest.format` (`png`→`image/png`, `jpeg`→`image/jpeg`; pinned by test); body maps `prompt`/`negative_prompt`/`width`/`height`/`steps`/`cfg_scale`/`seed` directly (implementer verifies current field names from the API reference).
 2. Response is RAW IMAGE BYTES on success; error responses arrive as JSON on the same endpoint — the adapter distinguishes by status + content-type and surfaces sanitized errors (never raw response bodies; a 404 gets the task-620 enriched message naming the attempted model id and `[image_generation.fireworks] default_model`).
 
 **Shared requirements (all three):**
@@ -62,9 +62,23 @@ One adapter file per service under `Image_Generation/adapters/` implementing the
 - Opt-in live tests per backend in `test_live_backends.py` style (`TLDW_LIVE_FAL_API_KEY` etc., markers integration/optional/slow).
 - Live UAT (post merge-readiness, user keys): per backend — Settings probe, then Console `/generate-image :backend <prompt>` end-to-end with card verification; the OpenRouter UAT recipe.
 
+## Reference images (engine seam — user-approved scope addition)
+
+The P1 port left a dormant seam that this program opens at the ENGINE level for the three new backends (Console attach UX is a follow-up spec — engine first, surface second):
+- `ImageGenRequest.reference_image: ResolvedReferenceImage | None` already exists (`capabilities.py`: bytes `content`, `mime_type`, dims) — the request shape needs no change. `worker.build_request` gains an optional `reference_image` param that populates it.
+- **Per-backend capability flags**: `supports_reference_image` — True for `fal`, `gemini`, `fireworks`; False for the existing six (modelstudio's dormant per-model map stays dormant; per-model gating remains v2). Exposed via the existing `resolve_backend_reference_image_capability` seam so callers can query it.
+- **Fail loudly, never silently ignore**: `run_generation`'s validation choke point rejects a request carrying a reference image for a backend whose flag is False ("backend X does not support reference images") — the silent no-op contract of the dormant seam ends with this program.
+- **Validation at the choke point**: mime allowlist (png/jpeg/webp), size cap `IMAGE_GEN_REFERENCE_MAX_BYTES = 10 * 1024 * 1024`, non-empty content bytes required (file_id/temp_path variants are NOT accepted by the engine — bytes-in-memory only, preserving the P1 no-media-DB-coupling decision).
+- **Per-adapter encoding**:
+  - gemini: an `inlineData` part (`{inline_data: {mime_type, data: <b64>}}`) alongside the text part — nano-banana's native editing input.
+  - fal: `image_url` field as a base64 data URI (`data:{mime};base64,...`) — fal accepts data URIs, avoiding any fal-storage upload scope. When a reference is present the model is used as-is (choosing an image-capable fal model is the caller's job; a model that ignores image_url is vendor behavior, not adapter error).
+  - fireworks: implementer verifies the current image-input field/route from the API reference (Kontext-family workflows; possibly a distinct `image_to_image`/kontext endpoint) — if the configured model's workflow does not accept an image input the adapter surfaces the vendor error sanitized; if a distinct route exists the adapter selects it when a reference is present.
+- **Tests**: per-adapter encoding shape (gemini part structure; fal data-URI; fireworks field/route selection); choke-point refusal for unsupported backends (all six legacy ids); mime/size validation matrix; capability-flag exposure.
+- **Live UAT addition**: one nano-banana edit case (tiny reference image + edit instruction) alongside the text-to-image cases.
+
 ## Non-goals
 
-Image-to-image / editing modes (Kontext, gemini image inputs); fal websocket/realtime; LoRA/ControlNet params; per-backend `allowed_extra_params` curation beyond the existing config-only mechanism; Vertex-AI service-account auth for Gemini (AI-Studio API keys only, per the request).
+Console/UI reference-image attach UX (follow-up spec); per-MODEL reference gating (the dormant `reference_image_supported_models` map stays dormant); reference images for the six existing backends; fal websocket/realtime; LoRA/ControlNet params; per-backend `allowed_extra_params` curation beyond the existing config-only mechanism; Vertex-AI service-account auth for Gemini (AI-Studio API keys only, per the request).
 
 ## Risks
 
