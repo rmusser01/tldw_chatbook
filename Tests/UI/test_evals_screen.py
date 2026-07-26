@@ -132,28 +132,65 @@ async def test_workbench_body_is_not_empty(evals_app):
 
 
 @pytest.mark.asyncio
-async def test_workbench_pane_has_a_real_rendered_region(evals_app):
+async def test_workbench_panes_and_their_descendants_have_a_real_rendered_region(
+    evals_app,
+):
     """Closes a gap found empirically while building this harness (see the
     Task 3 report): a Screen mounted inside a Container mounts
     STRUCTURALLY -- `query_one`/`children` checks (the two tests above)
     both pass against it -- but the compositor never gives it a laid-out
-    region; a throwaway repro showed its descendants report
-    `region=Region(0, 0, 0, 0)` even though they exist in the DOM. A bare
-    presence check cannot tell that apart from a genuinely rendered pane.
-    This screen uses zero Screen subclasses, so its panes get a real
-    region from ordinary widget layout; asserting that directly is what
-    would have caught the retired hub's actual (visual, PR-1-screenshot)
-    defect, which the brief's own DOM-presence tests structurally cannot.
+    region.
+
+    An earlier version of this test asserted region on `#evals-library-pane`
+    alone, which review caught as too weak: a repro of the actual
+    historical shape (a Screen mounted *inside* a workbench pane, not as
+    the pane itself) showed the WRAPPING pane still reports a real region
+    -- it's an ordinary Container, unaffected -- while only the nested
+    Screen and its descendants collapse to `Region(0, 0, 0, 0)`. A pane-only
+    assertion would still pass if someone reintroduced a Screen one level
+    deeper (e.g. inside `#evals-detail-pane`), and so would every other
+    test in this file: the pane is still present, `#evals-primary-action`
+    is still findable *through* the nested Screen with its label and
+    disabled state intact (`query_one` walks the whole DOM regardless of
+    layout), and `test_screen_does_not_push_a_child_screen_on_mount` only
+    checks `screen_stack`, which mounting a Screen never touches.
+
+    So this asserts region on all three panes AND on a descendant inside
+    each of the two swappable ones (`#evals-detail-empty`,
+    `#evals-primary-action`) -- a descendant is what actually distinguishes
+    "real widgets" from "a Screen wrapping real widgets." Verified against
+    a reconstructed nested-Screen-in-detail-pane shape during review: this
+    amended test fails on the descendant assertion (region 0x0) while the
+    pane-only assertions above it still pass -- see the Task 3 fix report.
     """
     async with evals_app.run_test() as pilot:
         await pilot.pause()
-        pane = evals_app.screen.query_one("#evals-library-pane")
-        assert pane.region.width > 0
-        assert pane.region.height > 0
+        screen = evals_app.screen
+        for pane_id in (
+            "#evals-library-pane",
+            "#evals-detail-pane",
+            "#evals-inspector-pane",
+        ):
+            pane = screen.query_one(pane_id)
+            assert pane.region.width > 0, pane_id
+            assert pane.region.height > 0, pane_id
+
+        detail_descendant = screen.query_one("#evals-detail-empty")
+        assert detail_descendant.region.width > 0
+        assert detail_descendant.region.height > 0
+
+        inspector_descendant = screen.query_one("#evals-primary-action")
+        assert inspector_descendant.region.width > 0
+        assert inspector_descendant.region.height > 0
 
 
 @pytest.mark.asyncio
-async def test_library_rail_shows_three_sections_with_counts(evals_app):
+async def test_library_rail_shows_three_sections_with_counts(evals_app, seeded_bench):
+    """`seeded_bench` also creates the one dataset it needs (see the
+    fixture), and creates no runs -- so the live counts should read
+    Benches (1), Datasets (1), Runs (0). The original version of this test
+    (from the brief) only grepped for the section words and never actually
+    asserted a count despite its own name; review caught that gap."""
     async with evals_app.run_test() as pilot:
         await pilot.pause()
         labels = [
@@ -161,8 +198,43 @@ async def test_library_rail_shows_three_sections_with_counts(evals_app):
             for w in evals_app.screen.query(".evals-rail-section-label")
         ]
         joined = " ".join(labels)
-        for section in ("Benches", "Datasets", "Runs"):
-            assert section in joined
+        assert "Benches (1)" in joined
+        assert "Datasets (1)" in joined
+        assert "Runs (0)" in joined
+
+
+@pytest.mark.asyncio
+async def test_selecting_a_bench_row_in_the_rail_updates_the_detail_pane(
+    evals_app, seeded_bench
+):
+    """Every other selection test in this file drives selection by calling
+    `screen.select()` directly, which leaves the actual user path --
+    LibraryRail's row Button -> `on_button_pressed` ->
+    `post_message(EvalsSelectionChanged)` -> EvalsScreen's
+    `_on_library_selection_changed` handler -> `select()` -- completely
+    unexercised. That path is this screen's primary interaction, and the
+    one Tasks 4/5 mount their editors on; drive it end to end here instead
+    of stubbing it out."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#evals-rail-row-benches-0")
+        await pilot.pause()
+        name = evals_app.screen.query_one("#evals-detail-bench-name")
+        assert "loaded-nouns v1" in str(name.renderable)
+
+
+@pytest.mark.asyncio
+async def test_collapsing_a_rail_section_hides_its_rows(evals_app, seeded_bench):
+    """The collapse/expand toggle is the other rail interaction no test
+    exercised; verify a press actually hides the section body rather than
+    just flipping an internal flag nothing reads."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        assert evals_app.screen.query_one("#evals-rail-row-benches-0")
+        await pilot.click("#evals-rail-toggle-benches")
+        await pilot.pause()
+        body = evals_app.screen.query_one("#evals-rail-section-body-benches")
+        assert body.styles.display == "none"
 
 
 @pytest.mark.asyncio

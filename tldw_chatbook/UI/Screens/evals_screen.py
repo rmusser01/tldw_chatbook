@@ -30,8 +30,8 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from ...DB.Evals_DB import EvalsDB
-from ..Evals.evals_state import EvalsSelection, EvalsViewModel
-from ..Evals.library_rail import LibraryRail
+from ..Evals.evals_state import EvalsSelection, EvalsViewModel, SelectionKind
+from ..Evals.library_rail import RAIL_SECTIONS, LibraryRail
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Workbench.workbench_widgets import DestinationHeader
@@ -52,7 +52,7 @@ class EvalsScreen(BaseAppScreen):
         # collapsed/expanded rail sections survive a selection-triggered
         # recompose, which constructs a brand-new LibraryRail instance.
         self._rail_open_sections: dict[str, bool] = {
-            section_id: True for section_id in ("benches", "datasets", "runs")
+            section_id: True for section_id in RAIL_SECTIONS
         }
 
     @staticmethod
@@ -71,7 +71,7 @@ class EvalsScreen(BaseAppScreen):
         orchestrator = getattr(app_instance, "evaluation_orchestrator", None)
         return getattr(orchestrator, "db", None)
 
-    def select(self, *, kind: str, id: Optional[str] = None) -> None:  # noqa: A002
+    def select(self, *, kind: SelectionKind, id: Optional[str] = None) -> None:  # noqa: A002
         """Set the workbench's active selection and refresh dependent panes.
 
         Public, not just an internal message handler: it is the shell's own
@@ -85,7 +85,7 @@ class EvalsScreen(BaseAppScreen):
         ``await pilot.pause()`` afterward, mirroring every other
         recompose-driven screen in this app.
         """
-        self._selection = EvalsSelection(kind=kind, id=id)  # type: ignore[arg-type]
+        self._selection = EvalsSelection(kind=kind, id=id)
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -96,15 +96,12 @@ class EvalsScreen(BaseAppScreen):
         event.stop()
         self.select(kind=event.selection.kind, id=event.selection.id)
 
-    @on(Button.Pressed, "#evals-primary-action")
-    def _run_primary_action(self, event: Button.Pressed) -> None:
-        event.stop()
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify(
-                "Running a bench from this workbench is not wired yet.",
-                severity="information",
-            )
+    # No `#evals-primary-action` press handler: `_primary_action_state`
+    # below keeps the button disabled unconditionally (even for a found,
+    # selected bench) until PR 3b wires real bench execution to it. An
+    # enabled button whose only handler shows a "not wired yet" toast is
+    # itself the dead-end-toast anti-pattern this button's own design note
+    # exists to avoid -- see _primary_action_state's docstring.
 
     def compose_content(self) -> ComposeResult:
         with Vertical(id="evals-shell"):
@@ -267,6 +264,14 @@ class EvalsScreen(BaseAppScreen):
         the old screen produced dead-end toasts (see the plan's design
         note) -- every branch here names the concrete object the action
         would run, or states a concrete reason it can't.
+
+        Every branch is currently disabled, including a found, selected
+        bench: this PR (3a) wires selection and the shell, not execution --
+        the word bench runner (PR 2) has no button connecting to it yet,
+        and that wiring is PR 3b's job (the results grid it runs into). An
+        *enabled* button whose only handler pops a "not wired yet" toast
+        would be exactly the dead-end-toast pattern this function's naming
+        rule exists to avoid, just moved one click later.
         """
         selection = self._selection
 
@@ -284,8 +289,9 @@ class EvalsScreen(BaseAppScreen):
             name = str(bench.get("name") or "Untitled bench")
             return (
                 f"Run {name}",
-                False,
-                f"Run the {name} word bench against its configured targets.",
+                True,
+                "Running a bench from this workbench isn't wired up yet; "
+                "that lands with the results grid in a later PR.",
             )
 
         if selection.kind == "classic":

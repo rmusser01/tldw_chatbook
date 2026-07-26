@@ -11699,6 +11699,21 @@ Button:disabled {
     content-align: left middle;
 }
 
+/* Explicit, not relying on the generic `.evals-rail-row { border: none }`
+   above to win by cascade order against `.is-active { border: round
+   $ds-action-focus }` (components/_agentic_terminal.tcss). Both rules are
+   equal specificity (one class each); today `.evals-rail-row` happens to
+   be declared later in the manifest, so it wins, but a manifest reorder
+   could silently flip that and reintroduce the row's only content line
+   being consumed by a round border (a real height-1 button needs at
+   least 2 lines for a round border to render at all) -- mirrors
+   `#mcp-hub-rail Button.mcp-rail-row.is-active`'s own override for the
+   identical reason. */
+.evals-rail-row.is-active {
+    border: none;
+    text-style: bold;
+}
+
 .evals-rail-empty-copy {
     color: $ds-text-muted;
     padding: 0 1;
