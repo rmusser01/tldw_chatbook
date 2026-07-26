@@ -1019,13 +1019,13 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
 async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(
     monkeypatch,
 ):
-    from tldw_chatbook.UI.Screens import watchlists_collections_screen
+    from tldw_chatbook.UI.Watchlists_Modules import watchlists_console_handoff
 
     app = _build_test_app()
     app.home_active_work_adapter = RaisingHomeActiveWorkAdapter()
     app.open_active_home_item_in_console = Mock()
     logger = Mock()
-    monkeypatch.setattr(watchlists_collections_screen, "logger", logger, raising=False)
+    monkeypatch.setattr(watchlists_console_handoff, "logger", logger, raising=False)
     host = DestinationHarness(app, "watchlists_collections")
 
     async with host.run_test(size=(180, 40)) as pilot:
@@ -1042,9 +1042,9 @@ async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(
     # The call site is `logger.opt(exception=True).warning(...)` -- loguru's
     # traceback capture (the stdlib `exc_info=True` kwarg is a silent no-op
     # under loguru) -- so the warning lands on the Mock returned by `.opt()`.
-    # Other sites on this screen also route through `.opt(exception=True)`
-    # (e.g. the snapshot-load debug), so assert on the chained warning mock
-    # rather than pinning an exact `.opt()` call count.
+    # It now lives on the extracted WatchlistsConsoleHandoff object (moved off
+    # the screen), so assert on the chained warning mock rather than pinning
+    # an exact `.opt()` call count.
     assert logger.opt.call_args_list
     assert all(c.kwargs.get("exception") is True for c in logger.opt.call_args_list)
     opt_warning = logger.opt.return_value.warning
