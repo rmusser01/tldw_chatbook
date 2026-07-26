@@ -407,9 +407,10 @@ def _clear_server_probe_state_if_binding_changed(
 
 
 def _apply_runtime_policy_to_app(app: Any, state: RuntimeSourceState) -> None:
-    setattr(app, "current_runtime_backend", state.active_source)
-    setattr(app, "runtime_backend", state.active_source)
-    setattr(app, "active_server_id", state.active_server_id)
+    publisher = getattr(app, "_publish_runtime_policy_projection")
+    if not callable(publisher):
+        raise TypeError("runtime policy projection publisher is not callable")
+    publisher(state)
 
 
 def _normalize_server_identity(raw_url: str) -> tuple[str | None, str | None]:

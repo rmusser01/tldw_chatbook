@@ -5,7 +5,10 @@ from datetime import datetime, timezone
 import pytest
 
 from tldw_chatbook.app import TldwCli
-from tldw_chatbook.runtime_policy.bootstrap import set_authoritative_runtime_source
+from tldw_chatbook.runtime_policy.bootstrap import (
+    _apply_runtime_policy_to_app,
+    set_authoritative_runtime_source,
+)
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 
@@ -56,6 +59,113 @@ async def test_full_app_wiring_uses_unavailable_store_when_secure_store_is_missi
     )
     assert app.server_context_provider.credential_store is app.server_credential_store
     assert app.server_context_provider.runtime_context is app.runtime_policy
+
+
+@pytest.mark.asyncio
+async def test_full_app_projection_attributes_reject_direct_and_alias_assignment(
+    app_with_cleanup: TldwCli,
+) -> None:
+    app = app_with_cleanup
+    alias = app
+
+    with pytest.raises(AttributeError):
+        app.current_runtime_backend = "server"
+    with pytest.raises(AttributeError):
+        alias.runtime_backend = "server"
+    with pytest.raises(AttributeError):
+        alias.active_server_id = "server-alias"
+
+
+@pytest.mark.asyncio
+async def test_full_app_projection_boundary_publishes_one_coherent_state(
+    app_with_cleanup: TldwCli,
+) -> None:
+    app = app_with_cleanup
+    state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="server-projection",
+        server_configured=True,
+    )
+
+    _apply_runtime_policy_to_app(app, state)
+
+    assert (
+        app.current_runtime_backend,
+        app.runtime_backend,
+        app.active_server_id,
+    ) == ("server", "server", "server-projection")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("publisher_mode", "expected_exception"),
+    (
+        ("missing", AttributeError),
+        ("descriptor_failure", AttributeError),
+        ("non_callable", TypeError),
+        ("throws", RuntimeError),
+    ),
+)
+async def test_full_app_projection_boundary_never_falls_back_to_public_writes(
+    app_with_cleanup: TldwCli,
+    monkeypatch: pytest.MonkeyPatch,
+    publisher_mode: str,
+    expected_exception: type[Exception],
+) -> None:
+    app = app_with_cleanup
+    publisher_name = "_publish_runtime_policy_projection"
+    before = (
+        app.current_runtime_backend,
+        app.runtime_backend,
+        app.active_server_id,
+    )
+
+    if publisher_mode == "missing":
+        monkeypatch.delattr(TldwCli, publisher_name, raising=False)
+    elif publisher_mode == "descriptor_failure":
+
+        class RaisingPublisherDescriptor:
+            def __get__(self, instance, owner):
+                raise AttributeError("publisher descriptor failed")
+
+        monkeypatch.setattr(
+            TldwCli,
+            publisher_name,
+            RaisingPublisherDescriptor(),
+            raising=False,
+        )
+    elif publisher_mode == "non_callable":
+        monkeypatch.setattr(TldwCli, publisher_name, None, raising=False)
+    else:
+
+        def raise_from_publisher(
+            _app: TldwCli,
+            _state: RuntimeSourceState,
+        ) -> None:
+            raise RuntimeError("publisher failed")
+
+        monkeypatch.setattr(
+            TldwCli,
+            publisher_name,
+            raise_from_publisher,
+            raising=False,
+        )
+
+    with pytest.raises(expected_exception):
+        _apply_runtime_policy_to_app(
+            app,
+            RuntimeSourceState(
+                active_source="server",
+                active_server_id="server-should-not-publish",
+                server_configured=True,
+            ),
+        )
+
+    assert (
+        app.current_runtime_backend,
+        app.runtime_backend,
+        app.active_server_id,
+    ) == before
 
 
 @pytest.mark.asyncio

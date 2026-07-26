@@ -2674,6 +2674,29 @@ class TldwCli(
 ):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
 
+    _runtime_policy_projection_snapshot: tuple[str, str | None] = ("local", None)
+
+    @property
+    def current_runtime_backend(self) -> str:
+        return self._runtime_policy_projection_snapshot[0]
+
+    @property
+    def runtime_backend(self) -> str:
+        return self._runtime_policy_projection_snapshot[0]
+
+    @property
+    def active_server_id(self) -> str | None:
+        return self._runtime_policy_projection_snapshot[1]
+
+    def _publish_runtime_policy_projection(
+        self,
+        state: RuntimeSourceState,
+    ) -> None:
+        self._runtime_policy_projection_snapshot = (
+            state.active_source,
+            state.active_server_id,
+        )
+
     # Product name shown in the terminal title (legacy "tldw CLI" retired).
     TITLE = "tldw chatbook"
     # CSS file path
