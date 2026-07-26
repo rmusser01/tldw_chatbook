@@ -1,7 +1,7 @@
 # TldwCli Reactive State Decomposition Design
 
 Date: 2026-07-26
-Status: Draft; independent-review corrections applied, re-review pending
+Status: Independently reviewed; pending user approval
 ADR:
 [ADR-026](../../../backlog/decisions/026-application-session-state-ownership.md),
 [ADR-006](../../../backlog/decisions/006-provider-aware-generation-settings.md),
