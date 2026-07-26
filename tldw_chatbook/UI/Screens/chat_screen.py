@@ -29,6 +29,7 @@ from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.pending_handoff_store import HandoffChannel
 from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResumeState
 from .provider_model_resolution import (
     ResolvedProviderModelOption,
@@ -1779,13 +1780,24 @@ class ChatScreen(BaseAppScreen):
         if self._pending_console_launch_context is not None:
             return self._pending_console_launch_context
 
-        pending_launch = getattr(self.app_instance, "pending_console_launch", None)
-        if (
-            normalized_launch := ConsoleLiveWorkLaunch.from_pending(pending_launch)
-        ) is not None:
-            self._pending_console_launch_context = normalized_launch
+        store = self.app_instance.pending_handoffs
+        claim = store.claim(HandoffChannel.CONSOLE_LIVE_WORK)
+        if claim is None:
+            return self._pending_console_launch_context
+        try:
+            self._pending_console_launch_context = claim.value
             self._pending_console_launch_auto_open_inspector = True
-            self.app_instance.pending_console_launch = None
+        except Exception as exc:
+            store.release(claim)
+            logger.warning(
+                "Console live-work handoff transfer failed "
+                "(channel={}, revision={}, exception_category={})",
+                claim.channel.value,
+                claim.revision,
+                type(exc).__name__,
+            )
+            return self._pending_console_launch_context
+        store.acknowledge(claim)
         return self._pending_console_launch_context
 
     def _chat_default_value(self, key: str) -> Any:
@@ -7646,9 +7658,8 @@ class ChatScreen(BaseAppScreen):
         # guaranteed to exist in the DOM yet at this exact point (it can
         # still be settling in immediately after mount, same reason every
         # composer-touching test here awaits `_wait_for_selector` first) --
-        # firing this immediately risked a silent, unrecoverable miss (the
-        # pending field is cleared on first read, so a `QueryError` here
-        # would have thrown the staged text away with nothing left to retry).
+        # a failed early attempt releases its claim for this screen's
+        # existing resume/user-triggered retry paths.
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.call_after_refresh(self._sync_native_console_chat_ui)
         self.call_after_refresh(self._restore_console_workbench_focus)
@@ -9331,47 +9342,44 @@ class ChatScreen(BaseAppScreen):
         insert -- the draft is left untouched and nothing about the source
         Library prompt is touched either.
         """
-        pending = getattr(self.app_instance, "pending_console_prompt_insert", None)
-        if pending is None:
+        store = self.app_instance.pending_handoffs
+        claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+        if claim is None:
             return
-        text = pending if isinstance(pending, str) else str(pending)
+        text = claim.value
         if not text.strip():
-            self.app_instance.pending_console_prompt_insert = None
+            store.acknowledge(claim)
             return
-        if self._console_setup_blocked_reason():
-            # A persistent state, not a mount-timing race -- always safe to
-            # consume+notify here regardless of whether the composer widget
-            # itself has finished mounting yet.
-            self.app_instance.pending_console_prompt_insert = None
-            self.app_instance.notify(
-                self._LIBRARY_PROMPT_INSERT_BLOCKED_COPY,
-                severity="warning",
+        try:
+            if self._console_setup_blocked_reason():
+                self.app_instance.notify(
+                    self._LIBRARY_PROMPT_INSERT_BLOCKED_COPY,
+                    severity="warning",
+                )
+                store.release(claim)
+                return
+            # Settle the active-session draft tracking immediately before
+            # insertion. A later native-Console sync then sees the current
+            # session tracker and cannot wipe the newly inserted draft.
+            self._sync_console_session_draft()
+            if not self._insert_prompt_text_into_composer(text, replace=False):
+                store.release(claim)
+                return
+        except asyncio.CancelledError:
+            store.release(claim)
+            raise
+        except Exception as exc:
+            store.release(claim)
+            logger.warning(
+                "Console prompt handoff failed "
+                "(channel={}, revision={}, exception_category={})",
+                claim.channel.value,
+                claim.revision,
+                type(exc).__name__,
             )
             return
-        # Settle the active-session draft tracking BEFORE inserting so this
-        # consumption is self-guarding no matter which lifecycle hook
-        # (`on_mount`, `on_screen_resume`, or any other resume-adjacent path)
-        # scheduled it. If a session switch races ahead of us,
-        # `_console_visible_draft_session_id` can be stale relative to the
-        # store's active session; a *later* `_sync_native_console_chat_ui`
-        # pass would then unconditionally reload the composer from that
-        # newly-active session's stored draft, silently discarding the
-        # insert below (the pending field is already cleared once the
-        # insert lands, so there is no retry). Calling this here -- and
-        # nowhere between here and the insert, so the two run atomically
-        # within this event-loop turn -- settles the tracker onto the
-        # current active session first, so any subsequent sync pass takes
-        # the no-op fast path instead of clobbering what we're about to
-        # insert.
-        self._sync_console_session_draft()
-        # Only clear the staged field once the insert has actually landed --
-        # if the native composer has not finished mounting yet (a transient
-        # race the 0.15s mount-time delay above should normally avoid), leave
-        # it pending for a later mount/resume to retry rather than silently
-        # discarding it.
-        if self._insert_prompt_text_into_composer(text, replace=False):
-            self.app_instance.pending_console_prompt_insert = None
-            self._focus_console_composer_if_needed(force=True)
+        store.acknowledge(claim)
+        self._focus_console_composer_if_needed(force=True)
 
     async def _console_command_apply_system(self, parse: CommandParse) -> None:
         """Resolve and apply a saved prompt's ``system_prompt`` for `/system`.
