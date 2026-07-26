@@ -903,6 +903,20 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
             "server handoff does not move local source content unless explicitly requested",
         ),
     ),
+    SettingsCategoryId.WORKSPACES: (
+        (
+            "Affected config",
+            "workspace lifecycle records and their bound folders",
+        ),
+        (
+            "Recovery",
+            "switch/rename/archive in Console (Alt+W); create a workspace in Library",
+        ),
+        (
+            "Boundary",
+            "lifecycle and folder bindings apply immediately; there is no draft state here",
+        ),
+    ),
     SettingsCategoryId.PRIVACY_SECURITY: (
         (
             "Affected config",
@@ -1885,6 +1899,12 @@ class SettingsScreen(BaseAppScreen):
                 "Guided",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.WORKSPACES,
+                "Workspaces",
+                "Create, rename, archive, and bind folders for agent file tools.",
+                "Immediate actions",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.PRIVACY_SECURITY,
                 "Privacy & Security",
                 "Secrets, encryption, redaction, and local privacy boundaries.",
@@ -2027,6 +2047,7 @@ class SettingsScreen(BaseAppScreen):
                 "Data & Privacy",
                 (
                     SettingsCategoryId.STORAGE,
+                    SettingsCategoryId.WORKSPACES,
                     SettingsCategoryId.PRIVACY_SECURITY,
                 ),
             ),
@@ -2270,6 +2291,19 @@ class SettingsScreen(BaseAppScreen):
                 recovery_copy=(
                     "Validate paths, save the config-only change, then restart Chatbook to "
                     "activate new storage defaults."
+                ),
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.WORKSPACES,
+                owns_config_sections=(),
+                reads_runtime_state_from=("workspace registry",),
+                writes_allowed=True,
+                runtime_owner="Workspace registry (immediate actions)",
+                boundary_copy=(
+                    "Lifecycle and folder bindings apply immediately; no draft state."
+                ),
+                recovery_copy=(
+                    "Quick actions: switch/rename/archive in Console (Alt+W); create in Library."
                 ),
             ),
             SettingsOwnershipRecord(
@@ -10060,6 +10094,12 @@ class SettingsScreen(BaseAppScreen):
                 yield self._detail_row(label, value)
             yield self._detail_row("Follow-up", contract.follow_up)
 
+    def _render_workspaces_detail(self) -> ComposeResult:
+        # Stub pane (task-8): registers the category and its immediate-apply
+        # boundary (no Save/Revert draft state). Task 9 replaces this with
+        # the real workspace list + lifecycle card.
+        yield Static("Workspace management", classes="destination-section")
+
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.OVERVIEW:
@@ -10315,6 +10355,8 @@ class SettingsScreen(BaseAppScreen):
                     "Handoff boundary",
                     "database and media paths remain local unless a server handoff is explicit",
                 )
+        elif category is SettingsCategoryId.WORKSPACES:
+            yield from self._render_workspaces_detail()
         elif category is SettingsCategoryId.PRIVACY_SECURITY:
             posture = self._settings_privacy_posture()
             yield Static(
@@ -10562,6 +10604,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategoryId.SPLASH_SCREEN,
             SettingsCategoryId.INTERNAL_PROMPTS,
             SettingsCategoryId.IMAGE_GENERATION,
+            SettingsCategoryId.WORKSPACES,
         ):
             save_button = Button(
                 "Save",
@@ -13463,6 +13506,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategoryId.THEME,
             SettingsCategoryId.SPLASH_SCREEN,
             SettingsCategoryId.INTERNAL_PROMPTS,
+            SettingsCategoryId.WORKSPACES,
         ):
             self.app.notify(
                 "Use the editor's own buttons for this category", severity="information"

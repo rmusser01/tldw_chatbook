@@ -151,13 +151,15 @@ def test_settings_category_summaries_cover_every_category_id_exactly_once():
     """Guards the total sidebar category count.
 
     Adding Internal Prompts brought the total from 19 to 20; adding Image Gen
-    (Settings > Image Gen task 4) brought it to 21. This pins the literal
-    count so the next addition must touch this assertion deliberately, and
-    cross-checks that summaries neither miss nor duplicate an enum member.
+    (Settings > Image Gen task 4) brought it to 21; adding Workspaces
+    (settings-workspaces-folder-roots task 8) brought it to 22. This pins
+    the literal count so the next addition must touch this assertion
+    deliberately, and cross-checks that summaries neither miss nor duplicate
+    an enum member.
     """
     screen = SettingsScreen(_build_test_app())
     summaries = screen._category_summaries()
-    assert len(summaries) == len(list(SettingsCategoryId)) == 21
+    assert len(summaries) == len(list(SettingsCategoryId)) == 22
     assert {s.category for s in summaries} == set(SettingsCategoryId)
 
 
@@ -6156,7 +6158,12 @@ async def test_settings_storage_privacy_diagnostics_label_unsupported_mutations_
             ),
             ("#settings-category-diagnostics", "Diagnostics writes: unavailable/WIP"),
         ):
-            await pilot.click(button_id)
+            # Scroll the target into view before clicking: the category
+            # rail is taller than the fixed pilot viewport, and Settings >
+            # Workspaces (task 8) pushed Privacy & Security further down
+            # the "Data & Privacy" group, so a raw pilot.click() can land
+            # outside the visible screen region.
+            await _open_settings_category(pilot, button_id)
             screen = _active_destination_screen(host)
             text = _visible_text(screen)
 

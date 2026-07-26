@@ -16,6 +16,7 @@ class SettingsCategoryId(StrEnum):
     THEME = "theme"
     SPLASH_SCREEN = "splash_screen"
     STORAGE = "storage"
+    WORKSPACES = "workspaces"
     PRIVACY_SECURITY = "privacy-security"
     CONSOLE_BEHAVIOR = "console-behavior"
     LIBRARY_RAG = "library-rag"
