@@ -36,6 +36,7 @@ from tldw_chatbook.Chat.citation_trace_repository import (
     load_local_citation_identity_context,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.RAG_Search.local_citation_capture import (
     FINAL_SCORE_KIND_KEY,
     FINAL_SCORE_KIND_RERANKER,
@@ -986,11 +987,39 @@ async def test_capture_api_records_one_equivalent_run_and_prompt_for_every_mode(
     expected_context = f"[S1] MEDIA — {title}\n{content}"
     repository = _CaptureRepository()
     app = _CaptureApp(search_mode=search_mode, repository=repository)
-    _patch_pipeline(
-        monkeypatch,
-        [_ranked_result(title=title, content=content)],
-        "legacy pipeline bytes",
+    pipeline_function_names = (
+        "perform_plain_rag_search",
+        "perform_full_rag_pipeline",
+        "perform_hybrid_rag_search",
+        "perform_search_with_pipeline",
     )
+    expected_function_name = {
+        "plain": "perform_plain_rag_search",
+        "semantic": "perform_full_rag_pipeline",
+        "hybrid": "perform_hybrid_rag_search",
+        "custom-pipeline": "perform_search_with_pipeline",
+    }[search_mode]
+    calls = []
+
+    def _refuse_wrong_branch(function_name):
+        async def _refuse(*_args, **_kwargs):
+            raise AssertionError(f"unexpected pipeline branch: {function_name}")
+
+        return _refuse
+
+    for function_name in pipeline_function_names:
+        monkeypatch.setattr(cre, function_name, _refuse_wrong_branch(function_name))
+
+    async def _expected_branch(*args, **kwargs):
+        calls.append((args, kwargs))
+        return [_ranked_result(title=title, content=content)], "legacy pipeline bytes"
+
+    monkeypatch.setattr(cre, expected_function_name, _expected_branch)
+
+    async def _semantic_service(*_args, **_kwargs):
+        return object(), None
+
+    monkeypatch.setattr(cre, "resolve_semantic_rag_service", _semantic_service)
     captured_logs = []
     sink_id = loguru_logger.add(
         captured_logs.append,
@@ -1020,6 +1049,9 @@ async def test_capture_api_records_one_equivalent_run_and_prompt_for_every_mode(
     assert re.fullmatch(r"request_[0-9a-f]{32}", repository.request_ids[0])
     assert re.fullmatch(r"generation_[0-9a-f]{32}", repository.generation_ids[0])
     assert repository.request_ids[0] != repository.generation_ids[0]
+    assert len(calls) == 1
+    if search_mode == "custom-pipeline":
+        assert calls[0][0][3] == "custom-pipeline"
 
     rendered_logs = "".join(str(message) for message in captured_logs)
     for sentinel in (query, title, content):
@@ -1185,6 +1217,55 @@ async def test_malformed_result_is_excluded_before_markers_and_logs_are_sanitize
 
 
 @pytest.mark.asyncio
+async def test_off_selection_source_is_excluded_before_authorization_and_capture(
+    monkeypatch,
+):
+    sentinel = "PRIVATE-OFF-SELECTION-NOTE-SENTINEL"
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository, media_ids=("m1",))
+    note_result = {
+        "source": "note",
+        "id": "n1",
+        "title": sentinel,
+        "content": sentinel,
+        "score": 0.9,
+        "metadata": {},
+    }
+    media_result = _ranked_result(
+        result_id="m1",
+        title="Selected",
+        content="selected body",
+    )
+    _patch_pipeline(
+        monkeypatch,
+        [note_result, media_result],
+        "legacy context must not survive canonical capture",
+    )
+    captured_logs = []
+    sink_id = loguru_logger.add(
+        captured_logs.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        captured = await cre.get_rag_context_capture_for_chat(app, "query")
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert captured.context == "[S1] MEDIA — Selected\nselected body"
+    assert captured.citation_builder is repository.builders[0]
+    run_payload = captured.citation_builder.evidence_run_payloads[0]
+    assert [candidate.rank for candidate in run_payload.candidates] == [2]
+    assert [
+        candidate.source_identity["source_kind"] for candidate in run_payload.candidates
+    ] == [CanonicalSourceKind.MEDIA_DB.value]
+    prompt = captured.citation_builder.prompt_evidence_sets[0]
+    assert [entry.marker_ordinal for entry in prompt.entries] == [1]
+    rendered_logs = "".join(str(message) for message in captured_logs)
+    assert sentinel not in rendered_logs
+
+
+@pytest.mark.asyncio
 async def test_validation_failure_discards_context_and_partial_builder_without_logging(
     monkeypatch, tmp_path
 ):
@@ -1237,3 +1318,103 @@ async def test_validation_failure_discards_context_and_partial_builder_without_l
         assert "reason=canonical_capture_failure" in rendered_logs
     finally:
         db.close_connection()
+
+
+def test_sensitive_real_database_reads_do_not_log_source_identities(tmp_path):
+    media_sentinel = "987654321"
+    note_sentinel = "PRIVATE-NOTE-IDENTITY-SENTINEL"
+    conversation_sentinel = "PRIVATE-CONVERSATION-IDENTITY-SENTINEL"
+    media_db = MediaDatabase(tmp_path / "sensitive-media.sqlite", "sensitive-media")
+    chacha_db = CharactersRAGDB(
+        tmp_path / "sensitive-chacha.sqlite",
+        client_id="sensitive-chacha",
+    )
+    app = SimpleNamespace(media_db=media_db, chachanotes_db=chacha_db)
+    captured_logs = []
+    sink_id = loguru_logger.add(
+        captured_logs.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        assert (
+            cre._existing_ids_sync(
+                app,
+                cre.SOURCE_TYPE_MEDIA,
+                frozenset({media_sentinel}),
+            )
+            == frozenset()
+        )
+        assert (
+            cre._existing_ids_sync(
+                app,
+                cre.SOURCE_TYPE_NOTE,
+                frozenset({note_sentinel}),
+            )
+            == frozenset()
+        )
+        assert (
+            cre._current_media_evidence_ids_sync(
+                media_db,
+                frozenset({media_sentinel}),
+            )
+            == frozenset()
+        )
+        assert (
+            cre._current_chacha_evidence_ids_sync(
+                chacha_db,
+                frozenset({note_sentinel}),
+                frozenset({conversation_sentinel}),
+            )
+            == frozenset()
+        )
+    finally:
+        loguru_logger.remove(sink_id)
+        media_db.close_connection()
+        chacha_db.close_connection()
+
+    rendered_logs = "".join(str(message) for message in captured_logs)
+    for sentinel in (media_sentinel, note_sentinel, conversation_sentinel):
+        assert sentinel not in rendered_logs
+
+
+@pytest.mark.asyncio
+async def test_fresh_persisted_scope_read_does_not_log_conversation_identity(
+    tmp_path,
+):
+    conversation_sentinel = "PRIVATE-FRESH-CONVERSATION-IDENTITY-SENTINEL"
+    chacha_db = CharactersRAGDB(
+        tmp_path / "fresh-scope-chacha.sqlite",
+        client_id="fresh-scope-chacha",
+    )
+    chacha_db.add_conversation(
+        {
+            "id": conversation_sentinel,
+            "title": "Private identity log regression",
+        }
+    )
+    app = SimpleNamespace(chachanotes_db=chacha_db, media_db=None)
+    session = SimpleNamespace(
+        id="session-log-regression",
+        persisted_conversation_id=conversation_sentinel,
+        workspace_id=None,
+    )
+    captured_logs = []
+    sink_id = loguru_logger.add(
+        captured_logs.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        resolution = await cre.resolve_scope_for_session(
+            app,
+            session,
+            use_cache=False,
+        )
+    finally:
+        loguru_logger.remove(sink_id)
+        chacha_db.close_connection()
+
+    assert resolution.effective.state == "unscoped"
+    rendered_logs = "".join(str(message) for message in captured_logs)
+    assert conversation_sentinel not in rendered_logs

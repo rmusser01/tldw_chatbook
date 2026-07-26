@@ -88,6 +88,10 @@ class _PromptAuthorizationResult:
     completed: bool
 
 
+class _ScopeExistenceReadError(RuntimeError):
+    """A scoped dangling-id authority read did not complete."""
+
+
 _CURRENT_ACTIVE_SESSION = object()
 
 
@@ -598,6 +602,52 @@ def _capture_request_scope_session(app: "TldwCli") -> _RequestScopeSession | Non
         return None
 
 
+def _sensitive_fetchall(
+    db: Any,
+    query: str,
+    params: tuple[Any, ...],
+) -> list[Any]:
+    """Run an identity-bearing read without the public query logger.
+
+    Production database classes expose ``get_connection``; their public
+    ``execute_query`` helpers DEBUG-log parameters and therefore must not be
+    used for prompt-boundary identity reads. The fallback exists only for
+    deliberately small test doubles in test modules.
+    """
+
+    get_connection = getattr(db, "get_connection", None)
+    if callable(get_connection):
+        return list(get_connection().execute(query, params).fetchall())
+
+    module_name = type(db).__module__
+    is_test_double = (
+        module_name.startswith("Tests.")
+        or module_name.startswith("test_")
+        or ".test_" in module_name
+    )
+    execute_query = getattr(db, "execute_query", None)
+    if is_test_double and callable(execute_query):
+        return list(execute_query(query, params).fetchall())
+    raise RuntimeError("sensitive database read is unavailable")
+
+
+def _read_fresh_conversation_metadata_sync(db: Any, conversation_id: str) -> Any:
+    """Read prompt-boundary conversation metadata without logging its id."""
+
+    rows = _sensitive_fetchall(
+        db,
+        "SELECT metadata FROM conversations WHERE id = ? AND deleted = 0",
+        (conversation_id,),
+    )
+    if not rows:
+        raise LookupError("active conversation unavailable")
+    row = rows[0]
+    try:
+        return row["metadata"]
+    except (IndexError, KeyError, TypeError):
+        return row[0]
+
+
 def _existing_ids_sync(
     app: "TldwCli", source_type: str, ids: "frozenset[str]"
 ) -> "frozenset[str]":
@@ -610,10 +660,9 @@ def _existing_ids_sync(
     ``asyncio.to_thread`` around the whole ``resolve_effective_scope`` call,
     matching this file's existing threading discipline for DB work).
 
-    Missing DB handles or query errors degrade to "nothing survives" (an
-    empty ``frozenset``) rather than raising or assuming existence: a broken
-    existence check must never let scope enforcement silently widen to
-    "search everything".
+    Missing DB handles or query errors raise ``_ScopeExistenceReadError`` so
+    callers can distinguish unavailable authority from a successful read in
+    which no rows survive.
 
     Args:
         app: App-like object exposing ``media_db``/``chachanotes_db``.
@@ -634,19 +683,23 @@ def _existing_ids_sync(
     else:
         return frozenset()
     if db is None:
-        return frozenset()
+        logger.warning(
+            "RAG scope existence unavailable; reason=scope_existing_ids_read_failure"
+        )
+        raise _ScopeExistenceReadError from None
     try:
-        rows = db.execute_query(
+        rows = _sensitive_fetchall(
+            db,
             f"SELECT id FROM {table} "
             "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
             (json.dumps(sorted(ids)),),
-        ).fetchall()
+        )
         return frozenset(str(row[0]) for row in rows)
     except Exception:
         logger.warning(
             "RAG scope existence unavailable; reason=scope_existing_ids_read_failure"
         )
-        return frozenset()
+        raise _ScopeExistenceReadError from None
 
 
 @dataclass(frozen=True)
@@ -852,14 +905,15 @@ async def resolve_scope_for_session(
         else:
             try:
                 if conversation_is_memory_db:
-                    record = db.get_conversation_by_id(str(conversation_id))
-                else:
-                    record = await asyncio.to_thread(
-                        db.get_conversation_by_id, str(conversation_id)
+                    raw_metadata = _read_fresh_conversation_metadata_sync(
+                        db, str(conversation_id)
                     )
-                if record is None:
-                    raise LookupError("active conversation unavailable")
-                raw_metadata = record.get("metadata")
+                else:
+                    raw_metadata = await asyncio.to_thread(
+                        _read_fresh_conversation_metadata_sync,
+                        db,
+                        str(conversation_id),
+                    )
                 if raw_metadata in (None, ""):
                     metadata = {}
                 else:
@@ -975,11 +1029,22 @@ async def resolve_scope_for_session(
     def _existing_ids(source_type: str, ids: "frozenset[str]") -> "frozenset[str]":
         return _existing_ids_sync(app, source_type, ids)
 
-    if scope_resolution_requires_inline:
-        effective = resolve_effective_scope(conv_scope, ws_scope, _existing_ids)
-    else:
-        effective = await asyncio.to_thread(
-            resolve_effective_scope, conv_scope, ws_scope, _existing_ids
+    try:
+        if scope_resolution_requires_inline:
+            effective = resolve_effective_scope(conv_scope, ws_scope, _existing_ids)
+        else:
+            effective = await asyncio.to_thread(
+                resolve_effective_scope, conv_scope, ws_scope, _existing_ids
+            )
+    except _ScopeExistenceReadError:
+        return ScopeResolution(
+            conv_scope,
+            ws_scope,
+            EffectiveScope(
+                state="empty",
+                allowlist={},
+                cause="scope-existence-unavailable",
+            ),
         )
     if use_cache:
         cache.put(cache_key_id, workspace_id, conv_stamp, ws_stamp, effective)
@@ -1028,11 +1093,12 @@ def _current_media_evidence_ids_sync(
     """Return current media identities with one batched database read."""
 
     try:
-        rows = media_db.execute_query(
+        rows = _sensitive_fetchall(
+            media_db,
             "SELECT id FROM Media "
             "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
             (json.dumps(sorted(media_ids)),),
-        ).fetchall()
+        )
     except Exception:
         logger.warning(
             "Prompt-boundary authority unavailable; status=unavailable; "
@@ -1050,7 +1116,8 @@ def _current_chacha_evidence_ids_sync(
     """Return current note/conversation identities with one batched DB read."""
 
     try:
-        rows = db.execute_query(
+        rows = _sensitive_fetchall(
+            db,
             "SELECT 'notes' AS source_kind, id FROM notes "
             "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0 "
             "UNION ALL "
@@ -1060,7 +1127,7 @@ def _current_chacha_evidence_ids_sync(
                 json.dumps(sorted(note_ids)),
                 json.dumps(sorted(conversation_ids)),
             ),
-        ).fetchall()
+        )
     except Exception:
         logger.warning(
             "Prompt-boundary authority unavailable; status=unavailable; "
@@ -1151,6 +1218,7 @@ async def _authorize_local_results_for_prompt(
     if effective_scope.state == "empty":
         authority_failed = effective_scope.cause in {
             "conversation-scope-unavailable",
+            "scope-existence-unavailable",
             "workspace-scope-unavailable",
         }
         return _PromptAuthorizationResult((), not authority_failed)
@@ -1295,19 +1363,32 @@ async def _capture_local_pipeline_results(
     """Atomically assemble and record canonical local prompt evidence."""
 
     try:
+        selected_source_kinds = _selected_source_kinds(sources)
+        selected_source_kind_set = frozenset(selected_source_kinds)
         normalized: list[NormalizedLocalResult] = []
         rejected_count = 0
+        off_selection_count = 0
         for candidate_rank, result in enumerate(results, start=1):
             try:
-                normalized.append(
-                    normalize_local_result(result, candidate_rank=candidate_rank)
+                candidate = normalize_local_result(
+                    result,
+                    candidate_rank=candidate_rank,
                 )
+                if candidate.source_kind not in selected_source_kind_set:
+                    off_selection_count += 1
+                    continue
+                normalized.append(candidate)
             except LocalResultNormalizationError:
                 rejected_count += 1
         if rejected_count:
             logger.warning(
                 "RAG candidates rejected; "
                 f"count={rejected_count}; reason=invalid_local_result"
+            )
+        if off_selection_count:
+            logger.info(
+                "RAG candidates excluded; "
+                f"count={off_selection_count}; reason=source_not_selected"
             )
 
         authorization = await _authorize_local_results_for_prompt(
@@ -1336,7 +1417,7 @@ async def _capture_local_pipeline_results(
             requested_top_k=top_k,
             max_context_characters=max_context_length,
             rerank_enabled=bool(enable_rerank),
-            source_kinds=_selected_source_kinds(sources),
+            source_kinds=selected_source_kinds,
             scope_state=effective_scope.state,
         )
         candidates = tuple(

@@ -122,6 +122,36 @@ class MockApp:
         logger.info(f"[{severity.upper()}] {message}")
 
 
+class CaptureUnavailableApp:
+    """DB-free app double for capture compatibility at the UI boundary."""
+
+    def __init__(self):
+        self.ui_elements = {
+            "#chat-rag-enable-checkbox": MockCheckbox(False),
+            "#chat-rag-plain-enable-checkbox": MockCheckbox(True),
+            "#chat-rag-search-mode": MockSelect("plain"),
+            "#chat-rag-search-media-checkbox": MockCheckbox(True),
+            "#chat-rag-search-conversations-checkbox": MockCheckbox(False),
+            "#chat-rag-search-notes-checkbox": MockCheckbox(False),
+            "#chat-rag-top-k": MockInput("5"),
+            "#chat-rag-max-context-length": MockInput("10000"),
+            "#chat-rag-keyword-filter": MockInput(""),
+            "#chat-rag-rerank-enable-checkbox": MockCheckbox(False),
+            "#chat-rag-reranker-model": MockSelect("flashrank"),
+            "#chat-rag-chunk-size": MockInput("400"),
+            "#chat-rag-chunk-overlap": MockInput("100"),
+            "#chat-rag-chunk-type": MockSelect("words"),
+            "#chat-rag-include-metadata-checkbox": MockCheckbox(False),
+        }
+        self.notifications = []
+
+    def query_one(self, selector: str):
+        return self.ui_elements[selector]
+
+    def notify(self, message: str, severity: str = "info"):
+        self.notifications.append((message, severity))
+
+
 @pytest.mark.requires_rag_deps
 @pytest.mark.asyncio
 async def test_get_rag_context_basic():
@@ -427,15 +457,10 @@ async def test_capture_unavailable_keeps_ui_pipeline_context_and_legacy_string(
     """The UI-facing legacy API remains byte-compatible without a repository."""
     from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as cre
 
-    app = MockApp(
-        {
-            "enable_plain_rag": True,
-            "search_mode": "plain",
-            "search_media": True,
-            "search_conversations": False,
-            "search_notes": False,
-        }
-    )
+    app = CaptureUnavailableApp()
+    assert not hasattr(app, "media_db")
+    assert not hasattr(app, "chachanotes_db")
+    assert not hasattr(app, "rag_db")
     raw_context = "UI PIPELINE CONTEXT\nunchanged"
 
     async def _plain_search(*_args, **_kwargs):

@@ -1799,14 +1799,16 @@ class TestResolveEffectiveScopeMemoryDbGuard:
             )
             main_thread = threading.current_thread()
             call_threads = []
-            real_get_conversation = cha_db.get_conversation_by_id
+            real_read_metadata = cre._read_fresh_conversation_metadata_sync
 
-            def _recording_get_conversation(*args, **kwargs):
+            def _recording_read_metadata(*args, **kwargs):
                 call_threads.append(threading.current_thread())
-                return real_get_conversation(*args, **kwargs)
+                return real_read_metadata(*args, **kwargs)
 
             monkeypatch.setattr(
-                cha_db, "get_conversation_by_id", _recording_get_conversation
+                cre,
+                "_read_fresh_conversation_metadata_sync",
+                _recording_read_metadata,
             )
             app = _App(media_db=memory_media, chachanotes_db=cha_db)
 
@@ -2336,19 +2338,20 @@ class TestFreshPromptBoundaryAuthority:
             ]
         )
         calls = {"media": 0, "chacha": 0}
-        real_media_execute = media_db.execute_query
-        real_chacha_execute = cha_db.execute_query
+        real_sensitive_fetchall = cre._sensitive_fetchall
 
-        def _media_execute(*args, **kwargs):
-            calls["media"] += 1
-            return real_media_execute(*args, **kwargs)
+        def _recording_sensitive_fetchall(db, *args, **kwargs):
+            if db is media_db:
+                calls["media"] += 1
+            elif db is cha_db:
+                calls["chacha"] += 1
+            return real_sensitive_fetchall(db, *args, **kwargs)
 
-        def _chacha_execute(*args, **kwargs):
-            calls["chacha"] += 1
-            return real_chacha_execute(*args, **kwargs)
-
-        monkeypatch.setattr(media_db, "execute_query", _media_execute)
-        monkeypatch.setattr(cha_db, "execute_query", _chacha_execute)
+        monkeypatch.setattr(
+            cre,
+            "_sensitive_fetchall",
+            _recording_sensitive_fetchall,
+        )
 
         authorized = await cre.authorize_local_results_for_prompt(
             _App(media_db=media_db, chachanotes_db=cha_db), candidates
@@ -2462,6 +2465,79 @@ class TestFreshPromptBoundaryAuthority:
 
 class TestCapturePromptBoundaryFreshAuthority:
     """Capture rechecks the original request identity after retrieval."""
+
+    @pytest.mark.asyncio
+    async def test_fresh_scoped_existence_failure_discards_context_and_builder(
+        self, media_db, cha_db, monkeypatch
+    ):
+        failure_sentinel = "PRIVATE-SCOPE-EXISTENCE-FAILURE-SENTINEL"
+        media_id = _seed_media(media_db, n=1)[0]
+        conversation_id = cha_db.add_conversation({"title": "Scoped"})
+        write_conversation_scope(
+            cha_db,
+            conversation_id,
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_id),),
+                updated_at="t1",
+            ),
+        )
+        session = SimpleNamespace(
+            id="request-session",
+            persisted_conversation_id=conversation_id,
+            workspace_id=None,
+        )
+        repository = _BuilderRepository()
+        app = _ChatMockApp(
+            search_mode="plain",
+            media_db=media_db,
+            chachanotes_db=cha_db,
+            citation_trace_repository=repository,
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+
+        async def _return_candidate(*_args, **_kwargs):
+            return [
+                {
+                    "source": "media",
+                    "id": media_id,
+                    "title": "Fresh authority",
+                    "content": "must not reach the prompt",
+                    "score": 1.0,
+                    "metadata": {},
+                }
+            ], "legacy context must not survive canonical capture"
+
+        monkeypatch.setattr(cre, "perform_plain_rag_search", _return_candidate)
+        real_sensitive_fetchall = cre._sensitive_fetchall
+        scope_existence_reads = 0
+
+        def _fail_fresh_scope_existence(db, query, params):
+            nonlocal scope_existence_reads
+            if db is media_db and query.startswith("SELECT id FROM Media"):
+                scope_existence_reads += 1
+                if scope_existence_reads == 2:
+                    raise RuntimeError(failure_sentinel)
+            return real_sensitive_fetchall(db, query, params)
+
+        monkeypatch.setattr(cre, "_sensitive_fetchall", _fail_fresh_scope_existence)
+        captured_logs = []
+        sink_id = loguru_logger.add(
+            captured_logs.append,
+            level="DEBUG",
+            format="{message}",
+        )
+        try:
+            captured = await cre.get_rag_context_capture_for_chat(app, "query")
+        finally:
+            loguru_logger.remove(sink_id)
+
+        assert scope_existence_reads == 2
+        assert captured == cre.LocalRagContextResult(None, None)
+        assert repository.builders[0].evidence_runs == ()
+        rendered_logs = "".join(str(message) for message in captured_logs)
+        assert failure_sentinel not in rendered_logs
+        assert "reason=scope_existing_ids_read_failure" in rendered_logs
+        assert "reason=prompt_authority_failure" in rendered_logs
 
     @pytest.mark.asyncio
     async def test_backing_row_deleted_during_retrieval_is_not_submitted(
