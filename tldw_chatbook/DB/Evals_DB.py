@@ -1313,10 +1313,28 @@ class EvalsDB:
         status: str = None,
         task_id: str = None,
         model_id: str = None,
+        run_group_id: str = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
-        """List evaluation runs with optional filtering."""
+        """List evaluation runs with optional filtering.
+
+        Args:
+            status: Restrict to runs with this status.
+            task_id: Restrict to runs belonging to this task.
+            model_id: Restrict to runs belonging to this model.
+            run_group_id: Restrict to runs sharing this run_group_id (see
+                idx_eval_runs_group). Filtering here in SQL -- rather than
+                fetching a page and filtering in Python -- is what lets a
+                caller find a run group regardless of how many newer runs
+                exist ahead of it.
+            limit: Maximum rows to return.
+            offset: Rows to skip, for paging.
+
+        Returns:
+            Matching eval_runs rows (newest first), each with config_overrides
+            parsed from JSON.
+        """
         conn = self._get_connection()
 
         query = """
@@ -1337,6 +1355,9 @@ class EvalsDB:
         if model_id:
             query += " AND r.model_id = ?"
             params.append(model_id)
+        if run_group_id:
+            query += " AND r.run_group_id = ?"
+            params.append(run_group_id)
 
         query += " ORDER BY r.created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])

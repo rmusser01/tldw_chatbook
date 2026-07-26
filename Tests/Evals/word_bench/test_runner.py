@@ -115,6 +115,46 @@ async def test_cancel_stops_the_run_and_keeps_completed_cells(db, config, target
 
 
 @pytest.mark.asyncio
+async def test_cancelled_run_rows_read_cancelled_not_pending(db, config, targets, snippets):
+    """Without an explicit status transition, every eval_runs row created by
+    create_run_group sits at its 'pending' default forever -- indistinguishable
+    from a run that hasn't started. A cancelled run group must read
+    'cancelled' on every one of its run rows, with end_time set."""
+    token = CancelToken()
+    order = []
+
+    class CancellingClient(FakeClient):
+        async def capture(self, snippet, target, mode, top_k):
+            result = await super().capture(snippet, target, mode, top_k)
+            if len(order) == 1:
+                token.cancel()
+            return result
+
+    task_id = save_bench(db, config)
+    runner = WordBenchRunner(db, lambda t: CancellingClient(order))
+    group_id = await runner.run(config, targets, snippets, task_id, cancel_token=token)
+
+    runs = db.list_runs(run_group_id=group_id)
+    assert len(runs) == len(targets)
+    for run in runs:
+        assert run["status"] == "cancelled"
+        assert run["end_time"] is not None
+
+
+@pytest.mark.asyncio
+async def test_completed_run_rows_read_completed(db, config, targets, snippets):
+    task_id = save_bench(db, config)
+    runner = WordBenchRunner(db, lambda t: FakeClient([]))
+    group_id = await runner.run(config, targets, snippets, task_id)
+
+    runs = db.list_runs(run_group_id=group_id)
+    assert len(runs) == len(targets)
+    for run in runs:
+        assert run["status"] == "completed"
+        assert run["end_time"] is not None
+
+
+@pytest.mark.asyncio
 async def test_degenerate_canary_propagates_onto_every_cell(db, config, targets, snippets):
     """The preflight warning must not be lost between preflight and grid."""
     task_id = save_bench(db, config)

@@ -36,6 +36,19 @@ def save_bench(db: EvalsDB, config: BenchConfig, task_id: Optional[str] = None) 
 
     task_type is 'logprob' because its CHECK constraint permits only four
     values; config_data.bench_type is the real discriminator.
+
+    A bench's dataset_id is immutable after creation and is intentionally
+    not passed through on the edit path below: Evals_DB.update_task has no
+    dataset_id parameter. Extending it looked trivial in isolation, but
+    eval_tasks.dataset_id carries a FOREIGN KEY to eval_datasets(id) that
+    create_task enforces at insert time; wiring it into update_task too
+    would require every edited BenchConfig to carry a real, current
+    eval_datasets id even when the caller has no intention of changing the
+    dataset -- previously a no-op field on edit. Confirmed the hard way: this
+    module's own edit-path tests construct BenchConfigs with placeholder
+    dataset_id values, and passing those through raised sqlite3's FOREIGN
+    KEY constraint failed. A documented restriction is preferable to a
+    surface that breaks existing callers this way.
     """
     config_data = {
         "bench_type": BENCH_TYPE,
@@ -46,9 +59,15 @@ def save_bench(db: EvalsDB, config: BenchConfig, task_id: Optional[str] = None) 
         "concurrency": config.concurrency,
     }
     if task_id is not None:
-        # Evals_DB.update_task takes name/description/config_data as separate
-        # keyword args, not a single updates dict.
-        db.update_task(task_id, name=config.name, config_data=config_data)
+        # Evals_DB.update_task takes name/description/config_data as
+        # separate keyword args, not a single updates dict. dataset_id is
+        # deliberately not among them -- see the immutability note above.
+        db.update_task(
+            task_id,
+            name=config.name,
+            description=config.description,
+            config_data=config_data,
+        )
         return task_id
     return db.create_task(
         name=config.name,
@@ -61,6 +80,19 @@ def save_bench(db: EvalsDB, config: BenchConfig, task_id: Optional[str] = None) 
 
 
 def load_bench(db: EvalsDB, task_id: str) -> BenchConfig:
+    """Load a bench definition back out of its eval_tasks row.
+
+    Args:
+        db: Database handle.
+        task_id: The eval_tasks row id returned by save_bench.
+
+    Returns:
+        The bench's current (live, editable) definition.
+
+    Raises:
+        TypeError: If task_id does not name an existing, non-deleted task
+            (get_task returns None, and subscripting it below raises).
+    """
     row = db.get_task(task_id)
     data = row["config_data"]
     return BenchConfig(
@@ -167,6 +199,14 @@ def save_cell(
 
 
 def _cell_from_payload(payload: dict[str, Any]) -> CellCapture | CellError:
+    """Rebuild a cell from its stored ``logprobs`` JSON.
+
+    ``"error"`` is the branch discriminator (rather than a ``schema`` tag)
+    because save_cell writes CellError payloads with a distinct shape --
+    ``{"schema": ..., "error": {...}}`` -- that never contains ``top_k``, so
+    checking for ``"error"`` first avoids requiring every success payload to
+    carry an extra type tag alongside the fields it already has.
+    """
     if "error" in payload:
         return CellError(
             reason=payload["error"]["reason"], detail=payload["error"].get("detail", "")
@@ -188,16 +228,39 @@ def _cell_from_payload(payload: dict[str, Any]) -> CellCapture | CellError:
     )
 
 
-def load_grid(db: EvalsDB, run_group_id: str) -> dict[str, Any]:
+#: get_run_results is a paginated API (default limit=1000); a bench with
+#: more snippets than one page would otherwise silently load an incomplete
+#: grid. Tests override this via load_grid's page_size parameter so they can
+#: exercise the paging loop without creating thousands of rows.
+_RESULTS_PAGE_SIZE = 1000
+
+
+def load_grid(
+    db: EvalsDB, run_group_id: str, *, page_size: int = _RESULTS_PAGE_SIZE
+) -> dict[str, Any]:
     """Pivot a run group into a grid.
 
-    Returns ``{"snapshot": …, "cells": {(snippet_id, target_id): cell}}``.
-    The snapshot is the run's own, never the live task's.
+    Args:
+        db: Database handle.
+        run_group_id: The run group id returned by create_run_group.
+        page_size: Page size used when draining get_run_results for each
+            run. Overridable so tests can force multiple pages cheaply.
+
+    Returns:
+        ``{"snapshot": …, "cells": {(snippet_id, target_id): cell}}``.
+        The snapshot is the run's own, never the live task's. A missing
+        cell means "not yet run" (see save_cell), so every result page for
+        every run in the group must be drained in full -- a truncated page
+        would silently read as unrun cells rather than lost ones.
+
+    Raises:
+        ValueError: If no runs share this run_group_id.
     """
-    runs = [
-        run for run in db.list_runs(limit=10_000)
-        if run.get("run_group_id") == run_group_id
-    ]
+    # Filtered in SQL (via idx_eval_runs_group) rather than fetched in a
+    # fixed-size page and filtered in Python: list_runs is newest-first with
+    # a LIMIT, so once the table holds more rows than that limit, an older
+    # run group would otherwise become unreachable and read as nonexistent.
+    runs = db.list_runs(run_group_id=run_group_id, limit=10_000)
     if not runs:
         raise ValueError(f"no runs found for run group {run_group_id!r}")
 
@@ -207,12 +270,20 @@ def load_grid(db: EvalsDB, run_group_id: str) -> dict[str, Any]:
     cells: dict[tuple[str, str], CellCapture | CellError] = {}
     for run in runs:
         target_id = (run.get("config_overrides") or {}).get("target_id")
-        for result in db.get_run_results(run["id"]):
-            payload = result.get("logprobs")
-            if isinstance(payload, str):
-                payload = json.loads(payload)
-            if not payload:
-                continue
-            cells[(result["sample_id"], target_id)] = _cell_from_payload(payload)
+        offset = 0
+        while True:
+            page = db.get_run_results(run["id"], limit=page_size, offset=offset)
+            if not page:
+                break
+            for result in page:
+                payload = result.get("logprobs")
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+                if not payload:
+                    continue
+                cells[(result["sample_id"], target_id)] = _cell_from_payload(payload)
+            if len(page) < page_size:
+                break
+            offset += page_size
 
     return {"snapshot": snapshot, "cells": cells}

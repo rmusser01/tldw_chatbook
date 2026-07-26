@@ -93,6 +93,8 @@ class WordBenchRunner:
         group_id, run_ids = create_run_group(
             self._db, task_id, config, targets, snippets
         )
+        for run_id in run_ids.values():
+            self._db.update_run_status(run_id, "running")
 
         total = len(snippets) * len(targets)
         done = 0
@@ -104,6 +106,8 @@ class WordBenchRunner:
                         "Word bench run group {} cancelled after {}/{} cells",
                         group_id, done, total,
                     )
+                    for run_id in run_ids.values():
+                        self._db.update_run_status(run_id, "cancelled")
                     return group_id
 
                 result = await clients[target.id].capture(
@@ -115,6 +119,9 @@ class WordBenchRunner:
                 done += 1
                 if progress is not None:
                     progress(done, total)
+
+        for run_id in run_ids.values():
+            self._db.update_run_status(run_id, "completed")
 
         return group_id
 

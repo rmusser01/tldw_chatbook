@@ -132,3 +132,53 @@ def test_grid_renders_from_the_snapshot_after_the_bench_is_edited(
     grid = load_grid(db, group_id)
     assert grid["snapshot"]["prompt_mode"] == "raw", "historical run keeps its own config"
     assert grid["snapshot"]["top_k"] == 20
+
+
+def test_bench_edit_round_trips_the_description(db, config, targets):
+    """The edit branch of save_bench must not silently drop description --
+    it was previously absent from the update_task call."""
+    task_id = save_bench(db, config)
+
+    edited = BenchConfig(
+        name=config.name, description="Now with a real description.",
+        prompt_mode=config.prompt_mode, top_k=config.top_k,
+        dataset_id=config.dataset_id, target_ids=config.target_ids,
+        probes=config.probes,
+    )
+    save_bench(db, edited, task_id=task_id)
+
+    loaded = load_bench(db, task_id)
+    assert loaded.description == "Now with a real description."
+
+
+def test_bench_edit_leaves_dataset_id_untouched(db, config, targets):
+    """dataset_id is immutable after creation: even an edited BenchConfig
+    that names a different dataset_id must not move the live task's
+    dataset_id, because save_bench's edit path never passes it through."""
+    task_id = save_bench(db, config)
+    original_dataset_id = load_bench(db, task_id).dataset_id
+
+    edited = BenchConfig(
+        name=config.name, prompt_mode=config.prompt_mode, top_k=config.top_k,
+        dataset_id="some-other-dataset-id-that-does-not-exist",
+        target_ids=config.target_ids, probes=config.probes,
+    )
+    save_bench(db, edited, task_id=task_id)
+
+    assert load_bench(db, task_id).dataset_id == original_dataset_id
+
+
+def test_load_grid_drains_every_page_of_results(db, config, targets):
+    """get_run_results is paginated (default limit=1000); a grid with more
+    cells than one page must still load in full, or the missing cells would
+    misread as 'not yet run' rather than 'not yet loaded'."""
+    snippets = [Snippet(id=f"s{i}", text=f"snippet {i}") for i in range(5)]
+    task_id = save_bench(db, config)
+    group_id, run_ids = create_run_group(db, task_id, config, targets, snippets)
+    run_id = run_ids[targets[0].id]
+    for snippet in snippets:
+        save_cell(db, run_id, snippet, _capture())
+
+    grid = load_grid(db, group_id, page_size=2)
+    this_target_cells = {sid for (sid, tid) in grid["cells"] if tid == targets[0].id}
+    assert this_target_cells == {s.id for s in snippets}

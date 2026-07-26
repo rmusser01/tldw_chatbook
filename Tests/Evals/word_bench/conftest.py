@@ -11,8 +11,8 @@ from tldw_chatbook.Evals.word_bench.models import Snippet, Target
 
 
 @pytest.fixture
-def db(tmp_path):
-    return EvalsDB(db_path=str(tmp_path / "evals.db"), client_id="test")
+def db():
+    return EvalsDB(db_path=":memory:", client_id="test")
 
 
 @pytest.fixture

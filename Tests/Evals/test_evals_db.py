@@ -373,6 +373,66 @@ class TestRunOperations:
         run = in_memory_db.get_run(run_id)
         assert run["status"] == "running"
 
+    def test_list_runs_filters_by_run_group_id_in_sql(self, in_memory_db):
+        """list_runs(run_group_id=...) must filter in SQL, not just page and
+        filter in Python -- otherwise an older run group becomes
+        unreachable once the table holds more rows than the default LIMIT."""
+        task_id = in_memory_db.create_task(
+            name="test_task",
+            description="Test",
+            task_type="question_answer",
+            config_format="custom",
+            config_data={},
+        )
+        model_id = in_memory_db.create_model(
+            name="Test Model", provider="test", model_id="test-1", config={}
+        )
+
+        target_group = "group-under-test"
+        target_run_ids = set()
+        for i in range(2):
+            run_id = in_memory_db.create_run(
+                name=f"Target Run {i}", task_id=task_id, model_id=model_id,
+                config_overrides={},
+            )
+            in_memory_db.update_run(run_id, {"run_group_id": target_group})
+            target_run_ids.add(run_id)
+
+        # Other runs, in a different group, that a naive Python filter over
+        # a fixed-size page could still legitimately see -- the point is
+        # that SQL-side filtering returns exactly the requested group either
+        # way, regardless of how many other rows exist.
+        for i in range(3):
+            run_id = in_memory_db.create_run(
+                name=f"Other Run {i}", task_id=task_id, model_id=model_id,
+                config_overrides={},
+            )
+            in_memory_db.update_run(run_id, {"run_group_id": "other-group"})
+
+        found = in_memory_db.list_runs(run_group_id=target_group)
+        assert {r["id"] for r in found} == target_run_ids
+        assert len(found) == 2
+
+    def test_list_runs_without_run_group_id_is_unaffected(self, in_memory_db):
+        """The new parameter must be additive: omitting it keeps returning
+        every run, exactly as before the parameter existed."""
+        task_id = in_memory_db.create_task(
+            name="test_task",
+            description="Test",
+            task_type="question_answer",
+            config_format="custom",
+            config_data={},
+        )
+        model_id = in_memory_db.create_model(
+            name="Test Model", provider="test", model_id="test-1", config={}
+        )
+        run_id = in_memory_db.create_run(
+            name="Test Run", task_id=task_id, model_id=model_id, config_overrides={}
+        )
+
+        found = in_memory_db.list_runs()
+        assert {r["id"] for r in found} == {run_id}
+
 
 class TestResultOperations:
     """Test operations for evaluation results."""
