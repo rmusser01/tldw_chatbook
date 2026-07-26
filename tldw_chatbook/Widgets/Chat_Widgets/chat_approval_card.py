@@ -26,6 +26,7 @@ from typing import Any, Mapping, Sequence
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Select, Static
 
@@ -177,7 +178,19 @@ class ChatApprovalCard(Container):
 
     def on_mount(self) -> None:
         self.display = False
-        self.query_one("#approval-batch-body").display = False
+        # Mount can fire before this widget's composed children are attached
+        # to the DOM (observed as a NoMatches crash on '#approval-batch-body'
+        # during Console screen mount), so defer the initial batch-body hide
+        # until after the children have settled.
+        self.call_after_refresh(self._hide_batch_body)
+
+    def _hide_batch_body(self) -> None:
+        try:
+            self.query_one("#approval-batch-body").display = False
+        except NoMatches:
+            # The card is hidden anyway (display = False above); a missing
+            # batch body at this point is harmless.
+            pass
 
     # -- legacy single-approval API (unchanged; kept for existing callers) --
 

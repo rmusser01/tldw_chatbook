@@ -42,6 +42,16 @@ from tldw_chatbook.Utils.path_validation import (  # noqa: E402
 #
 # Constants
 DEFAULT_CHARACTER_ID = 1
+
+# Image metadata keys that carry embedded character-card JSON:
+# 'chara' holds V1/V2 cards, 'ccv3' holds V3 cards (PNG tEXt/zTXt/iTXt chunks).
+_CARD_IMAGE_METADATA_KEYS = ("chara", "ccv3")
+
+# Upper bound on image dimensions for the full decode used to reveal trailing
+# (post-IDAT) PNG metadata chunks. Character card images are typically well
+# under 1 MP; this guards untrusted-import paths against CPU/memory spikes
+# from oversized images.
+_MAX_CARD_DECODE_PIXELS = 50_000_000
 #
 
 # String boolean vocabularies for loosely-typed card/lorebook fields
@@ -1273,10 +1283,43 @@ def extract_json_from_image_file(
         # 'chara' holds V1/V2 cards; 'ccv3' holds V3 cards.
         metadata_key: Optional[str] = None
         if hasattr(img_obj, "info") and isinstance(img_obj.info, dict):
-            for candidate_key in ("chara", "ccv3"):
+            for candidate_key in _CARD_IMAGE_METADATA_KEYS:
                 if candidate_key in img_obj.info:
                     metadata_key = candidate_key
                     break
+
+        # SillyTavern and other tools write the character text chunks AFTER
+        # the IDAT (image data) chunk. Pillow only surfaces trailing chunks in
+        # .info once the image data has been decoded, so force a full load and
+        # re-check before falling back to EXIF or giving up. PNG-only: WebP and
+        # JPEG carry card data in EXIF instead, and the decode is bounded by
+        # _MAX_CARD_DECODE_PIXELS to avoid CPU/memory spikes on huge untrusted
+        # images.
+        if metadata_key is None and img_obj.format == "PNG":
+            width, height = img_obj.size
+            if width * height > _MAX_CARD_DECODE_PIXELS:
+                logger.warning(
+                    f"Skipping full decode of oversized PNG '{file_name_for_log}' "
+                    f"({width}x{height} > {_MAX_CARD_DECODE_PIXELS} pixels); "
+                    "trailing (post-IDAT) card metadata cannot be probed."
+                )
+            else:
+                try:
+                    img_obj.load()
+                except Exception as load_err:
+                    logger.warning(
+                        f"Full image decode failed for PNG '{file_name_for_log}': {load_err}. "
+                        "Trailing (post-IDAT) card metadata cannot be recovered."
+                    )
+                if hasattr(img_obj, "info") and isinstance(img_obj.info, dict):
+                    for candidate_key in _CARD_IMAGE_METADATA_KEYS:
+                        if candidate_key in img_obj.info:
+                            metadata_key = candidate_key
+                            break
+                if metadata_key:
+                    logger.debug(
+                        f"Found '{metadata_key}' metadata in a trailing (post-IDAT) chunk of '{file_name_for_log}'."
+                    )
 
         # WebP (and JPEG) character cards embed the base64 card JSON in the
         # EXIF UserComment tag (37510) instead of a 'chara' text chunk.
