@@ -21,7 +21,6 @@ from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import Button, Rule, Select, Static
 
-from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Constants import (
     WATCHLISTS_NAV_CONTEXT_BACKEND,
     WATCHLISTS_NAV_CONTEXT_RUN_ID,
@@ -75,6 +74,7 @@ from ..Watchlists_Modules.sources_pane import (
     SourcesPane,
 )
 from ..Watchlists_Modules.watchlists_backend_controller import WatchlistsBackendController
+from ..Watchlists_Modules.watchlists_console_handoff import WatchlistsConsoleHandoff
 from ..Watchlists_Modules.watchlists_navigator import SectionSelected, WatchlistsNavigator
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 
@@ -83,7 +83,6 @@ logger = logger.bind(module="WatchlistsCollectionsScreen")
 WC_LOCAL_PAGE_SIZE = 5
 WC_SERVICE_ERROR_COPY = "Watchlists services unavailable; retry Watchlists later."
 WC_SERVICE_UNAVAILABLE_COPY = "Watchlists services are unavailable in this runtime."
-WC_EMPTY_COPY = "No local Watchlists are available yet."
 WC_SNAPSHOT_TIMEOUT_SECONDS = 1.5
 
 
@@ -124,10 +123,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(app_instance, "watchlists_collections", **kwargs)
-        self._latest_console_follow_item_id = None
-        self._latest_console_follow_item_cache = None
-        self._latest_console_follow_loaded = False
-        self._latest_console_follow_error_logged = False
+        self._console_handoff = WatchlistsConsoleHandoff(app_instance)
         self._local_watchlist_records: tuple[Mapping[str, Any], ...] = ()
         self._local_watchlist_count = 0
         self._watchlist_total_known = True
@@ -384,44 +380,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             "backend": "local",
         }
 
-    def _latest_console_follow_item(self):
-        if self._latest_console_follow_loaded:
-            return self._latest_console_follow_item_cache
-        adapter = getattr(self.app_instance, "home_active_work_adapter", None)
-        build_dashboard_input = getattr(adapter, "build_dashboard_input", None)
-        if not callable(build_dashboard_input):
-            self._latest_console_follow_item_cache = None
-            self._latest_console_follow_loaded = True
-            self._latest_console_follow_error_logged = False
-            return None
-        try:
-            dashboard_input = build_dashboard_input(
-                providers_models={},
-                has_recent_work=False,
-            )
-        except Exception:
-            if not self._latest_console_follow_error_logged:
-                logger.opt(exception=True).warning(
-                    "Failed to load Watchlists Console follow item from Home active-work adapter.",
-                )
-                self._latest_console_follow_error_logged = True
-            self._latest_console_follow_item_cache = None
-            return None
-        selected_item = None
-        for item in tuple(getattr(dashboard_input, "active_work_items", ()) or ()):
-            if (
-                str(getattr(item, "source", None) or "").strip().lower()
-                in {"watchlists", "w+c", "watchlists+collections"}
-                and bool(getattr(item, "console_available", False))
-                and getattr(item, "item_id", None)
-            ):
-                selected_item = item
-                break
-        self._latest_console_follow_item_cache = selected_item
-        self._latest_console_follow_loaded = True
-        self._latest_console_follow_error_logged = False
-        return selected_item
-
     @staticmethod
     def _column_divider(divider_id: str) -> Rule:
         return Rule(
@@ -432,12 +390,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
 
     def compose_content(self) -> ComposeResult:
-        latest_console_item = self._latest_console_follow_item()
-        self._latest_console_follow_item_id = (
-            getattr(latest_console_item, "item_id", None)
-            if latest_console_item is not None
-            else None
-        )
+        latest_console_item = self._console_handoff.resolve_latest_follow_item()
         with Vertical(id="watchlists-collections-shell"):
             yield Static(
                 "Watchlists | Monitored sources, runs, alerts, recovery | Mixed | Local/Server",
@@ -735,63 +688,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(Button.Pressed, "#wc-attach-to-console")
     def attach_to_console(self, event: Button.Pressed) -> None:
         event.stop()
-        if not self._has_local_wc_context():
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(
-                    self._wc_lookup_error or WC_EMPTY_COPY,
-                    severity="warning",
-                )
-            return
-        open_chat_with_handoff = getattr(
-            self.app_instance, "open_chat_with_handoff", None
-        )
-        if not callable(open_chat_with_handoff):
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(
-                    "Console handoff is unavailable for Watchlists in this runtime.",
-                    severity="warning",
-                )
-            return
-        open_chat_with_handoff(
-            ChatHandoffPayload(
-                source="watchlists_collections",
-                item_type="wc-context",
-                title="Local Watchlists snapshot",
-                body=self._snapshot_body(),
-                display_summary="Local Watchlists snapshot staged.",
-                suggested_prompt="Use these monitored sources as context.",
-                runtime_backend="local",
-                source_owner="local",
-                source_selector_state="local",
-                metadata=self._snapshot_metadata(),
-            )
-        )
+        self._console_handoff.attach_to_console(self)
 
     @on(Button.Pressed, "#watchlists-follow-in-console")
     def follow_latest_watchlist_run_in_console(self, event: Button.Pressed) -> None:
         event.stop()
-        target_id = self._latest_console_follow_item_id
-        if not target_id:
-            self.app_instance.notify(
-                "No active Watchlists run is available for Console follow.",
-                severity="warning",
-            )
-            return
-        open_in_console = getattr(
-            self.app_instance, "open_active_home_item_in_console", None
-        )
-        if not callable(open_in_console):
-            self.app_instance.notify(
-                "Console follow is unavailable for Watchlists in this runtime.",
-                severity="warning",
-            )
-            return
-        open_in_console(
-            target_id=target_id,
-            target_route="chat",
-        )
+        self._console_handoff.follow_in_console()
 
     @on(Button.Pressed, "#wc-empty-create-source")
     def handle_empty_create_source(self, event: Button.Pressed) -> None:
@@ -976,9 +878,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(StageInConsoleRequested)
     def handle_stage_in_console_requested(self, event: StageInConsoleRequested) -> None:
         event.stop()
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify("Stage in Console is not implemented yet.", severity="information")
+        self._console_handoff.handle_stage_in_console_requested()
 
     async def _load_sources(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
