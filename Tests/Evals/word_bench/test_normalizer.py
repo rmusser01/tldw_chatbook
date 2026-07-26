@@ -71,6 +71,25 @@ def test_top_k_is_returned_in_descending_logprob_order():
     assert logprobs == sorted(logprobs, reverse=True)
 
 
+def test_top_k_is_sorted_even_when_the_provider_sends_it_unordered():
+    """The sort is load-bearing: top_k[0] must be the maximum, not merely
+    whatever the provider happened to send first. No committed fixture
+    exercises this, because both arrive pre-sorted."""
+    payload = {
+        "choices": [{"logprobs": {"content": [{
+            "id": 1, "token": " mid", "bytes": [], "logprob": -1.5,
+            "top_logprobs": [
+                {"id": 1, "token": " mid", "bytes": [], "logprob": -1.5},
+                {"id": 2, "token": " best", "bytes": [], "logprob": -0.2},
+                {"id": 3, "token": " worst", "bytes": [], "logprob": -4.0},
+            ],
+        }]}}]
+    }
+    top_k, _ = normalize_logprobs(payload, want_content_token=False)
+    assert [t.token for t in top_k] == [" best", " mid", " worst"]
+    assert top_k[0].logprob == pytest.approx(-0.2)
+
+
 def test_chat_fixture_normalizes_with_the_same_shape():
     """Both endpoints share one shape -- this is the corrected assumption."""
     top_k, _ = normalize_logprobs(
