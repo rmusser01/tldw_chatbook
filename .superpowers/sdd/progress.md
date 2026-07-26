@@ -271,3 +271,22 @@ Task 5: complete (commits c69a35a5a + 19b6477bc, review clean)
   - Minor (untested log) escalated and fixed: the log IS this task's deliverable. Repo
     already had a temp-loguru-sink idiom (caplog does not intercept loguru) -- reused it.
     2 tests: warning fires + names the tool, and stays silent with no collisions.
+Task 6: complete (commits ddcfb58dc + 4d4e0e6, review clean after direct comment fix)
+  - PHASE 0 COMPLETE. Console: 30 turns / 96 steps / 1800s / 1M token ceiling.
+  - Reviewer independently recomputed 3*(30-1)+1=88 <= 96 and checked the native
+    multi-call path (1+2N steps/turn): at N=2 the step cap trips ~turn 19, so 96 is
+    still a real backstop rather than unreachable. Confirmed max_total_tokens is
+    enforced at agent_runtime.py:418, not inert.
+  - Important finding was a stale docstring literal in clamp_child_budget ("60 at
+    20/2" -> 90 at 30/2). Fixed directly; clamp_child_budget BODY still byte-identical.
+  - LESSON: resizing a constant leaves stale derivations in sibling docstrings that
+    the brief's line targets do not cover. Grep the old literals repo-wide.
+Task 7: complete (commit 86dce1799, review clean)
+  - builtin_services.py imports only dataclasses/typing/__future__; reviewer verified by
+    isolated import that zero Notes/Media/RAG/Prompt/Chunking modules load. Dependency-
+    light claim holds.
+  - FACT CORRECTION: DateTimeTool.name is "get_current_datetime", NOT "datetime". The
+    plan and spec prose both said "datetime". Implementer caught it. Use the real name in
+    all later tasks/tests.
+  - frozen=True blocks field reassignment only; the referenced service objects stay
+    mutable. Shipped docstring does not overclaim (report did, harmlessly).

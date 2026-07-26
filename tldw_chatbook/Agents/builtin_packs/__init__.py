@@ -6,7 +6,9 @@ it stays near ``DIRECT_DISCLOSE_THRESHOLD``, and they give the permission
 gate a coarse consent surface above the per-tool one.
 
 Each pack module exports ``TOOLS`` (tool classes, catalog order) and
-``REQUIRES`` (optional-dependency feature names). A pack whose
+``REQUIRES`` (importable module names, checked via
+``optional_deps.check_dependency`` -- these are module names, not the
+human-facing extra/feature labels). A pack whose
 dependencies are unmet is ABSENT from the catalog rather than present and
 failing at invoke -- the model must not spend turns discovering a tool is
 broken.

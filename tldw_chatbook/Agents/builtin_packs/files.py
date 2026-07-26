@@ -13,7 +13,7 @@ services, so TASK-656's enumerator can describe them with ``services=None``.
 
 from __future__ import annotations
 
-from typing import Any
+from tldw_chatbook.Agents.builtin_services import BuiltinToolServices
 
 from tldw_chatbook.Tools.file_operation_tools import ListDirectoryTool, ReadFileTool
 
@@ -21,7 +21,7 @@ from tldw_chatbook.Tools.file_operation_tools import ListDirectoryTool, ReadFile
 class ReadFile(ReadFileTool):
     """`read_file`, constructed under the pack contract."""
 
-    def __init__(self, services: Any | None = None) -> None:
+    def __init__(self, services: BuiltinToolServices | None = None) -> None:
         super().__init__()
         self.services = services
 
@@ -29,7 +29,7 @@ class ReadFile(ReadFileTool):
 class ListDirectory(ListDirectoryTool):
     """`list_directory`, constructed under the pack contract."""
 
-    def __init__(self, services: Any | None = None) -> None:
+    def __init__(self, services: BuiltinToolServices | None = None) -> None:
         super().__init__()
         self.services = services
 
