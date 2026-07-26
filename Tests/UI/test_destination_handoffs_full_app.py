@@ -398,14 +398,23 @@ async def test_full_app_study_handoff_overrides_restored_scope_and_section(
 async def test_full_app_study_scope_failure_releases_only_scope_and_redacts_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sentinel = "TASK-646-STUDY-PRIVATE-SENTINEL"
+    sentinel = "TASK-646-STUDY-LOCATOR-PRIVATE-SENTINEL"
     app = TldwCli()
 
     async with _mounted_app(app, monkeypatch, route="study") as pilot:
         screen = await _wait_for_study_screen(app, pilot)
         app.pending_handoffs.stage(
             HandoffChannel.STUDY_SCOPE,
-            StudyScopeContext(material_title=sentinel),
+            StudyScopeContext(
+                material_title="Private study material",
+                source_items=(
+                    StudySourceItem(
+                        source_type="media",
+                        source_id="media-private",
+                        locator={"private_marker": sentinel},
+                    ),
+                ),
+            ),
         )
         app.pending_handoffs.stage(
             HandoffChannel.STUDY_INITIAL_SECTION,
@@ -413,7 +422,7 @@ async def test_full_app_study_scope_failure_releases_only_scope_and_redacts_valu
         )
 
         async def fail_scope(*_args, **_kwargs) -> None:
-            raise ValueError(sentinel)
+            raise ValueError("injected Study scope failure")
 
         monkeypatch.setattr(screen, "_apply_scope_context_and_refresh", fail_scope)
         messages: list[str] = []
@@ -425,7 +434,7 @@ async def test_full_app_study_scope_failure_releases_only_scope_and_redacts_valu
 
         scope_retry = app.pending_handoffs.claim(HandoffChannel.STUDY_SCOPE)
         assert scope_retry is not None
-        assert scope_retry.value.material_title == sentinel
+        assert scope_retry.value.source_items[0].locator["private_marker"] == sentinel
         assert app.pending_handoffs.claim(HandoffChannel.STUDY_INITIAL_SECTION) is None
         assert screen.current_section == "flashcards"
         assert any("exception_category=ValueError" in message for message in messages)
@@ -583,10 +592,10 @@ async def test_full_app_missing_artifact_is_terminal_with_explicit_recovery(
 async def test_full_app_artifact_lookup_failure_releases_without_private_logging(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sentinel = "TASK-646-ARTIFACT-PRIVATE-SENTINEL"
+    sentinel = "TASK-646-ARTIFACT-TARGET-PRIVATE-SENTINEL"
     app = TldwCli()
     service = InjectedChatbookService(
-        exact={"77": RuntimeError(sentinel)},
+        exact={sentinel: RuntimeError("injected Chatbook service failure")},
     )
     app.local_chatbook_service = service
 
@@ -596,7 +605,7 @@ async def test_full_app_artifact_lookup_failure_releases_without_private_logging
         try:
             app.pending_handoffs.stage(
                 HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
-                "local:chatbook:77",
+                f"local:chatbook:{sentinel}",
             )
             app.post_message(NavigateToScreen("artifacts"))
             screen = await _wait_for_artifacts_screen(app, pilot)
@@ -606,11 +615,10 @@ async def test_full_app_artifact_lookup_failure_releases_without_private_logging
 
         retry = app.pending_handoffs.claim(HandoffChannel.ARTIFACT_CHATBOOK_TARGET)
         assert retry is not None
-        assert retry.value == "local:chatbook:77"
+        assert retry.value == f"local:chatbook:{sentinel}"
         assert screen._latest_chatbook_console_launch is None
         assert any("exception_category=RuntimeError" in message for message in messages)
         assert all(sentinel not in message for message in messages)
-        assert all("local:chatbook:77" not in message for message in messages)
 
 
 @pytest.mark.asyncio

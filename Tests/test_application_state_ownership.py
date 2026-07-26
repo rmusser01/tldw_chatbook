@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from functools import cache
 from pathlib import Path
 import warnings
 
@@ -31,10 +32,19 @@ SCREEN_STATE_STORE_PATH = (
 )
 HANDOFF_STORE_PATH = PRODUCTION_ROOT / "UI" / "Navigation" / "pending_handoff_store.py"
 CHAT_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen.py"
+STUDY_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "study_screen.py"
+ARTIFACTS_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "artifacts_screen.py"
+ACP_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "acp_screen.py"
 RETIRED_HANDOFF_FIELDS = (
     "pending_chat_handoff",
     "pending_console_launch",
     "pending_console_prompt_insert",
+    "pending_study_scope_context",
+    "pending_study_initial_section",
+    "pending_notes_workspace_context",
+    "pending_artifacts_chatbook_target_id",
+    "pending_acp_session_target_id",
+    "_screen_states",
 )
 PROJECTION_NAMES = (
     "current_runtime_backend",
@@ -49,6 +59,7 @@ PRIVATE_CONTEXT_CALLBACK = "__runtime_policy_projection_callback"
 RUNTIME_POLICY_LOADER = "load_runtime_policy_for_app"
 
 
+@cache
 def _parse(path: Path) -> ast.Module:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SyntaxWarning)
@@ -248,6 +259,31 @@ def _unsafe_handoff_log_parts(node: ast.Call) -> list[str]:
             unsafe.append(f"keyword:{keyword.arg or '**'}")
 
     return unsafe
+
+
+def test_named_occurrence_guard_covers_all_retired_state_access_forms() -> None:
+    path = PROJECT_ROOT / "direct-ast-guard-check.py"
+    collector = _NamedOccurrenceCollector(path, "retired_state")
+    collector.visit(
+        ast.parse(
+            """
+owner.retired_state = value
+owner.retired_state: str = value
+owner.retired_state += value
+del owner.retired_state
+getattr(owner, "retired_state")
+setattr(owner, "retired_state", value)
+delattr(owner, "retired_state")
+mapping["retired_state"]
+"""
+        )
+    )
+    kinds = [kind for _path, kind, _scopes, _line in collector.occurrences]
+
+    assert kinds.count("attribute_store") == 3
+    assert kinds.count("attribute_del") == 1
+    assert kinds.count("dynamic_name") == 3
+    assert kinds.count("subscript_name") == 1
 
 
 def test_tldw_cli_neither_imports_nor_instantiates_app_state() -> None:
@@ -638,13 +674,14 @@ def test_runtime_source_state_store_references_are_confined_to_owner_modules() -
     assert observed_paths == {BOOTSTRAP_PATH, SOURCE_STATE_PATH}
 
 
-def test_legacy_screen_snapshot_symbols_are_absent_from_production() -> None:
+def test_legacy_runtime_policy_snapshot_symbol_is_absent_from_production() -> None:
     violations: list[tuple[str, str]] = []
     for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
         source = path.read_text(encoding="utf-8")
-        for forbidden in ("_screen_states", "runtime_policy_snapshot"):
-            if forbidden in source:
-                violations.append((str(path.relative_to(PROJECT_ROOT)), forbidden))
+        if "runtime_policy_snapshot" in source:
+            violations.append(
+                (str(path.relative_to(PROJECT_ROOT)), "runtime_policy_snapshot")
+            )
 
     assert violations == []
 
@@ -807,6 +844,9 @@ def test_pending_handoff_owner_has_no_persistence_or_serialization_calls() -> No
 def test_handoff_exception_logs_are_metadata_only() -> None:
     app_class = _class_definition(APP_PATH, "TldwCli")
     chat_class = _class_definition(CHAT_SCREEN_PATH, "ChatScreen")
+    study_class = _class_definition(STUDY_SCREEN_PATH, "StudyScreen")
+    artifacts_class = _class_definition(ARTIFACTS_SCREEN_PATH, "ArtifactsScreen")
+    acp_class = _class_definition(ACP_SCREEN_PATH, "ACPScreen")
     methods = (
         (APP_PATH, _method_definition(app_class, "_stage_handoff")),
         (
@@ -828,6 +868,30 @@ def test_handoff_exception_logs_are_metadata_only() -> None:
         (
             CHAT_SCREEN_PATH,
             _method_definition(chat_class, "_stage_handoff_as_console_live_work"),
+        ),
+        (
+            STUDY_SCREEN_PATH,
+            _method_definition(study_class, "_apply_pending_scope_handoff"),
+        ),
+        (
+            STUDY_SCREEN_PATH,
+            _method_definition(study_class, "_apply_pending_section_handoff"),
+        ),
+        (
+            ARTIFACTS_SCREEN_PATH,
+            _method_definition(artifacts_class, "_start_chatbook_refresh"),
+        ),
+        (
+            ARTIFACTS_SCREEN_PATH,
+            _method_definition(artifacts_class, "_apply_chatbook_refresh_outcome"),
+        ),
+        (
+            ARTIFACTS_SCREEN_PATH,
+            _method_definition(artifacts_class, "_exact_local_chatbook_console_launch"),
+        ),
+        (
+            ACP_SCREEN_PATH,
+            _method_definition(acp_class, "_consume_pending_session_target"),
         ),
     )
     violations: list[tuple[str, str, int, list[str]]] = []
