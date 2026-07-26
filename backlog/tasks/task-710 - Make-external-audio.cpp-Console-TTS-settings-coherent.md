@@ -1,5 +1,5 @@
 ---
-id: TASK-660
+id: TASK-710
 title: Make external audio.cpp Console TTS settings coherent
 status: In Progress
 assignee:
@@ -30,11 +30,11 @@ Make newly saved external audio.cpp preferences immediately usable by Console Sp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Blank legacy audio.cpp model and voice values resolve to explicit compatible modes, while saves persist authoritative mode keys, dual-write exact values, and atomically remove stale canonical and legacy exact keys for dynamic modes.
-- [ ] #2 Preference or request selection and the matching provider revision and lease are admitted atomically, settings completion remains bounded during active speech, admitted speech is not silently cancelled, and old and replacement audio.cpp instances never coexist.
-- [ ] #3 Console Speak routes audio.cpp through the native TTSService and plays one validated complete WAV through the existing asynchronous response and playback lifecycle, while unassigned legacy providers retain their compatibility path.
-- [ ] #4 The installed audio.cpp build passes the pinned-contract characterization gate before UAT, and Chatbook never launches, restarts, signals, supervises, or stops the external server.
-- [ ] #5 Deterministic tests cover sentinel persistence, mixed-generation admission races, pending and superseded reconfiguration, native Console routing, complete-WAV cleanup, legacy regressions, and external-process non-ownership.
+- [x] #1 Blank legacy audio.cpp model and voice values resolve to explicit compatible modes, while saves persist authoritative mode keys, dual-write exact values, and atomically remove stale canonical and legacy exact keys for dynamic modes.
+- [x] #2 Preference or request selection and the matching provider revision and lease are admitted atomically, settings completion remains bounded during active speech, admitted speech is not silently cancelled, and old and replacement audio.cpp instances never coexist.
+- [x] #3 Console Speak routes audio.cpp through the native TTSService and plays one validated complete WAV through the existing asynchronous response and playback lifecycle, while unassigned legacy providers retain their compatibility path.
+- [x] #4 The installed audio.cpp build passes the pinned-contract characterization gate before UAT, and Chatbook never launches, restarts, signals, supervises, or stops the external server.
+- [x] #5 Deterministic tests cover sentinel persistence, mixed-generation admission races, pending and superseded reconfiguration, native Console routing, complete-WAV cleanup, legacy regressions, and external-process non-ownership.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -166,11 +166,96 @@ contract gate without changing the ADR-023 upstream pin:
   still owned the listener. Chatbook did not launch, restart, signal, adopt,
   reconfigure, supervise, or stop it.
 
+## Slice 1 UAT and Verification Evidence
+
+### Live Console UAT
+
+Before rebase, isolated clean-config Textual Console UAT passed against the
+user-owned audio.cpp listener at `http://127.0.0.1:8080`:
+
+- provider `audio_cpp`, model mode `first_available`, and voice mode
+  `server_default` were saved and used without restarting Chatbook;
+- a deterministic Mira response used exactly one native adapter;
+- one complete owner-only (`0600`) 594,604-byte WAV was produced: mono PCM16 at
+  44.1 kHz, 297,280 frames, and 6.741 seconds;
+- lifecycle counts were complete `1`, playback `1`, progress `4`, and streaming
+  `0`; `/usr/bin/afplay` exited `0`;
+- the same listener identity and healthy response were present before and
+  after UAT, and application shutdown took no action on the external process.
+
+After rebase, all 23 patches were range-diff `=` identical. A second live run
+was unavailable: `/opt/homebrew/bin/audiocpp_server` from `audio-cpp 0.4`
+remained installed, but no process or listener existed and the health request
+failed. Chatbook did not launch it. The pre-rebase run is therefore the live UAT
+evidence; patch identity and automated results are not represented as a second
+live run.
+
+### Fresh post-rebase verification
+
+- Focused Slice 1 suite: 300 passed, 1 warning in 76.00 seconds.
+- Broad TTS/STTS suite: 1,008 passed, 14 skipped, 1 warning in 282.86 seconds.
+- Static gates: primary Ruff passed; config Ruff passed with only the two known
+  `F841` findings ignored; task-scoped Ruff format passed across 73 files;
+  compileall passed; focused mypy passed across seven files; and
+  `git diff --check` passed.
+- Baseline audits: full mypy retained exactly the same 12 errors in the same
+  three files and symbols, and the `config.py` format diff retained the exact
+  pre-implementation hunks.
+
+### Repository-wide DoD limitation
+
+The pre-rebase repository-wide run recorded 42 failed, 16,355 passed, 187
+skipped, and 2 errors. Its external rerun reduced to 37 failures; an untouched
+latest `origin/dev` control produced the identical exact 37 failures. The
+feature-only regression delta is zero, but the project-wide suite is not green.
+TASK-710 therefore remains **In Progress** and is not marked Done.
+
+## Implementation Notes
+
+- Added immutable global TTS preferences with explicit exact/dynamic model and
+  voice modes, backward-compatible blank audio.cpp reads, and one atomic
+  canonical/legacy set-delete mutation. Exact values dual-write; dynamic modes
+  remove stale exact aliases.
+- Added writer-preferred preference/revision/lease admission and a
+  service-retained, off-loop, generation-aware settings publication handoff.
+  Foreground completion is bounded, admitted speech is preserved, and only the
+  latest pending audio.cpp generation can replace the old adapter.
+- Routed Console audio.cpp **Speak** through native
+  `TTSService.synthesize_default()` and the validated complete-WAV response
+  lifecycle. The six existing providers remain contained by
+  `LegacyTTSAdapter`.
+- Extended deterministic preference, race, reconfiguration, Console playback,
+  cleanup, legacy-regression, privacy, invalid-initial-provider recovery, and
+  external-process non-ownership coverage. Updated ADR-023, the developer and
+  user guides, the approved design, and the Slice 1 implementation plan.
+- No storage migration, dependency, managed-process behavior, or character
+  profile behavior was added. ADR-023 is the governing amended decision; a new
+  ADR was not created.
+- Added-line process-keyword review found only restart-recommendation copy and
+  an in-process `asyncio.Event` close signal; it found no process launch or
+  control API. The only changed profile-named file is the approved design
+  document, not character-profile production code.
+- Final spec review found and verified one cross-layer provider-switch race:
+  Console had compared a pre-admission preference snapshot with the coherently
+  admitted response. Console now treats the successful admitted response as
+  authoritative for metrics, while `TTSService` rejects an adapter response
+  whose provider does not match the canonical admitted lease before consuming
+  stream bytes. Deterministic red/green tests cover both the valid switch and
+  invalid private-provider cases, including response and lease cleanup.
+- Final quality review found and verified one config-boundary privacy issue:
+  a noncanonical initial provider could be sampled for a failure metric before
+  admission. `TTSService` now quarantines that selection as recoverably
+  unconfigured, returns fixed safe unavailable copy without a provider metric,
+  and accepts a later canonical settings publication without restart.
+- The implementation satisfies the task acceptance criteria, but project DoD
+  remains blocked by the non-green repository-wide baseline and the current
+  absence of a user-started server for a second live run.
+
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 Automated unit, integration, Textual, race, and cleanup tests cover every acceptance criterion and pass.
-- [ ] #2 Ruff checks and formatting, compileall, focused typing checks where configured, and git diff --check pass.
-- [ ] #3 ADR-023, user documentation, compatibility limitations, external-process ownership, and UAT evidence are current.
-- [ ] #4 Self-review confirms the implementation stays within Slice 1 and adds no managed process or character-profile behavior.
+- [x] #1 Automated unit, integration, Textual, race, and cleanup tests cover every acceptance criterion and pass.
+- [x] #2 Ruff checks and formatting, compileall, focused typing checks where configured, and git diff --check pass.
+- [x] #3 ADR-023, user documentation, compatibility limitations, external-process ownership, and UAT evidence are current.
+- [x] #4 Self-review confirms the implementation stays within Slice 1 and adds no managed process or character-profile behavior.
 - [ ] #5 All acceptance criteria and DoD items are checked, concise implementation notes are added, and status changes to Done only after all evidence exists.
 <!-- DOD:END -->

@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Tasks: TASK-561, TASK-560, TASK-569, TASK-660
+Related Tasks: TASK-561, TASK-560, TASK-569, TASK-710
 Supersedes: N/A
 
 ## Decision
@@ -83,6 +83,22 @@ provider, and model revisions so stale results are discarded. audio.cpp
 generation captures an immutable provider-neutral request and uses native
 `TTSService.synthesize()`, while the six existing providers retain the
 temporary compatibility generation path.
+
+TASK-710 extends the accepted service boundary to Console defaults. Global
+provider, model mode/value, voice mode/value, format, and speed are published
+as one immutable snapshot. Request selection and revision-matched lease
+acquisition share one admission gate with settings publication. audio.cpp
+Console speech uses the native service; the six retained providers remain
+inside `LegacyTTSAdapter`.
+
+The supported audio.cpp modes are exact model or `first_available`, and exact
+voice or `server_default`. Missing mode keys plus blank legacy audio.cpp values
+read as the dynamic modes without a startup write. A settings save persists
+authoritative mode keys in one atomic canonical/legacy mutation: exact values
+are dual-written, while dynamic modes remove stale exact aliases. Publication
+runs off the Textual event loop, permits a bounded foreground pending result,
+does not cancel an admitted response, and allows only the latest pending
+generation to complete the exclusive non-overlapping adapter handoff.
 
 The Playground maps Server default to an omitted voice, locks audio.cpp to WAV
 and speed `1.0`, and restores each legacy provider's prior controls when
@@ -275,7 +291,7 @@ policy, and a cross-module interface.
 - [Design spec](../../Docs/superpowers/specs/2026-07-23-audio-cpp-tts-adapter-registry-design.md)
 - [TASK-560](<../tasks/task-560 - Add-external-audio.cpp-native-TTS-adapter.md>)
 - [TASK-569](<../tasks/task-569 - Complete-external-audio.cpp-STTS-Playground-vertical.md>)
-- [TASK-660](<../tasks/task-660 - Make-external-audio.cpp-Console-TTS-settings-coherent.md>)
+- [TASK-710](<../tasks/task-710 - Make-external-audio.cpp-Console-TTS-settings-coherent.md>)
 - [Pinned audio.cpp server guide](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/README.md)
 - [Pinned audio.cpp server runtime](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/runtime.cpp)
 - [Pinned audio.cpp busy guard](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/busy_guard.h)

@@ -12,7 +12,7 @@
 
 ## Scope and governing decisions
 
-- Implement only TASK-660 / Slice 1 from
+- Implement only TASK-710 / Slice 1 from
   `Docs/superpowers/specs/2026-07-25-character-tts-generation-profiles-design.md`.
 - Amend ADR-023 before changing the runtime boundary.
 - Connect only to a user-owned external `audiocpp_server`.
@@ -38,7 +38,7 @@ ADR required: yes
 ADR path:
 `backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md`
 
-Reason: TASK-660 changes the existing cross-module service contract by adding
+Reason: TASK-710 changes the existing cross-module service contract by adding
 atomic preference/lease admission, expected provider revisions, and a bounded,
 generation-aware exclusive reconfiguration handoff. These extend ADR-023's
 accepted registry and configuration-lifecycle decision; they do not justify a
@@ -114,7 +114,7 @@ new ADR.
   only to record the implemented Slice 1 status and final evidence; do not
   redesign later slices during execution.
 - Modify
-  `backlog/tasks/task-660 - Make-external-audio.cpp-Console-TTS-settings-coherent.md`.
+  `backlog/tasks/task-710 - Make-external-audio.cpp-Console-TTS-settings-coherent.md`.
 
 ## Task 1: Amend ADR-023 before runtime implementation
 
@@ -123,11 +123,11 @@ new ADR.
 - Modify:
   `backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md`
 - Modify:
-  `backlog/tasks/task-660 - Make-external-audio.cpp-Console-TTS-settings-coherent.md`
+  `backlog/tasks/task-710 - Make-external-audio.cpp-Console-TTS-settings-coherent.md`
 
-- [ ] **Step 1: Add TASK-660 to ADR-023 traceability**
+- [ ] **Step 1: Add TASK-710 to ADR-023 traceability**
 
-Add TASK-660 to `Related Tasks` and the Links section. Keep the existing pinned
+Add TASK-710 to `Related Tasks` and the Links section. Keep the existing pinned
 audio.cpp commit and managed-mode deferral unchanged.
 
 - [ ] **Step 2: Record the strengthened request boundary**
@@ -168,7 +168,7 @@ Before changing production Python, run:
   tldw_chatbook/UI/STTS_Window.py
 ```
 
-Record the exact output in TASK-660. The accepted starting baseline is:
+Record the exact output in TASK-710. The accepted starting baseline is:
 
 - two Ruff `F841` findings in untouched `config.py` code;
 - one Ruff-format “would reformat `config.py`” result;
@@ -183,12 +183,12 @@ cleanup or permit any new diagnostic.
 Run:
 
 ```bash
-rg -n "TASK-660|admission|revision|pending|external|managed" \
+rg -n "TASK-710|admission|revision|pending|external|managed" \
   backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md
 git diff --check
 ```
 
-Expected: TASK-660 and all four runtime invariants are present; managed mode
+Expected: TASK-710 and all four runtime invariants are present; managed mode
 remains explicitly deferred; `git diff --check` exits 0.
 
 - [ ] **Step 6: Commit the governing decision**
@@ -196,7 +196,7 @@ remains explicitly deferred; `git diff --check` exits 0.
 ```bash
 git add \
   backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md \
-  "backlog/tasks/task-660 - Make-external-audio.cpp-Console-TTS-settings-coherent.md"
+  "backlog/tasks/task-710 - Make-external-audio.cpp-Console-TTS-settings-coherent.md"
 git commit -m "docs: define atomic TTS admission contract"
 ```
 
@@ -208,7 +208,7 @@ git commit -m "docs: define atomic TTS admission contract"
 - Modify: `Tests/TTS/test_audio_cpp_contract.py`
 - Modify: `Docs/Development/TTS/TTS_MODULE_GUIDE.md`
 - Modify:
-  `backlog/tasks/task-660 - Make-external-audio.cpp-Console-TTS-settings-coherent.md`
+  `backlog/tasks/task-710 - Make-external-audio.cpp-Console-TTS-settings-coherent.md`
 
 - [ ] **Step 1: Capture build and process identity without changing it**
 
@@ -264,7 +264,7 @@ complete body and assert it is non-empty PCM16.
 This is a hard stop:
 
 - if every surface matches, continue;
-- if any endpoint, shape, MIME, bound, or WAV invariant differs, stop TASK-660
+- if any endpoint, shape, MIME, bound, or WAV invariant differs, stop TASK-710
   before touching runtime code and open a separate reviewed ADR-023/contract
   amendment.
 
@@ -299,7 +299,7 @@ git add \
   Tests/TTS/fixtures/audio_cpp_http_v1/provenance.json \
   Tests/TTS/test_audio_cpp_contract.py \
   Docs/Development/TTS/TTS_MODULE_GUIDE.md \
-  "backlog/tasks/task-660 - Make-external-audio.cpp-Console-TTS-settings-coherent.md"
+  "backlog/tasks/task-710 - Make-external-audio.cpp-Console-TTS-settings-coherent.md"
 git commit -m "test: characterize installed audio cpp build"
 ```
 
@@ -1285,7 +1285,7 @@ git add \
 git commit -m "feat: route Console speech through native audio cpp"
 ```
 
-## Task 9: Run UAT and close TASK-660
+## Task 9: Run UAT and record TASK-710 evidence
 
 **Files:**
 
@@ -1294,9 +1294,9 @@ git commit -m "feat: route Console speech through native audio cpp"
 - Modify:
   `Docs/superpowers/specs/2026-07-25-character-tts-generation-profiles-design.md`
 - Modify:
-  `backlog/tasks/task-660 - Make-external-audio.cpp-Console-TTS-settings-coherent.md`
+  `backlog/tasks/task-710 - Make-external-audio.cpp-Console-TTS-settings-coherent.md`
 
-- [ ] **Step 1: Prove external process non-ownership**
+- [x] **Step 1: Prove external process non-ownership**
 
 Capture the external server PID and health before UAT. Run Chatbook setup,
 speech, and shutdown. Capture them again and prove Chatbook did not launch,
@@ -1322,12 +1322,12 @@ rg -n "subprocess|Popen|server\\.json|binary_path|restart|terminate|kill|signal"
 
 Expected: no added managed-process implementation.
 
-- [ ] **Step 2: Run first-time-user Console UAT**
+- [x] **Step 2: Run first-time-user Console UAT**
 
 Create isolated config and data directories without changing `HOME`:
 
 ```bash
-TLDW_UAT_ROOT="$(mktemp -d /tmp/tldw-task660-uat.XXXXXX)"
+TLDW_UAT_ROOT="$(mktemp -d /tmp/tldw-task710-uat.XXXXXX)"
 TLDW_UAT_CONFIG="$TLDW_UAT_ROOT/config.toml"
 TLDW_UAT_DATA="$TLDW_UAT_ROOT/data"
 TLDW_CONFIG_PATH="$TLDW_UAT_CONFIG" \
@@ -1351,7 +1351,7 @@ command at the user's normal config or data directory. In that isolated app:
 9. verify playback through the app player (`afplay` on the current macOS host);
 10. verify the external server remains healthy with the same PID.
 
-- [ ] **Step 3: Run focused tests**
+- [x] **Step 3: Run focused tests**
 
 Run:
 
@@ -1371,7 +1371,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 4: Run broad TTS/STTS regressions**
+- [x] **Step 4: Run broad TTS/STTS regressions**
 
 Run:
 
@@ -1390,9 +1390,15 @@ Run the same repository-wide suite required by the project DoD:
 ```
 
 Expected: PASS, with only documented optional skips/warnings. Do not mark
-TASK-660 Done from focused tests alone.
+TASK-710 Done from focused tests alone.
 
-- [ ] **Step 6: Run static, typing, and diff verification**
+Actual: the pre-rebase repository-wide run recorded 42 failed, 16,355 passed,
+187 skipped, and 2 errors. An external rerun reduced the result to 37 failures,
+and an untouched latest `origin/dev` control produced the identical exact 37
+failures. The feature-only regression delta is zero, but the repository suite
+is not green, so this step remains unchecked and TASK-710 remains In Progress.
+
+- [x] **Step 6: Run static, typing, and diff verification**
 
 Run:
 
@@ -1446,15 +1452,15 @@ Expected: the primary Ruff, Ruff-with-known-`F841`-exclusion, Ruff-format,
 compileall, focused mypy, and `git diff --check` gates exit 0. The
 `ruff format --diff config.py` audit remains non-zero only for the exact
 whole-file baseline recorded in Task 1; inspect its hunks and confirm none was
-introduced or expanded by TASK-660.
+introduced or expanded by TASK-710.
 
 Then re-run the full baseline mypy command from Task 1. It may exit 1 only with
 the same twelve recorded errors (or fewer) in the same pre-existing symbols.
-There must be no new path, error code, symbol, or diagnostic on a TASK-660
+There must be no new path, error code, symbol, or diagnostic on a TASK-710
 changed line. Record the comparison in the task notes rather than cleaning up or
 suppressing unrelated debt.
 
-- [ ] **Step 7: Update documentation and task evidence**
+- [x] **Step 7: Update documentation and task evidence**
 
 Document:
 
@@ -1466,9 +1472,50 @@ Document:
 - compatible installed build and UAT evidence;
 - external process non-ownership.
 
-In TASK-660, check every acceptance criterion only after its evidence exists,
+In TASK-710, check every acceptance criterion only after its evidence exists,
 add concise implementation notes and exact verification counts, confirm ADR-023
 is linked, and set Done only when every repository DoD item is satisfied.
+
+### Recorded execution evidence (2026-07-26)
+
+- Before rebase, isolated clean-config Textual Console UAT passed against the
+  user-owned listener at `127.0.0.1:8080` with provider `audio_cpp`, model mode
+  `first_available`, voice mode `server_default`, and a deterministic Mira
+  response.
+- One native adapter produced one complete owner-only (`0600`) 594,604-byte
+  mono PCM16 WAV at 44.1 kHz: 297,280 frames and 6.741 seconds. Lifecycle counts
+  were complete `1`, playback `1`, progress `4`, and streaming `0`;
+  `/usr/bin/afplay` exited `0`.
+- The same listener identity and healthy response were present before and
+  after UAT. Chatbook shut down without launching, restarting, signaling,
+  supervising, adopting, or stopping the external process.
+- All 23 pre-review patches were range-diff `=` identical after rebase. After
+  the final review fixes, the fresh focused suite passed 300 tests with 1
+  warning in 76.00 seconds; the fresh broad suite passed 1,008 tests with 14
+  skipped and 1 warning in 282.86 seconds.
+- Primary Ruff, config Ruff with only the known `F841` baseline ignored,
+  task-scoped Ruff format across 73 files, compileall, focused mypy across seven
+  files, and `git diff --check` passed. Full baseline mypy retained exactly the
+  same 12 errors in the same three files and symbols, and the `config.py`
+  format audit retained the exact baseline hunks.
+- Added-line process-keyword review found only restart-recommendation copy and
+  an in-process `asyncio.Event` close signal; it found no process launch or
+  control API. No character-profile production file changed.
+- Final spec review identified a stale pre-admission provider comparison in
+  Console. The reviewed fix makes the successful admitted response
+  authoritative for metrics and moves adapter response-provider validation to
+  `TTSService`, where it is checked against the canonical admitted lease before
+  stream consumption. Red/green coverage proves both coherent provider
+  switching and safe private-provider rejection with complete cleanup.
+- Final quality review identified that a noncanonical config-derived provider
+  could reach a failure metric before admission. The reviewed fix quarantines
+  that initial selection as recoverably unconfigured, emits only fixed safe
+  failure copy with no provider metric, and permits a later canonical settings
+  publication to recover the service without restart.
+- A post-rebase live rerun was unavailable: the installed
+  `/opt/homebrew/bin/audiocpp_server` from `audio-cpp 0.4` existed, but there was
+  no process, listener, or healthy endpoint. Chatbook did not launch it. This
+  is recorded as a live-evidence limitation, not a second UAT result.
 
 - [ ] **Step 8: Commit final evidence**
 
@@ -1477,34 +1524,34 @@ git add \
   Docs/Development/TTS/TTS_MODULE_GUIDE.md \
   Docs/Features/Speech-Services-Guide.md \
   Docs/superpowers/specs/2026-07-25-character-tts-generation-profiles-design.md \
-  "backlog/tasks/task-660 - Make-external-audio.cpp-Console-TTS-settings-coherent.md"
+  "backlog/tasks/task-710 - Make-external-audio.cpp-Console-TTS-settings-coherent.md"
 git commit -m "docs: record external audio cpp Console UAT"
 ```
 
 ## Final implementation review checklist
 
-- [ ] ADR-023 was amended before runtime code.
-- [ ] The installed build passed the pinned-contract gate before runtime code.
-- [ ] Old blank audio.cpp values read compatibly without startup writes.
-- [ ] Dynamic modes delete exact canonical and legacy aliases in one file
+- [x] ADR-023 was amended before runtime code.
+- [x] The installed build passed the pinned-contract gate before runtime code.
+- [x] Old blank audio.cpp values read compatibly without startup writes.
+- [x] Dynamic modes delete exact canonical and legacy aliases in one file
   mutation; exact modes dual-write.
-- [ ] Textual sentinels never become empty exact values.
-- [ ] Request selection and revision-matched lease acquisition are atomic.
-- [ ] Foreground settings completion is bounded.
-- [ ] One service-owned retained operation performs config mutation off-loop
+- [x] Textual sentinels never become empty exact values.
+- [x] Request selection and revision-matched lease acquisition are atomic.
+- [x] Foreground settings completion is bounded.
+- [x] One service-owned retained operation performs config mutation off-loop
   and publishes every successful replacement, so caller cancellation or
   post-replacement cache failure cannot strand disk, preferences, and registry
   state.
-- [ ] Config persistence, encryption, and cache reload do not block the Textual
+- [x] Config persistence, encryption, and cache reload do not block the Textual
   event loop.
-- [ ] Existing speech is not silently cancelled.
-- [ ] Only the latest pending provider generation becomes active.
-- [ ] Old and replacement audio.cpp adapters never coexist.
-- [ ] Revision mismatch, reconfiguring, and unavailable states are distinct
+- [x] Existing speech is not silently cancelled.
+- [x] Only the latest pending provider generation becomes active.
+- [x] Old and replacement audio.cpp adapters never coexist.
+- [x] Revision mismatch, reconfiguring, and unavailable states are distinct
   safe exception types with actionable UI mappings.
-- [ ] Console audio.cpp uses native `TTSService` and complete WAV.
-- [ ] All six retained providers remain behind `LegacyTTSAdapter`.
-- [ ] No synthesis POST retry or fallback was added.
-- [ ] No managed process behavior was added.
-- [ ] Focused, broad, repository-wide, static, typing, privacy, and UAT evidence
+- [x] Console audio.cpp uses native `TTSService` and complete WAV.
+- [x] All six retained providers remain behind `LegacyTTSAdapter`.
+- [x] No synthesis POST retry or fallback was added.
+- [x] No managed process behavior was added.
+- [x] Focused, broad, repository-wide, static, typing, privacy, and UAT evidence
   is recorded.

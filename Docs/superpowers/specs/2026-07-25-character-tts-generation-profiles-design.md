@@ -5,6 +5,7 @@
 **Related design:** [audio.cpp TTS Adapter Registry](2026-07-23-audio-cpp-tts-adapter-registry-design.md)
 **Existing ADR:** [ADR-023 — TTS Adapter Registry and audio.cpp Runtime Boundary](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
 **Planned ADR:** `backlog/decisions/027-character-tts-generation-profile-ownership.md`
+**Slice 1 status:** implemented and live-UAT validated; TASK-710 remains In Progress because the repository-wide DoD suite is not green and no external server was available for a post-rebase live rerun
 
 ## Goal
 
@@ -72,6 +73,49 @@ This is a stop/go compatibility gate:
 Upstream streaming capability does not expand this release. Chatbook continues
 to request and consume one complete WAV through the asynchronous response
 interface.
+
+## Slice 1 implementation and verification evidence
+
+The isolated clean-config Textual Console UAT passed before rebase against the
+user-owned audio.cpp server at `http://127.0.0.1:8080`. It selected provider
+`audio_cpp`, model mode `first_available`, and voice mode `server_default`,
+then generated a deterministic Mira response without restarting Chatbook.
+Exactly one native adapter produced one complete 594,604-byte owner-only
+(`0600`) WAV: mono PCM16 at 44.1 kHz, 297,280 frames, and 6.741 seconds. The
+observed lifecycle was complete `1`, playback `1`, progress `4`, and streaming
+`0`; `/usr/bin/afplay` exited `0`. The same external listener identity and
+healthy response were present before and after UAT, and application shutdown
+did not act on the external process.
+
+After rebase, all 23 Slice 1 patches were range-diff `=` identical. Fresh
+post-rebase verification recorded:
+
+- focused Slice 1 suite: 300 passed, 1 warning in 76.00 seconds;
+- broad TTS/STTS suite: 1,008 passed, 14 skipped, 1 warning in 282.86 seconds;
+- primary Ruff, config Ruff with only the known `F841` baseline ignored,
+  task-scoped Ruff format across 73 files, compileall, focused mypy across seven
+  files, and `git diff --check`: passed;
+- full baseline mypy: the same 12 errors in the same three files and symbols;
+- `config.py` format audit: the exact pre-implementation baseline hunks.
+
+The pre-rebase repository-wide run recorded 42 failed, 16,355 passed, 187
+skipped, and 2 errors. Its external rerun reduced to 37 failures; an untouched
+latest `origin/dev` control produced the identical exact 37 failures, for a
+feature-only regression delta of zero. This comparison does not make the
+project DoD green, so TASK-710 remains In Progress.
+
+The post-rebase host still had `/opt/homebrew/bin/audiocpp_server` from
+`audio-cpp 0.4`, but no process or listener was present and the health request
+failed. Chatbook did not launch the binary. The pre-rebase live result remains
+the UAT evidence; patch identity and fresh automated verification do not get
+misreported as a second live run.
+
+Final spec review also caught a stale pre-admission provider comparison in the
+Console handler. The reviewed fix uses the successful admitted response for
+metrics and validates adapter response provenance against the canonical
+admitted lease inside `TTSService`, before consuming stream bytes. Red/green
+tests cover a coherent provider switch and rejection of a private mismatched
+provider with complete response and lease cleanup.
 
 ## Design principles
 

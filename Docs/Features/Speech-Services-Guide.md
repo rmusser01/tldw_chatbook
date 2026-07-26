@@ -54,7 +54,7 @@ The TTS Playground allows you to experiment with different voices and settings:
 
 Configure default TTS options:
 
-- Default provider and voice
+- Default provider, model mode, and voice mode
 - Audio format preferences
 - API key management
 - Voice blend creation (Kokoro only)
@@ -66,17 +66,22 @@ you start and manage yourself:
 
 1. Start your compatible `audiocpp_server` and note its HTTP or HTTPS origin.
 2. Open **Speech Services → TTS Settings → audio.cpp External Server**.
-3. Enter the server's **Base URL**. Review the timeout and safety bounds, then
-   click **Save Settings**. Saving validates and persists the values but does
-   not connect to or launch a server.
-4. Click **Test Connection** or **Refresh Models**. These actions use the saved
+3. Enter the server's **Base URL** and review the timeout and safety bounds.
+4. Choose audio.cpp as the default provider. Select **First available** or an
+   exact model, then choose **Server default** or an exact voice.
+5. Click **Save Settings** once. Saving validates and persists the values but
+   does not connect to or launch a server. The new defaults are available to
+   Console **Speak** without restarting Chatbook.
+6. Click **Test Connection** or **Refresh Models**. These actions use the saved
    settings and discover the server's TTS models.
-5. Return to **Playground**, select **audio.cpp**, then choose a discovered
+7. Return to **Playground**, select **audio.cpp**, then choose a discovered
    model. Voice discovery happens when the model is selected.
-6. Leave **Server default** selected to omit the voice from the request, or
+8. Leave **Server default** selected to omit the voice from the request, or
    select an announced voice.
-7. Enter text and click **Generate Speech**. After the complete WAV is
+9. Enter text and click **Generate Speech**. After the complete WAV is
    validated, use **Play** or **Export**.
+10. In Console, use **Speak** on a response to synthesize and play it with the
+   same saved defaults.
 
 audio.cpp currently returns one complete WAV per request and supports speed
 `1.0`; the Playground locks both controls while it is selected. This still uses
@@ -91,6 +96,17 @@ voice disappears after refresh, the Playground announces and selects a valid
 fallback. A failed audio.cpp request never silently uses another model or
 provider.
 
+Older audio.cpp settings with blank model or voice values are interpreted as
+**First available** and **Server default** when their mode keys are absent.
+Saving writes explicit mode keys. Exact selections retain compatibility aliases
+for older Chatbook builds; dynamic selections remove stale exact values. Before
+downgrading while using a dynamic selection, save explicit model and voice
+values or restore a trusted pre-feature configuration backup.
+
+If a save reports **Saved — applying after current speech**, the current
+admitted response is allowed to finish. Chatbook applies only the latest saved
+generation, without running old and replacement audio.cpp adapters together.
+
 **Privacy:** the text submitted for synthesis is sent to the configured
 audio.cpp server. Chatbook avoids putting that text, the configured origin or
 settings values, credentials, raw remote responses, and unsafe remote
@@ -100,6 +116,13 @@ This release does not download, launch, monitor, restart, or stop audio.cpp and
 does not accept a binary path or `server.json` path. User-provided binary plus
 user-provided `server.json` launch and supervision are deferred to later
 managed-mode slices.
+
+Release validation used an isolated clean configuration and a user-owned
+audio.cpp server at `127.0.0.1:8080`. A deterministic Mira Console response
+produced one complete owner-only WAV, played once through `/usr/bin/afplay`, and
+left the same external listener healthy after Chatbook shut down. A later
+post-rebase live rerun was not attempted because no server was listening;
+Chatbook did not start the installed binary.
 
 ### AudioBook Generator
 
@@ -450,9 +473,11 @@ auto_clear_buffer = true
 ### TTS Settings
 ```toml
 [app_tts]
-default_provider = "openai"
-default_voice = "alloy"
-default_format = "mp3"
+default_provider = "audio_cpp"
+default_model_mode = "first_available"
+default_voice_mode = "server_default"
+default_format = "wav"
+default_speed = 1.0
 
 [app_tts.audio_cpp]
 mode = "external"
@@ -476,5 +501,5 @@ max_identifier_characters = 256
 
 ---
 
-**Last Updated**: 2026-07-25
-**Version**: 2.1 (External audio.cpp Playground)
+**Last Updated**: 2026-07-26
+**Version**: 2.2 (Native external audio.cpp Console speech)
