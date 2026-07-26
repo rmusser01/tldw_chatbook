@@ -13,7 +13,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-task-628 fixed the lazy embeddings_rag gate at EmbeddingFactory, but two raw DEPENDENCIES_AVAILABLE reads in search_rag_window.py retain the stale-flag anti-pattern (cosmetic banner/guard shows deps-missing to users who have them). Also: the 628 test module's skipif over-covers test_manually_forced_unavailable_is_still_honored, which needs no extras - losing CI coverage on no-extras environments.
+task-657 fixed the lazy embeddings_rag gate at EmbeddingFactory, but two raw DEPENDENCIES_AVAILABLE reads in search_rag_window.py retain the stale-flag anti-pattern (cosmetic banner/guard shows deps-missing to users who have them). Also: the 657 test module's skipif over-covers test_manually_forced_unavailable_is_still_honored, which needs no extras - losing CI coverage on no-extras environments.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
