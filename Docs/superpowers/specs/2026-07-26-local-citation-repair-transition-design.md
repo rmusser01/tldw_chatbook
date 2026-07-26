@@ -330,7 +330,9 @@ text. The outer response path creates one request-scoped
 contracts in `console_provider_gateway.py`. The optional signal is passed
 unchanged through direct `stream_chat` calls and, for agent runs, through
 `ConsoleAgentBridge` and its streaming model adapter to the same gateway call.
-Existing callers may omit it.
+For an agent run, that one signal spans the entire outer run and is passed to
+every primary, intermediate tool-turn, and subagent gateway call; it is never
+reset between calls. Existing callers may omit it.
 
 The gateway sets the event only in the exact normalization branches where the
 gateway itself emits fallback copy; it sets the event before yielding that
@@ -526,6 +528,9 @@ evidence, source identity, locator, prompt, exception text, or traceback.
 - direct and agent gateway calls propagate the same request-scoped fallback
   signal; synthesized copy marks it before yield while genuine provider text
   equal to the fallback string leaves it unset
+- a multi-turn agent run bypasses final-answer repair when synthesized fallback
+  is emitted by any earlier primary, intermediate tool-turn, or subagent gateway
+  call
 - omitting the optional signal preserves existing gateway output types and
   behavior, and the signal never carries governed text
 - repair remains active and defers persistence when no builder is available
