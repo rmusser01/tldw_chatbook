@@ -11,7 +11,22 @@
 ## Global Constraints
 
 - Base branch: `origin/dev` at `8242a5b58`. Work in a git worktree, not the primary checkout — many concurrent agents mutate branches there.
-- `pytest` runs from the project venv only: `source .venv/bin/activate` first.
+- **A git worktree has no `.venv`.** Use the primary checkout's interpreter by absolute path, always with cwd set to the worktree, so the worktree's copy of the package wins over the editable-install pointer:
+
+  ```bash
+  cd <worktree> && /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest ...
+  ```
+
+  Confirm resolution before the first test run — `python -c "import tldw_chatbook; print(tldw_chatbook.__file__)"` must print a path inside the worktree. If it prints one in the primary checkout, **stop**: tests would be verifying the wrong tree and every deletion check would be meaningless.
+- **`pytest Tests/UI` cannot be run in one call.** It collects 5,183 tests and exceeds the platform's hard 10-minute per-call cap. The per-task gate below preserves its intent — a deletion breaks imports, and broken imports surface as *collection* errors:
+
+  ```bash
+  python -m pytest Tests/UI --collect-only -q   # must report 0 collection errors (~2.4s)
+  python -m pytest Tests/UI/test_evals_deletion_guard.py -q
+  python -c "import tldw_chatbook.app"
+  ```
+
+  Full-suite runs are the controller's job, backgrounded, and belong to Task 5. An implementer that finds itself waiting on a backgrounded suite should stop and report instead.
 - The `timeout` command is not available in this environment.
 - Deletion is gated **per symbol**, never per file assumption. Every group below states the exact importer check that must return empty before deleting.
 - No file outside the listed sets is modified, except `tldw_chatbook/app.py` in Task 4.
@@ -195,8 +210,7 @@ def test_no_source_imports_removed_module(stem: str) -> None:
 - [ ] **Step 3: Run the guard to verify it fails**
 
 ```bash
-source .venv/bin/activate
-pytest Tests/UI/test_evals_deletion_guard.py -v
+python -m pytest Tests/UI/test_evals_deletion_guard.py -v
 ```
 
 Expected: FAIL. All 5 `test_removed_module_file_is_absent` cases fail (files still exist), and `test_no_source_imports_removed_module[eval_events]` fails (the three Group A windows import it). The 4 other `stem` cases pass already, which is correct — those modules are imported by nothing.
@@ -223,7 +237,8 @@ Expected: PASS, 10 passed.
 
 ```bash
 python -c "import tldw_chatbook.app; print('app imports OK')"
-pytest Tests/UI -x -q
+python -m pytest Tests/UI --collect-only -q | tail -3
+python -m pytest Tests/UI/test_evals_deletion_guard.py -q
 ```
 
 Expected: `app imports OK`, and `Tests/UI` passes with **10 more tests than before this task** (the new guard's 5 + 5 parametrized cases) and no failures. `Tests/UI/test_non_obscuring_focus_contract.py` must still pass — it reads Evals files by path, but none of its subjects are in this group.
@@ -345,9 +360,9 @@ git rm tldw_chatbook/Widgets/Evals/Evals_Sidebar.py \
 - [ ] **Step 5: Run the guard and the suite**
 
 ```bash
-pytest Tests/UI/test_evals_deletion_guard.py -v
+python -m pytest Tests/UI/test_evals_deletion_guard.py -v
 python -c "import tldw_chatbook.app; print('app imports OK')"
-pytest Tests/UI -x -q
+python -m pytest Tests/UI --collect-only -q | tail -3
 ```
 
 Expected: guard PASSES (32 passed), `app imports OK`, `Tests/UI` unchanged from Task 1.
@@ -478,8 +493,8 @@ git rm tldw_chatbook/Widgets/Evals/eval_additional_dialogs.py \
 - [ ] **Step 10: Run the guard and the full UI suite**
 
 ```bash
-pytest Tests/UI/test_evals_deletion_guard.py -v
-pytest Tests/UI -q
+python -m pytest Tests/UI/test_evals_deletion_guard.py -v
+python -m pytest Tests/UI --collect-only -q | tail -3
 ```
 
 Expected: guard PASSES (38 passed). `Tests/UI` shows a **net 5 fewer tests** than the Task 2 baseline: 11 removed (4 from the deleted file, 2 + 1 + 1 + 2 inline, plus 1 dropped `parametrize` case) minus the 6 new guard cases this task added. No failures, no errors, no collection errors.
@@ -603,8 +618,7 @@ Expected: no output. Any hit in `tldw_chatbook/` must be resolved before continu
 - [ ] **Step 3: Run the whole test suite**
 
 ```bash
-source .venv/bin/activate
-pytest -q
+python -m pytest Tests/UI -q   # controller runs this backgrounded; see Global Constraints
 ```
 
 Expected: no new failures relative to the `origin/dev` baseline. Record the pass/fail counts. Per repo convention, pre-existing failures on `dev` are not this PR's to fix — but you must confirm they are pre-existing by comparing against a clean `origin/dev` run, not by assuming.
