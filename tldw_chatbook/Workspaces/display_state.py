@@ -389,7 +389,7 @@ def build_console_workspace_state(
             change_workspace_recovery=(
                 ""
                 if can_switch
-                else "Create a workspace in Library > Workspaces before switching."
+                else "Create one with the rail's New button or in Library > Details > Workspace."
             ),
             new_conversation_enabled=True,
             new_conversation_recovery="",
