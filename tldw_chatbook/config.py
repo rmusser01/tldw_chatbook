@@ -5,6 +5,7 @@
 import copy
 import json
 import sys
+from dataclasses import dataclass
 
 if sys.version_info < (3, 11):
     import tomli as tomllib
@@ -13,7 +14,7 @@ else:
 import os
 from pathlib import Path
 import toml
-from typing import Dict, Any, List, Optional, Mapping
+from typing import Any, Collection, Dict, List, Literal, Mapping, Optional
 
 #
 # Third-Party Imports
@@ -3804,42 +3805,121 @@ def _config_write_mode(config_path: Path) -> int:
     return _CONFIG_FILE_DEFAULT_MODE
 
 
-def save_settings_to_cli_config(
-    section_values: Mapping[str, Mapping[Any, Any]],
-) -> bool:
-    """Persist multiple config values with one TOML read/write and one cache reload."""
-    global _CONFIG_CACHE, _SETTINGS_CACHE, settings
-    logged_keys = {
-        section: list(values.keys()) for section, values in section_values.items()
-    }
-    logger.info(f"Attempting to save settings batch: {logged_keys!r}")
-    config_path = _get_effective_config_path()
+@dataclass(frozen=True, slots=True)
+class ConfigMutationResult:
+    """Outcome of an atomic config file replacement and cache reload."""
 
+    file_replaced: bool
+    caches_reloaded: bool
+    failure_phase: Literal["before_replace", "cache_reload"] | None
+
+    @property
+    def fully_applied(self) -> bool:
+        """Return whether both persistence phases completed."""
+        return self.file_replaced and self.caches_reloaded
+
+
+def _delete_config_keys(
+    config_data: Dict[str, Any],
+    delete_keys: Mapping[str, Collection[str]],
+) -> bool:
+    """Delete exact keys and report whether the config changed."""
+    changed = False
+    missing = object()
+    for section, keys in delete_keys.items():
+        current_level: Any = config_data
+        section_missing = False
+        for part in section.split("."):
+            if not isinstance(current_level, dict):
+                raise TypeError(part)
+            if part not in current_level:
+                section_missing = True
+                break
+            current_level = current_level[part]
+        if section_missing:
+            continue
+        if not isinstance(current_level, dict):
+            raise TypeError(section)
+        for key in keys:
+            if current_level.pop(key, missing) is not missing:
+                changed = True
+    return changed
+
+
+def _validate_config_mutation_targets(
+    section_values: Mapping[str, Mapping[Any, Any]],
+    delete_keys: Mapping[str, Collection[str]],
+) -> None:
+    """Validate input shapes and reject overlapping set/delete targets."""
+    if not isinstance(section_values, Mapping) or not isinstance(
+        delete_keys,
+        Mapping,
+    ):
+        raise TypeError("Configuration mutations must use mappings")
+
+    set_targets: set[tuple[str, Any]] = set()
+    for section, values in section_values.items():
+        if not isinstance(section, str) or not section:
+            raise TypeError("Configuration sections must be non-empty strings")
+        if not isinstance(values, Mapping):
+            raise TypeError("Configuration section values must be mappings")
+        for key in values:
+            set_targets.add((section, key))
+
+    delete_targets: set[tuple[str, str]] = set()
+    for section, keys in delete_keys.items():
+        if not isinstance(section, str) or not section:
+            raise TypeError("Configuration sections must be non-empty strings")
+        if isinstance(keys, (str, bytes)) or not isinstance(keys, Collection):
+            raise TypeError("Configuration delete keys must be collections")
+        for key in keys:
+            if not isinstance(key, str) or not key:
+                raise TypeError("Configuration delete keys must be non-empty strings")
+            delete_targets.add((section, key))
+
+    if set_targets.intersection(delete_targets):
+        raise ValueError("Configuration mutation cannot set and delete the same key")
+
+
+def apply_settings_mutation_to_cli_config(
+    section_values: Mapping[str, Mapping[Any, Any]],
+    *,
+    delete_keys: Mapping[str, Collection[str]] | None = None,
+) -> ConfigMutationResult:
+    """Atomically apply exact config sets/deletes, then refresh caches."""
+    global _CONFIG_CACHE, _SETTINGS_CACHE, settings
+    requested_deletes = {} if delete_keys is None else delete_keys
     try:
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        logger.error(f"Could not create config directory {config_path.parent}: {e}")
-        return False
+        config_path = _get_effective_config_path()
+    except Exception as error:
+        logger.error(
+            "Configuration mutation failed "
+            "(phase=resolve_path, config_path=unresolved, error_type={}).",
+            type(error).__name__,
+        )
+        return ConfigMutationResult(False, False, "before_replace")
 
     with _config_file_lock():
-        config_data: Dict[str, Any] = {}
-        if config_path.exists():
-            try:
+        try:
+            _validate_config_mutation_targets(section_values, requested_deletes)
+            logged_keys = {
+                section: list(values.keys())
+                for section, values in section_values.items()
+            }
+            logged_deletes = {
+                section: list(keys) for section, keys in requested_deletes.items()
+            }
+            logger.info(
+                "Attempting to apply settings mutation: "
+                f"sets={logged_keys!r}, deletes={logged_deletes!r}"
+            )
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_data: Dict[str, Any] = {}
+            if config_path.exists():
                 with open(config_path, "rb") as f:
                     config_data = tomllib.load(f)
-            except tomllib.TOMLDecodeError as e:
-                logger.error(
-                    f"Corrupted config file at {config_path}. Cannot save. Please fix or delete it. Error: {e}"
-                )
-                # Consider creating a backup of the corrupt file for the user.
-                return False
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Unexpected error reading {config_path}: {e}"
-                )
-                return False
 
-        try:
+            deleted_any = _delete_config_keys(config_data, requested_deletes)
             for section, values in section_values.items():
                 if not values:
                     continue
@@ -3848,108 +3928,80 @@ def save_settings_to_cli_config(
                     current_level[key] = _maybe_encrypt_setting_value(
                         config_data, key, value
                     )
-        except (TypeError, AttributeError):
-            logger.error(
-                "Configuration structure conflict. Could not save settings batch "
-                "because a part of the path is not a table/dictionary. Please check your config file."
-            )
-            return False
+            set_any = any(bool(values) for values in section_values.values())
+            if not set_any and not deleted_any:
+                return ConfigMutationResult(False, False, None)
 
-        try:
             atomic_write_text(
                 config_path,
                 toml.dumps(config_data),
                 mode=_config_write_mode(config_path),
             )
-            logger.success(f"Successfully saved settings batch to {config_path}")
+        except Exception as error:
+            logger.error(
+                "Configuration mutation failed "
+                "(phase=before_replace, config_path={}, error_type={}).",
+                config_path,
+                type(error).__name__,
+            )
+            return ConfigMutationResult(False, False, "before_replace")
 
+        file_replaced = True
+        logger.success(f"Successfully replaced settings file at {config_path}")
+
+        try:
             _CONFIG_CACHE = None
             _SETTINGS_CACHE = None
-            load_cli_config_and_ensure_existence(force_reload=True)
             settings = load_settings(force_reload=True)
-            logger.info("Global configuration caches invalidated and reloaded.")
-
-            return True
-        except (IOError, OSError, toml.TomlDecodeError) as e:
-            logger.opt(exception=True).error(
-                f"Failed to write updated config to {config_path}: {e}"
+        except Exception as error:
+            logger.error(
+                "Configuration mutation failed "
+                "(phase=cache_reload, config_path={}, error_type={}).",
+                config_path,
+                type(error).__name__,
             )
-            return False
+            return ConfigMutationResult(file_replaced, False, "cache_reload")
+
+        logger.info("Global configuration caches invalidated and reloaded.")
+        return ConfigMutationResult(file_replaced, True, None)
+
+
+def save_settings_to_cli_config(
+    section_values: Mapping[str, Mapping[Any, Any]],
+    *,
+    delete_keys: Mapping[str, Collection[str]] | None = None,
+) -> bool:
+    """Persist multiple config values with one atomic mutation and cache reload."""
+    result = apply_settings_mutation_to_cli_config(
+        section_values,
+        delete_keys=delete_keys,
+    )
+    if result.failure_phase is None and not result.file_replaced:
+        return True
+    return result.fully_applied
 
 
 def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
-    """Remove keys from a config section and persist the file atomically.
+    """Remove exact keys through the structured atomic mutation primitive.
 
     Args:
         section: Dotted config section path (e.g. ``"console.rail_state"``).
         keys: Keys to remove from that section.
 
     Returns:
-        True on success, including the no-op cases where the file, section,
-        or every named key is already absent. False only when the file
-        exists but cannot be read or rewritten, or the path is not a table.
+        True on success, including when the file, section, or keys are absent.
     """
-    global _CONFIG_CACHE, _SETTINGS_CACHE, settings
     config_path = _get_effective_config_path()
     if not config_path.exists():
         return True
 
-    with _config_file_lock():
-        try:
-            with open(config_path, "rb") as f:
-                config_data: Dict[str, Any] = tomllib.load(f)
-        except tomllib.TOMLDecodeError as e:
-            logger.error(
-                f"Corrupted config file at {config_path}. Cannot delete from it. Error: {e}"
-            )
-            return False
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"Unexpected error reading {config_path}: {e}"
-            )
-            return False
-
-        current_level: Any = config_data
-        for part in section.split("."):
-            if not isinstance(current_level, dict) or part not in current_level:
-                return True
-            current_level = current_level[part]
-        if not isinstance(current_level, dict):
-            logger.error(
-                f"Cannot delete keys from [{section}]: path is not a table in {config_path}."
-            )
-            return False
-
-        # Sentinel, not None: a key whose stored value is legitimately None
-        # must still count as removed so the file is rewritten.
-        _MISSING = object()
-        removed = [
-            key for key in keys if current_level.pop(key, _MISSING) is not _MISSING
-        ]
-        if not removed:
-            return True
-
-        try:
-            atomic_write_text(
-                config_path,
-                toml.dumps(config_data),
-                mode=_config_write_mode(config_path),
-            )
-            logger.info(
-                f"Removed {len(removed)} key(s) from [{section}] in {config_path}"
-            )
-
-            _CONFIG_CACHE = None
-            _SETTINGS_CACHE = None
-            load_cli_config_and_ensure_existence(force_reload=True)
-            settings = load_settings(force_reload=True)
-
-            return True
-        except (IOError, OSError, toml.TomlDecodeError) as e:
-            logger.opt(exception=True).error(
-                f"Failed to write updated config to {config_path}: {e}"
-            )
-            return False
+    result = apply_settings_mutation_to_cli_config(
+        {},
+        delete_keys={section: tuple(keys)},
+    )
+    if result.failure_phase is None and not result.file_replaced:
+        return True
+    return result.fully_applied
 
 
 def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:

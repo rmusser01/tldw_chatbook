@@ -25,6 +25,7 @@ from tldw_chatbook.TTS.adapter_registry import (
 from tldw_chatbook.TTS.adapter_types import (
     ProgressSink,
     TTSAudioResponse,
+    TTSConfigurationRevisionError,
     TTSOperationError,
     TTSProgress,
     TTSProviderDescriptor,
@@ -38,6 +39,7 @@ from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_module
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.legacy_bridge import legacy_provider_specs
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import (
     TTSService,
     bind_tts_service,
@@ -264,6 +266,7 @@ def registry_for_adapter(
     *,
     shutdown_timeout_seconds: float = 10.0,
     registry_type: type[TTSAdapterRegistry] = TTSAdapterRegistry,
+    exclusive_reconfigure: bool = False,
 ) -> TTSAdapterRegistry:
     replacements = FakeAdapterFactory(adapter.provider_id)
     calls = 0
@@ -284,6 +287,7 @@ def registry_for_adapter(
                 ),
                 factory=factory,
                 initial_config={"revision": 1},
+                exclusive_reconfigure=exclusive_reconfigure,
             ),
         ),
         aliases={},
@@ -307,6 +311,367 @@ async def test_synthesize_holds_lease_until_response_close() -> None:
     assert adapter.close_calls == 0
 
     await response.aclose()
+    assert adapter.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_admit_owns_revision_matched_lease_before_execution_and_response_close() -> (
+    None
+):
+    adapter = FakeAdapter("openai")
+    registry = registry_for_adapter(adapter, exclusive_reconfigure=True)
+    service = TTSService(registry, max_concurrent_operations=1)
+
+    operation = await service.admit(
+        tts_request(),
+        expected_configuration_revision=1,
+    )
+
+    assert service._operation_limit._value == 0
+    assert registry._total_leases() == 1
+    assert adapter.ensure_ready_calls == 0
+    assert adapter.synthesize_calls == 0
+    reconfigure = asyncio.create_task(
+        registry.reconfigure_provider("openai", {"revision": 2})
+    )
+    await asyncio.sleep(0)
+    assert reconfigure.done() is False
+    assert adapter.close_calls == 0
+
+    response = await operation.synthesize()
+    assert service._operation_limit._value == 0
+    assert registry._total_leases() == 1
+    assert reconfigure.done() is False
+    assert adapter.ensure_ready_calls == 1
+    assert adapter.synthesize_calls == 1
+
+    await response.aclose()
+    assert await reconfigure is ReconfigureResult.CHANGED
+    assert adapter.close_calls == 1
+    assert service._operation_limit._value == 1
+    assert registry._total_leases() == 0
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_admit_rejects_stale_revision_and_releases_service_slot() -> None:
+    adapter = FakeAdapter("openai")
+    registry = registry_for_adapter(adapter)
+    service = TTSService(registry, max_concurrent_operations=1)
+    await registry.reconfigure_provider("openai", {"revision": 2})
+
+    with pytest.raises(TTSConfigurationRevisionError):
+        await service.admit(
+            tts_request(),
+            expected_configuration_revision=1,
+        )
+
+    assert service._operation_limit._value == 1
+    assert registry._total_leases() == 0
+    assert registry._slots["openai"].active is None
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_admitted_execution_failure_releases_lease_and_service_slot() -> None:
+    class FailingAdapter(FakeAdapter):
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: ProgressSink | None = None,
+        ) -> TTSAudioResponse:
+            del request, progress_sink
+            self.synthesize_calls += 1
+            raise RuntimeError("synthesis failed")
+
+    adapter = FailingAdapter("openai")
+    registry = registry_for_adapter(adapter)
+    service = TTSService(registry, max_concurrent_operations=1)
+    operation = await service.admit(tts_request())
+
+    with pytest.raises(RuntimeError, match="synthesis failed"):
+        await operation.synthesize()
+
+    assert service._operation_limit._value == 1
+    assert registry._total_leases() == 0
+    assert service._admitted_operations == set()
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_admitted_operation_rejects_response_provider_mismatch_and_closes_once() -> (
+    None
+):
+    private_provider = "PRIVATE_ADAPTER_RESPONSE_PROVIDER"
+    stream_iterations = 0
+
+    class MismatchedProviderAdapter(FakeAdapter):
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: ProgressSink | None = None,
+        ) -> TTSAudioResponse:
+            del progress_sink
+            self.synthesize_calls += 1
+
+            async def stream() -> AsyncGenerator[bytes, None]:
+                nonlocal stream_iterations
+                stream_iterations += 1
+                yield b"must not be consumed"
+
+            async def cleanup() -> None:
+                self.response_close_calls += 1
+
+            return TTSAudioResponse(
+                provider_id=private_provider,
+                model_id=request.model_id,
+                audio_format=request.response_format,
+                content_type="audio/mpeg",
+                byte_stream=stream(),
+                cleanup=cleanup,
+            )
+
+    class CountingReleaseRegistry(TTSAdapterRegistry):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.release_calls = 0
+
+        async def _release(self, slot: Any, record: Any) -> None:
+            self.release_calls += 1
+            await super()._release(slot, record)
+
+    adapter = MismatchedProviderAdapter("openai")
+    registry = registry_for_adapter(
+        adapter,
+        registry_type=CountingReleaseRegistry,
+    )
+    assert isinstance(registry, CountingReleaseRegistry)
+    service = TTSService(registry, max_concurrent_operations=1)
+    unexpected_response: TTSAudioResponse | None = None
+    try:
+        with pytest.raises(TTSOperationError) as captured:
+            unexpected_response = await service.synthesize(tts_request())
+
+        error = captured.value
+        assert error.code == "audio_response_invalid"
+        assert str(error) == "TTS adapter returned invalid audio"
+        assert error.retryable is False
+        assert error.recovery_action == "check_provider"
+        assert error.operation_id
+        assert error.__context__ is None
+        assert private_provider not in repr(error)
+        assert stream_iterations == 0
+        assert adapter.response_close_calls == 1
+        assert registry.release_calls == 1
+        assert service._operation_limit._value == 1
+        assert registry._total_leases() == 0
+        assert service._admitted_operations == set()
+        assert service._responses == set()
+    finally:
+        if unexpected_response is not None:
+            await unexpected_response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+    assert adapter.response_close_calls == 1
+    assert registry.release_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_admission_releases_service_slot_once() -> None:
+    adapter = FakeAdapter("openai")
+    registry = registry_for_adapter(adapter)
+    service = TTSService(registry, max_concurrent_operations=1)
+    slot = registry._slots["openai"]
+    await slot.lock.acquire()
+    admission = asyncio.create_task(service.admit(tts_request()))
+    try:
+        for _ in range(100):
+            if service._operation_limit._value == 0:
+                break
+            await asyncio.sleep(0)
+        assert service._operation_limit._value == 0
+        admission.cancel("caller cancelled during admission")
+    finally:
+        slot.lock.release()
+
+    with pytest.raises(asyncio.CancelledError) as cancellation:
+        await admission
+    assert cancellation.value.args == ("caller cancelled during admission",)
+    assert service._operation_limit._value == 1
+    assert registry._total_leases() == 0
+    assert service._admitted_operations == set()
+
+    operation = await service.admit(tts_request())
+    response = await operation.synthesize()
+    await response.aclose()
+    assert service._operation_limit._value == 1
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_admitted_execution_releases_resources_once() -> None:
+    synthesis_started = asyncio.Event()
+    allow_synthesis = asyncio.Event()
+
+    class BlockingAdapter(FakeAdapter):
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: ProgressSink | None = None,
+        ) -> TTSAudioResponse:
+            del request, progress_sink
+            self.synthesize_calls += 1
+            synthesis_started.set()
+            await allow_synthesis.wait()
+            raise AssertionError("cancelled synthesis resumed")
+
+    adapter = BlockingAdapter("openai")
+    registry = registry_for_adapter(adapter)
+    service = TTSService(registry, max_concurrent_operations=1)
+    operation = await service.admit(tts_request())
+    execution = asyncio.create_task(operation.synthesize())
+    await synthesis_started.wait()
+
+    execution.cancel("caller cancelled during execution")
+    with pytest.raises(asyncio.CancelledError) as cancellation:
+        await execution
+
+    assert cancellation.value.args == ("caller cancelled during execution",)
+    assert service._operation_limit._value == 1
+    assert registry._total_leases() == 0
+    assert service._admitted_operations == set()
+    with pytest.raises(RuntimeError, match="already been used"):
+        await operation.synthesize()
+    assert service._operation_limit._value == 1
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_admitted_operation_is_single_use_after_response_transfer() -> None:
+    adapter = FakeAdapter("openai")
+    registry = registry_for_adapter(adapter)
+    service = TTSService(registry, max_concurrent_operations=1)
+    operation = await service.admit(tts_request())
+
+    response = await operation.synthesize()
+    with pytest.raises(RuntimeError, match="already been used"):
+        await operation.synthesize()
+
+    assert service._operation_limit._value == 0
+    assert registry._total_leases() == 1
+    await response.aclose()
+    assert service._operation_limit._value == 1
+    assert registry._total_leases() == 0
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_releases_abandoned_operation_and_response_resources() -> None:
+    adapter = FakeAdapter("openai")
+    registry = registry_for_adapter(adapter, shutdown_timeout_seconds=0)
+    service = TTSService(registry, max_concurrent_operations=2)
+    response = await service.synthesize(tts_request())
+    operation = await service.admit(tts_request())
+
+    assert service._operation_limit._value == 0
+    assert registry._total_leases() == 2
+    assert operation in service._admitted_operations
+    await service.close()
+    await asyncio.wait_for(service.wait_closed(), timeout=1)
+
+    assert adapter.response_close_calls == 1
+    assert service._operation_limit._value == 2
+    assert registry._total_leases() == 0
+    assert service._admitted_operations == set()
+    assert service._responses == set()
+    await response.aclose()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_owns_executing_admission_cleanup_after_drain_deadline() -> None:
+    synthesis_started = asyncio.Event()
+    allow_synthesis = asyncio.Event()
+    response_cleanup_finished = asyncio.Event()
+
+    class BlockingAdapter(FakeAdapter):
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: ProgressSink | None = None,
+        ) -> TTSAudioResponse:
+            del progress_sink
+            self.synthesize_calls += 1
+            synthesis_started.set()
+            await allow_synthesis.wait()
+
+            async def stream() -> AsyncGenerator[bytes, None]:
+                yield b"audio"
+
+            async def cleanup() -> None:
+                self.response_close_calls += 1
+                response_cleanup_finished.set()
+
+            return TTSAudioResponse(
+                provider_id=self.provider_id,
+                model_id=request.model_id,
+                audio_format=request.response_format,
+                content_type="audio/wav",
+                byte_stream=stream(),
+                cleanup=cleanup,
+            )
+
+    class CountingReleaseRegistry(TTSAdapterRegistry):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.release_calls = 0
+
+        async def _release(self, slot: Any, record: Any) -> None:
+            self.release_calls += 1
+            await super()._release(slot, record)
+
+    adapter = BlockingAdapter("openai")
+    registry = registry_for_adapter(
+        adapter,
+        shutdown_timeout_seconds=0,
+        registry_type=CountingReleaseRegistry,
+    )
+    assert isinstance(registry, CountingReleaseRegistry)
+    service = TTSService(registry, max_concurrent_operations=1)
+    operation = await service.admit(tts_request())
+    execution = asyncio.create_task(operation.synthesize())
+    await synthesis_started.wait()
+
+    tracked_during_execution = operation in service._admitted_operations
+    await service.close()
+    await asyncio.wait_for(service.wait_closed(), timeout=1)
+    shutdown_semaphore_value = service._operation_limit._value
+    shutdown_lease_count = sum(record.leases for record in registry._closing_records)
+    execution_pending_at_shutdown = not execution.done()
+
+    allow_synthesis.set()
+    with pytest.raises(TTSRegistryClosedError):
+        await asyncio.wait_for(execution, timeout=1)
+    await asyncio.wait_for(response_cleanup_finished.wait(), timeout=1)
+    await asyncio.wait_for(operation._resources.close(), timeout=1)
+    await asyncio.sleep(0)
+
+    assert tracked_during_execution is True
+    assert execution_pending_at_shutdown is True
+    assert shutdown_semaphore_value == 1
+    assert shutdown_lease_count == 0
+    assert registry.release_calls == 1
+    assert service._operation_limit._value == 1
+    assert all(record.leases == 0 for record in registry._closing_records)
+    assert service._admitted_operations == set()
+    assert service._responses == set()
+    assert adapter.response_close_calls == 1
     assert adapter.close_calls == 1
 
 
@@ -1338,9 +1703,55 @@ def test_default_bootstrap_prepends_audio_cpp_without_changing_legacy_specs(
     )
     assert service.registry.aliases() == {}
     assert service.configuration_revision("audio_cpp") == 1
+    assert service.preferences_snapshot() == TTSPreferencesSnapshot.from_settings({})
     assert service.registry._slots["audio_cpp"].spec.exclusive_reconfigure is True
     assert all(slot.active is None for slot in service.registry._slots.values())
     assert all(factory.calls == 0 for factory in factories.values())
+
+
+def test_default_bootstrap_parses_supplied_preferences_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_config = {
+        "APP_TTS_CONFIG": {
+            "default_provider": "audio_cpp",
+            "default_model_mode": "exact",
+            "default_model": "Opaque/Model",
+            "default_voice_mode": "server_default",
+            "default_format": "wav",
+            "default_speed": 1.0,
+        }
+    }
+    expected = TTSPreferencesSnapshot.from_settings(app_config)
+    parse_calls: list[Mapping[str, Any]] = []
+    real_parser = TTSPreferencesSnapshot.from_settings
+
+    def parse_once(
+        _snapshot_type: type[TTSPreferencesSnapshot],
+        settings: Mapping[str, Any],
+    ) -> TTSPreferencesSnapshot:
+        parse_calls.append(settings)
+        return real_parser(settings)
+
+    monkeypatch.setattr(
+        TTSPreferencesSnapshot,
+        "from_settings",
+        classmethod(parse_once),
+    )
+
+    service = build_default_tts_service(app_config)
+
+    assert parse_calls == [app_config]
+    assert service.preferences_snapshot() == expected
+    assert all(slot.active is None for slot in service.registry._slots.values())
+
+
+def test_direct_service_construction_has_safe_default_preferences() -> None:
+    adapter = FakeAdapter("openai")
+    service = TTSService(registry_for_adapter(adapter))
+
+    assert service.preferences_snapshot() == TTSPreferencesSnapshot.from_settings({})
+    assert adapter.synthesize_calls == 0
 
 
 def test_audio_cpp_provider_spec_owns_its_effective_configuration() -> None:

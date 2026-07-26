@@ -8,7 +8,9 @@ import struct
 import sys
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Mapping
+from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -16,24 +18,40 @@ import pytest
 from loguru import logger
 
 import tldw_chatbook.TTS as tts
+from Tests.TTS.adapter_fakes import FakeAdapterFactory, provider_spec
+from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSSettingsSaveEvent,
 )
+from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+    TTSCompleteEvent,
+    TTSEventHandler,
+)
 from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
-from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
+from tldw_chatbook.TTS.adapter_registry import (
+    ReconfigureResult,
+    TTSAdapterRegistry,
+)
 from tldw_chatbook.TTS.adapter_types import (
     TTSAudioResponse,
+    TTSConfigurationRevisionError,
     TTSOperationError,
     TTSProviderDescriptor,
+    TTSProviderReconfiguringError,
     TTSProviderSpec,
+    TTSProviderUnavailableError,
     TTSRequest,
 )
 from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_module
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.legacy_bridge import LEGACY_ROUTES
-from tldw_chatbook.TTS.TTS_Generation import TTSService
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.TTS_Generation import (
+    TTSService,
+    TTSSettingsPublicationTicket,
+)
 
 GUIDE_PATH = Path(__file__).parents[2] / "Docs/Development/TTS/TTS_MODULE_GUIDE.md"
 _TEST_WAIT_SECONDS = 2.0
@@ -139,9 +157,11 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
         "STTSGeneratedAudio",
         "STTSPlaygroundRequest",
         "TTSAudioResponse",
+        "TTSConfigMutation",
         "TTSModelInfo",
         "TTSOperationCode",
         "TTSOperationError",
+        "TTSPreferencesSnapshot",
         "TTSProgress",
         "TTSProviderCatalog",
         "TTSProviderDescriptor",
@@ -203,6 +223,576 @@ def test_tts_guide_documents_exact_legacy_routes_and_working_example() -> None:
 
 
 @pytest.mark.asyncio
+async def test_console_tts_metrics_use_only_the_safe_slice_one_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_values = (
+        "PRIVATE_MODEL_ID",
+        "[PRIVATE_VOICE_ID]",
+        "PRIVATE CHARACTER RESPONSE TEXT",
+        "https://user:password@private-audio.invalid:8181",
+        "PRIVATE_AUDIO_CPP_CREDENTIAL",
+        "/private/local/audio/path.wav",
+        "PRIVATE_CHARACTER_AUTHORITY",
+        "PRIVATE_RAW_UPSTREAM_DETAIL",
+    )
+    metric_calls: list[tuple[str, str, float | int, dict[str, Any]]] = []
+    log_messages: list[str] = []
+
+    async def stream() -> AsyncIterator[bytes]:
+        yield b"RIFF"
+        yield b"\x24\x00\x00\x00WAVE" + b"\x00" * 32
+
+    class Response:
+        provider_id = "audio_cpp"
+        model_id = private_values[0]
+        audio_format = "wav"
+        content_type = "audio/wav"
+        metadata = {
+            "origin": private_values[3],
+            "credential": private_values[4],
+            "local_path": private_values[5],
+            "authority": private_values[6],
+            "upstream": private_values[7],
+        }
+
+        def __init__(self) -> None:
+            self.byte_stream = stream()
+            self.close_calls = 0
+
+        async def aclose(self) -> None:
+            self.close_calls += 1
+            await self.byte_stream.aclose()
+
+    response = Response()
+
+    class Service:
+        def preferences_snapshot(self) -> SimpleNamespace:
+            return SimpleNamespace(provider_id="audio_cpp")
+
+        async def synthesize_default(
+            self,
+            *,
+            text: str,
+            voice_override: str | None = None,
+            progress_sink: object = None,
+        ) -> Response:
+            assert text == private_values[2]
+            assert voice_override == private_values[1]
+            del progress_sink
+            return response
+
+    class Handler(TTSEventHandler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.messages: list[object] = []
+
+        async def post_message(self, message: object) -> None:
+            self.messages.append(message)
+
+    def capture_counter(
+        name: str,
+        value: int = 1,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        metric_calls.append((name, "counter", value, dict(labels or {})))
+
+    def capture_histogram(
+        name: str,
+        value: float,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        metric_calls.append((name, "histogram", value, dict(labels or {})))
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_counter",
+        capture_counter,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_histogram",
+        capture_histogram,
+    )
+    handler = Handler()
+    handler._tts_service = Service()
+    sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
+    try:
+        await handler._generate_tts(
+            private_values[2],
+            "console-private-metrics",
+            private_values[1],
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert response.close_calls == 1
+    assert len(metric_calls) == 2
+    assert {kind for _name, kind, _value, _labels in metric_calls} == {
+        "counter",
+        "histogram",
+    }
+    for _name, _kind, _value, labels in metric_calls:
+        assert labels == {
+            "provider_id": "audio_cpp",
+            "resolution_source": "explicit_override",
+            "outcome_code": "success",
+        }
+    histogram = next(call for call in metric_calls if call[1] == "histogram")
+    assert isinstance(histogram[2], float)
+    assert histogram[2] >= 0.0
+
+    rendered = repr(metric_calls) + "\n".join(log_messages)
+    for private_value in private_values:
+        assert private_value not in rendered
+    assert all(
+        prohibited not in labels
+        for _name, _kind, _value, labels in metric_calls
+        for prohibited in (
+            "model",
+            "model_id",
+            "voice",
+            "voice_id",
+            "text",
+            "url",
+            "credential",
+            "configuration",
+            "path",
+            "authority",
+            "upstream",
+        )
+    )
+
+    await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_console_invalid_initial_provider_is_unconfigured_without_private_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_values = (
+        "PRIVATE_INITIAL_PROVIDER",
+        "PRIVATE_INITIAL_MODEL",
+        "PRIVATE_INITIAL_VOICE",
+        "PRIVATE_INITIAL_TEXT",
+    )
+    service = build_default_tts_service(
+        {
+            "APP_TTS_CONFIG": {
+                "default_provider": private_values[0],
+                "default_model_mode": "exact",
+                "default_model": private_values[1],
+                "default_voice_mode": "exact",
+                "default_voice": private_values[2],
+                "default_format": "wav",
+                "default_speed": 1.0,
+            }
+        }
+    )
+    metric_calls: list[tuple[str, dict[str, Any]]] = []
+    log_messages: list[str] = []
+
+    class Handler(TTSEventHandler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.messages: list[object] = []
+
+        async def post_message(self, message: object) -> None:
+            self.messages.append(message)
+
+    def capture_counter(
+        name: str,
+        value: int = 1,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        del value
+        metric_calls.append((name, dict(labels or {})))
+
+    def capture_histogram(
+        name: str,
+        value: float,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        del value
+        metric_calls.append((name, dict(labels or {})))
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_counter",
+        capture_counter,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_histogram",
+        capture_histogram,
+    )
+    handler = Handler()
+    handler._tts_service = service
+    sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
+    try:
+        await handler._generate_tts(
+            private_values[3],
+            "console-invalid-initial-provider",
+            None,
+        )
+    finally:
+        logger.remove(sink_id)
+        await handler.cleanup_tts_resources()
+        await service.close()
+        await service.wait_closed()
+
+    completions = [
+        message for message in handler.messages if isinstance(message, TTSCompleteEvent)
+    ]
+    assert len(completions) == 1
+    assert (
+        completions[0].error
+        == "TTS is unavailable; check STTS Settings and Retry/Reconnect"
+    )
+    assert service.preferences_snapshot() is None
+    assert metric_calls == []
+    assert handler._audio_files == {}
+    assert all(slot.active is None for slot in service.registry._slots.values())
+
+    rendered = repr(metric_calls) + "\n".join(log_messages) + repr(completions)
+    for private_value in private_values:
+        assert private_value not in rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response_provider", "response_model", "response_format"),
+    (
+        ("PRIVATE_RESPONSE_PROVIDER", "model", "wav"),
+        ("audio_cpp", None, "wav"),
+        ("audio_cpp", "model", "PRIVATE_RESPONSE_FORMAT"),
+    ),
+)
+async def test_console_malformed_response_metadata_is_an_audio_contract_error(
+    response_provider: object,
+    response_model: object,
+    response_format: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_values = (
+        "PRIVATE_RESPONSE_PROVIDER",
+        "PRIVATE_RESPONSE_FORMAT",
+        "PRIVATE_RESPONSE_METADATA",
+        "PRIVATE_RESPONSE_TEXT",
+    )
+    metric_calls: list[tuple[str, str, float | int, dict[str, Any]]] = []
+    log_messages: list[str] = []
+    stream_iterations = 0
+    response_close_calls = 0
+
+    async def stream() -> AsyncIterator[bytes]:
+        nonlocal stream_iterations
+        stream_iterations += 1
+        yield b"must not be consumed"
+
+    async def close_response() -> None:
+        nonlocal response_close_calls
+        response_close_calls += 1
+
+    response = TTSAudioResponse(
+        provider_id=response_provider,  # type: ignore[arg-type]
+        model_id=response_model,  # type: ignore[arg-type]
+        audio_format=response_format,  # type: ignore[arg-type]
+        content_type="audio/wav",
+        metadata={"private": private_values[2]},
+        byte_stream=stream(),
+        cleanup=close_response,
+    )
+
+    class Adapter:
+        async def ensure_ready(self) -> None:
+            return
+
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: object = None,
+        ) -> TTSAudioResponse:
+            assert request.provider_id == "audio_cpp"
+            assert request.text == private_values[3]
+            del progress_sink
+            return response
+
+        async def close(self) -> None:
+            return
+
+    adapter = Adapter()
+    registry = TTSAdapterRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=lambda _config: adapter,
+                initial_config={},
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(
+        registry,
+        preferences_snapshot=TTSPreferencesSnapshot(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="model",
+            voice_mode="server_default",
+            voice_id=None,
+            response_format="wav",
+            speed=1.0,
+        ),
+    )
+
+    class Handler(TTSEventHandler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.messages: list[object] = []
+
+        async def post_message(self, message: object) -> None:
+            self.messages.append(message)
+
+    def capture_counter(
+        name: str,
+        value: int = 1,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        metric_calls.append((name, "counter", value, dict(labels or {})))
+
+    def capture_histogram(
+        name: str,
+        value: float,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        metric_calls.append((name, "histogram", value, dict(labels or {})))
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_counter",
+        capture_counter,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_histogram",
+        capture_histogram,
+    )
+    handler = Handler()
+    handler._tts_service = service
+    sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
+    try:
+        await handler._generate_tts(
+            private_values[3],
+            "console-invalid-response",
+            None,
+        )
+    finally:
+        logger.remove(sink_id)
+        await handler.cleanup_tts_resources()
+        await service.close()
+        await service.wait_closed()
+
+    completions = [
+        message for message in handler.messages if isinstance(message, TTSCompleteEvent)
+    ]
+    assert len(completions) == 1
+    assert (
+        completions[0].error
+        == "The TTS service returned invalid audio; check provider compatibility"
+    )
+    assert response_close_calls == 1
+    assert stream_iterations == 0
+    assert len(metric_calls) == 2
+    for _name, _kind, _value, labels in metric_calls:
+        assert labels == {
+            "provider_id": "audio_cpp",
+            "resolution_source": "global",
+            "outcome_code": "audio_response_invalid",
+        }
+
+    rendered = repr(metric_calls) + "\n".join(log_messages) + repr(completions)
+    for private_value in private_values:
+        assert private_value not in rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "expected_copy", "expected_outcome"),
+    (
+        (
+            TTSProviderReconfiguringError("PRIVATE_RECONFIGURING_DETAIL"),
+            "TTS settings are being applied; retry shortly",
+            "reconfiguring",
+        ),
+        (
+            TTSProviderUnavailableError("PRIVATE_UNAVAILABLE_DETAIL"),
+            "TTS is unavailable; check STTS Settings and Retry/Reconnect",
+            "unavailable",
+        ),
+        (
+            TTSConfigurationRevisionError("PRIVATE_REVISION_DETAIL"),
+            "TTS settings changed before speech started; retry",
+            "revision_mismatch",
+        ),
+    ),
+)
+async def test_console_tts_lifecycle_errors_use_bounded_actionable_copy(
+    failure: Exception,
+    expected_copy: str,
+    expected_outcome: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metric_calls: list[tuple[str, str, float | int, dict[str, Any]]] = []
+    log_messages: list[str] = []
+
+    class Service:
+        def preferences_snapshot(self) -> SimpleNamespace:
+            return SimpleNamespace(provider_id="audio_cpp")
+
+        async def synthesize_default(
+            self,
+            *,
+            text: str,
+            voice_override: str | None = None,
+            progress_sink: object = None,
+        ) -> None:
+            del text, voice_override, progress_sink
+            raise failure
+
+    class Handler(TTSEventHandler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.messages: list[object] = []
+
+        async def post_message(self, message: object) -> None:
+            self.messages.append(message)
+
+    def capture_counter(
+        name: str,
+        value: int = 1,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        metric_calls.append((name, "counter", value, dict(labels or {})))
+
+    def capture_histogram(
+        name: str,
+        value: float,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        metric_calls.append((name, "histogram", value, dict(labels or {})))
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_counter",
+        capture_counter,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_histogram",
+        capture_histogram,
+    )
+    handler = Handler()
+    handler._tts_service = Service()
+    sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
+    try:
+        await handler._generate_tts(
+            "PRIVATE_FAILURE_TEXT",
+            "console-private-error",
+            None,
+        )
+    finally:
+        logger.remove(sink_id)
+
+    completions = [
+        message for message in handler.messages if isinstance(message, TTSCompleteEvent)
+    ]
+    assert len(completions) == 1
+    assert completions[0].error == expected_copy
+    assert len(expected_copy) < 100
+    assert len(metric_calls) == 2
+    for _name, _kind, _value, labels in metric_calls:
+        assert labels == {
+            "provider_id": "audio_cpp",
+            "resolution_source": "global",
+            "outcome_code": expected_outcome,
+        }
+
+    rendered = repr(metric_calls) + "\n".join(log_messages) + repr(completions)
+    assert str(failure) not in rendered
+    assert "PRIVATE_FAILURE_TEXT" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_registry_admission_errors_expose_no_configuration_values() -> None:
+    private_values = (
+        "http://private-audio-origin.invalid:8181",
+        "PRIVATE_AUDIO_CPP_CREDENTIAL",
+        "PRIVATE_REPLACEMENT_VALUE",
+    )
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                factory,
+                {
+                    "origin": private_values[0],
+                    "credential": private_values[1],
+                },
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    errors: list[BaseException] = []
+    await registry.reconfigure_provider(
+        "audio_cpp",
+        {"value": private_values[2]},
+    )
+    with pytest.raises(TTSConfigurationRevisionError) as revision:
+        await registry.acquire("audio_cpp", expected_revision=1)
+    errors.append(revision.value)
+
+    await registry.seal_provider_unavailable("audio_cpp")
+    with pytest.raises(TTSProviderUnavailableError) as unavailable:
+        await registry.acquire("audio_cpp", expected_revision=1)
+    errors.append(unavailable.value)
+
+    assert (
+        await registry.reconfigure_provider("audio_cpp", {"revision": 3})
+        is ReconfigureResult.CHANGED
+    )
+    lease = await registry.acquire("audio_cpp", expected_revision=3)
+    reconfigure = asyncio.create_task(
+        registry.reconfigure_provider("audio_cpp", {"revision": 4})
+    )
+    await asyncio.sleep(0)
+    with pytest.raises(TTSProviderReconfiguringError) as pending:
+        await registry.acquire("audio_cpp", expected_revision=2)
+    errors.append(pending.value)
+    await lease.release()
+    assert await reconfigure is ReconfigureResult.CHANGED
+    await registry.close()
+
+    exception_graphs = [_exception_graph(error) for error in errors]
+    rendered = " ".join(
+        (
+            repr([(type(error), error.args) for error in errors]),
+            repr(exception_graphs),
+            "\n".join("".join(traceback.format_exception(error)) for error in errors),
+        )
+    )
+    assert [type(error) for error in errors] == [
+        TTSConfigurationRevisionError,
+        TTSProviderUnavailableError,
+        TTSProviderReconfiguringError,
+    ]
+    assert [str(error) for error in errors] == [
+        "TTS provider configuration changed: audio_cpp",
+        "TTS provider is unavailable: audio_cpp",
+        "TTS provider is reconfiguring: audio_cpp",
+    ]
+    assert all(graph == [error] for graph, error in zip(exception_graphs, errors))
+    assert all(private_value not in rendered for private_value in private_values)
+
+
+@pytest.mark.asyncio
 async def test_openai_backend_never_logs_api_key_details(monkeypatch) -> None:
     secret = "sk-UniquePrefix-Extremely-Private-Suffix"
     messages: list[str] = []
@@ -233,56 +823,119 @@ async def test_openai_backend_never_logs_api_key_details(monkeypatch) -> None:
 async def test_stts_settings_save_logs_names_and_destinations_not_secrets(
     monkeypatch,
 ) -> None:
+    from tldw_chatbook import config as config_module
+
     secrets = {
         "openai_api_key": "sk-OpenAI-UniquePrefix-PrivateSuffix",
         "elevenlabs_api_key": "xi-ElevenLabs-UniquePrefix-PrivateSuffix",
     }
-    saved_batches: list[dict[str, dict[str, str]]] = []
+    saved_batches: list[dict[str, dict[str, Any]]] = []
+    saved_deletes: list[dict[str, tuple[str, ...]]] = []
+    attempted_configs: list[tuple[str, dict[str, Any]]] = []
     messages: list[str] = []
+    posted_messages: list[object] = []
+    current_settings: dict[str, Any] = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "API": {},
+            "app_tts": {},
+        }
+    }
 
     class App:
         def notify(self, message: str, *, severity: str) -> None:
             messages.append(f"{severity}: {message}")
 
-    handler = STTSEventHandler(App())
+        def post_message(self, message: object) -> bool:
+            posted_messages.append(message)
+            return True
 
-    class Service:
-        async def reconfigure_provider(self, provider_id: str, config: object) -> None:
-            del provider_id, config
+    class CapturingRegistry(TTSAdapterRegistry):
+        async def begin_reconfigure_provider(
+            self,
+            provider_id: str,
+            config: Mapping[str, Any],
+            *,
+            generation: int | None = None,
+        ) -> Any:
+            attempted_configs.append((provider_id, deepcopy(dict(config))))
+            return await super().begin_reconfigure_provider(
+                provider_id,
+                config,
+                generation=generation,
+            )
 
-    def save_settings(section_values: dict[str, dict[str, str]]) -> bool:
-        saved_batches.append(section_values)
-        return True
-
-    handler._stts_service = Service()
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config",
-        save_settings,
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    registry = CapturingRegistry(
+        specs=tuple(
+            provider_spec(provider_id, FakeAdapterFactory(provider_id))
+            for provider_id in ("openai", "elevenlabs")
+        ),
+        aliases={},
     )
+    service = TTSService(
+        registry,
+        preferences_snapshot=TTSPreferencesSnapshot.from_settings(current_settings),
+    )
+    handler = STTSEventHandler(App())
+    handler._stts_service = service
+
+    def apply_settings(
+        section_values: Mapping[str, Mapping[Any, Any]],
+        *,
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> Any:
+        saved_batches.append(
+            {
+                section: deepcopy(dict(values))
+                for section, values in section_values.items()
+            }
+        )
+        saved_deletes.append(deepcopy(dict(delete_keys)))
+        return config_module.ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(config_module, "settings", current_settings)
     monkeypatch.setattr(
-        "tldw_chatbook.config.load_settings",
-        lambda *, force_reload=False: {
-            "COMPREHENSIVE_CONFIG_RAW": {"API": secrets, "app_tts": {}}
-        },
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        apply_settings,
     )
 
     sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
     try:
-        await handler.handle_settings_save(STTSSettingsSaveEvent(secrets))
+        await asyncio.wait_for(
+            handler.handle_settings_save(STTSSettingsSaveEvent(secrets)),
+            timeout=_TEST_WAIT_SECONDS,
+        )
     finally:
         logger.remove(sink_id)
+        await asyncio.wait_for(service.close(), timeout=_TEST_WAIT_SECONDS)
+        await asyncio.wait_for(service.wait_closed(), timeout=_TEST_WAIT_SECONDS)
 
-    assert saved_batches == [
-        {
-            "API": {
-                "openai_api_key": secrets["openai_api_key"],
-                "elevenlabs_api_key": secrets["elevenlabs_api_key"],
-            }
-        }
+    assert len(saved_batches) == 1
+    assert saved_batches[0]["API"] == secrets
+    assert saved_deletes == [{}]
+    assert service.preferences_generation() == 1
+    assert registry.configuration_revision("openai") == 2
+    assert registry.configuration_revision("elevenlabs") == 2
+    assert [provider_id for provider_id, _config in attempted_configs] == [
+        "openai",
+        "elevenlabs",
     ]
+    configs_by_provider = dict(attempted_configs)
+    assert (
+        configs_by_provider["openai"]["app_config"]["openai_api"]["api_key"]
+        == secrets["openai_api_key"]
+    )
+    assert (
+        configs_by_provider["elevenlabs"]["app_config"]["elevenlabs_api"]["api_key"]
+        == secrets["elevenlabs_api_key"]
+    )
+    assert len(posted_messages) == 2
     rendered = "\n".join(messages)
     assert "Saved openai_api_key to [API].openai_api_key" in rendered
     assert "Saved elevenlabs_api_key to [API].elevenlabs_api_key" in rendered
+    assert "information: Settings saved successfully!" in rendered
     for secret in secrets.values():
         assert secret not in rendered
         assert secret[:12] not in rendered
@@ -296,33 +949,111 @@ async def test_stts_settings_save_logs_names_and_destinations_not_secrets(
 async def test_stts_settings_save_does_not_echo_secret_from_writer_error(
     monkeypatch,
 ) -> None:
+    from tldw_chatbook import config as config_module
+
     secret = "sk-WriterError-UniquePrefix-PrivateSuffix"
-    messages: list[str] = []
+    log_messages: list[str] = []
+    notifications: list[tuple[str, str]] = []
+    posted_messages: list[object] = []
+    attempted_batches: list[dict[str, dict[str, Any]]] = []
+    captured_ticket: TTSSettingsPublicationTicket | None = None
+    current_settings: dict[str, Any] = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "API": {},
+            "app_tts": {},
+        }
+    }
 
     class App:
         def notify(self, message: str, *, severity: str) -> None:
-            messages.append(f"{severity}: {message}")
+            notifications.append((message, severity))
 
+        def post_message(self, message: object) -> bool:
+            posted_messages.append(message)
+            return True
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("openai", FakeAdapterFactory("openai")),),
+        aliases={},
+    )
+    service = TTSService(
+        registry,
+        preferences_snapshot=TTSPreferencesSnapshot.from_settings(current_settings),
+    )
+    original_begin = service.begin_preferences_publication
+
+    def begin_publication(*args: Any, **kwargs: Any) -> TTSSettingsPublicationTicket:
+        nonlocal captured_ticket
+        captured_ticket = original_begin(*args, **kwargs)
+        return captured_ticket
+
+    service.begin_preferences_publication = begin_publication  # type: ignore[method-assign]
     handler = STTSEventHandler(App())
+    handler._stts_service = service
 
-    def fail_to_save(section_values: dict[str, dict[str, str]]) -> None:
+    def fail_to_save(
+        section_values: Mapping[str, Mapping[Any, Any]],
+        *,
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> Any:
+        del delete_keys
+        attempted_batches.append(
+            {
+                section: deepcopy(dict(values))
+                for section, values in section_values.items()
+            }
+        )
         raise RuntimeError(f"could not save {section_values['API']['openai_api_key']}")
 
+    monkeypatch.setattr(config_module, "settings", current_settings)
     monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config",
+        config_module,
+        "apply_settings_mutation_to_cli_config",
         fail_to_save,
     )
 
-    sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
+    sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
+    completion = None
     try:
-        await handler.handle_settings_save(
-            STTSSettingsSaveEvent({"openai_api_key": secret})
+        await asyncio.wait_for(
+            handler.handle_settings_save(
+                STTSSettingsSaveEvent({"openai_api_key": secret})
+            ),
+            timeout=_TEST_WAIT_SECONDS,
+        )
+        assert captured_ticket is not None
+        completion = await asyncio.wait_for(
+            asyncio.shield(captured_ticket.completion),
+            timeout=_TEST_WAIT_SECONDS,
         )
     finally:
         logger.remove(sink_id)
+        await asyncio.wait_for(service.close(), timeout=_TEST_WAIT_SECONDS)
+        await asyncio.wait_for(service.wait_closed(), timeout=_TEST_WAIT_SECONDS)
 
-    rendered = "\n".join(messages)
+    assert len(attempted_batches) == 1
+    assert attempted_batches[0]["API"] == {"openai_api_key": secret}
+    assert completion is not None
+    assert completion.published is False
+    assert completion.persistence.file_replaced is False
+    assert completion.persistence.caches_reloaded is False
+    assert completion.persistence.failure_phase == "before_replace"
+    assert completion.provider_statuses == {"openai": "unchanged"}
+    assert captured_ticket is not None
+    assert captured_ticket.completion.exception() is None
+    assert registry.configuration_revision("openai") == 1
+    assert posted_messages == []
+    assert notifications == [("Failed to save settings", "error")]
+    rendered = "\n".join(
+        [
+            *log_messages,
+            *(f"{severity}: {message}" for message, severity in notifications),
+            repr(completion),
+        ]
+    )
     assert "Failed to save settings" in rendered
+    assert "could not save" not in rendered
     assert secret not in rendered
     assert secret[:12] not in rendered
     assert secret[-12:] not in rendered
@@ -335,66 +1066,125 @@ async def test_stts_settings_save_does_not_echo_secret_from_writer_error(
 async def test_stts_settings_save_does_not_echo_reconfiguration_error_secret(
     monkeypatch,
 ) -> None:
+    from tldw_chatbook import config as config_module
+
     secret = "sk-Reconfigure-UniquePrefix-PrivateSuffix"
-    messages: list[str] = []
-    saved_batches: list[dict[str, dict[str, str]]] = []
-    get_service_calls = 0
+    log_messages: list[str] = []
+    notifications: list[tuple[str, str]] = []
+    posted_messages: list[object] = []
+    saved_batches: list[dict[str, dict[str, Any]]] = []
+    attempted_configs: list[tuple[str, dict[str, Any]]] = []
+    captured_ticket: TTSSettingsPublicationTicket | None = None
+    current_settings: dict[str, Any] = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "API": {},
+            "app_tts": {},
+        }
+    }
 
     class App:
         def notify(self, message: str, *, severity: str) -> None:
-            messages.append(f"{severity}: {message}")
+            notifications.append((message, severity))
 
-    handler = STTSEventHandler(App())
+        def post_message(self, message: object) -> bool:
+            posted_messages.append(message)
+            return True
 
-    class Service:
-        async def reconfigure_provider(
+    class SecretFailingRegistry(TTSAdapterRegistry):
+        async def begin_reconfigure_provider(
             self,
             provider_id: str,
-            config: object,
-        ) -> None:
-            del provider_id, config
+            config: Mapping[str, Any],
+            *,
+            generation: int | None = None,
+        ) -> Any:
+            del generation
+            attempted_configs.append((provider_id, deepcopy(dict(config))))
             raise RuntimeError(f"rejected credential {secret}")
 
-    def save_settings(section_values: dict[str, dict[str, str]]) -> bool:
-        saved_batches.append(section_values)
-        return True
-
-    async def get_bound_service() -> Service:
-        nonlocal get_service_calls
-        get_service_calls += 1
-        return Service()
-
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config",
-        save_settings,
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    registry = SecretFailingRegistry(
+        specs=(provider_spec("openai", FakeAdapterFactory("openai")),),
+        aliases={},
     )
-    monkeypatch.setattr(
-        "tldw_chatbook.config.load_settings",
-        lambda *, force_reload=False: {
-            "COMPREHENSIVE_CONFIG_RAW": {
-                "API": {"openai_api_key": secret},
-                "app_tts": {},
+    service = TTSService(
+        registry,
+        preferences_snapshot=TTSPreferencesSnapshot.from_settings(current_settings),
+    )
+    original_begin = service.begin_preferences_publication
+
+    def begin_publication(*args: Any, **kwargs: Any) -> TTSSettingsPublicationTicket:
+        nonlocal captured_ticket
+        captured_ticket = original_begin(*args, **kwargs)
+        return captured_ticket
+
+    service.begin_preferences_publication = begin_publication  # type: ignore[method-assign]
+    handler = STTSEventHandler(App())
+    handler._stts_service = service
+
+    def apply_settings(
+        section_values: Mapping[str, Mapping[Any, Any]],
+        *,
+        delete_keys: Mapping[str, tuple[str, ...]],
+    ) -> Any:
+        del delete_keys
+        saved_batches.append(
+            {
+                section: deepcopy(dict(values))
+                for section, values in section_values.items()
             }
-        },
-    )
+        )
+        return config_module.ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(config_module, "settings", current_settings)
     monkeypatch.setattr(
-        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.get_tts_service",
-        get_bound_service,
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        apply_settings,
     )
 
-    sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
+    sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
+    completion = None
     try:
-        await handler.handle_settings_save(
-            STTSSettingsSaveEvent({"openai_api_key": secret})
+        await asyncio.wait_for(
+            handler.handle_settings_save(
+                STTSSettingsSaveEvent({"openai_api_key": secret})
+            ),
+            timeout=_TEST_WAIT_SECONDS,
+        )
+        assert captured_ticket is not None
+        completion = await asyncio.wait_for(
+            asyncio.shield(captured_ticket.completion),
+            timeout=_TEST_WAIT_SECONDS,
         )
     finally:
         logger.remove(sink_id)
+        await asyncio.wait_for(service.close(), timeout=_TEST_WAIT_SECONDS)
+        await asyncio.wait_for(service.wait_closed(), timeout=_TEST_WAIT_SECONDS)
 
-    assert saved_batches == [{"API": {"openai_api_key": secret}}]
-    assert get_service_calls == 1
-    rendered = "\n".join(messages)
-    assert "Failed to reconfigure TTS providers: openai" in rendered
-    assert "Settings saved, but some TTS providers could not be updated" in rendered
+    assert len(saved_batches) == 1
+    assert saved_batches[0]["API"] == {"openai_api_key": secret}
+    assert attempted_configs[0][0] == "openai"
+    assert attempted_configs[0][1]["app_config"]["openai_api"]["api_key"] == secret
+    assert completion is not None
+    assert completion.provider_statuses == {"openai": "unavailable"}
+    assert captured_ticket is not None
+    assert captured_ticket.completion.exception() is None
+    assert posted_messages == []
+    assert notifications == [
+        (
+            "Settings saved, but TTS is unavailable. Retry/Reconnect.",
+            "error",
+        )
+    ]
+    rendered = "\n".join(
+        [
+            *log_messages,
+            *(f"{severity}: {message}" for message, severity in notifications),
+            repr(completion),
+        ]
+    )
+    assert "Saved openai_api_key to [API].openai_api_key" in rendered
     assert "rejected credential" not in rendered
     assert secret not in rendered
     assert secret[:12] not in rendered

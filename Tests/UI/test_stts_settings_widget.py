@@ -23,12 +23,21 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
 )
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.UI import STTS_Window
 from tldw_chatbook.UI.STTS_Window import TTSSettingsWidget
 from tldw_chatbook.UI.stts_playground_catalog import (
     FIRST_AVAILABLE_MODEL_ID,
     SERVER_DEFAULT_VOICE_ID,
 )
+
+_PREFERENCE_PAYLOAD_KEYS = {
+    "default_provider",
+    "default_model",
+    "default_voice",
+    "default_format",
+    "default_speed",
+}
 
 
 class _SettingsHost(App[None]):
@@ -74,7 +83,7 @@ def test_settings_binding_table_classifies_every_widget_payload_key() -> None:
         and isinstance(target.slice.value, str)
     }
 
-    assert payload_keys == set(_TTS_SETTING_BINDINGS)
+    assert payload_keys == set(_TTS_SETTING_BINDINGS) - _PREFERENCE_PAYLOAD_KEYS
 
 
 @pytest.fixture
@@ -116,6 +125,101 @@ async def test_settings_selects_mount_with_canonical_values(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stored_preferences", "expected_model", "expected_voice"),
+    (
+        (
+            {
+                "default_model_mode": "first_available",
+                "default_model": "stale-model",
+                "default_voice_mode": "server_default",
+                "default_voice": "stale-voice",
+            },
+            FIRST_AVAILABLE_MODEL_ID,
+            SERVER_DEFAULT_VOICE_ID,
+        ),
+        (
+            {
+                "default_model": "",
+                "default_voice": "",
+            },
+            FIRST_AVAILABLE_MODEL_ID,
+            SERVER_DEFAULT_VOICE_ID,
+        ),
+        (
+            {
+                "default_model": "Legacy.Model/Exact",
+                "default_voice": "Legacy.Voice/Exact",
+            },
+            "Legacy.Model/Exact",
+            "Legacy.Voice/Exact",
+        ),
+    ),
+)
+async def test_audio_cpp_mount_uses_one_read_only_preference_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    stored_preferences: dict[str, object],
+    expected_model: object,
+    expected_voice: object,
+) -> None:
+    from tldw_chatbook import config as config_module
+
+    stored = {
+        ("app_tts", "default_provider"): "audio_cpp",
+        ("app_tts", "default_format"): "wav",
+        ("app_tts", "default_speed"): 1.0,
+        ("app_tts", "audio_cpp"): AudioCppConfig().to_mapping(),
+        **{("app_tts", key): value for key, value in stored_preferences.items()},
+    }
+    monkeypatch.setattr(
+        STTS_Window,
+        "get_cli_setting",
+        lambda section, key, default=None: stored.get((section, key), default),
+    )
+    monkeypatch.setattr(
+        TTSSettingsWidget,
+        "_load_kokoro_voice_blends",
+        lambda self: None,
+    )
+    parse_preferences = Mock(wraps=TTSPreferencesSnapshot.from_settings)
+    monkeypatch.setattr(
+        TTSPreferencesSnapshot,
+        "from_settings",
+        parse_preferences,
+    )
+    configuration_write = Mock(
+        side_effect=AssertionError("mount must not write configuration")
+    )
+    for helper_name in (
+        "apply_settings_mutation_to_cli_config",
+        "save_settings_to_cli_config",
+        "save_setting_to_cli_config",
+        "delete_settings_from_cli_config",
+    ):
+        monkeypatch.setattr(config_module, helper_name, configuration_write)
+    get_service = AsyncMock(
+        side_effect=AssertionError("mount must not materialize the TTS service")
+    )
+    monkeypatch.setattr(STTS_Window, "get_tts_service", get_service)
+    app = _SettingsHost()
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await pilot.pause()
+
+        assert app.query_one("#default-provider-select", Select).value == "audio_cpp"
+        assert app.query_one("#default-model-select", Select).value == expected_model
+        assert app.query_one("#default-voice-select", Select).value == expected_voice
+        assert app.query_one("#default-format-select", Select).value == "wav"
+        assert app.query_one("#default-format-select", Select).disabled is True
+        assert app.query_one("#default-speed-input", Input).value == "1.0"
+        assert app.query_one("#default-speed-input", Input).disabled is True
+
+    assert parse_preferences.call_count == 1
+    configuration_write.assert_not_called()
+    get_service.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_audio_cpp_stored_defaults_mount_and_save_without_nulls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -149,23 +253,29 @@ async def test_audio_cpp_stored_defaults_mount_and_save_without_nulls(
         widget._save_settings()
         await pilot.pause()
 
-        settings = app.saved_events[-1].settings
-        assert settings["default_provider"] == "audio_cpp"
-        assert settings["default_model"] == "<opaque:model>"
-        assert settings["default_voice"] == "[voice]"
-        assert settings["default_format"] == "wav"
-    assert settings["default_speed"] == 1.0
+        event = app.saved_events[-1]
+        assert event.preferences is not None
+        assert event.preferences.provider_id == "audio_cpp"
+        assert event.preferences.model_mode == "exact"
+        assert event.preferences.model_id == "<opaque:model>"
+        assert event.preferences.voice_mode == "exact"
+        assert event.preferences.voice_id == "[voice]"
+        assert event.preferences.response_format == "wav"
+        assert event.preferences.speed == 1.0
+        assert _PREFERENCE_PAYLOAD_KEYS.isdisjoint(event.settings)
 
 
 @pytest.mark.asyncio
 async def test_audio_cpp_settings_preserve_sentinel_shaped_remote_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    remote_model_id = "__opaque_model__"
-    remote_voice_id = "__server_default__"
+    remote_model_id = str(FIRST_AVAILABLE_MODEL_ID)
+    remote_voice_id = str(SERVER_DEFAULT_VOICE_ID)
     stored = {
         ("app_tts", "default_provider"): "audio_cpp",
+        ("app_tts", "default_model_mode"): "exact",
         ("app_tts", "default_model"): remote_model_id,
+        ("app_tts", "default_voice_mode"): "exact",
         ("app_tts", "default_voice"): remote_voice_id,
         ("app_tts", "default_format"): "wav",
         ("app_tts", "audio_cpp"): AudioCppConfig().to_mapping(),
@@ -197,9 +307,13 @@ async def test_audio_cpp_settings_preserve_sentinel_shaped_remote_defaults(
         app.query_one(TTSSettingsWidget)._save_settings()
         await pilot.pause()
 
-    settings = app.saved_events[-1].settings
-    assert settings["default_model"] == remote_model_id
-    assert settings["default_voice"] == remote_voice_id
+    event = app.saved_events[-1]
+    assert event.preferences is not None
+    assert event.preferences.model_mode == "exact"
+    assert event.preferences.model_id == remote_model_id
+    assert event.preferences.voice_mode == "exact"
+    assert event.preferences.voice_id == remote_voice_id
+    assert _PREFERENCE_PAYLOAD_KEYS.isdisjoint(event.settings)
 
 
 @pytest.mark.asyncio
@@ -229,10 +343,15 @@ async def test_selecting_audio_cpp_defaults_uses_non_materializing_sentinels(
         app.query_one(TTSSettingsWidget)._save_settings()
         await pilot.pause()
 
-        settings = app.saved_events[-1].settings
-        assert settings["default_provider"] == "audio_cpp"
-        assert settings["default_model"] == ""
-        assert settings["default_voice"] == ""
+        event = app.saved_events[-1]
+        assert event.preferences is not None
+        assert event.preferences.provider_id == "audio_cpp"
+        assert event.preferences.model_mode == "first_available"
+        assert event.preferences.model_id is None
+        assert event.preferences.voice_mode == "server_default"
+        assert event.preferences.voice_id is None
+        assert "default_model" not in event.settings
+        assert "default_voice" not in event.settings
 
 
 @pytest.mark.asyncio
@@ -255,10 +374,17 @@ async def test_settings_save_posts_canonical_values_and_explicit_openai_resets(
         await pilot.pause()
 
         assert app.saved_events, app.notices
-        settings = app.saved_events[-1].settings
-        assert settings["default_provider"] == "openai"
-        assert settings["default_voice"] == "alloy"
-        assert settings["default_model"] == "tts-1"
+        event = app.saved_events[-1]
+        settings = event.settings
+        assert event.preferences is not None
+        assert event.preferences.provider_id == "openai"
+        assert event.preferences.voice_mode == "exact"
+        assert event.preferences.voice_id == "alloy"
+        assert event.preferences.model_mode == "exact"
+        assert event.preferences.model_id == "tts-1"
+        assert event.preferences.response_format == "mp3"
+        assert event.preferences.speed == 1.0
+        assert _PREFERENCE_PAYLOAD_KEYS.isdisjoint(settings)
         assert settings["ELEVENLABS_DEFAULT_MODEL"] == "eleven_multilingual_v2"
         assert settings["KOKORO_DEVICE_DEFAULT"] == "cpu"
         assert settings["HIGGS_DEVICE"] == "auto"

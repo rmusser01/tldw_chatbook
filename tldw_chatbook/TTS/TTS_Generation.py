@@ -2,19 +2,26 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from typing import Any
+from copy import deepcopy
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Any, Literal
+from uuid import uuid4
 
 from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.adapter_registry import (
     ReconfigureResult,
     TTSAdapterLease,
     TTSAdapterRegistry,
+    TTSReconfigurationTicket,
 )
 from tldw_chatbook.TTS.adapter_types import (
     CleanupCallback,
     ProgressSink,
     TTSAudioResponse,
+    TTSOperationError,
     TTSProgress,
     TTSProviderCatalog,
     TTSProviderDescriptor,
@@ -23,10 +30,80 @@ from tldw_chatbook.TTS.adapter_types import (
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
+from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.request_admission import TTSRequestAdmissionCoordinator
 
 logger = logging.getLogger(__name__)
 
 _CLEANUP_FAILURE_NOTE = "TTS cleanup also failed while preserving the original error"
+_TTS_SETTINGS_FOREGROUND_TIMEOUT_SECONDS = 2.0
+
+TTSSettingsProviderStatus = Literal[
+    "applied",
+    "pending",
+    "unchanged",
+    "superseded",
+    "unavailable",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class TTSSettingsPersistenceOutcome:
+    """Structured result of atomic settings replacement and cache refresh."""
+
+    file_replaced: bool
+    caches_reloaded: bool
+    failure_phase: Literal["before_replace", "cache_reload"] | None
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.file_replaced) is not bool
+            or type(self.caches_reloaded) is not bool
+        ):
+            raise TypeError("TTS settings persistence flags must be booleans")
+        if self.failure_phase not in {None, "before_replace", "cache_reload"}:
+            raise ValueError("Unknown TTS settings persistence failure phase")
+        if self.caches_reloaded and not self.file_replaced:
+            raise ValueError("Caches cannot reload before settings replacement")
+        if self.failure_phase == "before_replace" and self.file_replaced:
+            raise ValueError("Pre-replacement failure cannot replace the settings file")
+        if self.failure_phase == "cache_reload" and (
+            not self.file_replaced or self.caches_reloaded
+        ):
+            raise ValueError("Cache-reload failure requires a replaced settings file")
+
+
+@dataclass(frozen=True, slots=True)
+class TTSSettingsPublication:
+    """One safe settings-publication result for foreground or final observers."""
+
+    generation: int
+    preferences: TTSPreferencesSnapshot
+    persistence: TTSSettingsPersistenceOutcome
+    provider_statuses: Mapping[str, TTSSettingsProviderStatus]
+    provider_revisions: Mapping[str, int]
+    published: bool
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "provider_statuses",
+            MappingProxyType(dict(self.provider_statuses)),
+        )
+        object.__setattr__(
+            self,
+            "provider_revisions",
+            MappingProxyType(dict(self.provider_revisions)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TTSSettingsPublicationTicket:
+    """Service-owned settings operation with bounded and definitive views."""
+
+    generation: int
+    foreground: asyncio.Future[TTSSettingsPublication]
+    completion: asyncio.Task[TTSSettingsPublication]
 
 
 def _sanitized_shutdown_error(*failures: BaseException) -> RuntimeError:
@@ -79,14 +156,44 @@ async def _cleanup_preserving_primary(
         _record_cleanup_failure(primary_error, cleanup_error)
 
 
+class _OperationCapacityReservation:
+    """One idempotent reservation of a service concurrency slot."""
+
+    def __init__(self, operation_limit: asyncio.Semaphore) -> None:
+        self._operation_limit = operation_limit
+        self._transferred = False
+        self._released = False
+
+    def transfer_to_resources(self) -> None:
+        if self._released or self._transferred:
+            raise RuntimeError("The TTS operation capacity is not transferable")
+        self._transferred = True
+
+    def release_if_untransferred(self) -> None:
+        if not self._transferred:
+            self._release()
+
+    def release_from_resources(self) -> None:
+        if not self._transferred:
+            raise RuntimeError("The TTS operation capacity was not transferred")
+        self._release()
+
+    def _release(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        self._operation_limit.release()
+
+
 class _OperationResources:
     def __init__(
         self,
         lease: TTSAdapterLease,
-        operation_limit: asyncio.Semaphore,
+        capacity: _OperationCapacityReservation,
     ) -> None:
         self._lease = lease
-        self._operation_limit = operation_limit
+        self._capacity = capacity
+        self._capacity.transfer_to_resources()
         self._cleanup_task: asyncio.Task[None] | None = None
 
     async def close(self) -> None:
@@ -101,7 +208,7 @@ class _OperationResources:
         try:
             await self._lease.release()
         finally:
-            self._operation_limit.release()
+            self._capacity.release_from_resources()
 
 
 class _ManagedAudioResponse(TTSAudioResponse):
@@ -152,6 +259,150 @@ class _ManagedAudioResponse(TTSAudioResponse):
             self._on_closed(self)
 
 
+class _AdmittedTTSOperation:
+    """Single-use synthesis operation with already-admitted resources."""
+
+    def __init__(
+        self,
+        *,
+        request: TTSRequest,
+        resources: _OperationResources,
+        close_signal: asyncio.Event,
+        on_finished: Callable[["_AdmittedTTSOperation"], None],
+        manage_response: Callable[
+            [TTSAudioResponse, _OperationResources],
+            _ManagedAudioResponse,
+        ],
+        observe_cleanup: Callable[[asyncio.Task[None]], None],
+    ) -> None:
+        self._request = request
+        self._resources = resources
+        self._close_signal = close_signal
+        self._on_finished = on_finished
+        self._manage_response = manage_response
+        self._observe_cleanup = observe_cleanup
+        self._claimed = False
+        self._used = False
+        self._executing = False
+        self._close_task: asyncio.Task[None] | None = None
+
+    def claim(self) -> None:
+        """Transfer a pending operation to its immediate execution owner."""
+        if self._used or self._claimed:
+            raise RuntimeError("The admitted TTS operation cannot be claimed")
+        self._claimed = True
+
+    async def synthesize(
+        self,
+        progress_sink: ProgressSink | None = None,
+    ) -> TTSAudioResponse:
+        """Execute the admitted request exactly once."""
+        if self._used:
+            raise RuntimeError("The admitted TTS operation has already been used")
+        self._claimed = True
+        self._used = True
+        self._executing = True
+
+        if self._close_signal.is_set():
+            closed_error = TTSRegistryClosedError("The TTS service is closed")
+            try:
+                await _cleanup_preserving_primary(self._resources.close, closed_error)
+            finally:
+                self._finish_tracking()
+            raise closed_error
+
+        lease = self._resources._lease
+        safe_sink = _isolate_progress_sink(progress_sink)
+        try:
+            await lease.adapter.ensure_ready()
+            response = await lease.adapter.synthesize(self._request, safe_sink)
+        except BaseException as error:
+            try:
+                await _cleanup_preserving_primary(self._resources.close, error)
+            finally:
+                self._finish_tracking()
+            raise
+
+        try:
+            response_provider_id = response.provider_id
+            admitted_provider_id = self._resources._lease.provider_id
+            if (
+                type(response_provider_id) is not str
+                or response_provider_id != admitted_provider_id
+            ):
+                raise TTSOperationError(
+                    code="audio_response_invalid",
+                    message="TTS adapter returned invalid audio",
+                    retryable=False,
+                    operation_id=uuid4().hex,
+                    recovery_action="check_provider",
+                )
+            managed_response = self._manage_response(response, self._resources)
+        except BaseException as error:
+
+            async def close_unmanaged_response() -> None:
+                try:
+                    await response.aclose()
+                finally:
+                    await self._resources.close()
+
+            try:
+                await _cleanup_preserving_primary(close_unmanaged_response, error)
+            finally:
+                self._finish_tracking()
+            raise
+
+        self._finish_tracking()
+        if self._close_signal.is_set():
+            closed_error = TTSRegistryClosedError("The TTS service is closed")
+            cleanup_tasks = (
+                managed_response.start_close(),
+                managed_response.start_resource_release(),
+            )
+            for cleanup_task in cleanup_tasks:
+                cleanup_task.add_done_callback(self._observe_cleanup)
+            raise closed_error
+        return managed_response
+
+    async def close(self) -> None:
+        """Release an admitted operation that has not started execution."""
+        await _join_retained_task(self.start_close())
+
+    def start_close(self) -> asyncio.Task[None]:
+        """Start idempotent resource cleanup for an abandoned operation."""
+        if self._close_task is None:
+            if self._used:
+                raise RuntimeError("The admitted TTS operation has already been used")
+            self._used = True
+            self._close_task = asyncio.create_task(self._close())
+        return self._close_task
+
+    def start_close_if_pending(self) -> asyncio.Task[None] | None:
+        """Start cleanup only when synthesis has not begun."""
+        if self._executing or self._claimed:
+            return None
+        return self.start_close()
+
+    def start_shutdown_cleanup(self) -> asyncio.Task[None] | None:
+        """Release resources for an operation still tracked after the drain."""
+        if self._claimed and not self._used:
+            return None
+        if self._close_task is None:
+            self._used = True
+            self._close_task = asyncio.create_task(self._close())
+        return self._close_task
+
+    async def _close(self) -> None:
+        try:
+            await self._resources.close()
+        finally:
+            self._finish_tracking()
+
+    def _finish_tracking(self) -> None:
+        self._executing = False
+        self._on_finished(self)
+
+
 class TTSService:
     """Coordinate registry-backed TTS operations and response lifetimes."""
 
@@ -160,6 +411,7 @@ class TTSService:
         registry: TTSAdapterRegistry,
         *,
         max_concurrent_operations: int = 4,
+        preferences_snapshot: TTSPreferencesSnapshot | None = None,
     ) -> None:
         if max_concurrent_operations < 1:
             raise ValueError("max_concurrent_operations must be positive")
@@ -169,6 +421,108 @@ class TTSService:
         self._registry_close_task: asyncio.Task[None] | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
         self._responses: set[_ManagedAudioResponse] = set()
+        self._admitted_operations: set[_AdmittedTTSOperation] = set()
+        self._settings_generation = 0
+        self._settings_persisted_provider_generations: dict[str, int] = {}
+        self._settings_publication_tasks: set[asyncio.Task[TTSSettingsPublication]] = (
+            set()
+        )
+        candidate_preferences = (
+            TTSPreferencesSnapshot.from_settings({})
+            if preferences_snapshot is None
+            else preferences_snapshot
+        )
+        canonical_provider_ids = frozenset(self._canonical_provider_ids())
+        initial_preferences = (
+            candidate_preferences
+            if candidate_preferences.provider_id in canonical_provider_ids
+            else None
+        )
+        self._request_admission = TTSRequestAdmissionCoordinator(
+            self,
+            initial_preferences,
+        )
+
+    async def admit(
+        self,
+        request: TTSRequest,
+        *,
+        expected_configuration_revision: int | None = None,
+    ) -> _AdmittedTTSOperation:
+        """Reserve service capacity and a revision-matched provider lease.
+
+        Args:
+            request: Native provider, model, and audio options.
+            expected_configuration_revision: Optional selected provider revision.
+
+        Returns:
+            A single-use operation that owns its admitted resources.
+        """
+        reservation: _OperationCapacityReservation | None = None
+        try:
+            reservation = await self._reserve_operation_capacity()
+            return await self._admit_reserved(
+                request,
+                reservation,
+                expected_configuration_revision=expected_configuration_revision,
+            )
+        except BaseException:
+            if reservation is not None:
+                reservation.release_if_untransferred()
+            raise
+
+    async def _reserve_operation_capacity(
+        self,
+    ) -> _OperationCapacityReservation:
+        """Reserve service capacity before entering request-selection gates."""
+        await self._acquire_operation_slot()
+        return _OperationCapacityReservation(self._operation_limit)
+
+    async def _admit_reserved(
+        self,
+        request: TTSRequest,
+        reservation: _OperationCapacityReservation,
+        *,
+        expected_configuration_revision: int | None = None,
+    ) -> _AdmittedTTSOperation:
+        """Acquire a provider lease using capacity reserved by this service."""
+        try:
+            lease = await self.registry.acquire(
+                request.provider_id,
+                expected_revision=expected_configuration_revision,
+            )
+        except BaseException:
+            reservation.release_if_untransferred()
+            raise
+
+        resources = _OperationResources(lease, reservation)
+        if self._close_signal.is_set():
+            closed_error = TTSRegistryClosedError("The TTS service is closed")
+            await _cleanup_preserving_primary(resources.close, closed_error)
+            raise closed_error
+
+        operation = _AdmittedTTSOperation(
+            request=request,
+            resources=resources,
+            close_signal=self._close_signal,
+            on_finished=self._admitted_operations.discard,
+            manage_response=self._manage_response,
+            observe_cleanup=self._observe_shutdown_result,
+        )
+        self._admitted_operations.add(operation)
+        if self._close_signal.is_set():
+            closed_error = TTSRegistryClosedError("The TTS service is closed")
+            await _cleanup_preserving_primary(operation.close, closed_error)
+            raise closed_error
+        return operation
+
+    async def _close_admitted_operation_preserving_primary(
+        self,
+        operation: _AdmittedTTSOperation,
+        primary_error: BaseException,
+    ) -> None:
+        """Close a claimed operation without replacing its primary failure."""
+        await _cleanup_preserving_primary(operation.close, primary_error)
 
     async def synthesize(
         self,
@@ -184,54 +538,30 @@ class TTSService:
         Returns:
             A response that releases its registry lease when closed.
         """
-        await self._acquire_operation_slot()
-        try:
-            lease = await self.registry.acquire(request.provider_id)
-        except BaseException:
-            self._operation_limit.release()
-            raise
+        operation = await self.admit(request)
+        return await operation.synthesize(progress_sink)
 
-        resources = _OperationResources(lease, self._operation_limit)
-        if self._close_signal.is_set():
-            closed_error = TTSRegistryClosedError("The TTS service is closed")
-            await _cleanup_preserving_primary(resources.close, closed_error)
-            raise closed_error
+    def preferences_snapshot(self) -> TTSPreferencesSnapshot | None:
+        """Return canonical default preferences, or None while unconfigured."""
+        return self._request_admission.preferences_snapshot()
 
-        safe_sink = _isolate_progress_sink(progress_sink)
-        try:
-            await lease.adapter.ensure_ready()
-            response = await lease.adapter.synthesize(request, safe_sink)
-        except BaseException as error:
-            await _cleanup_preserving_primary(resources.close, error)
-            raise
+    def preferences_generation(self) -> int:
+        """Return the latest saved settings generation published in memory."""
+        return self._request_admission.preferences_generation()
 
-        try:
-            managed_response = _ManagedAudioResponse(
-                response,
-                resources,
-                self._responses.discard,
-            )
-        except BaseException as error:
-
-            async def close_unmanaged_response() -> None:
-                try:
-                    await response.aclose()
-                finally:
-                    await resources.close()
-
-            await _cleanup_preserving_primary(close_unmanaged_response, error)
-            raise
-        self._responses.add(managed_response)
-        if self._close_signal.is_set():
-            closed_error = TTSRegistryClosedError("The TTS service is closed")
-            cleanup_tasks = (
-                managed_response.start_close(),
-                managed_response.start_resource_release(),
-            )
-            for cleanup_task in cleanup_tasks:
-                cleanup_task.add_done_callback(self._observe_shutdown_result)
-            raise closed_error
-        return managed_response
+    async def synthesize_default(
+        self,
+        *,
+        text: str,
+        voice_override: str | None = None,
+        progress_sink: ProgressSink | None = None,
+    ) -> TTSAudioResponse:
+        """Resolve and synthesize one revision-coherent default request."""
+        return await self._request_admission.synthesize_default(
+            text=text,
+            voice_override=voice_override,
+            progress_sink=progress_sink,
+        )
 
     async def generate_audio_stream(
         self,
@@ -278,6 +608,12 @@ class TTSService:
     def provider_descriptors(self) -> tuple[TTSProviderDescriptor, ...]:
         """Return ordered provider metadata without materializing adapters."""
         return self.registry.descriptors()
+
+    def _canonical_provider_ids(self) -> tuple[str, ...]:
+        """Return ordered exact provider IDs admitted by this service."""
+        return tuple(
+            descriptor.provider_id for descriptor in self.registry.descriptors()
+        )
 
     def configuration_revision(self, provider_id: str) -> int:
         """Return the current registry configuration revision for a provider.
@@ -343,6 +679,321 @@ class TTSService:
             The registry's reconfiguration result.
         """
         return await self.registry.reconfigure_provider(provider_id, config)
+
+    def begin_preferences_publication(
+        self,
+        preferences: TTSPreferencesSnapshot,
+        provider_configs: Mapping[str, Mapping[str, Any]],
+        persistence: Callable[[], TTSSettingsPersistenceOutcome],
+        *,
+        foreground_timeout_seconds: float = (_TTS_SETTINGS_FOREGROUND_TIMEOUT_SECONDS),
+    ) -> TTSSettingsPublicationTicket:
+        """Start one retained settings persistence and runtime publication.
+
+        Args:
+            preferences: Complete immutable preferences to publish after the
+                settings file is replaced.
+            provider_configs: Complete replacement configurations keyed by
+                canonical provider ID.
+            persistence: Blocking atomic persistence operation.
+            foreground_timeout_seconds: Maximum foreground wait for provider
+                handoffs after persistence succeeds.
+
+        Returns:
+            A service-owned ticket with bounded foreground and final views.
+
+        Raises:
+            TTSRegistryClosedError: If service shutdown has started.
+            TypeError: If an input does not match the publication contract.
+            ValueError: If provider IDs or the timeout are invalid.
+        """
+        if self._close_signal.is_set():
+            raise TTSRegistryClosedError("The TTS service is closed")
+        if not isinstance(preferences, TTSPreferencesSnapshot):
+            raise TypeError("preferences must be a TTSPreferencesSnapshot")
+        if not isinstance(provider_configs, Mapping):
+            raise TypeError("provider_configs must be a mapping")
+        if not callable(persistence):
+            raise TypeError("persistence must be callable")
+        if (
+            isinstance(foreground_timeout_seconds, bool)
+            or not isinstance(foreground_timeout_seconds, (int, float))
+            or not math.isfinite(foreground_timeout_seconds)
+            or foreground_timeout_seconds < 0
+        ):
+            raise ValueError("foreground timeout must be finite and non-negative")
+
+        canonical_ids = self._canonical_provider_ids()
+        canonical_id_set = frozenset(canonical_ids)
+        if preferences.provider_id not in canonical_id_set:
+            raise ValueError("preferences must use a canonical registered provider ID")
+        validated_configs: dict[str, dict[str, Any]] = {}
+        for provider_id, config in provider_configs.items():
+            if not isinstance(provider_id, str) or provider_id not in canonical_id_set:
+                raise ValueError("provider_configs must use canonical provider IDs")
+            if not isinstance(config, Mapping):
+                raise TypeError("Each TTS provider config must be a mapping")
+            validated_configs[provider_id] = deepcopy(dict(config))
+        copied_configs = {
+            provider_id: validated_configs[provider_id]
+            for provider_id in canonical_ids
+            if provider_id in validated_configs
+        }
+
+        generation = self.registry.reserve_reconfiguration_generation()
+        self._settings_generation = generation
+        foreground: asyncio.Future[TTSSettingsPublication] = (
+            asyncio.get_running_loop().create_future()
+        )
+        completion = asyncio.create_task(
+            self._run_preferences_publication(
+                generation=generation,
+                preferences=preferences,
+                provider_configs=copied_configs,
+                persistence=persistence,
+                foreground_timeout_seconds=float(foreground_timeout_seconds),
+                foreground=foreground,
+            ),
+            name=f"tts_settings_publication_{generation}",
+        )
+        self._settings_publication_tasks.add(completion)
+        completion.add_done_callback(self._settings_publication_tasks.discard)
+        completion.add_done_callback(self._observe_settings_publication)
+        return TTSSettingsPublicationTicket(
+            generation=generation,
+            foreground=foreground,
+            completion=completion,
+        )
+
+    async def _run_preferences_publication(
+        self,
+        *,
+        generation: int,
+        preferences: TTSPreferencesSnapshot,
+        provider_configs: Mapping[str, Mapping[str, Any]],
+        persistence: Callable[[], TTSSettingsPersistenceOutcome],
+        foreground_timeout_seconds: float,
+        foreground: asyncio.Future[TTSSettingsPublication],
+    ) -> TTSSettingsPublication:
+        tickets: dict[str, TTSReconfigurationTicket] = {}
+        provider_statuses: dict[str, TTSSettingsProviderStatus] = {}
+        provider_revisions: dict[str, int] = {}
+        persistence_outcome = TTSSettingsPersistenceOutcome(
+            file_replaced=False,
+            caches_reloaded=False,
+            failure_phase="before_replace",
+        )
+
+        async with self._request_admission._publication_lock:
+            try:
+                persisted = await asyncio.to_thread(persistence)
+                if not isinstance(persisted, TTSSettingsPersistenceOutcome):
+                    raise TypeError("Unexpected TTS settings persistence result")
+                persistence_outcome = persisted
+            except BaseException:
+                persistence_outcome = TTSSettingsPersistenceOutcome(
+                    file_replaced=False,
+                    caches_reloaded=False,
+                    failure_phase="before_replace",
+                )
+
+            if not persistence_outcome.file_replaced:
+                provider_statuses.update(
+                    {provider_id: "unchanged" for provider_id in provider_configs}
+                )
+                provider_revisions.update(
+                    self._safe_provider_revisions(provider_configs)
+                )
+                result = self._settings_publication_result(
+                    generation=generation,
+                    preferences=preferences,
+                    persistence=persistence_outcome,
+                    provider_statuses=provider_statuses,
+                    provider_revisions=provider_revisions,
+                    published=False,
+                )
+                self._resolve_settings_foreground(foreground, result)
+                return result
+
+            # Expose durable, provider-scoped proof before a newer handoff can
+            # wake an older publication that it superseded.
+            for provider_id in provider_configs:
+                self._settings_persisted_provider_generations[provider_id] = max(
+                    generation,
+                    self._settings_persisted_provider_generations.get(provider_id, 0),
+                )
+
+            async with self._request_admission._gate.write():
+                transition_failed = False
+                for provider_id, config in provider_configs.items():
+                    try:
+                        ticket = await self.registry.begin_reconfigure_provider(
+                            provider_id,
+                            config,
+                            generation=generation,
+                        )
+                        tickets[provider_id] = ticket
+                    except BaseException:
+                        transition_failed = True
+                        break
+
+                if transition_failed:
+                    await self._seal_provider_configs(provider_configs)
+                    provider_statuses.update(
+                        {provider_id: "unavailable" for provider_id in provider_configs}
+                    )
+                else:
+                    provider_statuses.update(
+                        await self._bounded_reconfiguration_statuses(
+                            tickets,
+                            timeout_seconds=foreground_timeout_seconds,
+                        )
+                    )
+
+                self._request_admission._publish_preferences(
+                    preferences,
+                    generation,
+                )
+                provider_revisions.update(
+                    self._safe_provider_revisions(provider_configs)
+                )
+                foreground_result = self._settings_publication_result(
+                    generation=generation,
+                    preferences=preferences,
+                    persistence=persistence_outcome,
+                    provider_statuses=provider_statuses,
+                    provider_revisions=provider_revisions,
+                    published=True,
+                )
+                self._resolve_settings_foreground(foreground, foreground_result)
+
+        final_statuses = dict(provider_statuses)
+        for provider_id, ticket in tickets.items():
+            if final_statuses.get(provider_id) == "pending":
+                final_statuses[provider_id] = await self._reconfiguration_status(
+                    provider_id,
+                    ticket,
+                )
+                continue
+            try:
+                await asyncio.shield(ticket.completion)
+            except BaseException:
+                pass
+        final_revisions = self._safe_provider_revisions(provider_configs)
+        return self._settings_publication_result(
+            generation=generation,
+            preferences=preferences,
+            persistence=persistence_outcome,
+            provider_statuses=final_statuses,
+            provider_revisions=final_revisions,
+            published=True,
+        )
+
+    async def _bounded_reconfiguration_statuses(
+        self,
+        tickets: Mapping[str, TTSReconfigurationTicket],
+        *,
+        timeout_seconds: float,
+    ) -> dict[str, TTSSettingsProviderStatus]:
+        if not tickets:
+            return {}
+        completion_to_provider = {
+            ticket.completion: provider_id for provider_id, ticket in tickets.items()
+        }
+        done, pending = await asyncio.wait(
+            completion_to_provider,
+            timeout=timeout_seconds,
+        )
+        statuses: dict[str, TTSSettingsProviderStatus] = {}
+        for completion in done:
+            provider_id = completion_to_provider[completion]
+            statuses[provider_id] = await self._reconfiguration_status(
+                provider_id,
+                tickets[provider_id],
+            )
+        for completion in pending:
+            statuses[completion_to_provider[completion]] = "pending"
+        return {provider_id: statuses[provider_id] for provider_id in tickets}
+
+    async def _reconfiguration_status(
+        self,
+        provider_id: str,
+        ticket: TTSReconfigurationTicket,
+    ) -> TTSSettingsProviderStatus:
+        try:
+            result = await asyncio.shield(ticket.completion)
+        except BaseException:
+            await self._seal_provider_configs((provider_id,))
+            return "unavailable"
+        if result is ReconfigureResult.CHANGED:
+            return "applied"
+        if result is ReconfigureResult.UNCHANGED:
+            return "unchanged"
+        if (
+            self._settings_persisted_provider_generations.get(provider_id, 0)
+            > ticket.generation
+        ):
+            return "superseded"
+        await self._seal_provider_configs((provider_id,))
+        return "unavailable"
+
+    async def _seal_provider_configs(
+        self,
+        provider_configs: Mapping[str, object] | tuple[str, ...],
+    ) -> None:
+        for provider_id in reversed(tuple(provider_configs)):
+            try:
+                await self.registry.seal_provider_unavailable(provider_id)
+            except BaseException:
+                pass
+
+    def _safe_provider_revisions(
+        self,
+        provider_configs: Mapping[str, object],
+    ) -> dict[str, int]:
+        revisions: dict[str, int] = {}
+        for provider_id in provider_configs:
+            try:
+                revisions[provider_id] = self.configuration_revision(provider_id)
+            except BaseException:
+                continue
+        return revisions
+
+    @staticmethod
+    def _settings_publication_result(
+        *,
+        generation: int,
+        preferences: TTSPreferencesSnapshot,
+        persistence: TTSSettingsPersistenceOutcome,
+        provider_statuses: Mapping[str, TTSSettingsProviderStatus],
+        provider_revisions: Mapping[str, int],
+        published: bool,
+    ) -> TTSSettingsPublication:
+        return TTSSettingsPublication(
+            generation=generation,
+            preferences=preferences,
+            persistence=persistence,
+            provider_statuses=provider_statuses,
+            provider_revisions=provider_revisions,
+            published=published,
+        )
+
+    @staticmethod
+    def _resolve_settings_foreground(
+        foreground: asyncio.Future[TTSSettingsPublication],
+        result: TTSSettingsPublication,
+    ) -> None:
+        if not foreground.done():
+            foreground.set_result(result)
+
+    @staticmethod
+    def _observe_settings_publication(
+        task: asyncio.Task[TTSSettingsPublication],
+    ) -> None:
+        try:
+            task.exception()
+        except BaseException:
+            pass
 
     async def close(self) -> None:
         """Seal admission and begin bounded provider shutdown."""
@@ -416,9 +1067,19 @@ class TTSService:
     def _start_close(self) -> tuple[asyncio.Task[None], asyncio.Task[None]]:
         if self._registry_close_task is None:
             self._close_signal.set()
+            publication_tasks = tuple(self._settings_publication_tasks)
+            operation_tasks = tuple(
+                cleanup_task
+                for operation in tuple(self._admitted_operations)
+                if (cleanup_task := operation.start_close_if_pending()) is not None
+            )
             self._registry_close_task = asyncio.create_task(self.registry.close())
             self._shutdown_task = asyncio.create_task(
-                self._complete_shutdown(self._registry_close_task)
+                self._complete_shutdown(
+                    self._registry_close_task,
+                    operation_tasks,
+                    publication_tasks,
+                )
             )
             self._shutdown_task.add_done_callback(self._observe_shutdown_result)
         assert self._shutdown_task is not None
@@ -427,6 +1088,8 @@ class TTSService:
     async def _complete_shutdown(
         self,
         registry_close_task: asyncio.Task[None],
+        operation_tasks: tuple[asyncio.Task[None], ...],
+        publication_tasks: tuple[asyncio.Task[TTSSettingsPublication], ...],
     ) -> None:
         failures: list[BaseException] = []
         try:
@@ -434,17 +1097,34 @@ class TTSService:
         except BaseException as error:
             failures.append(error)
 
+        late_operation_tasks = tuple(
+            cleanup_task
+            for operation in tuple(self._admitted_operations)
+            if (cleanup_task := operation.start_shutdown_cleanup()) is not None
+            and cleanup_task not in operation_tasks
+        )
         responses = tuple(self._responses)
         response_tasks = [response.start_close() for response in responses]
         resource_tasks = [response.start_resource_release() for response in responses]
         registry_wait_task = asyncio.create_task(self.registry.wait_closed())
-        results = await asyncio.gather(
+        terminal_shutdown_tasks = (
             registry_wait_task,
+            *operation_tasks,
             *resource_tasks,
+            *publication_tasks,
+        )
+        results = await asyncio.gather(
+            *terminal_shutdown_tasks,
+            *late_operation_tasks,
             return_exceptions=True,
         )
+        # A still-executing operation may later produce the primary failure.
+        # Its joined resource error remains available to that cleanup path and
+        # must not be promoted ahead of the unfinished execution.
         failures.extend(
-            result for result in results if isinstance(result, BaseException)
+            result
+            for result in results[: len(terminal_shutdown_tasks)]
+            if isinstance(result, BaseException)
         )
         await asyncio.sleep(0)
         for response_task in response_tasks:
@@ -457,6 +1137,19 @@ class TTSService:
                 failures.append(error)
         if failures:
             raise _sanitized_shutdown_error(*failures) from None
+
+    def _manage_response(
+        self,
+        response: TTSAudioResponse,
+        resources: _OperationResources,
+    ) -> _ManagedAudioResponse:
+        managed_response = _ManagedAudioResponse(
+            response,
+            resources,
+            self._responses.discard,
+        )
+        self._responses.add(managed_response)
+        return managed_response
 
     @staticmethod
     def _task_acquired_slot(task: asyncio.Task[bool]) -> bool:

@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Tasks: TASK-561, TASK-560, TASK-569
+Related Tasks: TASK-561, TASK-560, TASK-569, TASK-710
 Supersedes: N/A
 
 ## Decision
@@ -84,6 +84,22 @@ generation captures an immutable provider-neutral request and uses native
 `TTSService.synthesize()`, while the six existing providers retain the
 temporary compatibility generation path.
 
+TASK-710 extends the accepted service boundary to Console defaults. Global
+provider, model mode/value, voice mode/value, format, and speed are published
+as one immutable snapshot. Request selection and revision-matched lease
+acquisition share one admission gate with settings publication. audio.cpp
+Console speech uses the native service; the six retained providers remain
+inside `LegacyTTSAdapter`.
+
+The supported audio.cpp modes are exact model or `first_available`, and exact
+voice or `server_default`. Missing mode keys plus blank legacy audio.cpp values
+read as the dynamic modes without a startup write. A settings save persists
+authoritative mode keys in one atomic canonical/legacy mutation: exact values
+are dual-written, while dynamic modes remove stale exact aliases. Publication
+runs off the Textual event loop, permits a bounded foreground pending result,
+does not cancel an admitted response, and allows only the latest pending
+generation to complete the exclusive non-overlapping adapter handoff.
+
 The Playground maps Server default to an omitted voice, locks audio.cpp to WAV
 and speed `1.0`, and restores each legacy provider's prior controls when
 switching away. A successful complete-WAV artifact retains immutable provider,
@@ -138,6 +154,14 @@ policy, and a cross-module interface.
 
 - `TTSService` and `TTSAdapterRegistry` become application-owned lifecycle
   objects.
+- Global TTS preferences are published together as one immutable snapshot.
+  Under one application-owned shared admission gate, each request freezes its
+  complete selection and acquires a provider lease carrying the same
+  configuration revision.
+- Settings publication holds the exclusive side of that admission gate.
+  Requests observe either the old coherent preference-and-lease pair, the new
+  coherent pair, or a structured reconfiguring/unavailable state; they never
+  combine selection from one configuration revision with a lease from another.
 - Registration at the app boundary is explicit and sealed. Legacy wildcard
   matching is quarantined inside `LegacyBackendHost`, reset deterministically
   in tests, closed to new providers, and removed with the bridge.
@@ -160,10 +184,14 @@ policy, and a cross-module interface.
   drain, and independently releases service-owned leases and concurrency slots.
   Definitive service shutdown leaves no admission waiter blocked and does not
   wait indefinitely for a provider finalizer that ignores cancellation.
-- audio.cpp reconfiguration is an exclusive handoff: new operations are blocked
-  while active leases drain, the old adapter closes before the new
-  configuration becomes active, and the replacement remains lazy. Future
-  managed mode applies the same rule to an owned child.
+- audio.cpp reconfiguration is an exclusive handoff. The foreground settings
+  wait is finite, and an admitted request keeps its old provider lease until it
+  completes; that lease is never silently cancelled. Configuration pending
+  handoff is inert, superseded pending generations cannot become active, and
+  only the latest pending generation is eligible for activation. New
+  operations are blocked while active leases drain, the old adapter closes
+  before a replacement adapter can be created, and the replacement remains
+  lazy. Future managed mode applies the same rule to an owned child.
 - Provider-scoped legacy hosts preserve current implementations while isolating
   configuration replacement and backend caches. The quarantined class registry
   is their only shared legacy state.
@@ -263,6 +291,7 @@ policy, and a cross-module interface.
 - [Design spec](../../Docs/superpowers/specs/2026-07-23-audio-cpp-tts-adapter-registry-design.md)
 - [TASK-560](<../tasks/task-560 - Add-external-audio.cpp-native-TTS-adapter.md>)
 - [TASK-569](<../tasks/task-569 - Complete-external-audio.cpp-STTS-Playground-vertical.md>)
+- [TASK-710](<../tasks/task-710 - Make-external-audio.cpp-Console-TTS-settings-coherent.md>)
 - [Pinned audio.cpp server guide](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/README.md)
 - [Pinned audio.cpp server runtime](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/runtime.cpp)
 - [Pinned audio.cpp busy guard](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/busy_guard.h)
