@@ -85,8 +85,9 @@ class WordBenchRunner:
             canaries[target.id] = result.canary
             if result.is_warned:
                 logger.warning(
-                    "Word bench target %s preflighted degenerate; its column "
-                    "carries a warning.", target.name,
+                    "Word bench target {} preflighted degenerate; its column "
+                    "carries a warning.",
+                    target.name,
                 )
 
         group_id, run_ids = create_run_group(
@@ -100,7 +101,7 @@ class WordBenchRunner:
             for target in targets:
                 if cancel_token is not None and cancel_token.is_cancelled:
                     logger.info(
-                        "Word bench run group %s cancelled after %d/%d cells",
+                        "Word bench run group {} cancelled after {}/{} cells",
                         group_id, done, total,
                     )
                     return group_id
