@@ -27,7 +27,7 @@ Non-blocking follow-ups from the fal.ai + Gemini image-backend program's final w
 - [ ] Pre-existing (out of this program's diff): the chat-side Google path (`LLM_Calls/LLM_API_Calls.py` ~:2906) sends `x-goog-api-key` through a redirect-following `requests.Session` — outside the guarded-helper credential-strip net that now protects the image path. Route it through guarded transport or strip on redirect.
 - [ ] Per-backend keyring-source loader tests for `fal`/`gemini` (generic keyring path is covered; sibling backends share the same gap).
 - [ ] `fetch_bytes_via_post`'s docstring cites Fireworks (dropped) as its example consumer — reword to a generic bytes-returning-POST description. Note the helper currently has NO production consumer (kept: tested, guarded, and the class of API it serves recurs).
-- [ ] Gemini 429 (quota) surfaces the generic httpx text — add a friendlier enriched message ("rate limited / image quota exhausted — free-tier caps apply") alongside the 404 enrichment pattern (live-UAT observation).
+- [ ] Gemini 429 (quota) and fal 403 (locked/exhausted-balance) surface generic httpx text — add friendlier enriched messages ("rate limited / image quota exhausted — free-tier caps apply"; "fal account locked or out of balance — top up at fal.ai") alongside the 404 enrichment pattern (live-UAT observations; both raw bodies carry actionable detail our sanitization rightly drops — the enrichment can name the CATEGORY without echoing bodies).
 <!-- AC:END -->
 
 ## Implementation Plan
