@@ -149,6 +149,53 @@ def test_flat_backend_key_under_image_generation_warns_with_nested_replacement(m
     assert "[image_generation.openrouter] default_model" in matches[0]
 
 
+def _load_config_with_section(monkeypatch, section: dict, *, keyring: dict | None = None):
+    """Shared helper for the key_sources tests below: monkeypatch the raw
+    [image_generation] TOML section (+ optional keyring hits) the same way
+    every other test in this file does inline, then load. `keyring` maps
+    backend id -> fake keyring secret (default: keyring never hits)."""
+    from tldw_chatbook.Image_Generation import config as c
+    monkeypatch.setattr(c, "_read_image_generation_toml", lambda: section, raising=False)
+    kr = keyring or {}
+    monkeypatch.setattr(c, "_keyring_get", lambda backend: kr.get(backend), raising=False)
+    return c.get_image_generation_config(reload=True)
+
+
+def test_key_sources_env_wins(monkeypatch, tmp_path):
+    """key_sources records env origin with the winning variable name."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-env-key")
+    cfg = _load_config_with_section(monkeypatch, {"openrouter": {}})
+    assert cfg.key_sources["openrouter"] == "env:OPENROUTER_API_KEY"
+
+
+def test_key_sources_config(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    cfg = _load_config_with_section(monkeypatch, {"openrouter": {"api_key": "fake-config-key"}})
+    assert cfg.key_sources["openrouter"] == "config"
+
+
+def test_key_sources_missing(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    cfg = _load_config_with_section(monkeypatch, {})
+    assert cfg.key_sources["openrouter"] == "missing"
+    assert set(cfg.key_sources) == {"stable_diffusion_cpp", "swarmui", "openrouter", "novita", "together", "modelstudio"}
+
+
+def test_key_sources_modelstudio_names_winning_env(monkeypatch):
+    monkeypatch.setenv("QWEN_API_KEY", "fake-2")
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    cfg = _load_config_with_section(monkeypatch, {})
+    assert cfg.key_sources["modelstudio"] == "env:QWEN_API_KEY"
+
+
+def test_key_sources_keyring(monkeypatch):
+    """keyring-origin secret is recorded as "keyring" (not the raw value)."""
+    monkeypatch.delenv("NOVITA_API_KEY", raising=False)
+    cfg = _load_config_with_section(monkeypatch, {}, keyring={"novita": "kr-secret"})
+    assert cfg.key_sources["novita"] == "keyring"
+    assert cfg.novita_image_api_key == "kr-secret"  # existing secret-field behavior unchanged
+
+
 def test_unrecognized_key_under_image_generation_warns_generically(monkeypatch):
     from loguru import logger as loguru_logger
     from tldw_chatbook.Image_Generation import config as c
@@ -209,3 +256,78 @@ def test_unknown_key_warning_fires_once_per_load_not_per_field_access(monkeypatc
 
     matches = [m for m in messages if "openrouter_image_default_model" in m]
     assert len(matches) == 1
+
+
+# --- Final-review CRITICAL fix: swarmui's real config key is swarm_token ----
+#
+# FIELD_SCHEMA (Settings > Image Gen, matching the design spec) writes/
+# clears swarmui's secret under its OWN nested key, `swarm_token` -- but
+# _resolve_secret's config branch used to read a hardcoded "api_key" for
+# EVERY backend, so a pasted-and-saved swarm token landed in config.toml
+# yet was never read back (key_sources stayed "missing", the value stayed
+# None). Fixed by making the nested config key per-backend DATA in
+# _SECRETS, with "api_key" kept as a back-compat fallback ONLY when a
+# backend's own key is unset (so it never masks a real swarm_token, and
+# every OTHER backend -- whose nested key was already "api_key" -- is
+# unaffected).
+
+
+def test_key_sources_swarmui_config_via_swarm_token(monkeypatch):
+    """The round-trip the bug broke: write the secret via FIELD_SCHEMA's
+    actual toml_key (swarm_token) and the loader must resolve it."""
+    cfg = _load_config_with_section(
+        monkeypatch, {"swarmui": {"swarm_token": "fake-swarm-token"}}
+    )
+    assert cfg.key_sources["swarmui"] == "config"
+    assert cfg.swarmui_swarm_token == "fake-swarm-token"
+
+
+def test_key_sources_swarmui_legacy_api_key_fallback(monkeypatch):
+    """Back-compat: a config hand-written (or saved before this fix) with
+    the wrong/legacy `api_key` key for swarmui must still resolve."""
+    cfg = _load_config_with_section(
+        monkeypatch, {"swarmui": {"api_key": "fake-legacy-key"}}
+    )
+    assert cfg.key_sources["swarmui"] == "config"
+    assert cfg.swarmui_swarm_token == "fake-legacy-key"
+
+
+def test_key_sources_swarmui_swarm_token_wins_over_legacy_api_key(monkeypatch):
+    """When both are somehow set, the real key wins -- the fallback never
+    overrides an explicit swarm_token value."""
+    cfg = _load_config_with_section(
+        monkeypatch,
+        {"swarmui": {"swarm_token": "real-token", "api_key": "stale-legacy-key"}},
+    )
+    assert cfg.key_sources["swarmui"] == "config"
+    assert cfg.swarmui_swarm_token == "real-token"
+
+
+def test_key_sources_swarmui_missing_when_neither_key_set(monkeypatch):
+    monkeypatch.delenv("SWARMUI_TOKEN", raising=False)
+    cfg = _load_config_with_section(monkeypatch, {"swarmui": {}})
+    assert cfg.key_sources["swarmui"] == "missing"
+    assert cfg.swarmui_swarm_token in (None, "")
+
+
+def test_key_sources_swarmui_env_wins_over_config_key(monkeypatch):
+    """Precedence (env > config > keyring) is unaffected by the config-key
+    fix -- swarm_token in config is still beaten by SWARMUI_TOKEN in env."""
+    monkeypatch.setenv("SWARMUI_TOKEN", "fake-env-token")
+    cfg = _load_config_with_section(
+        monkeypatch, {"swarmui": {"swarm_token": "fake-swarm-token"}}
+    )
+    assert cfg.key_sources["swarmui"] == "env:SWARMUI_TOKEN"
+    assert cfg.swarmui_swarm_token == "fake-env-token"
+
+
+def test_other_backends_config_key_unaffected_by_swarmui_fix(monkeypatch):
+    """Every non-swarmui backend's config_key was already "api_key" --
+    the fix must be a no-op for them (no fallback ever engages, since
+    config_key == "api_key" already)."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    cfg = _load_config_with_section(
+        monkeypatch, {"openrouter": {"api_key": "fake-openrouter-key"}}
+    )
+    assert cfg.key_sources["openrouter"] == "config"
+    assert cfg.openrouter_image_api_key == "fake-openrouter-key"

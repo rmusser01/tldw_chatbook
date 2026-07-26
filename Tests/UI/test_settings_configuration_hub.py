@@ -150,14 +150,14 @@ def test_internal_prompts_appears_in_settings_sidebar_expert_group():
 def test_settings_category_summaries_cover_every_category_id_exactly_once():
     """Guards the total sidebar category count.
 
-    Adding Internal Prompts brought the total from 19 to 20 categories. This
-    pins the literal count so the next addition must touch this assertion
-    deliberately, and cross-checks that summaries neither miss nor duplicate
-    an enum member.
+    Adding Internal Prompts brought the total from 19 to 20; adding Image Gen
+    (Settings > Image Gen task 4) brought it to 21. This pins the literal
+    count so the next addition must touch this assertion deliberately, and
+    cross-checks that summaries neither miss nor duplicate an enum member.
     """
     screen = SettingsScreen(_build_test_app())
     summaries = screen._category_summaries()
-    assert len(summaries) == len(list(SettingsCategoryId)) == 20
+    assert len(summaries) == len(list(SettingsCategoryId)) == 21
     assert {s.category for s in summaries} == set(SettingsCategoryId)
 
 
@@ -775,6 +775,14 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
         SettingsCategoryId.WORKFLOWS,
         SettingsCategoryId.MCP_DEFAULTS,
         SettingsCategoryId.ACP_DEFAULTS,
+        SettingsCategoryId.IMAGE_GENERATION,
+    }
+    # LIBRARY_RAG and IMAGE_GENERATION are the two "Domain Defaults" members
+    # with a full self-owned editor (Settings genuinely persists their
+    # config) rather than a pure view-only pointer to another destination.
+    mutable_categories = {
+        SettingsCategoryId.LIBRARY_RAG,
+        SettingsCategoryId.IMAGE_GENERATION,
     }
 
     assert set(contracts) == expected_categories
@@ -783,7 +791,7 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
         assert contract.owner_destination
         assert contract.source_of_truth
         assert contract.follow_up
-        if category is SettingsCategoryId.LIBRARY_RAG:
+        if category in mutable_categories:
             assert contract.settings_can_mutate is True
         else:
             assert contract.settings_can_mutate is False

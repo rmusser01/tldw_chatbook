@@ -30,6 +30,7 @@ class SettingsCategoryId(StrEnum):
     DIAGNOSTICS = "diagnostics"
     ADVANCED_CONFIG = "advanced-config"
     INTERNAL_PROMPTS = "internal-prompts"
+    IMAGE_GENERATION = "image_generation"
 
 
 class SettingsValidationState(StrEnum):

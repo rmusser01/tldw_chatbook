@@ -118,7 +118,28 @@ from .settings_config_models import (
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor
 from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel
+from ...Widgets.settings_image_gen_panel import (
+    ImageGenSettingsPanel,
+    _key_source_line as _image_gen_key_source_line,
+    _secret_placeholder as _image_gen_secret_placeholder,
+)
 from ...Internal_Prompts import authoring as internal_prompts_authoring
+from .settings_image_gen_defaults import (
+    BACKEND_IDS as IMAGE_GEN_BACKEND_IDS,
+    FIELD_SCHEMA as IMAGE_GEN_FIELD_SCHEMA,
+    ImageGenDraftValues,
+    canonical_backend_order as image_gen_canonical_backend_order,
+    diff_to_sections as image_gen_diff_to_sections,
+    effective_placeholder as image_gen_effective_placeholder,
+    effective_secret_value as image_gen_effective_secret_value,
+    key_source_after_clear as image_gen_key_source_after_clear,
+    probe_backend as image_gen_probe_backend,
+    validate_draft as validate_image_gen_draft,
+)
+from ...Image_Generation.config import (
+    get_image_generation_config,
+    reset_image_generation_config_cache,
+)
 from .settings_appearance_defaults import (
     SettingsAppearanceDefaults,
     build_appearance_save_sections,
@@ -617,6 +638,34 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
         ),
         follow_up="Follow-up: add ACP defaults after ACP exposes a persisted runtime/session preference contract.",
     ),
+    SettingsDomainCategoryContract(
+        category=SettingsCategoryId.IMAGE_GENERATION,
+        title="Image Gen",
+        owner_destination="Console",
+        source_of_truth=(
+            "config.toml [image_generation] (+ nested backend sections)",
+            "Image_Generation engine (adapters/worker)",
+        ),
+        rows=(
+            (
+                "Generation actions",
+                "Console owns /generate-image, cards, variants",
+            ),
+            (
+                "Settings role",
+                "Settings edits persisted backend/config defaults only",
+            ),
+            (
+                "Style templates",
+                "config/templates dir own definitions; management UI planned",
+            ),
+        ),
+        settings_can_mutate=True,
+        follow_up=(
+            "Follow-up: add a dedicated style-template create/edit/delete UI (v2); "
+            "v1 shows a read-only count only."
+        ),
+    ),
 )
 
 
@@ -959,6 +1008,27 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         (
             "Boundary",
             "edits apply to internal tooling prompts only; no shared Settings draft state",
+        ),
+    ),
+    # NOTE: unreachable via _inspector_guidance() -- IMAGE_GENERATION has
+    # its own explicit branch there (checked before this dict), same as
+    # LIBRARY_RAG's identical pre-existing shadowing. Kept accurate anyway
+    # as a safety net for the dict-lookup fallback path.
+    SettingsCategoryId.IMAGE_GENERATION: (
+        (
+            "Affected config",
+            "[image_generation] backend enable/default, per-backend fields, and "
+            "generation defaults",
+        ),
+        (
+            "Recovery",
+            "Revert discards unsaved edits; Console's /generate-image keeps "
+            "working off the last saved config.toml regardless",
+        ),
+        (
+            "Boundary",
+            "Edits backend, key, and generation defaults here; Save applies "
+            "to config.toml",
         ),
     ),
 }
@@ -1440,6 +1510,53 @@ class SettingsScreen(BaseAppScreen):
         #: category recomposes the detail pane, minting a brand-new Select
         #: instance no stale expectation could ever legitimately match.
         self._rag_select_suppress_queue: list = []
+        #: Same idiom as `_rag_select_suppress_queue`, applied to the
+        #: Image Gen default-backend Select: constructing a Select with a
+        #: non-blank `value=` fires `Select.Changed` the moment it mounts
+        #: (verified empirically -- unlike Checkbox/Input, a fresh Select's
+        #: reactive default IS blank, so any non-blank initial value is a
+        #: real change from Select's own point of view). Every category
+        #: (re)compose/recompose of `ImageGenSettingsPanel` -- initial
+        #: category open, and the panel.recompose() after a successful
+        #: Save or after Revert -- mints a brand-new Select instance that
+        #: refires exactly once, re-staging its own already-current value
+        #: into the draft as a spurious "edit" if left unguarded. Queued
+        #: right before each (re)compose with the value that compose() is
+        #: about to construct the Select with; the handler consumes and
+        #: ignores exactly one matching entry per message. Cleared on any
+        #: category switch away from IMAGE_GENERATION (see _select_category).
+        self._image_gen_select_suppress_queue: list = []
+        #: Task 6: guards the single-in-flight backend Test probe. Set
+        #: True for the duration of one `_image_gen_probe_worker` run
+        #: (Test buttons disabled meanwhile); a re-entrant Test click is a
+        #: no-op while True (belt-and-suspenders alongside the disabled
+        #: buttons themselves).
+        self._image_gen_probe_in_flight: bool = False
+        #: Bumped every time the user navigates AWAY from IMAGE_GENERATION
+        #: (see _select_category). A probe result callback captures the
+        #: session value at dispatch time; if it no longer matches when
+        #: the callback lands (the category was left -- and possibly
+        #: re-entered, minting a brand-new panel with fresh "Configured"/
+        #: "Not configured" badges -- since dispatch), the stale result is
+        #: dropped rather than clobbering an unrelated, freshly (re)opened
+        #: panel's badge or in-flight state.
+        self._image_gen_probe_session: int = 0
+        #: Qodo PR #901 fix 3: `_image_gen_raw_section()`'s merged
+        #: `[image_generation]` baseline, cached for the duration of one
+        #: category "session" -- reached from every keystroke's staging
+        #: handler (`Input.Changed` et al.), and `SettingsConfigAdapter
+        #: ().load()` deepcopies the ENTIRE merged app config, making a
+        #: fresh call per keystroke needlessly expensive. Invalidated
+        #: (`None`) at exactly the three moments the on-disk truth can
+        #: change: entering IMAGE_GENERATION (`_select_category`, so a
+        #: stale cache from a PRIOR visit -- e.g. after an Advanced
+        #: Config hand-edit in between -- is never reused), and after a
+        #: successful Save or Revert (`_apply_image_gen_save_result` /
+        #: `_handle_image_gen_revert`). `None` also means "not yet
+        #: populated this session" -- lazily filled on first access, so
+        #: merely opening the category (never editing anything) never
+        #: triggers a load at all.
+        self._image_gen_raw_section_cache: Mapping[str, object] | None = None
         self._navigation_provider: str | None = None
         self._navigation_model: str | None = None
         self._navigation_field: str | None = None
@@ -1834,6 +1951,13 @@ class SettingsScreen(BaseAppScreen):
                 "Read-only",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.IMAGE_GENERATION,
+                "Image Gen",
+                "Image generation backend defaults for SwarmUI, OpenRouter, and "
+                "other backend models.",
+                "Guided",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.DIAGNOSTICS,
                 "Diagnostics",
                 "Config validation, logs, and troubleshooting signals.",
@@ -1926,6 +2050,7 @@ class SettingsScreen(BaseAppScreen):
                     SettingsCategoryId.WORKFLOWS,
                     SettingsCategoryId.MCP_DEFAULTS,
                     SettingsCategoryId.ACP_DEFAULTS,
+                    SettingsCategoryId.IMAGE_GENERATION,
                 ),
             ),
         )
@@ -1968,6 +2093,34 @@ class SettingsScreen(BaseAppScreen):
                         ),
                         recovery_copy=(
                             "Revert unsaved defaults or open Library to validate query behavior."
+                        ),
+                    )
+                )
+                continue
+            if contract.category is SettingsCategoryId.IMAGE_GENERATION:
+                records.append(
+                    SettingsOwnershipRecord(
+                        category=contract.category,
+                        owns_config_sections=(
+                            "image_generation.default_backend",
+                            "image_generation.enabled_backends",
+                            "image_generation.<backend>.*",
+                            "image_generation.default_batch",
+                            "image_generation.max_variants_per_message",
+                            "image_generation.context_llm_enabled",
+                            "image_generation.context_llm_turns",
+                            "image_generation.context_llm_timeout_seconds",
+                        ),
+                        reads_runtime_state_from=contract.source_of_truth,
+                        writes_allowed=True,
+                        runtime_owner="Settings persisted defaults; Console /generate-image",
+                        boundary_copy=(
+                            "Settings owns persisted backend and generation-default config; "
+                            "Console owns /generate-image, cards, and variant actions."
+                        ),
+                        recovery_copy=(
+                            "Revert unsaved edits, or edit image_generation values "
+                            "directly in Advanced Config."
                         ),
                     )
                 )
@@ -2649,6 +2802,588 @@ class SettingsScreen(BaseAppScreen):
             return False
         return self._storage_validation_result().valid
 
+    # ------------------------------------------------------------------
+    # Image Gen (task 5): draft/dirty editing + Save/Revert.
+    #
+    # Unlike APPEARANCE/LIBRARY_RAG/STORAGE (flat scalar fields), Image Gen
+    # stages edits into `self._settings_drafts[IMAGE_GENERATION]` using
+    # namespaced string keys so the ONE generic `SettingsDraft` still drives
+    # the shared dirty-marker mechanism (`_category_has_unsaved_changes`,
+    # the rail `*`, `settings-dirty-category`) -- no parallel draft
+    # mechanism. Keys: "default_backend", "enabled_backends",
+    # "context_llm_enabled", "default_batch", "max_variants_per_message",
+    # "context_llm_turns", "context_llm_timeout_seconds",
+    # "field::<backend_id>::<toml_key>" (per edited backend field), and
+    # "cleared::<backend_id>::<toml_key>" (per Clear action).
+    #
+    # The diff/save baseline is ALWAYS `SettingsConfigAdapter().load()`'s
+    # MERGED `[image_generation]` view -- never `load_user_image_generation_
+    # table()`, which is display-only (see that helper's and
+    # `diff_to_sections`'s docstrings). Using the merged view as the
+    # "original" for dirty-tracking is what makes the Enabled checkboxes,
+    # the default-backend Select, and `context_llm_enabled` safe to stage
+    # straight from LIVE widget state on every change and at save time:
+    # unlike free-text Inputs, Checkboxes/Select have no "blank value means
+    # deferred to placeholder" ambiguity, and they're initialized from that
+    # SAME merged config -- so an untouched widget's value always equals
+    # its own "original" (never a spurious diff), while a genuinely toggled
+    # one always differs.
+    def _image_gen_raw_section(self) -> Mapping[str, object]:
+        # Qodo PR #901 fix 3: cached per category session -- see
+        # `_image_gen_raw_section_cache`'s docstring at its `__init__`
+        # declaration for the exact three invalidation points.
+        if self._image_gen_raw_section_cache is None:
+            raw = SettingsConfigAdapter().load().get("image_generation")
+            self._image_gen_raw_section_cache = (
+                raw if isinstance(raw, Mapping) else {}
+            )
+        return self._image_gen_raw_section_cache
+
+    def _image_gen_overlay_values(self) -> dict[str, object]:
+        draft = self._settings_drafts.get(SettingsCategoryId.IMAGE_GENERATION)
+        return dict(draft.values) if draft is not None else {}
+
+    def _image_gen_expected_default_backend_select_value(
+        self, overlay: Mapping[str, object]
+    ) -> object:
+        """The exact value `ImageGenSettingsPanel.compose()` is about to
+        construct `#settings-imagegen-default_backend` with, for `overlay`
+        -- must mirror that compose() logic exactly (see
+        `_queue_image_gen_select_suppression`'s docstring)."""
+        cfg = get_image_generation_config(reload=True)
+        effective_default_backend = overlay.get("default_backend", cfg.default_backend)
+        return (
+            effective_default_backend
+            if effective_default_backend in IMAGE_GEN_BACKEND_IDS
+            else Select.NULL
+        )
+
+    def _queue_image_gen_select_suppression(self, overlay: Mapping[str, object]) -> None:
+        """Record the value the about-to-(re)compose default-backend
+        `Select` will mount with, if that value is non-blank -- a fresh
+        `Select` only posts `Changed` on mount when constructed with a
+        non-`Select.NULL` value (verified empirically; unlike Checkbox,
+        which never refires on construction regardless of value). Call
+        this immediately before every `ImageGenSettingsPanel` (re)compose:
+        the initial category-open `_render_detail_pane` branch, and the
+        `panel.recompose()` calls in `_apply_image_gen_save_result` /
+        `_handle_image_gen_revert`. See `_rag_select_suppress_queue` for
+        the sibling idiom this mirrors (a boolean in-progress flag cannot
+        suppress a deferred `Select.Changed` message)."""
+        expected_value = self._image_gen_expected_default_backend_select_value(overlay)
+        if expected_value is not Select.NULL:
+            self._image_gen_select_suppress_queue.append(expected_value)
+
+    def _image_gen_stage(self, key: str, original: object, value: object) -> None:
+        category = SettingsCategoryId.IMAGE_GENERATION
+        draft = self._settings_drafts.setdefault(
+            category, SettingsDraft(category=category)
+        )
+        draft.set_value(key, original, value)
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+        self._update_draft_status_widgets(category)
+
+    def _image_gen_unstage(self, key: str) -> None:
+        """Remove one staged key without touching any other (e.g. a fresh
+        edit cancelling a pending Clear on the SAME field)."""
+        category = SettingsCategoryId.IMAGE_GENERATION
+        draft = self._settings_drafts.get(category)
+        if draft is None:
+            return
+        draft.values.pop(key, None)
+        draft.originals.pop(key, None)
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+
+    def _stage_image_gen_field(self, backend_id: str, toml_key: str, raw_value: str) -> None:
+        raw_backend = self._image_gen_raw_section().get(backend_id) or {}
+        original = raw_backend.get(toml_key) if isinstance(raw_backend, Mapping) else None
+        original_str = "" if original is None else str(original)
+        self._image_gen_stage(f"field::{backend_id}::{toml_key}", original_str, raw_value)
+        # Typing into a field cancels a pending Clear on that SAME field --
+        # otherwise diff_to_sections' documented "cleared wins" rule would
+        # silently delete a key the user just retyped.
+        self._image_gen_unstage(f"cleared::{backend_id}::{toml_key}")
+        self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
+
+    @staticmethod
+    def _image_gen_coerce_int(raw_value: str) -> int | None:
+        try:
+            return int(raw_value.strip())
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _image_gen_coerce_float(raw_value: str) -> float | None:
+        try:
+            return float(raw_value.strip())
+        except ValueError:
+            return None
+
+    def _refresh_image_gen_default_markers(self, effective_default_backend: str) -> None:
+        for backend_id in IMAGE_GEN_BACKEND_IDS:
+            try:
+                marker = self.query_one(
+                    f"#settings-imagegen-default-marker-{backend_id}", Static
+                )
+            except QueryError:
+                continue
+            marker.update("★ Default" if backend_id == effective_default_backend else "")
+
+    def _image_gen_draft_values_for_save(
+        self, panel: ImageGenSettingsPanel
+    ) -> ImageGenDraftValues:
+        draft = self._settings_drafts.get(SettingsCategoryId.IMAGE_GENERATION)
+        values = draft.values if draft is not None else {}
+        backend_fields: dict[str, dict[str, str]] = {}
+        cleared_fields: dict[str, list[str]] = {}
+        for key, value in values.items():
+            if key.startswith("field::"):
+                _prefix, backend_id, toml_key = key.split("::", 2)
+                backend_fields.setdefault(backend_id, {})[toml_key] = value
+            elif key.startswith("cleared::"):
+                _prefix, backend_id, toml_key = key.split("::", 2)
+                cleared_fields.setdefault(backend_id, []).append(toml_key)
+
+        # enabled_backends/default_backend/context_llm_enabled are ALWAYS
+        # read live off the mounted widgets (never from `values`) -- see
+        # the class-comment above for why this is safe and required (an
+        # untouched checkbox/select must still be reflected, since it's
+        # never staged unless the user actually toggles it).
+        enabled_backends = [
+            backend_id
+            for backend_id in IMAGE_GEN_BACKEND_IDS
+            if panel.query_one(
+                f"#settings-imagegen-enabled-{backend_id}", Checkbox
+            ).value
+        ]
+        default_backend_widget_value = panel.query_one(
+            "#settings-imagegen-default_backend", Select
+        ).value
+        default_backend = (
+            default_backend_widget_value
+            if isinstance(default_backend_widget_value, str)
+            else None
+        )
+        context_llm_enabled = bool(
+            panel.query_one(
+                "#settings-imagegen-context_llm_enabled", Checkbox
+            ).value
+        )
+
+        return ImageGenDraftValues(
+            default_backend=default_backend,
+            enabled_backends=enabled_backends,
+            default_batch=values.get("default_batch"),
+            max_variants_per_message=values.get("max_variants_per_message"),
+            context_llm_enabled=context_llm_enabled,
+            context_llm_turns=values.get("context_llm_turns"),
+            context_llm_timeout_seconds=values.get("context_llm_timeout_seconds"),
+            backend_fields=backend_fields,
+            cleared_fields=cleared_fields,
+        )
+
+    @on(Select.Changed, "#settings-imagegen-default_backend")
+    def handle_image_gen_default_backend_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        # A brand-new Select instance refires Changed with its OWN initial
+        # value the moment it mounts (every category open + every post-
+        # Save/Revert recompose) -- consume-and-ignore that expected
+        # arrival rather than re-staging the value it's already showing as
+        # a spurious "edit". See _queue_image_gen_select_suppression.
+        queue = self._image_gen_select_suppress_queue
+        if queue and event.value == queue[0]:
+            queue.pop(0)
+            return
+        value = event.value if isinstance(event.value, str) else None
+        if value is None:
+            self._image_gen_unstage("default_backend")
+            self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
+            # Qodo PR #901 fix 1: clearing the Select to blank must clear
+            # every row's "★ Default" marker too -- left unrefreshed, the
+            # OLD default's marker keeps showing, now inconsistent with
+            # the Select itself showing nothing selected.
+            self._refresh_image_gen_default_markers("")
+            return
+        original = self._image_gen_raw_section().get("default_backend")
+        self._image_gen_stage("default_backend", original, value)
+        self._refresh_image_gen_default_markers(value)
+
+    @on(Checkbox.Changed)
+    def handle_image_gen_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        checkbox_id = str(getattr(event.checkbox, "id", "") or "")
+        if not checkbox_id.startswith("settings-imagegen-"):
+            return
+        event.stop()
+        if checkbox_id == "settings-imagegen-context_llm_enabled":
+            original = bool(self._image_gen_raw_section().get("context_llm_enabled"))
+            self._image_gen_stage("context_llm_enabled", original, bool(event.value))
+            return
+        prefix = "settings-imagegen-enabled-"
+        if not checkbox_id.startswith(prefix):
+            return
+        try:
+            panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        except QueryError:
+            return
+        enabled_backends = [
+            backend_id
+            for backend_id in IMAGE_GEN_BACKEND_IDS
+            if panel.query_one(
+                f"#settings-imagegen-enabled-{backend_id}", Checkbox
+            ).value
+        ]
+        # Normalized to canonical order (Minor 1, final review) -- `enabled_
+        # backends` is already canonical (built by iterating IMAGE_GEN_
+        # BACKEND_IDS above); without normalizing `original` the SAME way,
+        # a config file whose list happens to be in a different order would
+        # spuriously stage a "dirty" edit even when nothing actually
+        # changed, and the rail marker would never clear on its own.
+        original = image_gen_canonical_backend_order(
+            self._image_gen_raw_section().get("enabled_backends")
+        )
+        self._image_gen_stage("enabled_backends", original, enabled_backends)
+
+    _IMAGE_GEN_INT_GLOBAL_KEYS = {
+        "settings-imagegen-default_batch": "default_batch",
+        "settings-imagegen-max_variants_per_message": "max_variants_per_message",
+        "settings-imagegen-context_llm_turns": "context_llm_turns",
+    }
+
+    @on(Input.Changed)
+    def handle_image_gen_input_changed(self, event: Input.Changed) -> None:
+        input_id = str(getattr(event.input, "id", "") or "")
+        if not input_id.startswith("settings-imagegen-"):
+            return
+        prefix = "settings-imagegen-field-"
+        if input_id.startswith(prefix):
+            event.stop()
+            remainder = input_id[len(prefix):]
+            for backend_id in IMAGE_GEN_BACKEND_IDS:
+                backend_prefix = f"{backend_id}-"
+                if remainder.startswith(backend_prefix):
+                    toml_key = remainder[len(backend_prefix):]
+                    self._stage_image_gen_field(backend_id, toml_key, event.value)
+                    return
+            return
+        global_key = self._IMAGE_GEN_INT_GLOBAL_KEYS.get(input_id)
+        if global_key is not None:
+            event.stop()
+            original = self._image_gen_raw_section().get(global_key)
+            # An unparseable edit is staged as the raw string rather than
+            # silently dropped -- it still marks dirty, and validate_draft
+            # (settings_image_gen_defaults.py) is what actually catches it
+            # at Save time with an inline error, matching the per-backend
+            # "int"-kind fields' treatment exactly instead of the edit
+            # just vanishing with no feedback at all.
+            coerced = self._image_gen_coerce_int(event.value)
+            staged_value = coerced if coerced is not None else event.value
+            self._image_gen_stage(global_key, original, staged_value)
+            return
+        if input_id == "settings-imagegen-context_llm_timeout_seconds":
+            event.stop()
+            original = self._image_gen_raw_section().get("context_llm_timeout_seconds")
+            coerced_float = self._image_gen_coerce_float(event.value)
+            staged_value = coerced_float if coerced_float is not None else event.value
+            self._image_gen_stage(
+                "context_llm_timeout_seconds", original, staged_value
+            )
+
+    def _handle_image_gen_clear(self, backend_id: str, toml_key: str) -> None:
+        self._image_gen_stage(f"cleared::{backend_id}::{toml_key}", False, True)
+        if backend_id == "swarmui" and toml_key == "swarm_token":
+            # The loader also resolves the legacy `api_key` spelling as a
+            # back-compat fallback; Clear must delete BOTH or a stale
+            # hand-edited api_key resurrects the credential with no in-UI
+            # recovery (deleting an absent key is a no-op, so this is free).
+            self._image_gen_stage("cleared::swarmui::api_key", False, True)
+        self._image_gen_unstage(f"field::{backend_id}::{toml_key}")
+        new_source = image_gen_key_source_after_clear(backend_id)
+        try:
+            secret_input = self.query_one(
+                f"#settings-imagegen-field-{backend_id}-{toml_key}", Input
+            )
+            secret_input.value = ""
+            secret_input.placeholder = _image_gen_secret_placeholder(new_source)
+        except QueryError:
+            pass
+        try:
+            source_static = self.query_one(
+                f"#settings-imagegen-key-source-{backend_id}", Static
+            )
+            source_static.update(_image_gen_key_source_line(new_source))
+            secret_optional = backend_id == "swarmui"
+            source_static.set_class(
+                secret_optional and new_source == "missing",
+                "settings-imagegen-key-source-neutral",
+            )
+        except QueryError:
+            pass
+        self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
+
+    # ------------------------------------------------------------------
+    # Image Gen (task 6): backend "Test" probes.
+    #
+    # A probe never persists anything -- it's a short live/filesystem
+    # reachability check (`probe_backend`, settings_image_gen_defaults.py)
+    # run against the CURRENT (possibly-unsaved) form values for one
+    # backend. `probe_backend` is BLOCKING (a plain HTTP GET or filesystem
+    # stat), so it always runs off the UI thread via `@work(thread=True)`;
+    # any exception it fails to catch itself degrades to a safe closed-set
+    # badge here rather than ever propagating exception text into a badge
+    # or a notify(). Only one probe may be in flight at a time
+    # (`_image_gen_probe_in_flight` + all six Test buttons disabled
+    # meanwhile) -- see `_image_gen_probe_session`'s docstring (near its
+    # declaration) for how a stale callback from a since-left-and-
+    # reentered category is safely dropped instead of clobbering an
+    # unrelated, freshly (re)opened panel.
+
+    def _image_gen_test_form_values(
+        self, panel: ImageGenSettingsPanel, backend_id: str
+    ) -> dict[str, str]:
+        """Gather the CURRENT non-secret form values for `backend_id`'s Test
+        probe -- an edited-but-unsaved Input wins; a blank (untouched)
+        Input falls back to the resolved effective value it's currently
+        showing as its own placeholder (see `effective_placeholder`),
+        never a blank string `probe_backend` could mistake for
+        "explicitly cleared"."""
+        cfg = get_image_generation_config(reload=True)
+        form_values: dict[str, str] = {}
+        for spec in IMAGE_GEN_FIELD_SCHEMA[backend_id]:
+            if spec.kind == "secret":
+                continue
+            try:
+                current = panel.query_one(
+                    f"#settings-imagegen-field-{backend_id}-{spec.toml_key}", Input
+                ).value.strip()
+            except QueryError:
+                current = ""
+            form_values[spec.toml_key] = current or image_gen_effective_placeholder(
+                cfg, backend_id, spec.toml_key
+            )
+        return form_values
+
+    def _image_gen_test_secret(
+        self, panel: ImageGenSettingsPanel, backend_id: str
+    ) -> str | None:
+        """The secret to probe with: this session's pasted-but-unsaved
+        value if present, else the effective resolved secret (env/config/
+        keyring) -- see `probe_backend`'s `secret` parameter docstring."""
+        secret_spec = next(
+            (
+                spec
+                for spec in IMAGE_GEN_FIELD_SCHEMA[backend_id]
+                if spec.kind == "secret"
+            ),
+            None,
+        )
+        if secret_spec is None:
+            return None
+        try:
+            pasted = panel.query_one(
+                f"#settings-imagegen-field-{backend_id}-{secret_spec.toml_key}", Input
+            ).value.strip()
+        except QueryError:
+            pasted = ""
+        if pasted:
+            return pasted
+        cfg = get_image_generation_config(reload=True)
+        return image_gen_effective_secret_value(cfg, backend_id)
+
+    def _image_gen_set_test_buttons_disabled(self, disabled: bool) -> None:
+        for backend_id in IMAGE_GEN_BACKEND_IDS:
+            try:
+                self.query_one(
+                    f"#settings-imagegen-test-{backend_id}", Button
+                ).disabled = disabled
+            except QueryError:
+                continue
+
+    def _handle_image_gen_test(self, backend_id: str) -> None:
+        if self._image_gen_probe_in_flight:
+            return
+        try:
+            panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        except QueryError:
+            return
+        form_values = self._image_gen_test_form_values(panel, backend_id)
+        secret = self._image_gen_test_secret(panel, backend_id)
+        self._image_gen_probe_in_flight = True
+        self._image_gen_set_test_buttons_disabled(True)
+        self._image_gen_probe_worker(
+            backend_id, form_values, secret, self._image_gen_probe_session
+        )
+
+    @work(thread=True, exclusive=False, exit_on_error=False)
+    def _image_gen_probe_worker(
+        self,
+        backend_id: str,
+        form_values: dict[str, str],
+        secret: str | None,
+        session: int,
+    ) -> None:
+        try:
+            badge = image_gen_probe_backend(backend_id, form_values, secret).badge
+        except Exception as exc:  # noqa: BLE001 - any escape must degrade safely
+            # Qodo PR #901 fix 2: this probe builds Authorization headers
+            # from a pasted-or-effective secret -- the spec's keys-never-
+            # enter-logs contract forbids logging the raw exception text
+            # (it could echo a header, URL, or secret embedded in some
+            # library's error message). Log only the exception TYPE name
+            # and the backend id, never str(exc).
+            logger.debug(
+                f"Image Gen probe for {backend_id!r} raised "
+                f"{type(exc).__name__}"
+            )
+            badge = "Unreachable: probe error"
+        finally:
+            self.app.call_from_thread(
+                self._apply_image_gen_probe_result, backend_id, badge, session
+            )
+
+    def _apply_image_gen_probe_result(
+        self, backend_id: str, badge: str, session: int
+    ) -> None:
+        if session != self._image_gen_probe_session:
+            # Stale: the category was left (and possibly re-entered, minting
+            # a brand-new panel) since this probe was dispatched. Dropping
+            # it here -- rather than clearing `_image_gen_probe_in_flight`
+            # or touching any widget -- is what keeps a leftover result from
+            # a PREVIOUS visit from ever re-enabling buttons for (or
+            # overwriting a badge on) an unrelated, currently active probe
+            # or freshly (re)opened panel.
+            return
+        self._image_gen_probe_in_flight = False
+        self._image_gen_set_test_buttons_disabled(False)
+        try:
+            self.query_one(f"#settings-imagegen-status-{backend_id}", Static).update(
+                badge
+            )
+        except QueryError:
+            pass
+
+    def _handle_image_gen_save(self) -> None:
+        try:
+            panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        except QueryError:
+            return
+        draft_values = self._image_gen_draft_values_for_save(panel)
+        errors, warnings = validate_image_gen_draft(draft_values)
+        if errors:
+            message = " ".join(errors)
+            self._set_static_text("#settings-imagegen-save-result", message)
+            self.app.notify(message, severity="error")
+            return
+        self._set_static_text(
+            "#settings-imagegen-save-result", "Saving Image Gen defaults..."
+        )
+        self._settings_save_image_gen_worker(draft_values, warnings)
+
+    @work(exclusive=True, thread=True)
+    def _settings_save_image_gen_worker(
+        self, draft_values: ImageGenDraftValues, warnings: list[str]
+    ) -> None:
+        raw_config = SettingsConfigAdapter().load()
+        sections, deletions = image_gen_diff_to_sections(draft_values, raw_config)
+        adapter = SettingsConfigAdapter()
+        ok = True
+        if sections:
+            ok = adapter.save_sections(sections) and ok
+        for section, keys in deletions.items():
+            if keys:
+                ok = adapter.delete_values(section, keys) and ok
+        if ok:
+            reset_image_generation_config_cache()
+        self.app.call_from_thread(self._apply_image_gen_save_result, ok, warnings)
+
+    async def _apply_image_gen_save_result(
+        self, saved: bool, warnings: list[str]
+    ) -> None:
+        if not saved:
+            message = "Failed to save Image Gen defaults."
+            self._set_static_text("#settings-imagegen-save-result", message)
+            self.app.notify(message, severity="error")
+            return
+        self._settings_drafts.pop(SettingsCategoryId.IMAGE_GENERATION, None)
+        # Qodo PR #901 fix 3: the save just changed the on-disk truth --
+        # invalidate the cached raw-section baseline (see
+        # `_image_gen_raw_section_cache`'s docstring).
+        self._image_gen_raw_section_cache = None
+        message = "Image Gen defaults saved."
+        if warnings:
+            message = f"{message} {' '.join(warnings)}"
+        try:
+            panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        except QueryError:
+            panel = None
+        if panel is not None:
+            panel.overlay = {}
+            self._queue_image_gen_select_suppression({})
+            await panel.recompose()
+            self._set_static_text("#settings-imagegen-save-result", message)
+            # A fresh panel mounts its Test buttons enabled by default; if a
+            # probe is still in flight (Save clicked mid-probe), re-assert
+            # the disabled state on the newly-mounted buttons rather than
+            # letting them render as clickable while ignored.
+            if self._image_gen_probe_in_flight:
+                self._image_gen_set_test_buttons_disabled(True)
+        self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
+        self.app.notify(message, severity="warning" if warnings else "information")
+
+    async def _handle_image_gen_revert(self) -> None:
+        self._settings_drafts.pop(SettingsCategoryId.IMAGE_GENERATION, None)
+        # Qodo PR #901 fix 3: revert is the third of the exactly-three
+        # invalidation points (see `_image_gen_raw_section_cache`'s
+        # docstring) -- the file itself doesn't change on revert, but
+        # this keeps the cache's lifetime scoped strictly to "since the
+        # last time the draft was known-consistent with disk" rather
+        # than silently spanning across a discard-and-restart edit.
+        self._image_gen_raw_section_cache = None
+        try:
+            panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        except QueryError:
+            panel = None
+        if panel is not None:
+            panel.overlay = {}
+            self._queue_image_gen_select_suppression({})
+            await panel.recompose()
+            self._set_static_text("#settings-imagegen-save-result", "")
+            # See the matching comment in _apply_image_gen_save_result.
+            if self._image_gen_probe_in_flight:
+                self._image_gen_set_test_buttons_disabled(True)
+        self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
+
+    @on(Button.Pressed)
+    async def handle_image_gen_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = str(getattr(event.button, "id", "") or "")
+        if button_id == "settings-imagegen-save":
+            event.stop()
+            self._handle_image_gen_save()
+            return
+        if button_id == "settings-imagegen-revert":
+            event.stop()
+            await self._handle_image_gen_revert()
+            return
+        test_prefix = "settings-imagegen-test-"
+        if button_id.startswith(test_prefix):
+            backend_id = button_id[len(test_prefix):]
+            if backend_id in IMAGE_GEN_BACKEND_IDS:
+                event.stop()
+                self._handle_image_gen_test(backend_id)
+            return
+        prefix = "settings-imagegen-clear-"
+        if not button_id.startswith(prefix):
+            return
+        event.stop()
+        remainder = button_id[len(prefix):]
+        for backend_id in IMAGE_GEN_BACKEND_IDS:
+            backend_prefix = f"{backend_id}-"
+            if remainder.startswith(backend_prefix):
+                toml_key = remainder[len(backend_prefix):]
+                self._handle_image_gen_clear(backend_id, toml_key)
+                return
+
     def _category_has_unsaved_changes(self, category: SettingsCategoryId) -> bool:
         draft = self._settings_drafts.get(category)
         return bool(draft and draft.is_dirty)
@@ -2674,6 +3409,10 @@ class SettingsScreen(BaseAppScreen):
             return "Splash defaults are saved automatically."
         if category == SettingsCategoryId.INTERNAL_PROMPTS:
             return "Use each prompt's Save / Reset buttons in the editor to manage overrides."
+        if category == SettingsCategoryId.IMAGE_GENERATION:
+            if self._category_has_unsaved_changes(category):
+                return "Guided edits: use the panel's own Save/Revert controls below."
+            return "Guided edits: change a backend or generation default first."
         if category is SettingsCategoryId.STORAGE:
             if self._category_has_unsaved_changes(category):
                 validation = self._storage_validation_result()
@@ -2783,6 +3522,19 @@ class SettingsScreen(BaseAppScreen):
         self._refresh_category_button_label(category)
         if category is self._active_category_id():
             self._update_guided_action_widgets()
+        if category is SettingsCategoryId.IMAGE_GENERATION:
+            # Image Gen's Save/Revert live INSIDE the panel (not the generic
+            # top guided-action bar, excluded above like THEME/INTERNAL_
+            # PROMPTS) -- toggle them here so every staging path updates
+            # them through this one shared draft-status refresh, matching
+            # the sibling idiom rather than a parallel mechanism.
+            for button_id in ("settings-imagegen-save", "settings-imagegen-revert"):
+                try:
+                    self.query_one(f"#{button_id}", Button).disabled = (
+                        not has_unsaved_changes
+                    )
+                except QueryError:
+                    pass
 
     def _category_summary_by_id(
         self, category: SettingsCategoryId
@@ -2962,6 +3714,8 @@ class SettingsScreen(BaseAppScreen):
             return "State: Console scoped | Changes affect global Console fallbacks after save."
         if category is SettingsCategoryId.LIBRARY_RAG:
             return "State: Library scoped | Defaults affect future Library/RAG retrieval and display."
+        if category is SettingsCategoryId.IMAGE_GENERATION:
+            return "State: Image Gen scoped | Defaults affect future Console image generations."
         if category is SettingsCategoryId.DIAGNOSTICS:
             return "State: Safe to run | Validation and reload expose status without writing raw TOML."
         if category is SettingsCategoryId.APPEARANCE:
@@ -7097,6 +7851,35 @@ class SettingsScreen(BaseAppScreen):
     def _inspector_guidance(
         self, category: SettingsCategoryId
     ) -> tuple[tuple[str, str], ...]:
+        if category is SettingsCategoryId.IMAGE_GENERATION:
+            # Final review Important 2: IMAGE_GENERATION sits in the
+            # "Domain Defaults" rail group (needed for that grouping + the
+            # settings_can_mutate=True domain contract test) but, unlike a
+            # pure view-only delegation card, Settings genuinely owns and
+            # writes this config -- an explicit branch here (mirroring
+            # _guided_action_message's/_category_state_banner_text's own
+            # IMAGE_GENERATION branches, both of which already win over the
+            # generic domain fallback below) keeps this page from showing
+            # the generic "nothing on this page is editable" copy that's
+            # true for every OTHER domain category but not this one.
+            return (
+                (
+                    "Affected config",
+                    "[image_generation] backend enable/default, per-backend "
+                    "fields (base URL, model, timeout, key), and generation "
+                    "defaults",
+                ),
+                (
+                    "Recovery",
+                    "Revert discards unsaved edits; Console's /generate-image "
+                    "keeps working off the last saved config.toml regardless",
+                ),
+                (
+                    "Boundary",
+                    "Edits backend, key, and generation defaults here; Save "
+                    "applies to config.toml",
+                ),
+            )
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
             contract = self._domain_category_contract(category)
             return (
@@ -9425,6 +10208,14 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.INTERNAL_PROMPTS:
             yield Static("Internal Prompts", classes="destination-section settings-column-title")
             yield InternalPromptsPanel(id="settings-internal-prompts-panel")
+        elif category is SettingsCategoryId.IMAGE_GENERATION:
+            yield Static("Image Gen", classes="destination-section settings-column-title")
+            image_gen_overlay = self._image_gen_overlay_values()
+            self._queue_image_gen_select_suppression(image_gen_overlay)
+            yield ImageGenSettingsPanel(
+                id="settings-imagegen-panel",
+                overlay=image_gen_overlay,
+            )
         elif category is SettingsCategoryId.STORAGE:
             values = self._storage_setting_values()
             try:
@@ -9739,6 +10530,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategoryId.THEME,
             SettingsCategoryId.SPLASH_SCREEN,
             SettingsCategoryId.INTERNAL_PROMPTS,
+            SettingsCategoryId.IMAGE_GENERATION,
         ):
             save_button = Button(
                 "Save",
@@ -10246,6 +11038,22 @@ class SettingsScreen(BaseAppScreen):
             # -- same guard shape as `_refresh_library_rag_index_status`.
             if getattr(self, "is_mounted", False):
                 self.workers.cancel_group(self, "settings-rag-index-status")
+        if category_value != SettingsCategoryId.IMAGE_GENERATION.value:
+            # Same reasoning as the RAG queue clear immediately above: a
+            # still-pending suppression expectation belongs to the (about
+            # to be destroyed) default-backend Select instance; the
+            # recomposed detail pane mints a brand-new one that owes it
+            # nothing.
+            self._image_gen_select_suppress_queue.clear()
+            # Task 6: bump the probe session and drop the in-flight guard
+            # -- see `_image_gen_probe_session`'s docstring. A probe
+            # already running keeps running (best-effort only, matching
+            # the RAG index-status precedent above -- an in-flight thread
+            # worker can't be interrupted mid-blocking-call), but its
+            # eventual callback will find this session stale and no-op
+            # instead of touching a since-recomposed, unrelated panel.
+            self._image_gen_probe_session += 1
+            self._image_gen_probe_in_flight = False
         # Task 2 review (Important): a stale re-index-confirm in-flight
         # guard must never survive navigating away from (or back into) the
         # category -- e.g. the user backs out mid-fetch. Unconditional
@@ -10261,6 +11069,13 @@ class SettingsScreen(BaseAppScreen):
             self._queue_sync_rows_refresh()
         if category_value == SettingsCategoryId.LIBRARY_RAG.value:
             self._refresh_library_rag_index_status()
+        if category_value == SettingsCategoryId.IMAGE_GENERATION.value:
+            # Qodo PR #901 fix 3: entering the category invalidates the
+            # cached raw-section baseline (see `_image_gen_raw_section_
+            # cache`'s docstring) -- a PRIOR visit's cache must never
+            # survive into a new one (e.g. an Advanced Config hand-edit
+            # to [image_generation] made while away).
+            self._image_gen_raw_section_cache = None
         if restore_focus:
             self.call_after_refresh(self._focus_category, category_value)
 
@@ -12596,6 +13411,23 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
+        if category is SettingsCategoryId.IMAGE_GENERATION:
+            # Unlike THEME/SPLASH_SCREEN/INTERNAL_PROMPTS below (which have
+            # no unified revert this action could drive at all), Image Gen
+            # DOES have one -- `_handle_image_gen_revert` (the same coroutine
+            # the panel's own Revert button calls). Routing the footer `r`
+            # shortcut through the generic draft-pop-only path further down
+            # would have popped the draft/cleared the `*` marker without
+            # ever recomposing the panel, leaving its Input widgets stuck
+            # showing the just-discarded unsaved text until the category was
+            # re-entered. `run_worker` schedules the coroutine since this
+            # action itself is sync (mirrors the Button.Pressed handler,
+            # which is async and awaits it directly instead).
+            if not self._category_has_unsaved_changes(category):
+                self.app.notify("No Settings changes to revert.", severity="information")
+                return
+            self.run_worker(self._handle_image_gen_revert(), exclusive=False)
+            return
         if category in (
             SettingsCategoryId.THEME,
             SettingsCategoryId.SPLASH_SCREEN,
