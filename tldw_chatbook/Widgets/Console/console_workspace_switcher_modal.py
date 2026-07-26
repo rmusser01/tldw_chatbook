@@ -68,7 +68,16 @@ class ConsoleWorkspaceSwitcherModal(ModalScreen[str | None]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss", "Cancel")]
+    BINDINGS = [
+        ("escape", "dismiss", "Cancel"),
+        # TASK-722: arrow ergonomics on top of Tab/Shift+Tab focus cycling.
+        ("down", "focus_next", "Next"),
+        ("up", "focus_previous", "Previous"),
+    ]
+
+    # TASK-722: land focus on the first actionable workspace option so the
+    # modal is operable start-to-finish without a pointer (Enter selects).
+    AUTO_FOCUS = "Button.console-workspace-switcher-option"
 
     def __init__(
         self,

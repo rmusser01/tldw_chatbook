@@ -50,6 +50,16 @@ class ConsoleCommandProvider(Provider):
                 "Return focus to the composer (Esc)",
             ),
             (
+                "Console: Switch workspace…",
+                screen.action_open_console_workspace_switcher,
+                "Change the active Console workspace (Alt+W)",
+            ),
+            (
+                "Console: New workspace",
+                screen.action_new_console_workspace,
+                "Create a local workspace and switch Console to it",
+            ),
+            (
                 "Console: Session settings…",
                 screen.action_open_console_session_settings,
                 "Open the full session settings modal",

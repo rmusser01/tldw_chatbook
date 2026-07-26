@@ -762,6 +762,9 @@ class ChatScreen(BaseAppScreen):
         ),
         Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=True),
         Binding("alt+m", "open_console_model_popover", "Model", show=True),
+        Binding(
+            "alt+w", "open_console_workspace_switcher", "Workspace", show=True
+        ),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
         Binding("ctrl+shift+p", "view_chat_context", "View context", show=True),
         Binding(
@@ -1574,6 +1577,14 @@ class ChatScreen(BaseAppScreen):
     def on_console_change_workspace(self, event: Button.Pressed) -> None:
         """Open the active Console workspace switcher."""
         event.stop()
+        self._open_console_workspace_switcher()
+
+    def action_open_console_workspace_switcher(self) -> None:
+        """Open the workspace switcher (Alt+W / command palette, TASK-722)."""
+        self._open_console_workspace_switcher()
+
+    def _open_console_workspace_switcher(self) -> None:
+        """Open the active Console workspace switcher."""
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
         )
@@ -1640,6 +1651,14 @@ class ChatScreen(BaseAppScreen):
     def on_console_new_workspace(self, event: Button.Pressed) -> None:
         """Create a new local workspace from the Console rail and activate it."""
         event.stop()
+        self._create_console_workspace()
+
+    def action_new_console_workspace(self) -> None:
+        """Create a local workspace from the command palette (TASK-722)."""
+        self._create_console_workspace()
+
+    def _create_console_workspace(self) -> None:
+        """Create a new local workspace and activate it."""
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
         )
