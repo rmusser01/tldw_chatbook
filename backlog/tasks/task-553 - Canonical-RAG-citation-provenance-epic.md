@@ -1,9 +1,10 @@
 ---
 id: TASK-553
 title: Canonical RAG citation provenance epic
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-24 00:42'
+updated_date: '2026-07-26 18:18'
 labels:
   - rag
   - citations
