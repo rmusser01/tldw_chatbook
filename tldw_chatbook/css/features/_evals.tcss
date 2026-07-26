@@ -126,3 +126,48 @@
 #evals-inspector-bench .ds-recovery-callout {
     margin: 0 0 1 0;
 }
+
+/* Task 5 (snippet editor + import). The whitespace marker itself is a
+   Rich inline style embedded directly in each row's Text content (see
+   snippet_editor.py's WHITESPACE_MARKER_GLYPH/_WHITESPACE_MARKER_STYLE) --
+   not a CSS class -- because a Rich Text object passed as a Static's
+   content cannot reference Textual's $ds-* design tokens. This block only
+   lays the table out; it never colours the marker or the status text
+   (never colour, per the design contract -- tests assert the rendered
+   text, in Tests/UI/test_evals_snippet_editor.py). */
+.evals-snippet-table-header {
+    text-style: bold;
+    color: $ds-text-primary;
+    padding: 0 1;
+}
+
+.evals-snippet-row {
+    height: auto;
+    padding: 0 1;
+}
+
+.evals-snippet-index {
+    width: 4;
+    color: $ds-text-muted;
+}
+
+.evals-snippet-text {
+    width: 1fr;
+}
+
+.evals-snippet-meta {
+    width: auto;
+    color: $ds-text-muted;
+}
+
+#evals-snippet-editor-summary {
+    color: $ds-text-muted;
+}
+
+#evals-snippet-warnings-summary {
+    margin: 1 0 0 0;
+}
+
+#evals-import-snippets {
+    margin: 1 0 0 0;
+}

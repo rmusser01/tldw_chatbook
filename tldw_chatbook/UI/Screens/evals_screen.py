@@ -34,6 +34,7 @@ from ..Evals.bench_editor import BenchEditor, ClassicTaskDetail
 from ..Evals.evals_state import EvalsSelection, EvalsViewModel, SelectionKind
 from ..Evals.inspector import EvalsInspector
 from ..Evals.library_rail import RAIL_SECTIONS, LibraryRail
+from ..Evals.snippet_editor import SnippetEditor
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Workbench.workbench_widgets import DestinationHeader
@@ -176,18 +177,8 @@ class EvalsScreen(BaseAppScreen):
                     id="evals-detail-missing",
                 )
                 return
-            yield Static(
-                str(dataset.get("name") or "Untitled dataset"),
-                id="evals-detail-dataset-name",
-                classes="evals-pane-heading",
-            )
-            yield Static(
-                f"Format: {dataset.get('format', 'unknown')}",
-                id="evals-detail-dataset-format",
-            )
-            yield Static(
-                f"Source: {dataset.get('source_path', 'unknown')}",
-                id="evals-detail-dataset-source",
+            yield SnippetEditor(
+                self._view_model, selection.id, id="evals-snippet-editor"
             )
             return
 
