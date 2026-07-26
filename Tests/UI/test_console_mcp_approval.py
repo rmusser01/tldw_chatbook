@@ -314,6 +314,109 @@ async def test_bulk_approve_and_deny_all_are_row_aware_and_never_raise():
         assert row_c.value == "approve_once"
 
 
+def _row_options_excluding_every_bulk_candidate() -> list[str]:
+    """The only decision value that is neither an "Approve all" candidate
+    (``approve_once``/``approve_session``) nor "Deny all"'s ``deny`` --
+    unreachable by either bulk button. Unlike today's only shipped narrowed
+    shape (``approve_once``/``approve_session``/``deny``, which BOTH bulk
+    buttons can reach), a row narrowed to just this genuinely exercises the
+    skip path in ``_set_all_batch_decisions``."""
+    return ["always_allow"]
+
+
+@pytest.mark.asyncio
+async def test_bulk_actions_flag_a_row_they_could_not_apply_to():
+    """Task 5: a row a bulk button could not touch must not look identical
+    to a row nobody has decided on yet -- it gets a `needs-decision` class
+    on its row container so the user notices it still needs an explicit
+    choice. Covers both bulk buttons and confirms an applied row (here,
+    the unnarrowed row) never carries the class."""
+    calls = _sample_calls()
+    calls[0]["options"] = _row_options_excluding_every_bulk_candidate()
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        rows = list(app.query(".approval-row"))
+        row_a, row_b = rows  # row A: narrowed & unreachable; row B: unnarrowed
+        assert not row_a.has_class("needs-decision")  # untouched card starts clean
+        assert not row_b.has_class("needs-decision")
+
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+        assert row_a.has_class("needs-decision")
+        assert not row_b.has_class("needs-decision")  # applied row: never flagged
+
+        app.query_one("#approval-deny-all", Button).press()
+        await pilot.pause()
+        assert row_a.has_class("needs-decision")  # still unreachable
+        assert not row_b.has_class("needs-decision")
+
+
+@pytest.mark.asyncio
+async def test_changing_a_flagged_rows_select_clears_needs_decision():
+    """Task 5: once the user gives a flagged row its own explicit decision,
+    the flag must clear -- the row's own `Select.Changed` is what a real
+    interaction with the (only legal, single-option) overlay would fire.
+    Posted directly (mirrors ``test_mcp_rail.py``'s
+    ``rail.on_select_changed(Select.Changed(select, "local"))`` pattern)
+    since this row's sole legal value is already its current value, so a
+    real drive-the-overlay interaction wouldn't itself change `.value` --
+    the flag-clearing contract is "the row got a Select.Changed", not
+    "the value differs from its previous value"."""
+    calls = _sample_calls()
+    calls[0]["options"] = _row_options_excluding_every_bulk_candidate()
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        rows = list(app.query(".approval-row"))
+        row_a = rows[0]
+        select_a = row_a.query_one(".approval-row-decision", Select)
+
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+        assert row_a.has_class("needs-decision")
+
+        select_a.post_message(Select.Changed(select_a, select_a.value))
+        await pilot.pause()
+        assert not row_a.has_class("needs-decision")
+
+
+@pytest.mark.asyncio
+async def test_unrelated_select_changed_does_not_touch_batch_rows():
+    """A `Select.Changed` from a `Select` that isn't one of this card's
+    batch-row selects must be a no-op -- guards the membership check in
+    `_on_batch_row_select_changed` (it must not, say, clear every row's
+    flag on any incoming event)."""
+    calls = _sample_calls()
+    calls[0]["options"] = _row_options_excluding_every_bulk_candidate()
+
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        rows = list(app.query(".approval-row"))
+        row_a = rows[0]
+
+        app.query_one("#approval-approve-all", Button).press()
+        await pilot.pause()
+        assert row_a.has_class("needs-decision")
+
+        foreign_select = Select([("x", "x")], value="x", allow_blank=False)
+        card._on_batch_row_select_changed(Select.Changed(foreign_select, "x"))
+        await pilot.pause()
+        assert row_a.has_class("needs-decision")  # unaffected by a foreign Select
+
+
 @pytest.mark.asyncio
 async def test_approve_all_and_deny_all_bulk_set_every_row():
     app = _CardHarnessApp()

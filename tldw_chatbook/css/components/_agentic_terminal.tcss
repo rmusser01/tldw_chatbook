@@ -5184,6 +5184,21 @@ Button.mcp-callout {
 .approval-row-decision {
     width: 26;
 }
+/* task-5 (Phase-5 follow-up): a bulk "Approve all"/"Deny all" press can't
+   legally reach every narrowed row (`ChatApprovalCard._set_all_batch_
+   decisions` -- a row whose `options` exclude every bulk candidate is left
+   on its current value instead of crashing). Left unstyled, that row looks
+   identical to one nobody has decided on yet. `.needs-decision` (added by
+   that same skip path, cleared by the row's own `Select.Changed`) gives it
+   the same warning treatment as `.library-rag-callout.is-blocked` above:
+   border + a light background tint, using the semantic
+   `$ds-status-approval-required` token rather than the generic `$ds-
+   status-warning` one, since this state literally IS "still needs an
+   approval decision." */
+.approval-row.needs-decision {
+    border: solid $ds-status-approval-required;
+    background: $ds-status-approval-required 10%;
+}
 
 /* ConsoleScopePickerModal (rag-scope-narrowing spec §4, Task 8): RAG
    retrieval scope picker -- type tabs, text+tag filters, sort select,

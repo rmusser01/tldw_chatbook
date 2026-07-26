@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping, Sequence
 
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import NoMatches
@@ -145,6 +146,7 @@ class ChatApprovalCard(Container):
         self._batch_names: list[str] = []
         self._batch_selects: list[Select] = []
         self._batch_legal_values: list[list[str]] = []
+        self._batch_rows: list[Horizontal] = []
 
     def compose(self) -> ComposeResult:
         yield Static("Approval required", id="approval-title")
@@ -236,6 +238,7 @@ class ChatApprovalCard(Container):
             self._batch_names = []
             self._batch_selects = []
             self._batch_legal_values = []
+            self._batch_rows = []
             return
 
         self.display = True
@@ -286,6 +289,7 @@ class ChatApprovalCard(Container):
         self._batch_names = names
         self._batch_selects = selects
         self._batch_legal_values = legal_values
+        self._batch_rows = rows
 
         rows_container = self.query_one("#approval-batch-rows", Vertical)
         rows_container.remove_children()
@@ -315,12 +319,48 @@ class ChatApprovalCard(Container):
         falling back between them is honest); a row that legally offers
         none of ``candidates`` is left on its current value rather than
         crashing or silently doing nothing useful.
+
+        A row left untouched this way is otherwise visually identical to a
+        row nobody has looked at yet, so it also gets a ``needs-decision``
+        class on its row container -- a visible "this one still needs an
+        explicit choice" signal. A row that DOES receive a bulk value has
+        the class cleared, so a stale flag from an earlier bulk press
+        (e.g. "Approve all" skipped it, then "Deny all" successfully set
+        it) never lingers.
         """
-        for select, legal_values in zip(self._batch_selects, self._batch_legal_values):
+        for select, legal_values, row in zip(
+            self._batch_selects, self._batch_legal_values, self._batch_rows
+        ):
+            applied = False
             for candidate in candidates:
                 if candidate in legal_values:
                     select.value = candidate
+                    applied = True
                     break
+            if applied:
+                row.remove_class("needs-decision")
+            else:
+                row.add_class("needs-decision")
+
+    @on(Select.Changed)
+    def _on_batch_row_select_changed(self, event: Select.Changed) -> None:
+        """Clear a row's ``needs-decision`` flag once it has an explicit choice.
+
+        The only ``Select`` widgets under this card are the per-row batch
+        decision selects (the legacy single-approval body has none), so no
+        id/class scoping is needed on the decorator -- membership in
+        ``self._batch_selects`` is enough to identify "one of our rows."
+        This does not stop the event: nothing else in this widget handles
+        ``Select.Changed`` today, and it must keep bubbling exactly as it
+        did before this handler existed (``TldwCli.on_select_changed`` in
+        ``app.py`` filters by ``select.id``, which these rows never set, so
+        it already ignores them).
+        """
+        select = event.select
+        if select not in self._batch_selects:
+            return
+        index = self._batch_selects.index(select)
+        self._batch_rows[index].remove_class("needs-decision")
 
     def _submit_batch_decisions(self) -> None:
         decisions = {
