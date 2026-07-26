@@ -698,6 +698,83 @@ class LibraryIngestJobRegistry:
         self._persist(updated)
         return replace(updated)
 
+    def mark_remote_done(self, job_id: str) -> LibraryIngestJob | None:
+        """Finish a ``server``-origin job that has no local media row.
+
+        ``mark_done`` requires a ``media_id`` because a *local* completion that
+        wrote nothing is a bug (task-677). A server completion genuinely has no
+        local row -- the server's own response carries only counts, no media id
+        -- so it needs its own terminal path rather than weakening that
+        invariant for everyone.
+
+        The resulting job has ``media_id`` unset, so the queue row's "Open in
+        Library" stays withheld: the content lives in the server's library, not
+        this machine's.
+
+        Args:
+            job_id: The job to finish.
+
+        Returns:
+            The updated job (a copy), or ``None`` when ``job_id`` is unknown,
+            hidden, not ``server``-origin, or already finished.
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        current = self._jobs[index]
+        if current.superseded or current.dismissed:
+            return None
+        if current.origin != "server":
+            logger.warning(
+                f"mark_remote_done called for local job {job_id}; ignoring "
+                "(a local completion must record a media_id)."
+            )
+            return None
+        if current.state in _TERMINAL_STATES:
+            return None
+        updated = replace(
+            current,
+            state=IngestJobState.DONE,
+            finished_at=time.monotonic(),
+            finished_at_wall=datetime.now(timezone.utc).isoformat(),
+        )
+        self._jobs[index] = updated
+        self._notify_listeners()
+        self._persist(updated)
+        return replace(updated)
+
+    def update_progress(
+        self, job_id: str, *, progress: dict[str, Any] | None
+    ) -> LibraryIngestJob | None:
+        """Attach in-flight progress to a running job.
+
+        Local jobs only ever report progress at completion; a server job
+        reports it *while* running (a long transcription, say), which is why
+        this exists as its own seam rather than a ``mark_*`` argument.
+
+        Args:
+            job_id: The job to annotate.
+            progress: Structured progress payload, or ``None`` to clear it.
+
+        Returns:
+            The updated job (a copy), or ``None`` when ``job_id`` is unknown,
+            hidden, or already finished (late progress must not reopen a
+            settled row).
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        current = self._jobs[index]
+        if current.superseded or current.dismissed:
+            return None
+        if current.state in _TERMINAL_STATES:
+            return None
+        updated = replace(current, progress=progress)
+        self._jobs[index] = updated
+        self._notify_listeners()
+        self._persist(updated)
+        return replace(updated)
+
     def mark_cancelled(
         self, job_id: str, *, reason: str = ""
     ) -> LibraryIngestJob | None:
