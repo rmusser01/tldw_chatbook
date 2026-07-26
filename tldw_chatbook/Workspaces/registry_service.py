@@ -32,6 +32,34 @@ from .models import (
 _STORAGE_FAILURE_MESSAGE = "Workspace registry storage failed."
 
 
+def _filesystem_binding_missing(locator: str) -> bool:
+    """Whether a local-filesystem binding's locator no longer resolves safely.
+
+    A bound folder counts as missing not only once it no longer exists, but
+    also once the path has been replaced by a symlink or its resolved form
+    no longer matches the stored locator. ``add_folder_binding`` always
+    stores an already-resolved path, so any drift here means a symlink or
+    mount trick appeared along the path after binding -- trusting it could
+    silently widen the sandboxed root at enforcement time (ADR-028).
+
+    Args:
+        locator: The binding's stored (already-resolved) folder path.
+
+    Returns:
+        True if the locator no longer points at a real, non-symlinked
+        directory matching its own resolved form; False otherwise.
+    """
+    folder = Path(locator)
+    if folder.is_symlink():
+        return True
+    if not folder.is_dir():
+        return True
+    try:
+        return folder.resolve() != folder
+    except OSError:
+        return True
+
+
 class WorkspaceRegistryServiceError(Exception):
     """Base exception for workspace registry failures."""
 
@@ -704,9 +732,9 @@ class LocalWorkspaceRegistryService:
         refreshed: list[WorkspaceRuntimeBinding] = []
         for binding in filtered:
             actual = (
-                RuntimeBindingStatus.READY
-                if Path(binding.locator).is_dir()
-                else RuntimeBindingStatus.MISSING
+                RuntimeBindingStatus.MISSING
+                if _filesystem_binding_missing(binding.locator)
+                else RuntimeBindingStatus.READY
             )
             refreshed.append(
                 WorkspaceRuntimeBinding(

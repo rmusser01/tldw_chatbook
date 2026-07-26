@@ -631,3 +631,82 @@ def test_v2_migration_dedupes_and_indexes_existing_duplicates(tmp_path: Path) ->
 
     assert index_row is not None
     assert len({n.strip().casefold() for n in names}) == len(names)
+
+
+def test_v2_migration_dedupes_across_groups_without_collision(tmp_path: Path) -> None:
+    """A rename generated for one duplicate group must not collide with a
+    name reserved by a different duplicate group's rename (Qodo #943/#944)."""
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    db = WorkspaceDB(tmp_path / "mig-cross-group.sqlite", client_id="mig")
+    with db.connection() as conn:
+        conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
+        conn.execute("DELETE FROM schema_version WHERE version = 2")
+        # Group 1: "Foo" / "foo" duplicates. Group 2: a lone pre-existing
+        # "Foo (2)" that is NOT a duplicate of anything by itself, but is
+        # exactly the candidate name group 1's rename would naively produce.
+        for wid, name in (("w1", "Foo"), ("w2", "foo"), ("w3", "Foo (2)")):
+            conn.execute(
+                """
+                INSERT INTO workspace_records
+                    (workspace_id, name, description, authority, sync_status,
+                     active, archived, created_at, updated_at)
+                VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
+                """,
+                (wid, name, f"2026-01-0{wid[-1]}T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+            )
+        conn.commit()
+
+    db._initialize_schema()
+
+    with db.connection() as conn:
+        names = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM workspace_records WHERE archived = 0 ORDER BY workspace_id"
+            ).fetchall()
+        ]
+        index_row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspace_records_name_ci'"
+        ).fetchone()
+
+    assert index_row is not None
+    assert len({n.strip().casefold() for n in names}) == len(names)
+
+
+def test_v2_migration_dedupes_against_preexisting_suffixed_name(tmp_path: Path) -> None:
+    """A generated rename must not collide with a real, pre-existing name
+    that already looks like a generated suffix (Qodo #943/#944)."""
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    db = WorkspaceDB(tmp_path / "mig-preexisting-suffix.sqlite", client_id="mig")
+    with db.connection() as conn:
+        conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
+        conn.execute("DELETE FROM schema_version WHERE version = 2")
+        for wid, name in (("w1", "Bar"), ("w2", "bar"), ("w3", "Bar (2)")):
+            conn.execute(
+                """
+                INSERT INTO workspace_records
+                    (workspace_id, name, description, authority, sync_status,
+                     active, archived, created_at, updated_at)
+                VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
+                """,
+                (wid, name, f"2026-01-0{wid[-1]}T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+            )
+        conn.commit()
+
+    db._initialize_schema()
+
+    with db.connection() as conn:
+        names = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM workspace_records WHERE archived = 0 ORDER BY workspace_id"
+            ).fetchall()
+        ]
+        index_row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workspace_records_name_ci'"
+        ).fetchone()
+
+    assert index_row is not None
+    assert len({n.strip().casefold() for n in names}) == len(names)

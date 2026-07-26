@@ -3,10 +3,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
+
+import pytest
 
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 from tldw_chatbook.Tools import workspace_file_roots as wfr
+
+
+@pytest.fixture(autouse=True)
+def _reset_default_registry_cache():
+    """Item E's default-factory memoization must not leak across tests."""
+    wfr._default_registry_instance = None
+    yield
+    wfr._default_registry_instance = None
 
 
 def _registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
@@ -74,3 +85,44 @@ def test_registry_failure_degrades_to_sandbox_only(tmp_path, monkeypatch) -> Non
     sandbox.mkdir()
     with wfr.run_workspace("ws-a"):
         assert wfr.allowed_file_roots(write=True, sandbox_root=sandbox) == (sandbox,)
+
+
+def test_default_registry_factory_is_cached(tmp_path, monkeypatch) -> None:
+    """Item E: the default factory must not rebuild WorkspaceDB on every call."""
+    monkeypatch.setattr(
+        "tldw_chatbook.config.get_workspaces_db_path",
+        lambda: tmp_path / "cached.sqlite",
+    )
+
+    first = wfr._default_registry_factory()
+    second = wfr._default_registry_factory()
+
+    assert first is second
+    assert isinstance(first, LocalWorkspaceRegistryService)
+
+
+def test_symlink_replaced_root_excluded_from_allowed_roots(
+    tmp_path, monkeypatch
+) -> None:
+    """Item F: a bound folder later swapped for a symlink must not widen roots."""
+    registry = _registry(tmp_path)
+    bound = tmp_path / "bound-root"
+    bound.mkdir()
+    registry.add_folder_binding("ws-a", bound)
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "secret.txt").write_text("nope")
+
+    # Replace the bound directory in place with a symlink to another folder.
+    shutil.rmtree(bound)
+    bound.symlink_to(elsewhere)
+
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+
+    with wfr.run_workspace("ws-a"):
+        roots = wfr.allowed_file_roots(write=False, sandbox_root=sandbox)
+
+    assert roots == (sandbox,)

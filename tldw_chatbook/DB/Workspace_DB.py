@@ -124,11 +124,15 @@ class WorkspaceDB(BaseDB):
             )
             conn.commit()
 
-            # v2 migration: add case-insensitive unique index on non-archived names
+            # v2 migration: add case-insensitive unique index on non-archived names.
+            # Keep this runner SQL aligned with
+            # tldw_chatbook/DB/migrations/workspaces_v1_to_v2_name_unique_index.sql.
             version_row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
             version = int(version_row[0] or 0) if version_row is not None else 0
-            if version < 2:
-                # Dedup non-archived duplicate names so the index can build on old DBs
+            needs_v2 = version < 2
+            rows: list[tuple[str, str]] = []
+            if needs_v2:
+                # Reads only here; all v2 writes happen below inside self.transaction().
                 rows = conn.execute(
                     """
                     SELECT workspace_id, name
@@ -137,43 +141,54 @@ class WorkspaceDB(BaseDB):
                     ORDER BY created_at ASC, workspace_id ASC
                     """
                 ).fetchall()
-                seen_names = {}  # maps casefold -> list of (workspace_id, original_name)
-                for workspace_id, name in rows:
-                    needle = name.strip().casefold()
-                    if needle not in seen_names:
-                        seen_names[needle] = []
-                    seen_names[needle].append((workspace_id, name))
 
-                # For groups with >1 row, rename all but the first
-                seen_final = set()
-                for needle, group in seen_names.items():
-                    if len(group) > 1:
-                        for idx, (workspace_id, orig_name) in enumerate(group[1:], start=2):
-                            # Generate unique suffix until we find a free name
-                            new_name = f"{orig_name} ({idx})"
-                            suffix = idx
-                            while new_name.strip().casefold() in seen_final:
-                                suffix += 1
-                                new_name = f"{orig_name} ({suffix})"
-                            seen_final.add(new_name.strip().casefold())
-                            conn.execute(
-                                "UPDATE workspace_records SET name = ? WHERE workspace_id = ?",
-                                (new_name, workspace_id),
-                            )
-                    else:
-                        seen_final.add(needle)
+        if not needs_v2:
+            return
 
-                # Create case-insensitive unique index on non-archived names
-                # SQLite lower() is ASCII-only, so the index is the coarse backstop
-                # while the service-level casefold() check remains the primary, broader guard
-                conn.execute(
-                    """
-                    CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_records_name_ci
-                    ON workspace_records (lower(name)) WHERE archived = 0
-                    """
+        # Reserve every existing non-archived name up front (stripped, casefolded)
+        # so renames below can never collide with a retained first-of-group row,
+        # nor with a pre-existing unrelated name that already looks like a
+        # generated suffix (e.g. a real "Foo (2)").
+        reserved = {name.strip().casefold() for _, name in rows}
+
+        groups: dict[str, list[tuple[str, str]]] = {}
+        for workspace_id, name in rows:
+            groups.setdefault(name.strip().casefold(), []).append((workspace_id, name))
+
+        # For groups with >1 row, keep the first (earliest-created) row as-is
+        # and rename the rest against the shared `reserved` set.
+        renames: list[tuple[str, str]] = []  # (workspace_id, new_name)
+        for group in groups.values():
+            if len(group) <= 1:
+                continue
+            for idx, (workspace_id, orig_name) in enumerate(group[1:], start=2):
+                base = orig_name.strip()
+                candidate = f"{base} ({idx})"
+                suffix = idx
+                while candidate.casefold() in reserved:
+                    suffix += 1
+                    candidate = f"{base} ({suffix})"
+                reserved.add(candidate.casefold())
+                renames.append((workspace_id, candidate))
+
+        # All v2 writes run inside one transaction so a mid-migration failure
+        # (e.g. the unique index hitting an unresolved collision) rolls back
+        # atomically instead of leaving the database half-migrated.
+        with self.transaction() as write_conn:
+            for workspace_id, candidate in renames:
+                write_conn.execute(
+                    "UPDATE workspace_records SET name = ? WHERE workspace_id = ?",
+                    (candidate, workspace_id),
                 )
-                conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (2)")
-                conn.commit()
+            # SQLite lower() is ASCII-only, so the index is the coarse backstop
+            # while the service-level casefold() check remains the primary, broader guard
+            write_conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_records_name_ci
+                ON workspace_records (lower(name)) WHERE archived = 0
+                """
+            )
+            write_conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (2)")
 
     def get_schema_version(self) -> int:
         """Return the initialized schema version."""

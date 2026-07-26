@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -108,6 +109,26 @@ def test_list_folder_bindings_recomputes_status(
     folder.mkdir()
     service.add_folder_binding("ws-a", folder)
     folder.rmdir()
+
+    bindings = service.list_folder_bindings("ws-a")
+    assert len(bindings) == 1
+    assert str(bindings[0].status) in ("missing", "RuntimeBindingStatus.MISSING")
+
+
+def test_list_folder_bindings_reports_symlink_swap_as_missing(
+    service: LocalWorkspaceRegistryService, tmp_path: Path
+) -> None:
+    """Item F: a bound folder later replaced by a symlink must report MISSING,
+    since trusting it would silently widen the root at enforcement time."""
+    real_root = tmp_path / "real-root"
+    real_root.mkdir()
+    service.add_folder_binding("ws-a", real_root)
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    shutil.rmtree(real_root)
+    real_root.symlink_to(elsewhere)
 
     bindings = service.list_folder_bindings("ws-a")
     assert len(bindings) == 1
