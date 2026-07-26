@@ -600,6 +600,16 @@ class SubscriptionsDB(BaseDB):
         round-trips. ``SUM(CASE …)`` is used rather than ``COUNT(*) FILTER``
         to avoid depending on a newer SQLite than the bundled one.
 
+        The per-watchlist leg is anchored on ``watchlists`` with LEFT JOINs
+        (not an INNER JOIN from ``watchlist_sources``), so a watchlist with
+        no sources yet -- or sources with no items yet -- still appears with
+        ``{"total": 0, "unread": 0}`` instead of being missing from the
+        result entirely. With a LEFT JOIN, ``COUNT(si.id)`` would still be
+        correct (``COUNT`` ignores NULLs), but ``COUNT(*)`` would wrongly
+        count the null-padded row for a sourceless watchlist -- the
+        ``SUM(CASE WHEN si.id IS NOT NULL ...)`` form is used to make that
+        unambiguous rather than relying on a NULL-counting subtlety.
+
         Returns:
             Mapping of bucket id to ``{"total": int, "unread": int}``. Bucket
             ``-1`` is Unassigned (sources in no watchlist) and ``-2`` is All
@@ -607,12 +617,13 @@ class SubscriptionsDB(BaseDB):
         """
         rows = self.conn.execute(
             """
-            SELECT ws.watchlist_id AS bucket,
-                   COUNT(si.id) AS total,
+            SELECT w.id AS bucket,
+                   SUM(CASE WHEN si.id IS NOT NULL THEN 1 ELSE 0 END) AS total,
                    SUM(CASE WHEN si.status = 'new' THEN 1 ELSE 0 END) AS unread
-            FROM watchlist_sources ws
-            JOIN subscription_items si ON si.subscription_id = ws.subscription_id
-            GROUP BY ws.watchlist_id
+            FROM watchlists w
+            LEFT JOIN watchlist_sources ws  ON ws.watchlist_id = w.id
+            LEFT JOIN subscription_items si ON si.subscription_id = ws.subscription_id
+            GROUP BY w.id
 
             UNION ALL
 
@@ -633,10 +644,12 @@ class SubscriptionsDB(BaseDB):
             (self.UNASSIGNED_BUCKET, self.ALL_SOURCES_BUCKET),
         ).fetchall()
 
+        # No `if row[0] is not None` filter here: watchlists.id and
+        # watchlist_sources.watchlist_id are NOT NULL, and both sentinels
+        # bind non-null literals, so every row's bucket id is always non-null.
         return {
             row[0]: {"total": row[1] or 0, "unread": row[2] or 0}
             for row in rows
-            if row[0] is not None
         }
 
     @property

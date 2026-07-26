@@ -243,6 +243,34 @@ def test_counts_bucket_by_watchlist_unassigned_and_all(db):
     assert counts[-2] == {"total": 2, "unread": 1}   # All sources
 
 
+def test_counts_include_watchlist_with_no_sources(db):
+    """A freshly created watchlist has no sources at all yet, but must still
+    appear in the tree (as all zeros) rather than being absent."""
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
+
+    service = WatchlistBundleService(db)
+    empty = service.create("Empty")
+
+    counts = db.get_watchlist_item_counts()
+
+    assert counts[empty["id"]] == {"total": 0, "unread": 0}
+
+
+def test_counts_include_watchlist_with_sources_but_no_items(db):
+    """A watchlist can have a source attached before that source has ever
+    produced any items -- it must still report zeros, not be missing."""
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
+
+    service = WatchlistBundleService(db)
+    quiet = service.create("Quiet")
+    source = db.add_subscription(name="Quiet Feed", type="rss", source="https://d.example/f")
+    service.add_source(quiet["id"], source)
+
+    counts = db.get_watchlist_item_counts()
+
+    assert counts[quiet["id"]] == {"total": 0, "unread": 0}
+
+
 def test_counts_use_a_single_query_regardless_of_watchlist_count(db, monkeypatch):
     from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 
