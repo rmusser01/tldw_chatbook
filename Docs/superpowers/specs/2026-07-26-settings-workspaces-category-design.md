@@ -24,6 +24,17 @@ lets users modify existing workspaces by **adding/removing folders**.
 - **Two stacked PRs, merged as one train** (§7): PR1 = service + enforcement,
   PR2 = the Settings page. Never ship management UI for behavior that does
   not exist yet (the aspirational-UI failure the UX review condemned).
+- **Companion package (separate spec, same program): parallel agents across
+  workspaces.** The user's end goal is agents working in parallel in
+  different workspaces, swapped between from the Console sidebar. Console
+  runs are globally serialized today (single exclusive `console-run` worker
+  group + an "already running" send gate), so that requires a Console
+  concurrency change — per-session run state/workers, sidebar run
+  indicators, background-run streaming/approval UX — specced separately.
+  This spec deliberately builds the enabling primitive: run-bound folder
+  roots (§3) mean concurrent runs each enforce their own workspace's
+  folders with no cross-talk, so the companion work needs no enforcement
+  changes.
 
 ## 2. Service layer (PR1)
 
@@ -204,7 +215,9 @@ roots model.
 
 ## 9. Out of scope
 
-Non-filesystem binding kinds (git-worktree, container, VM, remote, ACP);
+Parallel/concurrent agent runs and sidebar run indicators (companion spec,
+see §1); non-filesystem binding kinds (git-worktree, container, VM, remote,
+ACP);
 per-folder permissions beyond ro/rw; folder pickers (text input only);
 watching/ingesting folder contents (that is Library/watchlists territory);
 server sync of bindings.
