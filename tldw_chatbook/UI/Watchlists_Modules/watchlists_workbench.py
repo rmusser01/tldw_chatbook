@@ -102,7 +102,7 @@ class WatchlistsWorkbench(Horizontal):
                 easy to miss with a single-recompose test. A factory
                 sidesteps the whole class of bug by handing back a brand
                 new instance on every region rebuild, matching how
-                ``WatchlistsNavigator`` (an overridden-``compose()``
+                ``WatchlistsTabStrip`` (an overridden-``compose()``
                 widget) already behaves.
         """
         super().__init__(**kwargs)

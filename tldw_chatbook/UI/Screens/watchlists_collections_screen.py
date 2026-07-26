@@ -83,7 +83,7 @@ from ..Watchlists_Modules.sources_pane import (
 )
 from ..Watchlists_Modules.watchlists_backend_controller import WatchlistsBackendController
 from ..Watchlists_Modules.watchlists_console_handoff import WatchlistsConsoleHandoff
-from ..Watchlists_Modules.watchlists_navigator import SectionSelected, WatchlistsNavigator
+from ..Watchlists_Modules.watchlists_tab_strip import SectionSelected, WatchlistsTabStrip
 from ..Watchlists_Modules.watchlists_workbench import RegionToggled, WatchlistsWorkbench
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 
@@ -480,20 +480,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return False, "Stage local Watchlists context in Console."
 
     def _build_list_pane(self) -> Vertical:
-        """Build the FEEDS-region content: the Sources title plus the local
-        Watchlists snapshot used for Console staging (recovery-state rendering).
+        """Build the FEEDS-region content: the section tab strip, the Sources
+        title, plus the local Watchlists snapshot used for Console staging
+        (recovery-state rendering).
 
-        Byte-identical logic to the pre-rehost inline composition; only the
-        `yield` calls became list appends and a `Vertical(...)` return so the
-        result can be handed to `WatchlistsWorkbench` as a content factory
-        instead of being mounted directly by `compose_content`.
+        Byte-identical logic to the pre-rehost inline composition for the
+        snapshot itself; only the `yield` calls became list appends and a
+        `Vertical(...)` return so the result can be handed to
+        `WatchlistsWorkbench` as a content factory instead of being mounted
+        directly by `compose_content`. The tab strip is prepended here
+        (rather than left unwired) so section-switching by click is not lost
+        now that the navigator is retired — `Region.LEFT_RAIL` will take over
+        the tree once Task 4 wires it in, at which point this stays the
+        strip's permanent home per the design (a one-row strip at the top of
+        the centre).
 
         This is called fresh on every region rebuild (see
         `WatchlistsWorkbench.__init__`'s docstring on why `content` holds
         factories, not instances), so it must stay side-effect-free.
         """
         children: list[Widget] = [
-            Static("Sources", classes="destination-section watchlists-column-title")
+            WatchlistsTabStrip(active_section=self.active_section, id="wl-tabs"),
+            Static("Sources", classes="destination-section watchlists-column-title"),
         ]
         if not self._wc_loaded:
             children.append(
@@ -779,7 +787,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     # only mount on its FIRST mount; the same instance
                     # remounted a second time comes back childless (verified
                     # empirically — see `WatchlistsWorkbench.__init__`).
-                    Region.LEFT_RAIL: lambda: WatchlistsNavigator(id="watchlists-navigator"),
+                    # LEFT_RAIL has no factory here: the navigator that used
+                    # to occupy it is retired in this task, and the watchlist
+                    # tree that replaces it (Task 2's `WatchlistTree`) is not
+                    # wired into the screen until Task 4. Until then this
+                    # region falls back to `WatchlistsWorkbench`'s own
+                    # placeholder stub rather than crash or fake a widget.
                     Region.FEEDS: self._build_list_pane,
                     Region.ITEMS: self._build_detail_pane,
                     Region.RIGHT_RAIL: lambda: self._build_inspector_pane(
