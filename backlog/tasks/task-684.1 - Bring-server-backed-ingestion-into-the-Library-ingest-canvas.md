@@ -4,7 +4,7 @@ title: Bring server-backed ingestion into the Library ingest canvas
 status: In Progress
 assignee: []
 created_date: '2026-07-26 04:33'
-updated_date: '2026-07-26 05:05'
+updated_date: '2026-07-26 05:09'
 labels:
   - ingest
   - consolidation
@@ -36,3 +36,15 @@ Server Sources is the only way to start a server-backed ingest, and it lives in 
 5. Gate honestly: with no server configured the option explains what to configure rather than failing at submit.
 6. Tests at the mapping and routing seams, then a live pass against a configured server.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Slice 1 of 3 landed: the pure mapping layer (tldw_chatbook/Library/server_ingest_request.py, 21 tests).
+
+Key finding that reshaped the plan: the server seam already existed. ServerMediaReadingService.submit_ingest_jobs already wraps TLDWAPIClient.submit_media_ingest_jobs and accepts exactly the kwargs a Library submission needs, with list/cancel siblings for 684.2 and ingest_web_content for 684.3. The 700-line widget-coupled handler in tldw_api_events.py never needs untangling -- it dies with the window in 684.4.
+
+Two boundaries are explicit rather than guessed: the server has no html media type (its document extractor takes that text), and a plain web page is refused with the reason that clipping runs through a different endpoint (684.3), rather than being sent as a type the server would reject.
+
+Remaining: slice 2 routes submit through the chosen backend (the selector already exists as app.media_runtime_state.runtime_backend, alongside the local/server MediaReadingScopeService pattern); slice 3 renders the choice in the canvas and replaces the cosmetic 'ingest runs on Local' line, gating honestly when no server is configured. Then a live pass against a configured server -- which is the part this environment cannot verify.
+<!-- SECTION:NOTES:END -->
