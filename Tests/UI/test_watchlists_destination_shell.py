@@ -6,15 +6,20 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Select
 
+from textual.widgets import DataTable
+
 from Tests.UI.test_destination_shells import DestinationHarness
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
+from tldw_chatbook.UI.Watchlists_Modules.rules_pane import RulesPane
 from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
+from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 
 
 class WatchlistsContextHarness(App):
@@ -754,3 +759,146 @@ async def test_cancelling_the_create_form_clears_the_draft():
 
         assert screen._source_create_draft == {"name": "", "url": "", "tags": ""}
         assert screen._source_create_form_open is False
+
+
+# --- Fix round 2 (final whole-branch review): Findings 2, 3, 4. `_build_
+# detail_pane`/`_build_inspector_pane` construct a brand new pane on EVERY
+# workbench rebuild, not just a section switch -- any region collapse/solo/
+# rail toggle recomposes the whole `WatchlistsWorkbench` (`region_layout` is
+# `recompose=True`). RunsPane/NotificationsPane/OverviewPane were already
+# seeded from screen state; Sources/Items/Rules and the Inspector were not,
+# and an in-progress Rules edit had no screen-state mirror at all (unlike the
+# Sources create-form draft fixed in round 1).
+
+
+async def _wait_for_table_rows(pilot, table_id: str, screen, expected: int) -> DataTable:
+    table = screen.query_one(table_id, DataTable)
+    for _ in range(30):
+        if table.row_count >= expected:
+            break
+        await pilot.pause()
+        table = screen.query_one(table_id, DataTable)
+    return table
+
+
+@pytest.mark.asyncio
+async def test_bracket_toggle_preserves_loaded_sources_items_and_rules_tables():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen._controller.list_sources = AsyncMock(
+            return_value=[{"id": "s1", "name": "Feed One", "source_type": "rss"}]
+        )
+        screen._controller.list_items = AsyncMock(
+            return_value=[{"id": "i1", "title": "Item One", "source_name": "Feed One"}]
+        )
+        screen._controller.list_alert_rules = AsyncMock(
+            return_value=[{"id": "r1", "name": "Rule One", "condition_type": "no_items"}]
+        )
+
+        for section, table_id in (
+            ("sources", "#sources-table"),
+            ("items", "#items-table"),
+            ("rules", "#rules-table"),
+        ):
+            screen.query_one(f"#nav-{section}", Button).press()
+            await pilot.pause()
+
+            table = await _wait_for_table_rows(pilot, table_id, screen, 1)
+            assert table.row_count == 1, f"{section} table never loaded its one row"
+
+            await pilot.press("[")
+            await pilot.pause()
+
+            table_after_toggle = screen.query_one(table_id, DataTable)
+            assert table_after_toggle.row_count == 1, (
+                f"{section} table was emptied by an unrelated left-rail toggle"
+            )
+
+            # Re-expand so the next section's nav button (in the left rail)
+            # is reachable again.
+            await pilot.press("[")
+            await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_bracket_toggle_preserves_inspector_selection():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen._controller.list_sources = AsyncMock(
+            return_value=[{"id": "s1", "name": "Feed One", "source_type": "rss"}]
+        )
+
+        screen.query_one("#nav-sources", Button).press()
+        await pilot.pause()
+        await _wait_for_table_rows(pilot, "#sources-table", screen, 1)
+
+        sources_pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        sources_pane.select_source_by_id("s1")
+        await pilot.pause()
+
+        assert screen.selected_entity is not None
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        assert inspector.selected_entity == screen.selected_entity
+
+        await pilot.press("[")
+        await pilot.pause()
+
+        rebuilt_inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        assert rebuilt_inspector is not inspector, "the inspector should have been rebuilt"
+        assert rebuilt_inspector.selected_entity == screen.selected_entity, (
+            "the rebuilt inspector lost the screen's selection"
+        )
+        # The empty state ("Select a source...") must NOT be showing, since a
+        # real selection is still in effect after the rebuild.
+        assert not rebuilt_inspector.query("#inspector-empty-state")
+
+
+@pytest.mark.asyncio
+async def test_bracket_toggle_preserves_in_progress_rule_edit():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        rule = {
+            "id": "r1",
+            "name": "Rule One",
+            "condition_type": "no_items",
+            "severity": "warning",
+            "enabled": True,
+        }
+        screen._controller.list_alert_rules = AsyncMock(return_value=[rule])
+
+        screen.query_one("#nav-rules", Button).press()
+        await pilot.pause()
+        await _wait_for_table_rows(pilot, "#rules-table", screen, 1)
+
+        rules_pane = screen.query_one("#watchlists-rules-pane", RulesPane)
+        rules_pane.edit_rule(rule)
+        await pilot.pause()
+
+        assert screen.query("#rules-create-name"), "the edit form should be open"
+        assert screen._rule_form_open is True
+        assert screen._rule_form_editing == rule
+
+        # Toggle a rail that has nothing to do with Rules. This rebuilds the
+        # whole workbench, including the RulesPane living in ITEMS.
+        await pilot.press("[")
+        await pilot.pause()
+
+        assert screen.query(
+            "#rules-create-name"
+        ), "the rule edit form must still be open after an unrelated toggle"
+        name_input = screen.query_one("#rules-create-name", Input)
+        assert name_input.value == "Rule One", (
+            "the form must still be pre-filled for the SAME rule being edited"
+        )

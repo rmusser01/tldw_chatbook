@@ -61,7 +61,20 @@
     min-height: 0;
 }
 
-.watchlists-region-feeds,
+/* FEEDS only ever hosts a short (<=5-line) source-count summary, but before
+ * this rebalance it shared an equal `1fr` with ITEMS -- which hosts all six
+ * section panes and their DataTables -- and CONTENT. At 160x42 that handed
+ * FEEDS 11 rows for a handful of Static lines while ITEMS, doing all the
+ * work, got the same 11 (Finding 5). `height: auto` lets FEEDS take only
+ * what its content needs so ITEMS/CONTENT split what is left.
+ */
+.watchlists-region-feeds {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    border: round $ds-grid-line;
+}
+
 .watchlists-region-items,
 .watchlists-region-content {
     width: 100%;
@@ -80,10 +93,31 @@
     color: $ds-text-muted;
 }
 
-/* Collapsed regions keep a one-line, focusable header so nothing vanishes */
+/* Collapsed regions keep a one-line, focusable header so nothing vanishes.
+ *
+ * `width: 100%` is only correct when the header is a direct child of the
+ * centre `Vertical` (`#wl-centre` / `.watchlists-centre`) -- there "100%"
+ * means the centre column's own width. A rail header (LEFT_RAIL/RIGHT_RAIL)
+ * is a direct child of the workbench `Horizontal` itself, so the same rule
+ * there means the ENTIRE workbench width, pushing every region after it off
+ * the right edge of the screen (Finding 1, fix round 2). Rails get a fixed
+ * narrow width instead -- the same fixed-width-handle pattern
+ * `console_rail_handle.py` uses for its collapsed rail buttons -- with
+ * `min-width`/`max-width` pinned so Button's own `min-width: 16` default
+ * (textual/widgets/_button.py) can't win the cascade and re-widen it.
+ */
 .watchlists-region-header {
     height: 1;
     min-height: 1;
-    width: 100%;
     color: $ds-text-muted;
+}
+
+.watchlists-centre > .watchlists-region-header {
+    width: 100%;
+}
+
+.watchlists-workbench > .watchlists-region-header {
+    width: 16;
+    min-width: 0;
+    max-width: 16;
 }

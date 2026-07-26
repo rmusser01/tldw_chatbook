@@ -47,7 +47,7 @@ from tldw_chatbook.UI.Screens import (
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
-from tldw_chatbook.UI.Watchlists_Modules.region_layout import RegionLayout
+from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
 from tldw_chatbook.Widgets.destination_workbench import (
     DestinationWorkbench,
     WorkbenchPane,
@@ -1045,6 +1045,83 @@ async def test_watchlists_centre_regions_stack_vertically_in_order():
             assert top.region.y + top.region.height <= bottom.region.y, (
                 f"centre regions overlap: {top.region} vs {bottom.region}"
             )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_collapsing_both_rails_keeps_every_region_in_viewport():
+    """Fix round 2, Finding 1 (CRITICAL): `.watchlists-region-header`'s
+    `width: 100%` rule was unscoped, so a RAIL header (a direct child of the
+    workbench `Horizontal`, not the centre `Vertical`) took the ENTIRE
+    workbench width instead of a narrow collapsed-handle width -- pushing
+    every region after it off-screen. Measured pre-fix at 160x42 after
+    collapsing both rails: the right rail's header landed at
+    x=161 with the workbench only 160 wide, unreachable by mouse. This forces
+    the exact reproduction and asserts every remaining region/header stays
+    inside the 160-wide viewport.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        screen._apply_layout(
+            RegionLayout(collapsed=frozenset({Region.LEFT_RAIL, Region.RIGHT_RAIL}))
+        )
+        await pilot.pause()
+
+        for selector in (
+            "#wl-header-left_rail",
+            "#wl-region-feeds",
+            "#wl-region-items",
+            "#wl-header-right_rail",
+        ):
+            _assert_visible_in_viewport(
+                screen.query_one(selector),
+                height=42,
+                context=selector,
+                viewport_width=160,
+            )
+
+        left_header = screen.query_one("#wl-header-left_rail")
+        right_header = screen.query_one("#wl-header-right_rail")
+        assert left_header.region.width < 160, (
+            f"left rail header claimed (close to) the full workbench width: "
+            f"{left_header.region}"
+        )
+        assert right_header.region.x + right_header.region.width <= 160, (
+            f"right rail header fell outside the viewport: {right_header.region}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_items_region_is_taller_than_feeds_region_when_expanded():
+    """Fix round 2, Finding 5 (human-ruled, CSS-only rebalance): FEEDS only
+    ever hosts a short (<=5-line) source-count summary but shared an equal
+    `1fr` with ITEMS -- which hosts all six section panes and their
+    DataTables -- and CONTENT, before this rebalance. `height: auto` on
+    FEEDS lets it take only what its content needs so ITEMS (still `1fr`)
+    gets the space FEEDS no longer claims.
+    """
+    app = _build_test_app()
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+
+        feeds = screen.query_one("#wl-region-feeds")
+        items = screen.query_one("#wl-region-items")
+
+        assert items.region.height > feeds.region.height, (
+            f"ITEMS should be taller than FEEDS once FEEDS is content-fit: "
+            f"feeds={feeds.region} items={items.region}"
+        )
 
 
 @pytest.mark.parametrize(

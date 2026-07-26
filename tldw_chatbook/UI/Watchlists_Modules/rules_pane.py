@@ -40,6 +40,28 @@ class EditRuleRequested(Message):
         super().__init__()
 
 
+class RuleFormVisibilityChanged(Message):
+    """Posted whenever the rule form opens or closes, and which rule (if any)
+    it is editing.
+
+    `RulesPane` lives inside a `WatchlistsWorkbench` region, and that
+    workbench's `region_layout` reactive is `recompose=True` — collapsing or
+    expanding *any* region (including one unrelated to Rules, e.g. `[` on the
+    left rail) rebuilds the whole workbench and constructs a brand new
+    `RulesPane`. Without this message the screen has no way to know an edit
+    was in progress, so an open edit form would be silently destroyed on the
+    next such rebuild — the same failure `CreateFormVisibilityChanged` in
+    sources_pane.py already fixes for the Sources create form. The owning
+    screen mirrors this into its own state and re-seeds it into the
+    freshly-constructed pane via `RulesPane.edit_rule`.
+    """
+
+    def __init__(self, is_open: bool, editing_rule: dict[str, Any] | None) -> None:
+        self.is_open = is_open
+        self.editing_rule = editing_rule
+        super().__init__()
+
+
 class RulesPane(RecomposeCaptureGuard, Vertical):
     """Alert rule list and editor for watchlists."""
 
@@ -144,6 +166,11 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
     def watch_selected_rule(self, rule: dict[str, Any] | None) -> None:
         if self.is_mounted:
             self.post_message(RuleSelected(rule))
+
+    def watch_show_rule_form(self, is_open: bool) -> None:
+        if self.is_mounted:
+            editing_rule = self.selected_rule if self._editing_rule_id else None
+            self.post_message(RuleFormVisibilityChanged(is_open, editing_rule))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = str(event.button.id)

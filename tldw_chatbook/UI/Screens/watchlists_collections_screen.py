@@ -64,6 +64,7 @@ from ..Watchlists_Modules.region_layout import CENTRE_REGIONS, Region, RegionLay
 from ..Watchlists_Modules.region_layout_store import load_region_layout, save_region_layout
 from ..Watchlists_Modules.rules_pane import (
     RefreshRulesRequested,
+    RuleFormVisibilityChanged,
     RuleSelected,
     RulesPane,
     SaveRuleRequested,
@@ -152,6 +153,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._pending_navigation_run_backend: str | None = None
         self._loaded_runs: list[dict[str, Any]] = []
         self._loaded_notifications: list[dict[str, Any]] = []
+        # Mirrors what's currently loaded for Sources/Items/Rules the same way
+        # `_loaded_runs`/`_loaded_notifications` already do (Finding 2, fix
+        # round 2): `_build_detail_pane` constructs a brand new
+        # SourcesPane/ItemsPane/RulesPane on every workbench rebuild (any
+        # region collapse/solo/rail toggle, not just switching sections), and
+        # a fresh pane's `sources`/`items`/`rules` reactive starts at its
+        # class default (`[]`). Without holding the last-loaded rows here and
+        # re-seeding them below, the table would render empty until the next
+        # unrelated navigation happened to trigger a reload.
+        self._loaded_sources: list[dict[str, Any]] = []
+        self._loaded_items: list[dict[str, Any]] = []
+        self._loaded_rules: list[dict[str, Any]] = []
         self._applying_navigation_context = False
         # Mirrors SourcesPane's create-form state (Finding 1, fix round 1):
         # `region_layout` is `recompose=True`, so any collapse/solo/rail
@@ -162,6 +175,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # a keybinding that has nothing to do with Sources.
         self._source_create_form_open = False
         self._source_create_draft: dict[str, str] = {"name": "", "url": "", "tags": ""}
+        # Mirrors RulesPane's edit-form state (Finding 4, fix round 2): the
+        # same rebuild-destroys-pane-local-state failure mode as the Sources
+        # create form above, but for an in-progress rule EDIT rather than a
+        # create. `_rule_form_editing` holds the rule being edited, or `None`
+        # when the open form is for a brand new rule.
+        self._rule_form_open = False
+        self._rule_form_editing: dict[str, Any] | None = None
         self._controller = WatchlistsBackendController(
             app_instance=app_instance,
             scope_service=getattr(app_instance, "watchlist_scope_service", None),
@@ -542,6 +562,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             children.append(overview)
         elif self.active_section == "sources":
             sources_pane = SourcesPane(id="watchlists-sources-pane")
+            # Seed the last-loaded rows and selection (Finding 2, fix round
+            # 2) the same way RunsPane/NotificationsPane already do below —
+            # without this the table renders empty until the next unrelated
+            # navigation happens to trigger `_load_sources` again.
+            sources_pane.sources = self._loaded_sources
+            sources_pane.selected_source = self.selected_source
             # Seed the create-form draft so it survives this pane being
             # reconstructed (see the note on `_source_create_draft` in
             # __init__ and CreateFormDraftChanged/CreateFormVisibilityChanged
@@ -557,9 +583,27 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             runs_pane.selected_run = self.selected_run
             children.append(runs_pane)
         elif self.active_section == "items":
-            children.append(ItemsPane(id="watchlists-items-pane"))
+            # Seed the last-loaded rows (Finding 2, fix round 2) — see the
+            # note on `sources_pane.sources` above; same rebuild, same gap.
+            items_pane = ItemsPane(id="watchlists-items-pane")
+            items_pane.items = self._loaded_items
+            children.append(items_pane)
         elif self.active_section == "rules":
-            children.append(RulesPane(id="watchlists-rules-pane"))
+            # Seed the last-loaded rows (Finding 2, fix round 2) — see the
+            # note on `sources_pane.sources` above; same rebuild, same gap.
+            rules_pane = RulesPane(id="watchlists-rules-pane")
+            rules_pane.rules = self._loaded_rules
+            # Seed the edit-form state so an in-progress rule edit survives
+            # this pane being reconstructed (Finding 4, fix round 2) — the
+            # same treatment the Sources create-form draft already gets
+            # above; see `_rule_form_open`/`_rule_form_editing` in __init__
+            # and RuleFormVisibilityChanged in rules_pane.py.
+            if self._rule_form_open:
+                if self._rule_form_editing is not None:
+                    rules_pane.edit_rule(self._rule_form_editing)
+                else:
+                    rules_pane.show_rule_form = True
+            children.append(rules_pane)
         elif self.active_section == "notifications":
             notifications_pane = NotificationsPane(id="watchlists-notifications-pane")
             notifications_pane.notifications = self._loaded_notifications
@@ -651,7 +695,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     tooltip="Unavailable until Watchlists has an active run with Console context.",
                 )
             )
-        children.append(InspectorPane(id="watchlists-entity-inspector"))
+        # Seed from screen state (Finding 3, fix round 2): `region_layout` is
+        # `recompose=True`, so any collapse/solo/rail toggle constructs a
+        # brand new InspectorPane. Without this, the screen keeps
+        # `selected_entity` but the freshly-built Inspector starts at its
+        # class default (`None`) until the NEXT explicit selection change —
+        # `watch_selected_entity` only pushes on change, so a rebuild alone
+        # never re-syncs it. That left `d`/`c`/`p` silently operating on a
+        # selection the user could no longer see.
+        inspector = InspectorPane(id="watchlists-entity-inspector")
+        inspector.selected_entity = self.selected_entity
+        children.append(inspector)
         return Vertical(
             *children,
             id="watchlists-inspector-pane",
@@ -1086,10 +1140,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 runtime_backend=self.runtime_backend,
                 limit=100,
             )
+            # Mirror to screen state (Finding 2, fix round 2) so a later
+            # workbench rebuild — any region collapse/solo/rail toggle, not
+            # just a fresh section switch — can re-seed a brand new
+            # SourcesPane instead of leaving its table empty; see
+            # `_build_detail_pane` and `_loaded_sources` in __init__.
+            self._loaded_sources = [dict(source) for source in sources]
             if self.is_mounted:
                 try:
                     sources_pane = self.query_one("#watchlists-sources-pane", SourcesPane)
-                    sources_pane.sources = sources
+                    sources_pane.sources = self._loaded_sources
                     if self.selected_source is not None:
                         source_id = self.selected_source.get("id")
                         if source_id is not None:
@@ -1279,10 +1339,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 limit=100,
                 offset=0,
             )
+            # Mirror to screen state (Finding 2, fix round 2) — see the note
+            # on `_loaded_sources` in `_load_sources` above; same rebuild,
+            # same gap, same fix.
+            self._loaded_items = [dict(item) for item in items]
             if self.is_mounted:
                 try:
                     items_pane = self.query_one("#watchlists-items-pane", ItemsPane)
-                    items_pane.items = items
+                    items_pane.items = self._loaded_items
                 except Exception:
                     pass
         except Exception:
@@ -1306,10 +1370,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             rules = await self._controller.list_alert_rules(
                 runtime_backend=self.runtime_backend,
             )
+            # Mirror to screen state (Finding 2, fix round 2) — see the note
+            # on `_loaded_sources` in `_load_sources` above; same rebuild,
+            # same gap, same fix.
+            self._loaded_rules = [dict(rule) for rule in rules]
             if self.is_mounted:
                 try:
                     rules_pane = self.query_one("#watchlists-rules-pane", RulesPane)
-                    rules_pane.rules = rules
+                    rules_pane.rules = self._loaded_rules
                 except Exception:
                     pass
         except Exception:
@@ -1321,6 +1389,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_rule_selected(self, event: RuleSelected) -> None:
         event.stop()
         self.selected_entity = event.rule
+
+    @on(RuleFormVisibilityChanged)
+    def handle_rule_form_visibility_changed(
+        self, event: RuleFormVisibilityChanged
+    ) -> None:
+        event.stop()
+        self._rule_form_open = event.is_open
+        # Always clear on close, regardless of what `event.editing_rule`
+        # carries: RulesPane's Cancel/Submit handlers clear `show_rule_form`
+        # before clearing `_editing_rule_id`, so the message posted at that
+        # instant can still report the rule that WAS being edited. Ignoring
+        # it here (rather than trusting it) keeps a closed form from being
+        # re-seeded as still-editing on the next rebuild.
+        self._rule_form_editing = event.editing_rule if event.is_open else None
 
     @on(RefreshRulesRequested)
     def handle_refresh_rules_requested(self, event: RefreshRulesRequested) -> None:
