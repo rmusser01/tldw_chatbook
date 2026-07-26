@@ -36,11 +36,16 @@ discarded instead of overwriting a newer source or server selection.
 Application compatibility projections are updated by a non-throwing
 publication callback owned by the context boundary; they have no independent
 production writers. On `TldwCli`, the three legacy attributes are getter-only
-properties backed by uniquely named private projection fields. The callback's
-sole app publisher updates those fields; direct writes through the public
-attributes fail. Context state is read-only; there is no public state setter or
-standalone persistence escape hatch, and the backing store is private. The
-callback does not read or write `AppState`.
+properties backed by one private immutable `(source, active_server_id)`
+projection tuple. The callback's sole app publisher replaces that tuple
+atomically; direct writes through the public attributes fail.
+
+One `RuntimePolicyContext` identity is installed for the `TldwCli` lifetime.
+Configuration changes rebind that context and its server-context provider
+rather than replacing the authority object retained by long-lived consumers.
+Context state is read-only; there is no public state setter or standalone
+persistence escape hatch, and both the backing store and projection callback
+are private. The callback does not read or write `AppState`.
 
 Runtime-policy persistence is part of the ADR-022 private-data boundary. Its
 default path is resolved from the effective config path when the context is

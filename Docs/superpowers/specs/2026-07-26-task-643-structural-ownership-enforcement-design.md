@@ -8,12 +8,13 @@
 
 **Decision:** [ADR-026](../../../backlog/decisions/026-application-session-state-ownership.md)
 
-**Supersedes:** The `_store` naming and enforcement shape in Task 2, Step 3 and
-the projection/store-enforcement shape in Task 4, Steps 1 and 3 of the original
-TASK-643 implementation plan, together with the alias-flow implementation
-inside `Tests/test_application_state_ownership.py`. It does not replace the
-runtime authority, persistence ordering, or compatibility decisions already
-made for TASK-643. The implementation plan must be amended to this shape before
+**Supersedes:** The `_store` and projection-callback naming/enforcement shape in
+Task 2, Step 3; the projection/store-enforcement shape in Task 4, Steps 1 and
+3; and the Settings runtime-policy reload omitted by the original TASK-643
+implementation plan. It also replaces the alias-flow implementation inside
+`Tests/test_application_state_ownership.py`. It does not replace the runtime
+authority, persistence ordering, or compatibility decisions already made for
+TASK-643. The implementation plan must be amended to this shape before
 implementation resumes.
 
 **ADR required:** yes
@@ -46,6 +47,8 @@ control flow.
 ## Constraints
 
 - `RuntimePolicyContext` remains the only mutable runtime-source authority.
+- One `RuntimePolicyContext` identity is installed for the `TldwCli` lifetime;
+  configuration changes rebind that context instead of replacing it.
 - Runtime-source commits remain owner-thread-affine, revisioned, and
   persist-before-publish.
 - `current_runtime_backend`, `runtime_backend`, and `active_server_id` remain
@@ -65,9 +68,10 @@ control flow.
 
 ### 1. Runtime-enforced read-only surfaces with exact structural guards
 
-Make the public projection attributes read-only properties on `TldwCli`, give
-their backing fields unique private names, and update them through one private
-publisher method. Give the context store one unique name-mangled attribute.
+Make the public projection attributes read-only properties on `TldwCli`, back
+them with one private immutable tuple, and update that tuple through one
+private publisher method. Give the context store and projection callback
+unique name-mangled attributes. Make runtime-policy installation one-shot.
 Replace alias analysis with exact AST and descriptor checks.
 
 This is the selected approach. It makes aliases irrelevant: an alias to the
@@ -96,19 +100,22 @@ would knowingly weaken the verified ownership claim and is rejected.
 - `runtime_backend`
 - `active_server_id`
 
-Both backend properties read `_runtime_policy_projection_source`. The server
-property reads `_runtime_policy_projection_active_server_id`. There are no
+All three properties read one
+`_runtime_policy_projection_snapshot: tuple[str, str | None]`. Both backend
+properties return item `0`; the server property returns item `1`. There are no
 public setters.
 
 One private method, `_publish_runtime_policy_projection()`, receives an
-immutable `RuntimeSourceState` and assigns exactly those two private fields.
-The fields are derived compatibility data; they are not a second state
-container and do not accept independent mutation.
+immutable `RuntimeSourceState` and atomically assigns one derived
+`(active_source, active_server_id)` tuple. The tuple is compatibility data, not
+a second state authority or a new root state object, and does not accept
+independent mutation.
 
-The getters return safe startup defaults if publication has not happened:
-`"local"` for the source and `None` for the server ID. Normal application
-construction installs and publishes `RuntimePolicyContext` before consumers
-need the projections.
+The getters return safe startup defaults from `("local", None)` if publication
+has not happened. Normal application construction installs and publishes
+`RuntimePolicyContext` before consumers need the projections. A single tuple
+assignment prevents readers from observing a new source paired with an old
+server ID and prevents a partially updated projection if publication fails.
 
 Writing any of the three public attributes on a real `TldwCli`, through any
 alias, raises `AttributeError` because the properties are data descriptors
@@ -123,9 +130,12 @@ lightweight app double that does not expose the publisher, it retains the
 existing three `setattr()` operations. This preserves focused bootstrap tests
 and helper compatibility without weakening the production app surface.
 
-The fallback is selected only when the publisher attribute is absent. A
-present but non-callable publisher is an error. For commit-triggered
-publication, a publisher exception reaches
+The fallback is selected only when the publisher attribute is statically
+absent. `_apply_runtime_policy_to_app()` uses `inspect.getattr_static()` with a
+private sentinel for the presence check, then ordinary `getattr()` to bind a
+present publisher. A descriptor binding error propagates; it is not
+misclassified as absence. A present but non-callable publisher is an error.
+For commit-triggered publication, a publisher exception reaches
 `RuntimePolicyContext.commit_state()`'s existing projection-failure
 containment; bootstrap must not retry through public `setattr()`. Logs include
 only bounded exception-category metadata.
@@ -154,7 +164,35 @@ The symbol `_apply_runtime_policy_to_app` may occur in production only as:
 Exact direct, captured, qualified, and constant-string dynamic references are
 rejected elsewhere.
 
-### Uniquely private context store
+### One-time context installation and Settings rebind
+
+`load_runtime_policy_for_app()` is a one-time installation boundary. Before
+loading a store or publishing a projection, it checks for an installed
+`RuntimePolicyContext` and raises a bounded `RuntimeError` if one exists.
+`ensure_runtime_policy_for_app()` remains the idempotent accessor: it returns
+the installed context or invokes the loader only when none exists.
+
+Production calls to the loader are confined to the `TldwCli` constructor and
+the internal `ensure_runtime_policy_for_app()` fallback. Loader-symbol
+references are confined to its definition, the internal fallback call, the
+`app.py` import, and the constructor call. Exact structural checks reject
+direct, captured, qualified, imported, and constant-string dynamic references
+elsewhere.
+
+Settings no longer calls the loader after saving a new server configuration.
+It reloads `app.app_config`, rebinds
+`RuntimeServerContextProvider` through a focused
+`rebind_app_config()` operation, and calls
+`handle_runtime_backend_changed()`. The provider rebind updates its config
+mapping, upserts the legacy-config target, and invalidates any cached client
+before the existing context commit selects the new server identity.
+
+The app context identity does not change. Long-lived consumers—including
+`ServicePolicyEnforcer`, `RuntimeServerContextProvider`,
+`ActiveServerCapabilityService`, and Home—continue observing the same
+authority object and see the committed rebind.
+
+### Uniquely private context store and projection callback
 
 `RuntimePolicyContext._store` becomes
 `RuntimePolicyContext.__runtime_policy_state_store` and remains in
@@ -186,19 +224,40 @@ outside the allowed `__slots__` declaration. Tests inspect source structure;
 they do not claim that Python name mangling makes exact mangled runtime access
 impossible.
 
+`RuntimePolicyContext._publish` likewise becomes
+`RuntimePolicyContext.__runtime_policy_projection_callback`. Its exact
+structural allowlist is:
+
+- raw string `__runtime_policy_projection_callback` once in `__slots__`;
+- one raw attribute assignment in `__init__`;
+- direct raw attribute loads only for the contained callback invocation in
+  `commit_state()`.
+
+The mangled spelling
+`_RuntimePolicyContext__runtime_policy_projection_callback` must not occur in
+production source. Raw or mangled constant-string dynamic access is forbidden.
+This prevents callers from publishing app projections without a context
+commit.
+
 ### Small structural ownership checks
 
-The custom alias and control-flow engine is removed. Replacement tests verify:
+Delete the custom alias, lexical-scope, and control-flow visitors rather than
+retaining them beside the replacement. The new checks use small stateless AST
+collectors and direct shape assertions. They inspect only name-bearing syntax:
+`Name`, `Attribute`, import aliases, and constant names passed to
+`getattr`/`setattr`/`delattr` or equivalent subscript lookup. They do not scan
+arbitrary strings or docstrings.
+
+Replacement tests verify:
 
 1. `TldwCli` defines all three public projections as properties whose
    `fset` is `None`.
 2. Assigning a projection on a minimally constructed real `TldwCli` fails,
    including through a local alias.
-3. `_runtime_policy_projection_source` is read only by the two backend
-   getters, `_runtime_policy_projection_active_server_id` is read only by its
-   getter, and both are assigned only by
-   `_publish_runtime_policy_projection()`. Direct and constant-string
-   `getattr`/`setattr`/`delattr` references elsewhere are rejected.
+3. `_runtime_policy_projection_snapshot` is read only by the three getters and
+   assigned once per publication only by
+   `_publish_runtime_policy_projection()`. Direct, captured, qualified,
+   imported, and constant-string dynamic references elsewhere are rejected.
 4. `_apply_runtime_policy_to_app` occurs only at its definition, the contained
    callback registration, and the one initial loaded-state projection in
    `load_runtime_policy_for_app()`. Direct, captured, qualified, and
@@ -208,7 +267,8 @@ The custom alias and control-flow engine is removed. Replacement tests verify:
    `_apply_runtime_policy_to_app()`. Direct and constant-string dynamic
    references elsewhere are rejected.
 6. The bootstrap boundary uses the three public `setattr()` calls only in its
-   explicit publisher-absent lightweight-double fallback. Publisher errors
+   explicit statically publisher-absent lightweight-double fallback.
+   Descriptor binding failures, non-callable publishers, and publisher errors
    never enter the fallback.
 7. `RuntimePolicyContext.state` has no setter; the context has no public
    `persist` or `store` surface; direct assignment fails through an alias.
@@ -220,7 +280,16 @@ The custom alias and control-flow engine is removed. Replacement tests verify:
    constant-`getattr` references remain confined to `source_state.py` and
    `bootstrap.py`.
 10. The production tree contains exactly one direct private-store save
-   statement, in synchronous, non-generator `commit_state()`.
+    statement, in synchronous, non-generator `commit_state()`.
+11. The raw projection-callback name occurs only in its exact `__slots__`,
+    constructor-assignment, and contained `commit_state()` structures. The
+    mangled name occurs nowhere, and raw or mangled constant-string dynamic
+    access is rejected.
+12. `load_runtime_policy_for_app` production references are exactly its
+    definition, the internal ensure fallback call, the `app.py` import, and the
+    `TldwCli` constructor call. Direct, captured, qualified, imported, and
+    constant-string dynamic references elsewhere are rejected.
+13. The old alias/scope/control-flow analyzer classes are absent.
 
 These checks depend on unique symbols and descriptor behavior, not variable
 spelling, alias propagation, or control-flow interpretation.
@@ -238,8 +307,13 @@ spelling, alias propagation, or control-flow interpretation.
    invoking the projection callback, so callback readers observe the committed
    `(state, revision)`.
 7. The callback reaches `_apply_runtime_policy_to_app()`.
-8. A real `TldwCli` updates its two private projection fields through the one
-   private publisher; the three public properties immediately reflect them.
+8. A real `TldwCli` atomically replaces its private projection tuple through
+   the one private publisher; the three public properties immediately reflect
+   one coherent pair.
+
+When Settings changes the configured server, it reloads configuration and
+rebinds the server-context provider, but it does not repeat steps 1–2. It
+derives and commits the new binding through the already-installed context.
 
 Persistence failure leaves the context snapshot, revision, private projection
 fields, active screen, and target-status side effects unchanged.
@@ -251,6 +325,8 @@ fields, active screen, and target-status side effects unchanged.
   promises read compatibility, not write compatibility.
 - Lightweight objects passed directly to bootstrap helpers retain their
   projected attributes through the explicit fallback.
+- Repeated loader calls do not replace a live context; callers use
+  `ensure_runtime_policy_for_app()` when idempotent access is required.
 - Legacy state imports and `to_dict()`/`from_dict()` behavior remain unchanged.
 - Runtime-policy JSON path, schema, privacy posture, and migration behavior are
   unchanged.
@@ -263,7 +339,7 @@ The implementation must demonstrate red-to-green tests for:
   `("local", "local", None)` before publication;
 - projection assignment through a `TldwCli` alias;
 - real publication mapping one source to both backend getters and mapping the
-  active server ID;
+  active server ID through one tuple assignment;
 - the projection callback observing the newly committed state and revision;
 - context-state assignment through a context alias;
 - structural raw and mangled private-store references, including
@@ -272,18 +348,32 @@ The implementation must demonstrate red-to-green tests for:
 - store construction outside its two owner modules;
 - the real bootstrap publication path and publisher-absent lightweight-double
   fallback;
+- a publisher descriptor whose binding raises `AttributeError` being treated
+  as present and failing without fallback;
+- a present non-callable publisher failing without fallback;
 - a throwing publisher being contained after durable commit without public
   `setattr()` fallback;
 - a throwing publisher during the direct initial loaded-state projection
   propagating and aborting bootstrap without public `setattr()` fallback;
 - persistence failure leaving a previously published real projection
-  unchanged.
+  unchanged;
+- a second loader call rejecting before store I/O or publication and retaining
+  the original context identity;
+- a Settings server rebind preserving context identity while the enforcer,
+  server-context provider, capability service, and Home observe the committed
+  state;
+- the provider rebind refreshing its config mapping/default legacy target and
+  invalidating its cached client;
+- direct, mangled, and constant-string access to the private projection
+  callback failing structural checks;
+- deletion of the old alias/scope/control-flow visitors.
 
 It must then pass:
 
 - `Tests/RuntimePolicy`;
 - the simplified application-state ownership suite;
 - Media Ingest and Study runtime-change tests;
+- Settings runtime-source switch and server-context-provider rebind tests;
 - affected app/bootstrap caller tests;
 - ADR-022 private-writer/store tests;
 - scoped Ruff, formatter, compilation, and diff checks.

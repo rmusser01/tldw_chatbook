@@ -317,9 +317,9 @@ projections.
 The exact compatibility projections `current_runtime_backend`,
 `runtime_backend`, and `active_server_id` are getter-only properties on
 `TldwCli`. The runtime-policy projection boundary's private publisher is the
-only writer of their uniquely named backing fields. Media Ingest, Study, and
-the no-policy branch in `handle_runtime_backend_changed()` stop writing them
-independently.
+only writer of their one immutable `(source, active_server_id)` backing tuple.
+Media Ingest, Study, and the no-policy branch in
+`handle_runtime_backend_changed()` stop writing them independently.
 
 ### Capability refresh
 
@@ -654,6 +654,10 @@ read compatibility. Their values are projections from `RuntimePolicyContext`,
 and ownership guards prohibit independent production writers. On `TldwCli`,
 the projection boundary invokes the sole private publisher behind the three
 getter-only properties; it neither reads nor writes a root `AppState`.
+
+The application installs one `RuntimePolicyContext` identity for its lifetime.
+Settings changes rebind the existing context and refresh the server-context
+provider's configuration instead of loading and installing another authority.
 
 ## Migration Tasks
 

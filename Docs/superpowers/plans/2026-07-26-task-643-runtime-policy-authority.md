@@ -18,9 +18,10 @@
 
 **Reason:** ADR-026 already defines the runtime authority, mutation, projection, thread-affinity, and persistence boundary implemented by this task.
 
-> **Quality-review amendment:** Task 2, Step 3's `_store` naming/enforcement
-> details and Task 4's public-projection and private-store enforcement steps
-> are superseded by
+> **Quality-review amendment:** Task 2, Step 3's `_store` and callback
+> naming/enforcement details; Task 4's public-projection and private-store
+> enforcement steps; and the unplanned Settings runtime-policy reload are
+> superseded by
 > [TASK-643 Structural Ownership Enforcement Design](../specs/2026-07-26-task-643-structural-ownership-enforcement-design.md).
 > Do not resume implementation from the old direct-public-write or alias-flow
 > instructions. A corrective implementation plan must replace those steps
@@ -48,10 +49,14 @@ pytest 8.4.2, and Ruff 0.15.22.
 - Modify `tldw_chatbook/runtime_policy/source_state.py`: make runtime-policy JSON use the ADR-022 verified private reader and random-name atomic private writer.
 - Modify `tldw_chatbook/runtime_policy/bootstrap.py`: implement revisioned `RuntimePolicyContext`, effective-path construction, contained projections, and persist-before-publish source changes.
 - Modify `tldw_chatbook/runtime_policy/server_capabilities.py`: derive from a captured revision and discard stale probe results and side effects.
+- Modify `tldw_chatbook/runtime_policy/server_context.py`: rebind refreshed app
+  configuration without replacing the runtime-policy context.
 - Modify `tldw_chatbook/config.py`: expose the existing application-owned config-directory decision as a reusable helper rather than duplicating override policy.
 - Modify `tldw_chatbook/app.py`: remove `AppState`, install only the runtime projection callback, and contain runtime change persistence failures.
 - Modify `tldw_chatbook/state/app_state.py` and `tldw_chatbook/state/__init__.py`: correct the false live-authority documentation while retaining imports and serialization.
 - Modify `tldw_chatbook/UI/Screens/media_ingest_screen.py` and `tldw_chatbook/UI/Screens/study_screen.py`: remove independent writes to the three compatibility projections.
+- Modify `tldw_chatbook/UI/Screens/settings_screen.py`: replace runtime-policy
+  reload with existing-context/provider rebind.
 - Create `Tests/RuntimePolicy/test_runtime_policy_private_store.py`: focused path, permission, symlink, posture, and redaction checks.
 - Create `Tests/RuntimePolicy/test_runtime_policy_context.py`: revision, ordering, failure atomicity, projection, and owner-thread checks.
 - Modify `Tests/RuntimePolicy/test_runtime_policy_bootstrap.py`: effective-path, app integration, failure recovery, and compatibility tests.
@@ -305,7 +310,7 @@ Use a normal slotted class so `state` can be a read-only property:
 class RuntimePolicyContext:
     __slots__ = (
         "_owner_thread_id",
-        "_publish",
+        "__runtime_policy_projection_callback",
         "_snapshot",
         "__runtime_policy_state_store",
     )
@@ -319,7 +324,7 @@ class RuntimePolicyContext:
     ) -> None:
         self._snapshot = (state, 0)
         self._owner_thread_id = threading.get_ident()
-        self._publish = publish
+        self.__runtime_policy_projection_callback = publish
         self.__runtime_policy_state_store = store
 
     @property
@@ -341,9 +346,9 @@ class RuntimePolicyContext:
             return False
         self.__runtime_policy_state_store.save(candidate)
         self._snapshot = (candidate, current_revision + 1)
-        if self._publish is not None:
+        if self.__runtime_policy_projection_callback is not None:
             try:
-                self._publish(candidate)
+                self.__runtime_policy_projection_callback(candidate)
             except Exception as exc:
                 logger.warning(
                     "Runtime policy projection failed after durable commit "
@@ -484,7 +489,10 @@ git commit -m "fix(runtime-policy): discard superseded capability probes (task-6
 - Modify: `tldw_chatbook/state/__init__.py`
 - Modify: `tldw_chatbook/UI/Screens/media_ingest_screen.py`
 - Modify: `tldw_chatbook/UI/Screens/study_screen.py`
+- Modify: `tldw_chatbook/UI/Screens/settings_screen.py`
+- Modify: `tldw_chatbook/runtime_policy/server_context.py`
 - Modify: `Tests/RuntimePolicy/test_runtime_policy_bootstrap.py`
+- Modify: `Tests/RuntimePolicy/test_server_context_provider.py`
 - Create: `Tests/test_application_state_ownership.py`
 
 - [ ] **Step 1: Write failing integration and AST guard tests**
@@ -497,13 +505,22 @@ The guard must parse production Python, not grep comments. Assert:
 - `RuntimePolicyContext.state` is a setter-free property and calls to its
   removed `persist()` are absent;
 - `TldwCli` exposes getter-only public projections backed by the exact private
-  fields and publisher defined in the structural-enforcement design;
+  tuple and publisher defined in the structural-enforcement design;
 - the private publisher is invoked only by `_apply_runtime_policy_to_app`;
+- the context's private projection callback is accessible only by the exact
+  constructor/commit structures in the structural-enforcement design;
+- `load_runtime_policy_for_app` is a one-time installer whose production
+  references are confined to its definition, ensure fallback, app import, and
+  `TldwCli` construction;
 - production calls to `RuntimeSourceStateStore.save()` occur only from
   `RuntimePolicyContext.commit_state()`;
 - the uniquely named context backing store has only the exact structural
   references allowed by the structural-enforcement design, and no public
   `context.store` compatibility property is introduced.
+
+Delete the existing alias, lexical-scope, and control-flow visitor
+implementation. Replacement checks must be stateless, direct AST-shape and
+descriptor assertions over name-bearing syntax only.
 
 Add an async bootstrap test whose store raises on save and assert `handle_runtime_backend_changed()` keeps the previous context snapshot and all three app projections, does not invoke the active screen callback, and emits one bounded warning that omits unique path/server sentinels.
 Add a projection test using an app double with no `app_state` attribute and a
@@ -525,8 +542,10 @@ Expected: FAIL on the live `AppState`, fallback projection branch, and screen-ow
 Delete the import and `self.app_state = AppState()` from `TldwCli`. Delete the
 `getattr(app, "app_state", ...)` branch and `app_state.runtime_source` write
 from `_apply_runtime_policy_to_app()`. Implement the getter-only projections,
-private publisher, uniquely named context store, fallback behavior, and exact
-structural checks from the structural-enforcement design. Keep all
+single private projection tuple, private publisher, uniquely named context
+store and callback, one-time installation, Settings/provider rebind, static
+fallback detection, and exact structural checks from the
+structural-enforcement design. Keep all
 compatibility exports. Change documentation to state that these classes are
 caller-owned serializable compatibility containers and are not the
 application's live authority. Preserve `to_dict()`/`from_dict()` behavior
