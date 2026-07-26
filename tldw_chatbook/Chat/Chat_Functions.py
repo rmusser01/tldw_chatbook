@@ -30,7 +30,7 @@ from typing import List, Dict, Any, Tuple, Optional, Union, Literal
 # 3rd-party Libraries
 from loguru import logger
 import requests
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 # Configure logger with context
 logger = logger.bind(module="Chat_Functions")
@@ -865,7 +865,7 @@ def chat_api_call(
 
         if isinstance(response, str):
             logger.debug(
-                f"Debug - Chat API Call - Response (first 500 chars): {response[:500]}..."
+                f"Debug - Chat API Call - Response type=str; length={len(response)}"
             )
         elif hasattr(response, "__iter__") and not isinstance(
             response, (str, bytes, dict)
@@ -879,15 +879,11 @@ def chat_api_call(
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, "status_code", 500)
         error_text = getattr(e.response, "text", str(e))
-        log_message_base = f"{endpoint_lower} API call failed with status {status_code}"
-
-        # Log safely first
-        try:
-            logger.error("{}. Details: {}", log_message_base, error_text[:500])
-        except Exception as log_e:
-            logger.error(f"Error during logging HTTPError details: {log_e}")
-
-        detail_message = f"API call to {endpoint_lower} failed with status {status_code}. Response: {error_text[:200]}"
+        logger.error(
+            "{} API call failed; status={}; reason=http_error",
+            endpoint_lower,
+            status_code,
+        )
         if status_code == 401:
             raise ChatAuthenticationError(
                 provider=endpoint_lower,
@@ -916,7 +912,11 @@ def chat_api_call(
                 status_code=status_code,
             )
     except requests.exceptions.RequestException as e:
-        logger.error(f"Network error connecting to {endpoint_lower}: {e}")
+        logger.error(
+            "Network error connecting to {}; error_type={}",
+            endpoint_lower,
+            type(e).__name__,
+        )
         raise ChatProviderError(
             provider=endpoint_lower, message=f"Network error: {e}", status_code=504
         )
@@ -932,16 +932,19 @@ def chat_api_call(
         # (e.g. non-HTTP error, or it decided to raise a specific Chat*Error type)
         # and raises one of our custom exceptions.
         status_code = getattr(e_chat_direct, "status_code", 0)
-        logger.opt(exception=isinstance(status_code, int) and status_code >= 500).error(
-            "Handler for {} directly raised: {} - {}",
+        logger.error(
+            "Handler for {} directly raised; error_type={}; status={}",
             endpoint_lower,
             type(e_chat_direct).__name__,
-            e_chat_direct.message,
+            status_code,
         )
         raise e_chat_direct  # Re-raise the specific error
     except (ValueError, TypeError, KeyError) as e:
-        logger.opt(exception=True).error(
-            f"Value/Type/Key error during chat API call setup for {endpoint_lower}: {e}"
+        logger.error(
+            "Chat API call setup failed for {}; error_type={}; "
+            "reason=invalid_parameter",
+            endpoint_lower,
+            type(e).__name__,
         )
         error_type = "Configuration/Parameter Error"
         if "Unsupported API endpoint" in str(e):
@@ -955,8 +958,10 @@ def chat_api_call(
                 message=f"{error_type} for {endpoint_lower}: {e}",
             )
     except Exception as e:
-        logger.exception(
-            f"Unexpected internal error in chat_api_call for {endpoint_lower}: {e}"
+        logger.error(
+            "Unexpected internal error in chat_api_call for {}; error_type={}",
+            endpoint_lower,
+            type(e).__name__,
         )
         raise ChatAPIError(
             provider=endpoint_lower,
@@ -1077,30 +1082,52 @@ def chat(
 
     try:
         logging.info(
-            f"Debug - Chat Function - Input Text: '{message}', Image provided: {'Yes' if current_image_input else 'No'}"
+            "Debug - Chat Function - Input type=%s; length=%d; image_provided=%s",
+            type(message).__name__,
+            len(message),
+            bool(current_image_input),
         )
         if current_image_input:
             logging.info(
-                f"DEBUG: current_image_input contents: {current_image_input.keys() if isinstance(current_image_input, dict) else type(current_image_input)}"
+                "DEBUG: current_image_input type=%s; key_count=%d",
+                type(current_image_input).__name__,
+                len(current_image_input)
+                if isinstance(current_image_input, dict)
+                else 0,
             )
             if isinstance(current_image_input, dict):
                 logging.info(
-                    f"DEBUG: has base64_data={bool(current_image_input.get('base64_data'))}, mime_type={current_image_input.get('mime_type')}"
+                    "DEBUG: image has_base64_data=%s; has_mime_type=%s",
+                    bool(current_image_input.get("base64_data")),
+                    bool(current_image_input.get("mime_type")),
                 )
         logging.info(
             f"Debug - Chat Function - History length: {len(history)}, Image History Mode: {image_history_mode}"
         )
         logging.info(
-            f"Debug - Chat Function - LLM Max Tokens: {llm_max_tokens}, LLM Seed: {llm_seed}, LLM Stop: {llm_stop}, LLM N: {llm_n}"
+            "Debug - Chat Function - LLM options: max_tokens=%s; seed_set=%s; "
+            "stop_type=%s; n=%s; user_identifier_set=%s; logprobs=%s; "
+            "top_logprobs=%s",
+            llm_max_tokens,
+            llm_seed is not None,
+            type(llm_stop).__name__ if llm_stop is not None else "none",
+            llm_n,
+            llm_user_identifier is not None,
+            llm_logprobs,
+            llm_top_logprobs,
         )
         logging.info(
-            f"Debug - Chat Function - LLM User Identifier: {llm_user_identifier}, LLM Logprobs: {llm_logprobs}, LLM Top Logprobs: {llm_top_logprobs}"
-        )
-        logging.info(
-            f"Debug - Chat Function - LLM Logit Bias: {llm_logit_bias}, LLM Presence Penalty: {llm_presence_penalty}, LLM Frequency Penalty: {llm_frequency_penalty}"
-        )
-        logging.info(
-            f"Debug - Chat Function - LLM Tools: {llm_tools}, LLM Tool Choice: {llm_tool_choice}, LLM Response Format (dict): {llm_response_format}"
+            "Debug - Chat Function - Structured options: logit_bias_count=%d; "
+            "presence_penalty=%s; frequency_penalty=%s; tools_count=%d; "
+            "tool_choice_type=%s; response_format_type=%s",
+            len(llm_logit_bias or {}),
+            llm_presence_penalty,
+            llm_frequency_penalty,
+            len(llm_tools or []),
+            type(llm_tool_choice).__name__ if llm_tool_choice is not None else "none",
+            type(llm_response_format).__name__
+            if llm_response_format is not None
+            else "none",
         )
 
         # Ensure selected_parts is a list
@@ -1190,9 +1217,10 @@ def chat(
                                     mime_type_part = image_url_data.split(";base64,")[
                                         0
                                     ].split("/")[-1]
-                                except (IndexError, ValueError) as e:
+                                except (IndexError, ValueError):
                                     logger.debug(
-                                        f"Failed to parse image MIME type from data URL: {e}"
+                                        "Failed to parse image MIME type from data URL; "
+                                        "reason=invalid_data_url"
                                     )
                                     # mime_type_part remains "image"
                             processed_hist_content_parts.append(
@@ -1245,7 +1273,8 @@ def chat(
                 not appended_to_last
             ):  # No user message in history, or image already there
                 logging.debug(
-                    f"Could not append last_user_image_from_history, no suitable prior user message or already present. Image: {last_user_image_url_from_history[:60]}..."
+                    "Could not append last user image from history; "
+                    "reason=no_suitable_user_message"
                 )
 
         # Log history processing metrics
@@ -1271,13 +1300,13 @@ def chat(
         if media_content and selected_parts:
             rag_start_time = time.time()
             rag_text_prefix = "\n\n".join(
-                [
-                    f"{part.capitalize()}: {media_content.get(part, '')}"
-                    for part in selected_parts
-                    if media_content.get(part)
-                ]
-            ).strip()
-            if rag_text_prefix:
+                f"{part.capitalize()}: {media_content.get(part, '')}"
+                for part in selected_parts
+                if media_content.get(part)
+            )
+            if "evidence" not in selected_parts:
+                rag_text_prefix = rag_text_prefix.strip()
+            if rag_text_prefix.strip():
                 rag_text_prefix += "\n\n---\n\n"
                 rag_duration = time.time() - rag_start_time
                 log_histogram(
@@ -1354,28 +1383,38 @@ def chat(
         try:
             temperature_float = float(temperature) if temperature is not None else 0.7
         except ValueError:
-            logging.warning(f"Invalid temperature '{temperature}', using 0.7.")
+            logging.warning(
+                "Invalid temperature; reason=value_error; using_default=0.7"
+            )
 
-        logging.debug(
-            "Debug - Chat Function - Final LLM Payload (structure, image data truncated):"
-        )
+        logging.debug("Debug - Chat Function - Final LLM payload structure:")
         for i, msg_p in enumerate(llm_messages_payload):
             content_log = []
             if isinstance(msg_p.get("content"), list):
-                for part_idx, part_c in enumerate(msg_p["content"]):
+                for part_c in msg_p["content"]:
                     if part_c.get("type") == "text":
-                        content_log.append(f"text: '{part_c['text'][:30]}...'")
-                    elif part_c.get("type") == "image_url":
                         content_log.append(
-                            f"image: '{part_c['image_url']['url'][:40]}...'"
+                            f"text(length={len(part_c.get('text', ''))})"
                         )
+                    elif part_c.get("type") == "image_url":
+                        image_url_value = part_c.get("image_url", {}).get("url", "")
+                        content_log.append(f"image_url(length={len(image_url_value)})")
             logging.debug(
-                f"  Msg {i}: Role: {msg_p['role']}, Content: [{', '.join(content_log)}]"
+                "  Msg %d: content_type=%s; parts=[%s]",
+                i,
+                type(msg_p.get("content")).__name__,
+                ", ".join(content_log),
             )
 
-        logging.debug(f"Debug - Chat Function - Temperature: {temperature}")
+        logging.debug(
+            "Debug - Chat Function - Temperature configured: %s",
+            temperature_float,
+        )
         logging.debug("Debug - Chat Function - API key provided: %s", bool(api_key))
-        logging.debug(f"Debug - Chat Function - Prompt: {custom_prompt}")
+        logging.debug(
+            "Debug - Chat Function - Custom prompt length: %d",
+            len(custom_prompt) if custom_prompt else 0,
+        )
 
         #####################################################################
         # --- Adapt payload for specific provider requirements ---
@@ -1389,7 +1428,7 @@ def chat(
                 "Adapting message payload for DeepSeek (text-only string content)."
             )
             adapted_payload_for_deepseek = []
-            for msg_obj in llm_messages_payload:
+            for message_index, msg_obj in enumerate(llm_messages_payload):
                 role = msg_obj.get("role")
                 content_input = msg_obj.get("content")
 
@@ -1405,7 +1444,8 @@ def chat(
                             # You already log warnings about image handling during payload construction if current_image_input is present.
                             # This is an additional safeguard if history contains images.
                             logging.warning(
-                                f"DeepSeek (API: {api_endpoint}) does not support images. Image part in role '{role}' will be ignored."
+                                "DeepSeek does not support images; "
+                                f"message_index={message_index}; image_ignored=true"
                             )
                 elif isinstance(
                     content_input, str
@@ -1413,7 +1453,9 @@ def chat(
                     text_parts.append(content_input)
                 else:
                     logging.warning(
-                        f"Unexpected content type for role '{role}' in payload for DeepSeek: {type(content_input)}. Attempting to coerce to string."
+                        "Unexpected DeepSeek content type; "
+                        f"message_index={message_index}; "
+                        f"content_type={type(content_input).__name__}"
                     )
                     text_parts.append(str(content_input))
 
@@ -1424,7 +1466,8 @@ def chat(
                 # For now, we'll pass the potentially empty string.
                 if image_detected_and_ignored and not final_text_content:
                     logging.debug(
-                        f"Message for role '{role}' contained only an image (ignored for DeepSeek), resulting in empty text content."
+                        "DeepSeek message contained only an ignored image; "
+                        f"message_index={message_index}"
                     )
 
                 adapted_payload_for_deepseek.append(
@@ -1433,15 +1476,13 @@ def chat(
 
             final_api_payload_for_provider = adapted_payload_for_deepseek
 
-            # Optional: Re-log the adapted payload for DeepSeek to confirm its structure
             logging.debug("Debug - Chat Function - Adapted LLM Payload for DeepSeek:")
             for i, msg_p in enumerate(final_api_payload_for_provider):
-                # Ensure content is logged even if it's long by truncating
-                content_preview = str(msg_p.get("content", ""))[:100] + (
-                    "..." if len(str(msg_p.get("content", ""))) > 100 else ""
-                )
                 logging.debug(
-                    f"  Msg {i}: Role: {msg_p['role']}, Content: '{content_preview}'"
+                    "  Msg %d: content_type=%s; content_length=%d",
+                    i,
+                    type(msg_p.get("content")).__name__,
+                    len(str(msg_p.get("content", ""))),
                 )
 
         # --- Call the LLM via the updated chat_api_call ---
@@ -1488,7 +1529,9 @@ def chat(
                 "chat_success_multimodal", labels={"api_endpoint": api_endpoint}
             )
             logging.debug(
-                f"Chat Function - Response (first 500 chars): {str(response)[:500]}"
+                "Chat Function - Response type=%s; length=%d",
+                type(response).__name__,
+                len(response) if isinstance(response, (str, bytes)) else 0,
             )
 
             loaded_config_data = load_settings()
@@ -1515,9 +1558,9 @@ def chat(
                                 response = process_user_input(
                                     response, post_gen_chat_dict_objects
                                 )
-                                # The original warning log can be removed or changed to a debug log if successfully applied.
                                 logging.debug(
-                                    f"Response after post-gen replacement (first 500 chars): {str(response)[:500]}"
+                                    "Post-generation replacement complete; "
+                                    f"response_length={len(response)}"
                                 )
                             else:
                                 logging.debug(
@@ -1525,16 +1568,19 @@ def chat(
                                 )
                         else:
                             logging.debug(
-                                f"Post-gen replacement dictionary at {post_gen_replacement_dict_path} was empty or failed to parse."
+                                "Post-generation replacement dictionary empty "
+                                "or unavailable"
                             )
 
                         logging.debug(
-                            f"Response after post-gen replacement (first 500 chars): {str(response)[:500]}"
+                            "Post-generation processing complete; "
+                            f"response_length={len(response)}"
                         )
                     except Exception as e_post_gen:
                         logging.error(
-                            f"Error during post-generation replacement: {e_post_gen}",
-                            exc_info=True,
+                            "Error during post-generation replacement; "
+                            "reason=processing_failure; error_type=%s",
+                            type(e_post_gen).__name__,
                         )
                 else:
                     logging.warning(
@@ -1570,7 +1616,8 @@ def chat(
                     text_parts.append(response[last_kept_block_end:])
                     response = "".join(text_parts)
                     logging.debug(
-                        f"Response after stripping all but last think block: {response[:200]}..."
+                        "Response thinking-tag stripping complete; "
+                        f"response_length={len(response)}"
                     )
                 elif think_blocks:  # Only one block, or stripping not needed / done
                     logging.info(
@@ -1588,11 +1635,20 @@ def chat(
             return response
 
     except Exception as e:
+        error_reason = (
+            "validation_failure"
+            if isinstance(e, ValidationError)
+            else "unexpected_error"
+        )
         log_counter(
             "chat_error_multimodal",
-            labels={"api_endpoint": api_endpoint, "error": str(e)},
+            labels={"api_endpoint": api_endpoint, "reason": error_reason},
         )
-        logging.error(f"Error in multimodal chat function: {str(e)}", exc_info=True)
+        logging.error(
+            "Error in multimodal chat function; reason=%s; error_type=%s",
+            error_reason,
+            type(e).__name__,
+        )
         # Consider if the error format should change from just a string
         return f"An error occurred in the chat function: {str(e)}"
 
