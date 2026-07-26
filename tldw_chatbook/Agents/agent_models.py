@@ -142,6 +142,13 @@ class RunBudget:
     max_subagents: int = 2
     max_active_tools: int = 24
     max_subagent_result_chars: int = 4000
+    # Ceiling on how much of ONE tool result enters conversation history.
+    # Enforced at the history-append seam (agent_runtime), NOT per tool, so
+    # built-in, MCP, and skill results are all bounded by the same rule.
+    # Derived from max_subagent_result_chars (4000): four times a whole
+    # sub-agent result is generous for a single call while keeping a
+    # 30-turn run tractable. 0 = unlimited, restoring pre-cap behaviour.
+    max_tool_result_chars: int = 16000
     # Primary provider-call limiter (task-244): counts STEP_MODEL turns.
     # Raised 8 -> 20 so an agent gets ~20 tool-calling rounds per user
     # message rather than ~8. It stays >= max_steps at engine defaults, so

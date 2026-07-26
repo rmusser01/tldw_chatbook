@@ -750,3 +750,27 @@ def test_load_tools_same_batch_duplicate_names_admit_one_into_active():
         if s.kind == STEP_TOOL_RESULT and s.tool_name == "load_tools"
     ][0]
     assert load_result.result == "loaded: calculator"  # once, not twice
+
+
+def test_truncate_tool_result_bounds_content_and_names_a_continuation():
+    from tldw_chatbook.Agents.agent_runtime import _truncate_tool_result
+
+    out = _truncate_tool_result("x" * 5000, 100, "grep_files")
+
+    assert len(out) < 5000
+    assert out.startswith("x" * 100)
+    assert "grep_files" in out
+    assert "5000" in out
+
+
+def test_truncate_tool_result_is_a_noop_under_the_cap():
+    from tldw_chatbook.Agents.agent_runtime import _truncate_tool_result
+
+    assert _truncate_tool_result("small", 100, "t") == "small"
+
+
+def test_truncate_tool_result_zero_means_unlimited():
+    """0 restores today's behaviour exactly, for an operator who wants it."""
+    from tldw_chatbook.Agents.agent_runtime import _truncate_tool_result
+
+    assert _truncate_tool_result("x" * 5000, 0, "t") == "x" * 5000
