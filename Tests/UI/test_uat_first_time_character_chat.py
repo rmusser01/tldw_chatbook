@@ -2,25 +2,34 @@
 
 Simulates the full first-run journey against the REAL application object
 (headless Textual Pilot), with an isolated fresh profile (temp ChaChaNotes
-DB) and a real character card file:
+DB) and a SillyTavern-layout (post-IDAT ``tEXt`` chunk) character card PNG:
 
 1. App boots; user navigates to the Personas destination (Characters mode).
-2. User imports a character card PNG (the same file a SillyTavern user
-   reported failing to import).
+2. User imports a character card PNG (the layout a SillyTavern user reported
+   failing to import).
 3. The character appears in the library and is selected.
 4. User presses "Start Chat" with NO provider configured -> the app blocks
-   gracefully with an actionable notification (no crash, no dead end).
+   gracefully with an actionable tooltip (no crash, no dead end).
 5. User configures a provider (API key in settings).
-6. User presses "Start Chat" again -> handed off to the Console with the
-   character staged.
-7. User types a message and sends it -> the (mocked) provider replies and
-   the reply lands in the transcript; the conversation is persisted.
+6. User presses "Start Chat" again -> a character handoff payload is staged
+   and the Console consumes it.
+7. User types a message and sends it -> the (mocked) provider replies, the
+   reply lands in the transcript, and the conversation is persisted.
+
+The card PNG is generated inside the test (same post-IDAT chunk surgery as
+``Tests/Character_Chat/test_character_card_lenient_import.py``) so the
+journey runs on every machine and CI. Set ``TLDW_UAT_CARD_PATH`` to a real
+card file to run the journey against it instead (a set-but-missing path is a
+hard failure, never a silent skip).
 
 The only mock is the provider network call itself (``chat_api_call``); all
 UI, DB, import, handoff, and send-path code runs for real.
 """
 
 import asyncio
+import base64
+import json
+import os
 from pathlib import Path
 
 import pytest
@@ -29,21 +38,41 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
+from Tests.Character_Chat.test_character_card_lenient_import import (
+    _v2_card,
+    _write_png_with_trailing_metadata,
+)
 from Tests.UI.test_screen_navigation import _build_test_app
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.ui]
 
-# The card the reporter could not import (SillyTavern post-IDAT layout).
-UAT_CARD_PATH = Path(
-    r"E:\LLM-Runners\SillyTavern\data\default-user\characters\Ann1.png"
-)
+# Clearly-fake credential placeholder (rule: no realistic-looking secrets in
+# tests). Non-empty and not in the app's placeholder-key denylist, so the
+# provider-readiness gate treats it as "configured".
+FAKE_UAT_API_KEY = "sk-uat-fake-placeholder-not-a-real-key"
+
+# Optional override: run the journey against a real local card file.
+UAT_CARD_ENV_VAR = "TLDW_UAT_CARD_PATH"
 
 UAT_USER_MESSAGE = "Hello! Who are you?"
 UAT_CANNED_REPLY = "I'm Ann, your test character. Lovely to meet you!"
 
 
 async def _wait_for(pilot, condition, timeout: float = 15.0, interval: float = 0.05):
-    """Poll until condition() is truthy; returns the truthy value."""
+    """Poll until ``condition()`` is truthy and return that truthy value.
+
+    Args:
+        pilot: Textual Pilot used to yield to the app loop between polls.
+        condition: Zero-arg callable evaluated each poll cycle.
+        timeout: Maximum seconds to wait before failing.
+        interval: Seconds to pause between polls.
+
+    Returns:
+        The first truthy value produced by ``condition``.
+
+    Raises:
+        TimeoutError: When no truthy value appears within ``timeout``.
+    """
     elapsed = 0.0
     while elapsed < timeout:
         result = condition()
@@ -54,9 +83,53 @@ async def _wait_for(pilot, condition, timeout: float = 15.0, interval: float = 0
     raise TimeoutError("condition not met within timeout")
 
 
+def _resolve_uat_card_path(tmp_path: Path) -> Path:
+    """Return the character card PNG to import during the journey.
+
+    Defaults to a generated SillyTavern-layout PNG (post-IDAT ``tEXt`` chunk,
+    the layout that motivated the import fix) so the UAT runs everywhere.
+    ``TLDW_UAT_CARD_PATH`` overrides with a real local card; a set-but-missing
+    override fails loudly instead of silently skipping the journey.
+
+    Args:
+        tmp_path: Pytest-provided temporary directory for the generated PNG.
+
+    Returns:
+        Path to the card PNG the test should import.
+
+    Raises:
+        pytest.Failed: When the env-var override points at a missing file.
+    """
+    override = os.environ.get(UAT_CARD_ENV_VAR, "").strip()
+    if override:
+        override_path = Path(override)
+        if not override_path.exists():
+            pytest.fail(
+                f"{UAT_CARD_ENV_VAR} is set but the file does not exist: "
+                f"{override_path}"
+            )
+        return override_path
+    card = _v2_card(name="UAT Ann", first_mes="Hello, I am Ann.")
+    payload = base64.b64encode(json.dumps(card).encode("utf-8")).decode("utf-8")
+    return _write_png_with_trailing_metadata(
+        tmp_path / "uat_card.png", {"chara": payload}
+    )
+
+
 @pytest.fixture
 def fresh_profile(tmp_path, monkeypatch):
-    """A first-time user's profile: real but isolated ChaChaNotes DB."""
+    """Build a first-time user's profile: real but isolated ChaChaNotes DB.
+
+    Args:
+        tmp_path: Pytest-provided temporary directory for the user database.
+        monkeypatch: Pytest fixture used to point the app's lazy DB global
+            and notification sink at the isolated profile.
+
+    Returns:
+        Tuple of ``(app, db, notifications)``: the real application object,
+        the isolated ``CharactersRAGDB``, and a list that records every
+        ``app.notify`` call as ``{"message", "severity"}`` dicts.
+    """
     import tldw_chatbook.config as config_module
 
     db = CharactersRAGDB(str(tmp_path / "chachanotes_uat.db"), "uat-first-run")
@@ -89,10 +162,22 @@ def fresh_profile(tmp_path, monkeypatch):
     return app, db, notifications
 
 
-async def test_first_time_user_character_chat_journey(fresh_profile):
-    if not UAT_CARD_PATH.exists():
-        pytest.skip(f"UAT card not present on this machine: {UAT_CARD_PATH}")
+async def test_first_time_user_character_chat_journey(
+    fresh_profile, tmp_path, monkeypatch
+):
+    """Drive the full first-run journey: import a card, then chat with it.
 
+    Args:
+        fresh_profile: Isolated ``(app, db, notifications)`` profile fixture.
+        tmp_path: Pytest-provided temporary directory for the generated card.
+        monkeypatch: Pytest fixture that scopes the provider-call patch so
+            the fake cannot leak into other tests in the session.
+
+    Raises:
+        AssertionError: When any journey step violates the expected
+            first-run behavior.
+    """
+    card_path = _resolve_uat_card_path(tmp_path)
     app, db, notifications = fresh_profile
 
     async with app.run_test(size=(160, 40)) as pilot:
@@ -109,7 +194,7 @@ async def test_first_time_user_character_chat_journey(fresh_profile):
         assert personas.state.active_mode == "characters"
 
         # -- 3. Import the character card (file picker continuation) --------
-        await personas._import_character_from_path(str(UAT_CARD_PATH))
+        await personas._import_character_from_path(str(card_path))
         await pilot.pause(0.3)
 
         imported = [
@@ -147,7 +232,9 @@ async def test_first_time_user_character_chat_journey(fresh_profile):
             "model": "gpt-4o",
             "streaming": False,
         }
-        app.app_config["api_settings"] = {"openai": {"api_key": "sk-uat-test"}}
+        app.app_config["api_settings"] = {
+            "openai": {"api_key": FAKE_UAT_API_KEY}
+        }
         # Returning from Settings re-syncs console actions; simulate it.
         personas._sync_title_and_console_actions()
         await pilot.pause(0.3)
@@ -157,22 +244,50 @@ async def test_first_time_user_character_chat_journey(fresh_profile):
         )
 
         # Mock ONLY the provider network call; everything else runs for real.
+        # monkeypatch.setattr scopes the patch to this test -- direct module
+        # assignment would leak the fake into later tests in the session.
         provider_calls = []
 
         def fake_chat_api_call(**kwargs):
             provider_calls.append(kwargs)
             return UAT_CANNED_REPLY
 
-        import tldw_chatbook.Chat.console_provider_gateway as gateway_module
-
-        # Patch every binding the send path may use.
+        # The Console gateway resolves the provider call lazily at send time
+        # (``from tldw_chatbook.Chat.Chat_Functions import chat_api_call``
+        # inside ``ConsoleProviderGateway._chat_api_call``), so patching the
+        # attribute on the Chat_Functions module covers the whole send path.
         import tldw_chatbook.Chat.Chat_Functions as chat_functions_module
 
-        gateway_module.chat_api_call = fake_chat_api_call
-        chat_functions_module.chat_api_call = fake_chat_api_call
+        monkeypatch.setattr(
+            chat_functions_module, "chat_api_call", fake_chat_api_call
+        )
 
         # -- 6. Start Chat again -> handoff to the Console ------------------
+        # Baseline for the persistence check: anything the handoff/send
+        # persists must appear AFTER this point.
+        before_conversation_ids = set(db.get_all_conversation_ids())
+
         await pilot.click("#personas-start-chat")
+
+        # Capture the staged handoff payload before the Console consumes it
+        # (consumption clears app.pending_chat_handoff; the local reference
+        # stays valid for field assertions).
+        handoff = await _wait_for(
+            pilot,
+            lambda: getattr(app, "pending_chat_handoff", None),
+            timeout=5.0,
+        )
+        handoff_metadata = handoff.metadata or {}
+        assert handoff_metadata.get("intent") == "start_chat", (
+            f"handoff intent must be start_chat; metadata: {handoff_metadata!r}"
+        )
+        assert handoff_metadata.get("selected_kind") == "character", (
+            f"handoff must stage a character; metadata: {handoff_metadata!r}"
+        )
+        assert str(handoff_metadata.get("selected_record_id") or "").strip(), (
+            f"handoff must carry the character record id; "
+            f"metadata: {handoff_metadata!r}"
+        )
 
         def console_mounted():
             screen = app.screen
@@ -183,9 +298,6 @@ async def test_first_time_user_character_chat_journey(fresh_profile):
 
         await _wait_for(pilot, console_mounted, timeout=30.0)
         chat_screen = app.screen
-
-        # The handoff payload must have been delivered for staging.
-        assert getattr(app, "pending_chat_handoff", None) is not None or True
 
         # -- 7. Type and send a message (native Console composer) ------------
         from textual.widgets import Input as _Input
@@ -282,14 +394,27 @@ async def test_first_time_user_character_chat_journey(fresh_profile):
 
         # -- 8. Conversation persisted --------------------------------------
         await pilot.pause(0.5)
-        conversations = db.list_conversations() if hasattr(db, "list_conversations") else []
-        assert conversations or provider_calls, (
-            "expected the conversation to be persisted in the user DB"
+        after_conversation_ids = set(db.get_all_conversation_ids())
+        new_conversation_ids = after_conversation_ids - before_conversation_ids
+        assert new_conversation_ids, (
+            "the character chat was not persisted to the user DB "
+            f"(before={len(before_conversation_ids)}, "
+            f"after={len(after_conversation_ids)})"
+        )
+        message_counts = {
+            cid: db.count_messages_for_conversation(cid)
+            for cid in new_conversation_ids
+        }
+        assert any(count >= 2 for count in message_counts.values()), (
+            "expected the new conversation to hold the user + assistant "
+            f"messages; per-conversation counts: {message_counts}"
         )
 
         print("\n=== UAT SUMMARY ===")
         print(f"boot screen: {boot_screen}")
+        print(f"card under test: {card_path}")
         print(f"imported character: {personas.state.selected_entity_name}")
         print(f"blocked-start notifications: {notifications}")
         print(f"provider called {len(provider_calls)} time(s)")
         print(f"reply delivered: {UAT_CANNED_REPLY[:40]}...")
+        print(f"new conversations persisted: {sorted(message_counts.items())}")

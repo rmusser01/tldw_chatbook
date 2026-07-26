@@ -84,3 +84,21 @@ cross-module contract changes; the user-facing copy is deliberately unchanged.
 - Note: this branch stacks on `fix/character-card-trailing-text-chunks`
   (task-109) because the UAT imports a post-IDAT PNG card; the diff against
   `dev` shrinks automatically once that PR merges.
+- **Qodo hardening round (PR #896)**: all five review findings addressed in
+  the UAT/markup tests — (1) realistic-looking API keys replaced with
+  clearly-fake placeholder constants; (2) Google-style docstrings on all new
+  public callables; (3) the machine-specific `E:\...Ann1.png` dependency
+  removed — the UAT now generates its SillyTavern-layout post-IDAT PNG via
+  the shared chunk-surgery helpers from
+  `test_character_card_lenient_import.py`, with an optional
+  `TLDW_UAT_CARD_PATH` env override that fails loudly when set-but-missing
+  (never a silent skip); (4) provider-call patching switched to
+  `monkeypatch.setattr` on the real seam (`Chat_Functions.chat_api_call`,
+  which the gateway resolves lazily per call) and the tautological
+  `... or True` handoff assertion replaced with real payload-field checks
+  (`intent`/`selected_kind`/`selected_record_id`) captured before Console
+  consumption; (5) the persistence check now diffs
+  `db.get_all_conversation_ids()` before/after the send and asserts the new
+  conversation holds ≥2 messages (verified: greeting + user + assistant = 3),
+  replacing the `conversations or provider_calls` tautology and the
+  nonexistent `list_conversations` probe.

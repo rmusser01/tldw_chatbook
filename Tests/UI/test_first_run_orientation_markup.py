@@ -19,8 +19,22 @@ from textual.content import Content
 from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
 
 
+# Clearly-fake credential placeholder (rule: no realistic-looking secrets in
+# tests). Non-empty and not in the app's placeholder-key denylist, so the
+# provider-readiness gate treats it as "configured".
+FAKE_TEST_API_KEY = "sk-fake-placeholder-not-a-real-key"
+
+
 def _orientation_text(provider: str, app_config: dict) -> str:
-    """Build the orientation text without mounting the full chat window."""
+    """Build the orientation text without mounting the full chat window.
+
+    Args:
+        provider: Provider display name to resolve readiness for.
+        app_config: Minimal app-config mapping handed to the readiness probe.
+
+    Returns:
+        The orientation string exactly as ``Static.update`` would receive it.
+    """
     fake_self = SimpleNamespace(app_instance=SimpleNamespace(app_config=app_config))
     return ChatWindowEnhanced.build_first_run_orientation_text(
         fake_self, provider=provider
@@ -45,7 +59,7 @@ def test_orientation_markup_safe_for_unknown_provider():
 def test_orientation_markup_safe_when_ready():
     """A configured provider keeps rendering (no brackets, still parses)."""
     text = _orientation_text(
-        "OpenAI", {"api_settings": {"openai": {"api_key": "sk-test"}}}
+        "OpenAI", {"api_settings": {"openai": {"api_key": FAKE_TEST_API_KEY}}}
     )
     content = Content.from_markup(text)
     assert "OpenAI is ready" in content.plain
