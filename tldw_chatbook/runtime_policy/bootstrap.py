@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
+from loguru import logger
+
 from tldw_chatbook.config import DEFAULT_CONFIG_PATH, resolve_tldw_api_config
 
 from .source_state import RuntimeSourceStateStore
@@ -13,8 +15,52 @@ from .types import RuntimeSourceState
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import TLDWAPIClient
 
+#: Where the runtime-policy state lands when no config override is set. Kept as
+#: a module constant for callers that reference it, but prefer
+#: :func:`default_runtime_policy_path`, which follows the *active* profile.
 DEFAULT_RUNTIME_POLICY_PATH = DEFAULT_CONFIG_PATH.parent / "runtime_policy.json"
 _VALID_RUNTIME_SOURCES = {"local", "server"}
+
+
+def default_runtime_policy_path() -> Path:
+    """Return the runtime-policy state file for the config profile in effect.
+
+    This file records whether the app runs local or server. It used to be
+    derived from ``DEFAULT_CONFIG_PATH`` -- a hardcoded home directory -- so a
+    profile launched with ``TLDW_CONFIG_PATH`` still read and wrote the real
+    user's file: putting a scratch profile into server mode left the default
+    profile in server mode afterwards (task-701).
+
+    Resolved on each call rather than captured at import, because the override
+    is an environment variable that a test or a launcher can set after this
+    module is first imported; a module-level constant would freeze whichever
+    value happened to be present at import time.
+
+    Returns:
+        The path to ``runtime_policy.json`` beside the active config file.
+    """
+    from tldw_chatbook.config import _get_effective_config_path
+
+    try:
+        return _get_effective_config_path().parent / "runtime_policy.json"
+    except (ValueError, OSError):
+        # A rejected or unreadable override must not stop the app booting, but
+        # falling back means this profile's local/server mode is read from and
+        # written to the DEFAULT profile -- exactly the cross-profile leak this
+        # function exists to prevent. So it is a warning, not a debug line: the
+        # earlier version logged at debug and would have hidden the misrouting
+        # in a normal run.
+        #
+        # Only the two failure modes the resolver actually raises are caught.
+        # Anything else is a defect rather than a bad path, and swallowing it
+        # here would silently route state to the wrong profile; letting it
+        # surface is the safer direction.
+        logger.opt(exception=True).warning(
+            f"Could not resolve the active config path; runtime-policy state "
+            f"will use the default profile at {DEFAULT_RUNTIME_POLICY_PATH}. "
+            "A local/server mode change made now will affect that profile."
+        )
+        return DEFAULT_RUNTIME_POLICY_PATH
 
 
 @dataclass(slots=True)
@@ -140,7 +186,7 @@ def load_runtime_policy_for_app(
     path: str | Path | None = None,
 ) -> RuntimePolicyContext:
     runtime_store = store or RuntimeSourceStateStore(
-        path or DEFAULT_RUNTIME_POLICY_PATH
+        path or default_runtime_policy_path()
     )
     loaded_state = runtime_store.load()
     synchronized_state = synchronize_runtime_source_state_with_app_config(
