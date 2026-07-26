@@ -30,6 +30,7 @@ This is a posture-relevant change even though the tools stay behind their existi
 - [x] #3 Each gate is independent; enabling one does not surface the other
 - [x] #4 A tool that cannot be constructed (missing module, bad config) is simply absent rather than breaking provider construction
 - [x] #5 The names are covered by the shadowed-builtin guard, so a skill cannot silently shadow them once a gate is enabled
+- [x] #6 `list_directory` cannot enumerate outside the sandbox root via a planted symlink
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -40,4 +41,6 @@ Extended `BuiltinToolProvider.__init__` to add `ReadFileTool`/`ListDirectoryTool
 
 `WriteFileTool` is deliberately **not** surfaced: granting the agent loop filesystem writes is a larger decision than making retained output readable, and nothing here needs it.
 
-Files: `tldw_chatbook/Agents/tool_catalog.py`, `tldw_chatbook/Library/library_skills_state.py`, `Tests/Agents/test_builtin_file_tools.py`
+**AC#6 was found by review and is the reason this split mattered.** A symlink planted inside `file_sandbox_root` let `ListDirectoryTool`'s recursive walk enumerate files anywhere on disk — reproduced before fixing (an out-of-sandbox file appeared in the listing). Latent while nothing in the agent loop could call the tool; reachable the moment this PR surfaces it, so it is fixed here rather than deferred. The walk now refuses to descend into symlinked directories and re-checks that each child resolves under the root.
+
+Files: `tldw_chatbook/Tools/file_operation_tools.py`, `tldw_chatbook/Agents/tool_catalog.py`, `tldw_chatbook/Library/library_skills_state.py`, `Tests/Agents/test_builtin_file_tools.py`

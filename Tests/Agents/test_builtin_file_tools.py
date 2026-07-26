@@ -74,3 +74,32 @@ def test_gated_tool_names_are_covered_by_the_shadow_guard(tools_config):
     assert gated <= _SHADOWED_BUILTIN_NAMES, (
         f"gated builtin tool names not covered: {gated - _SHADOWED_BUILTIN_NAMES}"
     )
+
+
+@pytest.mark.asyncio
+async def test_list_directory_does_not_follow_symlinks_out_of_the_sandbox(
+    tmp_path, monkeypatch
+):
+    """Containment: a planted symlink must not enumerate outside the root.
+
+    Surfacing this tool to the agent loop makes the escape reachable by an
+    agent, so it is fixed here rather than left to the tool's own PR: a
+    symlink created inside file_sandbox_root previously let the recursive
+    walk list files anywhere on disk.
+    """
+    import tldw_chatbook.Tools.file_operation_tools as fot
+
+    sandbox = tmp_path / "sandbox"
+    outside = tmp_path / "outside"
+    sandbox.mkdir()
+    outside.mkdir()
+    (outside / "OUTSIDE_SECRET.txt").write_text("x", encoding="utf-8")
+    (sandbox / "escape").symlink_to(outside)
+    (sandbox / "legit").mkdir()
+    (sandbox / "legit" / "inside.txt").write_text("y", encoding="utf-8")
+
+    monkeypatch.setattr(fot, "_resolve_sandbox_config", lambda: str(sandbox))
+    listing = str(await fot.ListDirectoryTool().execute(directory_path=".", recursive=True))
+
+    assert "OUTSIDE_SECRET" not in listing, "symlink escaped the sandbox root"
+    assert "inside.txt" in listing, "legitimate nested listing must still work"
