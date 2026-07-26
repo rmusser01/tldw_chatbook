@@ -9,9 +9,12 @@ of inserting its ``user_prompt``.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
+from textual.pilot import Pilot
+from textual.widget import Widget
 from textual.widgets import Button, Input, Static, TextArea
 
 from Tests.UI.test_console_native_chat_flow import (
@@ -75,6 +78,33 @@ def _rail_system_line_is_dim(console) -> bool:
     )
 
 
+async def _wait_for_widget_in_viewport(
+    pilot: Pilot,
+    viewport: Widget,
+    widget: Widget,
+    *,
+    timeout: float = 2.0,
+) -> None:
+    """Wait for a requested Textual scroll to produce clickable geometry."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        widget_region = widget.region
+        if (
+            widget_region.width > 0
+            and widget_region.height > 0
+            and viewport.content_region.contains_region(widget_region)
+            and pilot.app.screen.region.contains_region(widget_region)
+        ):
+            return
+        await pilot.pause(0.01)
+
+    raise AssertionError(
+        "Timed out waiting for widget to enter its viewport: "
+        f"widget={widget.region!r}, viewport={viewport.content_region!r}, "
+        f"screen={pilot.app.screen.region!r}"
+    )
+
+
 class FakeConsolePersistence:
     """Minimal persistence double recording conversation/system-prompt writes."""
 
@@ -132,7 +162,7 @@ async def test_console_rail_system_line_click_opens_editor_modal():
         rail_body = console.query_one("#console-left-rail-body")
         system_line = console.query_one("#console-rail-system-line")
         rail_body.scroll_to_widget(system_line, animate=False)
-        await pilot.pause(0.1)
+        await _wait_for_widget_in_viewport(pilot, rail_body, system_line)
 
         await pilot.click("#console-rail-system-line")
         await pilot.pause(0.2)
