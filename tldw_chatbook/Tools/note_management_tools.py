@@ -9,7 +9,14 @@ from loguru import logger
 
 from . import Tool
 from ..Notes.Notes_Library import NotesInteropService
-from ..config import USER_DB_BASE_DIR
+from ..config import get_chachanotes_db_path
+
+# Base directory for the notes DB, mirroring the app's own NotesInteropService
+# wiring in app.py (`get_chachanotes_db_path().parent`). The previous
+# `from ..config import USER_DB_BASE_DIR` imported a name that only exists
+# inside the CONFIG_TOML_CONTENT string literal, not as a real module-level
+# constant, so this module could never actually be imported.
+USER_DB_BASE_DIR = get_chachanotes_db_path().parent
 
 
 class CreateNoteTool(Tool):
@@ -33,6 +40,11 @@ class CreateNoteTool(Tool):
             },
             "required": ["title", "content"],
         }
+
+    @property
+    def risk_tags(self) -> tuple[str, ...]:
+        """Inserts a note row into the user's database."""
+        return ("mutates",)
 
     async def execute(self, **kwargs) -> Dict[str, Any]:
         """
@@ -206,6 +218,11 @@ class UpdateNoteTool(Tool):
             },
             "required": ["note_id"],
         }
+
+    @property
+    def risk_tags(self) -> tuple[str, ...]:
+        """Mutates an existing note the user owns."""
+        return ("mutates",)
 
     async def execute(self, **kwargs) -> Dict[str, Any]:
         """

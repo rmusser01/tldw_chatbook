@@ -79,6 +79,11 @@ class ReadFileTool(Tool):
             "required": ["file_path"],
         }
 
+    @property
+    def risk_tags(self) -> tuple[str, ...]:
+        """Reading arbitrary sandbox files is a disclosure risk."""
+        return ("reads",)
+
     async def execute(self, **kwargs) -> Dict[str, Any]:
         """
         Read a file's contents.
@@ -182,6 +187,11 @@ class ListDirectoryTool(Tool):
             },
             "required": ["directory_path"],
         }
+
+    @property
+    def risk_tags(self) -> tuple[str, ...]:
+        """Enumerating the sandbox discloses its structure."""
+        return ("reads",)
 
     async def execute(self, **kwargs) -> Dict[str, Any]:
         """
@@ -349,6 +359,11 @@ class WriteFileTool(Tool):
             },
             "required": ["file_path", "content"],
         }
+
+    @property
+    def risk_tags(self) -> tuple[str, ...]:
+        """Creates, overwrites, or appends to files."""
+        return ("mutates",)
 
     async def execute(self, **kwargs) -> Dict[str, Any]:
         """
