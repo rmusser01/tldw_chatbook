@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-26 13:35'
-updated_date: '2026-07-26 15:02'
+updated_date: '2026-07-26 18:44'
 labels:
   - architecture
   - state
@@ -40,12 +40,16 @@ Remove the active application dependency on the misleading root AppState model a
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 ADR path: backlog/decisions/026-application-session-state-ownership.md
-Reason: ADR-026 defines the runtime authority, private persistence, mutation, projection, and thread-affinity contract.
-Full plan: Docs/superpowers/plans/2026-07-26-task-643-runtime-policy-authority.md
+Reason: ADR-026 defines the runtime authority, private persistence, mutation, projection, thread-affinity, bootstrap, and coordinated configuration-rebind contract.
+Full corrective plan: Docs/superpowers/plans/2026-07-26-task-643-structural-ownership-correction.md
+Original partially superseded plan: Docs/superpowers/plans/2026-07-26-task-643-runtime-policy-authority.md
+Structural specification: Docs/superpowers/specs/2026-07-26-task-643-structural-ownership-enforcement-design.md
 
-1. Move runtime-policy JSON to the effective config path and ADR-022 private-file primitives.
-2. Replace mutable context state with owner-thread-affine revision snapshots and persist-before-publish commits.
-3. Make capability refresh discard superseded probes and side effects.
-4. Remove TldwCli AppState dependency, delete the projection boundary's AppState mirror, and remove all independent runtime projection writers.
-5. Add ownership/privacy guards and run focused gates, but keep TASK-643 In Progress until the shared TASK-646 release gates.
+1. Replace application-shaped bootstrap tests with direct app-independent units or full TldwCli coverage.
+2. Enforce getter-only atomic runtime projections and exact publication boundaries.
+3. Make context internals private and installation failure-atomic and one-time.
+4. Add a post-commit provider rebind primitive with bounded cleanup/materialization failures.
+5. Coordinate commit-first runtime changes through the real application and adapt the Schedules caller structurally.
+6. Rebind the actual mounted Settings screen without replacing runtime authority.
+7. Run direct/full-application, privacy-sentinel, structural, and scoped static gates while keeping TASK-643 In Progress until TASK-646 shared release gates.
 <!-- SECTION:PLAN:END -->

@@ -24,9 +24,9 @@
 > superseded by
 > [TASK-643 Structural Ownership Enforcement Design](../specs/2026-07-26-task-643-structural-ownership-enforcement-design.md).
 > Do not resume implementation from the old direct-public-write or alias-flow
-> instructions. A corrective implementation plan must replace those steps
-> after the amended design passes written-spec and user review.
-> The corrective plan must also implement the design's commit-first Settings
+> instructions. Continue from the reviewed
+> [TASK-643 Structural Ownership Correction Implementation Plan](2026-07-26-task-643-structural-ownership-correction.md),
+> which replaces those steps and implements the commit-first Settings
 > coordinator. Assigning refreshed app/provider configuration, invalidating a
 > cached client, or materializing a legacy target before the authoritative
 > commit is forbidden.

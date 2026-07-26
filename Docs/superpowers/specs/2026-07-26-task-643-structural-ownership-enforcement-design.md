@@ -1,6 +1,6 @@
 # TASK-643 Structural Ownership Enforcement Design
 
-**Status:** Approved direction; written-spec review corrections in progress
+**Status:** Approved; corrective implementation plan reviewed and ready
 
 **Task:** [TASK-643](../../../backlog/tasks/task-643%20-%20Make-runtime-policy-the-sole-application-runtime-source-authority.md)
 
@@ -55,8 +55,10 @@ control flow.
   readable compatibility attributes on `TldwCli`.
 - Those compatibility attributes are projections, never independent
   authorities.
-- Existing lightweight bootstrap test doubles may continue receiving the
-  three projected attributes.
+- Application integration tests instantiate the full `TldwCli`; unit tests
+  call the context, preparation, provider, or pure derivation boundary
+  directly. No partial, simplified, mock, or subclassed test application is
+  used.
 - `AppState` and the other legacy state values remain importable serialization
   containers; `TldwCli` remains independent of them.
 - No new root application-state object, persisted format, migration, or
@@ -125,26 +127,19 @@ without setters.
 
 `_apply_runtime_policy_to_app()` remains the sole projection boundary.
 
-For a real `TldwCli`, it invokes the private projection publisher. For a
-lightweight app double that does not expose the publisher, it retains the
-existing three `setattr()` operations. This preserves focused bootstrap tests
-and helper compatibility without weakening the production app surface.
-
-The fallback is selected only when the publisher attribute is statically
-absent. `_apply_runtime_policy_to_app()` uses `inspect.getattr_static()` with a
-private sentinel for the presence check, then ordinary `getattr()` to bind a
-present publisher. A descriptor binding error propagates; it is not
-misclassified as absence. A present but non-callable publisher is an error.
-For commit-triggered publication, a publisher exception reaches
+It invokes the private `TldwCli` projection publisher. There is no public
+`setattr()` or publisher-absent fallback: production has one application type,
+and test-only application compatibility is not a production requirement. A
+missing, descriptor-failing, non-callable, or throwing publisher fails
+directly. For commit-triggered publication, a publisher exception reaches
 `RuntimePolicyContext.commit_state()`'s existing projection-failure
-containment; bootstrap must not retry through public `setattr()`. Logs include
-only bounded exception-category metadata.
+containment. Logs include only bounded exception-category metadata.
 
-When an already-loaded state needs no synchronization commit,
-`load_runtime_policy_for_app()` performs the one permitted initial direct
-projection. An exception from that initial publication propagates and aborts
-bootstrap; it is not contained as a successful commit and does not trigger the
-lightweight-double fallback.
+When an already-loaded state needs no synchronization commit, the
+app-independent preparation function performs the one permitted initial
+publication through its supplied callback. An exception from that initial
+publication propagates and aborts bootstrap; it is not contained as a
+successful commit.
 
 The symbol `_publish_runtime_policy_projection` may occur in production only
 as its `TldwCli` method definition and as the direct or constant-string lookup
@@ -156,10 +151,12 @@ from the one initial projection of an already-loaded authoritative state.
 The symbol `_apply_runtime_policy_to_app` may occur in production only as:
 
 - its definition;
-- the contained projection callback registered by
-  `load_runtime_policy_for_app()`; and
-- the single initial projection of an already-loaded authoritative state in
-  that same loader.
+- the contained callback closure supplied by `load_runtime_policy_for_app()`
+  to the app-independent preparation function.
+
+The preparation function invokes only its callback parameter for initial
+publication and context registration; it does not name or import
+`_apply_runtime_policy_to_app`.
 
 Exact direct, captured, qualified, and constant-string dynamic references are
 rejected elsewhere.
@@ -172,11 +169,16 @@ loading a store or publishing a projection, it checks for an installed
 `ensure_runtime_policy_for_app()` remains the idempotent accessor: it returns
 the installed context or invokes the loader only when none exists.
 
-The loader constructs the context locally and installs it on
-`app.runtime_policy` only after any required synchronization commit and initial
-projection have succeeded. A store/load/synchronization failure, or a failure
-from the direct initial projection path, leaves no context installed and
-permits a clean retry. A projection-callback exception after a successful
+An app-independent private preparation function accepts configuration, store
+or path, and a publication callback. It constructs the context and completes
+any required synchronization commit or initial publication without reading or
+writing an application object. Unit tests call this function directly.
+
+The loader passes the full app's configuration and private publisher callback
+to the preparation function, then installs the returned context on
+`app.runtime_policy`. A store/load/synchronization failure, or a failure from
+the direct initial projection path, returns no context to install and permits a
+clean retry. A projection-callback exception after a successful
 synchronization commit remains contained by `commit_state()`; the durable
 context is installed because that commit succeeded. No await or externally
 reentrant step separates successful preparation from installation.
@@ -303,24 +305,24 @@ Replacement tests verify:
 
 1. `TldwCli` defines all three public projections as properties whose
    `fset` is `None`.
-2. Assigning a projection on a minimally constructed real `TldwCli` fails,
-   including through a local alias.
+2. Assigning a projection on a fully constructed `TldwCli` fails, including
+   through a local alias.
 3. `_runtime_policy_projection_snapshot` is read only by the three getters and
    assigned once per publication only by
    `_publish_runtime_policy_projection()`. Direct, captured, qualified,
    imported, and constant-string dynamic references elsewhere are rejected.
-4. `_apply_runtime_policy_to_app` occurs only at its definition, the contained
-   callback registration, and the one initial loaded-state projection in
-   `load_runtime_policy_for_app()`. Direct, captured, qualified, and
-   constant-string dynamic references elsewhere are rejected.
+4. `_apply_runtime_policy_to_app` occurs only at its definition and in the
+   contained callback closure that `load_runtime_policy_for_app()` passes to
+   the preparation function. The preparation function publishes through its
+   callback parameter and does not reference the symbol. Direct, captured,
+   qualified, and constant-string dynamic references elsewhere are rejected.
 5. `_publish_runtime_policy_projection` occurs only at its method definition
    and at the publisher lookup/invocation inside
    `_apply_runtime_policy_to_app()`. Direct and constant-string dynamic
    references elsewhere are rejected.
-6. The bootstrap boundary uses the three public `setattr()` calls only in its
-   explicit statically publisher-absent lightweight-double fallback.
-   Descriptor binding failures, non-callable publishers, and publisher errors
-   never enter the fallback.
+6. The bootstrap boundary contains no public projection `setattr()` calls or
+   publisher-absent fallback. Missing, descriptor-failing, non-callable, and
+   throwing publishers fail at the private boundary.
 7. `RuntimePolicyContext.state` has no setter; the context has no public
    `persist` or `store` surface; direct assignment fails through an alias.
 8. The raw context-store name occurs only in the exact `__slots__`,
@@ -347,11 +349,11 @@ spelling, alias propagation, or control-flow interpretation.
 
 ## Data Flow
 
-1. `load_runtime_policy_for_app()` loads and verifies the durable state.
-2. It creates `RuntimePolicyContext` with the private store and a contained
-   publication callback.
-3. It durably synchronizes and initially projects that context when required,
-   then installs the successfully prepared context on the app.
+1. `load_runtime_policy_for_app()` rejects an already-installed context.
+2. Its app-independent preparation function loads and verifies durable state,
+   creates `RuntimePolicyContext` with the private store/callback, and durably
+   synchronizes or initially projects it.
+3. The loader installs the successfully prepared context on the full app.
 4. A higher-level runtime operation captures `(state, revision)` and derives a
    candidate.
 5. `commit_state()` verifies the owner thread and revision.
@@ -379,8 +381,8 @@ client, active screen, and target-status side effects unchanged.
 - Reads of all three app projection names remain unchanged.
 - External or internal writes to those names now fail intentionally; ADR-026
   promises read compatibility, not write compatibility.
-- Lightweight objects passed directly to bootstrap helpers retain their
-  projected attributes through the explicit fallback.
+- Bootstrap and projection helpers support the real application contract only;
+  app-independent behavior is tested at direct function/class boundaries.
 - Repeated loader calls do not replace a live context; callers use
   `ensure_runtime_policy_for_app()` when idempotent access is required.
 - Legacy state imports and `to_dict()`/`from_dict()` behavior remain unchanged.
@@ -391,9 +393,9 @@ client, active screen, and target-status side effects unchanged.
 
 The implementation must demonstrate red-to-green tests for:
 
-- a minimally constructed real `TldwCli` reading
-  `("local", "local", None)` before publication;
-- projection assignment through a `TldwCli` alias;
+- the class-level safe projection default and a fully constructed `TldwCli`
+  reading one coherent published triple;
+- projection assignment through an alias to that full `TldwCli`;
 - real publication mapping one source to both backend getters and mapping the
   active server ID through one tuple assignment;
 - the projection callback observing the newly committed state and revision;
@@ -402,15 +404,13 @@ The implementation must demonstrate red-to-green tests for:
   constant-string dynamic access, without claiming mangled runtime access is
   inaccessible;
 - store construction outside its two owner modules;
-- the real bootstrap publication path and publisher-absent lightweight-double
-  fallback;
-- a publisher descriptor whose binding raises `AttributeError` being treated
-  as present and failing without fallback;
-- a present non-callable publisher failing without fallback;
-- a throwing publisher being contained after durable commit without public
+- the real full-application bootstrap publication path with no public
   `setattr()` fallback;
+- a publisher descriptor whose binding raises `AttributeError` failing;
+- a present non-callable publisher failing;
+- a throwing publisher being contained after durable commit;
 - a throwing publisher during the direct initial loaded-state projection
-  propagating and aborting bootstrap without public `setattr()` fallback;
+  propagating and aborting bootstrap;
 - a failed initial load, synchronization persistence, or direct projection
   leaving no context installed and allowing a clean retry;
 - a synchronized durable commit whose contained projection callback fails
@@ -444,7 +444,7 @@ The implementation must demonstrate red-to-green tests for:
 It must then pass:
 
 - `Tests/RuntimePolicy`;
-- the simplified application-state ownership suite;
+- the focused application-state ownership suite;
 - Media Ingest and Study runtime-change tests;
 - Settings runtime-source switch and server-context-provider rebind tests;
 - affected app/bootstrap caller tests;

@@ -1,7 +1,7 @@
 # Application Session State Ownership Design
 
 Date: 2026-07-26
-Status: Design approved; TASK-643 corrective plan pending structural-amendment review, TASK-644 through TASK-646 plans ready
+Status: Design approved; TASK-643 corrective plan reviewed and ready, TASK-644 through TASK-646 plans ready
 ADR:
 [ADR-026](../../../backlog/decisions/026-application-session-state-ownership.md)
 Backlog:
@@ -10,7 +10,8 @@ Backlog:
 [TASK-645](../../../backlog/tasks/task-645%20-%20Move-Chat-and-Console-handoffs-behind-revisioned-single-slot-ownership.md),
 [TASK-646](../../../backlog/tasks/task-646%20-%20Complete-destination-handoff-ownership-and-ACP-target-recovery.md)
 Plans:
-[TASK-643](../plans/2026-07-26-task-643-runtime-policy-authority.md),
+[TASK-643 corrective](../plans/2026-07-26-task-643-structural-ownership-correction.md),
+[TASK-643 original (partially superseded)](../plans/2026-07-26-task-643-runtime-policy-authority.md),
 [TASK-644](../plans/2026-07-26-task-644-screen-state-store.md),
 [TASK-645](../plans/2026-07-26-task-645-chat-console-handoffs.md),
 [TASK-646](../plans/2026-07-26-task-646-destination-handoffs.md)
@@ -659,6 +660,9 @@ The application installs one `RuntimePolicyContext` identity for its lifetime.
 Bootstrap prepares any synchronization commit and initial projection before
 attaching that identity; failed preparation leaves no half-installed context
 and may be retried.
+Application integration coverage uses the full `TldwCli`; direct unit coverage
+targets app-independent context/preparation/provider functions and classes.
+No simplified or partial test application contract is retained in production.
 Settings changes persist the server URL and token in one checked configuration
 batch, then pass a locally loaded candidate configuration to one app-level
 coordinator instead of loading and installing another authority.

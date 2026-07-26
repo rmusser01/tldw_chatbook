@@ -46,6 +46,10 @@ rather than replacing the authority object retained by long-lived consumers.
 Initial load, synchronization persistence, and direct initial projection
 prepare the context before it is attached; failure leaves no half-installed
 authority and permits retry.
+The projection boundary supports the full application contract only; it does
+not retain public projection writes or a test-double fallback. Integration
+tests use `TldwCli`, while app-independent behavior is exercised directly at
+the context, preparation, provider, or pure-function boundary.
 Context state is read-only; there is no public state setter or standalone
 persistence escape hatch, and both the backing store and projection callback
 are private. The callback does not read or write `AppState`.
