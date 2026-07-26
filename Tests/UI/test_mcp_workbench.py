@@ -3893,9 +3893,10 @@ async def test_permissions_mode_renders_pinned_grouped_sorted_matrix(tmp_path):
             assert row_key.value == expected_key
 
         preview = app.query_one("#mcp-perm-preview", Static)
-        # TASK-627 Task 3: the policy preview sentence is unaffected by the
-        # built-in section -- it's scoped to `_build_permission_rows()`'s
-        # own MCP rows only (no requirement to summarize built-ins here).
+        # Fix 2 (PR #906 review): the preview's override count now DOES
+        # include the built-in section -- but this fixture stores no
+        # built-in override at all (server/tool rows above all inherit),
+        # so the sentence is unchanged from before that fix.
         assert str(preview.renderable) == "global default: ask"
 
 
@@ -4539,6 +4540,50 @@ async def test_preview_shows_override_count_when_no_server_selected(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_preview_override_count_includes_a_persistent_builtin_override(tmp_path):
+    """Fix 2 (PR #906 review): before this fix, the preview's override
+    count was computed inside `_build_permission_rows()` on its MCP-only
+    `rows` list -- BEFORE `_sync_permissions_mode()` even appended the
+    built-in section -- so a persistent built-in override changed the
+    table cell but never this summary line, contradicting `update_matrix()`
+    's own documented "ALWAYS summarizes the full, UNFILTERED matrix"
+    contract. No MCP-side override exists in this fixture, so the ONE
+    override this pins is unambiguously the built-in one."""
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_tool_state(BUILTIN_TOOL_SERVER_KEY, "calculator", "deny")
+
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        preview = app.query_one("#mcp-perm-preview", Static)
+        assert str(preview.renderable) == (
+            "global default: ask · 1 override across 1 server"
+        )
+
+
+@pytest.mark.asyncio
+async def test_preview_override_count_unaffected_when_no_builtin_override_is_set(tmp_path):
+    """Fix 2 companion: the flip side of the test above -- with zero
+    built-in overrides (this fixture's default shape), the preview must
+    render exactly as it did before Fix 2 (no "0 overrides" segment, no
+    phantom count from the built-in section's own always-present pinned
+    row or its two always-rendered, uncustomized tool rows)."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        preview = app.query_one("#mcp-perm-preview", Static)
+        assert str(preview.renderable) == "global default: ask"
+
+
+@pytest.mark.asyncio
 async def test_permissions_mode_renders_fail_soft_without_t4_seams():
     """A service that hasn't been upgraded with the T4 permission methods
     (the base `FakeHubService` -- no `effective_tool_states`/
@@ -4798,6 +4843,85 @@ async def test_permissions_mode_pinned_row_selection_clears_inspector_without_cr
         assert app.query_one("#mcp-inspector-permission").display is True
 
         table.move_cursor(row=0)  # __global__ -- pinned row, no tool
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.query_one("#mcp-inspector-permission").display is False
+        assert not list(app.query("#mcp-inspector-tool-name"))
+
+
+@pytest.mark.asyncio
+async def test_permissions_mode_builtin_tool_row_selection_shows_permission_block(tmp_path):
+    """Fix 1 (PR #906 review, code-review round after TASK-627): before
+    this fix, `on_mcp_permissions_mode_row_selected()` resolved every
+    `"tool"` row's `HubTool` via `_tool_for()`, which only ever searches
+    `_last_hub_tools` (the MCP catalog) -- a built-in row is never in that
+    list (Constraint 1/5), so `tool` was always `None` and the handler
+    fell through to `show_tool(None)`, blanking the inspector. This was
+    the only interactive row in the whole matrix that did that -- selected
+    here (row 7, `agent:builtin::calculator`) using the SAME `enter`-press
+    selection path every other permissions-mode test in this file uses."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=7)  # agent:builtin::calculator
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.query_one("#mcp-inspector-permission").display is True
+        permission_text = str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
+        assert permission_text == "calculator — Built-in (agent runtime)"
+        state = str(app.query_one("#mcp-inspector-permission-state", Static).renderable)
+        assert state == "Permission: Allow"
+        # Built-ins have no MCP tool/server/global cascade -- falls back to
+        # the plain per-tool origin sentence, not the three provenance
+        # rungs `show_permission(..., cascade=...)` renders for an MCP row.
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
+        assert origin == "Built-in tools default to allow."
+        assert not list(app.query("#mcp-inspector-permission-cascade-tool"))
+        # Routed through show_permission(), NOT show_tool() -- same
+        # standalone-surface contract as an MCP tool row (Tools mode's own
+        # full tool-detail-plus-Test-Tool block never mounts here).
+        assert not list(app.query("#mcp-inspector-tool-name"))
+
+        # Selecting an MCP row afterwards is unchanged.
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("enter")
+        await pilot.pause()
+        permission_text = str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
+        assert "search" in permission_text and "docs" in permission_text
+        assert list(app.query("#mcp-inspector-permission-cascade-tool"))
+
+
+@pytest.mark.asyncio
+async def test_permissions_mode_builtin_pinned_row_selection_clears_inspector(tmp_path):
+    """Fix 1 companion: the built-in section's OWN pinned "Server default"
+    row (`row_kind == "server"`) must keep the pre-existing pinned-row
+    behavior (clears the inspector) -- only the built-in `"tool"` rows
+    beneath it gained a permission view. Mirrors `test_permissions_mode_
+    pinned_row_selection_clears_inspector_without_crash` above, for the
+    built-in section's own pinned row instead of the global one."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=7)  # agent:builtin::calculator -- populate the block first
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.query_one("#mcp-inspector-permission").display is True
+
+        table.move_cursor(row=6)  # Server default — Built-in (agent runtime)
         await pilot.press("enter")
         await pilot.pause()
 

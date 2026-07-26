@@ -7,7 +7,7 @@ import asyncio
 import json
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -554,6 +554,20 @@ class MCPWorkbench(Container):
         # `_sync_permissions_mode()` pass, reused rather than re-derived"
         # precedent immediately above.
         self._last_cascade: dict[tuple[str, str], tuple[str | None, str | None, str]] = {}
+        # Fix 1 (PR #906 review, post-TASK-627): the per-BUILT-IN-tool
+        # `EffectiveToolState` `_builtin_permission_matrix_rows()` most
+        # recently resolved (via `resolve_builtin_state`, not the MCP
+        # `effective_tool_states()` batch above) -- keyed like
+        # `_last_cascade` immediately above (server_key half is always
+        # `BUILTIN_TOOL_SERVER_KEY` here, kept as a tuple for the same
+        # lookup shape). `on_mcp_permissions_mode_row_selected()` reads
+        # this to route a built-in `"tool"` row to the inspector's
+        # permission view -- built-ins are NEVER in `_last_hub_tools`/
+        # `effective` (Constraint 1/5), so without a cache of their own
+        # that handler had no state to show and fell through to
+        # `show_tool(None)`, blanking the inspector instead of explaining
+        # the row.
+        self._last_builtin_effective: dict[tuple[str, str], EffectiveToolState] = {}
         # T7 (MCP Hub Phase 5): the full (unfiltered) execution-log record
         # list `_sync_audit_mode()` most recently pushed into `MCPAuditMode`
         # -- `MCPAuditMode.EntrySelected.index` (a position in THAT SAME
@@ -1306,8 +1320,20 @@ class MCPWorkbench(Container):
         server default, making it invisible and impossible to clear) -- only
         the per-tool rows beneath it are conditional on that list being
         non-empty.
+
+        Fix 1 (PR #906 review): also refreshes `self._last_builtin_
+        effective` -- REBUILT fresh here, not mutated in place, mirroring
+        `_last_cascade`'s own "computed once this pass, reused" precedent
+        -- so `on_mcp_permissions_mode_row_selected()` can route a built-in
+        `"tool"` row selection to the inspector's permission view using the
+        SAME resolution this method already did for the matrix cell, rather
+        than re-deriving the built-in catalog (and re-reading `payload`) a
+        second time.
         """
         rows_in = self._builtin_permission_rows(payload)
+        self._last_builtin_effective = {
+            (BUILTIN_TOOL_SERVER_KEY, row.name): row.effective for row in rows_in
+        }
 
         server_entry = servers_payload.get(BUILTIN_TOOL_SERVER_KEY)
         raw_default = (
@@ -1374,6 +1400,22 @@ class MCPWorkbench(Container):
         never trigger a second `store.load()` of its own; see that
         method's docstring for why a second read would also open a
         state/cycle_current coherence window, not just cost extra I/O.
+
+        Fix 2 (PR #906 review): `_builtin_permission_matrix_rows()` is now
+        called BEFORE `_build_permission_rows()` (it only ever needed
+        `payload`/`servers_payload`, both already loaded above -- nothing
+        `_build_permission_rows()` itself derives), so its rows can be
+        threaded into that call's `extra_override_rows` and counted by the
+        preview's override suffix too. `update_matrix()`'s own docstring
+        says the preview "ALWAYS summarizes the full, UNFILTERED matrix" --
+        that used to be false for a built-in override (the table cell
+        changed, the summary line's count didn't), because the preview was
+        built from `_build_permission_rows()`'s MCP-only `rows` before the
+        built-in section was even appended. The built-in rows are still
+        never merged into `tools`/`effective` (Constraint 1/5 -- see
+        `_builtin_permission_matrix_rows()`'s own docstring) -- only fed to
+        the preview's override COUNT, a separate concern from tool/state
+        resolution.
 
         T10: `effective` is the SAME batch `EffectiveToolState` resolution
         `_sync_children()` already computed once this pass (via
@@ -1463,19 +1505,23 @@ class MCPWorkbench(Container):
         if not isinstance(servers_payload, Mapping):
             servers_payload = {}
 
-        rows, preview, cascade_map = self._build_permission_rows(
-            tools, effective=effective, servers_payload=servers_payload, global_state=global_state,
-        )
-        # Task 3: cache this pass's per-tool cascade map for
-        # `_cascade_for_tool()` -- same "computed once, reused" precedent as
-        # `_last_effective_states` immediately above.
-        self._last_cascade = cascade_map
         # TASK-627 Task 3: the agent-runtime built-in section, appended
         # AFTER the MCP sections and never merged into `_build_permission_
         # rows()`'s own grouping -- it renders even when `tools` is empty
         # (no MCP servers configured), since it derives from the live
         # built-in tool registry, not the MCP catalog `tools` came from.
-        rows = rows + self._builtin_permission_matrix_rows(payload, servers_payload)
+        # Fix 2: computed FIRST now, so it can also feed the preview's
+        # override count below (see this method's own docstring).
+        builtin_rows = self._builtin_permission_matrix_rows(payload, servers_payload)
+        rows, preview, cascade_map = self._build_permission_rows(
+            tools, effective=effective, servers_payload=servers_payload, global_state=global_state,
+            extra_override_rows=builtin_rows,
+        )
+        # Task 3: cache this pass's per-tool cascade map for
+        # `_cascade_for_tool()` -- same "computed once, reused" precedent as
+        # `_last_effective_states` immediately above.
+        self._last_cascade = cascade_map
+        rows = rows + builtin_rows
         await self.query_one(MCPPermissionsMode).update_matrix(
             rows, kill_switch=kill_switch, preview=preview, echo=echo
         )
@@ -1610,6 +1656,7 @@ class MCPWorkbench(Container):
         effective: dict[tuple[str, str], EffectiveToolState],
         servers_payload: Mapping[str, Any],
         global_state: str,
+        extra_override_rows: Sequence[PermRow] = (),
     ) -> tuple[list[PermRow], str, dict[tuple[str, str], tuple[str | None, str | None, str]]]:
         """Derive the pinned global -> server-default -> tool `PermRow`
         list (grouped by server, both servers and their tools sorted by
@@ -1620,6 +1667,17 @@ class MCPWorkbench(Container):
         `server_cycle_current`/the global row, just packaged one tuple per
         tool for `_cascade_for_tool()`/`show_permission(..., cascade=...)`
         rather than split across rows.
+
+        Fix 2 (PR #906 review): `extra_override_rows` is passed straight
+        through to `_build_permission_preview()`'s own `extra_override_rows`
+        -- it is counted toward the preview's override suffix but never
+        merged into `tools`/`effective`/`rows`/`cascade_map` here, so it has
+        no effect on tool/state resolution or the returned matrix rows.
+        The caller (`_sync_permissions_mode()`) hands in the built-in
+        section's own rows (`_builtin_permission_matrix_rows()`) so a
+        persistent built-in override is reflected in the preview's count
+        too, without folding built-ins into this method's MCP-only
+        catalog walk (Constraint 1/5 -- see that method's docstring).
         """
         global_label = EffectiveToolState(state=global_state, origin="global_default").ui_label
         rows: list[PermRow] = [
@@ -1682,7 +1740,8 @@ class MCPWorkbench(Container):
                 )
 
         preview = self._build_permission_preview(
-            rows, tools_by_server, labels_by_key, effective, global_label
+            rows, tools_by_server, labels_by_key, effective, global_label,
+            extra_override_rows=extra_override_rows,
         )
         return rows, preview, cascade_map
 
@@ -1693,6 +1752,8 @@ class MCPWorkbench(Container):
         labels_by_key: dict[str, str],
         effective: dict[tuple[str, str], EffectiveToolState],
         global_label: str,
+        *,
+        extra_override_rows: Sequence[PermRow] = (),
     ) -> str:
         """One plain-language sentence -- UX batch item 9: Library counts-
         line vocabulary (lowercase state words, no noun, " · " separators,
@@ -1705,8 +1766,20 @@ class MCPWorkbench(Container):
         tools): `"global default: <word>"`, plus a
         `" · N overrides across M servers"` suffix when at least one
         explicit server- or tool-level override exists anywhere in `rows`
-        (omitted entirely when there are none, rather than a "0 overrides"
-        segment nobody needs).
+        OR `extra_override_rows` (omitted entirely when there are none,
+        rather than a "0 overrides" segment nobody needs).
+
+        Fix 2 (PR #906 review): `extra_override_rows` -- the built-in
+        section's own `PermRow`s, when the caller has them
+        (`_build_permission_rows()`'s own `extra_override_rows`) -- is
+        counted into this suffix alongside `rows` so a persistent built-in
+        override is reflected here too, matching `update_matrix()`'s own
+        documented contract that this sentence "ALWAYS summarizes the
+        full, UNFILTERED matrix". It plays no part in the rail-scoped
+        branch immediately below: that branch only ever triggers for a
+        SELECTED MCP server (`self._selected_server_key`), which the
+        built-in section's pseudo server key can never be (the rail never
+        lists it -- see `_builtin_permission_matrix_rows()`'s docstring).
         """
         global_word = global_label.lower()
         server_key = self._selected_server_key
@@ -1724,6 +1797,9 @@ class MCPWorkbench(Container):
             )
         override_rows = [
             row for row in rows if row.kind in ("server", "tool") and row.cycle_current is not None
+        ] + [
+            row for row in extra_override_rows
+            if row.kind in ("server", "tool") and row.cycle_current is not None
         ]
         if not override_rows:
             return f"global default: {global_word}"
@@ -2410,9 +2486,50 @@ class MCPWorkbench(Container):
         Task 3 (MCP Hub Phase 6): also threads this tool's cascade tuple
         (`_cascade_for_tool()`) so the block renders the three provenance
         rungs instead of the single origin sentence.
+
+        Fix 1 (PR #906 review): an `agent:builtin` `"tool"` row has no
+        `HubTool` at all -- `_tool_for()` only ever searches
+        `_last_hub_tools` (the MCP catalog, Constraint 1/5), so it always
+        returned `None` for one and this handler fell through to
+        `show_tool(None)` -- the newest, most interactive section of this
+        matrix was the only one that blanked the inspector on click instead
+        of explaining the row. Routed here instead, from `_last_builtin_
+        effective` (the state `_builtin_permission_matrix_rows()` already
+        resolved this same pass -- no second read of the store or the
+        built-in catalog) into a `HubTool` built locally for display only
+        (`show_permission()`'s Static widgets and its Re-allow/goto-
+        permission buttons read `tool.name`/`tool.server_key`/
+        `tool.server_label`, never anything catalog-specific), via
+        `show_permission()` -- the SAME entry point an MCP tool row uses.
+        `cascade=None` is deliberate: built-ins have no MCP tool/server/
+        global cascade to show three rungs for, so this falls back to the
+        plain per-tool origin sentence (`_ORIGIN_SENTENCES` already carries
+        a `"builtin_default"` entry for it). A built-in row with no cached
+        state (dropped from the live registry between resyncs) clears the
+        inspector the same as a dropped MCP tool would.
         """
         event.stop()
         inspector = self.query_one(MCPInspector)
+        if event.row_kind == "tool" and event.server_key == BUILTIN_TOOL_SERVER_KEY:
+            effective = self._last_builtin_effective.get(
+                (event.server_key, event.tool_name or "")
+            )
+            if effective is None:
+                await inspector.show_tool(None)
+                return
+            builtin_tool = HubTool(
+                server_key=BUILTIN_TOOL_SERVER_KEY,
+                server_label=_BUILTIN_SECTION_LABEL,
+                source="builtin",
+                name=event.tool_name or "",
+                description="",
+                input_schema=None,
+                tags=(),
+                stale=False,
+                executable=False,
+            )
+            await inspector.show_permission(builtin_tool, effective, cascade=None)
+            return
         tool = (
             self._tool_for(event.server_key, event.tool_name or "")
             if event.row_kind == "tool"
