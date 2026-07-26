@@ -2611,14 +2611,23 @@ class LibraryIngestQueueMixin:
     def _resolve_ingest_backend(self) -> str:
         """Return the backend a new ingest should run on: ``local`` or ``server``.
 
-        Reads the same selector the media screens already use
-        (``media_runtime_state.runtime_backend``) rather than introducing a
-        second notion of "which backend am I on". Anything unrecognised, or a
-        missing selector, means local -- the backend that always works.
+        Deliberately its **own** preference rather than the Library's browse
+        scope (``media_runtime_state.runtime_backend``). Reusing the browse
+        scope looked tidier -- one notion of "which backend am I on" -- but it
+        would mean a user who switched scope to look at server-side media and
+        then imported a file had that file leave their machine without ever
+        asking for it. ``build_library_ingest_state``'s own contract is explicit
+        that ingest "always targets the local media store regardless of browsing
+        scope", and quietly inverting that is not a change to make on the user's
+        behalf.
+
+        So sending an ingest to a server is an explicit opt-in, and anything
+        unrecognised or unset means local -- the backend that always works and
+        keeps the file where it already is.
         """
-        state = getattr(self, "media_runtime_state", None)
-        backend = str(getattr(state, "runtime_backend", "local") or "local")
-        return "server" if backend.strip().lower() == "server" else "local"
+        raw = get_cli_setting("library.ingest", "backend", "local")
+        backend = str(raw or "local").strip().lower()
+        return "server" if backend == "server" else "local"
 
     def _submit_server_ingest_job(
         self,

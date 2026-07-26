@@ -35,6 +35,7 @@ from unittest.mock import patch
 import pytest
 from textual.app import App
 
+import tldw_chatbook.app as _app_module
 from tldw_chatbook.app import LibraryIngestQueueMixin
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Library.library_ingest_jobs import (
@@ -1961,10 +1962,21 @@ class _RecordingServerService:
         return {"batch_id": batch_id, "jobs": []}
 
 
-def _use_server_backend(app) -> None:
-    from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
+def _server_ingest_preference():
+    """Patch the ingest backend preference to "server" for a test's duration.
 
-    app.media_runtime_state = MediaRuntimeState(runtime_backend="server")
+    Sending an ingest to a server is an explicit opt-in stored under
+    ``[library.ingest] backend``; the Library's browse scope deliberately does
+    not decide it (see ``_resolve_ingest_backend``).
+    """
+    real = _app_module.get_cli_setting
+
+    def _fake(*args, **kwargs):
+        if args[:2] == ("library.ingest", "backend"):
+            return "server"
+        return real(*args, **kwargs)
+
+    return patch("tldw_chatbook.app.get_cli_setting", side_effect=_fake)
 
 
 @pytest.mark.asyncio
@@ -1995,10 +2007,10 @@ async def test_server_backend_submits_remotely_and_attaches_ids(
     app.REMOTE_INGEST_POLL_SECONDS = 0.01
     service = _RecordingServerService()
     app.server_media_reading_service = service
-    _use_server_backend(app)
     source = _write_text_file(tmp_path, "note.txt", "Body.")
 
-    async with app.run_test() as pilot:
+    with _server_ingest_preference():
+      async with app.run_test() as pilot:
         job = app.submit_library_ingest_job(source_path=str(source), title="A title")
         assert job.origin == "server"
 
@@ -2028,10 +2040,10 @@ async def test_server_backend_without_a_service_fails_the_job_clearly(
     """Choosing a server with none configured must explain itself, not hang."""
     app = _IngestRunnerHarness(_make_db(tmp_path))
     app.server_media_reading_service = None
-    _use_server_backend(app)
     source = _write_text_file(tmp_path, "note.txt", "Body.")
 
-    async with app.run_test() as pilot:
+    with _server_ingest_preference():
+      async with app.run_test() as pilot:
         job = app.submit_library_ingest_job(source_path=str(source))
         failed = await _wait_for_job_state(
             app, pilot, job.job_id, IngestJobState.FAILED
@@ -2045,9 +2057,9 @@ async def test_server_backend_refuses_a_source_it_cannot_send(tmp_path: Path) ->
     """A plain web page belongs to the clipper, and says so rather than failing late."""
     app = _IngestRunnerHarness(_make_db(tmp_path))
     app.server_media_reading_service = _RecordingServerService()
-    _use_server_backend(app)
 
-    async with app.run_test() as pilot:
+    with _server_ingest_preference():
+      async with app.run_test() as pilot:
         job = app.submit_library_ingest_job(source_path="https://example.com/a-post")
         failed = await _wait_for_job_state(
             app, pilot, job.job_id, IngestJobState.FAILED
@@ -2061,10 +2073,10 @@ async def test_server_submit_failure_marks_the_job_failed(tmp_path: Path) -> Non
     """A refused submission must surface, not sit queued forever."""
     app = _IngestRunnerHarness(_make_db(tmp_path))
     app.server_media_reading_service = _RecordingServerService(fail=True)
-    _use_server_backend(app)
     source = _write_text_file(tmp_path, "note.txt", "Body.")
 
-    async with app.run_test() as pilot:
+    with _server_ingest_preference():
+      async with app.run_test() as pilot:
         job = app.submit_library_ingest_job(source_path=str(source))
         failed = await _wait_for_job_state(
             app, pilot, job.job_id, IngestJobState.FAILED
@@ -2094,16 +2106,16 @@ async def test_an_unrecognised_backend_falls_back_to_local(tmp_path: Path) -> No
     app.server_media_reading_service = service
 
     async with app.run_test() as pilot:
-        for backend in ("", "  ", "remote", "Server-ish", "cloud", None):
-            app.media_runtime_state = SimpleNamespace(runtime_backend=backend)
-            assert app._resolve_ingest_backend() == "local", repr(backend)
+        for value in ("", "  ", "remote", "Server-ish", "cloud", None):
+            with patch(
+                "tldw_chatbook.app.get_cli_setting",
+                side_effect=lambda *a, v=value, **k: (
+                    v if a[:2] == ("library.ingest", "backend") else None
+                ),
+            ):
+                assert app._resolve_ingest_backend() == "local", repr(value)
 
-        # A missing selector entirely is also local.
-        app.media_runtime_state = None
-        assert app._resolve_ingest_backend() == "local"
-
-        # And end-to-end: an unknown backend really does ingest locally.
-        app.media_runtime_state = SimpleNamespace(runtime_backend="remote")
+        # And end-to-end: with no preference set, ingest stays local.
         job = app.submit_library_ingest_job(source_path=str(source))
         assert job.origin == "local"
         await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
@@ -2115,13 +2127,16 @@ async def test_an_unrecognised_backend_falls_back_to_local(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_server_backend_is_matched_case_insensitively(tmp_path: Path) -> None:
     """A raw "Server"/" SERVER " value should still route remotely."""
-    from types import SimpleNamespace
-
     app = _IngestRunnerHarness(_make_db(tmp_path))
     async with app.run_test():
-        for backend in ("server", "Server", " SERVER "):
-            app.media_runtime_state = SimpleNamespace(runtime_backend=backend)
-            assert app._resolve_ingest_backend() == "server", repr(backend)
+        for value in ("server", "Server", " SERVER "):
+            with patch(
+                "tldw_chatbook.app.get_cli_setting",
+                side_effect=lambda *a, v=value, **k: (
+                    v if a[:2] == ("library.ingest", "backend") else None
+                ),
+            ):
+                assert app._resolve_ingest_backend() == "server", repr(value)
 
 
 @pytest.mark.asyncio
@@ -2135,3 +2150,60 @@ async def test_media_runtime_state_already_normalises_the_backend() -> None:
 
     assert MediaRuntimeState(runtime_backend="remote").runtime_backend == "local"
     assert MediaRuntimeState(runtime_backend="SERVER").runtime_backend == "server"
+
+
+@pytest.mark.asyncio
+async def test_browse_scope_alone_never_sends_files_to_a_server(
+    tmp_path: Path,
+) -> None:
+    """Browsing in server scope must not silently upload a local file.
+
+    ``build_library_ingest_state``'s own contract says ingest "always targets
+    the local media store regardless of browsing scope". Letting the browse
+    scope decide would mean a user who switched scope to look at server media
+    then imported a file would have it leave their machine without ever asking
+    for that -- so the ingest target is its own explicit preference, defaulting
+    to local.
+    """
+    from types import SimpleNamespace
+
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "note.txt", "Body.")
+    app = _IngestRunnerHarness(db)
+    service = _RecordingServerService()
+    app.server_media_reading_service = service
+    # Browsing server-side, with no ingest preference expressed.
+    app.media_runtime_state = SimpleNamespace(runtime_backend="server")
+
+    async with app.run_test() as pilot:
+        assert app._resolve_ingest_backend() == "local"
+        job = app.submit_library_ingest_job(source_path=str(source))
+        assert job.origin == "local"
+        await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
+        await _wait_for_runner_idle(app, pilot)
+
+    assert service.submissions == [], "browse scope must not route ingest remotely"
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_server_preference_routes_remotely(tmp_path: Path) -> None:
+    """Opting in -- and only opting in -- sends the ingest to the server."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+    service = _RecordingServerService()
+    app.server_media_reading_service = service
+    source = _write_text_file(tmp_path, "note.txt", "Body.")
+
+    with patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=lambda *a, **k: (
+            "server" if a and a[0] == "library.ingest" and a[1:2] == ("backend",) else None
+        ),
+    ):
+        async with app.run_test() as pilot:
+            assert app._resolve_ingest_backend() == "server"
+            job = app.submit_library_ingest_job(source_path=str(source))
+            assert job.origin == "server"
+            await pilot.pause(_POLL_INTERVAL)
+
+    assert len(service.submissions) == 1
