@@ -23,10 +23,13 @@ mirroring ``Tests/RAG_Search/test_pipeline_notes_search.py`` and
 """
 
 import asyncio
+import json
+import threading
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import pytest
+from loguru import logger as loguru_logger
 
 from tldw_chatbook.Chat.rag_scope import (
     EffectiveScope,
@@ -35,6 +38,7 @@ from tldw_chatbook.Chat.rag_scope import (
     SCOPE_REASON_EMPTY,
     SCOPE_STATUS_EMPTY,
     SCOPE_STATUS_EXCLUDED,
+    SessionScopeHolder,
     ScopeItem,
     SOURCE_TYPE_MEDIA,
     SOURCE_TYPE_NOTE,
@@ -43,13 +47,21 @@ from tldw_chatbook.Chat.rag_scope import (
     note_id_params,
     write_conversation_scope,
 )
+from tldw_chatbook.Chat.citation_trace_builder import CitationTraceBuilder
+from tldw_chatbook.Chat.citation_trace_identity import (
+    CitationFingerprintCodec,
+    LocalCitationIdentityContext,
+)
+from tldw_chatbook.Chat.citation_trace_models import PolicyCapability
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as cre
 from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
 from tldw_chatbook.RAG_Search import pipeline_functions_simple as pfs
+from tldw_chatbook.RAG_Search.local_citation_capture import normalize_local_result
 from tldw_chatbook.RAG_Search.pipeline_functions_simple import SCOPE_DIAGNOSTICS_KEY
+from tldw_chatbook.RAG_Search.pipeline_types import SearchResult
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
@@ -146,9 +158,7 @@ class _RefusingConversationsDB:
         raise AssertionError("search_conversations_by_content must not be called")
 
     def get_messages_for_conversations_batch(self, *args, **kwargs):
-        raise AssertionError(
-            "get_messages_for_conversations_batch must not be called"
-        )
+        raise AssertionError("get_messages_for_conversations_batch must not be called")
 
 
 class _RefusingRagService:
@@ -249,9 +259,7 @@ class TestMediaLegScopeEnforcement:
         app = _App(media_db=media_db)
         eff = _scoped(media={ids[1]})
 
-        results = await pfs.search_media_fts5(
-            app, "zanzibarite", limit=10, scope=eff
-        )
+        results = await pfs.search_media_fts5(app, "zanzibarite", limit=10, scope=eff)
 
         assert [r.id for r in results] == [ids[1]]
 
@@ -262,9 +270,7 @@ class TestMediaLegScopeEnforcement:
         app = _App(media_db=_RefusingMediaDB())
         eff = _scoped(note={"n1"})  # media type absent
 
-        results = await pfs.search_media_fts5(
-            app, "zanzibarite", limit=10, scope=eff
-        )
+        results = await pfs.search_media_fts5(app, "zanzibarite", limit=10, scope=eff)
 
         assert results == []
 
@@ -296,9 +302,7 @@ class TestNotesLegScopeEnforcement:
         app = _App(chachanotes_db=cha_db)
         eff = _scoped(note={ids[2]})
 
-        results = await pfs.search_notes_fts5(
-            app, "zanzibarite", limit=10, scope=eff
-        )
+        results = await pfs.search_notes_fts5(app, "zanzibarite", limit=10, scope=eff)
 
         assert [r.id for r in results] == [ids[2]]
 
@@ -308,9 +312,7 @@ class TestNotesLegScopeEnforcement:
         app = _App(chachanotes_db=_RefusingChaChaDB())
         eff = _scoped(media={"1"})  # note type absent
 
-        results = await pfs.search_notes_fts5(
-            app, "zanzibarite", limit=10, scope=eff
-        )
+        results = await pfs.search_notes_fts5(app, "zanzibarite", limit=10, scope=eff)
 
         assert results == []
 
@@ -827,6 +829,7 @@ class _ChatMockApp:
         media_db: Any = None,
         chachanotes_db: Any = None,
         rag_service: Any = None,
+        citation_trace_repository: Any = None,
     ):
         self._widgets = {
             "#chat-rag-enable-checkbox": _MockWidget(True),
@@ -849,6 +852,8 @@ class _ChatMockApp:
         self.chachanotes_db = chachanotes_db
         if rag_service is not None:
             self._rag_service = rag_service
+        if citation_trace_repository is not None:
+            self.citation_trace_repository = citation_trace_repository
         self.notifications: List[tuple] = []
 
     def query_one(self, selector):
@@ -856,6 +861,30 @@ class _ChatMockApp:
 
     def notify(self, message, severity="information", **kwargs):
         self.notifications.append((message, severity))
+
+
+class _BuilderRepository:
+    def __init__(self):
+        self.builders = []
+
+    def create_local_trace_builder(self, *, request_id, generation_id):
+        builder = CitationTraceBuilder.local(
+            request_id=request_id,
+            generation_id=generation_id,
+            identity_context=LocalCitationIdentityContext(
+                profile_id="scope-profile",
+                local_authority_id="scope-authority",
+                fingerprint_key_id="scope-key",
+            ),
+            fingerprint_codec=CitationFingerprintCodec(b"s" * 32),
+            policy_version="test-local-policy-v1",
+            policy_capabilities=(
+                PolicyCapability.VIEW_SNAPSHOT,
+                PolicyCapability.VIEW_SOURCE_IDENTITY,
+            ),
+        )
+        self.builders.append(builder)
+        return builder
 
 
 class TestChatEntryPointScopedE2E:
@@ -1069,6 +1098,7 @@ class TestWorkspaceScopeIntersectionE2E:
             "perform_hybrid_rag_search",
             "perform_search_with_pipeline",
         ):
+
             def _refuse(*args, __name=fn_name, **kwargs):
                 raise AssertionError(f"{__name} must not be called on EMPTY scope")
 
@@ -1132,6 +1162,7 @@ class TestWorkspaceScopeReadFailureFailsClosed:
             "perform_hybrid_rag_search",
             "perform_search_with_pipeline",
         ):
+
             def _refuse(*args, __name=fn_name, **kwargs):
                 raise AssertionError(f"{__name} must not be called on EMPTY scope")
 
@@ -1180,6 +1211,7 @@ class TestWorkspaceScopeReadFailureFailsClosed:
             "perform_hybrid_rag_search",
             "perform_search_with_pipeline",
         ):
+
             def _refuse(*args, __name=fn_name, **kwargs):
                 raise AssertionError(f"{__name} must not be called on EMPTY scope")
 
@@ -1200,9 +1232,7 @@ class TestWorkspaceScopeReadFailureFailsClosed:
         ), app.notifications
 
     @pytest.mark.asyncio
-    async def test_resolve_scope_for_session_reports_distinct_cause(
-        self, cha_db
-    ):
+    async def test_resolve_scope_for_session_reports_distinct_cause(self, cha_db):
         """Unit-level check directly against ``resolve_scope_for_session``:
         the returned ``ScopeResolution`` carries ``ws_scope=None`` (the read
         never produced a usable value -- distinct from "cleanly unset") and
@@ -1239,9 +1269,7 @@ class TestWorkspaceScopeMemoryDbGuard:
     """
 
     @pytest.mark.asyncio
-    async def test_memory_backed_registry_reads_inline(
-        self, media_db, monkeypatch
-    ):
+    async def test_memory_backed_registry_reads_inline(self, media_db, monkeypatch):
         """Checks the WORKSPACE-scope read's own thread, not a blanket
         ``asyncio.to_thread`` spy: the overall ``resolve_effective_scope``
         call is offloaded independently based on ``chachanotes_db``/
@@ -1282,9 +1310,7 @@ class TestWorkspaceScopeMemoryDbGuard:
         )
 
     @pytest.mark.asyncio
-    async def test_file_backed_registry_still_offloaded(
-        self, media_db, monkeypatch
-    ):
+    async def test_file_backed_registry_still_offloaded(self, media_db, monkeypatch):
         import threading
 
         media_ids = _seed_media(media_db, n=1)
@@ -1347,13 +1373,13 @@ class TestScopeCacheWiring:
         app = _App(media_db=media_db, chachanotes_db=cha_db)
 
         calls: list[int] = []
-        real_resolve = cre.resolve_effective_scope
+        real_resolve = cre._resolve_scope_with_current_ids
 
-        def _spy_resolve(*args, **kwargs):
+        async def _spy_resolve(*args, **kwargs):
             calls.append(1)
-            return real_resolve(*args, **kwargs)
+            return await real_resolve(*args, **kwargs)
 
-        monkeypatch.setattr(cre, "resolve_effective_scope", _spy_resolve)
+        monkeypatch.setattr(cre, "_resolve_scope_with_current_ids", _spy_resolve)
 
         first = await cre.resolve_effective_scope_for_chat(app)
         second = await cre.resolve_effective_scope_for_chat(app)
@@ -1361,6 +1387,40 @@ class TestScopeCacheWiring:
         assert first == second
         assert first.state == "scoped"
         assert len(calls) == 1, "the second call must be served from ScopeCache"
+
+    @pytest.mark.asyncio
+    async def test_explicit_uncached_mode_bypasses_populated_scope_cache(
+        self, media_db, cha_db, monkeypatch
+    ):
+        media_ids = _seed_media(media_db, n=1)
+        conv_id = cha_db.add_conversation({"title": "Fresh boundary"})
+        write_conversation_scope(
+            cha_db,
+            conv_id,
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),),
+                updated_at="same-stamp",
+            ),
+        )
+        session = SimpleNamespace(persisted_conversation_id=conv_id)
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+        app = _App(media_db=media_db, chachanotes_db=cha_db)
+
+        calls: list[int] = []
+        real_resolve = cre._resolve_scope_with_current_ids
+
+        async def _spy_resolve(*args, **kwargs):
+            calls.append(1)
+            return await real_resolve(*args, **kwargs)
+
+        monkeypatch.setattr(cre, "_resolve_scope_with_current_ids", _spy_resolve)
+
+        await cre.resolve_effective_scope_for_chat(app)
+        await cre.resolve_effective_scope_for_chat(app)
+        fresh = await cre.resolve_effective_scope_for_chat(app, use_cache=False)
+
+        assert fresh.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
+        assert len(calls) == 2
 
     @pytest.mark.asyncio
     async def test_cache_miss_on_conversation_scope_stamp_change(
@@ -1382,13 +1442,13 @@ class TestScopeCacheWiring:
         app = _App(media_db=media_db, chachanotes_db=cha_db)
 
         calls: list[int] = []
-        real_resolve = cre.resolve_effective_scope
+        real_resolve = cre._resolve_scope_with_current_ids
 
-        def _spy_resolve(*args, **kwargs):
+        async def _spy_resolve(*args, **kwargs):
             calls.append(1)
-            return real_resolve(*args, **kwargs)
+            return await real_resolve(*args, **kwargs)
 
-        monkeypatch.setattr(cre, "resolve_effective_scope", _spy_resolve)
+        monkeypatch.setattr(cre, "_resolve_scope_with_current_ids", _spy_resolve)
 
         first = await cre.resolve_effective_scope_for_chat(app)
         assert first.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
@@ -1443,13 +1503,13 @@ class TestScopeCacheWiring:
         app.workspace_registry_service = registry
 
         calls: list[int] = []
-        real_resolve = cre.resolve_effective_scope
+        real_resolve = cre._resolve_scope_with_current_ids
 
-        def _spy_resolve(*args, **kwargs):
+        async def _spy_resolve(*args, **kwargs):
             calls.append(1)
-            return real_resolve(*args, **kwargs)
+            return await real_resolve(*args, **kwargs)
 
-        monkeypatch.setattr(cre, "resolve_effective_scope", _spy_resolve)
+        monkeypatch.setattr(cre, "_resolve_scope_with_current_ids", _spy_resolve)
 
         first = await cre.resolve_effective_scope_for_chat(app)
         assert first.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
@@ -1508,13 +1568,13 @@ class TestScopeCacheWiring:
         app.workspace_registry_service = registry
 
         calls: list[int] = []
-        real_resolve = cre.resolve_effective_scope
+        real_resolve = cre._resolve_scope_with_current_ids
 
-        def _spy_resolve(*args, **kwargs):
+        async def _spy_resolve(*args, **kwargs):
             calls.append(1)
-            return real_resolve(*args, **kwargs)
+            return await real_resolve(*args, **kwargs)
 
-        monkeypatch.setattr(cre, "resolve_effective_scope", _spy_resolve)
+        monkeypatch.setattr(cre, "_resolve_scope_with_current_ids", _spy_resolve)
 
         first = await cre.resolve_effective_scope_for_chat(app)
         assert first.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
@@ -1560,6 +1620,7 @@ class TestChatEntryPointEmptyScopeShortCircuit:
             "perform_hybrid_rag_search",
             "perform_search_with_pipeline",
         ):
+
             def _refuse(*args, __name=fn_name, **kwargs):
                 raise AssertionError(f"{__name} must not be called on EMPTY scope")
 
@@ -1723,9 +1784,106 @@ class TestResolveEffectiveScopeMemoryDbGuard:
 
             assert effective.state == "scoped"
             assert effective.allowlist == {SOURCE_TYPE_NOTE: frozenset({note_id})}
-            assert calls, "file-backed DB reads must still be offloaded via asyncio.to_thread"
+            assert calls, (
+                "file-backed DB reads must still be offloaded via asyncio.to_thread"
+            )
         finally:
             cha_db.close_connection()
+
+    @pytest.mark.asyncio
+    async def test_memory_media_does_not_force_file_chacha_authority_inline(
+        self, cha_db, monkeypatch
+    ):
+        memory_media = MediaDatabase(":memory:", client_id="task2-mixed-routing")
+        try:
+            assert memory_media.is_memory_db is True
+            assert cha_db.is_memory_db is False
+            conversation_id = cha_db.add_conversation({"title": "Mixed stores"})
+            session = SimpleNamespace(
+                persisted_conversation_id=conversation_id,
+                workspace_id=None,
+            )
+            main_thread = threading.current_thread()
+            call_threads = []
+            real_read_metadata = cre._read_fresh_conversation_metadata_sync
+
+            def _recording_read_metadata(*args, **kwargs):
+                call_threads.append(threading.current_thread())
+                return real_read_metadata(*args, **kwargs)
+
+            monkeypatch.setattr(
+                cre,
+                "_read_fresh_conversation_metadata_sync",
+                _recording_read_metadata,
+            )
+            app = _App(media_db=memory_media, chachanotes_db=cha_db)
+
+            resolution = await cre.resolve_scope_for_session(
+                app, session, use_cache=False
+            )
+
+            assert resolution.effective.state == "unscoped"
+            assert len(call_threads) == 1
+            assert call_threads[0] is not main_thread
+        finally:
+            memory_media.close_connection()
+
+    @pytest.mark.asyncio
+    async def test_mixed_store_scope_existence_reads_use_each_store_thread(
+        self, cha_db, monkeypatch
+    ):
+        memory_media = MediaDatabase(":memory:", client_id="task4-mixed-existence")
+        try:
+            media_id = _seed_media(memory_media, n=1)[0]
+            note_id = _seed_notes(cha_db, n=1)[0]
+            conversation_id = cha_db.add_conversation({"title": "Mixed scope"})
+            write_conversation_scope(
+                cha_db,
+                conversation_id,
+                RagScope(
+                    items=(
+                        ScopeItem(SOURCE_TYPE_MEDIA, media_id),
+                        ScopeItem(SOURCE_TYPE_NOTE, note_id),
+                    ),
+                    updated_at="t1",
+                ),
+            )
+            session = SimpleNamespace(
+                persisted_conversation_id=conversation_id,
+                workspace_id=None,
+            )
+            main_thread = threading.current_thread()
+            call_threads = {"media": [], "note": []}
+            real_sensitive_fetchall = cre._sensitive_fetchall
+
+            def _record_existence_thread(db, query, params):
+                if query.startswith("SELECT id FROM Media"):
+                    call_threads["media"].append(threading.current_thread())
+                elif query.startswith("SELECT id FROM notes"):
+                    call_threads["note"].append(threading.current_thread())
+                return real_sensitive_fetchall(db, query, params)
+
+            monkeypatch.setattr(
+                cre,
+                "_sensitive_fetchall",
+                _record_existence_thread,
+            )
+
+            resolution = await cre.resolve_scope_for_session(
+                _App(media_db=memory_media, chachanotes_db=cha_db),
+                session,
+                use_cache=False,
+            )
+
+            assert resolution.effective.allowlist == {
+                SOURCE_TYPE_MEDIA: frozenset({media_id}),
+                SOURCE_TYPE_NOTE: frozenset({note_id}),
+            }
+            assert call_threads["media"] == [main_thread]
+            assert len(call_threads["note"]) == 1
+            assert call_threads["note"][0] is not main_thread
+        finally:
+            memory_media.close_connection()
 
 
 class TestChatEntryPointUnscopedZeroDrift:
@@ -1778,6 +1936,875 @@ class TestChatEntryPointUnscopedZeroDrift:
         assert context == "some context"
         assert "scope" in captured
         assert captured["scope"] is None
+
+
+class TestFreshPromptBoundaryAuthority:
+    """Prompt evidence gets a fresh, fail-closed scope/existence decision."""
+
+    @staticmethod
+    def _normalized(source: str, source_id: str, title: str, *, rank: int):
+        return normalize_local_result(
+            SearchResult(
+                source=source,
+                id=source_id,
+                title=title,
+                content=f"{title} body",
+            ),
+            candidate_rank=rank,
+        )
+
+    @pytest.mark.asyncio
+    async def test_soft_deleted_media_note_and_conversation_are_all_excluded(
+        self, media_db, cha_db, monkeypatch
+    ):
+        media_id = _seed_media(media_db, n=1)[0]
+        note_id = _seed_notes(cha_db, n=1)[0]
+        conv_id = cha_db.add_conversation({"title": "Candidate conversation"})
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: None)
+        candidates = (
+            self._normalized("media", media_id, "Media", rank=1),
+            self._normalized("note", note_id, "Note", rank=2),
+            self._normalized("conversation", conv_id, "Conversation", rank=3),
+        )
+
+        media_db.soft_delete_media(int(media_id))
+        note = cha_db.get_note_by_id(note_id)
+        conversation = cha_db.get_conversation_by_id(conv_id)
+        assert note is not None and conversation is not None
+        cha_db.soft_delete_note(note_id, expected_version=note["version"])
+        cha_db.soft_delete_conversation(
+            conv_id, expected_version=conversation["version"]
+        )
+
+        authorized = await cre.authorize_local_results_for_prompt(
+            _App(media_db=media_db, chachanotes_db=cha_db), candidates
+        )
+
+        assert authorized == ()
+
+    @pytest.mark.asyncio
+    async def test_active_scope_excludes_conversations_and_non_allowlisted_ids(
+        self, media_db, cha_db, monkeypatch
+    ):
+        media_ids = _seed_media(media_db, n=2)
+        candidate_conv_id = cha_db.add_conversation({"title": "Candidate"})
+        session_conv_id = cha_db.add_conversation({"title": "Active"})
+        write_conversation_scope(
+            cha_db,
+            session_conv_id,
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),),
+                updated_at="t1",
+            ),
+        )
+        session = SimpleNamespace(persisted_conversation_id=session_conv_id)
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        candidates = (
+            self._normalized("media", media_ids[0], "Denied", rank=1),
+            self._normalized("conversation", candidate_conv_id, "Chat", rank=2),
+            self._normalized("media", media_ids[1], "Allowed", rank=3),
+        )
+
+        authorized = await cre.authorize_local_results_for_prompt(
+            _App(media_db=media_db, chachanotes_db=cha_db), candidates
+        )
+
+        assert [(item.source_id, item.candidate_rank) for item in authorized] == [
+            (media_ids[1], 3)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_same_stamp_scope_narrowing_ignores_pre_retrieval_cache(
+        self, media_db, tmp_path, monkeypatch
+    ):
+        media_ids = _seed_media(media_db, n=2)
+        session = SimpleNamespace(
+            id="session-1",
+            persisted_conversation_id=None,
+            workspace_id="ws-1",
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task2-fresh")
+        )
+        registry.create_workspace(workspace_id="ws-1", name="Fresh authority")
+        registry.set_workspace_scope(
+            "ws-1",
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),),
+                updated_at="unchanged-stamp",
+            ),
+        )
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+        cached = await cre.resolve_effective_scope_for_chat(app)
+        assert cached.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
+
+        registry.set_workspace_scope(
+            "ws-1",
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),),
+                updated_at="unchanged-stamp",
+            ),
+        )
+        candidates = (
+            self._normalized("media", media_ids[0], "Old", rank=1),
+            self._normalized("media", media_ids[1], "Current", rank=2),
+        )
+
+        authorized = await cre.authorize_local_results_for_prompt(app, candidates)
+
+        assert [(item.source_id, item.candidate_rank) for item in authorized] == [
+            (media_ids[1], 2)
+        ]
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "{PRIVATE-WORKSPACE-SCOPE-SENTINEL",
+            '{"version": 1, "items": "PRIVATE-WORKSPACE-SCOPE-SENTINEL", '
+            '"updated_at": "t1"}',
+            '{"version": true, "items": [], "updated_at": "t1"}',
+        ],
+        ids=["malformed-json", "decoded-invalid-scope", "bool-version"],
+    )
+    @pytest.mark.asyncio
+    async def test_fresh_malformed_workspace_scope_fails_closed(
+        self, media_db, tmp_path, monkeypatch, payload
+    ):
+        media_id = _seed_media(media_db, n=1)[0]
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task2-strict")
+        )
+        registry.create_workspace(workspace_id="ws-malformed", name="Malformed")
+        with registry.db.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO workspace_rag_scopes (workspace_id, payload, updated_at)
+                VALUES (?, ?, ?)
+                """,
+                ("ws-malformed", payload, "t1"),
+            )
+        session = SimpleNamespace(
+            persisted_conversation_id=None,
+            workspace_id="ws-malformed",
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+        candidate = self._normalized("media", media_id, "Media", rank=1)
+
+        effective = await cre.resolve_effective_scope_for_chat(app, use_cache=False)
+        authorized = await cre.authorize_local_results_for_prompt(app, (candidate,))
+
+        assert effective.state == "empty"
+        assert effective.cause == "workspace-scope-unavailable"
+        assert authorized == ()
+
+    @pytest.mark.asyncio
+    async def test_fresh_workspace_with_no_scope_row_remains_unscoped(
+        self, media_db, tmp_path, monkeypatch
+    ):
+        media_id = _seed_media(media_db, n=1)[0]
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task2-unset")
+        )
+        registry.create_workspace(workspace_id="ws-unset", name="Unset")
+        session = SimpleNamespace(
+            persisted_conversation_id=None,
+            workspace_id="ws-unset",
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+        candidate = self._normalized("media", media_id, "Media", rank=1)
+
+        effective = await cre.resolve_effective_scope_for_chat(app, use_cache=False)
+        authorized = await cre.authorize_local_results_for_prompt(app, (candidate,))
+
+        assert effective.state == "unscoped"
+        assert authorized == (candidate,)
+
+    @pytest.mark.asyncio
+    async def test_fresh_workspace_with_valid_zero_item_scope_remains_unscoped(
+        self, media_db, tmp_path, monkeypatch
+    ):
+        media_id = _seed_media(media_db, n=1)[0]
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task2-empty")
+        )
+        registry.create_workspace(workspace_id="ws-empty", name="Empty")
+        with registry.db.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO workspace_rag_scopes (workspace_id, payload, updated_at)
+                VALUES (?, ?, ?)
+                """,
+                (
+                    "ws-empty",
+                    json.dumps({"version": 1, "items": [], "updated_at": "t1"}),
+                    "t1",
+                ),
+            )
+        session = SimpleNamespace(
+            persisted_conversation_id=None,
+            workspace_id="ws-empty",
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+        candidate = self._normalized("media", media_id, "Media", rank=1)
+
+        effective = await cre.resolve_effective_scope_for_chat(app, use_cache=False)
+        authorized = await cre.authorize_local_results_for_prompt(app, (candidate,))
+
+        assert effective.state == "unscoped"
+        assert authorized == (candidate,)
+
+    @pytest.mark.asyncio
+    async def test_fresh_missing_linked_workspace_fails_closed(
+        self, media_db, tmp_path, monkeypatch
+    ):
+        media_id = _seed_media(media_db, n=1)[0]
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task2-missing")
+        )
+        session = SimpleNamespace(
+            persisted_conversation_id=None,
+            workspace_id="workspace-does-not-exist",
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+        candidate = self._normalized("media", media_id, "Media", rank=1)
+
+        effective = await cre.resolve_effective_scope_for_chat(app, use_cache=False)
+        authorized = await cre.authorize_local_results_for_prompt(app, (candidate,))
+
+        assert effective.state == "empty"
+        assert effective.cause == "workspace-scope-unavailable"
+        assert authorized == ()
+
+    @pytest.mark.asyncio
+    async def test_fresh_workspace_version_rejection_does_not_log_raw_value(
+        self, media_db, tmp_path, monkeypatch
+    ):
+        sentinel = "PRIVATE-VERSION-SENTINEL"
+        media_id = _seed_media(media_db, n=1)[0]
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task2-version")
+        )
+        registry.create_workspace(workspace_id="ws-version", name="Version")
+        payload = json.dumps(
+            {
+                "version": sentinel,
+                "items": [{"source_type": SOURCE_TYPE_MEDIA, "source_id": media_id}],
+                "updated_at": "t1",
+            }
+        )
+        with registry.db.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO workspace_rag_scopes (workspace_id, payload, updated_at)
+                VALUES (?, ?, ?)
+                """,
+                ("ws-version", payload, "t1"),
+            )
+        session = SimpleNamespace(
+            persisted_conversation_id=None,
+            workspace_id="ws-version",
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+        candidate = self._normalized("media", media_id, "Media", rank=1)
+        captured = []
+        sink_id = loguru_logger.add(
+            captured.append,
+            level="WARNING",
+            format="{message}",
+        )
+        try:
+            effective = await cre.resolve_effective_scope_for_chat(app, use_cache=False)
+            authorized = await cre.authorize_local_results_for_prompt(app, (candidate,))
+        finally:
+            loguru_logger.remove(sink_id)
+
+        rendered = "".join(str(message) for message in captured)
+        assert effective.state == "empty"
+        assert effective.cause == "workspace-scope-unavailable"
+        assert authorized == ()
+        assert sentinel not in rendered
+
+    @pytest.mark.asyncio
+    async def test_fresh_conversation_version_rejection_does_not_log_raw_value(
+        self, media_db, cha_db, monkeypatch
+    ):
+        sentinel = "PRIVATE-VERSION-SENTINEL"
+        media_id = _seed_media(media_db, n=1)[0]
+        conversation_id = cha_db.add_conversation({"title": "Version"})
+        record = cha_db.get_conversation_by_id(conversation_id)
+        assert record is not None
+        cha_db.update_conversation(
+            conversation_id,
+            {
+                "metadata": json.dumps(
+                    {
+                        "rag_scope": {
+                            "version": sentinel,
+                            "items": [
+                                {
+                                    "source_type": SOURCE_TYPE_MEDIA,
+                                    "source_id": media_id,
+                                }
+                            ],
+                            "updated_at": "t1",
+                        }
+                    }
+                )
+            },
+            expected_version=record["version"],
+        )
+        session = SimpleNamespace(
+            persisted_conversation_id=conversation_id,
+            workspace_id=None,
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        app = _App(media_db=media_db, chachanotes_db=cha_db)
+        candidate = self._normalized("media", media_id, "Media", rank=1)
+        captured = []
+        sink_id = loguru_logger.add(
+            captured.append,
+            level="WARNING",
+            format="{message}",
+        )
+        try:
+            effective = await cre.resolve_effective_scope_for_chat(app, use_cache=False)
+            authorized = await cre.authorize_local_results_for_prompt(app, (candidate,))
+        finally:
+            loguru_logger.remove(sink_id)
+
+        rendered = "".join(str(message) for message in captured)
+        assert effective.state == "empty"
+        assert effective.cause == "conversation-scope-unavailable"
+        assert authorized == ()
+        assert sentinel not in rendered
+
+    @pytest.mark.asyncio
+    async def test_prompt_authority_failure_log_omits_sensitive_values(
+        self, monkeypatch
+    ):
+        sentinel = "PRIVATE-PROMPT-AUTHORITY-SENTINEL"
+
+        class _SensitiveFailureMediaDB:
+            is_memory_db = True
+
+            def execute_query(self, *_args, **_kwargs):
+                raise RuntimeError(sentinel)
+
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: None)
+        candidate = self._normalized("media", sentinel, sentinel, rank=1)
+        captured = []
+        sink_id = loguru_logger.add(
+            captured.append,
+            level="WARNING",
+            format="{message}",
+        )
+        try:
+            authorized = await cre.authorize_local_results_for_prompt(
+                _App(media_db=_SensitiveFailureMediaDB()), (candidate,)
+            )
+        finally:
+            loguru_logger.remove(sink_id)
+
+        rendered = "".join(str(message) for message in captured)
+        assert authorized == ()
+        assert sentinel not in rendered
+        assert "status=unavailable" in rendered
+        assert "reason=media_existence_read_failure" in rendered
+
+    @pytest.mark.asyncio
+    async def test_failed_authority_or_existence_read_rejects_every_candidate(
+        self, monkeypatch
+    ):
+        candidate = self._normalized("media", "m1", "Media", rank=1)
+        app = _App(media_db=_RefusingMediaDB())
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: None)
+
+        assert await cre.authorize_local_results_for_prompt(app, (candidate,)) == ()
+
+        async def _raise_authority(*_args, **_kwargs):
+            raise RuntimeError("authority unavailable")
+
+        monkeypatch.setattr(cre, "resolve_effective_scope_for_chat", _raise_authority)
+        assert await cre.authorize_local_results_for_prompt(app, (candidate,)) == ()
+
+    @pytest.mark.asyncio
+    async def test_missing_or_failed_active_scope_authority_rejects_all(
+        self, media_db, monkeypatch
+    ):
+        media_id = _seed_media(media_db, n=1)[0]
+        candidate = self._normalized("media", media_id, "Media", rank=1)
+
+        session = SimpleNamespace(persisted_conversation_id="active-conv")
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        assert (
+            await cre.authorize_local_results_for_prompt(
+                _App(media_db=media_db), (candidate,)
+            )
+            == ()
+        )
+
+        class _BrokenScopeDB:
+            is_memory_db = True
+
+            def get_conversation_by_id(self, _conversation_id):
+                raise RuntimeError("scope read failed")
+
+        assert (
+            await cre.authorize_local_results_for_prompt(
+                _App(media_db=media_db, chachanotes_db=_BrokenScopeDB()),
+                (candidate,),
+            )
+            == ()
+        )
+
+        session.persisted_conversation_id = None
+        session.workspace_id = "linked-workspace"
+        assert (
+            await cre.authorize_local_results_for_prompt(
+                _App(media_db=media_db), (candidate,)
+            )
+            == ()
+        )
+
+    @pytest.mark.asyncio
+    async def test_current_existence_reads_are_batched_by_backing_store(
+        self, media_db, cha_db, monkeypatch
+    ):
+        media_ids = _seed_media(media_db, n=2)
+        note_ids = _seed_notes(cha_db, n=2)
+        conv_ids = [cha_db.add_conversation({"title": f"C{i}"}) for i in range(2)]
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: None)
+        candidates = tuple(
+            [
+                self._normalized("media", source_id, "M", rank=index + 1)
+                for index, source_id in enumerate(media_ids)
+            ]
+            + [
+                self._normalized("note", source_id, "N", rank=index + 3)
+                for index, source_id in enumerate(note_ids)
+            ]
+            + [
+                self._normalized("conversation", source_id, "C", rank=index + 5)
+                for index, source_id in enumerate(conv_ids)
+            ]
+        )
+        calls = {"media": 0, "chacha": 0}
+        real_sensitive_fetchall = cre._sensitive_fetchall
+
+        def _recording_sensitive_fetchall(db, *args, **kwargs):
+            if db is media_db:
+                calls["media"] += 1
+            elif db is cha_db:
+                calls["chacha"] += 1
+            return real_sensitive_fetchall(db, *args, **kwargs)
+
+        monkeypatch.setattr(
+            cre,
+            "_sensitive_fetchall",
+            _recording_sensitive_fetchall,
+        )
+
+        authorized = await cre.authorize_local_results_for_prompt(
+            _App(media_db=media_db, chachanotes_db=cha_db), candidates
+        )
+
+        assert len(authorized) == 6
+        assert calls == {"media": 1, "chacha": 1}
+
+    @pytest.mark.asyncio
+    async def test_mixed_stores_dispatch_each_read_on_its_required_thread(
+        self, monkeypatch
+    ):
+        main_thread = threading.current_thread()
+        calls = {"media": [], "chacha": []}
+
+        class _Cursor:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def fetchall(self):
+                return self._rows
+
+        class _MemoryMediaDB:
+            is_memory_db = True
+
+            def execute_query(self, *_args, **_kwargs):
+                calls["media"].append(threading.current_thread())
+                return _Cursor([("m1",)])
+
+        class _FileChachaDB:
+            is_memory_db = False
+
+            def execute_query(self, *_args, **_kwargs):
+                calls["chacha"].append(threading.current_thread())
+                return _Cursor([("notes", "n1"), ("chat_history", "c1")])
+
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: None)
+        candidates = (
+            self._normalized("media", "m1", "Media", rank=1),
+            self._normalized("note", "n1", "Note", rank=2),
+            self._normalized("conversation", "c1", "Conversation", rank=3),
+        )
+
+        authorized = await cre.authorize_local_results_for_prompt(
+            _App(media_db=_MemoryMediaDB(), chachanotes_db=_FileChachaDB()),
+            candidates,
+        )
+
+        assert len(authorized) == 3
+        assert len(calls["media"]) == 1
+        assert len(calls["chacha"]) == 1
+        assert calls["media"][0] is main_thread
+        assert calls["chacha"][0] is not main_thread
+
+    @pytest.mark.asyncio
+    async def test_opt_in_assembly_filters_before_assigning_markers(
+        self, media_db, cha_db, monkeypatch
+    ):
+        media_id = _seed_media(media_db, n=1)[0]
+        note_id = _seed_notes(cha_db, n=1)[0]
+        session_conv_id = cha_db.add_conversation({"title": "Active"})
+        write_conversation_scope(
+            cha_db,
+            session_conv_id,
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_NOTE, note_id),),
+                updated_at="t1",
+            ),
+        )
+        session = SimpleNamespace(persisted_conversation_id=session_conv_id)
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+        raw_results = [
+            {
+                "source": "unknown",
+                "id": "unsafe",
+                "title": "Invalid",
+                "content": "invalid",
+                "score": 1.0,
+                "metadata": {},
+            },
+            {
+                "source": "media",
+                "id": media_id,
+                "title": "Unauthorized",
+                "content": "media body",
+                "score": 1.0,
+                "metadata": {},
+            },
+            {
+                "source": "note",
+                "id": note_id,
+                "title": "Authorized",
+                "content": "exact note body",
+                "score": 1.0,
+                "metadata": {},
+            },
+        ]
+
+        captured = await cre.assemble_local_evidence_for_prompt(
+            _App(media_db=media_db, chachanotes_db=cha_db),
+            raw_results,
+            max_length=200,
+        )
+
+        assert captured.context == ("[S1] NOTES — Authorized\nexact note body")
+        assert len(captured.entries) == 1
+        assert captured.entries[0].candidate_rank == 3
+        assert "Invalid" not in captured.entries[0].snapshot_text
+        assert "Unauthorized" not in captured.entries[0].snapshot_text
+
+
+class TestCapturePromptBoundaryFreshAuthority:
+    """Capture rechecks the original request identity after retrieval."""
+
+    @pytest.mark.asyncio
+    async def test_fresh_scoped_existence_failure_discards_context_and_builder(
+        self, media_db, cha_db, monkeypatch
+    ):
+        failure_sentinel = "PRIVATE-SCOPE-EXISTENCE-FAILURE-SENTINEL"
+        media_id = _seed_media(media_db, n=1)[0]
+        conversation_id = cha_db.add_conversation({"title": "Scoped"})
+        write_conversation_scope(
+            cha_db,
+            conversation_id,
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_id),),
+                updated_at="t1",
+            ),
+        )
+        session = SimpleNamespace(
+            id="request-session",
+            persisted_conversation_id=conversation_id,
+            workspace_id=None,
+        )
+        repository = _BuilderRepository()
+        app = _ChatMockApp(
+            search_mode="plain",
+            media_db=media_db,
+            chachanotes_db=cha_db,
+            citation_trace_repository=repository,
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+
+        async def _return_candidate(*_args, **_kwargs):
+            return [
+                {
+                    "source": "media",
+                    "id": media_id,
+                    "title": "Fresh authority",
+                    "content": "must not reach the prompt",
+                    "score": 1.0,
+                    "metadata": {},
+                }
+            ], "legacy context must not survive canonical capture"
+
+        monkeypatch.setattr(cre, "perform_plain_rag_search", _return_candidate)
+        real_sensitive_fetchall = cre._sensitive_fetchall
+        scope_existence_reads = 0
+
+        def _fail_fresh_scope_existence(db, query, params):
+            nonlocal scope_existence_reads
+            if db is media_db and query.startswith("SELECT id FROM Media"):
+                scope_existence_reads += 1
+                if scope_existence_reads == 2:
+                    raise RuntimeError(failure_sentinel)
+            return real_sensitive_fetchall(db, query, params)
+
+        monkeypatch.setattr(cre, "_sensitive_fetchall", _fail_fresh_scope_existence)
+        captured_logs = []
+        sink_id = loguru_logger.add(
+            captured_logs.append,
+            level="DEBUG",
+            format="{message}",
+        )
+        try:
+            captured = await cre.get_rag_context_capture_for_chat(app, "query")
+        finally:
+            loguru_logger.remove(sink_id)
+
+        assert scope_existence_reads == 2
+        assert captured == cre.LocalRagContextResult(None, None)
+        assert repository.builders[0].evidence_runs == ()
+        rendered_logs = "".join(str(message) for message in captured_logs)
+        assert failure_sentinel not in rendered_logs
+        assert "reason=scope_existing_ids_read_failure" in rendered_logs
+        assert "reason=prompt_authority_failure" in rendered_logs
+
+    @pytest.mark.asyncio
+    async def test_backing_row_deleted_during_retrieval_is_not_submitted(
+        self, media_db, cha_db, monkeypatch
+    ):
+        media_id = _seed_media(media_db, n=1)[0]
+        repository = _BuilderRepository()
+        app = _ChatMockApp(
+            search_mode="plain",
+            media_db=media_db,
+            chachanotes_db=cha_db,
+            citation_trace_repository=repository,
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda _app: None)
+
+        async def _delete_then_return(*_args, **_kwargs):
+            media_db.soft_delete_media(int(media_id))
+            return [
+                {
+                    "source": "media",
+                    "id": media_id,
+                    "title": "Deleted",
+                    "content": "must not reach the prompt",
+                    "score": 1.0,
+                    "metadata": {},
+                }
+            ], "legacy context must not survive canonical capture"
+
+        monkeypatch.setattr(cre, "perform_plain_rag_search", _delete_then_return)
+
+        captured = await cre.get_rag_context_capture_for_chat(app, "query")
+
+        assert captured.context is None
+        assert captured.citation_builder is repository.builders[0]
+        assert len(captured.citation_builder.evidence_runs) == 1
+        assert captured.citation_builder.evidence_run_payloads[0].candidates == ()
+        assert captured.citation_builder.prompt_evidence_sets == ()
+
+    @pytest.mark.asyncio
+    async def test_original_session_fresh_scope_beats_stale_cache_and_later_session(
+        self, media_db, cha_db, tmp_path, monkeypatch
+    ):
+        media_ids = _seed_media(media_db, n=2)
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task4-original")
+        )
+        registry.create_workspace(workspace_id="ws-original", name="Original")
+        registry.create_workspace(workspace_id="ws-later", name="Later")
+        registry.set_workspace_scope(
+            "ws-original",
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),),
+                updated_at="unchanged-stamp",
+            ),
+        )
+        registry.set_workspace_scope(
+            "ws-later",
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),),
+                updated_at="later-stamp",
+            ),
+        )
+        original_session = SimpleNamespace(
+            id="session-original",
+            persisted_conversation_id=None,
+            workspace_id="ws-original",
+        )
+        later_session = SimpleNamespace(
+            id="session-later",
+            persisted_conversation_id=None,
+            workspace_id="ws-later",
+        )
+        active = {"session": original_session}
+        monkeypatch.setattr(
+            cre,
+            "_active_console_session",
+            lambda _app: active["session"],
+        )
+        repository = _BuilderRepository()
+        app = _ChatMockApp(
+            search_mode="plain",
+            media_db=media_db,
+            chachanotes_db=cha_db,
+            citation_trace_repository=repository,
+        )
+        app.workspace_registry_service = registry
+        cached = await cre.resolve_effective_scope_for_chat(app)
+        assert cached.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
+
+        async def _narrow_original_then_switch_session(*_args, scope=None, **_kwargs):
+            assert scope is not None
+            assert scope.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
+            registry.set_workspace_scope(
+                "ws-original",
+                RagScope(
+                    items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),),
+                    updated_at="unchanged-stamp",
+                ),
+            )
+            active["session"] = later_session
+            return [
+                {
+                    "source": "media",
+                    "id": source_id,
+                    "title": title,
+                    "content": f"{title} body",
+                    "score": 1.0,
+                    "metadata": {},
+                }
+                for source_id, title in zip(media_ids, ("Stale", "Current"))
+            ], "legacy context"
+
+        monkeypatch.setattr(
+            cre,
+            "perform_plain_rag_search",
+            _narrow_original_then_switch_session,
+        )
+
+        captured = await cre.get_rag_context_capture_for_chat(app, "query")
+
+        assert captured.context == "[S1] MEDIA — Current\nCurrent body"
+        assert captured.citation_builder is repository.builders[0]
+        candidates = captured.citation_builder.evidence_run_payloads[0].candidates
+        assert [candidate.rank for candidate in candidates] == [2]
+
+    @pytest.mark.asyncio
+    async def test_original_unpersisted_holder_uses_current_scope_after_retrieval(
+        self, media_db, cha_db, monkeypatch
+    ):
+        media_ids = _seed_media(media_db, n=2)
+        original_holder = SessionScopeHolder()
+        original_holder.set(
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),),
+                updated_at="before-retrieval",
+            )
+        )
+        original_session = SimpleNamespace(
+            id="session-original",
+            persisted_conversation_id=None,
+            workspace_id=None,
+            rag_scope_holder=original_holder,
+        )
+        later_holder = SessionScopeHolder()
+        later_holder.set(
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),),
+                updated_at="later-session",
+            )
+        )
+        later_session = SimpleNamespace(
+            id="session-later",
+            persisted_conversation_id=None,
+            workspace_id=None,
+            rag_scope_holder=later_holder,
+        )
+        active = {"session": original_session}
+        monkeypatch.setattr(
+            cre,
+            "_active_console_session",
+            lambda _app: active["session"],
+        )
+        repository = _BuilderRepository()
+        app = _ChatMockApp(
+            search_mode="plain",
+            media_db=media_db,
+            chachanotes_db=cha_db,
+            citation_trace_repository=repository,
+        )
+
+        async def _narrow_original_then_switch_session(*_args, scope=None, **_kwargs):
+            assert scope is not None
+            assert scope.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
+            original_holder.set(
+                RagScope(
+                    items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),),
+                    updated_at="after-retrieval",
+                )
+            )
+            active["session"] = later_session
+            return [
+                {
+                    "source": "media",
+                    "id": source_id,
+                    "title": title,
+                    "content": f"{title} body",
+                    "score": 1.0,
+                    "metadata": {},
+                }
+                for source_id, title in zip(media_ids, ("Stale", "Current"))
+            ], "legacy context"
+
+        monkeypatch.setattr(
+            cre,
+            "perform_plain_rag_search",
+            _narrow_original_then_switch_session,
+        )
+
+        captured = await cre.get_rag_context_capture_for_chat(app, "query")
+
+        assert captured.context == "[S1] MEDIA — Current\nCurrent body"
+        assert captured.citation_builder is repository.builders[0]
+        candidates = captured.citation_builder.evidence_run_payloads[0].candidates
+        assert [candidate.rank for candidate in candidates] == [2]
 
 
 class TestActiveConsoleSessionRealGlue:

@@ -9,7 +9,8 @@ import threading
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Protocol
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
 from uuid import uuid4
 
 from tldw_chatbook.Chat.attachment_core import (
@@ -29,7 +30,16 @@ from tldw_chatbook.Chat.console_chat_models import (
     derive_console_session_title,
     is_default_console_session_title,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.citation_trace_builder import (
+    CitationTraceBuilder,
+    CitationTraceBuildUnavailable,
+)
+from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatSession,
+    ConsoleChatStore,
+    TerminalCitationFinalizer,
+)
 from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
@@ -553,6 +563,7 @@ class ConsoleChatController:
         skill_substitution_enabled: bool = True,
         chat_dictionary_applier: "Callable[[str | None, str], str] | None" = None,
         world_info_applier: "Callable[[str | None, str, list], str] | None" = None,
+        rag_capture_provider: "Callable[[str], Awaitable[Any]] | None" = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -581,6 +592,7 @@ class ConsoleChatController:
         self._skill_substitution_enabled = skill_substitution_enabled
         self._chat_dictionary_applier = chat_dictionary_applier
         self._world_info_applier = world_info_applier
+        self._rag_capture_provider = rag_capture_provider
         self.run_state = ConsoleRunState()
         self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
         #: Optional owner hook invoked once a submit is accepted (user message
@@ -766,6 +778,10 @@ class ConsoleChatController:
 
         if pendings:
             self.store.clear_pending_attachments(session.id)
+        citation_context: str | None = None
+        citation_trace_builder: CitationTraceBuilder | None = None
+        prompt_evidence_set_id: str | None = None
+        terminal_citation_finalizer: TerminalCitationFinalizer | None = None
         try:
             provider_messages = self._provider_messages_for_session(
                 session.id, annotate_ids=True
@@ -789,13 +805,33 @@ class ConsoleChatController:
                 self.store.append_message(
                     session.id, role=ConsoleMessageRole.SYSTEM, content=note
                 )
+            (
+                citation_context,
+                citation_trace_builder,
+                prompt_evidence_set_id,
+            ) = await self._capture_rag_context(clean_draft)
+            if citation_context and citation_trace_builder is None:
+                provider_messages = self._prepend_evidence_context(
+                    provider_messages,
+                    citation_context,
+                )
             provider_messages = await self._apply_chat_dictionaries(
                 provider_messages, session.id
             )
             provider_messages = await self._apply_world_info(
                 provider_messages, session.id
             )
+            if citation_context and citation_trace_builder is not None:
+                provider_messages = self._prepend_evidence_context(
+                    provider_messages,
+                    citation_context,
+                )
             prefill, prefill_from_one_shot = self._resolve_submit_prefill(session.id)
+            terminal_citation_finalizer = self._build_terminal_citation_finalizer(
+                context=citation_context,
+                builder=citation_trace_builder,
+                prompt_evidence_set_id=prompt_evidence_set_id,
+            )
         except BaseException:
             # Any failure between the optimistic echo and the confirmed turn
             # (dictionary/world-info application, prefill resolution) must also
@@ -818,21 +854,29 @@ class ConsoleChatController:
         # echo to durable storage now (creating the conversation), BEFORE the
         # assistant row, so a reload shows the user's prompt ahead of its reply.
         self.store.persist_message_if_needed(echoed_user.id)
-        assistant = self.store.append_message(
-            session.id,
-            role=ConsoleMessageRole.ASSISTANT,
-            content="",
-            persist=self.store.persistence is not None,
-        )
-        return await self._stream_assistant_response(
-            resolution=resolution,
-            provider_messages=provider_messages,
-            assistant_message_id=assistant.id,
-            prefill=prefill,
-            prefill_from_one_shot=prefill_from_one_shot,
-            skill_bindings=skill_bindings,
-            skill_bundle_block=skill_bundle_block,
-        )
+        assistant: ConsoleChatMessage | None = None
+        try:
+            assistant = self.store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="",
+                persist=self.store.persistence is not None,
+                terminal_citation_finalizer=terminal_citation_finalizer,
+            )
+            return await self._stream_assistant_response(
+                resolution=resolution,
+                provider_messages=provider_messages,
+                assistant_message_id=assistant.id,
+                prefill=prefill,
+                prefill_from_one_shot=prefill_from_one_shot,
+                skill_bindings=skill_bindings,
+                skill_bundle_block=skill_bundle_block,
+            )
+        finally:
+            if assistant is not None:
+                self.store.clear_terminal_citation_state(assistant.id)
+            del terminal_citation_finalizer
+            del citation_trace_builder
 
     def new_session(
         self,
@@ -3329,6 +3373,138 @@ class ConsoleChatController:
             visible_copy=visible_copy,
         )
 
+    async def _capture_rag_context(
+        self,
+        draft: str,
+    ) -> tuple[str | None, CitationTraceBuilder | None, str | None]:
+        """Resolve optional staged RAG context without exposing request state."""
+
+        provider = self._rag_capture_provider
+        if provider is None:
+            return None, None, None
+        try:
+            captured = await provider(draft)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error(
+                "Console RAG capture unavailable; "
+                f"reason=capture_provider_failure; draft_length={len(draft)}"
+            )
+            return None, None, None
+        captured_context = getattr(captured, "context", None)
+        context = (
+            captured_context
+            if isinstance(captured_context, str) and captured_context.strip()
+            else None
+        )
+        captured_builder = getattr(captured, "citation_builder", None)
+        builder = (
+            captured_builder
+            if isinstance(captured_builder, CitationTraceBuilder)
+            else None
+        )
+        captured_prompt_id = getattr(captured, "prompt_evidence_set_id", None)
+        prompt_evidence_set_id = (
+            captured_prompt_id
+            if isinstance(captured_prompt_id, str) and captured_prompt_id.strip()
+            else None
+        )
+        return context, builder, prompt_evidence_set_id
+
+    @staticmethod
+    def _build_terminal_citation_finalizer(
+        *,
+        context: str | None,
+        builder: CitationTraceBuilder | None,
+        prompt_evidence_set_id: str | None,
+    ) -> TerminalCitationFinalizer | None:
+        """Build exact-body citation finalization for one eligible initial send."""
+
+        if (
+            not isinstance(context, str)
+            or not context.strip()
+            or not isinstance(builder, CitationTraceBuilder)
+            or not isinstance(prompt_evidence_set_id, str)
+            or not prompt_evidence_set_id.strip()
+        ):
+            return None
+
+        def finalize(answer_body: str) -> SealedCitationWrite | None:
+            terminal_at = datetime.now(UTC)
+            try:
+                attempt_id = builder.record_initial_answer_attempt(
+                    prompt_evidence_set_id=prompt_evidence_set_id,
+                    answer_body=answer_body,
+                    completed_at=terminal_at,
+                )
+                return builder.seal(
+                    selected_attempt_id=attempt_id,
+                    sealed_at=terminal_at,
+                )
+            except CitationTraceBuildUnavailable:
+                logger.warning(
+                    "Console citation finalization unavailable; "
+                    "reason=occurrence_mapping_unavailable"
+                )
+            except Exception:
+                logger.warning(
+                    "Console citation finalization unavailable; "
+                    "reason=attempt_or_seal_failure"
+                )
+            return None
+
+        return finalize
+
+    @staticmethod
+    def _prepend_evidence_context(
+        provider_messages: list[dict[str, Any]],
+        context: str,
+    ) -> list[dict[str, Any]]:
+        """Prefix exact evidence to the final provider-only user message."""
+
+        final_index = next(
+            (
+                index
+                for index in range(len(provider_messages) - 1, -1, -1)
+                if provider_messages[index].get("role")
+                == ConsoleMessageRole.USER.value
+            ),
+            None,
+        )
+        if final_index is None:
+            return provider_messages
+        prefix = f"Evidence: {context}\n\n---\n\n"
+        message = provider_messages[final_index]
+        content = message.get("content")
+        if isinstance(content, str):
+            new_content: Any = prefix + content
+        elif isinstance(content, list):
+            new_content = list(content)
+            text_index = next(
+                (
+                    index
+                    for index, part in enumerate(new_content)
+                    if isinstance(part, dict)
+                    and part.get("type") == "text"
+                    and isinstance(part.get("text"), str)
+                ),
+                None,
+            )
+            if text_index is None:
+                new_content.insert(0, {"type": "text", "text": prefix})
+            else:
+                text_part = new_content[text_index]
+                new_content[text_index] = {
+                    **text_part,
+                    "text": prefix + text_part["text"],
+                }
+        else:
+            return provider_messages
+        updated = list(provider_messages)
+        updated[final_index] = {**message, "content": new_content}
+        return updated
+
     def _notify_submission_accepted(self) -> None:
         """Invoke the owner accepted-hook without letting UI errors kill the run."""
         callback = self.on_submission_accepted
@@ -3974,7 +4150,11 @@ class ConsoleChatController:
         existing persistence/validation paths stay unchanged.
         """
         if not getattr(outcome, "final_text", ""):
-            self.store.append_stream_chunk(assistant_message_id, "No response was generated.")
+            self.store.clear_terminal_citation_state(assistant_message_id)
+            self.store.append_stream_chunk(
+                assistant_message_id,
+                "No response was generated.",
+            )
         if variant_mode:
             return self.store.finalize_variant_stream(assistant_message_id)
         return self.store.mark_message_complete(assistant_message_id)

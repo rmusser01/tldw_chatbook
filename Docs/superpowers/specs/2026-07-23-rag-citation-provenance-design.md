@@ -1186,6 +1186,12 @@ criteria cannot be completed in one PR:
 30. Publish the fixed RAG evaluation dataset, human labels, commands, and
     deterministic retrieval/generation gates.
 
+Workstream 10 is delivered by
+[TASK-553.13](../../../backlog/tasks/task-553.13%20-%20Capture-local-RAG-retrieval-runs-and-exact-prompt-evidence-sets.md)
+under the
+[local RAG retrieval and prompt-evidence capture plan](../plans/2026-07-25-local-rag-retrieval-prompt-evidence-capture.md).
+Workstreams 11–30 remain follow-on work, and parent epic TASK-553 remains open.
+
 Do not combine export, import, artifact ownership, and sync into one task. Do not
 combine all resolver families into one task. Do not combine a server producer
 change with a Chatbook consumer change. Security, performance, and RAG quality

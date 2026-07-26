@@ -11,6 +11,10 @@ from uuid import uuid4
 from loguru import logger
 
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
+from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
+from tldw_chatbook.Chat.citation_trace_repository import (
+    CitationPersistenceUnavailable,
+)
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     DEFAULT_CONSOLE_SESSION_TITLE,
@@ -29,6 +33,8 @@ from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder
 
 #: Maximum number of attachments a Console session may stage before send.
 MAX_PENDING_ATTACHMENTS = 5
+
+TerminalCitationFinalizer = Callable[[str], SealedCitationWrite | None]
 
 
 @dataclass(frozen=True)
@@ -74,6 +80,7 @@ class ConsoleChatPersistence(Protocol):
         parent_message_id: str | None = None,
         feedback: str | None = None,
         attachments: Sequence[Mapping[str, Any]] | None = None,
+        citation_write: SealedCitationWrite | None = None,
     ) -> str:
         """Create a persisted message and return its ID.
 
@@ -81,6 +88,10 @@ class ConsoleChatPersistence(Protocol):
         authoritative over the scalar ``image_data``/``image_mime_type``
         kwargs; ``None`` leaves the pre-split legacy behavior unchanged.
         Optional: fakes used in tests may omit this parameter entirely.
+
+        ``citation_write``, when present, is committed atomically with the
+        message by citation-aware adapters. Narrow test fakes may omit this
+        optional parameter entirely.
         """
 
     def update_message_content(
@@ -298,6 +309,8 @@ class ConsoleChatStore:
         #: None)`` = no summary. Write-through is ``_persist_context_summary``.
         self._context_summary_by_session: dict[str, tuple[str | None, str | None]] = {}
         self._pending_persistence_message_ids: set[str] = set()
+        self._terminal_citation_finalizers: dict[str, TerminalCitationFinalizer] = {}
+        self._terminal_persistence_deferred_ids: set[str] = set()
         self._stream_chunks_by_message: dict[str, list[str]] = {}
         self._stream_materialized_counts: dict[str, int] = {}
         self._sync_v2_message_versions: dict[str, str] = {}
@@ -563,6 +576,7 @@ class ConsoleChatStore:
             if owner == session_id
         ]
         for message_id in owned_message_ids:
+            self.clear_terminal_citation_state(message_id)
             self._message_session_index.pop(message_id, None)
             self._stream_chunks_by_message.pop(message_id, None)
             self._stream_materialized_counts.pop(message_id, None)
@@ -755,6 +769,8 @@ class ConsoleChatStore:
         self._messages_by_session.clear()
         self._message_session_index.clear()
         self._pending_persistence_message_ids.clear()
+        self._terminal_citation_finalizers.clear()
+        self._terminal_persistence_deferred_ids.clear()
         self._stream_chunks_by_message.clear()
         self._stream_materialized_counts.clear()
         self._sync_v2_message_versions.clear()
@@ -818,6 +834,7 @@ class ConsoleChatStore:
         image_data: bytes | None = None,
         image_mime_type: str | None = None,
         attachment_label: str | None = None,
+        terminal_citation_finalizer: TerminalCitationFinalizer | None = None,
     ) -> ConsoleChatMessage:
         """Append a message; scalar image kwargs become a one-item tuple."""
         self._session_or_raise(session_id)
@@ -831,6 +848,19 @@ class ConsoleChatStore:
                     position=0,
                 ),
             )
+        if terminal_citation_finalizer is not None:
+            if not callable(terminal_citation_finalizer):
+                raise ValueError("terminal_citation_finalizer must be callable")
+            if role is not ConsoleMessageRole.ASSISTANT or content != "" or effective:
+                raise ValueError(
+                    "terminal_citation_finalizer requires an empty, "
+                    "attachment-free assistant placeholder"
+                )
+        arm_terminal_citation = (
+            terminal_citation_finalizer is not None
+            and persist
+            and self._citation_persistence_ready()
+        )
         message = ConsoleChatMessage(
             role=role,
             content=content,
@@ -853,8 +883,19 @@ class ConsoleChatStore:
         self._register_tree_node(session_id, message, parent_native_id=old_leaf)
         self._active_leaf_by_session[session_id] = message.id
         self._recompute_active_path(session_id)
-        if persist:
-            self._persist_new_message_or_defer(session_id=session_id, message=message)
+        if arm_terminal_citation:
+            assert terminal_citation_finalizer is not None
+            self._terminal_citation_finalizers[message.id] = terminal_citation_finalizer
+            self._terminal_persistence_deferred_ids.add(message.id)
+        try:
+            if persist:
+                self._persist_new_message_or_defer(
+                    session_id=session_id, message=message
+                )
+        except Exception:
+            if arm_terminal_citation:
+                self.clear_terminal_citation_state(message.id)
+            raise
         return self._snapshot(message)
 
     def create_sibling(
@@ -1252,6 +1293,7 @@ class ConsoleChatStore:
         # Purge the deleted node AND its whole subtree from every structure --
         # deleting a mid-conversation node drops the branch beneath it.
         for node_id in subtree_ids:
+            self.clear_terminal_citation_state(node_id)
             nodes.pop(node_id, None)
             children_map.pop(node_id, None)
             self._native_parent_by_message.pop(node_id, None)
@@ -1307,9 +1349,7 @@ class ConsoleChatStore:
         self._recompute_active_path(session_id)
         self._persist_active_leaf(session_id, message_id)
 
-    def session_context_summary(
-        self, session_id: str
-    ) -> tuple[str | None, str | None]:
+    def session_context_summary(self, session_id: str) -> tuple[str | None, str | None]:
         """Return the session's in-memory ``(summary, boundary_native_id)`` pair.
 
         Console `/rewind` "summarize up to here" (SP2). ``(None, None)`` when
@@ -1380,9 +1420,7 @@ class ConsoleChatStore:
         ids.reverse()
         return ids
 
-    def siblings_at(
-        self, message_id: str
-    ) -> tuple[list[ConsoleChatMessage], int, int]:
+    def siblings_at(self, message_id: str) -> tuple[list[ConsoleChatMessage], int, int]:
         """Return ``(ordered sibling snapshots, index of message_id, count)``.
 
         Siblings are the children of ``message_id``'s native parent, in creation
@@ -1480,9 +1518,45 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
         self._materialize_stream_buffer(message)
-        message.status = "complete"
-        self._persist_existing_message(message)
-        return self._snapshot(message)
+        finalizer = self._terminal_citation_finalizers.pop(message.id, None)
+        terminal_persistence = (
+            finalizer is not None
+            or message.id in self._terminal_persistence_deferred_ids
+        )
+        self._terminal_persistence_deferred_ids.discard(message.id)
+        if not terminal_persistence:
+            message.status = "complete"
+            self._persist_existing_message(message)
+            return self._snapshot(message)
+
+        try:
+            if not message.content:
+                message.status = "complete"
+                self._persist_existing_message(message)
+                return self._snapshot(message)
+
+            citation_write = None
+            if finalizer is not None:
+                try:
+                    citation_write = finalizer(message.content)
+                except Exception:
+                    logger.warning("terminal_finalizer_unavailable")
+            message.status = "complete"
+            session_id = self._message_session_index[message.id]
+            try:
+                self._persist_new_message(
+                    session_id=session_id,
+                    message=message,
+                    citation_write=citation_write,
+                    force_stable_message_id=True,
+                    terminal_persistence=True,
+                )
+            except Exception:
+                self._pending_persistence_message_ids.discard(message.id)
+                logger.warning("terminal_citation_persistence_abandoned")
+            return self._snapshot(message)
+        finally:
+            self.clear_terminal_citation_state(message.id)
 
     def mark_message_stopped(self, message_id: str) -> ConsoleChatMessage:
         """Mark a message stopped and flush final visible content to persistence.
@@ -1506,6 +1580,7 @@ class ConsoleChatStore:
         """
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
+        self.clear_terminal_citation_state(message.id)
         self._materialize_stream_buffer(message)
         base = self._variant_stream_bases.pop(message.id, None)
         if base is not None:
@@ -1536,6 +1611,7 @@ class ConsoleChatStore:
         """
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
+        self.clear_terminal_citation_state(message.id)
         self._materialize_stream_buffer(message)
         base = self._variant_stream_bases.pop(message.id, None)
         if base is not None:
@@ -1979,11 +2055,43 @@ class ConsoleChatStore:
     ) -> None:
         if self.persistence is None:
             return
+        if message.id in self._terminal_persistence_deferred_ids:
+            self._pending_persistence_message_ids.add(message.id)
+            self.persist_session_if_needed(session_id)
+            return
         if not message.content and not message.attachments:
             self._pending_persistence_message_ids.add(message.id)
             self.persist_session_if_needed(session_id)
             return
         self._persist_new_message(session_id=session_id, message=message)
+
+    def _citation_persistence_ready(self) -> bool:
+        """Return whether terminal citation writes can be accepted safely."""
+        persistence = self.persistence
+        if persistence is None:
+            return False
+        try:
+            parameters = inspect.signature(persistence.create_message).parameters
+            accepts_citation_write = "citation_write" in parameters or any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters.values()
+            )
+            return (
+                accepts_citation_write
+                and getattr(
+                    persistence,
+                    "canonical_citation_writes_ready",
+                    False,
+                )
+                is True
+            )
+        except Exception:
+            return False
+
+    def clear_terminal_citation_state(self, message_id: str) -> None:
+        """Clear transient terminal citation state without changing persistence."""
+        self._terminal_citation_finalizers.pop(message_id, None)
+        self._terminal_persistence_deferred_ids.discard(message_id)
 
     @staticmethod
     def _persistence_accepts_kwarg(func: Any, name: str) -> bool:
@@ -2043,7 +2151,13 @@ class ConsoleChatStore:
         return None
 
     def _persist_new_message(
-        self, *, session_id: str, message: ConsoleChatMessage
+        self,
+        *,
+        session_id: str,
+        message: ConsoleChatMessage,
+        citation_write: SealedCitationWrite | None = None,
+        force_stable_message_id: bool = False,
+        terminal_persistence: bool = False,
     ) -> None:
         if self.persistence is None:
             return
@@ -2071,7 +2185,9 @@ class ConsoleChatStore:
             # ``message.persisted_message_id`` straight through with no
             # separate id-translation bookkeeping. Every other message kind
             # keeps letting the DB assign its own id (unchanged).
-            message_id=message.id if message.generation_metadata else None,
+            message_id=message.id
+            if message.generation_metadata or force_stable_message_id
+            else None,
             parent_message_id=parent_persisted_id,
             feedback=message.feedback,
         )
@@ -2129,7 +2245,19 @@ class ConsoleChatStore:
                     message.attachments, message.generation_metadata
                 )
             ]
-        message.persisted_message_id = self.persistence.create_message(**create_kwargs)
+        if citation_write is not None:
+            create_kwargs["citation_write"] = citation_write
+        if terminal_persistence:
+            persisted_message_id = self._create_terminal_message(
+                create_kwargs=create_kwargs,
+                citation_write=citation_write,
+            )
+            if persisted_message_id is None:
+                self._pending_persistence_message_ids.discard(message.id)
+                return
+        else:
+            persisted_message_id = self.persistence.create_message(**create_kwargs)
+        message.persisted_message_id = persisted_message_id
         self._pending_persistence_message_ids.discard(message.id)
         # Carried-forward (Task 8): when this newly persisted message IS the
         # session's active leaf, write the durable active-leaf pointer through
@@ -2140,9 +2268,58 @@ class ConsoleChatStore:
         # later resume walks the wrong branch and drops the continuation. Also
         # covers the deferred path (``_persist_pending_message_if_ready`` ->
         # here) where the id only exists once streamed content arrives.
-        if message.id == self._active_leaf_by_session.get(session_id):
-            self._persist_active_leaf(session_id, message.id)
-        self._enqueue_sync_v2_message_if_ready(message)
+        if terminal_persistence:
+            try:
+                if message.id == self._active_leaf_by_session.get(session_id):
+                    self._persist_active_leaf(
+                        session_id,
+                        message.id,
+                        content_safe_diagnostic=True,
+                    )
+                self._enqueue_sync_v2_message_if_ready(
+                    message,
+                    content_safe_diagnostic=True,
+                )
+            except Exception:
+                logger.warning("terminal_persistence_bookkeeping_unavailable")
+        else:
+            if message.id == self._active_leaf_by_session.get(session_id):
+                self._persist_active_leaf(session_id, message.id)
+            self._enqueue_sync_v2_message_if_ready(message)
+
+    def _create_terminal_message(
+        self,
+        *,
+        create_kwargs: dict[str, Any],
+        citation_write: SealedCitationWrite | None,
+    ) -> str | None:
+        """Perform the bounded terminal create/fallback disposition."""
+        if self.persistence is None:
+            return None
+        if citation_write is None:
+            try:
+                return self.persistence.create_message(**create_kwargs)
+            except Exception:
+                logger.warning("terminal_ordinary_persistence_abandoned")
+                return None
+
+        try:
+            return self.persistence.create_message(**create_kwargs)
+        except CitationPersistenceUnavailable:
+            logger.warning("terminal_citation_persistence_fallback")
+            create_kwargs.pop("citation_write", None)
+            try:
+                return self.persistence.create_message(**create_kwargs)
+            except Exception:
+                logger.warning("terminal_citation_persistence_abandoned")
+                return None
+        except Exception:
+            logger.warning("terminal_citation_persistence_ambiguous_retry")
+            try:
+                return self.persistence.create_message(**create_kwargs)
+            except Exception:
+                logger.warning("terminal_citation_persistence_abandoned")
+                return None
 
     def _persist_existing_message(
         self,
@@ -2181,13 +2358,19 @@ class ConsoleChatStore:
         if (
             self.persistence is None
             or message.id not in self._pending_persistence_message_ids
+            or message.id in self._terminal_persistence_deferred_ids
             or not message.content
         ):
             return
         session_id = self._message_session_index[message.id]
         self._persist_new_message(session_id=session_id, message=message)
 
-    def _enqueue_sync_v2_message_if_ready(self, message: ConsoleChatMessage) -> None:
+    def _enqueue_sync_v2_message_if_ready(
+        self,
+        message: ConsoleChatMessage,
+        *,
+        content_safe_diagnostic: bool = False,
+    ) -> None:
         if (
             self.sync_v2_chat_producer is None
             or self.sync_v2_server_profile_id is None
@@ -2227,6 +2410,9 @@ class ConsoleChatStore:
             )
             self._record_sync_v2_message_version(stable_key, result)
         except Exception:
+            if content_safe_diagnostic:
+                logger.warning("terminal_persistence_bookkeeping_unavailable")
+                return
             logger.bind(
                 server_profile_id=self.sync_v2_server_profile_id,
                 authenticated_principal_id=self.sync_v2_authenticated_principal_id,
@@ -2642,7 +2828,11 @@ class ConsoleChatStore:
             current = children[-1]
 
     def _persist_active_leaf(
-        self, session_id: str, message_id: str | None
+        self,
+        session_id: str,
+        message_id: str | None,
+        *,
+        content_safe_diagnostic: bool = False,
     ) -> None:
         """Write-through the local-only active-leaf pointer for a persisted conv.
 
@@ -2670,6 +2860,9 @@ class ConsoleChatStore:
                 conversation_id, leaf_persisted_id
             )
         except Exception:
+            if content_safe_diagnostic:
+                logger.warning("terminal_persistence_bookkeeping_unavailable")
+                return
             logger.bind(
                 session_id=session_id,
                 conversation_id=conversation_id,

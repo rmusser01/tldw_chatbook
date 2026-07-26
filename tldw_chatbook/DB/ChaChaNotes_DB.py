@@ -2883,6 +2883,7 @@ UPDATE db_schema_version
         *,
         commit: bool = False,
         script: bool = False,
+        redact_params: bool = False,
     ) -> sqlite3.Cursor:
         """
         Executes a single SQL query or an entire SQL script.
@@ -2896,6 +2897,9 @@ UPDATE db_schema_version
                     Defaults to False.
             script: If True, executes the query string as an SQL script using `executescript`.
                     `params` are ignored if `script` is True. Defaults to False.
+            redact_params: If True, replaces the debug parameter preview with a
+                    fixed redaction marker. Query execution still receives the
+                    original parameters. Defaults to False.
 
         Returns:
             The sqlite3.Cursor object after execution.
@@ -2918,7 +2922,10 @@ UPDATE db_schema_version
             logger.opt(lazy=True).debug(
                 "Executing SQL (script={}): {}",
                 lambda: script,
-                lambda: f"{query[:300]}... Params: {preview_params(params)}",
+                lambda: (
+                    f"{query[:300]}... Params: "
+                    f"{'<redacted>' if redact_params else preview_params(params)}"
+                ),
             )
 
             if script:
@@ -7398,7 +7405,9 @@ UPDATE db_schema_version
                         f"Cannot add message: Conversation ID '{msg_data['conversation_id']}' not found or deleted."
                     )
                 self.execute_query(
-                    query, params
+                    query,
+                    params,
+                    redact_params=True,
                 )  # commit handled by transaction context
             logger.info(
                 f"Added message ID: {msg_id} to conversation {msg_data['conversation_id']} (Image: {'Yes' if msg_data.get('image_data') else 'No'})."

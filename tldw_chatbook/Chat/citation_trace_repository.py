@@ -31,6 +31,7 @@ from tldw_chatbook.Chat.citation_source_locators import (
     SOURCE_INVENTORY_BY_SCOPE_V1,
     SourceCapability,
 )
+from tldw_chatbook.Chat.citation_trace_builder import CitationTraceBuilder
 from tldw_chatbook.Chat.citation_trace_identity import (
     CitationFingerprintCodec,
     CitationFingerprintDomain,
@@ -67,6 +68,11 @@ if TYPE_CHECKING:
 
 
 _ROW_FAMILIES = frozenset({"trace", "runs", "snapshots", "attempts", "refs", "owner"})
+_LOCAL_TRACE_POLICY_VERSION = "local-prompt-provenance-v1"
+_LOCAL_TRACE_POLICY_CAPABILITIES = (
+    PolicyCapability.VIEW_SNAPSHOT,
+    PolicyCapability.VIEW_SOURCE_IDENTITY,
+)
 
 
 class CitationPersistenceUnavailable(RuntimeError):
@@ -483,6 +489,58 @@ class CitationTraceRepository:
         """Return whether signed artifact bindings can currently be verified."""
 
         return self._fingerprint_codec is not None and self.identity_context is not None
+
+    @property
+    def local_citation_writes_ready(self) -> bool:
+        """Return whether local canonical writes have an exact persisted identity.
+
+        Returns:
+            True when canonical writes are enabled and the active identity
+            exactly matches the identity persisted in the repository.
+        """
+
+        if not self.policy.canonical_writes_enabled:
+            return False
+        identity = self.identity_context
+        if identity is None or self._fingerprint_codec is None:
+            return False
+        try:
+            persisted = load_local_citation_identity_context(self.db)
+        except Exception:
+            return False
+        return persisted == identity
+
+    def create_local_trace_builder(
+        self,
+        *,
+        request_id: str,
+        generation_id: str,
+    ) -> CitationTraceBuilder | None:
+        """Create request-scoped local capture when canonical writes are enabled.
+
+        Args:
+            request_id: Opaque identifier for the generation request.
+            generation_id: Opaque identifier for the generation attempt.
+
+        Returns:
+            A request-scoped citation builder, or ``None`` when canonical local
+            writes are not ready.
+        """
+
+        if not self.local_citation_writes_ready:
+            return None
+        identity = self.identity_context
+        codec = self._fingerprint_codec
+        if identity is None or codec is None:
+            return None
+        return CitationTraceBuilder.local(
+            request_id=request_id,
+            generation_id=generation_id,
+            identity_context=identity,
+            fingerprint_codec=codec,
+            policy_version=_LOCAL_TRACE_POLICY_VERSION,
+            policy_capabilities=_LOCAL_TRACE_POLICY_CAPABILITIES,
+        )
 
     @classmethod
     def from_key_provider(
