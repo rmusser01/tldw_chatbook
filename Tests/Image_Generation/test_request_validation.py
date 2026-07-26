@@ -92,22 +92,41 @@ def test_reference_image_gif_refused(rv):
 
 
 def test_reference_image_oversize_refused(rv):
+    # Real oversized content, with bytes_len reported honestly -- the size
+    # cap must fire based on the actual content, not merely a claimed field.
+    big_content = b"x" * (rv.IMAGE_GEN_REFERENCE_MAX_BYTES + 1)
     bad = {
         "backend": "fal",
         "prompt": "cat",
         "extra_params": {},
-        "reference_image": _ref(bytes_len=rv.IMAGE_GEN_REFERENCE_MAX_BYTES + 1),
+        "reference_image": _ref(content=big_content, bytes_len=len(big_content)),
+    }
+    issues = rv.validate_image_generation_request(bad)
+    assert "reference image exceeds the 10MB limit" in _messages(issues)
+
+
+def test_reference_image_oversized_content_with_lying_bytes_len_refused(rv):
+    # task-686 choke-point hardening: a constructor that reports a tiny
+    # bytes_len while content is actually oversized must NOT bypass the cap
+    # -- the cap validates len(content), never the caller-supplied bytes_len.
+    big_content = b"x" * (rv.IMAGE_GEN_REFERENCE_MAX_BYTES + 1)
+    bad = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(content=big_content, bytes_len=4),
     }
     issues = rv.validate_image_generation_request(bad)
     assert "reference image exceeds the 10MB limit" in _messages(issues)
 
 
 def test_reference_image_at_exact_cap_not_refused(rv):
+    ok_content = b"x" * rv.IMAGE_GEN_REFERENCE_MAX_BYTES
     ok = {
         "backend": "fal",
         "prompt": "cat",
         "extra_params": {},
-        "reference_image": _ref(bytes_len=rv.IMAGE_GEN_REFERENCE_MAX_BYTES),
+        "reference_image": _ref(content=ok_content, bytes_len=len(ok_content)),
     }
     assert rv.validate_image_generation_request(ok) == []
 
@@ -123,16 +142,31 @@ def test_reference_image_no_content_refused(rv):
     assert "reference image has no content bytes" in _messages(issues)
 
 
-def test_reference_image_multiple_problems_all_reported(rv):
-    # Unsupported backend + bad mime + oversize + no content, all at once --
-    # the checks must not short-circuit each other.
+def test_reference_image_empty_content_refused(rv):
+    # task-686 choke-point hardening: content == b"" is refused with the
+    # same issue string as content is None, not treated as a (tiny) valid
+    # payload.
+    bad = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(content=b"", bytes_len=0),
+    }
+    issues = rv.validate_image_generation_request(bad)
+    assert "reference image has no content bytes" in _messages(issues)
+
+
+def test_reference_image_multiple_problems_all_reported_no_content_variant(rv):
+    # Unsupported backend + bad mime + no content, all at once -- the checks
+    # must not short-circuit each other. (Oversize and no-content are now
+    # mutually exclusive states of the same `content` field -- see the
+    # oversize variant below for the sibling case.)
     bad = {
         "backend": "swarmui",
         "prompt": "cat",
         "extra_params": {},
         "reference_image": _ref(
             mime_type="image/gif",
-            bytes_len=rv.IMAGE_GEN_REFERENCE_MAX_BYTES + 1,
             content=None,
             temp_path="/tmp/ref.gif",
         ),
@@ -141,6 +175,27 @@ def test_reference_image_multiple_problems_all_reported(rv):
     messages = _messages(issues)
     assert "backend 'swarmui' does not support reference images" in messages
     assert "reference image mime 'image/gif' is not supported (png/jpeg/webp)" in messages
-    assert "reference image exceeds the 10MB limit" in messages
     assert "reference image has no content bytes" in messages
-    assert len(issues) == 4
+    assert len(issues) == 3
+
+
+def test_reference_image_multiple_problems_all_reported_oversize_variant(rv):
+    # Sibling of the above: unsupported backend + bad mime + oversize
+    # content, all at once.
+    big_content = b"x" * (rv.IMAGE_GEN_REFERENCE_MAX_BYTES + 1)
+    bad = {
+        "backend": "swarmui",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(
+            mime_type="image/gif",
+            content=big_content,
+            bytes_len=len(big_content),
+        ),
+    }
+    issues = rv.validate_image_generation_request(bad)
+    messages = _messages(issues)
+    assert "backend 'swarmui' does not support reference images" in messages
+    assert "reference image mime 'image/gif' is not supported (png/jpeg/webp)" in messages
+    assert "reference image exceeds the 10MB limit" in messages
+    assert len(issues) == 3

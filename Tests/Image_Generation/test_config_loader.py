@@ -435,3 +435,27 @@ def test_gemini_env_fallback_to_google_api_key(monkeypatch):
     cfg = _load_config_with_section(monkeypatch, {})
     assert cfg.gemini_image_api_key == "fake-google-key"
     assert cfg.key_sources["gemini"] == "env:GOOGLE_API_KEY"
+
+
+# --- task-686: per-backend keyring-source tests (fal/gemini) ---------------
+# The generic keyring path is already covered for novita
+# (test_key_sources_keyring above); fal and gemini share the same
+# _resolve_secret/_keyring_get machinery but had no dedicated coverage.
+
+
+def test_fal_key_sources_keyring(monkeypatch):
+    """keyring-origin secret is recorded as "keyring" (not the raw value)
+    and lands on the flat field, same as the generic-backend case."""
+    _delenv_new_backend_vars(monkeypatch)
+    cfg = _load_config_with_section(monkeypatch, {}, keyring={"fal": "kr-fal-secret"})
+    assert cfg.key_sources["fal"] == "keyring"
+    assert cfg.fal_image_api_key == "kr-fal-secret"
+
+
+def test_gemini_key_sources_keyring(monkeypatch):
+    """keyring-origin secret is recorded as "keyring" (not the raw value)
+    and lands on the flat field, same as the generic-backend case."""
+    _delenv_new_backend_vars(monkeypatch)
+    cfg = _load_config_with_section(monkeypatch, {}, keyring={"gemini": "kr-gemini-secret"})
+    assert cfg.key_sources["gemini"] == "keyring"
+    assert cfg.gemini_image_api_key == "kr-gemini-secret"

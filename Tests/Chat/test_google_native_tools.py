@@ -15,6 +15,9 @@ and inspect the JSON payload actually sent.
 import json
 from unittest.mock import Mock, patch
 
+import pytest
+
+from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 
 
@@ -889,3 +892,91 @@ def test_unpairable_tool_result_is_skipped_not_empty_named(mock_post):
     result_turn = sent["contents"][2]
     names = [p["functionResponse"]["name"] for p in result_turn["parts"]]
     assert names == ["calculator"]  # the orphan (position 1 > 0 calls) dropped
+
+
+# ---------------------------------------------------------------------------
+# task-686 AC #3: the `x-goog-api-key` header must never survive a redirect.
+# `requests` follows 3xx responses by default and re-sends custom headers
+# (it only strips `Authorization` on a cross-host hop) -- `chat_with_google`
+# must pass `allow_redirects=False` and refuse loudly on any 3xx instead of
+# silently forwarding the credential to wherever `Location` points.
+# ---------------------------------------------------------------------------
+
+
+def _redirect_response(status_code=302, location="https://evil.example/collect"):
+    mock_response = Mock()
+    mock_response.status_code = status_code
+    mock_response.headers = {"Location": location}
+    mock_response.close = Mock()
+    # If the code under test mistakenly called raise_for_status() on a 3xx,
+    # a real `requests.Response` would NOT raise (raise_for_status only
+    # raises for 4xx/5xx) -- keep this a no-op Mock so a regression that
+    # relies on raise_for_status to catch the redirect fails the "refuses"
+    # assertion below instead of silently passing.
+    mock_response.raise_for_status = Mock()
+    mock_response.json.return_value = {}
+    return mock_response
+
+
+@patch("requests.Session.post")
+def test_post_always_passes_allow_redirects_false(mock_post):
+    """Pin the transport-level guard itself: `requests` cannot silently
+    follow a redirect and re-send the x-goog-api-key header if
+    allow_redirects=False was passed on the request that carries it."""
+    _call_google(mock_post, [{"role": "user", "content": "hi"}])
+    assert mock_post.call_args[1]["allow_redirects"] is False
+    assert mock_post.call_args[1]["headers"]["x-goog-api-key"] == "test-key"
+
+
+@pytest.mark.parametrize("status_code", [301, 302, 303, 307, 308])
+@patch("requests.Session.post")
+def test_non_streaming_redirect_refused_not_followed(mock_post, status_code):
+    mock_post.return_value = _redirect_response(status_code=status_code)
+
+    with pytest.raises(ChatProviderError) as excinfo:
+        chat_api_call(
+            "google",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="test-key",
+            model="gemini-1.5-flash-latest",
+            streaming=False,
+        )
+
+    assert "redirect" in str(excinfo.value).lower()
+    assert excinfo.value.provider == "google"
+    assert excinfo.value.status_code == status_code
+    # Exactly one request was ever issued -- nothing re-sent the credential
+    # to the Location target.
+    assert mock_post.call_count == 1
+    mock_post.return_value.raise_for_status.assert_not_called()
+    mock_post.return_value.close.assert_called_once()
+
+
+@patch("requests.Session.post")
+def test_streaming_redirect_refused_not_followed(mock_post):
+    """The streaming call shape (`stream=True`) must get the same refusal
+    -- `requests` still honors allow_redirects when streaming."""
+    mock_post.return_value = _redirect_response(status_code=302)
+
+    with pytest.raises(ChatProviderError) as excinfo:
+        chat_api_call(
+            "google",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="test-key",
+            model="gemini-1.5-flash-latest",
+            streaming=True,
+        )
+
+    assert "redirect" in str(excinfo.value).lower()
+    assert mock_post.call_count == 1
+    mock_post.return_value.close.assert_called_once()
+
+
+@patch("requests.Session.post")
+def test_normal_200_response_unaffected_by_redirect_guard(mock_post):
+    """Normal happy path: allow_redirects=False changes nothing about a
+    non-redirect response -- the existing success path stays intact."""
+    sent = _call_google(mock_post, [{"role": "user", "content": "2+2?"}])
+    assert mock_post.call_args[1]["allow_redirects"] is False
+    assert sent["contents"][0]["parts"][0]["text"] == "2+2?"
+    mock_post.return_value.raise_for_status.assert_called_once()

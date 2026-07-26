@@ -2929,6 +2929,29 @@ def chat_with_google(
                 json=payload,
                 stream=current_streaming,
                 timeout=180,
+                # task-686 AC #3: the API key travels in the custom
+                # `x-goog-api-key` header. `requests` strips `Authorization`
+                # across a redirect host change but NOT custom headers, so a
+                # 3xx from this endpoint would re-send the key wherever
+                # `Location` points. Refuse to follow rather than silently
+                # forward credentials -- see the explicit 3xx check below.
+                allow_redirects=False,
+            )
+        if 300 <= response.status_code < 400:
+            location = response.headers.get("Location", "<no Location header>")
+            logger.error(
+                f"Google Gemini: API endpoint returned a redirect "
+                f"({response.status_code} -> {location}); refusing to follow "
+                f"with the x-goog-api-key credential."
+            )
+            response.close()
+            raise ChatProviderError(
+                provider="google",
+                message=(
+                    "Google endpoint redirected unexpectedly -- refusing to "
+                    "follow with credentials."
+                ),
+                status_code=response.status_code,
             )
         response.raise_for_status()
 

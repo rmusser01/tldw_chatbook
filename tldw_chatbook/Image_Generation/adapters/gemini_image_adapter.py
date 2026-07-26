@@ -146,6 +146,15 @@ class GeminiImageAdapter:
                     f"model {model!r} was rejected by Gemini ({status}) — check "
                     "[image_generation.gemini] default_model"
                 ) from exc
+            # task-686 (live-UAT observation): a bare httpx 429 doesn't say
+            # *why* -- name the CATEGORY (rate limited / quota exhausted)
+            # and the model id, never the raw response body (it may carry
+            # account-identifying detail our sanitization rightly drops).
+            if exc.response is not None and exc.response.status_code == 429:
+                raise ImageGenerationError(
+                    f"Gemini rate limited or image quota exhausted (free-tier caps apply) "
+                    f"for model {model!r} (429)"
+                ) from exc
             raise ImageGenerationError(f"Gemini request failed: {exc}") from exc
         except ImageGenerationError:
             raise

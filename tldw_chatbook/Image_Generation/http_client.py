@@ -272,10 +272,15 @@ def fetch_bytes_via_post(
 ) -> tuple[bytes, str]:
     """Issue a POST request and return the raw response body, not parsed JSON.
 
-    For backends that return image bytes directly from a POST (e.g. Fireworks'
-    image-generation endpoint) rather than a JSON envelope carrying a URL or
-    base64 payload. Mirrors ``fetch_json``'s manual, per-hop-validated
-    redirect loop: egress is re-validated on every hop,
+    For backends whose generation endpoint returns the response bytes (e.g.
+    raw image data) directly from a POST, rather than a JSON envelope
+    carrying a URL or a base64 payload. No adapter in this codebase calls
+    this helper today -- it is kept because this class of API (a POST that
+    streams the payload straight back instead of wrapping it in JSON)
+    recurs across image-generation vendors, and it stays guarded and tested
+    (see ``test_http_client.py``) so it's ready the next time one shows up.
+    Mirrors ``fetch_json``'s manual, per-hop-validated redirect loop: egress
+    is re-validated on every hop,
     ``Authorization``/``Cookie``/``Proxy-Authorization`` are stripped on any
     hop whose origin differs from the original request's (see ``fetch_json``'s
     docstring for the full same-origin rationale), and redirects are never
