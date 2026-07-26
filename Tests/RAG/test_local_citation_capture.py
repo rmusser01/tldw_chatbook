@@ -1418,3 +1418,108 @@ async def test_fresh_persisted_scope_read_does_not_log_conversation_identity(
     assert resolution.effective.state == "unscoped"
     rendered_logs = "".join(str(message) for message in captured_logs)
     assert conversation_sentinel not in rendered_logs
+
+
+@pytest.mark.asyncio
+async def test_request_start_cached_scope_read_does_not_log_conversation_identity(
+    tmp_path,
+    monkeypatch,
+):
+    conversation_sentinel = "PRIVATE-CACHED-CONVERSATION-IDENTITY-SENTINEL"
+    chacha_db = CharactersRAGDB(
+        tmp_path / "cached-scope-chacha.sqlite",
+        client_id="cached-scope-chacha",
+    )
+    chacha_db.add_conversation(
+        {
+            "id": conversation_sentinel,
+            "title": "Cached request-start identity regression",
+        }
+    )
+    app = _CaptureApp()
+    app.chachanotes_db = chacha_db
+    session = SimpleNamespace(
+        id="cached-request-session",
+        persisted_conversation_id=conversation_sentinel,
+        workspace_id=None,
+    )
+    monkeypatch.setattr(cre, "_active_console_session", lambda _app: session)
+    raw_context = "CACHED REQUEST-START PIPELINE CONTEXT"
+    _patch_pipeline(monkeypatch, [_ranked_result()], raw_context)
+    captured_logs = []
+    sink_id = loguru_logger.add(
+        captured_logs.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        captured = await cre.get_rag_context_capture_for_chat(app, "query")
+    finally:
+        loguru_logger.remove(sink_id)
+        chacha_db.close_connection()
+
+    assert captured == cre.LocalRagContextResult(raw_context, None)
+    rendered_logs = "".join(str(message) for message in captured_logs)
+    assert conversation_sentinel not in rendered_logs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw_metadata",
+    [
+        "{malformed-json",
+        "[]",
+        json.dumps(
+            {
+                "rag_scope": {
+                    "version": 1,
+                    "items": "malformed-items",
+                    "updated_at": "t1",
+                }
+            }
+        ),
+        json.dumps(
+            {
+                "rag_scope": {
+                    "version": 1,
+                    "items": [],
+                    "updated_at": "t1",
+                }
+            }
+        ),
+    ],
+    ids=["malformed-json", "non-object", "malformed-scope", "empty-scope"],
+)
+async def test_cached_scope_read_preserves_guarded_unscoped_semantics(
+    tmp_path,
+    raw_metadata,
+):
+    conversation_id = "cached-guarded-semantics"
+    chacha_db = CharactersRAGDB(
+        tmp_path / "cached-guarded-chacha.sqlite",
+        client_id="cached-guarded-chacha",
+    )
+    chacha_db.add_conversation({"id": conversation_id, "title": "Guarded"})
+    connection = chacha_db.get_connection()
+    connection.execute(
+        "UPDATE conversations SET metadata = ? WHERE id = ?",
+        (raw_metadata, conversation_id),
+    )
+    connection.commit()
+    app = SimpleNamespace(chachanotes_db=chacha_db, media_db=None)
+    session = SimpleNamespace(
+        id="cached-guarded-session",
+        persisted_conversation_id=conversation_id,
+        workspace_id=None,
+    )
+    try:
+        resolution = await cre.resolve_scope_for_session(
+            app,
+            session,
+            use_cache=True,
+        )
+    finally:
+        chacha_db.close_connection()
+
+    assert resolution.conv_scope is None
+    assert resolution.effective.state == "unscoped"

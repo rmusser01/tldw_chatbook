@@ -32,7 +32,6 @@ from ...Chat.rag_scope import (
     ScopeCache,
     SessionScopeHolder,
     parse_scope,
-    read_conversation_scope,
     resolve_effective_scope,
 )
 from ...RAG_Search.fusion import resolve_hybrid_alpha
@@ -648,6 +647,35 @@ def _read_fresh_conversation_metadata_sync(db: Any, conversation_id: str) -> Any
         return row[0]
 
 
+def _read_cached_conversation_scope_sync(
+    db: Any,
+    conversation_id: str,
+) -> Optional[RagScope]:
+    """Read cached-path scope with legacy guarded parsing and silent identity."""
+
+    try:
+        raw_metadata = _read_fresh_conversation_metadata_sync(db, conversation_id)
+    except Exception:
+        logger.warning(
+            "RAG cached conversation scope unavailable; "
+            "reason=conversation_scope_read_failure"
+        )
+        return None
+    if raw_metadata in (None, ""):
+        metadata: Any = {}
+    else:
+        try:
+            metadata = json.loads(raw_metadata)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(metadata, dict):
+        return None
+    scope = parse_scope(metadata.get(CONVERSATION_METADATA_SCOPE_KEY))
+    if scope is not None and not scope.items:
+        return None
+    return scope
+
+
 def _existing_ids_sync(
     app: "TldwCli", source_type: str, ids: "frozenset[str]"
 ) -> "frozenset[str]":
@@ -700,6 +728,46 @@ def _existing_ids_sync(
             "RAG scope existence unavailable; reason=scope_existing_ids_read_failure"
         )
         raise _ScopeExistenceReadError from None
+
+
+async def _resolve_scope_with_current_ids(
+    app: "TldwCli",
+    conv_scope: Optional[RagScope],
+    ws_scope: Optional[RagScope],
+) -> EffectiveScope:
+    """Resolve scope while routing each existence read for its own store."""
+
+    candidate_scope = resolve_effective_scope(
+        conv_scope,
+        ws_scope,
+        lambda _source_type, ids: ids,
+    )
+    if candidate_scope.state != "scoped":
+        return candidate_scope
+
+    survivors: dict[str, frozenset[str]] = {}
+    for source_type, ids in candidate_scope.allowlist.items():
+        if source_type == SOURCE_TYPE_MEDIA:
+            db = getattr(app, "media_db", None)
+        elif source_type == SOURCE_TYPE_NOTE:
+            db = getattr(app, "chachanotes_db", None)
+        else:
+            continue
+        if bool(getattr(db, "is_memory_db", False)):
+            survivors[source_type] = _existing_ids_sync(app, source_type, ids)
+        else:
+            survivors[source_type] = await asyncio.to_thread(
+                _existing_ids_sync,
+                app,
+                source_type,
+                ids,
+            )
+
+    return resolve_effective_scope(
+        conv_scope,
+        ws_scope,
+        lambda source_type, _ids: survivors.get(source_type, frozenset()),
+    )
 
 
 @dataclass(frozen=True)
@@ -824,9 +892,11 @@ async def resolve_scope_for_session(
 
     Conversation identity comes from ``session.persisted_conversation_id``.
     When the conversation is persisted, its scope is read from storage
-    (``read_conversation_scope``). When the session has not been persisted
-    yet, an in-session ``SessionScopeHolder`` attached to the session object
-    (``session.rag_scope_holder``, duck-typed) is consulted instead (task-9).
+    through a local non-logging raw-connection read with the same guarded
+    parsing semantics as ``read_conversation_scope``. When the session has
+    not been persisted yet, an in-session ``SessionScopeHolder`` attached to
+    the session object (``session.rag_scope_holder``, duck-typed) is consulted
+    instead (task-9).
 
     Workspace identity comes from ``session.workspace_id`` (the Console
     session's linked local-workspace-registry id, duck-typed via
@@ -887,20 +957,20 @@ async def resolve_scope_for_session(
     )
 
     db = getattr(app, "chachanotes_db", None)
-    media_db = getattr(app, "media_db", None)
     conversation_is_memory_db = bool(getattr(db, "is_memory_db", False))
-    scope_resolution_requires_inline = conversation_is_memory_db or bool(
-        getattr(media_db, "is_memory_db", False)
-    )
 
     conv_scope: Optional[RagScope] = None
     if conversation_id and db is not None:
         if use_cache:
             if conversation_is_memory_db:
-                conv_scope = read_conversation_scope(db, conversation_id)
+                conv_scope = _read_cached_conversation_scope_sync(
+                    db, str(conversation_id)
+                )
             else:
                 conv_scope = await asyncio.to_thread(
-                    read_conversation_scope, db, conversation_id
+                    _read_cached_conversation_scope_sync,
+                    db,
+                    str(conversation_id),
                 )
         else:
             try:
@@ -1026,16 +1096,12 @@ async def resolve_scope_for_session(
         if cached is not None:
             return ScopeResolution(conv_scope, ws_scope, cached)
 
-    def _existing_ids(source_type: str, ids: "frozenset[str]") -> "frozenset[str]":
-        return _existing_ids_sync(app, source_type, ids)
-
     try:
-        if scope_resolution_requires_inline:
-            effective = resolve_effective_scope(conv_scope, ws_scope, _existing_ids)
-        else:
-            effective = await asyncio.to_thread(
-                resolve_effective_scope, conv_scope, ws_scope, _existing_ids
-            )
+        effective = await _resolve_scope_with_current_ids(
+            app,
+            conv_scope,
+            ws_scope,
+        )
     except _ScopeExistenceReadError:
         return ScopeResolution(
             conv_scope,

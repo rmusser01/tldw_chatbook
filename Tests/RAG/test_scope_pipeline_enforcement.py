@@ -1367,13 +1367,13 @@ class TestScopeCacheWiring:
         app = _App(media_db=media_db, chachanotes_db=cha_db)
 
         calls: list[int] = []
-        real_resolve = cre.resolve_effective_scope
+        real_resolve = cre._resolve_scope_with_current_ids
 
-        def _spy_resolve(*args, **kwargs):
+        async def _spy_resolve(*args, **kwargs):
             calls.append(1)
-            return real_resolve(*args, **kwargs)
+            return await real_resolve(*args, **kwargs)
 
-        monkeypatch.setattr(cre, "resolve_effective_scope", _spy_resolve)
+        monkeypatch.setattr(cre, "_resolve_scope_with_current_ids", _spy_resolve)
 
         first = await cre.resolve_effective_scope_for_chat(app)
         second = await cre.resolve_effective_scope_for_chat(app)
@@ -1401,13 +1401,13 @@ class TestScopeCacheWiring:
         app = _App(media_db=media_db, chachanotes_db=cha_db)
 
         calls: list[int] = []
-        real_resolve = cre.resolve_effective_scope
+        real_resolve = cre._resolve_scope_with_current_ids
 
-        def _spy_resolve(*args, **kwargs):
+        async def _spy_resolve(*args, **kwargs):
             calls.append(1)
-            return real_resolve(*args, **kwargs)
+            return await real_resolve(*args, **kwargs)
 
-        monkeypatch.setattr(cre, "resolve_effective_scope", _spy_resolve)
+        monkeypatch.setattr(cre, "_resolve_scope_with_current_ids", _spy_resolve)
 
         await cre.resolve_effective_scope_for_chat(app)
         await cre.resolve_effective_scope_for_chat(app)
@@ -1436,13 +1436,13 @@ class TestScopeCacheWiring:
         app = _App(media_db=media_db, chachanotes_db=cha_db)
 
         calls: list[int] = []
-        real_resolve = cre.resolve_effective_scope
+        real_resolve = cre._resolve_scope_with_current_ids
 
-        def _spy_resolve(*args, **kwargs):
+        async def _spy_resolve(*args, **kwargs):
             calls.append(1)
-            return real_resolve(*args, **kwargs)
+            return await real_resolve(*args, **kwargs)
 
-        monkeypatch.setattr(cre, "resolve_effective_scope", _spy_resolve)
+        monkeypatch.setattr(cre, "_resolve_scope_with_current_ids", _spy_resolve)
 
         first = await cre.resolve_effective_scope_for_chat(app)
         assert first.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
@@ -1497,13 +1497,13 @@ class TestScopeCacheWiring:
         app.workspace_registry_service = registry
 
         calls: list[int] = []
-        real_resolve = cre.resolve_effective_scope
+        real_resolve = cre._resolve_scope_with_current_ids
 
-        def _spy_resolve(*args, **kwargs):
+        async def _spy_resolve(*args, **kwargs):
             calls.append(1)
-            return real_resolve(*args, **kwargs)
+            return await real_resolve(*args, **kwargs)
 
-        monkeypatch.setattr(cre, "resolve_effective_scope", _spy_resolve)
+        monkeypatch.setattr(cre, "_resolve_scope_with_current_ids", _spy_resolve)
 
         first = await cre.resolve_effective_scope_for_chat(app)
         assert first.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
@@ -1562,13 +1562,13 @@ class TestScopeCacheWiring:
         app.workspace_registry_service = registry
 
         calls: list[int] = []
-        real_resolve = cre.resolve_effective_scope
+        real_resolve = cre._resolve_scope_with_current_ids
 
-        def _spy_resolve(*args, **kwargs):
+        async def _spy_resolve(*args, **kwargs):
             calls.append(1)
-            return real_resolve(*args, **kwargs)
+            return await real_resolve(*args, **kwargs)
 
-        monkeypatch.setattr(cre, "resolve_effective_scope", _spy_resolve)
+        monkeypatch.setattr(cre, "_resolve_scope_with_current_ids", _spy_resolve)
 
         first = await cre.resolve_effective_scope_for_chat(app)
         assert first.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
@@ -1819,6 +1819,63 @@ class TestResolveEffectiveScopeMemoryDbGuard:
             assert resolution.effective.state == "unscoped"
             assert len(call_threads) == 1
             assert call_threads[0] is not main_thread
+        finally:
+            memory_media.close_connection()
+
+    @pytest.mark.asyncio
+    async def test_mixed_store_scope_existence_reads_use_each_store_thread(
+        self, cha_db, monkeypatch
+    ):
+        memory_media = MediaDatabase(":memory:", client_id="task4-mixed-existence")
+        try:
+            media_id = _seed_media(memory_media, n=1)[0]
+            note_id = _seed_notes(cha_db, n=1)[0]
+            conversation_id = cha_db.add_conversation({"title": "Mixed scope"})
+            write_conversation_scope(
+                cha_db,
+                conversation_id,
+                RagScope(
+                    items=(
+                        ScopeItem(SOURCE_TYPE_MEDIA, media_id),
+                        ScopeItem(SOURCE_TYPE_NOTE, note_id),
+                    ),
+                    updated_at="t1",
+                ),
+            )
+            session = SimpleNamespace(
+                persisted_conversation_id=conversation_id,
+                workspace_id=None,
+            )
+            main_thread = threading.current_thread()
+            call_threads = {"media": [], "note": []}
+            real_sensitive_fetchall = cre._sensitive_fetchall
+
+            def _record_existence_thread(db, query, params):
+                if query.startswith("SELECT id FROM Media"):
+                    call_threads["media"].append(threading.current_thread())
+                elif query.startswith("SELECT id FROM notes"):
+                    call_threads["note"].append(threading.current_thread())
+                return real_sensitive_fetchall(db, query, params)
+
+            monkeypatch.setattr(
+                cre,
+                "_sensitive_fetchall",
+                _record_existence_thread,
+            )
+
+            resolution = await cre.resolve_scope_for_session(
+                _App(media_db=memory_media, chachanotes_db=cha_db),
+                session,
+                use_cache=False,
+            )
+
+            assert resolution.effective.allowlist == {
+                SOURCE_TYPE_MEDIA: frozenset({media_id}),
+                SOURCE_TYPE_NOTE: frozenset({note_id}),
+            }
+            assert call_threads["media"] == [main_thread]
+            assert len(call_threads["note"]) == 1
+            assert call_threads["note"][0] is not main_thread
         finally:
             memory_media.close_connection()
 
