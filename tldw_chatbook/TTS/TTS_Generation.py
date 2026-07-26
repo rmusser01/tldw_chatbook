@@ -152,6 +152,97 @@ class _ManagedAudioResponse(TTSAudioResponse):
             self._on_closed(self)
 
 
+class _AdmittedTTSOperation:
+    """Single-use synthesis operation with already-admitted resources."""
+
+    def __init__(
+        self,
+        *,
+        request: TTSRequest,
+        resources: _OperationResources,
+        close_signal: asyncio.Event,
+        on_started: Callable[["_AdmittedTTSOperation"], None],
+        manage_response: Callable[
+            [TTSAudioResponse, _OperationResources],
+            _ManagedAudioResponse,
+        ],
+        observe_cleanup: Callable[[asyncio.Task[None]], None],
+    ) -> None:
+        self._request = request
+        self._resources = resources
+        self._close_signal = close_signal
+        self._on_started = on_started
+        self._manage_response = manage_response
+        self._observe_cleanup = observe_cleanup
+        self._used = False
+        self._close_task: asyncio.Task[None] | None = None
+
+    async def synthesize(
+        self,
+        progress_sink: ProgressSink | None = None,
+    ) -> TTSAudioResponse:
+        """Execute the admitted request exactly once."""
+        if self._used:
+            raise RuntimeError("The admitted TTS operation has already been used")
+        self._used = True
+        self._on_started(self)
+
+        if self._close_signal.is_set():
+            closed_error = TTSRegistryClosedError("The TTS service is closed")
+            await _cleanup_preserving_primary(self._resources.close, closed_error)
+            raise closed_error
+
+        lease = self._resources._lease
+        safe_sink = _isolate_progress_sink(progress_sink)
+        try:
+            await lease.adapter.ensure_ready()
+            response = await lease.adapter.synthesize(self._request, safe_sink)
+        except BaseException as error:
+            await _cleanup_preserving_primary(self._resources.close, error)
+            raise
+
+        try:
+            managed_response = self._manage_response(response, self._resources)
+        except BaseException as error:
+
+            async def close_unmanaged_response() -> None:
+                try:
+                    await response.aclose()
+                finally:
+                    await self._resources.close()
+
+            await _cleanup_preserving_primary(close_unmanaged_response, error)
+            raise
+
+        if self._close_signal.is_set():
+            closed_error = TTSRegistryClosedError("The TTS service is closed")
+            cleanup_tasks = (
+                managed_response.start_close(),
+                managed_response.start_resource_release(),
+            )
+            for cleanup_task in cleanup_tasks:
+                cleanup_task.add_done_callback(self._observe_cleanup)
+            raise closed_error
+        return managed_response
+
+    async def close(self) -> None:
+        """Release an admitted operation that has not started execution."""
+        await _join_retained_task(self.start_close())
+
+    def start_close(self) -> asyncio.Task[None]:
+        """Start idempotent resource cleanup for an abandoned operation."""
+        if self._close_task is None:
+            if self._used:
+                raise RuntimeError("The admitted TTS operation has already been used")
+            self._used = True
+            self._on_started(self)
+            self._close_task = asyncio.create_task(self._close())
+        return self._close_task
+
+    async def _close(self) -> None:
+        await self._resources.close()
+
+
 class TTSService:
     """Coordinate registry-backed TTS operations and response lifetimes."""
 
@@ -169,6 +260,53 @@ class TTSService:
         self._registry_close_task: asyncio.Task[None] | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
         self._responses: set[_ManagedAudioResponse] = set()
+        self._admitted_operations: set[_AdmittedTTSOperation] = set()
+
+    async def admit(
+        self,
+        request: TTSRequest,
+        *,
+        expected_configuration_revision: int | None = None,
+    ) -> _AdmittedTTSOperation:
+        """Reserve service capacity and a revision-matched provider lease.
+
+        Args:
+            request: Native provider, model, and audio options.
+            expected_configuration_revision: Optional selected provider revision.
+
+        Returns:
+            A single-use operation that owns its admitted resources.
+        """
+        await self._acquire_operation_slot()
+        try:
+            lease = await self.registry.acquire(
+                request.provider_id,
+                expected_revision=expected_configuration_revision,
+            )
+        except BaseException:
+            self._operation_limit.release()
+            raise
+
+        resources = _OperationResources(lease, self._operation_limit)
+        if self._close_signal.is_set():
+            closed_error = TTSRegistryClosedError("The TTS service is closed")
+            await _cleanup_preserving_primary(resources.close, closed_error)
+            raise closed_error
+
+        operation = _AdmittedTTSOperation(
+            request=request,
+            resources=resources,
+            close_signal=self._close_signal,
+            on_started=self._admitted_operations.discard,
+            manage_response=self._manage_response,
+            observe_cleanup=self._observe_shutdown_result,
+        )
+        self._admitted_operations.add(operation)
+        if self._close_signal.is_set():
+            closed_error = TTSRegistryClosedError("The TTS service is closed")
+            await _cleanup_preserving_primary(operation.close, closed_error)
+            raise closed_error
+        return operation
 
     async def synthesize(
         self,
@@ -184,54 +322,8 @@ class TTSService:
         Returns:
             A response that releases its registry lease when closed.
         """
-        await self._acquire_operation_slot()
-        try:
-            lease = await self.registry.acquire(request.provider_id)
-        except BaseException:
-            self._operation_limit.release()
-            raise
-
-        resources = _OperationResources(lease, self._operation_limit)
-        if self._close_signal.is_set():
-            closed_error = TTSRegistryClosedError("The TTS service is closed")
-            await _cleanup_preserving_primary(resources.close, closed_error)
-            raise closed_error
-
-        safe_sink = _isolate_progress_sink(progress_sink)
-        try:
-            await lease.adapter.ensure_ready()
-            response = await lease.adapter.synthesize(request, safe_sink)
-        except BaseException as error:
-            await _cleanup_preserving_primary(resources.close, error)
-            raise
-
-        try:
-            managed_response = _ManagedAudioResponse(
-                response,
-                resources,
-                self._responses.discard,
-            )
-        except BaseException as error:
-
-            async def close_unmanaged_response() -> None:
-                try:
-                    await response.aclose()
-                finally:
-                    await resources.close()
-
-            await _cleanup_preserving_primary(close_unmanaged_response, error)
-            raise
-        self._responses.add(managed_response)
-        if self._close_signal.is_set():
-            closed_error = TTSRegistryClosedError("The TTS service is closed")
-            cleanup_tasks = (
-                managed_response.start_close(),
-                managed_response.start_resource_release(),
-            )
-            for cleanup_task in cleanup_tasks:
-                cleanup_task.add_done_callback(self._observe_shutdown_result)
-            raise closed_error
-        return managed_response
+        operation = await self.admit(request)
+        return await operation.synthesize(progress_sink)
 
     async def generate_audio_stream(
         self,
@@ -416,9 +508,16 @@ class TTSService:
     def _start_close(self) -> tuple[asyncio.Task[None], asyncio.Task[None]]:
         if self._registry_close_task is None:
             self._close_signal.set()
+            operation_tasks = tuple(
+                operation.start_close()
+                for operation in tuple(self._admitted_operations)
+            )
             self._registry_close_task = asyncio.create_task(self.registry.close())
             self._shutdown_task = asyncio.create_task(
-                self._complete_shutdown(self._registry_close_task)
+                self._complete_shutdown(
+                    self._registry_close_task,
+                    operation_tasks,
+                )
             )
             self._shutdown_task.add_done_callback(self._observe_shutdown_result)
         assert self._shutdown_task is not None
@@ -427,6 +526,7 @@ class TTSService:
     async def _complete_shutdown(
         self,
         registry_close_task: asyncio.Task[None],
+        operation_tasks: tuple[asyncio.Task[None], ...],
     ) -> None:
         failures: list[BaseException] = []
         try:
@@ -440,6 +540,7 @@ class TTSService:
         registry_wait_task = asyncio.create_task(self.registry.wait_closed())
         results = await asyncio.gather(
             registry_wait_task,
+            *operation_tasks,
             *resource_tasks,
             return_exceptions=True,
         )
@@ -457,6 +558,19 @@ class TTSService:
                 failures.append(error)
         if failures:
             raise _sanitized_shutdown_error(*failures) from None
+
+    def _manage_response(
+        self,
+        response: TTSAudioResponse,
+        resources: _OperationResources,
+    ) -> _ManagedAudioResponse:
+        managed_response = _ManagedAudioResponse(
+            response,
+            resources,
+            self._responses.discard,
+        )
+        self._responses.add(managed_response)
+        return managed_response
 
     @staticmethod
     def _task_acquired_slot(task: asyncio.Task[bool]) -> bool:

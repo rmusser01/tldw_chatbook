@@ -16,17 +16,24 @@ import pytest
 from loguru import logger
 
 import tldw_chatbook.TTS as tts
+from Tests.TTS.adapter_fakes import FakeAdapterFactory, provider_spec
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSSettingsSaveEvent,
 )
 from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
-from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
+from tldw_chatbook.TTS.adapter_registry import (
+    ReconfigureResult,
+    TTSAdapterRegistry,
+)
 from tldw_chatbook.TTS.adapter_types import (
     TTSAudioResponse,
+    TTSConfigurationRevisionError,
     TTSOperationError,
     TTSProviderDescriptor,
+    TTSProviderReconfiguringError,
     TTSProviderSpec,
+    TTSProviderUnavailableError,
     TTSRequest,
 )
 from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_module
@@ -202,6 +209,80 @@ def test_tts_guide_documents_exact_legacy_routes_and_working_example() -> None:
     assert 'internal_model_id = "openai_official_tts-1"' in usage
     assert "generate_audio_stream(request, internal_model_id)" in usage
     assert "tts_service.synthesize(" not in usage
+
+
+@pytest.mark.asyncio
+async def test_registry_admission_errors_expose_no_configuration_values() -> None:
+    private_values = (
+        "http://private-audio-origin.invalid:8181",
+        "PRIVATE_AUDIO_CPP_CREDENTIAL",
+        "PRIVATE_REPLACEMENT_VALUE",
+    )
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                factory,
+                {
+                    "origin": private_values[0],
+                    "credential": private_values[1],
+                },
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    errors: list[BaseException] = []
+    await registry.reconfigure_provider(
+        "audio_cpp",
+        {"value": private_values[2]},
+    )
+    with pytest.raises(TTSConfigurationRevisionError) as revision:
+        await registry.acquire("audio_cpp", expected_revision=1)
+    errors.append(revision.value)
+
+    await registry.seal_provider_unavailable("audio_cpp")
+    with pytest.raises(TTSProviderUnavailableError) as unavailable:
+        await registry.acquire("audio_cpp", expected_revision=1)
+    errors.append(unavailable.value)
+
+    assert (
+        await registry.reconfigure_provider("audio_cpp", {"revision": 3})
+        is ReconfigureResult.CHANGED
+    )
+    lease = await registry.acquire("audio_cpp", expected_revision=3)
+    reconfigure = asyncio.create_task(
+        registry.reconfigure_provider("audio_cpp", {"revision": 4})
+    )
+    await asyncio.sleep(0)
+    with pytest.raises(TTSProviderReconfiguringError) as pending:
+        await registry.acquire("audio_cpp", expected_revision=2)
+    errors.append(pending.value)
+    await lease.release()
+    assert await reconfigure is ReconfigureResult.CHANGED
+    await registry.close()
+
+    exception_graphs = [_exception_graph(error) for error in errors]
+    rendered = " ".join(
+        (
+            repr([(type(error), error.args) for error in errors]),
+            repr(exception_graphs),
+            "\n".join("".join(traceback.format_exception(error)) for error in errors),
+        )
+    )
+    assert [type(error) for error in errors] == [
+        TTSConfigurationRevisionError,
+        TTSProviderUnavailableError,
+        TTSProviderReconfiguringError,
+    ]
+    assert [str(error) for error in errors] == [
+        "TTS provider configuration changed: audio_cpp",
+        "TTS provider is unavailable: audio_cpp",
+        "TTS provider is reconfiguring: audio_cpp",
+    ]
+    assert all(graph == [error] for graph, error in zip(exception_graphs, errors))
+    assert all(private_value not in rendered for private_value in private_values)
 
 
 @pytest.mark.asyncio

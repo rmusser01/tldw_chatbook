@@ -13,10 +13,12 @@ from tldw_chatbook.TTS._async_lifecycle import (
 )
 from tldw_chatbook.TTS.adapter_types import (
     TTSAdapter,
+    TTSConfigurationRevisionError,
     TTSProviderCatalog,
     TTSProviderDescriptor,
     TTSProviderReconfiguringError,
     TTSProviderSpec,
+    TTSProviderUnavailableError,
     TTSRegistryClosedError,
     UnknownTTSProviderError,
 )
@@ -44,6 +46,7 @@ class _ProviderSlot:
     active: _AdapterRecord | None = None
     retired: list[_AdapterRecord] = field(default_factory=list)
     reconfiguring: bool = False
+    unavailable: bool = False
     exclusive_record: _AdapterRecord | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     transition_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -123,7 +126,12 @@ class TTSAdapterRegistry:
     def configuration_revision(self, provider_id: str) -> int:
         return self._slots[self._resolve_id(provider_id)].revision
 
-    async def acquire(self, provider_id: str) -> TTSAdapterLease:
+    async def acquire(
+        self,
+        provider_id: str,
+        *,
+        expected_revision: int | None = None,
+    ) -> TTSAdapterLease:
         canonical_id = self._resolve_id(provider_id)
         if self._closed:
             raise TTSRegistryClosedError("The TTS registry is closed")
@@ -135,6 +143,14 @@ class TTSAdapterRegistry:
             if slot.reconfiguring:
                 raise TTSProviderReconfiguringError(
                     f"TTS provider is reconfiguring: {canonical_id}"
+                )
+            if slot.unavailable:
+                raise TTSProviderUnavailableError(
+                    f"TTS provider is unavailable: {canonical_id}"
+                )
+            if expected_revision is not None and slot.revision != expected_revision:
+                raise TTSConfigurationRevisionError(
+                    f"TTS provider configuration changed: {canonical_id}"
                 )
             if slot.active is None:
                 slot.active = _AdapterRecord(
@@ -181,6 +197,23 @@ class TTSAdapterRegistry:
         if slot.spec.exclusive_reconfigure:
             return await self._reconfigure_exclusive(slot, new_config)
         return await self._reconfigure_retiring(slot, new_config)
+
+    async def seal_provider_unavailable(self, provider_id: str) -> None:
+        """Seal a provider slot after a reviewed handoff fails.
+
+        Args:
+            provider_id: Exact provider identifier or registered alias.
+        """
+        canonical_id = self._resolve_id(provider_id)
+        if self._closed:
+            raise TTSRegistryClosedError("The TTS registry is closed")
+
+        slot = self._slots[canonical_id]
+        async with slot.lock:
+            if self._closed:
+                raise TTSRegistryClosedError("The TTS registry is closed")
+            slot.reconfiguring = False
+            slot.unavailable = True
 
     async def close(self) -> None:
         """Seal admission and wait no longer than the shutdown timeout.
@@ -323,12 +356,13 @@ class TTSAdapterRegistry:
             if self._closed:
                 raise TTSRegistryClosedError("The TTS registry is closed")
             async with slot.lock:
-                if slot.config == new_config:
+                if slot.config == new_config and not slot.unavailable:
                     return ReconfigureResult.UNCHANGED
                 close_record = slot.active
                 slot.active = None
                 slot.config = new_config
                 slot.revision += 1
+                slot.unavailable = False
                 if close_record is not None:
                     close_record.retired = True
                     slot.retired.append(close_record)
@@ -353,10 +387,16 @@ class TTSAdapterRegistry:
                 if slot.reconfiguring:
                     old_record = slot.exclusive_record
                 else:
-                    if slot.config == new_config:
+                    recovering_unavailable = slot.unavailable
+                    if slot.config == new_config and not recovering_unavailable:
                         return ReconfigureResult.UNCHANGED
                     slot.reconfiguring = True
-                    old_record = slot.active
+                    slot.unavailable = False
+                    old_record = (
+                        slot.exclusive_record if recovering_unavailable else slot.active
+                    )
+                    if old_record is None:
+                        old_record = slot.active
                     slot.exclusive_record = old_record
 
             if old_record is not None:
@@ -379,6 +419,7 @@ class TTSAdapterRegistry:
                 slot.config = new_config
                 slot.revision += 1
                 slot.reconfiguring = False
+                slot.unavailable = False
                 slot.exclusive_record = None
 
         return ReconfigureResult.CHANGED

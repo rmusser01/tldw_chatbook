@@ -16,8 +16,10 @@ from tldw_chatbook.TTS.adapter_registry import (
     TTSAdapterRegistry,
 )
 from tldw_chatbook.TTS.adapter_types import (
+    TTSConfigurationRevisionError,
     TTSProviderReconfiguringError,
     TTSProviderSpec,
+    TTSProviderUnavailableError,
     TTSRegistryClosedError,
     UnknownTTSProviderError,
 )
@@ -267,6 +269,130 @@ async def test_exclusive_reconfigure_blocks_until_old_lease_releases() -> None:
     await old_lease.release()
     assert await reconfigure is ReconfigureResult.CHANGED
     assert old_lease.adapter.close_calls == 1
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_revision_checked_acquire_rejects_stale_selection_before_factory() -> (
+    None
+):
+    original_value = "http://private-revision-one.invalid"
+    replacement_value = "PRIVATE_REVISION_TWO_CREDENTIAL"
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                factory,
+                {"origin": original_value},
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    selected_revision = registry.configuration_revision("audio_cpp")
+
+    assert (
+        await registry.reconfigure_provider(
+            "audio_cpp",
+            {"credential": replacement_value},
+        )
+        is ReconfigureResult.CHANGED
+    )
+    assert registry.configuration_revision("audio_cpp") == 2
+
+    try:
+        await registry.acquire(
+            "audio_cpp",
+            expected_revision=selected_revision,
+        )
+    except BaseException as error:
+        assert isinstance(error, TTSConfigurationRevisionError)
+        assert str(error) == "TTS provider configuration changed: audio_cpp"
+        assert error.__cause__ is None
+        assert error.__context__ is None
+        assert original_value not in repr(error)
+        assert replacement_value not in repr(error)
+    else:
+        raise AssertionError("stale registry selection was admitted")
+
+    assert factory.calls == 0
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_sealed_provider_is_unavailable_until_reviewed_reconfiguration() -> None:
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                factory,
+                {"revision": 1},
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+
+    await registry.seal_provider_unavailable("audio_cpp")
+    with pytest.raises(TTSProviderUnavailableError) as unavailable:
+        await registry.acquire("audio_cpp", expected_revision=0)
+
+    assert str(unavailable.value) == "TTS provider is unavailable: audio_cpp"
+    assert factory.calls == 0
+    assert (
+        await registry.reconfigure_provider("audio_cpp", {"revision": 2})
+        is ReconfigureResult.CHANGED
+    )
+    assert registry.configuration_revision("audio_cpp") == 2
+
+    lease = await registry.acquire("audio_cpp", expected_revision=2)
+    assert factory.calls == 1
+    await lease.release()
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_reconfiguring_unavailable_and_revision_errors_are_distinct() -> None:
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                factory,
+                {"revision": 1},
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    await registry.reconfigure_provider("audio_cpp", {"revision": 2})
+    with pytest.raises(TTSConfigurationRevisionError) as revision:
+        await registry.acquire("audio_cpp", expected_revision=1)
+
+    await registry.seal_provider_unavailable("audio_cpp")
+    with pytest.raises(TTSProviderUnavailableError) as unavailable:
+        await registry.acquire("audio_cpp", expected_revision=1)
+
+    await registry.reconfigure_provider("audio_cpp", {"revision": 3})
+    lease = await registry.acquire("audio_cpp", expected_revision=3)
+    reconfigure = asyncio.create_task(
+        registry.reconfigure_provider("audio_cpp", {"revision": 4})
+    )
+    await asyncio.sleep(0)
+    with pytest.raises(TTSProviderReconfiguringError) as reconfiguring:
+        await registry.acquire("audio_cpp", expected_revision=2)
+
+    assert type(revision.value) is TTSConfigurationRevisionError
+    assert type(unavailable.value) is TTSProviderUnavailableError
+    assert type(reconfiguring.value) is TTSProviderReconfiguringError
+    assert str(revision.value) == "TTS provider configuration changed: audio_cpp"
+    assert str(unavailable.value) == "TTS provider is unavailable: audio_cpp"
+    assert str(reconfiguring.value) == "TTS provider is reconfiguring: audio_cpp"
+
+    await lease.release()
+    assert await reconfigure is ReconfigureResult.CHANGED
     await registry.close()
 
 
@@ -672,20 +798,20 @@ async def test_failed_exclusive_cleanup_keeps_admission_sealed() -> None:
         await registry.reconfigure_provider("exclusive", {"revision": 2})
     except RuntimeError as error:
         retry_error = error
-    unexpected_lease = None
-    try:
-        unexpected_lease = await registry.acquire("exclusive")
-        admission_blocked = False
-    except TTSProviderReconfiguringError:
-        admission_blocked = True
-    if unexpected_lease is not None:
-        await unexpected_lease.release()
+    with pytest.raises(TTSProviderReconfiguringError):
+        await registry.acquire("exclusive")
+
+    await registry.seal_provider_unavailable("exclusive")
+    with pytest.raises(TTSProviderUnavailableError) as unavailable:
+        await registry.acquire("exclusive")
     with pytest.raises(RuntimeError, match="adapter close failed"):
         await registry.close()
     await registry.close()
 
     assert str(retry_error) == "adapter close failed"
-    assert admission_blocked is True
+    assert str(unavailable.value) == "TTS provider is unavailable: exclusive"
+    assert unavailable.value.__cause__ is None
+    assert unavailable.value.__context__ is None
     assert factory.calls == 1
 
 

@@ -25,6 +25,7 @@ from tldw_chatbook.TTS.adapter_registry import (
 from tldw_chatbook.TTS.adapter_types import (
     ProgressSink,
     TTSAudioResponse,
+    TTSConfigurationRevisionError,
     TTSOperationError,
     TTSProgress,
     TTSProviderDescriptor,
@@ -264,6 +265,7 @@ def registry_for_adapter(
     *,
     shutdown_timeout_seconds: float = 10.0,
     registry_type: type[TTSAdapterRegistry] = TTSAdapterRegistry,
+    exclusive_reconfigure: bool = False,
 ) -> TTSAdapterRegistry:
     replacements = FakeAdapterFactory(adapter.provider_id)
     calls = 0
@@ -284,6 +286,7 @@ def registry_for_adapter(
                 ),
                 factory=factory,
                 initial_config={"revision": 1},
+                exclusive_reconfigure=exclusive_reconfigure,
             ),
         ),
         aliases={},
@@ -308,6 +311,207 @@ async def test_synthesize_holds_lease_until_response_close() -> None:
 
     await response.aclose()
     assert adapter.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_admit_owns_revision_matched_lease_before_execution_and_response_close() -> (
+    None
+):
+    adapter = FakeAdapter("openai")
+    registry = registry_for_adapter(adapter, exclusive_reconfigure=True)
+    service = TTSService(registry, max_concurrent_operations=1)
+
+    operation = await service.admit(
+        tts_request(),
+        expected_configuration_revision=1,
+    )
+
+    assert service._operation_limit._value == 0
+    assert registry._total_leases() == 1
+    assert adapter.ensure_ready_calls == 0
+    assert adapter.synthesize_calls == 0
+    reconfigure = asyncio.create_task(
+        registry.reconfigure_provider("openai", {"revision": 2})
+    )
+    await asyncio.sleep(0)
+    assert reconfigure.done() is False
+    assert adapter.close_calls == 0
+
+    response = await operation.synthesize()
+    assert service._operation_limit._value == 0
+    assert registry._total_leases() == 1
+    assert reconfigure.done() is False
+    assert adapter.ensure_ready_calls == 1
+    assert adapter.synthesize_calls == 1
+
+    await response.aclose()
+    assert await reconfigure is ReconfigureResult.CHANGED
+    assert adapter.close_calls == 1
+    assert service._operation_limit._value == 1
+    assert registry._total_leases() == 0
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_admit_rejects_stale_revision_and_releases_service_slot() -> None:
+    adapter = FakeAdapter("openai")
+    registry = registry_for_adapter(adapter)
+    service = TTSService(registry, max_concurrent_operations=1)
+    await registry.reconfigure_provider("openai", {"revision": 2})
+
+    with pytest.raises(TTSConfigurationRevisionError):
+        await service.admit(
+            tts_request(),
+            expected_configuration_revision=1,
+        )
+
+    assert service._operation_limit._value == 1
+    assert registry._total_leases() == 0
+    assert registry._slots["openai"].active is None
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_admitted_execution_failure_releases_lease_and_service_slot() -> None:
+    class FailingAdapter(FakeAdapter):
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: ProgressSink | None = None,
+        ) -> TTSAudioResponse:
+            del request, progress_sink
+            self.synthesize_calls += 1
+            raise RuntimeError("synthesis failed")
+
+    adapter = FailingAdapter("openai")
+    registry = registry_for_adapter(adapter)
+    service = TTSService(registry, max_concurrent_operations=1)
+    operation = await service.admit(tts_request())
+
+    with pytest.raises(RuntimeError, match="synthesis failed"):
+        await operation.synthesize()
+
+    assert service._operation_limit._value == 1
+    assert registry._total_leases() == 0
+    assert service._admitted_operations == set()
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_admission_releases_service_slot_once() -> None:
+    adapter = FakeAdapter("openai")
+    registry = registry_for_adapter(adapter)
+    service = TTSService(registry, max_concurrent_operations=1)
+    slot = registry._slots["openai"]
+    await slot.lock.acquire()
+    admission = asyncio.create_task(service.admit(tts_request()))
+    try:
+        for _ in range(100):
+            if service._operation_limit._value == 0:
+                break
+            await asyncio.sleep(0)
+        assert service._operation_limit._value == 0
+        admission.cancel("caller cancelled during admission")
+    finally:
+        slot.lock.release()
+
+    with pytest.raises(asyncio.CancelledError) as cancellation:
+        await admission
+    assert cancellation.value.args == ("caller cancelled during admission",)
+    assert service._operation_limit._value == 1
+    assert registry._total_leases() == 0
+    assert service._admitted_operations == set()
+
+    operation = await service.admit(tts_request())
+    response = await operation.synthesize()
+    await response.aclose()
+    assert service._operation_limit._value == 1
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_admitted_execution_releases_resources_once() -> None:
+    synthesis_started = asyncio.Event()
+    allow_synthesis = asyncio.Event()
+
+    class BlockingAdapter(FakeAdapter):
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: ProgressSink | None = None,
+        ) -> TTSAudioResponse:
+            del request, progress_sink
+            self.synthesize_calls += 1
+            synthesis_started.set()
+            await allow_synthesis.wait()
+            raise AssertionError("cancelled synthesis resumed")
+
+    adapter = BlockingAdapter("openai")
+    registry = registry_for_adapter(adapter)
+    service = TTSService(registry, max_concurrent_operations=1)
+    operation = await service.admit(tts_request())
+    execution = asyncio.create_task(operation.synthesize())
+    await synthesis_started.wait()
+
+    execution.cancel("caller cancelled during execution")
+    with pytest.raises(asyncio.CancelledError) as cancellation:
+        await execution
+
+    assert cancellation.value.args == ("caller cancelled during execution",)
+    assert service._operation_limit._value == 1
+    assert registry._total_leases() == 0
+    assert service._admitted_operations == set()
+    with pytest.raises(RuntimeError, match="already been used"):
+        await operation.synthesize()
+    assert service._operation_limit._value == 1
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_admitted_operation_is_single_use_after_response_transfer() -> None:
+    adapter = FakeAdapter("openai")
+    registry = registry_for_adapter(adapter)
+    service = TTSService(registry, max_concurrent_operations=1)
+    operation = await service.admit(tts_request())
+
+    response = await operation.synthesize()
+    with pytest.raises(RuntimeError, match="already been used"):
+        await operation.synthesize()
+
+    assert service._operation_limit._value == 0
+    assert registry._total_leases() == 1
+    await response.aclose()
+    assert service._operation_limit._value == 1
+    assert registry._total_leases() == 0
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_releases_abandoned_operation_and_response_resources() -> None:
+    adapter = FakeAdapter("openai")
+    registry = registry_for_adapter(adapter, shutdown_timeout_seconds=0)
+    service = TTSService(registry, max_concurrent_operations=2)
+    response = await service.synthesize(tts_request())
+    operation = await service.admit(tts_request())
+
+    assert service._operation_limit._value == 0
+    assert registry._total_leases() == 2
+    assert operation in service._admitted_operations
+    await service.close()
+    await asyncio.wait_for(service.wait_closed(), timeout=1)
+
+    assert adapter.response_close_calls == 1
+    assert service._operation_limit._value == 2
+    assert registry._total_leases() == 0
+    assert service._admitted_operations == set()
+    assert service._responses == set()
+    await response.aclose()
 
 
 @pytest.mark.asyncio
