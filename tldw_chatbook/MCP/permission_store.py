@@ -373,16 +373,22 @@ class MCPPermissionStore:
             definition_hash: Required when ``state`` is ``"allow"`` -- the
                 tool's current fingerprint (see ``definition_hash()``),
                 stored alongside the allow for the rug-pull guard to
-                compare against later.
+                compare against later. Not required for ``server_key``
+                values in ``HASH_FREE_SERVER_KEYS``.
 
         Raises:
             ValueError: If ``state`` is not None and not one of
                 ``STORE_STATES``, or if ``state`` is ``"allow"`` without a
-                ``definition_hash``.
+                ``definition_hash`` and ``server_key`` is not in
+                ``HASH_FREE_SERVER_KEYS``.
         """
         if state is not None:
             _validate_state(state)
-            if state == "allow" and not definition_hash:
+            if (
+                state == "allow"
+                and not definition_hash
+                and server_key not in HASH_FREE_SERVER_KEYS
+            ):
                 raise ValueError("definition_hash is required when state is 'allow'")
 
         payload = self.load()
@@ -480,6 +486,20 @@ def definition_hash(description: str | None, input_schema: dict | None) -> str:
 #: it would let one decision govern two different execution paths. No MCP
 #: routing label (``local:``/``builtin:``/``server:``) claims ``agent:``.
 BUILTIN_TOOL_SERVER_KEY = "agent:builtin"
+
+#: Server keys whose tools carry no meaningful ``definition_hash``, so
+#: ``set_tool_state(..., "allow")`` does not require one.
+#:
+#: The hash is a RUG-PULL guard: it detects a *remote* server changing a
+#: tool's description/schema after the user trusted it. ``agent:builtin``
+#: tools are in-process code shipped with the app -- an attacker who can
+#: change them already has code execution, so the check protects nothing,
+#: while a stored hash would force a re-prompt on every release that edits
+#: a docstring. ``resolve_builtin_state`` correspondingly never reads one.
+#:
+#: Adding a REMOTE namespace here would silently disable the rug-pull guard
+#: for it; the contents are pinned by test.
+HASH_FREE_SERVER_KEYS = frozenset({BUILTIN_TOOL_SERVER_KEY})
 
 #: Precedence floor for built-in tools: they inherit ``allow`` rather than
 #: the MCP ``global_default``, so changing MCP's posture never starts
