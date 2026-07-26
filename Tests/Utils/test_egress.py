@@ -931,3 +931,24 @@ async def test_validate_navigation_chain_async(monkeypatch):
         ["http://internal.example/"],
         trusted_origins=frozenset({"internal.example"}),
     )
+
+
+def test_hop_headers_strips_x_goog_api_key_cross_origin():
+    # Gemini's custom auth header (Image_Generation/adapters/gemini_image_adapter.py)
+    # must be stripped on a cross-origin hop exactly like Authorization/Cookie --
+    # otherwise a redirect from the configured Gemini base to a different public
+    # host would forward the real API key verbatim.
+    from tldw_chatbook.Utils.egress import _hop_headers
+
+    headers = {"x-goog-api-key": "secret-key", "X-Keep": "y"}
+    stripped = _hop_headers(headers, False)
+    assert "x-goog-api-key" not in stripped
+    assert stripped.get("X-Keep") == "y"
+
+
+def test_hop_headers_keeps_x_goog_api_key_same_origin():
+    from tldw_chatbook.Utils.egress import _hop_headers
+
+    headers = {"x-goog-api-key": "secret-key"}
+    kept = _hop_headers(headers, True)
+    assert kept.get("x-goog-api-key") == "secret-key"
