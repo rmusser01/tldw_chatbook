@@ -3472,6 +3472,11 @@ class SettingsScreen(BaseAppScreen):
             return "Use the editor's Apply/Save/Reset buttons to manage themes."
         if category == SettingsCategoryId.SPLASH_SCREEN:
             return "Splash defaults are saved automatically."
+        if category == SettingsCategoryId.WORKSPACES:
+            return (
+                "Immediate actions: workspace changes apply as you make them; "
+                "there is no draft to save or revert."
+            )
         if category == SettingsCategoryId.INTERNAL_PROMPTS:
             return "Use each prompt's Save / Reset buttons in the editor to manage overrides."
         if category == SettingsCategoryId.IMAGE_GENERATION:
@@ -4732,7 +4737,7 @@ class SettingsScreen(BaseAppScreen):
         # TASK-719: name the concrete owning surfaces instead of a vague list.
         return (
             "Local Default; switch in Console (Alt+W), "
-            "manage in Library > Details > Workspace"
+            "manage in Settings > Workspaces"
         )
 
     def _acp_runtime_session_state(self) -> ACPRuntimeSessionState:
@@ -10178,9 +10183,12 @@ class SettingsScreen(BaseAppScreen):
         Renders nothing when no workspace is selected. The built-in Default
         workspace gets ONLY the protection notice -- it keeps its identity
         (no rename/archive) and stays tool-less (no folder bindings, see
-        Task 10). Every other workspace gets rename + set-active (or a
-        Static when it is already active -- never a disabled Button
-        expected to explain itself) + archive/unarchive.
+        Task 10). An archived workspace (final review Finding 3) gets ONLY
+        an explanatory note + Unarchive -- rename/set-active/archive/folder
+        controls are withheld since they act on a workspace_id that is
+        currently archived. Every other workspace gets rename + set-active
+        (or a Static when it is already active -- never a disabled Button
+        expected to explain itself) + archive + folder bindings.
         """
         workspace_id = self._settings_selected_workspace_id
         if not workspace_id:
@@ -10197,6 +10205,22 @@ class SettingsScreen(BaseAppScreen):
                     "The built-in Default workspace keeps its identity and "
                     "stays tool-less; create a workspace to bind folders.",
                     classes="settings-detail-row",
+                )
+                return
+            if record.archived:
+                # Finding 3 (final review): rename/set-active/archive/folder
+                # controls all require an ACTIVE workspace_id underneath --
+                # offering them here let a user hit a bare-id error acting
+                # on a workspace that is currently invisible everywhere
+                # else. Unarchive first restores it to normal editing.
+                yield Static(
+                    "Archived workspace. Unarchive it to rename, activate, "
+                    "or edit folders.",
+                    id="settings-workspace-archived-note",
+                    classes="settings-status-row",
+                )
+                yield Button(
+                    "Unarchive", id="settings-workspace-unarchive", compact=True
                 )
                 return
             with Horizontal(classes="settings-input-row"):
@@ -10216,14 +10240,9 @@ class SettingsScreen(BaseAppScreen):
                 yield Button(
                     "Set active", id="settings-workspace-set-active", compact=True
                 )
-            if record.archived:
-                yield Button(
-                    "Unarchive", id="settings-workspace-unarchive", compact=True
-                )
-            else:
-                yield Button(
-                    "Archive", id="settings-workspace-archive", compact=True
-                )
+            yield Button(
+                "Archive", id="settings-workspace-archive", compact=True
+            )
             yield from self._render_workspace_folder_bindings(registry, record.workspace_id)
 
     def _render_workspace_folder_bindings(

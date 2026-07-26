@@ -10,6 +10,7 @@ from Tests.UI.test_settings_configuration_hub import (
     _active_destination_screen,
     _build_test_app,
     _open_settings_category,
+    _settle_settings_mount_storm,
     _visible_text,
 )
 
@@ -109,6 +110,43 @@ async def test_default_workspace_card_is_protected() -> None:
 
 
 @pytest.mark.asyncio
+async def test_archived_workspace_card_offers_only_unarchive() -> None:
+    """Finding 3: an archived workspace's card must not offer controls that
+
+    fail with a bare-id error against an archived (currently invisible)
+    workspace -- rename/set-active/archive/folder-add all require the
+    record to be reachable outside the Show-archived view.
+    """
+    from textual.widgets import Button, Checkbox
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-archived", name="Archived WS")
+    registry.archive_workspace("ws-archived")
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+
+        screen.query_one("#settings-workspaces-show-archived", Checkbox).value = True
+        await pilot.pause(0.3)
+        screen.query_one("#settings-workspace-row-ws-archived", Button).press()
+        await pilot.pause(0.2)
+
+        assert not screen.query("#settings-workspace-rename-input")
+        assert not screen.query("#settings-workspace-rename-apply")
+        assert not screen.query("#settings-workspace-set-active")
+        assert not screen.query("#settings-workspace-archive")
+        assert not screen.query("#settings-workspace-folder-add")
+        assert screen.query_one("#settings-workspace-unarchive", Button)
+        assert (
+            "Archived workspace. Unarchive it to rename, activate, "
+            "or edit folders." in _visible_text(screen)
+        )
+
+
+@pytest.mark.asyncio
 async def test_folder_bindings_add_toggle_remove_and_inline_errors(tmp_path) -> None:
     from textual.widgets import Button, Input
 
@@ -203,3 +241,50 @@ async def test_resume_refreshes_workspaces_pane_only_when_active(monkeypatch) ->
         screen.on_screen_resume()
         await pilot.pause(0.2)
         assert refresh_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_scope_inspector_shows_immediate_actions_not_read_only() -> None:
+    """Finding 1: Workspaces is an immediate-apply category, not read-only.
+
+    The Scope Inspector impact pane (and the ``s`` Save-shortcut toast, both
+    driven by ``_guided_action_message``) must not fall through to the
+    generic "Guided edits: read-only." default -- Workspaces has its own
+    message, mirroring how THEME/SPLASH_SCREEN get theirs.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        text = _visible_text(screen)
+
+        assert "read-only" not in text
+        assert (
+            "Immediate actions: workspace changes apply as you make them; "
+            "there is no draft to save or revert." in text
+        )
+
+
+@pytest.mark.asyncio
+async def test_overview_pins_workspaces_recovery_copy() -> None:
+    """Finding 2 (spec §6): Overview must point users at Settings > Workspaces.
+
+    Cross-surface copy pin -- Settings Overview's "Where changes happen"
+    recovery row is the guidance a user sees before ever opening the
+    Workspaces category, so it must name the real owning surfaces.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert (
+            "Sync status here is read-only - manage workspaces in "
+            "Settings > Workspaces; switch in Console (Alt+W); run "
+            "sync from the owning sync surfaces." in text
+        )

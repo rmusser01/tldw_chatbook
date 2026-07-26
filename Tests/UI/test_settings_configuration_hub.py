@@ -1786,7 +1786,7 @@ def test_settings_server_sync_workspace_rows_fallback_to_read_only_wip_copy():
     assert "Collections: dry-run only" in rows["Sync safety"]
     assert "Workspaces: dry-run only" in rows["Sync safety"]
     assert rows["Workspace default"] == (
-        "Local Default; switch in Console (Alt+W), manage in Library > Details > Workspace"
+        "Local Default; switch in Console (Alt+W), manage in Settings > Workspaces"
     )
     assert rows["Library visibility"] == LIBRARY_WORKSPACE_VISIBILITY_COPY
     assert rows["ACP handoff readiness"] == (
