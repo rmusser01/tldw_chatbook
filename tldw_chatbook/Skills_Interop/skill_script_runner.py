@@ -412,109 +412,114 @@ def run_script_subprocess(
     # A throwaway HOME, always deleted, so interpreter/OS cache junk never
     # lands in a caller-retained working directory (task-584).
     home_dir = Path(tempfile.mkdtemp(prefix="tldw-skill-home-"))
-    started = time.monotonic()
-    process = subprocess.Popen(  # noqa: S603 — argv list, shell=False, scrubbed env
-        argv,
-        cwd=str(cwd),
-        env=_scrubbed_env(cwd, home=home_dir),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        shell=False,
-        start_new_session=True,
-    )
-    # start_new_session makes the child a session/group leader, so its pgid is
-    # its pid. Capture it now, before anything can reap the child: POSIX keeps
-    # a pid number reserved for as long as it is still in use as a pgid, so
-    # killing this pgid while the child is confirmed not yet reaped (the
-    # timeout branch below) cannot hit a recycled, unrelated group. See the
-    # comment at the kill site for the one branch where that is not fully
-    # guaranteed.
-    pgid = process.pid
-    streams = (process.stdout, process.stderr)
-
-    readers: list[threading.Thread] = []
     try:
-        for stream, sink in zip(streams, (out_sink, err_sink)):
-            thread = threading.Thread(
-                target=_read_capped,
-                args=(stream, sink),
-                name="skill-script-reader",
-                daemon=True,
-            )
-            thread.start()
-            readers.append(thread)
-    except BaseException:
-        # Anything that fails after Popen must not leak a live child.
+        started = time.monotonic()
+        process = subprocess.Popen(  # noqa: S603 — argv list, shell=False, scrubbed env
+            argv,
+            cwd=str(cwd),
+            env=_scrubbed_env(cwd, home=home_dir),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            start_new_session=True,
+        )
+        # start_new_session makes the child a session/group leader, so its pgid is
+        # its pid. Capture it now, before anything can reap the child: POSIX keeps
+        # a pid number reserved for as long as it is still in use as a pgid, so
+        # killing this pgid while the child is confirmed not yet reaped (the
+        # timeout branch below) cannot hit a recycled, unrelated group. See the
+        # comment at the kill site for the one branch where that is not fully
+        # guaranteed.
+        pgid = process.pid
+        streams = (process.stdout, process.stderr)
+
+        readers: list[threading.Thread] = []
+        try:
+            for stream, sink in zip(streams, (out_sink, err_sink)):
+                thread = threading.Thread(
+                    target=_read_capped,
+                    args=(stream, sink),
+                    name="skill-script-reader",
+                    daemon=True,
+                )
+                thread.start()
+                readers.append(thread)
+        except BaseException:
+            # Anything that fails after Popen must not leak a live child.
+            _kill_group(pgid)
+            _reap(process)
+            for orphan in streams[len(readers) :]:  # no reader owns these
+                _close_quietly(orphan)
+            for reader in readers:
+                reader.join(timeout=_READER_JOIN_GRACE_SECONDS)
+            raise
+
+        timed_out = False
+        deadline = started + limits.wall_clock_seconds
+        while True:
+            if process.poll() is not None:
+                break
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            time.sleep(_POLL_INTERVAL_SECONDS)
+
+        # Unconditional, including the clean-exit path: surviving descendants hold
+        # the pipes open (readers would block forever) and would outlive the run.
+        #
+        # Deliberately kill before doing any further polling of our own: on the
+        # timeout branch the loop's last poll() found the child still running, so
+        # it is still unreaped right here and this kill cannot race a recycled
+        # pgid. On the clean-exit branch the loop's OWN completion-detecting
+        # poll() already reaped the child as a side effect of answering "is it
+        # done" — there is no portable peek-without-reap primitive available here
+        # to avoid that, so a vanishingly small (pid-wraparound-within-
+        # microseconds) window remains on that branch only.
         _kill_group(pgid)
-        _reap(process)
-        for orphan in streams[len(readers) :]:  # no reader owns these
-            _close_quietly(orphan)
+        exit_code = _reap(process)
+        if exit_code is None:
+            warnings.append(
+                "the sandboxed process did not exit after SIGKILL; its exit status "
+                "is unknown and its output may be incomplete"
+            )
+        elif timed_out and exit_code != -signal.SIGKILL:
+            # The child can finish in the sliver between the last poll and the
+            # deadline check above. The SIGKILL just sent lands regardless (it is
+            # a no-op if the child is already a zombie), so it can no longer be
+            # used to tell "we killed it" from "it had already finished" — the
+            # exit status can: a signal-terminated status of exactly SIGKILL means
+            # this kill is what ended it; anything else means it had already
+            # exited on its own, so this was not actually a timeout.
+            timed_out = False
+
         for reader in readers:
             reader.join(timeout=_READER_JOIN_GRACE_SECONDS)
-        raise
+        if any(reader.is_alive() for reader in readers):
+            logger.warning(
+                "skill script reader still blocked after process-group kill; "
+                "returning the output captured so far"
+            )
+            warnings.append(
+                "output may be incomplete: a reader was still blocked on the "
+                "child's pipe when the run was torn down"
+            )
 
-    timed_out = False
-    deadline = started + limits.wall_clock_seconds
-    while True:
-        if process.poll() is not None:
-            break
-        if time.monotonic() >= deadline:
-            timed_out = True
-            break
-        time.sleep(_POLL_INTERVAL_SECONDS)
-
-    # Unconditional, including the clean-exit path: surviving descendants hold
-    # the pipes open (readers would block forever) and would outlive the run.
-    #
-    # Deliberately kill before doing any further polling of our own: on the
-    # timeout branch the loop's last poll() found the child still running, so
-    # it is still unreaped right here and this kill cannot race a recycled
-    # pgid. On the clean-exit branch the loop's OWN completion-detecting
-    # poll() already reaped the child as a side effect of answering "is it
-    # done" — there is no portable peek-without-reap primitive available here
-    # to avoid that, so a vanishingly small (pid-wraparound-within-
-    # microseconds) window remains on that branch only.
-    _kill_group(pgid)
-    exit_code = _reap(process)
-    if exit_code is None:
-        warnings.append(
-            "the sandboxed process did not exit after SIGKILL; its exit status "
-            "is unknown and its output may be incomplete"
+        stdout_bytes, stdout_capped = out_sink.snapshot()
+        stderr_bytes, stderr_capped = err_sink.snapshot()
+        return ScriptRunResult(
+            exit_code=exit_code,
+            stdout=stdout_bytes.decode("utf-8", errors="replace"),
+            stderr=stderr_bytes.decode("utf-8", errors="replace"),
+            timed_out=timed_out,
+            output_capped=bool(stdout_capped or stderr_capped),
+            duration_seconds=time.monotonic() - started,
+            truncated_stdout=stdout_capped,
+            truncated_stderr=stderr_capped,
+            sandbox_warnings=tuple(warnings),
         )
-    elif timed_out and exit_code != -signal.SIGKILL:
-        # The child can finish in the sliver between the last poll and the
-        # deadline check above. The SIGKILL just sent lands regardless (it is
-        # a no-op if the child is already a zombie), so it can no longer be
-        # used to tell "we killed it" from "it had already finished" — the
-        # exit status can: a signal-terminated status of exactly SIGKILL means
-        # this kill is what ended it; anything else means it had already
-        # exited on its own, so this was not actually a timeout.
-        timed_out = False
-
-    for reader in readers:
-        reader.join(timeout=_READER_JOIN_GRACE_SECONDS)
-    if any(reader.is_alive() for reader in readers):
-        logger.warning(
-            "skill script reader still blocked after process-group kill; "
-            "returning the output captured so far"
-        )
-        warnings.append(
-            "output may be incomplete: a reader was still blocked on the "
-            "child's pipe when the run was torn down"
-        )
-
-    stdout_bytes, stdout_capped = out_sink.snapshot()
-    stderr_bytes, stderr_capped = err_sink.snapshot()
-    shutil.rmtree(home_dir, ignore_errors=True)
-    return ScriptRunResult(
-        exit_code=exit_code,
-        stdout=stdout_bytes.decode("utf-8", errors="replace"),
-        stderr=stderr_bytes.decode("utf-8", errors="replace"),
-        timed_out=timed_out,
-        output_capped=bool(stdout_capped or stderr_capped),
-        duration_seconds=time.monotonic() - started,
-        truncated_stdout=stdout_capped,
-        truncated_stderr=stderr_capped,
-        sandbox_warnings=tuple(warnings),
-    )
+    finally:
+        # Deterministic cleanup: Popen itself can raise OSError and
+        # several paths above can throw once the directory exists, so
+        # this must not sit on the normal return path alone.
+        shutil.rmtree(home_dir, ignore_errors=True)
