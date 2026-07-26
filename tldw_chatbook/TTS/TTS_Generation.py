@@ -408,6 +408,7 @@ class TTSService:
         self._responses: set[_ManagedAudioResponse] = set()
         self._admitted_operations: set[_AdmittedTTSOperation] = set()
         self._settings_generation = 0
+        self._settings_persisted_provider_generations: dict[str, int] = {}
         self._settings_publication_tasks: set[asyncio.Task[TTSSettingsPublication]] = (
             set()
         )
@@ -789,6 +790,14 @@ class TTSService:
                 self._resolve_settings_foreground(foreground, result)
                 return result
 
+            # Expose durable, provider-scoped proof before a newer handoff can
+            # wake an older publication that it superseded.
+            for provider_id in provider_configs:
+                self._settings_persisted_provider_generations[provider_id] = max(
+                    generation,
+                    self._settings_persisted_provider_generations.get(provider_id, 0),
+                )
+
             async with self._request_admission._gate.write():
                 transition_failed = False
                 for provider_id, config in provider_configs.items():
@@ -895,7 +904,10 @@ class TTSService:
             return "applied"
         if result is ReconfigureResult.UNCHANGED:
             return "unchanged"
-        if self.preferences_generation() > ticket.generation:
+        if (
+            self._settings_persisted_provider_generations.get(provider_id, 0)
+            > ticket.generation
+        ):
             return "superseded"
         await self._seal_provider_configs((provider_id,))
         return "unavailable"

@@ -1276,6 +1276,132 @@ async def test_newer_settings_publication_supersedes_pending_handoff() -> None:
     await service.wait_closed()
 
 
+class _OlderPublicationObserverFirstService(TTSService):
+    """Force an older pending publication to classify its result first."""
+
+    def __init__(
+        self,
+        registry: TTSAdapterRegistry,
+        snapshot: TTSPreferencesSnapshot,
+    ) -> None:
+        self.older_generation: int | None = None
+        self.newer_generation: int | None = None
+        self.older_status_classified = asyncio.Event()
+        super().__init__(registry, preferences_snapshot=snapshot)
+
+    async def _reconfiguration_status(
+        self,
+        provider_id: str,
+        ticket: Any,
+    ) -> Any:
+        if ticket.generation == self.newer_generation:
+            await self.older_status_classified.wait()
+        status = await super()._reconfiguration_status(provider_id, ticket)
+        if ticket.generation == self.older_generation:
+            self.older_status_classified.set()
+        return status
+
+
+@pytest.mark.asyncio
+async def test_persisted_newer_handoff_supersedes_older_before_snapshot_publish() -> (
+    None
+):
+    adapters: list[_CapturingAdapter] = []
+
+    def factory(config: Mapping[str, Any]) -> _CapturingAdapter:
+        adapter = _CapturingAdapter(
+            "audio_cpp",
+            generation=str(config["generation"]),
+        )
+        adapters.append(adapter)
+        return adapter
+
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=factory,
+                initial_config={"generation": "one"},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = _OlderPublicationObserverFirstService(
+        registry,
+        _snapshot(model_id="Model/One"),
+    )
+    active_response = await service.synthesize_default(text="Generation one")
+    outcome_type = generation_module.TTSSettingsPersistenceOutcome
+    replacement: TTSAudioResponse | None = None
+
+    try:
+        older = service.begin_preferences_publication(
+            _snapshot(model_id="Model/Two"),
+            {"audio_cpp": {"generation": "two"}},
+            lambda: outcome_type(True, True, None),
+            foreground_timeout_seconds=0,
+        )
+        service.older_generation = older.generation
+        assert (await asyncio.shield(older.foreground)).provider_statuses == {
+            "audio_cpp": "pending"
+        }
+
+        newer = service.begin_preferences_publication(
+            _snapshot(model_id="Model/Three"),
+            {"audio_cpp": {"generation": "three"}},
+            lambda: outcome_type(True, True, None),
+            foreground_timeout_seconds=_WAIT_SECONDS,
+        )
+        service.newer_generation = newer.generation
+
+        async def wait_for_newer_pending_config() -> None:
+            while registry._slots["audio_cpp"].pending_generation != newer.generation:
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(
+            wait_for_newer_pending_config(),
+            timeout=_WAIT_SECONDS,
+        )
+        await active_response.aclose()
+
+        older_result, newer_foreground, newer_result = await asyncio.gather(
+            asyncio.shield(older.completion),
+            asyncio.shield(newer.foreground),
+            asyncio.shield(newer.completion),
+        )
+
+        assert older_result.provider_statuses == {"audio_cpp": "superseded"}
+        assert newer_foreground.provider_statuses == {"audio_cpp": "applied"}
+        assert newer_result.provider_statuses == {"audio_cpp": "applied"}
+        assert service.preferences_snapshot().model_id == "Model/Three"
+        assert service.preferences_generation() == newer.generation
+        assert registry.configuration_generation("audio_cpp") == newer.generation
+        assert registry.configuration_revision("audio_cpp") == 2
+        assert len(adapters) == 1
+        assert adapters[0].generation == "one"
+        assert adapters[0].close_calls == 1
+
+        replacement = await service.synthesize_default(text="Generation three")
+        assert len(adapters) == 2
+        assert adapters[0].close_calls == 1
+        assert adapters[1].generation == "three"
+        assert adapters[1].requests[0].model_id == "Model/Three"
+        assert registry.expected_revisions[-1] == ("audio_cpp", 2)
+    finally:
+        await active_response.aclose()
+        if replacement is not None:
+            await replacement.aclose()
+        await service.close()
+        await service.wait_closed()
+
+    assert [adapter.close_calls for adapter in adapters] == [1, 1]
+
+
 @pytest.mark.asyncio
 async def test_persistence_runs_off_loop_and_publications_remain_serialized() -> None:
     adapter = _CapturingAdapter("audio_cpp")
