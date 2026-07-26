@@ -142,16 +142,26 @@ applied passes today, with the label invisible.
 
 ### `.library-collection-row` — investigated, no fix
 
-`LibraryCollectionsPanel` was mounted with the production bundle and a selected row. The selected
-row does pick up the global `.is-active { border: round }`:
+`LibraryCollectionsPanel` was mounted with the production bundle (`App(CSS_PATH=...)`, size
+`(120, 40)`), with three collections and the middle one `selected=True`. The first measurement
+pass (superseded below) read `widget.styles.border` and `widget.size`. That was a mistake:
+`Widget.size` is the **content** box (inside any border), not the widget's full on-screen extent,
+so it reads `(16, 1)` for every row regardless of whether that row also carries a border — it
+cannot distinguish a 1-row button from a 3-row bordered one. Re-measured with `widget.region`
+(the full outer rectangle, border included) after two `pilot.pause()` calls past the initial
+render:
 
 ```
-'Alpha - 1 item'    is-active=False  border=['','','','']              size=(16, 1)
-'Bravo - 1 item'    is-active=True   border=['round','round','round','round']  size=(16, 1)
-'Charlie - 1 item'  is-active=False  border=['','','','']              size=(18, 1)
+'Alpha - 1 item'    is-active=False  border=['','','','']                      region=Region(x=0, y=2, width=16, height=1)
+'Bravo - 1 item'    is-active=True   border=['round','round','round','round']  region=Region(x=0, y=3, width=18, height=3)
+'Charlie - 1 item'  is-active=False  border=['','','','']                      region=Region(x=0, y=6, width=18, height=1)
 ```
 
-But the rendered result is **not** the Lab defect. Lab's mode strip is height-constrained to one
+`region.height` shows what `size` could not: the selected row is genuinely 3 rows tall on screen,
+its siblings 1. Reading the actual compositor output (`screen._compositor.render_strips()`)
+confirms the label survives the extra rows — `"Bravo"` is present in the rendered strip text.
+
+The rendered result is **not** the Lab defect. Lab's mode strip is height-constrained to one
 row, so the border's box clipped the label away entirely. The collections list has vertical room,
 so the bordered row simply grows to three rows and its label stays fully readable — it reads as a
 deliberate selection box.

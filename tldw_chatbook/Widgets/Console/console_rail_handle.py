@@ -15,8 +15,28 @@ class ConsoleRailHandle(DestinationRailHandle):
     columns wide. They are Console's vocabulary, not the shared base's.
     """
 
-    def __init__(self, *, side: str, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        label: str,
+        badge: str = "",
+        button_id: str,
+        badge_id: str,
+        side: str,
+        **kwargs: Any,
+    ) -> None:
+        """Create Console's rail handle.
+
+        Forwards the base's keywords by name so a call site can only ever
+        supply them once. ``open_tooltip`` is deliberately not accepted here:
+        Console's tooltips are fixed strings derived from ``side``, not
+        caller-supplied.
+        """
         super().__init__(
+            label=label,
+            badge=badge,
+            button_id=button_id,
+            badge_id=badge_id,
             side=side,
             open_tooltip=(
                 "Open Context rail" if side == "left" else "Open Inspector rail"

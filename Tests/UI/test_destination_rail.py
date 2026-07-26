@@ -6,6 +6,8 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_INSPECTOR_LABEL
+from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 from tldw_chatbook.Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailHandle,
@@ -114,10 +116,6 @@ def test_shared_glyphs_match_the_console_originals():
 
     assert GLYPH_EXPANDED == console_glyphs.GLYPH_EXPANDED
     assert GLYPH_COLLAPSED == console_glyphs.GLYPH_COLLAPSED
-
-
-from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_INSPECTOR_LABEL
-from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 
 
 def _console_handle(**overrides) -> ConsoleRailHandle:

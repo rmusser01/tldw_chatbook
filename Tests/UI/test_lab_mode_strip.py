@@ -278,3 +278,79 @@ async def test_active_mode_chip_has_no_border_so_its_label_renders(route, active
         assert not _has_border(chip), (
             f"{active_chip} has a border; its label is clipped by the 1-row strip"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("route", "active_chip", "other_chip"), [
+    ("llm", "lab-mode-models", "lab-mode-speech"),
+    ("stts", "lab-mode-speech", "lab-mode-evals"),
+    ("evals", "lab-mode-evals", "lab-mode-models"),
+])
+async def test_focused_non_active_chip_does_not_impersonate_the_active_chip(
+    route, active_chip, other_chip
+):
+    """A focused, non-active chip must not read as the active one.
+
+    The app's global `Button:focus` grants `bold underline` -- exactly the
+    `.is-active` chip's signature (`$ds-focus-bg`/`$ds-focus-fg`/`bold
+    underline`). Without a focus guard, tabbing to a non-active chip would
+    make two chips look active at once, defeating the point of highlighting
+    the active mode at all. Underline must stay exclusive to `.is-active`.
+    """
+    app = _BundledStripHarness(route)
+    async with app.run_test(size=(80, 6)) as pilot:
+        await pilot.pause()
+        active_chip_widget = app.query_one(f"#{active_chip}")
+        other_chip_widget = app.query_one(f"#{other_chip}")
+
+        app.set_focus(other_chip_widget)
+        await pilot.pause()
+
+        active_text_style = active_chip_widget.styles.text_style
+        other_text_style = other_chip_widget.styles.text_style
+
+        assert active_text_style != other_text_style
+        assert active_text_style.underline, (
+            "the active chip lost its underline signature"
+        )
+        assert not other_text_style.underline, (
+            f"focused non-active chip {other_chip} carries underline; it now "
+            "reads as active too"
+        )
+
+
+def _rendered_text(app: App) -> str:
+    """Join every compositor strip's segment text into one blob.
+
+    Textual 8.2.7 has no `App.export_text()`; `screen._compositor.render_strips()`
+    is the way to read what was actually rendered, as opposed to inferring it
+    from styles.
+    """
+    strips = app.screen._compositor.render_strips()
+    return "\n".join("".join(segment.text for segment in strip) for strip in strips)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("route", "active_label"), [
+    ("llm", "Models"),
+    ("stts", "Speech"),
+    ("evals", "Evals"),
+])
+async def test_active_mode_chip_label_is_actually_rendered(route, active_label):
+    """Assert the active chip's rendered label text, not a styles proxy.
+
+    The spec requires the active chip's *rendered label* be present -- a
+    test asserting only the `is-active` class or the absence of a border
+    passes even when the label is clipped by the surrounding strip. This
+    reads the real compositor output, so it fails if the label is ever
+    clipped again for any reason (not just the specific border bug fixed
+    here).
+    """
+    app = _BundledStripHarness(route)
+    async with app.run_test(size=(80, 6)) as pilot:
+        await pilot.pause()
+        rendered = _rendered_text(app)
+
+        assert active_label in rendered, (
+            f"active label {active_label!r} not found in rendered strip output:\n{rendered}"
+        )

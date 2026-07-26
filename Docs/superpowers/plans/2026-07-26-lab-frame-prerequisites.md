@@ -46,8 +46,19 @@ tripped by Settings, not a Console regression.
 separate concern with its own owner. Note that PR0 also writes to the bundle; its rules use
 `border: none` and must not trip this assertion.
 
-`Tests/UI/test_library_shell.py` additionally carries 4 recorded baseline failures. Confirm the
-count is unchanged rather than expecting zero.
+`Tests/UI/test_library_shell.py` additionally carries **3** recorded baseline failures (measured
+directly on this worktree, `-p no:randomly`, reproduced twice for determinism — not 4 as previously
+recorded here):
+
+```
+Tests/UI/test_library_shell.py::test_library_shell_search_history_prefers_app_config_over_cli_config
+Tests/UI/test_library_shell.py::test_library_shell_rail_preferences_prefers_app_config_over_cli_config
+Tests/UI/test_library_shell.py::test_library_shell_ingest_nav_context_deeplink_reentry_resets_stale_form
+
+3 failed, 254 passed
+```
+
+Confirm the count is unchanged rather than expecting zero.
 
 ---
 
@@ -870,9 +881,9 @@ This is the whole point of subclassing rather than migrating. Run every suite th
   -v
 ```
 
-Expected: PASS, **with no edits to any of those files**. Note the four pre-existing
-`test_library_shell` failures recorded as baseline — confirm the count is unchanged rather than
-assuming zero.
+Expected: PASS, **with no edits to any of those files**. Note the three pre-existing
+`test_library_shell` failures recorded as baseline (see the corrected count above) — confirm the
+count is unchanged rather than assuming zero.
 
 If any of these need changing, the subclass approach failed; stop and report rather than editing
 the tests.
