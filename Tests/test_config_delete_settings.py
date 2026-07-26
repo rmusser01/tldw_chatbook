@@ -2,8 +2,10 @@
 
 import os
 from pathlib import Path
+import threading
 import tomllib
 
+import pytest
 import toml
 
 from tldw_chatbook import config as config_module
@@ -408,6 +410,151 @@ def test_batch_save_delete_keys_delegates_to_one_structured_mutation(
     assert saved["app_tts"] == {
         "default_provider": "audio_cpp",
         "default_model_mode": "first_available",
+    }
+
+
+def test_empty_batch_save_remains_a_successful_noop(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, {"app_tts": {"default_provider": "audio_cpp"}})
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    original_bytes = config_path.read_bytes()
+    original_mtime_ns = config_path.stat().st_mtime_ns
+
+    assert config_module.save_settings_to_cli_config({})
+
+    assert config_path.read_bytes() == original_bytes
+    assert config_path.stat().st_mtime_ns == original_mtime_ns
+
+
+def test_batch_save_with_only_empty_sections_remains_a_successful_noop(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, {"app_tts": {"default_provider": "audio_cpp"}})
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    original_bytes = config_path.read_bytes()
+    original_mtime_ns = config_path.stat().st_mtime_ns
+
+    assert config_module.save_settings_to_cli_config(
+        {"app_tts": {}, "tts_settings": {}}
+    )
+
+    assert config_path.read_bytes() == original_bytes
+    assert config_path.stat().st_mtime_ns == original_mtime_ns
+
+
+def test_shared_lock_prevents_lost_concurrent_set_and_delete_updates(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(
+        config_path,
+        {
+            "shared": {
+                "obsolete": "remove-me",
+                "preserved": "keep-me",
+            }
+        },
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    real_atomic_write = config_module.atomic_write_text
+    set_at_write = threading.Event()
+    release_set_write = threading.Event()
+    delete_attempting_lock = threading.Event()
+
+    class InstrumentedLock:
+        def __init__(self, lock) -> None:
+            self._lock = lock
+            self._state_lock = threading.Lock()
+            self._owner: str | None = None
+            self.blocked_threads: list[str] = []
+
+        def __enter__(self):
+            thread_name = threading.current_thread().name
+            with self._state_lock:
+                if self._owner is not None:
+                    self.blocked_threads.append(thread_name)
+            if thread_name == "delete-worker":
+                delete_attempting_lock.set()
+            self._lock.acquire()
+            with self._state_lock:
+                self._owner = thread_name
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback) -> None:
+            del exc_type, exc_value, traceback
+            with self._state_lock:
+                self._owner = None
+            self._lock.release()
+
+    instrumented_lock = InstrumentedLock(config_module._CONFIG_FILE_LOCK)
+    monkeypatch.setattr(config_module, "_CONFIG_FILE_LOCK", instrumented_lock)
+    monkeypatch.setattr(
+        config_module,
+        "load_settings",
+        lambda *, force_reload=False: {},
+    )
+
+    def controlled_atomic_write(*args, **kwargs):
+        if threading.current_thread().name == "set-worker":
+            set_at_write.set()
+            if not release_set_write.wait(timeout=5):
+                raise AssertionError("set worker was not released")
+        return real_atomic_write(*args, **kwargs)
+
+    monkeypatch.setattr(
+        config_module,
+        "atomic_write_text",
+        controlled_atomic_write,
+    )
+    results: dict[str, config_module.ConfigMutationResult] = {}
+
+    def set_value() -> None:
+        results["set"] = config_module.apply_settings_mutation_to_cli_config(
+            {"new_section": {"value": "set"}},
+        )
+
+    def delete_value() -> None:
+        results["delete"] = config_module.apply_settings_mutation_to_cli_config(
+            {},
+            delete_keys={"shared": ("obsolete",)},
+        )
+
+    set_thread = threading.Thread(target=set_value, name="set-worker")
+    delete_thread = threading.Thread(target=delete_value, name="delete-worker")
+    set_thread.start()
+    if not set_at_write.wait(timeout=5):
+        release_set_write.set()
+        set_thread.join(timeout=5)
+        pytest.fail("set worker did not reach the atomic write")
+
+    delete_thread.start()
+    if not delete_attempting_lock.wait(timeout=5):
+        release_set_write.set()
+        set_thread.join(timeout=5)
+        delete_thread.join(timeout=5)
+        pytest.fail("delete worker did not attempt the shared lock")
+
+    release_set_write.set()
+    set_thread.join(timeout=5)
+    delete_thread.join(timeout=5)
+
+    assert not set_thread.is_alive()
+    assert not delete_thread.is_alive()
+    assert instrumented_lock.blocked_threads == ["delete-worker"]
+    assert results == {
+        "set": config_module.ConfigMutationResult(True, True, None),
+        "delete": config_module.ConfigMutationResult(True, True, None),
+    }
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved == {
+        "shared": {"preserved": "keep-me"},
+        "new_section": {"value": "set"},
     }
 
 

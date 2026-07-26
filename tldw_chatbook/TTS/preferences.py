@@ -139,6 +139,8 @@ class TTSConfigMutation:
         for section, keys in self.deletes.items():
             if not isinstance(section, str) or not section:
                 raise ValueError("TTS configuration section must be a non-empty string")
+            if isinstance(keys, (str, bytes)):
+                raise ValueError("TTS configuration delete keys must be collections")
             copied_keys = tuple(keys)
             if not all(isinstance(key, str) and key for key in copied_keys):
                 raise ValueError(

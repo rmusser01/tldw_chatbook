@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
-from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
@@ -164,24 +163,37 @@ def test_supported_settings_shapes_parse_without_textual_state(shape: str) -> No
 
 
 def test_reading_legacy_blanks_does_not_mutate_input_or_write_disk(
-    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from tldw_chatbook import config as config_module
+
     TTSPreferencesSnapshot, _ = _preferences_api()
     settings = _audio_cpp_settings()
     original_settings = deepcopy(settings)
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        '[app_tts]\ndefault_provider = "audio_cpp"\ndefault_model = ""\n',
-        encoding="utf-8",
-    )
-    original_bytes = config_path.read_bytes()
-    original_mtime_ns = config_path.stat().st_mtime_ns
+    persistence_calls: list[str] = []
+
+    def unexpected_persistence(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        persistence_calls.append("called")
+        raise AssertionError("preference reads must not call persistence helpers")
+
+    for helper_name in (
+        "apply_settings_mutation_to_cli_config",
+        "save_settings_to_cli_config",
+        "save_setting_to_cli_config",
+        "delete_settings_from_cli_config",
+        "atomic_write_text",
+    ):
+        monkeypatch.setattr(
+            config_module,
+            helper_name,
+            unexpected_persistence,
+        )
 
     TTSPreferencesSnapshot.from_settings(settings)
 
+    assert persistence_calls == []
     assert settings == original_settings
-    assert config_path.read_bytes() == original_bytes
-    assert config_path.stat().st_mtime_ns == original_mtime_ns
 
 
 def test_preference_snapshot_is_frozen_and_slotted() -> None:
@@ -363,3 +375,19 @@ def test_config_mutation_defensively_freezes_nested_mappings() -> None:
     assert mutation.deletes["app_tts"] == ("default_model",)
     with pytest.raises(TypeError):
         mutation.sets["app_tts"]["default_provider"] = "openai"
+
+
+@pytest.mark.parametrize("delete_keys", ("default_model", b"default_model"))
+def test_config_mutation_rejects_string_like_delete_collections(
+    delete_keys: str | bytes,
+) -> None:
+    _, TTSConfigMutation = _preferences_api()
+
+    with pytest.raises(
+        ValueError,
+        match="^TTS configuration delete keys must be collections$",
+    ):
+        TTSConfigMutation(
+            sets={},
+            deletes={"app_tts": delete_keys},  # type: ignore[dict-item]
+        )
