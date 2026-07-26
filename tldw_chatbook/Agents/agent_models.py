@@ -150,8 +150,8 @@ class RunBudget:
     # 30-turn run tractable. 0 = unlimited, restoring pre-cap behaviour.
     max_tool_result_chars: int = 16000
     # Primary provider-call limiter (task-244): counts STEP_MODEL turns.
-    # Raised 8 -> 20 so an agent gets ~20 tool-calling rounds per user
-    # message rather than ~8. It stays >= max_steps at engine defaults, so
+    # Raised 8 -> 20, then 20 -> 30, so an agent gets ~30 tool-calling
+    # rounds per user message. It stays >= max_steps at engine defaults, so
     # it remains provably unreachable here (every model turn appends >=1
     # step, so the step check fires first) — engine-default behavior is
     # unchanged. It bites only where max_steps is raised to match; the
@@ -220,14 +220,18 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
     """Clamp a sub-agent's budget so it cannot outlive its parent.
 
     Sub-agents deliberately INHERIT ``max_model_turns`` and ``max_steps``
-    rather than being clamped down (operator decision, 2026-07-25, when the
-    Console cap was raised 8 -> 20). A child therefore gets the same
-    round budget as its parent, so one Console message can reach
+    rather than being clamped down (operator decision, 2026-07-25, first
+    taken when the Console cap was raised 8 -> 20 and re-confirmed when it
+    went 20 -> 30). A child therefore gets the same round budget as its
+    parent, so one Console message can reach
     ``max_model_turns * (1 + max_subagents)`` provider turns in the worst
-    case — 60 at the Console's current 20/2. That worst case is bounded in
+    case — 90 at the Console's current 30/2. That worst case is bounded in
     TIME by the wall-clock clamp below (a child can never outlive its
-    parent's remaining budget), not in spend. Do not "fix" this by
-    clamping turns without checking that decision.
+    parent's remaining budget). It is bounded in SPEND by
+    ``max_total_tokens``, which the Console sets non-zero for exactly this
+    reason (``console_agent_bridge.CONSOLE_MAX_TOTAL_TOKENS``) — that
+    ceiling is the deliberate alternative to clamping turns here. Do not
+    "fix" this by clamping turns without checking that decision.
 
     Wall-clock is clamped to the parent's remainder (floored at 1s);
     ``max_subagents`` is zeroed — depth-1 sub-agents never spawn.

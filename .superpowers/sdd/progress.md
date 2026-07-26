@@ -255,3 +255,19 @@ Pre-flight plan fixes (before Task 1, commit below):
 Tasks: 14. Held pending user confirmation: Task 13 (deletes ToolExecutor +
 Tools_Settings_Window switches app-wide; user is working on TASK-656/627 in
 parallel and may want it after their rebase).
+Task 4: complete (commits 73d2ff07c + b4dc29ffd, review clean)
+  - HIGH_RISK_TAGS -> {mutates, process, network}. Reviewer grepped repo-wide: only two
+    consumers, both `set(tool.tags) & HIGH_RISK_TAGS`, so a third member only affects
+    tools actually tagged network. No tool is tagged network yet (correct for this task).
+  - Pre-existing Tests/MCP test_high_risk_tags_constant updated: it is a pure pin on the
+    constant's contents, so updating it is correct, not a weakening.
+  - Minor (stale Tool.risk_tags docstring) fixed directly in b4dc29ffd, 349 tests green.
+Task 5: complete (commits c69a35a5a + 19b6477bc, review clean)
+  - Implementer took the structural route: _partition_mcp_catalog_by_collision is the
+    single predicate evaluation point; _non_colliding_mcp_names and shadowed_mcp_names
+    are thin wrappers over its halves, so they cannot drift out of being complements.
+  - Reviewer confirmed list_catalog() is a cached in-memory read (mcp_tool_provider.py:260),
+    NOT network-backed, so calling it from both wrappers is two cheap list copies.
+  - Minor (untested log) escalated and fixed: the log IS this task's deliverable. Repo
+    already had a temp-loguru-sink idiom (caplog does not intercept loguru) -- reused it.
+    2 tests: warning fires + names the tool, and stays silent with no collisions.
