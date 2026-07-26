@@ -3246,9 +3246,10 @@ class ToolsSettingsWindow(Container):
 
             yield Label("Available Tools", classes="settings-label")
             yield Static(
-                "Enable tools for the agent. Tools with a risk tag always ask "
-                "for approval before each call -- enabling one makes it "
-                "reachable, not automatic.",
+                "Enable tools for the agent. Enabling one makes it reachable, "
+                "not automatic: a tool with a risk tag asks for approval before "
+                "each call, unless you have granted it standing permission in "
+                "MCP Hub \u25b8 Permissions.",
                 classes="section-description",
             )
 

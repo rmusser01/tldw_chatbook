@@ -13,20 +13,6 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 
 
-@pytest.fixture
-def tools_config(monkeypatch):
-    values = {}
-    import tldw_chatbook.config as config_module
-
-    def fake(section, key=None, default=None):
-        if section != "tools" or not isinstance(key, str):
-            return default
-        return values.get(key, default)
-
-    monkeypatch.setattr(config_module, "get_cli_setting", fake)
-    return values
-
-
 def test_saving_a_gate_key_round_trips_to_the_provider(tmp_path, monkeypatch):
     """config -> save -> provider: the round trip the UI depends on.
 
