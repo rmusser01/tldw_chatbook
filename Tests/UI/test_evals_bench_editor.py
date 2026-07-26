@@ -122,6 +122,14 @@ def bench_with_mixed_readiness(evals_db: EvalsDB) -> tuple[str, dict[str, str]]:
     return task_id, {"ready": ready_id, "warned": warned_id, "blocked": blocked_id}
 
 
+#: `bench_with_mixed_readiness` builds `config.target_ids` in exactly this
+#: order (`(ready_id, warned_id, blocked_id)`) -- the target table and
+#: inspector rows are index-derived (see `bench_editor.py`/`inspector.py`'s
+#: fix), so this is the stable mapping from the fixture's readable names to
+#: the row a test should query.
+_TARGET_INDEX = {"ready": 0, "warned": 1, "blocked": 2}
+
+
 @pytest.fixture
 def never_run_bench(evals_db: EvalsDB) -> str:
     """A bench with no run group at all -- there is no snapshot to read
@@ -228,8 +236,12 @@ def classic_task_with_runs(evals_db: EvalsDB) -> str:
     return task_id
 
 
-def _target_status_text(screen, target_id: str) -> str:
-    widget = screen.query_one(f"#evals-inspector-target-{target_id}")
+def _target_status_text(screen, index: int) -> str:
+    """Looks up an inspector target row by INDEX, not target id -- widget
+    ids in ``inspector.py`` are index-derived (see its fix for the same
+    duplicate-id-collision principle ``snippet_editor.py``'s rows follow),
+    so a test must address a row the same way the widget itself does."""
+    widget = screen.query_one(f"#evals-inspector-target-{index}")
     text = widget.renderable
     return text.plain if hasattr(text, "plain") else str(text)
 
@@ -272,8 +284,8 @@ async def test_bench_detail_pane_shows_metadata_and_target_table(
             assert metadata_widget.region.width > 0
             assert metadata_widget.region.height > 0
 
-        for target_id in target_ids.values():
-            row = screen.query_one(f"#evals-bench-target-{target_id}")
+        for index in range(len(target_ids)):
+            row = screen.query_one(f"#evals-bench-target-{index}")
             assert row.region.width > 0
             assert row.region.height > 0
 
@@ -292,12 +304,12 @@ async def test_ready_target_renders_the_readable_label_ready(
         await pilot.pause()
         evals_app.screen.select(kind="bench", id=task_id)
         await pilot.pause()
-        status_text = _target_status_text(evals_app.screen, target_ids["ready"])
+        status_text = _target_status_text(evals_app.screen, _TARGET_INDEX["ready"])
         assert "Ready" in status_text
         # No callout for a clean pass -- see the design spec's Preflight
         # table: only "—" (nothing) is prescribed for the sane case.
         assert not evals_app.screen.query(
-            f"#evals-inspector-target-callout-{target_ids['ready']}"
+            f"#evals-inspector-target-callout-{_TARGET_INDEX['ready']}"
         )
 
 
@@ -317,7 +329,7 @@ async def test_warned_target_renders_ready_plus_a_recovery_callout(
         await pilot.pause()
         screen = evals_app.screen
 
-        status_text = _target_status_text(screen, target_ids["warned"])
+        status_text = _target_status_text(screen, _TARGET_INDEX["warned"])
         # The `or "Ready" in status_text` fallback made the strong
         # `endswith` clause inert (it always passes when the endswith
         # clause does, and would ALSO pass for a status_text that merely
@@ -328,7 +340,7 @@ async def test_warned_target_renders_ready_plus_a_recovery_callout(
         assert "Unavailable" not in status_text
 
         callout = screen.query_one(
-            f"#evals-inspector-target-callout-{target_ids['warned']}"
+            f"#evals-inspector-target-callout-{_TARGET_INDEX['warned']}"
         )
         assert "ds-recovery-callout" in callout.classes
         callout_text = str(callout.renderable)
@@ -354,11 +366,11 @@ async def test_blocked_target_renders_owner_problem_and_next_action(
         await pilot.pause()
         screen = evals_app.screen
 
-        status_text = _target_status_text(screen, target_ids["blocked"])
+        status_text = _target_status_text(screen, _TARGET_INDEX["blocked"])
         assert "Blocked" in status_text
 
         callout = screen.query_one(
-            f"#evals-inspector-target-callout-{target_ids['blocked']}"
+            f"#evals-inspector-target-callout-{_TARGET_INDEX['blocked']}"
         )
         assert "ds-recovery-callout" in callout.classes
         callout_text = str(callout.renderable)
@@ -637,3 +649,76 @@ async def test_classic_task_selection_has_no_run_control(evals_app, classic_task
             "classic-task selection must render no run control at all in "
             "the inspector pane, not merely a disabled one"
         )
+
+
+# ---------------------------------------------------------------------------
+# Qodo #941 finding 2: duplicate target_ids must not crash composition
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def bench_with_duplicate_target_id(evals_db: EvalsDB) -> str:
+    """A `BenchConfig` whose `target_ids` names the SAME id twice.
+
+    Nothing in `BenchConfig.__post_init__`, `save_bench`, or `load_bench`
+    enforces target-id uniqueness -- a word bench's target list is plain,
+    editable data -- so this is a realistic shape a UI edit (or a hand-
+    edited config_data blob) can produce, not a contrived one. Before the
+    fix, `bench_editor.py`'s target table and `inspector.py`'s readiness
+    list each derived a widget id straight from `target_id`
+    (`evals-bench-target-<id>`, `evals-inspector-target-<id>`), so a
+    duplicate collided at mount time and failed to compose the whole pane
+    -- not just the duplicated row.
+    """
+    target_id = _make_model(evals_db, "repeated-target")
+    dataset_id = evals_db.create_dataset(
+        name="dup-target-set",
+        format="custom",
+        source_path="inline:dup-target-set",
+        metadata={"sample_count": 4},
+    )
+    config = BenchConfig(
+        name="duplicate-target bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(target_id, target_id),
+    )
+    return save_bench(evals_db, config)
+
+
+@pytest.mark.asyncio
+async def test_bench_with_duplicate_target_id_composes_without_raising(
+    evals_app, bench_with_duplicate_target_id
+):
+    """Composes the real workbench (not just the id-derivation helper) with
+    a bench carrying a genuine duplicate target id, and asserts both the
+    detail pane's target table and the inspector's readiness list render
+    every row rather than raising out of compose()."""
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=bench_with_duplicate_target_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        target_rows = screen.query(".evals-bench-target-row")
+        assert len(target_rows) == 2, "both duplicate-id target rows should compose"
+        for row in target_rows:
+            assert row.region.width > 0
+            assert row.region.height > 0
+
+        inspector_pane = screen.query_one("#evals-inspector-pane")
+        readiness_rows = inspector_pane.query(".ds-status-badge")
+        assert len(readiness_rows) == 2, "both duplicate-id readiness rows should compose"
+        for row in readiness_rows:
+            assert row.region.width > 0
+            assert row.region.height > 0
+
+        # Distinct, index-derived widget ids despite the shared target_id
+        # underneath -- the actual regression check: a target_id-derived id
+        # would have raised a MountError composing the second row, well
+        # before either of these queries could even run.
+        assert screen.query_one("#evals-bench-target-0")
+        assert screen.query_one("#evals-bench-target-1")
+        assert screen.query_one("#evals-inspector-target-0")
+        assert screen.query_one("#evals-inspector-target-1")

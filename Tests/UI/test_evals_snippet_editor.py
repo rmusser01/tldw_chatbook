@@ -117,14 +117,18 @@ def _snip(text: str, *, group: str | None = None, note: str | None = None) -> di
     return {"id": str(uuid.uuid4()), "text": text, "group": group, "note": note}
 
 
-def _row_text(screen, snippet_id: str) -> str:
-    widget = screen.query_one(f"#evals-snippet-text-{snippet_id}")
+def _row_text(screen, index: int) -> str:
+    """Looks up a snippet row by INDEX, not snippet id -- `_compose_row`
+    derives its widget ids from a row's position, not its stored id (see
+    `snippet_editor.py`'s fix), so a test must address a row the same way
+    the widget itself does."""
+    widget = screen.query_one(f"#evals-snippet-text-{index}")
     text = widget.renderable
     return text.plain if hasattr(text, "plain") else str(text)
 
 
-def _row_meta(screen, snippet_id: str) -> str:
-    widget = screen.query_one(f"#evals-snippet-meta-{snippet_id}")
+def _row_meta(screen, index: int) -> str:
+    widget = screen.query_one(f"#evals-snippet-meta-{index}")
     text = widget.renderable
     return text.plain if hasattr(text, "plain") else str(text)
 
@@ -254,13 +258,18 @@ def test_parse_json_snippets_rejects_non_list_non_object_payload():
 
 
 def test_parse_json_snippets_replaces_an_illegal_id_with_a_fresh_uuid():
-    """C2 crash shape 1: `_compose_row` interpolates a snippet's `id`
+    """C2 crash shape 1: `_compose_row` used to interpolate a snippet's `id`
     directly into Textual widget ids (`evals-snippet-text-<id>` etc); an id
     containing a space is not a legal Textual identifier, so an unvalidated
     JSON export used to reach `_compose_row` unmodified and raise
     `BadIdentifier` at mount time -- well after the (still-successful) DB
     write, leaving the dataset permanently un-openable. Validated at parse
-    time now, same fallback a missing id already got."""
+    time now, same fallback a missing id already got -- and, per the PR
+    #941 review, `_compose_row`'s widget ids are now index-derived rather
+    than id-derived regardless (see
+    `test_dataset_with_duplicate_and_illegal_snippet_ids_renders_without_
+    raising` below), so this is defense in depth, not the only thing
+    preventing the crash."""
     content = json.dumps([{"id": "bad id", "text": "The protestors were"}])
     snippets, skipped = parse_json_snippets(content)
     assert snippets[0]["id"] != "bad id"
@@ -364,13 +373,13 @@ async def test_normal_snippet_renders_no_whitespace_marker(evals_app, evals_db):
         await pilot.pause()
         screen = evals_app.screen
 
-        text_widget = screen.query_one(f"#evals-snippet-text-{clean['id']}")
+        text_widget = screen.query_one("#evals-snippet-text-0")
         assert text_widget.region.width > 0
-        rendered_text = _row_text(screen, clean["id"])
+        rendered_text = _row_text(screen, 0)
         assert rendered_text == "The protestors were"
         assert "␣" not in rendered_text
 
-        meta_text = _row_meta(screen, clean["id"])
+        meta_text = _row_meta(screen, 0)
         assert "␣" not in meta_text
         assert "exact dup" not in meta_text
 
@@ -385,17 +394,17 @@ async def test_trailing_whitespace_snippet_renders_a_visible_marker(evals_app, e
         await pilot.pause()
         screen = evals_app.screen
 
-        text_widget = screen.query_one(f"#evals-snippet-text-{dirty['id']}")
+        text_widget = screen.query_one("#evals-snippet-text-0")
         assert text_widget.region.width > 0
         assert text_widget.region.height > 0
-        rendered_text = _row_text(screen, dirty["id"])
+        rendered_text = _row_text(screen, 0)
         assert rendered_text == "The government said␣"
 
         # The marker is genuinely styled, not just glyph substitution.
         rich_text = text_widget.renderable
         assert any(span.style for span in rich_text.spans)
 
-        meta_text = _row_meta(screen, dirty["id"])
+        meta_text = _row_meta(screen, 0)
         assert "trailing" in meta_text
         assert "␣" in meta_text
 
@@ -413,13 +422,13 @@ async def test_leading_and_interior_whitespace_are_both_detected_on_screen(
         await pilot.pause()
         screen = evals_app.screen
 
-        leading_text = _row_text(screen, leading["id"])
+        leading_text = _row_text(screen, 0)
         assert leading_text.startswith("␣")
-        assert "leading" in _row_meta(screen, leading["id"])
+        assert "leading" in _row_meta(screen, 0)
 
-        interior_text = _row_text(screen, interior["id"])
+        interior_text = _row_text(screen, 1)
         assert "␣␣" in interior_text
-        assert "interior" in _row_meta(screen, interior["id"])
+        assert "interior" in _row_meta(screen, 1)
 
 
 @pytest.mark.asyncio
@@ -436,8 +445,8 @@ async def test_minimal_pair_snippets_render_with_no_duplicate_warning(evals_app,
         await pilot.pause()
         screen = evals_app.screen
 
-        assert "exact dup" not in _row_meta(screen, protestors["id"])
-        assert "exact dup" not in _row_meta(screen, rioters["id"])
+        assert "exact dup" not in _row_meta(screen, 0)
+        assert "exact dup" not in _row_meta(screen, 1)
 
         warnings_line = str(
             screen.query_one("#evals-snippet-warnings-summary").renderable
@@ -463,11 +472,11 @@ async def test_exact_duplicate_after_normalization_is_flagged_on_screen(
         await pilot.pause()
         screen = evals_app.screen
 
-        dirty_meta = _row_meta(screen, dirty["id"])
+        dirty_meta = _row_meta(screen, 0)
         assert "trailing" in dirty_meta
         assert "exact dup" not in dirty_meta
 
-        clean_meta = _row_meta(screen, clean["id"])
+        clean_meta = _row_meta(screen, 1)
         assert "exact dup of 1" in clean_meta
 
         warnings_line = str(
@@ -513,7 +522,8 @@ async def test_snippet_table_scrolls_to_reveal_rows_and_import_button_stays_pinn
         button_y_before = import_button.region.y
         assert button_y_before > 0
 
-        last_row_text = screen.query_one(f"#evals-snippet-text-{snippets[-1]['id']}")
+        last_row_index = len(snippets) - 1
+        last_row_text = screen.query_one(f"#evals-snippet-text-{last_row_index}")
         pane = screen.query_one("#evals-detail-pane")
         assert not pane.region.contains_region(last_row_text.region), (
             "the last row should start out-of-view -- otherwise this test "
@@ -526,7 +536,7 @@ async def test_snippet_table_scrolls_to_reveal_rows_and_import_button_stays_pinn
 
         assert table.scroll_offset.y > 0, "the table did not actually scroll"
         last_row_text_after = screen.query_one(
-            f"#evals-snippet-text-{snippets[-1]['id']}"
+            f"#evals-snippet-text-{last_row_index}"
         )
         assert pane.region.contains_region(last_row_text_after.region), (
             "the last row is still unreachable after scrolling to the end"
@@ -554,6 +564,69 @@ async def test_empty_dataset_shows_empty_state_and_import_control(evals_app, eva
         import_button = screen.query_one("#evals-import-snippets")
         assert import_button.region.width > 0
         assert import_button.region.height > 0
+
+
+# ---------------------------------------------------------------------------
+# Qodo #941 finding 1: bad IDS ALREADY IN THE DATASET must not crash render
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dataset_with_duplicate_and_illegal_snippet_ids_renders_without_raising(
+    evals_app, evals_db
+):
+    """Read-path counterpart to C2's write-path fix (see
+    `test_json_import_with_illegal_id_does_not_crash_and_dataset_stays_
+    openable` / `test_json_import_of_the_same_export_twice_does_not_crash`
+    above). Those tests prove the IMPORTER sanitizes bad ids before they
+    reach the dataset; this proves rendering does not depend on that --
+    validating at the import boundary only protects data THIS importer
+    wrote. A dataset can just as easily arrive with bad ids already inline
+    (written before this PR shipped, or by anything else that touches
+    `RESERVED_LOCAL_DATASET_SAMPLES_KEY` directly), and display of that
+    dataset must not crash just because its stored ids are not widget-id
+    safe.
+
+    Snippets are inserted directly via `_make_dataset`, bypassing every
+    parser and `_sanitize_snippet_id`, so this exercises `_compose_row`
+    with data no write-time guard ever touched: one snippet with an id
+    containing a space (illegal as a Textual identifier), and two more
+    sharing one id verbatim (a duplicate)."""
+    snippets = [
+        {"id": "bad id", "text": "The protestors were", "group": None, "note": None},
+        {"id": "dup-id", "text": "The rioters were", "group": None, "note": None},
+        {"id": "dup-id", "text": "The demonstrators were", "group": None, "note": None},
+    ]
+    dataset_id = _make_dataset(evals_db, "already-dirty-set", snippets)
+
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        editor = screen.query_one("#evals-snippet-editor", SnippetEditor)
+        assert editor.region.width > 0
+        assert editor.region.height > 0
+
+        # All three rows composed at distinct, index-derived widget ids --
+        # despite the illegal id at row 0 and the duplicate id shared by
+        # rows 1 and 2. A target_id-style id-derived widget id would have
+        # raised (BadIdentifier for row 0, MountError for row 2) before
+        # this loop could even run.
+        for index, expected_text in enumerate(
+            ("The protestors were", "The rioters were", "The demonstrators were")
+        ):
+            assert _row_text(screen, index) == expected_text
+
+        # Re-selecting is the real regression check (mirrors the two
+        # import-path crash tests above): the historical crash left every
+        # LATER selection broken too, not just the first render.
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        editor_again = screen.query_one("#evals-snippet-editor", SnippetEditor)
+        assert editor_again.region.width > 0
+        assert editor_again.region.height > 0
 
 
 # ---------------------------------------------------------------------------
@@ -865,6 +938,41 @@ async def test_non_utf8_import_file_notifies_error_instead_of_crashing(
         # the crash this guards against propagates out of the callback and
         # takes the whole app down with it.
         assert isinstance(evals_app.screen, type(evals_app.screen))
+        editor_still_here = evals_app.screen.query_one(
+            "#evals-snippet-editor", SnippetEditor
+        )
+        assert editor_still_here.region.width > 0
+
+    assert any(
+        severity == "error" for _message, severity in evals_app.app_instance.notifications
+    )
+    stored = evals_db.get_dataset(dataset_id)
+    assert stored["metadata"].get("sample_count", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_nonexistent_import_path_notifies_error_instead_of_crashing(
+    evals_app, evals_db, tmp_path
+):
+    """Qodo #941 finding 3: the import path is now run through
+    `Utils.path_validation.validate_path_simple` (CLAUDE.md's security
+    requirement for file paths) before `read_text` ever touches it.
+    `require_exists=True` means a nonexistent path -- the case
+    `FileNotFoundError`/`OSError` used to catch directly -- now fails
+    validation instead; this pins that the user-visible outcome is
+    unchanged (a graceful error notification, not a crash), and that
+    nothing was ever written."""
+    dataset_id = _make_dataset(evals_db, "missing-file-target", [])
+    missing_path = tmp_path / "does_not_exist.txt"
+
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
+        editor._handle_import_file_selected(missing_path)
+        await pilot.pause()
+
         editor_still_here = evals_app.screen.query_one(
             "#evals-snippet-editor", SnippetEditor
         )

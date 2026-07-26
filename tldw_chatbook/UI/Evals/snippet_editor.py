@@ -65,6 +65,7 @@ from ...Evaluations_Interop.evaluation_normalizers import (
     RESERVED_LOCAL_DATASET_SAMPLES_KEY,
 )
 from ...Third_Party.textual_fspicker import FileOpen, Filters
+from ...Utils.path_validation import validate_path_simple
 from .evals_state import EvalsViewModel
 
 #: The glyph anomalous whitespace is replaced with when rendering a
@@ -229,15 +230,20 @@ def import_snippets_into_dataset(
 
     De-duplicates ids against every id already in the dataset (and against
     earlier entries in this same batch) before appending, minting a fresh
-    UUID for any collision -- this is what makes re-importing the same
-    export twice (the round-trip ``parse_json_snippets``'s own docstring
-    advertises: an id is preserved verbatim when present) safe rather than
-    a ``MountError`` from ``_compose_row`` mounting two rows with the same
-    widget id. A minted-fresh-id re-import is not silently dropped: its
-    text is identical to the row it re-imports, so ``find_exact_duplicate_
-    labels`` (text-based, not id-based) flags it as an exact duplicate the
-    same way any other repeated snippet would be -- the user sees it, rather
-    than the import silently doing nothing.
+    UUID for any collision -- so a snippet's id stays a usable identity
+    (e.g. the ``find_exact_duplicate_labels`` lookup key below) even after
+    re-importing the same export twice (the round-trip
+    ``parse_json_snippets``'s own docstring advertises: an id is preserved
+    verbatim when present). This is write-side hygiene, not what keeps
+    ``_compose_row`` from crashing -- that widget derives every id it mounts
+    from a row's INDEX, not its snippet id (see ``_compose_row``'s own
+    comment), specifically so a dataset written before this de-dup existed,
+    or by anything other than this importer, still renders. A minted-
+    fresh-id re-import is not silently dropped: its text is identical to
+    the row it re-imports, so ``find_exact_duplicate_labels`` (text-based,
+    not id-based) flags it as an exact duplicate the same way any other
+    repeated snippet would be -- the user sees it, rather than the import
+    silently doing nothing.
     """
     dataset = db.get_dataset(dataset_id)
     if dataset is None:
@@ -344,21 +350,23 @@ def parse_csv_snippets(content: str) -> ParsedSnippets:
     return ParsedSnippets(snippets, skipped)
 
 
-#: Snippet ids are interpolated as a SUFFIX of Textual widget ids
-#: (``evals-snippet-text-<id>``, ``evals-snippet-meta-<id>`` -- see
-#: ``_compose_row``), never as the whole identifier: the literal prefix
-#: always supplies the first character. Textual's own identifier grammar
-#: (``textual.css.tokenize.IDENTIFIER``, ``[a-zA-Z_-][a-zA-Z0-9_-]*``)
-#: restricts only the FIRST character of the full string to a
-#: non-digit -- a restriction the literal prefix already satisfies, so it
-#: must not be re-applied to the id fragment alone. A tighter regex here
-#: (requiring the id itself to start with a letter) would reject the
-#: majority of real ``uuid.uuid4()`` values, which start with a digit
-#: about 10 times in 16 -- confirmed the hard way: an earlier version of
-#: this pattern broke the "preserve an existing id verbatim" round-trip
-#: for most legitimate UUIDs. Every character (not just the first) must
-#: still be a legal identifier character -- e.g. a space is not -- so this
-#: is not simply "any non-empty string".
+#: A snippet's ``id`` is never interpolated into a Textual widget id --
+#: ``_compose_row`` below derives every widget id in a row from that row's
+#: INDEX instead, precisely so this sanitizer is not the only thing
+#: standing between a stored id and a mount-time crash (see
+#: ``_compose_row``'s own comment). This regex still matters at write time:
+#: an id that fails it is not safe to treat as a stable identity (round-
+#: tripping an export, matching a duplicate-label lookup key) even though
+#: it can no longer crash the renderer either way. Textual's own identifier
+#: grammar (``textual.css.tokenize.IDENTIFIER``, ``[a-zA-Z_-][a-zA-Z0-9_-]*``)
+#: restricts only the FIRST character of a widget id to a non-digit; this
+#: regex is deliberately looser than that (permits a leading digit)
+#: because the majority of real ``uuid.uuid4()`` values start with one --
+#: confirmed the hard way: an earlier version of this pattern broke the
+#: "preserve an existing id verbatim" round-trip for most legitimate
+#: UUIDs. Every character (not just the first) must still be a legal
+#: identifier character -- e.g. a space is not -- so this is not simply
+#: "any non-empty string".
 _SNIPPET_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
@@ -506,6 +514,19 @@ class SnippetEditor(Vertical):
     def _compose_row(
         index: int, snippet: dict[str, Any], duplicate_labels: dict[str, str]
     ) -> ComposeResult:
+        # `snippet_id` is used ONLY as a `duplicate_labels` lookup key below
+        # -- never as (or as part of) a widget id. Every widget id in this
+        # row is derived from `index` instead (see the `Horizontal(id=...)`
+        # below): a rendering path must never trust stored data to be
+        # widget-id-safe, no matter how it got into the dataset. Validating
+        # at the import boundary (`_sanitize_snippet_id`) only protects
+        # data THIS importer wrote; a dataset written before that
+        # validation existed, or by anything else that touches
+        # `RESERVED_LOCAL_DATASET_SAMPLES_KEY` directly, can still contain
+        # a duplicate or non-identifier-safe id, and display of that
+        # dataset must not depend on it being clean. An index is always a
+        # legal, unique widget id regardless of what a snippet's own id
+        # turns out to be.
         snippet_id = str(snippet.get("id") or index)
         text = str(snippet.get("text") or "")
         group = snippet.get("group") or "—"
@@ -514,25 +535,19 @@ class SnippetEditor(Vertical):
         dup_label = duplicate_labels.get(snippet_id)
         flags = ", ".join(label for label in (ws_label, dup_label) if label) or "—"
 
-        # Index-based, not snippet_id-based, as a second line of defence
-        # beyond the parse/import-time id validation (see
-        # `_sanitize_snippet_id`/`import_snippets_into_dataset`): nothing
-        # looks this row id up by snippet id, and an index is always a
-        # legal, unique widget id regardless of what a snippet's own id
-        # turns out to be.
         with Horizontal(
             id=f"evals-snippet-row-{index}", classes="evals-snippet-row"
         ):
             yield Static(f"{index + 1}.", classes="evals-snippet-index", markup=False)
             yield Static(
                 render_snippet_cell(text),
-                id=f"evals-snippet-text-{snippet_id}",
+                id=f"evals-snippet-text-{index}",
                 classes="evals-snippet-text",
                 markup=False,
             )
             yield Static(
                 f"group: {group} · {char_count} chars · {flags}",
-                id=f"evals-snippet-meta-{snippet_id}",
+                id=f"evals-snippet-meta-{index}",
                 classes="evals-snippet-meta",
                 markup=False,
             )
@@ -581,7 +596,22 @@ class SnippetEditor(Vertical):
         """
         if not path:
             return
-        file_path = Path(path)
+        try:
+            # CLAUDE.md's security requirements call for `path_validation.py`
+            # on every file path; `validate_path_simple` (not `validate_path`)
+            # is the right tool here -- there is no single base directory to
+            # confine to, since a user can legitimately import a snippet set
+            # from anywhere on disk (the same reasoning `Character_Chat_Lib.
+            # parse_character_card`'s identical call documents). `path` was
+            # chosen through a `FileOpen` dialog the user themselves drove,
+            # not typed as an untrusted string, so this is defense in depth
+            # rather than a live traversal hole -- but the rule is explicit
+            # and the helper is cheap, so it applies here too rather than
+            # reading the file directly.
+            file_path = validate_path_simple(path, require_exists=True)
+        except ValueError as exc:
+            self._notify(f"Could not read {Path(path).name}: {exc}", severity="error")
+            return
         try:
             content = file_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:

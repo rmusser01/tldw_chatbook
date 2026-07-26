@@ -88,6 +88,14 @@ class EvalsScreen(BaseAppScreen):
         completion -- callers that need the panes settled should
         ``await pilot.pause()`` afterward, mirroring every other
         recompose-driven screen in this app.
+
+        Args:
+            kind: The selected object's kind (``SelectionKind`` --
+                ``"none"``, ``"bench"``, ``"classic"``, ``"dataset"``, or
+                ``"run_group"``).
+            id: The selected object's id. Only meaningful for a non-
+                ``"none"`` ``kind``; may be ``None`` (e.g. for ``kind=
+                "none"``, or a caller clearing the selection).
         """
         self._selection = EvalsSelection(kind=kind, id=id)
         if self.is_mounted:

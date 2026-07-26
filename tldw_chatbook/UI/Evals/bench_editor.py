@@ -134,7 +134,15 @@ class BenchEditor(Vertical):
             yield Static("No targets configured yet.", id="evals-bench-targets-empty")
             return
         with Vertical(id="evals-bench-target-table"):
-            for target_id in config.target_ids:
+            # Index-derived widget ids, not target_id-derived: `target_ids`
+            # is user-editable data (see `BenchConfig`) with no uniqueness
+            # or identifier-safety constraint enforced anywhere on write, so
+            # a duplicate target id would otherwise collide and fail to
+            # compose the whole pane. `target_id` itself is still used
+            # below, just never as (or as part of) a widget id -- see
+            # `snippet_editor.py`'s identical `_compose_row` fix for the
+            # same principle applied to snippets.
+            for index, target_id in enumerate(config.target_ids):
                 model = db.get_model(target_id)
                 status_text = _target_status_text(preflight, target_id)
                 if model is None:
@@ -146,7 +154,7 @@ class BenchEditor(Vertical):
                     label = f"{model['name']} ({model['provider']}) — {status_text}"
                 yield Static(
                     label,
-                    id=f"evals-bench-target-{target_id}",
+                    id=f"evals-bench-target-{index}",
                     classes="evals-bench-target-row",
                     markup=False,
                 )

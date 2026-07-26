@@ -155,7 +155,13 @@ class EvalsInspector(Vertical):
             yield Static("No targets configured yet.", id="evals-inspector-readiness-empty")
 
         providers: list[str] = []
-        for target_id in config.target_ids:
+        # Index-derived widget ids, not target_id-derived -- same fix, same
+        # reasoning as `bench_editor.py`'s identical target table: a
+        # `BenchConfig.target_ids` duplicate must not collide two widget
+        # ids and fail to compose this whole pane. `target_id` is still
+        # used below for every lookup (`db.get_model`, `preflight.get`),
+        # just never as part of a widget id.
+        for index, target_id in enumerate(config.target_ids):
             model = db.get_model(target_id)
             target_label = model["name"] if model else f"(deleted target {target_id})"
             if model is not None:
@@ -165,7 +171,7 @@ class EvalsInspector(Vertical):
             status_text = result.status_label if result is not None else "Not yet checked"
             yield Static(
                 f"{target_label}: {status_text}",
-                id=f"evals-inspector-target-{target_id}",
+                id=f"evals-inspector-target-{index}",
                 classes=f"ds-status-badge {_status_css_class(result)}",
                 markup=False,
             )
@@ -179,7 +185,7 @@ class EvalsInspector(Vertical):
             if needs_callout:
                 yield Static(
                     _recovery_callout_text(target_label, result),
-                    id=f"evals-inspector-target-callout-{target_id}",
+                    id=f"evals-inspector-target-callout-{index}",
                     classes="ds-recovery-callout",
                     markup=False,
                 )
