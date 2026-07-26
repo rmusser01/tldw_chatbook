@@ -273,6 +273,20 @@ class WatchlistBundleService:
         ).fetchall()
         return [{"id": row[0], "name": row[1], "type": row[2]} for row in rows]
 
+    def get_watchlist_item_counts(self) -> dict[int, dict[str, int]]:
+        """Item totals and unread counts for every watchlists tree node.
+
+        Thin delegation to ``SubscriptionsDB.get_watchlist_item_counts()`` (a
+        single query returning every bucket) so the tree's loader can reach
+        both of its inputs -- this and ``list_watchlists()`` -- through this
+        service alone, the same as ``list_source_rows`` above, rather than
+        needing a second accessor to ``SubscriptionsDB`` directly.
+
+        Returns:
+            Mapping of bucket id to ``{"total": int, "unread": int}``.
+        """
+        return self._db.get_watchlist_item_counts()
+
     # --- Migration ---
 
     MIGRATION_KEY = "folders_to_watchlists"

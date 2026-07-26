@@ -1085,3 +1085,82 @@ async def test_saving_a_rule_edit_does_not_leave_a_phantom_form_open():
             "no rule edit form fields should remain in the DOM after a "
             "successful save"
         )
+
+
+# --- Task 4: wire the watchlist tree and tab strip into the screen ---
+#
+# As with the Task 5 section above, there is no `watchlists_app` fixture in
+# this file; the brief's snippets assumed one, but none existed before this
+# task either. These reuse the same `DestinationHarness` + `_build_test_app()`
+# pattern already established here.
+
+
+@pytest.mark.asyncio
+async def test_left_rail_hosts_the_tree_not_the_navigator():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert screen.query("#wl-tree")
+        assert not screen.query("#watchlists-navigator")
+
+
+@pytest.mark.asyncio
+async def test_centre_hosts_the_tab_strip():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        assert host.screen_stack[-1].query("#wl-tabs")
+
+
+@pytest.mark.asyncio
+async def test_clicking_a_tab_switches_the_active_section():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        await pilot.click("#wl-tab-runs")
+        await pilot.pause()
+        assert screen.active_section == "runs"
+
+
+@pytest.mark.asyncio
+async def test_tree_selection_sets_the_screen_scope():
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeScope,
+        TreeScopeChanged,
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7)))
+        await pilot.pause()
+        assert screen.selected_scope.kind == "watchlist"
+        assert screen.selected_scope.watchlist_id == 7
+
+
+@pytest.mark.asyncio
+async def test_scope_survives_a_region_toggle():
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeScope,
+        TreeScopeChanged,
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7)))
+        await pilot.pause()
+        await pilot.press("[")
+        await pilot.pause()
+        assert screen.selected_scope.watchlist_id == 7, (
+            "scope lives on the screen, so a workbench recompose must not lose it"
+        )

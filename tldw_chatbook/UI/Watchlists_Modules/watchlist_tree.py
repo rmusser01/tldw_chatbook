@@ -79,7 +79,16 @@ class WatchlistTree(Vertical):
                 # the id is the tag's position in the ordered tag list, not
                 # the tag text itself. The visible label still shows the
                 # (escaped) tag text.
-                button = Button(f"#{escape_markup(tag)}", id=f"wl-tree-tag-{index}", compact=True)
+                button = Button(
+                    f"#{escape_markup(tag)}",
+                    id=f"wl-tree-tag-{index}",
+                    compact=True,
+                    tooltip=(
+                        f"Clear the \"{escape_markup(tag)}\" tag filter."
+                        if tag == self.active_tag
+                        else f"Show only watchlists tagged \"{escape_markup(tag)}\"."
+                    ),
+                )
                 button.add_class("watchlist-tree-tag")
                 if tag == self.active_tag:
                     button.add_class("is-active")
@@ -87,7 +96,12 @@ class WatchlistTree(Vertical):
 
     def _root_node(self, key: str, label: str, bucket: int) -> Button:
         unread = self._counts.get(bucket, {}).get("unread", 0)
-        button = Button(f"{label}  {unread}", id=f"wl-tree-node-{key}", compact=True)
+        button = Button(
+            f"{label}  {unread}",
+            id=f"wl-tree-node-{key}",
+            compact=True,
+            tooltip=f"Show {label.lower()}.",
+        )
         button.add_class("watchlist-tree-root")
         return button
 
@@ -96,15 +110,24 @@ class WatchlistTree(Vertical):
         unread = self._counts.get(watchlist_id, {}).get("unread", 0)
         is_open = watchlist_id in self.expanded
         caret = "▾" if is_open else "▸"
+        watchlist_name = escape_markup(str(watchlist["name"]))
 
-        expander = Button(caret, id=f"wl-tree-expand-{watchlist_id}", compact=True)
+        expander = Button(
+            caret,
+            id=f"wl-tree-expand-{watchlist_id}",
+            compact=True,
+            tooltip=(
+                f"Collapse {watchlist_name}." if is_open else f"Expand {watchlist_name}."
+            ),
+        )
         expander.add_class("watchlist-tree-expander")
         yield expander
 
         node = Button(
-            f"{escape_markup(str(watchlist['name']))}  {unread}",
+            f"{watchlist_name}  {unread}",
             id=f"wl-tree-node-watchlist-{watchlist_id}",
             compact=True,
+            tooltip=f"Show sources in {watchlist_name}.",
         )
         node.add_class("watchlist-tree-watchlist")
         yield node
@@ -116,10 +139,12 @@ class WatchlistTree(Vertical):
                 # watchlists sharing a source would mount two buttons with
                 # the same id (a MountError) and the scope would be
                 # ambiguous besides.
+                source_name = escape_markup(str(row["name"]))
                 source = Button(
-                    f"  {escape_markup(str(row['name']))}",
+                    f"  {source_name}",
                     id=f"wl-tree-node-source-{watchlist_id}-{row['id']}",
                     compact=True,
+                    tooltip=f"Show items from {source_name}.",
                 )
                 source.add_class("watchlist-tree-source")
                 yield source

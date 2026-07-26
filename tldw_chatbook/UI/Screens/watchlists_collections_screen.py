@@ -81,6 +81,7 @@ from ..Watchlists_Modules.sources_pane import (
     SourceSelected,
     SourcesPane,
 )
+from ..Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged, WatchlistTree
 from ..Watchlists_Modules.watchlists_backend_controller import WatchlistsBackendController
 from ..Watchlists_Modules.watchlists_console_handoff import WatchlistsConsoleHandoff
 from ..Watchlists_Modules.watchlists_tab_strip import SectionSelected, WatchlistsTabStrip
@@ -129,6 +130,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # actually persisted (see `region_layout_store`) on top of this default.
     region_layout = reactive(RegionLayout(collapsed=frozenset({Region.CONTENT})))
     focused_region = reactive(Region.FEEDS)
+    # Lives on the screen, not on the tree widget, precisely because
+    # `region_layout` is `recompose=True`: any collapse/solo/rail toggle
+    # rebuilds the whole workbench, constructing a brand new `WatchlistTree`
+    # instance. Pane-local state does not survive that (see `selected_run`
+    # and the create-form draft above for the same reasoning already applied
+    # elsewhere on this screen).
+    selected_scope = reactive(TreeScope(kind="all"))
 
     _SECTION_DETAIL_TITLE = {
         "overview": "Overview",
@@ -167,6 +175,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._loaded_sources: list[dict[str, Any]] = []
         self._loaded_items: list[dict[str, Any]] = []
         self._loaded_rules: list[dict[str, Any]] = []
+        # Left-rail tree inputs (Task 4): loaded together by `_load_tree_data`
+        # in exactly two queries (`list_watchlists` + `get_watchlist_item_counts`),
+        # never one per node -- see that method's docstring.
+        self._tree_watchlists: list[dict[str, Any]] = []
+        self._tree_counts: dict[int, dict[str, int]] = {}
         self._applying_navigation_context = False
         # Mirrors SourcesPane's create-form state (Finding 1, fix round 1):
         # `region_layout` is `recompose=True`, so any collapse/solo/rail
@@ -232,6 +245,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
         self._load_active_section_data()
+        self._load_tree_data()
         self.set_timer(
             WC_SNAPSHOT_TIMEOUT_SECONDS, self._apply_snapshot_timeout_if_still_loading
         )
@@ -314,6 +328,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 "failed_runs": [],
                 "active_alert_rules": 0,
             }
+
+    @work(exclusive=True, group="wc_tree")
+    async def _load_tree_data(self) -> None:
+        """Load the left-rail tree's two inputs: watchlists and counts.
+
+        Exactly two queries total, never one per node: `list_watchlists()`
+        for the watchlist rows themselves, and `get_watchlist_item_counts()`
+        for every bucket's total/unread counts in a single statement. Both
+        are reached through `WatchlistBundleService` (Task 1) rather than a
+        second accessor onto `SubscriptionsDB` directly.
+        """
+        try:
+            service = self._watchlist_bundle_service()
+            self._tree_watchlists = service.list_watchlists()
+            self._tree_counts = service.get_watchlist_item_counts()
+        except Exception:
+            logger.opt(exception=True).debug("Failed to load watchlists tree data.")
+            self._tree_watchlists, self._tree_counts = [], {}
+        if self.is_mounted:
+            self.refresh(recompose=True)
 
     def _apply_local_wc_snapshot(
         self,
@@ -478,6 +512,34 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if not self._has_local_wc_context():
             return True, "Stage local Watchlists context once local sources exist."
         return False, "Stage local Watchlists context in Console."
+
+    def _build_tree_pane(self) -> WatchlistTree:
+        """Build the LEFT_RAIL-region content: the watchlist tree.
+
+        A factory, not an instance: `region_layout` is `recompose=True`, so
+        any collapse/solo/rail toggle rebuilds every region, and a widget
+        instance can only be mounted once (see the factory note on
+        `WatchlistsWorkbench.__init__`).
+        """
+        return WatchlistTree(
+            watchlists=self._tree_watchlists,
+            counts=self._tree_counts,
+            source_rows_loader=self._load_source_rows_for_tree,
+            id="wl-tree",
+        )
+
+    def _load_source_rows_for_tree(self, watchlist_id: int) -> list[dict[str, Any]]:
+        """Fetch one watchlist's source rows for the tree, synchronously.
+
+        Safe on the UI thread: the tree calls this during `compose()` when a
+        watchlist is expanded, and `list_source_rows` is one JOIN (Task 1),
+        not a fan-out of per-source queries.
+        """
+        try:
+            return self._watchlist_bundle_service().list_source_rows(watchlist_id)
+        except Exception:
+            logger.opt(exception=True).debug("Failed to load tree source rows.")
+            return []
 
     def _build_list_pane(self) -> Vertical:
         """Build the FEEDS-region content: the section tab strip, the Sources
@@ -787,12 +849,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     # only mount on its FIRST mount; the same instance
                     # remounted a second time comes back childless (verified
                     # empirically — see `WatchlistsWorkbench.__init__`).
-                    # LEFT_RAIL has no factory here: the navigator that used
-                    # to occupy it is retired in this task, and the watchlist
-                    # tree that replaces it (Task 2's `WatchlistTree`) is not
-                    # wired into the screen until Task 4. Until then this
-                    # region falls back to `WatchlistsWorkbench`'s own
-                    # placeholder stub rather than crash or fake a widget.
+                    Region.LEFT_RAIL: self._build_tree_pane,
                     Region.FEEDS: self._build_list_pane,
                     Region.ITEMS: self._build_detail_pane,
                     Region.RIGHT_RAIL: lambda: self._build_inspector_pane(
@@ -895,6 +952,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _on_region_toggled(self, event: RegionToggled) -> None:
         event.stop()
         self._apply_layout(self.region_layout.toggle(event.region))
+
+    @on(TreeScopeChanged)
+    def _on_tree_scope_changed(self, event: TreeScopeChanged) -> None:
+        """Store the tree's selection on the screen, not the tree.
+
+        `selected_scope` lives here for the same reason `selected_run` and
+        the create-form draft do: the workbench's `region_layout` is
+        `recompose=True`, so a bare rail toggle rebuilds a brand new
+        `WatchlistTree` that would otherwise lose the selection.
+        """
+        event.stop()
+        self.selected_scope = event.scope
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Keep `focused_region` in step with whatever actually holds focus.
