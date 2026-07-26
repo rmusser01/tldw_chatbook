@@ -831,6 +831,16 @@ class LibraryScreen(BaseAppScreen):
         ("escape", "library_skill_back", "Back to skills list"),
     ]
 
+    #: Whether the media item open in the viewer lives on the SERVER. Set only
+    #: by the ingest queue's "View on server" action (task-700); every other
+    #: route into the viewer opens a local row and clears it.
+    #:
+    #: Declared on the class, not in a method, because a restored session
+    #: reaches the viewer without running the constructors that set instance
+    #: state -- an attribute defined only there is missing exactly when the
+    #: viewer is rebuilt on mount, and the detail fetch that reads it fails.
+    _library_media_detail_is_remote: bool = False
+
     #: Footer hint set — mirrors the show=True bindings the retired Textual
     #: Footer used to render (task-264 review: per-screen AppFooterStatus
     #: renders registered contexts, not bindings).
@@ -4408,10 +4418,6 @@ class LibraryScreen(BaseAppScreen):
                 pass
             self._library_ingest_preflight_worker = None
         self._library_ingest_form = LibraryIngestFormState()
-        #: Whether the media currently open in the viewer lives on the server.
-        #: Set only by the ingest queue's "View on server" action; every other
-        #: route into the viewer opens a local row and clears it.
-        self._library_media_detail_is_remote = False
 
     # ----- Export canvas -------------------------------------------------
 
