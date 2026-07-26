@@ -1,7 +1,7 @@
 # TldwCli Reactive State Decomposition Design
 
 Date: 2026-07-26
-Status: Draft; conversational design approved, independent review pending
+Status: Draft; independent-review corrections applied, re-review pending
 ADR:
 [ADR-026](../../../backlog/decisions/026-application-session-state-ownership.md),
 [ADR-006](../../../backlog/decisions/006-provider-aware-generation-settings.md),
@@ -27,8 +27,9 @@ or temporary root aliases.
 
 The tranche also repairs four contracts exposed by the inventory:
 
-1. the unused root button-dispatch map is deleted only after LLM action
-   buttons are registered at their production destination;
+1. the unused root button-dispatch map is deleted only after supported LLM
+   action buttons are registered at their production destination and the
+   unsupported custom Transformers server-launch block is removed;
 2. Media messages stop at `MediaWindow`, preventing the destination and the
    legacy app handler from both applying one mutation;
 3. command-palette provider changes become an explicit Console intent instead
@@ -155,6 +156,8 @@ needed.
 - Preserve Settings as the durable global provider-default owner and Console
   as the active session owner.
 - Restore live LLM action routing at `LLMManagementWindow`.
+- Remove visible LLM actions that have no implemented runtime contract rather
+  than leaving inert controls or inventing a new server lifecycle.
 - Ensure one Media event produces one destination mutation.
 - Eliminate cross-request TLDW API context bleed.
 - Remove dead watchers, initializers, dynamic references, and dispatcher
@@ -175,6 +178,7 @@ needed.
 - Reworking service construction, shutdown, worker registry, timers, or
   process ownership.
 - Moving LLM server process handles out of `TldwCli` in this tranche.
+- Implementing a new custom Transformers server process lifecycle.
 - Removing importable compatibility state dataclasses.
 - Preserving dormant legacy tab behavior that has no production route.
 - Replacing the native Console with `ChatWindowEnhanced`.
@@ -387,6 +391,9 @@ configuration/default/session inputs. Production code no longer constructs a
 
 `LLMManagementWindow` owns all button event registration:
 
+- the slice first enumerates every visible actionable button ID in the
+  production composition and assigns each one exactly one outcome: a
+  destination-local handler or removal;
 - its existing `active_view` watcher remains the only view-navigation path;
 - navigation and action handlers call `event.stop()` before work;
 - action IDs are resolved against an allowlisted destination-local map;
@@ -400,6 +407,21 @@ Unknown button IDs are ignored. A handler exception produces bounded recovery
 copy and leaves the corresponding start/stop controls in a truthful state.
 Long-running process work remains in workers; the button handler itself does
 not block the Textual loop.
+
+The existing Transformers model-directory, list-local-models, and
+download-model controls remain and receive destination routing through their
+existing handler functions. The separate custom server-launch block has no
+implemented handlers for:
+
+- `transformers-browse-script-button`;
+- `transformers-start-server-button`;
+- `transformers-stop-server-button`.
+
+That block, including its orphan server-script, interpreter, host, port,
+additional-arguments, and operations-log controls, is removed. This tranche
+does not silently disable those buttons and does not invent the excluded
+custom Transformers server process lifecycle. A future feature would require
+its own accepted design before reintroducing the controls.
 
 After live destination routing exists, delete:
 
@@ -440,10 +462,28 @@ removed with their old app handlers.
 state is serialized only from the Console-owned rail fields. Restoring a
 native snapshot never writes those root names.
 
-The dormant `_ensure_chat_window()` path and any legacy restoration branch
-that requires root Chat state are removed or isolated from production
-composition. Importable legacy widgets may remain only if they own the state
-they still require; they may not reach back into deleted `TldwCli` fields.
+The dormant legacy Chat composition is retired, not rehabilitated:
+
+- delete `ChatScreen._ensure_chat_window()`, its `chat_window` field, and every
+  unreachable save/restore, diagnostics, sidebar, provider-control, and button
+  delegation branch that depends on it;
+- remove the production imports of `ChatWindow` and `ChatWindowEnhanced`;
+- delete `Chat_Window.py`, `Chat_Window_Enhanced.py`, and helper modules,
+  handlers, widgets, and CSS rules proved by an import/reachability manifest
+  to be exclusive to those dormant compositions;
+- retain a shared helper/widget module only when the native Console or another
+  registered production destination imports it, and remove only its
+  root-legacy branch;
+- remove tests whose sole subject is the retired composition, while preserving
+  direct tests for shared app-independent functions that still have a live
+  consumer.
+
+Direct construction or import of the retired Chat compositions is not a
+supported compatibility contract. No `LegacyChatState`, adapter, compatibility
+property, or second worker/session owner is introduced to keep dead UI alive.
+The import/reachability manifest is part of the implementation notes and must
+show that no registered production route imports a deleted module before the
+deletion lands.
 
 Native Console worker, cancellation, transcript, and session contracts are
 not replaced by the legacy streaming bridge.
@@ -479,23 +519,36 @@ No replacement store or compatibility property is introduced.
 
 ### TLDW API worker result envelope
 
-The TLDW API worker returns an immutable result envelope containing:
+The TLDW API worker returns a frozen result envelope with two `repr=False`
+fields:
 
-- the API response value;
-- the exact request model needed for ingestion;
-- the exact `overwrite_db` value;
-- a non-sensitive request/media type identifier when needed for routing.
+1. the API response value;
+2. a frozen, detached ingestion-fallback context.
 
-The success handler validates and unwraps this envelope. It never reads
-`app._last_tldw_api_request_context`.
+The fallback context contains only values the success handler actually reads:
 
-The envelope is created from the worker closure's immutable inputs. Two
+- normalized immutable keywords;
+- author text;
+- custom prompt text;
+- `overwrite_db`.
+
+It does not retain the mutable request model. Mutable collections are detached
+into immutable primitives when the worker is launched. The custom prompt and
+the enclosing context are excluded from `repr`; the response is also excluded
+because it can contain processed content. The envelope's default
+representation therefore exposes neither response nor fallback payload.
+
+The success handler validates and unwraps the envelope and uses those exact
+fallback fields. It never reads `app._last_tldw_api_request_context`.
+
+The envelope is created from the worker closure's detached inputs. Two
 concurrent workers therefore cannot exchange request options. Failure and
 cancellation do not leave shared context to be consumed by a later worker.
 
-The envelope's representation and diagnostics must not contain credentials,
-raw request headers, tokens, prompt bodies, response bodies, or filesystem
-secrets.
+The envelope and context contain no credentials, raw request headers, tokens,
+or filesystem secrets. Diagnostics identify only the operation, media type,
+and failure category; they do not render the envelope, response body, custom
+prompt, author, or keywords.
 
 ## Non-Reactive Companion Ledger
 
@@ -664,38 +717,46 @@ Backlog tasks are created only after this written specification passes
 independent review and user review. Each slice is one atomic, testable task
 with the existing ADRs linked in its plan.
 
-1. **Restore LLM destination action ownership and remove the dead root button
-   dispatcher.**
-   Register production LLM actions locally, preserve explicit process
-   lifecycle dependencies, remove root/dynamic dispatcher infrastructure, and
-   delete `llm_active_view`.
+1. **Restore LLM destination action ownership, remove unsupported Transformers
+   launch controls, and remove the dead root button dispatcher.**
+   Census every production button, register supported LLM actions locally,
+   remove the unimplemented custom Transformers server-launch block, preserve
+   explicit existing process lifecycle dependencies, remove root/dynamic
+   dispatcher infrastructure, and delete `llm_active_view`.
 
 2. **Move provider selection to Settings, Console session state, and one typed
    handoff.**
    Remove the root provider descriptor/watcher, refactor explicit resolution
    inputs, and preserve active/away-from-Console command behavior.
 
-3. **Remove legacy native-Console-adjacent Chat root state.**
-   Remove sidebars, legacy session/prompt/character reactives, app worker/widget
-   singleton state, dead restore branches, and root snapshot dependencies.
+3. **Retire the unreachable legacy Chat composition.**
+   Prove its import graph is absent from registered production routes, delete
+   the dormant `ChatWindow`/`ChatWindowEnhanced` composition and exclusive
+   helpers, and prune legacy-only branches from shared modules without adding
+   replacement state.
 
-4. **Remove legacy CCP/prompt root state and stale import refresh callbacks.**
+4. **Remove legacy native-Console-adjacent Chat root state.**
+   Remove sidebars, legacy session/prompt/character reactives, app worker/widget
+   singleton state, dead restore branches, and root snapshot dependencies
+   after the dormant composition no longer consumes them.
+
+5. **Remove legacy CCP/prompt root state and stale import refresh callbacks.**
    Keep Personas and Library as the only production owners.
 
-5. **Remove duplicate Media root state and stop mutation bubbling.**
+6. **Remove duplicate Media root state and stop mutation bubbling.**
    Keep `MediaWindow` as the view/selection owner and prove one mutation per
    event.
 
-6. **Remove retired Notes, Search, rebuilt-Ingest, Tools, and Evals root
+7. **Remove retired Notes, Search, rebuilt-Ingest, Tools, and Evals root
    state.**
    Delete no-op watchers, defaults, timers, and dead initializer paths while
    preserving their production destinations.
 
-7. **Replace shared TLDW API request context with an immutable result
+8. **Replace shared TLDW API request context with an immutable result
    envelope.**
    Prove interleaved completions cannot exchange request options.
 
-8. **Run the final ownership and installed-distribution sentinels.**
+9. **Run the final ownership and installed-distribution sentinels.**
    Freeze the exact retained root-reactive set, run the authorized integrated
    suite, and verify the clean installed wheel.
 
