@@ -116,6 +116,11 @@ local seal policy. The policy contains:
 - `VIEW_SNAPSHOT`
 - `VIEW_SOURCE_IDENTITY`
 
+The seal policy is one repository-module constant or private frozen value. It
+is deliberately separate from `CitationProvenanceRuntimePolicy`, whose only
+authority remains enabling or disabling canonical writes. Configuration cannot
+choose a policy version or widen capabilities.
+
 It does not advertise `RESOLVE_CURRENT_SOURCE`; current native locators and
 resolver navigation are not implemented yet. The controller never chooses or
 widens capabilities.
@@ -150,14 +155,14 @@ The initial attempt records:
 The exact body and its integrity fingerprint remain governed payload fields and
 must not appear in immutable trace JSON, logs, exceptions, or diagnostics.
 
-Before constructing the attempt, the builder uses the existing bounded,
-Markdown-aware marker-span helper only as an eligibility guard. If the exact
-body contains any eligible marker under the selected prompt set's namespace,
-recording fails atomically with a fixed reason code. TASK-553.14 does not
-construct occurrence records, infer evidence mappings, or weaken the model
-invariant that a retained body's eligible markers must be represented exactly.
-Workstream 13 removes this temporary restriction by adding canonical occurrence
-parsing.
+Before constructing the attempt, the builder uses the existing Markdown-aware
+marker-span helper with `max_count=1` only as a bounded eligibility guard. If
+the exact body contains any eligible marker under the selected prompt set's
+namespace, recording fails atomically with a fixed reason code. TASK-553.14
+does not construct occurrence records, infer evidence mappings, or weaken the
+model invariant that a retained body's eligible markers must be represented
+exactly. Workstream 13 removes this temporary restriction by adding canonical
+occurrence parsing.
 
 The answer payload participates in both its per-payload byte cap and the
 aggregate governed-payload cap. Validation constructs all prospective objects
@@ -203,8 +208,12 @@ Today an empty assistant placeholder is queued for persistence, and any UI
 poll that materializes the first stream chunk can persist it immediately.
 That behavior would make a later message-plus-trace transaction impossible.
 
-Provenance-eligible initial assistant placeholders therefore opt into
-terminal-deferred persistence:
+The controller constructs the request-local finalizer before appending the
+assistant placeholder. One store operation then creates the placeholder,
+registers the finalizer, and enables terminal-deferred persistence atomically;
+the placeholder is never observable with only half of that state installed.
+
+Provenance-eligible initial assistant placeholders therefore:
 
 - stream chunks and UI polling may materialize visible content in memory
 - pending/streaming states cannot flush the assistant row
@@ -219,6 +228,12 @@ Non-citation messages keep the current first-content persistence behavior.
 Callbacks live only in a bounded transient store map keyed by native message ID;
 they are not serialized into message or session models and cannot transfer to a
 replacement, retry, regenerated variant, or runtime-written assistant row.
+
+The controller also clears any still-registered finalizer in an outer
+`finally` around the complete dispatch lifecycle. This cleanup covers
+`CancelledError`, session closure, and failures before provider or agent
+terminal handling begins. Clearing an already consumed or session-removed
+entry is a no-op.
 
 ### Exact-body callback
 
@@ -248,9 +263,11 @@ When a sealed write exists, `ConsoleChatStore` passes it through the optional
 `citation_write` parameter already supported by the real
 `ChatPersistenceService.create_message()` implementation.
 
-The store also supplies the native Console message UUID as the explicit
-database message ID. This is required even for ordinary text assistants when a
-citation write is attached:
+The store supplies the native Console message UUID as the explicit database
+message ID for every provenance-eligible terminal persistence attempt. The
+same ID is retained when marker eligibility rejects sealing, canonical
+persistence is deterministically unavailable, or an ambiguous write is
+retried. Non-provenance messages retain their existing database-ID behavior:
 
 - message retry targets the same row
 - the trace retains the same stable identity
@@ -302,6 +319,12 @@ For a non-policy exception whose commit outcome may be uncertain:
    record a fixed content-free diagnostic, and do not attempt a potentially
    conflicting ordinary insert
 
+The disposition is fixed by the first failure. If the retry raises
+`CitationPersistenceUnavailable`, it remains the second failure of an
+ambiguous attempt and does not enter the ordinary-fallback branch. Retry logic
+wraps only the atomic message-plus-trace `create_message()` call; later active
+leaf or Sync v2 bookkeeping cannot cause that transaction to be replayed.
+
 The failed persistence state must not cause the controller to reclassify a
 successful generation as a provider or agent failure.
 
@@ -350,11 +373,17 @@ without overstating structural or semantic trust.
 ### Store and persistence tests
 
 - UI materialization does not persist a terminal-deferred assistant early
+- placeholder creation installs finalizer and deferral atomically
+- outer dispatch cleanup clears unconsumed finalizers on cancellation and
+  pre-terminal failure
 - exact materialized body reaches the callback once
-- stable native message ID reaches `create_message`
+- stable native message ID reaches sealed, marker-rejected, fallback, and retry
+  `create_message` calls
 - message and trace commit atomically
 - deterministic denial falls back to an ordinary ungrounded message
 - ambiguous failure retries once with the same IDs and sealed write
+- a differently typed retry failure does not change the first-failure
+  disposition
 - second ambiguous failure leaves the answer visible without a conflicting
   ordinary insert
 - non-citation messages preserve current persistence timing

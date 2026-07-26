@@ -35,5 +35,5 @@ Complete one eligible marker-free local RAG generation by binding its exact fina
 - [ ] #3 Eligible marker-free initial Console direct-provider and agent generations seal from the exact materialized visible body and atomically persist the message plus trace under stable idempotent identities.
 - [ ] #4 Disabled, marker-mapping-ineligible, or deterministically unavailable canonical persistence preserves the ordinary answer as ungrounded, while ambiguous transaction failure receives at most one same-identity retry and never leaves partial provenance.
 - [ ] #5 Failed, stopped, canceled, empty, retry, and regenerate paths do not seal or inherit unfinished builders.
-- [ ] #6 Focused tests cover builder atomicity, direct and agent completion, exact-body fidelity, atomic persistence, fallback, idempotent retry, and content-free diagnostics.
+- [ ] #6 Focused tests cover builder atomicity, direct and agent completion, exact-body fidelity, transient-finalizer cleanup, atomic persistence, fallback, idempotent retry, and content-free diagnostics.
 <!-- AC:END -->
