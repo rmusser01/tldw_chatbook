@@ -30,7 +30,7 @@ import sys
 import threading
 import time
 import traceback
-from typing import TYPE_CHECKING, Union, Optional, Any, Dict, List, Callable
+from typing import TYPE_CHECKING, Union, Optional, Any, Dict, List, Callable, Mapping
 from textual.widget import Widget
 
 #
@@ -169,6 +169,10 @@ from tldw_chatbook.Library.ingest_preflight import collect_directory_files
 from tldw_chatbook.Library.server_ingest_reconcile import (
     pending_remote_batches,
     reconcile_remote_ingest_jobs,
+)
+from tldw_chatbook.Library.server_ingest_request import (
+    ServerIngestUnsupported,
+    build_server_ingest_kwargs,
 )
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
@@ -1714,6 +1718,17 @@ def _ingest_pool_real_stderr():
     return _INGEST_POOL_STDERR_FALLBACK
 
 
+def _response_field(payload: Any, name: str) -> Any:
+    """Read ``name`` from a pydantic model or a plain dict response.
+
+    The tldw client returns models, but its own tests exercise the same paths
+    with dicts, so both shapes are accepted.
+    """
+    if isinstance(payload, Mapping):
+        return payload.get(name)
+    return getattr(payload, name, None)
+
+
 class LibraryIngestQueueMixin:
     """Library ingest job submission seam + parallel-parse coordinator + writer.
 
@@ -1925,6 +1940,16 @@ class LibraryIngestQueueMixin:
             # ``expanded`` is non-empty here, so the loop always assigns.
             assert first_job is not None
             return first_job
+
+        if self._resolve_ingest_backend() == "server":
+            return self._submit_server_ingest_job(
+                source_path=source_path,
+                ingest_options=ingest_options or {},
+                title=title,
+                author=author,
+                keywords=keywords,
+                perform_analysis=perform_analysis,
+            )
 
         try:
             detected_type = classify_ingest_source(source_path) or ""
@@ -2582,6 +2607,132 @@ class LibraryIngestQueueMixin:
     #: (transcription, OCR), so a slow cadence is plenty and keeps this off the
     #: server's back.
     REMOTE_INGEST_POLL_SECONDS: float = 5.0
+
+    def _resolve_ingest_backend(self) -> str:
+        """Return the backend a new ingest should run on: ``local`` or ``server``.
+
+        Reads the same selector the media screens already use
+        (``media_runtime_state.runtime_backend``) rather than introducing a
+        second notion of "which backend am I on". Anything unrecognised, or a
+        missing selector, means local -- the backend that always works.
+        """
+        state = getattr(self, "media_runtime_state", None)
+        backend = str(getattr(state, "runtime_backend", "local") or "local")
+        return "server" if backend.strip().lower() == "server" else "local"
+
+    def _submit_server_ingest_job(
+        self,
+        *,
+        source_path: str,
+        ingest_options: dict[str, Any],
+        title: str,
+        author: str,
+        keywords: tuple[str, ...],
+        perform_analysis: bool,
+    ) -> LibraryIngestJob:
+        """Queue a ``server``-origin job and send it to the server.
+
+        The registry row is created synchronously so the queue shows the job the
+        moment the user starts it, then an async worker performs the submission
+        and records the ids the server issues. A source the server has no
+        handler for fails immediately, with the reason, rather than being sent
+        and rejected later.
+
+        Returns:
+            The queued job, or an already-``FAILED`` one when the source cannot
+            be sent at all.
+        """
+        try:
+            kwargs = build_server_ingest_kwargs(
+                source_path,
+                options=ingest_options,
+                title=title,
+                author=author,
+                keywords=keywords,
+                perform_analysis=perform_analysis,
+            )
+        except ServerIngestUnsupported as exc:
+            job = self.library_ingest_jobs.submit(
+                source_path=source_path,
+                title=title,
+                author=author,
+                keywords=keywords,
+                perform_analysis=perform_analysis,
+                origin="server",
+                ingest_options=ingest_options,
+            )
+            failed = self.library_ingest_jobs.mark_failed(
+                job.job_id, error=str(exc), permanent=True
+            )
+            return failed if failed is not None else job
+
+        job = self.library_ingest_jobs.submit(
+            source_path=source_path,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            detected_type=str(kwargs.get("media_type") or ""),
+            origin="server",
+            ingest_options=ingest_options,
+        )
+        self._send_server_ingest_job(job.job_id, kwargs)
+        return job
+
+    @work(group="library_ingest_remote_submit")
+    async def _send_server_ingest_job(
+        self, job_id: str, kwargs: dict[str, Any]
+    ) -> None:
+        """Submit to the server, then attach the ids it issued.
+
+        Async for the same reason the poller is: the service call is a
+        coroutine, so staying on the event loop keeps every registry mutation
+        on the UI thread without marshalling.
+        """
+        service = getattr(self, "server_media_reading_service", None)
+        submit = getattr(service, "submit_ingest_jobs", None) or getattr(
+            service, "submit_media_ingest_jobs", None
+        )
+        if not callable(submit):
+            self.library_ingest_jobs.mark_failed(
+                job_id,
+                error=(
+                    "No server backend is configured, so this ingest cannot run "
+                    "on the server. Configure one in Settings, or switch this "
+                    "Library to Local."
+                ),
+                permanent=True,
+            )
+            return
+
+        try:
+            response = await submit(**kwargs)
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Server ingest submission failed for job {job_id}."
+            )
+            self.library_ingest_jobs.mark_failed(
+                job_id, error=f"The server refused the ingest: {exc}"
+            )
+            return
+
+        batch_id = _response_field(response, "batch_id")
+        jobs = _response_field(response, "jobs") or []
+        remote_job_id = None
+        if jobs:
+            remote_job_id = _response_field(jobs[0], "id")
+        self.library_ingest_jobs.attach_remote(
+            job_id,
+            remote_job_id=None if remote_job_id is None else str(remote_job_id),
+            batch_id=None if batch_id is None else str(batch_id),
+        )
+        errors = _response_field(response, "errors") or []
+        if errors and not jobs:
+            self.library_ingest_jobs.mark_failed(
+                job_id, error=f"The server rejected the ingest: {errors[0]}"
+            )
+            return
+        self.poll_remote_ingest_jobs()
 
     def cancel_remote_ingest_batch(self, batch_id: str) -> None:
         """Ask the server to cancel every job in ``batch_id``.
