@@ -71,3 +71,38 @@ def test_delete_removes_membership_but_not_sources(service, db):
 
     assert service.list_watchlists() == []
     assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
+    # Verify cascade delete: membership row should be gone
+    assert service.list_sources(watchlist["id"]) == []
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM watchlist_sources WHERE watchlist_id = ?",
+        (watchlist["id"],)
+    ).fetchone()[0] == 0
+
+
+def test_create_rejects_blank_name(service):
+    with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
+        service.create("   ")
+
+    with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
+        service.create("")
+
+
+def test_rename_rejects_blank_name(service):
+    watchlist = service.create("Security")
+    with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
+        service.rename(watchlist["id"], "   ")
+
+    with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
+        service.rename(watchlist["id"], "")
+
+
+def test_rename_to_own_exact_name_has_no_suffix(service):
+    watchlist = service.create("Security")
+    renamed = service.rename(watchlist["id"], "Security")
+    assert renamed["name"] == "Security"
+
+
+def test_rename_to_own_case_variant_has_no_suffix(service):
+    watchlist = service.create("Security")
+    renamed = service.rename(watchlist["id"], "security")
+    assert renamed["name"] == "security"

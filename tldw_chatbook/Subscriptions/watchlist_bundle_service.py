@@ -35,6 +35,9 @@ class WatchlistBundleService:
 
     @staticmethod
     def _join_tags(tags: Sequence[str] | None) -> str | None:
+        """Join tags as comma-separated string. Note: tags containing commas will be
+        split on round-trip due to this convention (inherited from subscriptions.tags).
+        This is a known, deliberate limitation of the shared comma-joined format."""
         if not tags:
             return None
         cleaned = [str(tag).strip() for tag in tags if str(tag).strip()]
@@ -92,6 +95,8 @@ class WatchlistBundleService:
         tags: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         """Create a watchlist, auto-suffixing the name on collision."""
+        if not name.strip():
+            raise ValueError("watchlist name cannot be empty or whitespace-only")
         with self._db.transaction() as conn:
             resolved = self._unique_name(conn, name)
             cursor = conn.execute(
@@ -102,6 +107,8 @@ class WatchlistBundleService:
 
     def rename(self, watchlist_id: int, name: str) -> dict[str, Any]:
         """Rename a watchlist, auto-suffixing on collision with another row."""
+        if not name.strip():
+            raise ValueError("watchlist name cannot be empty or whitespace-only")
         with self._db.transaction() as conn:
             resolved = self._unique_name(conn, name, exclude_id=watchlist_id)
             conn.execute(
