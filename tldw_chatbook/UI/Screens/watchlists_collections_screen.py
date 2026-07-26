@@ -30,6 +30,7 @@ from ...Constants import (
     WATCHLISTS_SECTION_RUNS,
 )
 from ...runtime_policy.types import PolicyDeniedError
+from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -201,6 +202,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             app_instance=app_instance,
             store=getattr(app_instance, "client_notifications_db", None),
         )
+
+    def _watchlist_bundle_service(self) -> WatchlistBundleService | None:
+        """The live watchlist bundle service, or ``None`` if unavailable.
+
+        Mirrors how the screen reaches ``watchlist_scope_service``: via
+        ``getattr(..., None)`` on the app instance, so the tree and other
+        callers degrade rather than crash when the service has not been
+        wired (e.g. a bare app stub in tests).
+        """
+        return getattr(self.app_instance, "watchlist_bundle_service", None)
 
     def on_mount(self) -> None:
         super().on_mount()
