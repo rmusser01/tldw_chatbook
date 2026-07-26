@@ -56,6 +56,7 @@ from ...Sync_Interop.sync_readiness import (
 )
 from ...Sync_Interop.manual_sync_control import ManualSyncPreview, ManualSyncRunResult
 from ...Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
+from ...Workspaces.models import RuntimeBindingStatus
 from ...Workspaces.registry_service import (
     DEFAULT_WORKSPACE_ID,
     LocalWorkspaceRegistryService,
@@ -10213,6 +10214,61 @@ class SettingsScreen(BaseAppScreen):
                 yield Button(
                     "Archive", id="settings-workspace-archive", compact=True
                 )
+            yield from self._render_workspace_folder_bindings(registry, record.workspace_id)
+
+    def _render_workspace_folder_bindings(
+        self,
+        registry: LocalWorkspaceRegistryService,
+        workspace_id: str,
+    ) -> ComposeResult:
+        """Render the folder-bindings editor for the selected workspace (task 10).
+
+        One row per bound folder with its access level and freshness
+        (recomputed from disk by `list_folder_bindings`), a per-row
+        ro/rw toggle and remove button, then an add row. Toggle/remove
+        buttons stash `binding_id` as a plain attribute at compose time
+        (mirrors the conversation browser's `conversation_id` stash) so
+        the handler never has to parse a uuid out of the button id.
+        """
+        yield Static(
+            "Folders (agent file-tool access)", classes="destination-section"
+        )
+        for binding in registry.list_folder_bindings(workspace_id):
+            access = binding.metadata.get("access", "ro")
+            freshness = (
+                "ready" if binding.status == RuntimeBindingStatus.READY else "missing"
+            )
+            yield Static(
+                f"{binding.locator} [{access}] {freshness}",
+                id=f"settings-workspace-folder-{binding.binding_id}",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row"):
+                toggle_button = Button(
+                    "Allow write" if access != "rw" else "Read-only",
+                    id=f"settings-workspace-folder-toggle-{binding.binding_id}",
+                    classes="settings-workspace-folder-toggle",
+                    compact=True,
+                )
+                toggle_button.binding_id = binding.binding_id
+                yield toggle_button
+                remove_button = Button(
+                    "Remove",
+                    id=f"settings-workspace-folder-remove-{binding.binding_id}",
+                    classes="settings-workspace-folder-remove",
+                    compact=True,
+                )
+                remove_button.binding_id = binding.binding_id
+                yield remove_button
+        with Horizontal(classes="settings-input-row"):
+            yield Input(
+                placeholder="~/path/to/folder",
+                id="settings-workspace-folder-path",
+                classes="settings-compact-input",
+            )
+            yield Button(
+                "Add folder", id="settings-workspace-folder-add", compact=True
+            )
 
     def _set_settings_workspaces_result(self, text: str) -> None:
         self._settings_workspaces_result = text
@@ -11790,6 +11846,80 @@ class SettingsScreen(BaseAppScreen):
             return
         try:
             registry.unarchive_workspace(workspace_id)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-folder-add")
+    def _settings_workspace_add_folder(self, event: Button.Pressed) -> None:
+        """Bind a folder as a read-only file-tool access root (task 10)."""
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        raw = self.query_one("#settings-workspace-folder-path", Input).value
+        try:
+            registry.add_folder_binding(workspace_id, raw)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._set_settings_workspaces_result("Folder added (read-only).")
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, ".settings-workspace-folder-toggle")
+    def _settings_workspace_toggle_folder_access(self, event: Button.Pressed) -> None:
+        """Flip a folder binding between read-only and read-write (task 10).
+
+        The binding id is read from `event.button.binding_id`, stashed at
+        compose time -- never parsed out of the button's dom id, which
+        would split a uuid on its own hyphens.
+        """
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        binding_id = str(getattr(event.button, "binding_id", "") or "")
+        if not binding_id:
+            return
+        current = next(
+            (
+                binding
+                for binding in registry.list_folder_bindings(workspace_id)
+                if binding.binding_id == binding_id
+            ),
+            None,
+        )
+        if current is None:
+            return
+        allow_write = current.metadata.get("access") != "rw"
+        try:
+            registry.set_folder_binding_access(binding_id, allow_write=allow_write)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, ".settings-workspace-folder-remove")
+    def _settings_workspace_remove_folder(self, event: Button.Pressed) -> None:
+        """Unbind a folder from the selected workspace (task 10)."""
+        event.stop()
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        binding_id = str(getattr(event.button, "binding_id", "") or "")
+        if not binding_id:
+            return
+        try:
+            registry.remove_runtime_binding(binding_id)
         except WorkspaceRegistryServiceError as exc:
             self._set_settings_workspaces_result(str(exc))
             return

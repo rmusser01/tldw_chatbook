@@ -105,3 +105,53 @@ async def test_default_workspace_card_is_protected() -> None:
         assert not screen.query("#settings-workspace-rename-apply")
         assert not screen.query("#settings-workspace-archive")
         assert "stays tool-less" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_folder_bindings_add_toggle_remove_and_inline_errors(tmp_path) -> None:
+    from textual.widgets import Button, Input
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-folders", name="Folder WS")
+    project = tmp_path / "project"
+    project.mkdir()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspace-row-ws-folders", Button).press()
+        await pilot.pause(0.2)
+
+        # Add (defaults to read-only).
+        screen.query_one("#settings-workspace-folder-path", Input).value = str(project)
+        screen.query_one("#settings-workspace-folder-add", Button).press()
+        await pilot.pause(0.3)
+        bindings = registry.list_folder_bindings("ws-folders")
+        assert len(bindings) == 1
+        binding = bindings[0]
+        assert binding.metadata["access"] == "ro"
+        assert "[ro]" in _visible_text(screen)
+
+        # Toggle to rw.
+        screen.query_one(
+            f"#settings-workspace-folder-toggle-{binding.binding_id}", Button
+        ).press()
+        await pilot.pause(0.3)
+        assert registry.list_folder_bindings("ws-folders")[0].metadata["access"] == "rw"
+
+        # Invalid add explains inline.
+        screen.query_one("#settings-workspace-folder-path", Input).value = str(
+            tmp_path / "missing"
+        )
+        screen.query_one("#settings-workspace-folder-add", Button).press()
+        await pilot.pause(0.3)
+        assert "not a directory" in _visible_text(screen)
+
+        # Remove.
+        screen.query_one(
+            f"#settings-workspace-folder-remove-{binding.binding_id}", Button
+        ).press()
+        await pilot.pause(0.3)
+        assert registry.list_folder_bindings("ws-folders") == ()
