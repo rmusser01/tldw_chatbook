@@ -2784,18 +2784,13 @@ async def test_console_workspace_authority_rows_are_structured_for_scanning():
             )
             == "File tools"
         )
-        assert "Off in Default workspace" in _static_plain_text(
+        assert "Off in Default" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
         )
-        assert (
-            _static_plain_text(
-                console.query_one("#console-workspace-handoff-label", Static)
-            )
-            == "Handoff"
-        )
-        assert "Not configured" in _static_plain_text(
-            console.query_one("#console-workspace-handoff-value", Static)
-        )
+        # TASK-715: factory-default sync/server/ACP rows collapse into one line.
+        assert "not configured" in _static_plain_text(
+            console.query_one("#console-workspace-server-features-collapsed", Static)
+        ).lower()
 
 
 @pytest.mark.asyncio
@@ -4056,7 +4051,7 @@ async def test_console_conversation_browser_lists_all_workspace_groups():
         assert "Chats" in visible_text
         assert "Global chat" in visible_text
         assert "Storage" in visible_text
-        assert "Server handoff" in visible_text
+        assert "Server" in visible_text
         assert len(console.query("#console-workspace-conversations-toggle")) == 0
         assert (
             len(
@@ -4385,7 +4380,7 @@ async def test_console_browser_selecting_default_native_session_switches_to_defa
             )
             == "File tools"
         )
-        assert "Off in Default workspace" in _static_plain_text(
+        assert "Off in Default" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
         )
 
@@ -4453,7 +4448,7 @@ async def test_console_browser_selecting_default_persisted_row_switches_to_defau
             )
             == "File tools"
         )
-        assert "Off in Default workspace" in _static_plain_text(
+        assert "Off in Default" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
         )
 
@@ -5205,15 +5200,17 @@ async def test_console_conversation_browser_long_list_keeps_readiness_rows_reach
             console._toggle_console_rail_section("details")
         await pilot.pause()
         conversation_list = console.query_one("#console-workspace-conversations")
-        server_label = console.query_one("#console-workspace-server-readiness-label")
-        server_value = console.query_one("#console-workspace-server-readiness-value")
+        # TASK-715: default server features collapse to one line; it and the
+        # Handoff section title are the lower-rail reachability anchors now.
+        server_line = console.query_one("#console-workspace-server-features-collapsed")
+        handoff_title = console.query_one("#console-workspace-handoff-title")
 
         assert conversation_list.region.height > 0
-        assert server_label.region.y > conversation_list.region.y
-        assert server_value.region.y >= server_label.region.y
+        assert server_line.region.y > conversation_list.region.y
+        assert handoff_title.region.y >= server_line.region.y
         visible_text = _visible_text(console)
         assert "Storage" in visible_text
-        assert "Server handoff" in visible_text
+        assert "Server features" in visible_text
 
 
 @pytest.mark.asyncio
@@ -5897,18 +5894,13 @@ async def test_console_workspace_rail_new_conversation_creates_default_workspace
             )
             == "File tools"
         )
-        assert "Off in Default workspace" in _static_plain_text(
+        assert "Off in Default" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
         )
-        assert (
-            _static_plain_text(
-                console.query_one("#console-workspace-server-readiness-label", Static)
-            )
-            == "Server handoff"
-        )
-        assert "Not configured" in _static_plain_text(
-            console.query_one("#console-workspace-server-readiness-value", Static)
-        )
+        # TASK-715: factory-default sync/server/ACP rows collapse into one line.
+        assert "not configured" in _static_plain_text(
+            console.query_one("#console-workspace-server-features-collapsed", Static)
+        ).lower()
         visible_text = _visible_text(console)
         assert (
             "Workspace conversation creation lands in a later slice" not in visible_text
