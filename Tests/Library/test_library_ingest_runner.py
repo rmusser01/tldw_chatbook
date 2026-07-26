@@ -1869,7 +1869,13 @@ async def test_cancel_remote_batch_asks_the_server_and_resumes_polling(
     cancelled_batches: list[str] = []
 
     class _CancellableService:
-        async def cancel_media_ingest_jobs_batch(self, batch_id: str):
+        async def cancel_media_ingest_jobs_batch(
+            self, *, batch_id: str | None = None, session_id: str | None = None,
+            reason: str | None = None,
+        ):
+            # Keyword-only, mirroring the real client/service signature --
+            # a fake with a positional parameter would happily accept a
+            # positional call that fails against the real one.
             cancelled_batches.append(batch_id)
             return {"batch_id": batch_id, "cancelled": 1}
 
@@ -1923,7 +1929,10 @@ async def test_cancel_remote_batch_ignores_an_empty_batch_id(tmp_path: Path) -> 
     calls: list[str] = []
 
     class _Service:
-        async def cancel_media_ingest_jobs_batch(self, batch_id: str):
+        async def cancel_media_ingest_jobs_batch(
+            self, *, batch_id: str | None = None, session_id: str | None = None,
+            reason: str | None = None,
+        ):
             calls.append(batch_id)
 
         async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100):
@@ -2024,7 +2033,9 @@ async def test_server_backend_submits_remotely_and_attaches_ids(
 
     assert len(service.submissions) == 1
     submitted = service.submissions[0]
-    assert submitted["media_type"] == "plaintext"
+    # "document" not "plaintext": the live server accepts only video/audio/
+    # document/pdf/ebook, enforced by a runtime validator not its OpenAPI spec.
+    assert submitted["media_type"] == "document"
     assert submitted["file_paths"] == [str(source)]
     assert submitted["title"] == "A title"
 
@@ -2207,3 +2218,56 @@ async def test_an_explicit_server_preference_routes_remotely(tmp_path: Path) -> 
             await pilot.pause(_POLL_INTERVAL)
 
     assert len(service.submissions) == 1
+
+
+@pytest.mark.asyncio
+async def test_remote_poll_follows_pagination(tmp_path: Path) -> None:
+    """A batch larger than one page must be reconciled in full.
+
+    The live server's MediaIngestJobListResponse carries has_more/next_offset
+    (confirmed from its OpenAPI spec). Reading only the first page would leave
+    later jobs unreconciled -- and because they stay unsettled, the poller would
+    keep fetching that batch forever, which is exactly what the stop condition
+    exists to prevent.
+    """
+    class _PagedService:
+        def __init__(self) -> None:
+            self.offsets: list[int] = []
+
+        async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100,
+                                         offset: int = 0):
+            self.offsets.append(offset)
+            if offset == 0:
+                return {
+                    "batch_id": batch_id,
+                    "jobs": [{"id": 11, "status": "completed"}],
+                    "has_more": True,
+                    "next_offset": 1,
+                }
+            return {
+                "batch_id": batch_id,
+                "jobs": [{"id": 12, "status": "completed"}],
+                "has_more": False,
+            }
+
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.REMOTE_INGEST_POLL_SECONDS = 0.01
+    service = _PagedService()
+    app.server_media_reading_service = service
+
+    async with app.run_test() as pilot:
+        _queued_server_job(app, remote_job_id="11")
+        _queued_server_job(app, remote_job_id="12")
+        app.poll_remote_ingest_jobs()
+
+        for _ in range(_POLL_ATTEMPTS):
+            states = {j.state for j in app.library_ingest_jobs.jobs()}
+            if states == {IngestJobState.DONE}:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        else:
+            raise AssertionError(
+                f"second page never reconciled; states={states}, offsets={service.offsets}"
+            )
+
+    assert 1 in service.offsets, "the poller never asked for the second page"

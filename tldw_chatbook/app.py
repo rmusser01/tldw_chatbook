@@ -2608,6 +2608,10 @@ class LibraryIngestQueueMixin:
     #: server's back.
     REMOTE_INGEST_POLL_SECONDS: float = 5.0
 
+    #: Cap on status pages fetched per batch per pass, so a server
+    #: reporting has_more forever cannot pin the loop.
+    REMOTE_INGEST_MAX_PAGES: int = 20
+
     def _resolve_ingest_backend(self) -> str:
         """Return the backend a new ingest should run on: ``local`` or ``server``.
 
@@ -2743,6 +2747,71 @@ class LibraryIngestQueueMixin:
             return
         self.poll_remote_ingest_jobs()
 
+    async def _reconcile_remote_batch(self, service: Any, batch_id: str) -> None:
+        """Fetch every page of ``batch_id``'s statuses and reconcile them.
+
+        The server's list response is paginated (``has_more``/``next_offset``,
+        per its OpenAPI schema). Reading only the first page would leave later
+        jobs unreconciled -- and since they stay unsettled, the poller would
+        keep re-fetching that batch forever, which is what the stop condition
+        exists to prevent.
+
+        A transient failure is logged and left for the next pass rather than
+        killing the poller; the jobs stay visibly unfinished meanwhile, which is
+        the recoverable direction.
+        """
+        offset = 0
+        for _ in range(self.REMOTE_INGEST_MAX_PAGES):
+            if self._ingest_shutdown:
+                return
+            try:
+                response = await service.list_media_ingest_jobs(
+                    batch_id, offset=offset
+                )
+            except TypeError:
+                # A service/stub without an ``offset`` parameter: one page only.
+                try:
+                    response = await service.list_media_ingest_jobs(batch_id)
+                except Exception:
+                    logger.opt(exception=True).debug(
+                        f"Remote ingest poll failed for batch {batch_id!r}; "
+                        "will retry on the next pass."
+                    )
+                    return
+                self._reconcile_page(response)
+                return
+            except Exception:
+                logger.opt(exception=True).debug(
+                    f"Remote ingest poll failed for batch {batch_id!r}; "
+                    "will retry on the next pass."
+                )
+                return
+
+            self._reconcile_page(response)
+            if not _response_field(response, "has_more"):
+                return
+            next_offset = _response_field(response, "next_offset")
+            if next_offset is None or next_offset == offset:
+                # Server says there is more but gives no way forward; stop
+                # rather than spin on the same page.
+                logger.debug(
+                    f"Batch {batch_id!r} reports has_more with no usable "
+                    "next_offset; stopping pagination."
+                )
+                return
+            offset = int(next_offset)
+        else:
+            logger.warning(
+                f"Batch {batch_id!r} exceeded {self.REMOTE_INGEST_MAX_PAGES} "
+                "pages of statuses; the rest will be picked up next pass."
+            )
+
+    def _reconcile_page(self, response: Any) -> None:
+        """Hand one page of statuses to the reconciler, if it has any."""
+        statuses = _response_field(response, "jobs")
+        if statuses:
+            reconcile_remote_ingest_jobs(self.library_ingest_jobs, statuses)
+
     def cancel_remote_ingest_batch(self, batch_id: str) -> None:
         """Ask the server to cancel every job in ``batch_id``.
 
@@ -2769,7 +2838,9 @@ class LibraryIngestQueueMixin:
             )
             return
         try:
-            await cancel(batch_id)
+            # Keyword-only on both the client and the service wrapper; a
+            # positional call raises TypeError at runtime.
+            await cancel(batch_id=batch_id)
         except Exception:
             logger.opt(exception=True).warning(
                 f"Failed to cancel remote ingest batch {batch_id!r}."
@@ -2820,23 +2891,7 @@ class LibraryIngestQueueMixin:
             for batch_id in batches:
                 if self._ingest_shutdown:
                     return
-                try:
-                    response = await service.list_media_ingest_jobs(batch_id)
-                except Exception:
-                    # A transient server/network failure must not kill the
-                    # poller: the next pass retries, and the jobs stay visibly
-                    # unfinished meanwhile.
-                    logger.opt(exception=True).debug(
-                        f"Remote ingest poll failed for batch {batch_id!r}; "
-                        "will retry on the next pass."
-                    )
-                    continue
-                statuses = getattr(response, "jobs", None)
-                if statuses is None and isinstance(response, dict):
-                    statuses = response.get("jobs")
-                if not statuses:
-                    continue
-                reconcile_remote_ingest_jobs(self.library_ingest_jobs, statuses)
+                await self._reconcile_remote_batch(service, batch_id)
 
             await asyncio.sleep(self.REMOTE_INGEST_POLL_SECONDS)
 

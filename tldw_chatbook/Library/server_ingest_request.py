@@ -36,20 +36,35 @@ class ServerIngestUnsupported(Exception):
     """
 
 
+#: The only ``media_type`` values the server's ingest-jobs endpoint accepts.
+#:
+#: Established by submitting to a live server, NOT from its OpenAPI spec: the
+#: spec types ``media_type`` as a bare string, and the real set is enforced by a
+#: runtime validator whose rejection reads "Input should be 'video', 'audio',
+#: 'document', 'pdf' or 'ebook'". Guarded by a test, since nothing in the
+#: generated client pins it.
+SERVER_ACCEPTED_MEDIA_TYPES: frozenset[str] = frozenset(
+    {"video", "audio", "document", "pdf", "ebook"}
+)
+
 #: What ``classify_ingest_source``/``detect_file_type`` call a source, mapped to
-#: the media types the server's ingest-jobs API accepts. The server's set is
-#: visible in ``tldw_api_events.py``'s submit dispatch (audio, video, pdf,
-#: document, ebook, plaintext, xml, mediawiki_dump); it has no ``html``, whose
-#: text the document extractor handles, and no ``article``.
+#: one of :data:`SERVER_ACCEPTED_MEDIA_TYPES`.
+#:
+#: An earlier version of this table sent ``plaintext`` and ``xml``, inferred
+#: from the legacy ingest window's own form dispatch in ``tldw_api_events.py``.
+#: That dispatch describes *that window's* form, not this endpoint's contract,
+#: and the server rejects both -- so every plain-text server ingest would have
+#: failed validation. The server has no text/markup type at all: its document
+#: extractor takes them.
 SERVER_MEDIA_TYPE_BY_LOCAL_TYPE: dict[str, str] = {
     "pdf": "pdf",
     "document": "document",
     "ebook": "ebook",
-    "plaintext": "plaintext",
     "audio": "audio",
     "video": "video",
+    "plaintext": "document",
     "html": "document",
-    "xml": "xml",
+    "xml": "document",
 }
 
 #: Local types that are real capabilities but belong to a different server

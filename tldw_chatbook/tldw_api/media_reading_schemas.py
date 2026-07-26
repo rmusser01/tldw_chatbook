@@ -644,6 +644,15 @@ class MediaIngestJobListResponse(BaseModel):
 
     batch_id: str
     jobs: list[MediaIngestJobStatus] = Field(default_factory=list)
+    # The server paginates this list and sends these alongside ``jobs``. With
+    # ``extra="ignore"`` and no declaration they were silently dropped, so a
+    # caller could not tell a partial page from a complete one -- and a batch
+    # larger than one page would never finish reconciling. Declared optional so
+    # an older server that omits them still validates.
+    has_more: bool | None = None
+    next_offset: int | None = None
+    limit: int | None = None
+    offset: int | None = None
 
 
 class MediaIngestJobStreamEvent(BaseModel):

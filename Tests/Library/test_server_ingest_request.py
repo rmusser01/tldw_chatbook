@@ -26,8 +26,8 @@ class TestServerMediaTypeFor:
             ("/tmp/paper.pdf", "pdf"),
             ("/tmp/report.docx", "document"),
             ("/tmp/book.epub", "ebook"),
-            ("/tmp/notes.txt", "plaintext"),
-            ("/tmp/notes.md", "plaintext"),
+            ("/tmp/notes.txt", "document"),
+            ("/tmp/notes.md", "document"),
             ("/tmp/talk.mp3", "audio"),
             ("/tmp/talk.mp4", "video"),
             ("https://youtube.com/watch?v=abc", "video"),
@@ -42,6 +42,33 @@ class TestServerMediaTypeFor:
     def test_html_is_a_document_to_the_server(self) -> None:
         """The server has no ``html`` media type; its document extractor takes it."""
         assert server_media_type_for("/tmp/page.html") == "document"
+
+    def test_every_mapping_target_is_one_the_server_accepts(self) -> None:
+        """Only the server's five media types may ever be sent.
+
+        Discovered by submitting to a live server, NOT from its OpenAPI spec --
+        the spec types ``media_type`` as a bare string and the real set is
+        enforced by a runtime validator, which answered:
+        "Input should be 'video', 'audio', 'document', 'pdf' or 'ebook'".
+
+        An earlier version of this mapping sent ``plaintext`` (inferred from the
+        legacy ingest window's own form dispatch) and every plain-text server
+        ingest would have failed validation.
+        """
+        from tldw_chatbook.Library.server_ingest_request import (
+            SERVER_ACCEPTED_MEDIA_TYPES,
+            SERVER_MEDIA_TYPE_BY_LOCAL_TYPE,
+        )
+
+        assert SERVER_ACCEPTED_MEDIA_TYPES == frozenset(
+            {"video", "audio", "document", "pdf", "ebook"}
+        )
+        unaccepted = {
+            local: sent
+            for local, sent in SERVER_MEDIA_TYPE_BY_LOCAL_TYPE.items()
+            if sent not in SERVER_ACCEPTED_MEDIA_TYPES
+        }
+        assert not unaccepted, f"would be rejected by the server: {unaccepted}"
 
     def test_plain_web_page_is_not_a_jobs_api_source(self) -> None:
         """A web page belongs to the clipper endpoint, not the ingest-jobs API.
@@ -63,7 +90,7 @@ class TestBuildServerIngestKwargs:
     def test_local_file_goes_in_file_paths_not_urls(self) -> None:
         kwargs = build_server_ingest_kwargs("/tmp/notes.txt", options={})
 
-        assert kwargs["media_type"] == "plaintext"
+        assert kwargs["media_type"] == "document"
         assert kwargs["file_paths"] == ["/tmp/notes.txt"]
         assert kwargs.get("urls") is None
 

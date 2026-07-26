@@ -4,7 +4,7 @@ title: Bring server-backed ingestion into the Library ingest canvas
 status: To Do
 assignee: []
 created_date: '2026-07-26 04:33'
-updated_date: '2026-07-26 05:16'
+updated_date: '2026-07-26 13:07'
 labels:
   - ingest
   - consolidation
@@ -39,11 +39,17 @@ Server Sources is the only way to start a server-backed ingest, and it lives in 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Slice 1 of 3 landed: the pure mapping layer (tldw_chatbook/Library/server_ingest_request.py, 21 tests).
+Slices 1 (mapping) and 2 (routing) landed, and the mapping is now LIVE-VERIFIED against a real tldw server on :8000. The UI slice (backend selector in the canvas) is the remainder.
 
-Key finding that reshaped the plan: the server seam already existed. ServerMediaReadingService.submit_ingest_jobs already wraps TLDWAPIClient.submit_media_ingest_jobs and accepts exactly the kwargs a Library submission needs, with list/cancel siblings for 684.2 and ingest_web_content for 684.3. The 700-line widget-coupled handler in tldw_api_events.py never needs untangling -- it dies with the window in 684.4.
+THREE DEFECTS FOUND ONLY BY LIVE CONTACT -- all invisible to 930 passing tests:
 
-Two boundaries are explicit rather than guessed: the server has no html media type (its document extractor takes that text), and a plain web page is refused with the reason that clipping runs through a different endpoint (684.3), rather than being sent as a type the server would reject.
+1. media_type mapping was wrong. The server accepts ONLY video/audio/document/pdf/ebook. It rejects 'plaintext', which this mapping sent for .txt/.md -- the commonest case -- so every plain-text server ingest would have failed validation. The value came from the legacy ingest window's own form dispatch in tldw_api_events.py, which describes that window's form, not this endpoint's contract. Crucially the accepted set is NOT in the server's OpenAPI spec: media_type is typed as a bare string and the set is enforced by a runtime validator, so submitting was the only way to learn it. Now a named constant with a guard test.
 
-Remaining: slice 2 routes submit through the chosen backend (the selector already exists as app.media_runtime_state.runtime_backend, alongside the local/server MediaReadingScopeService pattern); slice 3 renders the choice in the canvas and replaces the cosmetic 'ingest runs on Local' line, gating honestly when no server is configured. Then a live pass against a configured server -- which is the part this environment cannot verify.
+2. MediaIngestJobListResponse silently discarded pagination. It declared only batch_id/jobs with extra='ignore', so the has_more/next_offset the server really sends were dropped -- meaning the poller's pagination read a field that could never exist on the typed model. The unit test passed only because it used a dict. Fields now declared; confirmed arriving live (has_more=False, limit=10, offset=0).
+
+3. cancel_media_ingest_jobs_batch is KEYWORD-ONLY and was being called positionally, which raises TypeError. The unit test missed it because the fake service had a positional parameter -- the fake was written to match the wrong call, so it validated the bug. Both fixed; the corrected fake now fails if the call regresses. Lesson: a fake shaped by your own assumption tests nothing.
+
+VERIFIED END-TO-END against the live server: submit (document accepted, batch + job id issued) -> local row with origin=server and ids attached -> pending_remote_batches returns the batch -> cancel accepted (success=True cancelled=1) -> server reports 'cancelled' -> reconciler maps it to local cancelled with the reason carried through -> stop condition clears.
+
+STILL INFERRED, NOT CONFIRMED: the 'completed', 'running' and 'failed' status spellings. The server had not picked the job up before it was cancelled, so only 'queued' and 'cancelled' were observed live. Both mapped correctly.
 <!-- SECTION:NOTES:END -->
