@@ -200,6 +200,67 @@ def fetch_json(
     raise ImageGenerationError("request failed: too many redirects")
 
 
+def _positive_byte_limit(max_bytes: int | None) -> int | None:
+    """Normalize a byte cap: ``None``/non-int/non-positive values mean "no cap".
+
+    Relocated from ``Image_Generation/adapters/image_format_utils.py`` (task-1
+    fix round 1) so both ``fetch_bytes_via_post`` (this module) and
+    ``fetch_image_bytes`` (image_format_utils, which imports it back from
+    here) share one implementation instead of duplicating the cap logic.
+    """
+    if max_bytes is None:
+        return None
+    try:
+        limit = int(max_bytes)
+    except (TypeError, ValueError):
+        return None
+    return limit if limit > 0 else None
+
+
+def _reject_declared_oversize(headers: Any, max_bytes: int | None) -> None:
+    """Reject a response whose declared ``Content-Length`` already exceeds the cap.
+
+    Runs before any body bytes are read, so a server that honestly declares
+    an oversized body is rejected without buffering it at all. A missing or
+    unparsable ``Content-Length`` is not itself an error here -- the running
+    total check in ``_read_stream_with_limit`` is the backstop for a body
+    that is unbounded or lies about its declared size.
+    """
+    limit = _positive_byte_limit(max_bytes)
+    if limit is None:
+        return
+    content_length = headers.get("content-length") or headers.get("Content-Length")
+    if content_length is None:
+        return
+    try:
+        declared_size = int(str(content_length).strip())
+    except ValueError:
+        return
+    if declared_size > limit:
+        raise ImageGenerationError("image content too large")
+
+
+def _read_stream_with_limit(chunks: Any, max_bytes: int | None) -> bytes:
+    """Read a byte-chunk iterator, aborting mid-stream once the running total exceeds the cap.
+
+    This is the backstop against a body that is unbounded or that lies about
+    its declared ``Content-Length`` (or omits it): each chunk is only
+    buffered after confirming the running total is still within the cap, so
+    a body that blows the cap is never fully read into memory.
+    """
+    limit = _positive_byte_limit(max_bytes)
+    total = 0
+    parts: list[bytes] = []
+    for chunk in chunks:
+        if not chunk:
+            continue
+        total += len(chunk)
+        if limit is not None and total > limit:
+            raise ImageGenerationError("image content too large")
+        parts.append(chunk)
+    return b"".join(parts)
+
+
 def fetch_bytes_via_post(
     url: str,
     *,
@@ -214,11 +275,28 @@ def fetch_bytes_via_post(
     For backends that return image bytes directly from a POST (e.g. Fireworks'
     image-generation endpoint) rather than a JSON envelope carrying a URL or
     base64 payload. Mirrors ``fetch_json``'s manual, per-hop-validated
-    redirect loop verbatim: egress is re-validated on every hop,
+    redirect loop: egress is re-validated on every hop,
     ``Authorization``/``Cookie``/``Proxy-Authorization`` are stripped on any
     hop whose origin differs from the original request's (see ``fetch_json``'s
     docstring for the full same-origin rationale), and redirects are never
     auto-followed by the transport.
+
+    Unlike ``fetch_json``, the final hop's response is streamed
+    (``client.stream()``) rather than eagerly buffered: ``httpx`` has no
+    built-in body-size limit, so reading the whole body via ``resp.content``
+    before checking it against ``max_bytes`` would let a hostile or broken
+    endpoint force an unbounded in-memory buffer regardless of the cap. Two
+    guards apply instead, mirroring ``image_format_utils.fetch_image_bytes``
+    (whose ``_reject_declared_oversize``/``_read_stream_with_limit`` helpers
+    live in this module and are imported back by that module, so both GET and
+    POST byte-fetch paths share one implementation):
+
+    1. ``_reject_declared_oversize`` rejects a response whose declared
+       ``Content-Length`` already exceeds ``max_bytes`` -- before a single
+       chunk is read.
+    2. ``_read_stream_with_limit`` reads the body chunk-by-chunk, aborting as
+       soon as the running total exceeds ``max_bytes`` -- the backstop for a
+       body with no (or an inaccurate) ``Content-Length``.
 
     Args:
         url: Absolute request URL (validated before each hop).
@@ -233,7 +311,8 @@ def fetch_bytes_via_post(
             for URLs sourced from a remote API's response body.
         max_bytes: Maximum allowed response body size in bytes. A response
             body larger than this raises ``ImageGenerationError`` naming the
-            cap -- the body is never silently truncated and returned partial.
+            cap -- the body is never silently truncated and returned partial,
+            nor fully buffered in memory before being rejected.
 
     Returns:
         A ``(body_bytes, content_type_header_value)`` tuple.
@@ -242,7 +321,8 @@ def fetch_bytes_via_post(
         ImageGenerationError: On a blocked URL (see
             ``_validate_egress_or_raise``), a redirect without a
             ``Location``, exceeding the redirect cap, or the response body
-            exceeding ``max_bytes``.
+            exceeding ``max_bytes`` (declared via ``Content-Length`` or
+            discovered mid-stream).
     """
     current = url
     with create_client(timeout=timeout) as client:
@@ -253,23 +333,25 @@ def fetch_bytes_via_post(
             # origin must not carry Authorization/Cookie/Proxy-Authorization
             # along with it.
             same_origin = egress.same_origin(url, current)
-            resp = client.request(
+            with client.stream(
                 "POST",
                 current,
                 headers=egress._hop_headers(headers, same_origin),
                 json=json,
-            )
-            if resp.is_redirect:
-                location = resp.headers.get("location") or resp.headers.get("Location")
-                if not location:
-                    raise ImageGenerationError("request failed: redirect without location")
-                current = _resolve_redirect_url(str(resp.url), str(location))
-                continue
-            resp.raise_for_status()
-            content = resp.content
-            if len(content) > max_bytes:
-                raise ImageGenerationError(
-                    f"response body exceeds max_bytes cap ({max_bytes} bytes)"
-                )
-            return content, resp.headers.get("content-type", "")
+            ) as resp:
+                if resp.is_redirect:
+                    location = resp.headers.get("location") or resp.headers.get("Location")
+                    if not location:
+                        raise ImageGenerationError("request failed: redirect without location")
+                    current = _resolve_redirect_url(str(resp.url), str(location))
+                    continue
+                resp.raise_for_status()
+                try:
+                    _reject_declared_oversize(resp.headers, max_bytes)
+                    content = _read_stream_with_limit(resp.iter_bytes(), max_bytes)
+                except ImageGenerationError as exc:
+                    raise ImageGenerationError(
+                        f"response body exceeds max_bytes cap ({max_bytes} bytes)"
+                    ) from exc
+                return content, resp.headers.get("content-type", "")
     raise ImageGenerationError("request failed: too many redirects")
