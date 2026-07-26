@@ -145,7 +145,17 @@ class TTSAdapterRegistry:
         return self._slots[self._resolve_id(provider_id)].revision
 
     def configuration_generation(self, provider_id: str) -> int:
-        """Return the latest settings generation applied to one provider."""
+        """Return the latest settings generation applied to one provider.
+
+        Args:
+            provider_id: Exact provider identifier or registered alias.
+
+        Returns:
+            The latest applied registry-wide settings generation.
+
+        Raises:
+            UnknownTTSProviderError: If the provider is not registered.
+        """
         return self._slots[self._resolve_id(provider_id)].applied_generation
 
     def reserve_reconfiguration_generation(self) -> int:
@@ -164,6 +174,24 @@ class TTSAdapterRegistry:
         *,
         expected_revision: int | None = None,
     ) -> TTSAdapterLease:
+        """Acquire one lease for the provider's current adapter.
+
+        Args:
+            provider_id: Exact provider identifier or registered alias.
+            expected_revision: Optional configuration revision that must still
+                match at admission.
+
+        Returns:
+            A lease that must be released after adapter use.
+
+        Raises:
+            UnknownTTSProviderError: If the provider is not registered.
+            TTSRegistryClosedError: If registry shutdown has begun.
+            TTSProviderUnavailableError: If the provider has been sealed
+                unavailable.
+            TTSProviderReconfiguringError: If an exclusive handoff is active.
+            TTSConfigurationRevisionError: If ``expected_revision`` is stale.
+        """
         canonical_id = self._resolve_id(provider_id)
         if self._closed:
             raise TTSRegistryClosedError("The TTS registry is closed")
@@ -220,7 +248,20 @@ class TTSAdapterRegistry:
     async def reconfigure_provider(
         self, provider_id: str, config: Mapping[str, Any]
     ) -> ReconfigureResult:
-        """Apply one provider config and await its definitive retained result."""
+        """Apply one provider config and await its definitive retained result.
+
+        Args:
+            provider_id: Exact provider identifier or registered alias.
+            config: Complete replacement configuration for the provider.
+
+        Returns:
+            The definitive outcome for the retained reconfiguration.
+
+        Raises:
+            UnknownTTSProviderError: If the provider is not registered.
+            TTSRegistryClosedError: If registry shutdown has begun.
+            TypeError: If ``config`` is not a mapping.
+        """
         ticket = await self.begin_reconfigure_provider(provider_id, config)
         return await asyncio.shield(ticket.completion)
 
@@ -231,7 +272,24 @@ class TTSAdapterRegistry:
         *,
         generation: int | None = None,
     ) -> TTSReconfigurationTicket:
-        """Begin a retained, generation-aware provider reconfiguration."""
+        """Begin a retained, generation-aware provider reconfiguration.
+
+        Args:
+            provider_id: Exact provider identifier or registered alias.
+            config: Complete replacement configuration for the provider.
+            generation: Optional positive registry-wide generation. When
+                omitted, the registry reserves the next generation.
+
+        Returns:
+            A ticket whose retained task reports the definitive outcome.
+
+        Raises:
+            UnknownTTSProviderError: If the provider is not registered.
+            TTSRegistryClosedError: If registry shutdown has begun.
+            TypeError: If ``config`` is not a mapping or ``generation`` is not
+                an integer.
+            ValueError: If ``generation`` is not positive.
+        """
         canonical_id = self._resolve_id(provider_id)
         if self._closed:
             raise TTSRegistryClosedError("The TTS registry is closed")

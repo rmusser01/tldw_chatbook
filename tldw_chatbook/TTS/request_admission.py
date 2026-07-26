@@ -145,7 +145,27 @@ class TTSRequestAdmissionCoordinator:
         voice_override: str | None = None,
         progress_sink: ProgressSink | None = None,
     ) -> TTSAudioResponse:
-        """Resolve and admit one coherent default request, then execute it."""
+        """Resolve and admit one coherent default request, then execute it.
+
+        Args:
+            text: Text to synthesize.
+            voice_override: Optional request-scoped voice identifier.
+            progress_sink: Optional callback for bounded synthesis progress.
+
+        Returns:
+            The admitted provider response. The caller owns and must close it.
+
+        Raises:
+            TTSProviderUnavailableError: If no default provider is configured
+                or its dynamic model catalog is empty.
+            TTSRegistryClosedError: If service shutdown has begun.
+            TTSProviderReconfiguringError: If the selected provider is in an
+                exclusive settings handoff.
+            TTSConfigurationRevisionError: If the selected provider revision
+                changes before admission completes.
+            TTSOperationError: If admission or synthesis fails.
+            ValueError: If the published default preferences are invalid.
+        """
         reservation: _OperationCapacityReservation | None = None
         operation: _AdmittedTTSOperation | None = None
         try:

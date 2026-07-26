@@ -192,8 +192,10 @@ identity and automated results are not represented as a second live run.
 
 ### Fresh post-rebase verification
 
-- Focused Slice 1 suite: 300 passed, 1 warning in 76.44 seconds.
-- Broad TTS/STTS suite: 1,008 passed, 14 skipped, 1 warning in 332.03 seconds.
+- Final post-review focused Slice 1 suite: 325 passed, 1 warning in 79.81
+  seconds.
+- Final post-review broad TTS/STTS suite: 1,016 passed, 14 skipped, 1 warning
+  in 284.70 seconds.
 - Static gates: primary Ruff passed; config Ruff passed with only the two known
   `F841` findings ignored; task-scoped Ruff format passed across 73 files;
   compileall passed; focused mypy passed across seven files; and
@@ -247,6 +249,14 @@ TASK-710 therefore remains **In Progress** and is not marked Done.
   admission. `TTSService` now quarantines that selection as recoverably
   unconfigured, returns fixed safe unavailable copy without a provider metric,
   and accepts a later canonical settings publication without restart.
+- PR review hardening added Google-style boundary documentation, contextual
+  but privacy-safe config mutation logging, 64 KiB ordered artifact writes,
+  bounded cancellation and secure-delete joins, retained late-I/O draining,
+  eventual cleanup after late success or failure, and matching-only cache
+  release so a delayed delete cannot erase a replacement artifact. Red/green
+  lifecycle regressions cover the cancellation, timeout, shutdown, batching,
+  privacy, and replacement races. A final independent review reported no
+  Critical, Important, or Minor findings.
 - The implementation satisfies the task acceptance criteria, but project DoD
   remains blocked by the non-green repository-wide baseline and the current
   absence of a user-started server for a second live run.

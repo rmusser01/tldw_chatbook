@@ -27,10 +27,18 @@ from tldw_chatbook.TTS.adapter_types import (
 from tldw_chatbook.Utils.secure_temp_files import get_temp_manager, secure_delete_file
 
 _T = TypeVar("_T")
+_TTS_ARTIFACT_WRITE_BATCH_BYTES = 64 * 1024
+_TTS_IO_CANCELLATION_JOIN_TIMEOUT_SECONDS = 1.0
+_TTS_SECURE_DELETE_TIMEOUT_SECONDS = 1.0
+_TTS_RETAINED_WORK_DRAIN_TIMEOUT_SECONDS = 1.0
 
 
 class _TTSResponseContractError(RuntimeError):
     """Raised when a synthesized response violates the Console audio contract."""
+
+
+class _TTSArtifactIOTimeout(RuntimeError):
+    """Raised when bounded artifact I/O continues in a retained worker."""
 
 
 #######################################################################################################################
@@ -229,6 +237,10 @@ class TTSEventHandler:
         self._temp_manager = get_temp_manager()
         self._audio_files: Dict[str, Path] = {}  # Track audio files by message_id
         self._artifact_cleanup_retry: set[Path] = set()
+        self._retained_tts_io_tasks: set[asyncio.Task] = set()
+        self._retained_tts_cleanup_tasks: set[asyncio.Task] = set()
+        self._retained_tts_cleanup_paths: set[Path] = set()
+        self._retained_tts_cleanup_requeue: dict[Path, str] = {}
         # task-559 fix round 1: which file the player last loaded, tracked
         # independently of `_audio_files` -- that cache is deleted 5s after
         # playback STARTS (see handle_tts_playback's "play" branch), well
@@ -474,19 +486,51 @@ class TTSEventHandler:
                     nonlocal artifact_path
                     artifact_path = path
 
+                def cleanup_late_creation(path: Path) -> None:
+                    self._schedule_cancelled_artifact_cleanup(
+                        normalized_message_id,
+                        path,
+                    )
+
                 created_artifact_path = await self._run_blocking_tts_io(
                     lambda: self._create_tts_artifact(audio_format),
                     on_cancelled_result=remember_cancelled_creation,
+                    on_late_cancelled_result=cleanup_late_creation,
                 )
                 artifact_path = created_artifact_path
-                async for chunk in response.byte_stream:
+                buffered_chunks: list[bytes] = []
+                buffered_bytes = 0
+
+                def cleanup_late_write() -> None:
+                    self._schedule_cancelled_artifact_cleanup(
+                        normalized_message_id,
+                        created_artifact_path,
+                    )
+
+                async def flush_artifact_batch() -> None:
+                    nonlocal buffered_bytes
+                    if not buffered_chunks:
+                        return
+                    batch = b"".join(buffered_chunks)
+                    buffered_chunks.clear()
+                    buffered_bytes = 0
                     await self._run_blocking_tts_io(
                         partial(
                             self._append_tts_artifact_chunk,
                             created_artifact_path,
-                            chunk,
-                        )
+                            batch,
+                        ),
+                        on_late_completion=cleanup_late_write,
                     )
+
+                async for chunk in response.byte_stream:
+                    if not chunk:
+                        continue
+                    buffered_chunks.append(chunk)
+                    buffered_bytes += len(chunk)
+                    if buffered_bytes >= _TTS_ARTIFACT_WRITE_BATCH_BYTES:
+                        await flush_artifact_batch()
+                await flush_artifact_batch()
             except BaseException as error:
                 primary_error = error
                 raise
@@ -520,10 +564,20 @@ class TTSEventHandler:
                 )
             )
             outcome_code = "success"
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as cancellation:
             outcome_code = "cancelled"
-            await self._discard_tts_artifact(normalized_message_id, artifact_path)
-            raise
+            if artifact_path is not None:
+                cleanup = self._schedule_cancelled_artifact_cleanup(
+                    normalized_message_id,
+                    artifact_path,
+                )
+                if cleanup is not None:
+                    while not cleanup.done():
+                        try:
+                            await asyncio.wait({cleanup})
+                        except asyncio.CancelledError:
+                            continue
+            raise cancellation
         except Exception as error:
             outcome_code = self._tts_outcome_code(error)
             await self._discard_tts_artifact(normalized_message_id, artifact_path)
@@ -558,21 +612,50 @@ class TTSEventHandler:
                 except Exception:
                     logger.debug("TTS metric publication failed")
 
-    @staticmethod
     async def _run_blocking_tts_io(
+        self,
         operation: Callable[[], _T],
         *,
         on_cancelled_result: Callable[[_T], None] | None = None,
+        on_late_cancelled_result: Callable[[_T], None] | None = None,
+        on_late_completion: Callable[[], None] | None = None,
+        operation_timeout_seconds: float | None = None,
     ) -> _T:
-        """Run one artifact operation off-loop and join it before cancellation."""
+        """Run artifact I/O off-loop with a bounded cancellation join."""
         worker = asyncio.create_task(asyncio.to_thread(operation))
         try:
-            return await asyncio.shield(worker)
-        except asyncio.CancelledError:
+            if operation_timeout_seconds is None:
+                return await asyncio.shield(worker)
+            await asyncio.wait({worker}, timeout=operation_timeout_seconds)
+            if not worker.done():
+                self._retain_tts_io_after_cancellation(
+                    worker,
+                    on_late_cancelled_result=on_late_cancelled_result,
+                    on_late_completion=on_late_completion,
+                )
+                raise _TTSArtifactIOTimeout
+            return worker.result()
+        except asyncio.CancelledError as cancellation:
+            deadline = (
+                asyncio.get_running_loop().time()
+                + _TTS_IO_CANCELLATION_JOIN_TIMEOUT_SECONDS
+            )
             worker_error: BaseException | None = None
             while not worker.done():
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    self._retain_tts_io_after_cancellation(
+                        worker,
+                        on_late_cancelled_result=on_late_cancelled_result,
+                        on_late_completion=on_late_completion,
+                    )
+                    logger.warning(
+                        "TTS artifact I/O exceeded the cancellation join timeout; "
+                        "late cleanup was retained"
+                    )
+                    raise cancellation
                 try:
-                    await asyncio.shield(worker)
+                    await asyncio.wait({worker}, timeout=remaining)
                 except asyncio.CancelledError:
                     continue
                 except BaseException as error:
@@ -592,7 +675,84 @@ class TTSEventHandler:
                 )
             # Outside this already-cancelled branch, process-control
             # BaseExceptions still propagate from the initial await above.
-            raise
+            raise cancellation
+
+    def _retain_tts_io_after_cancellation(
+        self,
+        worker: asyncio.Task[_T],
+        *,
+        on_late_cancelled_result: Callable[[_T], None] | None,
+        on_late_completion: Callable[[], None] | None,
+    ) -> None:
+        """Observe one timed-out worker and dispatch its eventual result."""
+        self._retained_tts_io_tasks.add(worker)
+
+        def observe(completed: asyncio.Task[_T]) -> None:
+            self._retained_tts_io_tasks.discard(completed)
+            try:
+                try:
+                    result = completed.result()
+                except BaseException:
+                    logger.warning(
+                        "Retained TTS artifact I/O did not complete successfully"
+                    )
+                else:
+                    if on_late_cancelled_result is not None:
+                        try:
+                            on_late_cancelled_result(result)
+                        except BaseException:
+                            logger.warning(
+                                "Late TTS artifact cleanup could not be scheduled"
+                            )
+            finally:
+                if on_late_completion is not None:
+                    try:
+                        on_late_completion()
+                    except BaseException:
+                        logger.warning(
+                            "Late TTS artifact completion could not be processed"
+                        )
+
+        worker.add_done_callback(observe)
+
+    def _schedule_cancelled_artifact_cleanup(
+        self,
+        message_id: str,
+        artifact_path: Path,
+    ) -> asyncio.Task[None] | None:
+        """Retain cleanup for an artifact exposed after cancellation returned."""
+        self._artifact_cleanup_retry.add(artifact_path)
+        if artifact_path in self._retained_tts_cleanup_paths:
+            self._retained_tts_cleanup_requeue[artifact_path] = message_id
+            return None
+        self._retained_tts_cleanup_paths.add(artifact_path)
+        cleanup = asyncio.create_task(
+            self._discard_tts_artifact(message_id, artifact_path)
+        )
+        self._retained_tts_cleanup_tasks.add(cleanup)
+
+        def observe(completed: asyncio.Task[None]) -> None:
+            self._retained_tts_cleanup_tasks.discard(completed)
+            self._retained_tts_cleanup_paths.discard(artifact_path)
+            requeued_message_id = self._retained_tts_cleanup_requeue.pop(
+                artifact_path,
+                None,
+            )
+            try:
+                completed.result()
+            except BaseException:
+                logger.warning("Retained TTS artifact cleanup did not complete")
+            if (
+                requeued_message_id is not None
+                and artifact_path in self._artifact_cleanup_retry
+            ):
+                self._schedule_cancelled_artifact_cleanup(
+                    requeued_message_id,
+                    artifact_path,
+                )
+
+        cleanup.add_done_callback(observe)
+        return cleanup
 
     def _create_tts_artifact(self, audio_format: str) -> Path:
         """Create one owner-only Console audio artifact."""
@@ -606,7 +766,7 @@ class TTSEventHandler:
 
     @staticmethod
     def _append_tts_artifact_chunk(artifact_path: Path, chunk: bytes) -> None:
-        """Append and flush one response chunk while preserving stream order."""
+        """Append and flush one ordered response batch."""
         with artifact_path.open("ab") as audio_file:
             audio_file.write(chunk)
             audio_file.flush()
@@ -617,17 +777,87 @@ class TTSEventHandler:
         deleted = secure_delete_file(artifact_path)
         return deleted is True or not artifact_path.exists()
 
-    async def _try_secure_delete_tts_artifact(self, artifact_path: Path) -> bool:
-        """Attempt secure deletion without exposing the artifact path in logs."""
+    async def _try_secure_delete_tts_artifact(
+        self,
+        artifact_path: Path,
+        *,
+        on_late_success: Callable[[], None] | None = None,
+    ) -> bool:
+        """Attempt secure deletion without exposing the artifact path in logs.
+
+        Args:
+            artifact_path: Owned artifact to delete.
+            on_late_success: Event-loop callback used when a timed-out delete
+                eventually succeeds.
+
+        Returns:
+            ``True`` when deletion completed within the bounded attempt.
+        """
+
+        def observe_late_delete(deleted: bool) -> None:
+            if deleted:
+                self._artifact_cleanup_retry.discard(artifact_path)
+                if on_late_success is not None:
+                    on_late_success()
+
         try:
             deleted = await self._run_blocking_tts_io(
-                lambda: self._secure_delete_tts_artifact(artifact_path)
+                lambda: self._secure_delete_tts_artifact(artifact_path),
+                on_late_cancelled_result=observe_late_delete,
+                operation_timeout_seconds=_TTS_SECURE_DELETE_TIMEOUT_SECONDS,
             )
         except Exception:
             deleted = False
         if not deleted:
             logger.warning("Incomplete TTS artifact cleanup will be retried")
         return deleted
+
+    async def _release_audio_file_if_current(
+        self,
+        message_id: str,
+        artifact_path: Path,
+    ) -> None:
+        """Release a cache entry only when it still owns the deleted artifact."""
+        async with self._audio_files_lock:
+            if self._audio_files.get(message_id) == artifact_path:
+                del self._audio_files[message_id]
+
+    def _schedule_audio_file_release_if_current(
+        self,
+        message_id: str,
+        artifact_path: Path,
+    ) -> None:
+        """Track cache bookkeeping triggered by a retained delete worker."""
+        release = asyncio.create_task(
+            self._release_audio_file_if_current(message_id, artifact_path)
+        )
+        self._retained_tts_cleanup_tasks.add(release)
+
+        def observe(completed: asyncio.Task[None]) -> None:
+            self._retained_tts_cleanup_tasks.discard(completed)
+            try:
+                completed.result()
+            except BaseException:
+                logger.warning("Retained TTS audio cache cleanup did not complete")
+
+        release.add_done_callback(observe)
+
+    async def _drain_retained_tts_artifact_work(self) -> None:
+        """Bound shutdown waiting for retained artifact I/O and cleanup."""
+        deadline = (
+            asyncio.get_running_loop().time() + _TTS_RETAINED_WORK_DRAIN_TIMEOUT_SECONDS
+        )
+
+        async def drain(tasks: set[asyncio.Task]) -> None:
+            while tasks:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    return
+                await asyncio.wait(set(tasks), timeout=remaining)
+                await asyncio.sleep(0)
+
+        await drain(self._retained_tts_io_tasks)
+        await drain(self._retained_tts_cleanup_tasks)
 
     async def _discard_tts_artifact(
         self,
@@ -839,10 +1069,15 @@ class TTSEventHandler:
         if audio_file is None:
             return
 
-        if await self._try_secure_delete_tts_artifact(audio_file):
-            async with self._audio_files_lock:
-                if self._audio_files.get(message_id) == audio_file:
-                    del self._audio_files[message_id]
+        if await self._try_secure_delete_tts_artifact(
+            audio_file,
+            on_late_success=partial(
+                self._schedule_audio_file_release_if_current,
+                message_id,
+                audio_file,
+            ),
+        ):
+            await self._release_audio_file_if_current(message_id, audio_file)
             logger.debug(f"Cleaned up audio file for message {message_id}")
 
     def on_tts_request_event(self, event: TTSRequestEvent) -> None:
@@ -889,6 +1124,8 @@ class TTSEventHandler:
         if tasks_to_cancel:
             await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
 
+        await self._drain_retained_tts_artifact_work()
+
         # Snapshot owned files without dropping failed-deletion bookkeeping.
         async with self._audio_files_lock:
             files_to_clean = list(self._audio_files.items())
@@ -896,16 +1133,23 @@ class TTSEventHandler:
             self._last_played = None
 
         for message_id, audio_file in files_to_clean:
-            if await self._try_secure_delete_tts_artifact(audio_file):
-                async with self._audio_files_lock:
-                    if self._audio_files.get(message_id) == audio_file:
-                        del self._audio_files[message_id]
+            if await self._try_secure_delete_tts_artifact(
+                audio_file,
+                on_late_success=partial(
+                    self._schedule_audio_file_release_if_current,
+                    message_id,
+                    audio_file,
+                ),
+            ):
+                await self._release_audio_file_if_current(message_id, audio_file)
                 logger.debug(f"Cleaned up audio file for message {message_id}")
 
         for audio_file in retries_to_clean:
             if await self._try_secure_delete_tts_artifact(audio_file):
                 async with self._audio_files_lock:
                     self._artifact_cleanup_retry.discard(audio_file)
+
+        await self._drain_retained_tts_artifact_work()
 
         # Clear active tasks with lock
         async with self._active_tasks_lock:

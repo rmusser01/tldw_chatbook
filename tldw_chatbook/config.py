@@ -3891,8 +3891,12 @@ def apply_settings_mutation_to_cli_config(
     requested_deletes = {} if delete_keys is None else delete_keys
     try:
         config_path = _get_effective_config_path()
-    except Exception:
-        logger.opt(exception=True).error("Could not resolve the CLI config path.")
+    except Exception as error:
+        logger.error(
+            "Configuration mutation failed "
+            "(phase=resolve_path, config_path=unresolved, error_type={}).",
+            type(error).__name__,
+        )
         return ConfigMutationResult(False, False, "before_replace")
 
     with _config_file_lock():
@@ -3933,9 +3937,12 @@ def apply_settings_mutation_to_cli_config(
                 toml.dumps(config_data),
                 mode=_config_write_mode(config_path),
             )
-        except Exception:
-            logger.opt(exception=True).error(
-                "Configuration mutation failed before atomic file replacement."
+        except Exception as error:
+            logger.error(
+                "Configuration mutation failed "
+                "(phase=before_replace, config_path={}, error_type={}).",
+                config_path,
+                type(error).__name__,
             )
             return ConfigMutationResult(False, False, "before_replace")
 
@@ -3946,9 +3953,12 @@ def apply_settings_mutation_to_cli_config(
             _CONFIG_CACHE = None
             _SETTINGS_CACHE = None
             settings = load_settings(force_reload=True)
-        except Exception:
-            logger.opt(exception=True).error(
-                "Configuration file was replaced, but cache reload failed."
+        except Exception as error:
+            logger.error(
+                "Configuration mutation failed "
+                "(phase=cache_reload, config_path={}, error_type={}).",
+                config_path,
+                type(error).__name__,
             )
             return ConfigMutationResult(file_replaced, False, "cache_reload")
 

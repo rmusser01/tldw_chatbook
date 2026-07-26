@@ -326,10 +326,19 @@ def test_structured_mutation_reports_cache_reload_failure_after_replace(
         raise RuntimeError("injected cache reload failure")
 
     monkeypatch.setattr(config_module, "load_settings", fail_cache_reload)
-
-    result = config_module.apply_settings_mutation_to_cli_config(
-        {"app_tts": {"default_provider": "audio_cpp"}},
+    messages: list[str] = []
+    sink_id = config_module.logger.add(
+        messages.append,
+        level="DEBUG",
+        format="{message}",
     )
+
+    try:
+        result = config_module.apply_settings_mutation_to_cli_config(
+            {"app_tts": {"default_provider": "audio_cpp"}},
+        )
+    finally:
+        config_module.logger.remove(sink_id)
 
     assert result == config_module.ConfigMutationResult(
         file_replaced=True,
@@ -340,6 +349,11 @@ def test_structured_mutation_reports_cache_reload_failure_after_replace(
     assert not hasattr(result, "error")
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
     assert saved["app_tts"]["default_provider"] == "audio_cpp"
+    rendered = "\n".join(messages)
+    assert "phase=cache_reload" in rendered
+    assert f"config_path={config_path}" in rendered
+    assert "error_type=RuntimeError" in rendered
+    assert "injected cache reload failure" not in rendered
 
 
 def test_structured_mutation_reports_write_failure_before_replace(
@@ -356,10 +370,19 @@ def test_structured_mutation_reports_write_failure_before_replace(
         raise OSError("injected pre-replacement failure")
 
     monkeypatch.setattr(config_module, "atomic_write_text", fail_atomic_write)
-
-    result = config_module.apply_settings_mutation_to_cli_config(
-        {"app_tts": {"default_provider": "audio_cpp"}},
+    messages: list[str] = []
+    sink_id = config_module.logger.add(
+        messages.append,
+        level="DEBUG",
+        format="{message}",
     )
+
+    try:
+        result = config_module.apply_settings_mutation_to_cli_config(
+            {"app_tts": {"default_provider": "audio_cpp"}},
+        )
+    finally:
+        config_module.logger.remove(sink_id)
 
     assert result == config_module.ConfigMutationResult(
         file_replaced=False,
@@ -368,6 +391,11 @@ def test_structured_mutation_reports_write_failure_before_replace(
     )
     assert config_path.read_bytes() == original_bytes
     assert config_path.stat().st_mtime_ns == original_mtime_ns
+    rendered = "\n".join(messages)
+    assert "phase=before_replace" in rendered
+    assert f"config_path={config_path}" in rendered
+    assert "error_type=OSError" in rendered
+    assert "injected pre-replacement failure" not in rendered
 
 
 def test_batch_save_delete_keys_delegates_to_one_structured_mutation(

@@ -651,6 +651,86 @@ async def test_console_artifact_io_keeps_event_loop_responsive(
 
 
 @pytest.mark.asyncio
+async def test_console_batches_small_stream_chunks_into_one_artifact_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timeline: list[str] = []
+    response = _Response(_RecordingStream(_WAV_CHUNKS, timeline))
+    handler = _Handler()
+    handler._tts_service = _DefaultService(response)
+    handler._temp_manager = _RecordingTempManager(tmp_path)
+    written_batches: list[bytes] = []
+    append_chunk = handler._append_tts_artifact_chunk
+
+    def capture_batch(artifact_path: Path, content: bytes) -> None:
+        written_batches.append(content)
+        append_chunk(artifact_path, content)
+
+    monkeypatch.setattr(handler, "_append_tts_artifact_chunk", capture_batch)
+    try:
+        await handler._generate_tts(
+            "Character response",
+            "console-native-batched-write",
+            None,
+        )
+
+        assert written_batches == [b"".join(_WAV_CHUNKS)]
+        completion = next(
+            message
+            for message in handler.messages
+            if isinstance(message, TTSCompleteEvent)
+        )
+        assert completion.audio_file is not None
+        assert completion.audio_file.read_bytes() == b"".join(_WAV_CHUNKS)
+    finally:
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_console_artifact_batches_preserve_order_across_threshold(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chunks = (b"abc", b"def", b"ghi")
+    timeline: list[str] = []
+    response = _Response(_RecordingStream(chunks, timeline))
+    handler = _Handler()
+    handler._tts_service = _DefaultService(response)
+    handler._temp_manager = _RecordingTempManager(tmp_path)
+    written_batches: list[bytes] = []
+    append_chunk = handler._append_tts_artifact_chunk
+
+    def capture_batch(artifact_path: Path, content: bytes) -> None:
+        written_batches.append(content)
+        append_chunk(artifact_path, content)
+
+    monkeypatch.setattr(handler, "_append_tts_artifact_chunk", capture_batch)
+    monkeypatch.setattr(
+        tts_events_module,
+        "_TTS_ARTIFACT_WRITE_BATCH_BYTES",
+        5,
+    )
+    try:
+        await handler._generate_tts(
+            "Character response",
+            "console-native-threshold-batches",
+            None,
+        )
+
+        assert written_batches == [b"abcdef", b"ghi"]
+        completion = next(
+            message
+            for message in handler.messages
+            if isinstance(message, TTSCompleteEvent)
+        )
+        assert completion.audio_file is not None
+        assert completion.audio_file.read_bytes() == b"".join(chunks)
+    finally:
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
 async def test_console_cancellation_joins_blocking_artifact_worker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -735,6 +815,302 @@ async def test_console_cancellation_joins_blocking_artifact_worker(
     assert len(temp_manager.paths) == 1
     assert not temp_manager.paths[0].exists()
     assert asyncio.all_tasks() - tasks_before == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("late_failure", (False, True))
+async def test_console_cancellation_timeout_returns_before_stalled_write_and_retries_cleanup(
+    late_failure: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    worker_exited = threading.Event()
+    timeline: list[str] = []
+    response = _Response(_RecordingStream(_WAV_CHUNKS[:1], timeline))
+    handler = _Handler()
+    handler._tts_service = _DefaultService(response)
+    original_open = Path.open
+
+    class DirectTempManager(_RecordingTempManager):
+        def create_temp_file(
+            self,
+            content: str | bytes,
+            suffix: str = "",
+            prefix: str = "tmp",
+            dir: str | None = None,
+        ) -> str:
+            del dir
+            path = self.directory / f"{prefix}{len(self.paths)}{suffix}"
+            payload = content.encode() if isinstance(content, str) else content
+            with original_open(path, "wb") as artifact:
+                artifact.write(payload)
+                artifact.flush()
+            path.chmod(0o600)
+            self.paths.append(path)
+            self.suffixes.append(suffix)
+            return str(path)
+
+    temp_manager = DirectTempManager(tmp_path)
+    handler._temp_manager = temp_manager
+
+    class StalledWriteFile:
+        def __init__(self, wrapped: Any) -> None:
+            self._wrapped = wrapped
+
+        def __enter__(self) -> StalledWriteFile:
+            self._wrapped.__enter__()
+            return self
+
+        def __exit__(self, *exc_info: object) -> object:
+            return self._wrapped.__exit__(*exc_info)
+
+        def write(self, content: bytes) -> int:
+            entered.set()
+            try:
+                assert release.wait(timeout=2.0)
+                if late_failure:
+                    raise OSError("PRIVATE_LATE_WRITE_FAILURE")
+                return self._wrapped.write(content)
+            finally:
+                worker_exited.set()
+
+        def flush(self) -> None:
+            self._wrapped.flush()
+
+    def blocking_open(path: Path, *args: object, **kwargs: object) -> Any:
+        wrapped = original_open(path, *args, **kwargs)
+        if path.parent == tmp_path and path.name.startswith("tts_audio_"):
+            return StalledWriteFile(wrapped)
+        return wrapped
+
+    def delete_after_writer(candidate: str | Path) -> bool:
+        path = Path(candidate)
+        if not worker_exited.is_set():
+            return False
+        path.unlink(missing_ok=True)
+        return True
+
+    async def wait_for_thread_event(event: threading.Event) -> None:
+        while not event.is_set():
+            await asyncio.sleep(0)
+
+    async def wait_for_late_cleanup(path: Path) -> None:
+        while (
+            path.exists()
+            or handler._artifact_cleanup_retry
+            or handler._retained_tts_io_tasks
+            or handler._retained_tts_cleanup_tasks
+        ):
+            await asyncio.sleep(0)
+
+    monkeypatch.setattr(Path, "open", blocking_open)
+    monkeypatch.setattr(tts_events_module, "secure_delete_file", delete_after_writer)
+    monkeypatch.setattr(
+        tts_events_module,
+        "_TTS_IO_CANCELLATION_JOIN_TIMEOUT_SECONDS",
+        0.01,
+        raising=False,
+    )
+    generation = asyncio.create_task(
+        handler._generate_tts(
+            "Character response",
+            "console-native-stalled-write",
+            None,
+        )
+    )
+
+    try:
+        await asyncio.wait_for(wait_for_thread_event(entered), timeout=1.0)
+        generation.cancel("caller shutdown")
+        done, _pending = await asyncio.wait({generation}, timeout=0.2)
+        assert generation in done
+        with pytest.raises(asyncio.CancelledError, match="caller shutdown"):
+            await generation
+
+        assert len(temp_manager.paths) == 1
+        artifact = temp_manager.paths[0]
+        assert artifact in handler._artifact_cleanup_retry
+        assert artifact.exists()
+
+        release.set()
+        await asyncio.wait_for(wait_for_thread_event(worker_exited), timeout=1.0)
+        await asyncio.wait_for(wait_for_late_cleanup(artifact), timeout=1.0)
+        assert not artifact.exists()
+    finally:
+        release.set()
+        await asyncio.gather(generation, return_exceptions=True)
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_console_cancellation_does_not_wait_for_stalled_secure_delete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream_started = asyncio.Event()
+    hold_stream = asyncio.Event()
+    delete_entered = threading.Event()
+    delete_release = threading.Event()
+    timeline: list[str] = []
+    response = _Response(
+        _RecordingStream(
+            _WAV_CHUNKS[:1],
+            timeline,
+            blocked=hold_stream,
+            started=stream_started,
+        )
+    )
+    handler = _Handler()
+    handler._tts_service = _DefaultService(response)
+    temp_manager = _RecordingTempManager(tmp_path)
+    handler._temp_manager = temp_manager
+
+    def stalled_delete(candidate: str | Path) -> bool:
+        path = Path(candidate)
+        delete_entered.set()
+        assert delete_release.wait(timeout=2.0)
+        path.unlink(missing_ok=True)
+        return True
+
+    async def wait_for_thread_event(event: threading.Event) -> None:
+        while not event.is_set():
+            await asyncio.sleep(0)
+
+    async def wait_for_cleanup(path: Path) -> None:
+        while (
+            path.exists()
+            or handler._artifact_cleanup_retry
+            or handler._retained_tts_io_tasks
+            or handler._retained_tts_cleanup_tasks
+        ):
+            await asyncio.sleep(0)
+
+    monkeypatch.setattr(tts_events_module, "secure_delete_file", stalled_delete)
+    monkeypatch.setattr(
+        tts_events_module,
+        "_TTS_SECURE_DELETE_TIMEOUT_SECONDS",
+        0.01,
+        raising=False,
+    )
+    generation = asyncio.create_task(
+        handler._generate_tts(
+            "Character response",
+            "console-native-stalled-delete",
+            None,
+        )
+    )
+
+    try:
+        await asyncio.wait_for(stream_started.wait(), timeout=1.0)
+        generation.cancel("caller shutdown")
+        await asyncio.wait_for(wait_for_thread_event(delete_entered), timeout=1.0)
+        done, _pending = await asyncio.wait({generation}, timeout=0.2)
+        assert generation in done
+        with pytest.raises(asyncio.CancelledError, match="caller shutdown"):
+            await generation
+
+        assert len(temp_manager.paths) == 1
+        artifact = temp_manager.paths[0]
+        assert artifact in handler._artifact_cleanup_retry
+
+        delete_release.set()
+        await asyncio.wait_for(wait_for_cleanup(artifact), timeout=1.0)
+        assert not artifact.exists()
+    finally:
+        delete_release.set()
+        hold_stream.set()
+        await asyncio.gather(generation, return_exceptions=True)
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_console_late_cancelled_creation_is_eventually_deleted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    timeline: list[str] = []
+    response = _Response(_RecordingStream(_WAV_CHUNKS[:1], timeline))
+    handler = _Handler()
+    handler._tts_service = _DefaultService(response)
+
+    class StalledTempManager(_RecordingTempManager):
+        def create_temp_file(
+            self,
+            content: str | bytes,
+            suffix: str = "",
+            prefix: str = "tmp",
+            dir: str | None = None,
+        ) -> str:
+            entered.set()
+            assert release.wait(timeout=2.0)
+            return super().create_temp_file(content, suffix, prefix, dir)
+
+    temp_manager = StalledTempManager(tmp_path)
+    handler._temp_manager = temp_manager
+    deleted: list[Path] = []
+
+    def delete(candidate: str | Path) -> bool:
+        path = Path(candidate)
+        deleted.append(path)
+        path.unlink(missing_ok=True)
+        return True
+
+    async def wait_for_thread_event(event: threading.Event) -> None:
+        while not event.is_set():
+            await asyncio.sleep(0)
+
+    async def wait_for_late_cleanup() -> None:
+        while (
+            not temp_manager.paths
+            or temp_manager.paths[0].exists()
+            or handler._artifact_cleanup_retry
+            or handler._retained_tts_io_tasks
+            or handler._retained_tts_cleanup_tasks
+        ):
+            await asyncio.sleep(0)
+
+    monkeypatch.setattr(tts_events_module, "secure_delete_file", delete)
+    monkeypatch.setattr(
+        tts_events_module,
+        "_TTS_IO_CANCELLATION_JOIN_TIMEOUT_SECONDS",
+        0.01,
+        raising=False,
+    )
+    generation = asyncio.create_task(
+        handler._generate_tts(
+            "Character response",
+            "console-native-stalled-create",
+            None,
+        )
+    )
+
+    try:
+        await asyncio.wait_for(wait_for_thread_event(entered), timeout=1.0)
+        generation.cancel()
+        done, _pending = await asyncio.wait({generation}, timeout=0.2)
+        assert generation in done
+        with pytest.raises(asyncio.CancelledError):
+            await generation
+        assert temp_manager.paths == []
+
+        cleanup = asyncio.create_task(handler.cleanup_tts_resources())
+        await asyncio.sleep(0)
+        assert not cleanup.done()
+        release.set()
+        await asyncio.wait_for(cleanup, timeout=1.0)
+        assert deleted == temp_manager.paths
+        assert not temp_manager.paths[0].exists()
+        assert handler._retained_tts_io_tasks == set()
+        assert handler._retained_tts_cleanup_tasks == set()
+    finally:
+        release.set()
+        await asyncio.gather(generation, return_exceptions=True)
+        await asyncio.wait_for(wait_for_late_cleanup(), timeout=1.0)
+        await handler.cleanup_tts_resources()
 
 
 @pytest.mark.asyncio
@@ -936,6 +1312,68 @@ async def test_console_secure_delete_keeps_event_loop_responsive(
     assert blocker.observed_heartbeat is True
     assert not path.exists()
     assert handler._audio_files == {}
+
+
+@pytest.mark.parametrize("replace_during_delete", [False, True])
+@pytest.mark.asyncio
+async def test_console_late_secure_delete_success_releases_only_matching_cache_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replace_during_delete: bool,
+) -> None:
+    path = tmp_path / "late-delete.wav"
+    replacement = tmp_path / "replacement.wav"
+    path.write_bytes(b"audio")
+    replacement.write_bytes(b"replacement")
+    handler = _Handler()
+    handler._audio_files["message"] = path
+    entered = threading.Event()
+    release = threading.Event()
+
+    def delayed_delete(candidate: str | Path) -> bool:
+        assert Path(candidate) == path
+        entered.set()
+        assert release.wait(timeout=2.0)
+        path.unlink()
+        return True
+
+    async def wait_for_thread_event(event: threading.Event) -> None:
+        while not event.is_set():
+            await asyncio.sleep(0)
+
+    async def wait_for_late_delete() -> None:
+        while (
+            path.exists()
+            or handler._retained_tts_io_tasks
+            or handler._retained_tts_cleanup_tasks
+        ):
+            await asyncio.sleep(0)
+
+    monkeypatch.setattr(tts_events_module, "secure_delete_file", delayed_delete)
+    monkeypatch.setattr(
+        tts_events_module,
+        "_TTS_SECURE_DELETE_TIMEOUT_SECONDS",
+        0.01,
+        raising=False,
+    )
+
+    try:
+        await handler._cleanup_audio_file("message")
+        await asyncio.wait_for(wait_for_thread_event(entered), timeout=1.0)
+        assert handler._audio_files == {"message": path}
+
+        if replace_during_delete:
+            handler._audio_files["message"] = replacement
+
+        release.set()
+        await asyncio.wait_for(wait_for_late_delete(), timeout=1.0)
+    finally:
+        release.set()
+        replacement.unlink(missing_ok=True)
+
+    expected = {"message": replacement} if replace_during_delete else {}
+    assert handler._audio_files == expected
+    assert not path.exists()
 
 
 @pytest.mark.asyncio
