@@ -13,6 +13,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
     ConsoleWorkspaceStatusPair,
 )
 from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
 _AUTHORITY_LABELS = {
@@ -28,7 +29,7 @@ _AUTHORITY_LABELS = {
 }
 
 
-class ConsoleWorkspaceDetailsTray(Vertical):
+class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
     """Render workspace plumbing status, readiness, and handoff rows."""
 
     def __init__(self, state: ConsoleWorkspaceContextState, **kwargs: Any) -> None:

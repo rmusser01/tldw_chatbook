@@ -14,6 +14,8 @@ from textual.widgets import Static
 from textual.containers import Container, Grid
 from textual.reactive import reactive
 
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+
 
 class MetricCard(Container):
     """Individual metric display card."""
@@ -32,7 +34,7 @@ class MetricCard(Container):
         )
 
 
-class MetricsDisplay(Container):
+class MetricsDisplay(RecomposeCaptureGuard, Container):
     """Display evaluation metrics in a grid."""
 
     metrics = reactive({})

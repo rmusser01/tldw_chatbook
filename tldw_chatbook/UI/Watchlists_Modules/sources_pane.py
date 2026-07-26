@@ -10,6 +10,7 @@ from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch
 
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
+from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .inspector_pane import CheckNowRequested, PreviewRequested
 
 
@@ -37,7 +38,7 @@ class ExportOpmlRequested(Message):
     """Posted when the user requests an OPML export."""
 
 
-class SourcesPane(Vertical):
+class SourcesPane(RecomposeCaptureGuard, Vertical):
     """Source list, search/filter, and create form for watchlists."""
 
     sources = reactive[list[dict[str, Any]]]([], recompose=True)

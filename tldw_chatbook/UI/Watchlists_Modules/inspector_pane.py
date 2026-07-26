@@ -10,6 +10,8 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Static
 
+from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+
 
 class PreviewRequested(Message):
     """Posted when the user requests a preview of the selected entity."""
@@ -75,7 +77,7 @@ class EditRuleRequested(Message):
         super().__init__()
 
 
-class InspectorPane(Vertical):
+class InspectorPane(RecomposeCaptureGuard, Vertical):
     """Context-aware inspector showing actions for the selected entity."""
 
     selected_entity = reactive[dict[str, Any] | None](None, recompose=True)

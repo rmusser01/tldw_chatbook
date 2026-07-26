@@ -30,6 +30,7 @@ from textual.message import Message
 #
 # Local imports
 from tldw_chatbook.TTS.audiobook_generator import Character
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 #
 #######################################################################################################################
 #
@@ -58,7 +59,7 @@ class CharacterDetectionEvent(Message):
 # Character Voice Widget
 
 
-class CharacterVoiceWidget(Widget):
+class CharacterVoiceWidget(RecomposeCaptureGuard, Widget):
     """Widget for managing character voice assignments"""
 
     DEFAULT_CSS = """

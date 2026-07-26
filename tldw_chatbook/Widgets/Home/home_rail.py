@@ -11,6 +11,7 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Home.dashboard_state import HomeRailSectionState, HomeTriageState
 from tldw_chatbook.Home.home_rail_state import HomeRailPreferences
 from tldw_chatbook.Widgets.Console.console_rail_section import ConsoleRailSectionHeader
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 HOME_RAIL_ROW_PREFIX = "home-row-"
 
@@ -25,7 +26,7 @@ def _visible_row_title(title: str) -> str:
     return f"{readable[: _MAX_HOME_ROW_TITLE - 3].rstrip()}..."
 
 
-class HomeRail(Vertical):
+class HomeRail(RecomposeCaptureGuard, Vertical):
     """Render the Home triage sections as selectable rows.
 
     Attributes:

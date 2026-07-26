@@ -9,6 +9,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
 
 from tldw_chatbook.Chat.console_display_state import ConsoleStagedContextState
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
 _STATUS_CLASS_MAP = {
@@ -34,7 +35,7 @@ def _normalize_source_status(status: str) -> str:
     return "muted"
 
 
-class ConsoleStagedContextTray(Vertical):
+class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
     """Render staged handoff/live-work provenance in the Console shell.
 
     The tray shows the current staged-context heading, summary, structured

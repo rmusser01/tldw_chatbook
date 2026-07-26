@@ -11,9 +11,10 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Library.library_media_state import LibraryMediaCanvasState
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
-class LibraryMediaCanvas(Vertical):
+class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
     """Render the Library media list with a type filter and preview.
 
     Attributes:

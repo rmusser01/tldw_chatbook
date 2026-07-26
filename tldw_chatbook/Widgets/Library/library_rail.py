@@ -18,6 +18,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LibraryShellState,
 )
 from tldw_chatbook.Widgets.Console.console_rail_section import ConsoleRailSectionHeader
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 LIBRARY_RAIL_ROW_PREFIX = "library-row-"
 
@@ -70,7 +71,7 @@ def _visible_row_title(title: str) -> str:
     return escape_markup(readable)
 
 
-class LibraryRail(Vertical):
+class LibraryRail(RecomposeCaptureGuard, Vertical):
     """Render the Library shell rail: search, source sections, and Details.
 
     Attributes:
