@@ -3,13 +3,32 @@ from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager, Profi
 
 
 def _wire(monkeypatch, tmp_path):
+    """Wire a real ConfigProfileManager plus fakes for the active-profile
+    pointer and the task-639 first-run-import-done marker.
+
+    `ptr["v"]` is the pointer ([rag.service].profile); `ptr["marker"]` is the
+    durable first-run marker ([rag.service].first_run_import_done, see
+    `_first_run_import_done`/`_mark_first_run_import_done`). Both are backed
+    by the SAME fake `save_setting_to_cli_config`, routed by `key` exactly
+    like the real TOML writes would be -- this catches a real bug class
+    (e.g. one write silently clobbering the other's tracked value) that a
+    single shared dict/lambda would have masked.
+    """
     mgr = ConfigProfileManager(profiles_dir=tmp_path / "profiles")
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
     monkeypatch.setattr(ac, "_manager", lambda: mgr, raising=False)
-    ptr = {"v": None}
+    ptr = {"v": None, "marker": False}
     monkeypatch.setattr(ac, "_active_profile_id", lambda: ptr["v"] or "hybrid_basic", raising=False)
-    monkeypatch.setattr(ac, "save_setting_to_cli_config",
-                        lambda s, k, v: ptr.update(v=v) or True, raising=False)
+    monkeypatch.setattr(ac, "_first_run_import_done", lambda: ptr["marker"], raising=False)
+
+    def _fake_save_setting(section, key, value):
+        if section == "rag.service" and key == "profile":
+            ptr["v"] = value
+        elif section == "rag.service" and key == "first_run_import_done":
+            ptr["marker"] = value
+        return True
+
+    monkeypatch.setattr(ac, "save_setting_to_cli_config", _fake_save_setting, raising=False)
     monkeypatch.setattr(ac, "reset_shared_rag_service", lambda: None, raising=False)
     # task-635: ensure_imported_profile() now only imports when there is
     # genuine hand-set [AppRAGSearchConfig.rag.*] material (see
@@ -33,6 +52,7 @@ def test_first_run_creates_imported_profile_and_sets_active(monkeypatch, tmp_pat
     imported = mgr.get_profile(new_id)
     assert imported is not None and imported.read_only is False
     assert ptr["v"] == new_id  # set active
+    assert ptr["marker"] is True  # task-639: first-run-import-done marker recorded
     # Idempotent: a second call is a no-op (no duplicate).
     assert ensure_imported_profile() is None
 
@@ -120,12 +140,14 @@ def test_ensure_imported_profile_heals_half_done_first_run(monkeypatch, tmp_path
                               rag_config=ac.resolve_active_rag_config())
     mgr.save_profile(half_done)
     assert ptr["v"] is None  # pointer was never flipped -- simulates the half-done crash
+    assert ptr["marker"] is False  # task-639: no marker either -- the new gate condition
 
     result = ac.ensure_imported_profile()
 
     assert result is None  # idempotent: no new profile id returned
     assert [p for p in mgr.list_profiles() if p == ac._IMPORTED_ID] == [ac._IMPORTED_ID]  # no duplicate created
     assert ptr["v"] == ac._IMPORTED_ID  # healed: pointer now activates the existing profile
+    assert ptr["marker"] is True  # task-639: marker recorded, so this can't recur
 
 
 def test_ensure_imported_profile_swallows_save_failure(monkeypatch, tmp_path):
@@ -149,6 +171,7 @@ def test_ensure_imported_profile_swallows_save_failure(monkeypatch, tmp_path):
     assert result is None
     assert mgr.get_profile(ac._IMPORTED_ID) is None
     assert ptr["v"] is None  # never activated a profile that failed to save
+    assert ptr["marker"] is False  # task-639: no activation happened, so no marker either
 
 
 # --- Task 6: wiring into get_shared_rag_service --------------------------
@@ -437,3 +460,288 @@ def test_imported_profile_does_not_merge_legacy_index_determining_keys(monkeypat
     assert imported.vector_store.distance_metric != "l2"
     assert imported.search.default_top_k == 25  # query-time key still merged
     assert fingerprint_collection(imported) == pre_fp
+
+
+# --- Task-639: healing must not undo a deliberate profile switch, and must --
+# --- never delete a profile on a content guess (review: marker-based fix) --
+
+
+def test_ensure_imported_profile_does_not_reflip_deliberate_switch(monkeypatch, tmp_path):
+    """AC #1: once a user has deliberately activated a DIFFERENT profile
+    (neither the default builtin nor imported_settings), a later
+    ensure_imported_profile() call (e.g. the next process's first RAG touch)
+    must leave that pointer alone -- the old healing branch treated "pointer
+    != imported_settings" as proof of a half-done first run, which silently
+    undid a real user choice on every subsequent launch. The fresh import
+    above already recorded the first-run-import-done marker, so the healing
+    branch's "not marker" gate is skipped entirely on the later call."""
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    _wire_legacy_rag_config(monkeypatch, {"search": {"default_top_k": 10}})
+
+    new_id = ac.ensure_imported_profile()
+    assert ptr["v"] == new_id  # sanity: import activated it, as before
+    assert ptr["marker"] is True
+
+    # The user later, deliberately, switches to a different builtin.
+    ptr["v"] = "fast_search"
+
+    result = ac.ensure_imported_profile()
+
+    assert result is None  # idempotent, no duplicate profile
+    assert ptr["v"] == "fast_search"  # NOT flipped back to imported_settings
+
+
+def test_ensure_imported_profile_still_heals_when_pointer_is_default(monkeypatch, tmp_path):
+    """AC #3 (restated for task-639's narrower gate): the healing branch must
+    still fire for the one case it exists for -- no marker recorded yet AND
+    the pointer never having been successfully written by anyone, i.e. it
+    still names the default builtin. This is the same scenario
+    test_ensure_imported_profile_heals_half_done_first_run covers; kept here
+    too as an explicit task-639 lock on the new gating condition itself."""
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    half_done = ProfileConfig(id=ac._IMPORTED_ID,
+                              name="Imported settings",
+                              description="Captured from your existing RAG configuration on first run.",
+                              profile_type="custom",
+                              rag_config=ac.resolve_active_rag_config())
+    mgr.save_profile(half_done)
+    assert ptr["v"] is None  # pointer still resolves to the default builtin
+    assert ptr["marker"] is False
+
+    result = ac.ensure_imported_profile()
+
+    assert result is None
+    assert ptr["v"] == ac._IMPORTED_ID  # healed
+    assert ptr["marker"] is True  # recorded, so this can never recur
+
+
+def test_ensure_imported_profile_marker_present_never_touches_pointer_even_back_to_default(monkeypatch, tmp_path):
+    """Closes the previously-disclosed gap: once the marker is set, the
+    pointer is NEVER touched again -- including a user switching all the way
+    back to the default builtin itself, which is otherwise indistinguishable
+    from "never written" using the pointer alone. With the marker recording
+    that the activation was deliberate, that ambiguity no longer matters:
+    the healing branch is skipped entirely regardless of what the pointer
+    currently names."""
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    imported = _pre635_damage_snapshot(mgr, ac)
+    mgr.save_profile(imported)
+    ptr["marker"] = True  # a prior run already recorded a deliberate activation
+    ptr["v"] = None  # the user has since switched all the way back to the default builtin
+
+    result = ac.ensure_imported_profile()
+
+    assert result is None
+    assert ptr["v"] is None  # NOT flipped back to imported_settings -- stays on the default
+    assert mgr.get_profile(ac._IMPORTED_ID) is not None  # untouched either way
+
+
+def test_fresh_user_leaves_marker_unset(monkeypatch, tmp_path):
+    """A truly fresh install (task-635 no-op path) never creates the imported
+    profile, so there is nothing to mark done either -- the marker stays
+    absent. This must not, by itself, trigger any different behavior on a
+    later call (still a no-op, still no marker)."""
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+
+    result = ac.ensure_imported_profile()
+
+    assert result is None
+    assert ptr["marker"] is False
+    assert ptr["v"] is None
+    # Idempotent, still no marker.
+    assert ac.ensure_imported_profile() is None
+    assert ptr["marker"] is False
+
+
+def _pre635_damage_snapshot(mgr, ac):
+    """A profile shaped exactly like what the pre-635 always-import bug would
+    have created+activated for a truly fresh install: a snapshot of the
+    default builtin (the active pointer a fresh user starts with), no legacy
+    merge, no reranking. Also stands in generically for "an imported_settings
+    profile that predates the first-run-import-done marker" in the tests
+    below, whether or not its content happens to look default-equivalent --
+    the marker-based fix no longer cares which."""
+    return ProfileConfig(
+        id=ac._IMPORTED_ID,
+        name="Imported settings",
+        description="Snapshot of your active RAG profile (plus any RAG_* env "
+                    "overrides) captured on first run; edit freely.",
+        profile_type="custom",
+        rag_config=ac.resolve_active_rag_config(),  # pointer is still default here
+    )
+
+
+def test_ensure_imported_profile_never_deletes_settings_screen_customization(monkeypatch, tmp_path):
+    """Critical (task-639 review, reviewer-reproduced): the Settings screen
+    editor (apply_defaults_to_profile, settings_rag_profile_adapter.py:150-
+    167) can hand-tune SearchConfig fields the prior fingerprint + allow-list
+    damage heuristic never checked at all -- e.g. `search.hybrid_alpha`
+    (default 0.7), `default_search_mode`, `citation_style`,
+    `snippet_max_chars`, `max_context_size`, `fts_top_k`, `vector_top_k`, or
+    `embedding.batch_size`. None of those are index-determining (the
+    fingerprint still matched the default) and none were in the old
+    allow-list, so a profile with ONLY one of these fields customized still
+    looked "provably safe to delete" and was PERMANENTLY DESTROYED. No finite
+    content allow-list can close this for good -- there is always another
+    field it doesn't know about -- so the fix must never delete a profile
+    based on comparing its content at all, no matter what differs (or
+    doesn't). "Survives every subsequent ensure call": exercised 3x."""
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    customized = _pre635_damage_snapshot(mgr, ac)
+    customized.rag_config.search.hybrid_alpha = 0.95  # real hand-set tuning, default is 0.7
+    mgr.save_profile(customized)
+    ptr["v"] = ac._IMPORTED_ID  # already active; no marker (predates the marker fix)
+    assert ptr["marker"] is False
+
+    for _ in range(3):
+        result = ac.ensure_imported_profile()
+        assert result is None
+
+    imported = mgr.get_profile(ac._IMPORTED_ID)
+    assert imported is not None  # NEVER deleted
+    assert imported.rag_config.search.hybrid_alpha == 0.95  # customization intact
+    assert ptr["v"] == ac._IMPORTED_ID  # left active
+    assert ptr["marker"] is True  # adopted as settled after the first call
+
+
+def test_ensure_imported_profile_adopts_preexisting_imported_pointer_without_deleting(monkeypatch, tmp_path):
+    """task-639 AC #2 (revised per review): a config whose pointer is ALREADY
+    imported_settings with no marker yet -- whether a pre-635 damage artifact
+    or a genuine, deliberately-kept import from before the marker existed,
+    indistinguishable from config contents alone (see the Critical finding
+    above) -- is NEVER deleted, even when its content happens to look
+    identical to the default builtin. It is simply adopted as settled: the
+    marker is set, and both the profile and the pointer are left completely
+    untouched."""
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    imported = _pre635_damage_snapshot(mgr, ac)  # content-identical to the default builtin
+    mgr.save_profile(imported)
+    ptr["v"] = ac._IMPORTED_ID  # already active, no marker (pre-marker world)
+    assert ptr["marker"] is False
+
+    result = ac.ensure_imported_profile()
+
+    assert result is None
+    assert ptr["v"] == ac._IMPORTED_ID  # untouched
+    assert mgr.get_profile(ac._IMPORTED_ID) is not None  # NOT deleted
+    assert ptr["marker"] is True  # adopted as settled -- never re-evaluated again
+
+    # Idempotent: a further call changes nothing further.
+    assert ac.ensure_imported_profile() is None
+    assert ptr["v"] == ac._IMPORTED_ID
+    assert mgr.get_profile(ac._IMPORTED_ID) is not None
+
+
+# --- Task-639 review round 3: don't mark "done" on an unconfirmed pointer --
+# --- write (set_active_profile swallows a failed write) --------------------
+
+
+def _wire_pointer_write_fails(monkeypatch, ac, ptr):
+    """Make the pointer write ([rag.service].profile) always fail (return
+    False, as save_setting_to_cli_config does on an I/O failure -- see its
+    real implementation) while the marker write
+    ([rag.service].first_run_import_done) keeps succeeding normally. Models
+    set_active_profile()'s documented failure mode: it swallows a failed
+    write (logs a warning, leaves the pointer untouched) instead of raising."""
+
+    def _fake_save_setting(section, key, value):
+        if section == "rag.service" and key == "profile":
+            return False  # simulated failure -- ptr["v"] deliberately NOT updated
+        if section == "rag.service" and key == "first_run_import_done":
+            ptr["marker"] = value
+            return True
+        return True
+
+    monkeypatch.setattr(ac, "save_setting_to_cli_config", _fake_save_setting, raising=False)
+
+
+def _wire_pointer_write_succeeds(monkeypatch, ac, ptr):
+    """Restore normal (successful) writes for both keys -- the same routing
+    _wire()'s own fake uses, exposed here so a test can flip a previously-
+    failing pointer write back to succeeding mid-test."""
+
+    def _fake_save_setting(section, key, value):
+        if section == "rag.service" and key == "profile":
+            ptr["v"] = value
+        elif section == "rag.service" and key == "first_run_import_done":
+            ptr["marker"] = value
+        return True
+
+    monkeypatch.setattr(ac, "save_setting_to_cli_config", _fake_save_setting, raising=False)
+
+
+def test_ensure_imported_profile_does_not_mark_when_healing_pointer_write_fails(monkeypatch, tmp_path):
+    """Important (task-639 review round 3, reviewer-reproduced): the healing
+    branch used to call _mark_first_run_import_done() unconditionally right
+    after set_active_profile(_IMPORTED_ID), but set_active_profile() itself
+    swallows a failed pointer write (logs a warning and returns without
+    resetting the shared service -- see its docstring). If the pointer write
+    fails while the marker write succeeds, the user would be permanently
+    parked on the default profile with NO future retry: the marker is
+    exactly what stops this branch from ever running again. Must instead
+    only mark once _active_profile_id() is confirmed to read back as
+    _IMPORTED_ID, and a later call (once the write starts succeeding) must
+    retry the activation rather than being permanently blocked."""
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    half_done = ProfileConfig(id=ac._IMPORTED_ID,
+                              name="Imported settings",
+                              description="Captured from your existing RAG configuration on first run.",
+                              profile_type="custom",
+                              rag_config=ac.resolve_active_rag_config())
+    mgr.save_profile(half_done)
+    assert ptr["v"] is None  # pointer still resolves to the default builtin
+
+    _wire_pointer_write_fails(monkeypatch, ac, ptr)
+
+    result = ac.ensure_imported_profile()
+
+    assert result is None
+    assert ptr["v"] is None  # pointer write failed -- never actually activated
+    assert ptr["marker"] is False  # MUST NOT be set: the activation never actually happened
+
+    # A later call, once the pointer write starts succeeding again, must
+    # RETRY the activation -- not be permanently blocked by a marker that
+    # was never legitimately earned.
+    _wire_pointer_write_succeeds(monkeypatch, ac, ptr)
+
+    result2 = ac.ensure_imported_profile()
+
+    assert result2 is None
+    assert ptr["v"] == ac._IMPORTED_ID  # retried and succeeded this time
+    assert ptr["marker"] is True
+
+
+def test_ensure_imported_profile_does_not_mark_when_fresh_import_pointer_write_fails(monkeypatch, tmp_path):
+    """Mirrors the fix at the fresh-import call site (task-639 review round
+    3): if set_active_profile() fails right after a brand-new "Imported
+    settings" profile is created, the marker must not be set either --
+    otherwise the next process's first RAG touch would see `existing is not
+    None`, the marker already True, and skip retrying the failed activation
+    forever, even though the pointer was never actually updated."""
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    _wire_legacy_rag_config(monkeypatch, {"search": {"default_top_k": 10}})
+    _wire_pointer_write_fails(monkeypatch, ac, ptr)
+
+    new_id = ac.ensure_imported_profile()
+
+    assert new_id == ac._IMPORTED_ID  # the profile WAS created
+    assert ptr["v"] is None  # but the pointer write failed -- never activated
+    assert ptr["marker"] is False  # MUST NOT be set
+
+    # A later call must retry activation via the healing branch (the profile
+    # already exists now), not skip it because of a falsely-set marker.
+    _wire_pointer_write_succeeds(monkeypatch, ac, ptr)
+
+    result2 = ac.ensure_imported_profile()
+
+    assert result2 is None  # profile already exists -- this is the healing path now
+    assert ptr["v"] == ac._IMPORTED_ID
+    assert ptr["marker"] is True

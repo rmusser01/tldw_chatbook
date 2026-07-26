@@ -52,6 +52,65 @@ def _active_profile_id() -> str:
     return DEFAULT_PROFILE
 
 
+def _first_run_import_done() -> bool:
+    """The durable first-run-import marker: [rag.service].first_run_import_done.
+
+    True once ensure_imported_profile() has deliberately activated
+    ``imported_settings`` — either by completing a fresh import or by healing
+    a half-done one (see ``_mark_first_run_import_done``, called at both
+    sites). This is the proof `ensure_imported_profile`'s healing branch uses
+    to tell "the pointer was never successfully settled" apart from "the
+    pointer is settled, whatever it currently names" -- unlike comparing
+    config *contents*, it can never be fooled by a customization it doesn't
+    happen to check for (task-639 review: the prior fingerprint + allow-list
+    heuristic missed several Settings-screen-editable fields, e.g.
+    ``search.hybrid_alpha``, and could delete a genuinely customized
+    profile).
+    """
+    try:
+        svc = get_cli_setting("rag", "service", {}) or {}
+        if isinstance(svc, dict):
+            return bool(svc.get("first_run_import_done"))
+    except Exception as e:
+        logger.debug(f"Could not read first_run_import_done marker: {e}")
+    return False
+
+
+def _mark_first_run_import_done() -> None:
+    """Persist [rag.service].first_run_import_done = True.
+
+    Called at both places ``ensure_imported_profile`` activates
+    ``imported_settings`` (a fresh import, and healing a half-done run) so
+    that, from then on, the pointer is never second-guessed again -- even if
+    the user later switches to a different profile, or back to the default
+    builtin itself.
+
+    Callers on a path that just called ``set_active_profile(_IMPORTED_ID)``
+    MUST re-read ``_active_profile_id()`` and only call this when it now
+    reads ``_IMPORTED_ID``, confirming the pointer write actually took
+    effect, before calling this (task-639 review): ``set_active_profile``
+    swallows a failed write (``save_setting_to_cli_config`` returning
+    ``False`` just logs a warning and returns -- see its docstring), so
+    marking unconditionally right after it would record "done" even though
+    the pointer was never actually updated. Since the marker is what stops
+    the healing branch from ever retrying, that combination would
+    permanently strand the user on the default profile with no way to
+    recover. A path that never attempted a pointer write in the first place
+    (the "adopt an already-settled pointer as-is" branch) has nothing to
+    confirm and calls this unconditionally.
+
+    Best-effort: a failure here (the marker write itself failing) is logged
+    and swallowed, same as the rest of ``ensure_imported_profile`` -- it must
+    never block RAG service creation. A failed write just means the next
+    call may re-evaluate the healing branch once more, which is safe
+    (idempotent), not corrupting.
+    """
+    try:
+        save_setting_to_cli_config("rag.service", "first_run_import_done", True)
+    except Exception as e:
+        logger.debug(f"Could not persist first_run_import_done marker: {e}")
+
+
 def _apply_env_overrides(config: RAGConfig,
                          override_embedding_model: Optional[str] = None,
                          override_persist_dir: Optional[Union[str, Path]] = None) -> RAGConfig:
@@ -341,13 +400,70 @@ def ensure_imported_profile() -> Optional[str]:
     established convention this mirrors). Without this, a legacy user with
     reranking enabled would silently end up with it OFF after import.
 
-    Self-healing: existence of the profile is not enough to consider first-run
-    import "done" -- if a previous run persisted the profile but failed before
-    (or otherwise never got to) activating it, that leaves it created-but-never-
-    active forever with no retry. So every call also checks the active pointer
-    and (re)activates the imported profile if it isn't already active. This
-    healing path runs regardless of ``_has_legacy_rag_config_material()`` --
-    once the profile exists, healing its activation is not a fresh-install
+    Self-healing (task-639, marker-based): existence of the profile is not
+    enough to consider first-run import "done" -- if a previous run persisted
+    the profile but failed before (or otherwise never got to) activating it,
+    that leaves it created-but-never-active forever with no retry. The guard
+    used to be "the active pointer differs from imported_settings", which
+    cannot distinguish that half-done state from a user who deliberately
+    activated a different profile afterward -- it silently flipped a
+    deliberate switch back to Imported settings on the user's next launch. A
+    second attempt compared the profile's *contents* against the default
+    builtin (fingerprint + an allow-listed field set) to prove "nothing to
+    lose", but that heuristic could itself be fooled: the Settings screen
+    lets a user hand-tune fields the allow-list never checked (e.g.
+    ``search.hybrid_alpha``, `default_search_mode`, `citation_style`,
+    `embedding.batch_size`, ...), so a real customization outside that list
+    passed the "provably safe" check and got permanently deleted.
+
+    The fix is a durable marker instead of a content guess:
+    ``[rag.service].first_run_import_done`` (``_first_run_import_done`` /
+    ``_mark_first_run_import_done``), written every time this function
+    deliberately activates ``imported_settings`` (both the fresh-import path
+    below and the healing branch here). Once set, the pointer is NEVER
+    second-guessed again, no matter what it currently names -- including the
+    user switching back to the default builtin itself, which the pointer-only
+    approach could not tell apart from "never written". While the marker is
+    still absent (a config from before this function ever set it -- either a
+    genuine half-done first run, or a pre-existing "Imported settings"
+    activation from before the marker existed, task-639 AC #2), exactly one
+    thing happens:
+
+    - Pointer still names the default builtin (``DEFAULT_PROFILE`` ==
+      ``hybrid_basic``, i.e. it was never successfully written by anyone) --
+      this is the one condition a genuine half-done first run and "the
+      marker predates this profile" share, so the healing here attempts the
+      activation and, ONLY if ``_active_profile_id()`` reads back as
+      ``_IMPORTED_ID`` afterward (the write is confirmed, not assumed),
+      records the marker. A failed pointer write (``set_active_profile``
+      swallows it -- logs a warning, leaves the pointer untouched) leaves
+      the marker unset too, so the very next call retries instead of being
+      permanently stuck: marking on an unconfirmed write would otherwise
+      strand the user on the default profile forever, since the marker is
+      exactly what stops this branch from ever running again.
+    - Pointer already names anything else (``imported_settings`` from a
+      pre-635/pre-marker activation, or a different profile entirely) -- the
+      pointer is left completely untouched (never deleted, never repointed,
+      no write attempted) and the marker is simply set unconditionally
+      (nothing to confirm when nothing was written), adopting whatever is
+      already active as confirmed going forward. Deliberately does NOT
+      delete the profile even when it happens to look identical to the
+      default: unlike a marker, no finite content comparison can prove a
+      Settings-screen customization is absent, so guessing "safe to delete"
+      risks real, irreversible data loss -- doing nothing here has no such
+      risk and reaches the same settled state (the marker stops any further
+      automatic handling).
+
+    One inherent, bounded gap: for a config that predates the marker (an
+    existing pointer that happens to already read as the default builtin,
+    with no marker yet) there is no way to tell "never completed" apart from
+    "the user deliberately switched back to the default sometime before this
+    code shipped" -- this can only occur once, on the first run under
+    marker-aware code, since the marker is written at every activation site
+    from then on and this ambiguity can never arise again afterward.
+
+    This healing path runs regardless of ``_has_legacy_rag_config_material()``
+    -- once the profile exists, healing its activation is not a fresh-install
     concern.
 
     Exception-safe: any failure here must never block RAG service creation, so
@@ -357,16 +473,36 @@ def ensure_imported_profile() -> Optional[str]:
     Returns:
         The new profile's id (``"imported_settings"``) on the run that
         creates and activates it; ``None`` when it already existed (no-op,
-        after healing the active pointer if needed), when there is no
-        genuine legacy material to import (fresh install), or when import
+        after healing the active pointer / marker if needed), when there is
+        no genuine legacy material to import (fresh install), or when import
         failed (logged, swallowed).
     """
     try:
         mgr = _manager()
         existing = mgr.get_profile(_IMPORTED_ID)
         if existing is not None:
-            if _active_profile_id() != _IMPORTED_ID:
-                set_active_profile(_IMPORTED_ID)  # heal a half-done first run
+            if not _first_run_import_done():
+                if _active_profile_id() == DEFAULT_PROFILE:
+                    # Never successfully written by anyone -- heal a
+                    # half-done first run. Only record the marker once the
+                    # pointer write is CONFIRMED to have taken effect
+                    # (task-639 review): set_active_profile() swallows a
+                    # failed write (save_setting_to_cli_config returning
+                    # False just logs a warning and returns -- see its
+                    # docstring), so marking unconditionally here could
+                    # permanently strand the user on the default profile
+                    # with the marker now blocking every future retry.
+                    set_active_profile(_IMPORTED_ID)
+                    if _active_profile_id() == _IMPORTED_ID:
+                        _mark_first_run_import_done()
+                else:
+                    # Pointer already names imported_settings (a pre-marker
+                    # activation, possibly pre-635 damage) or some other
+                    # profile entirely -- leave it exactly as-is (never
+                    # delete, never repoint; see docstring for why). No
+                    # write is attempted on this path, so there is nothing
+                    # to confirm -- adopt it as settled unconditionally.
+                    _mark_first_run_import_done()
             return None
         if not _has_legacy_rag_config_material():
             # task-635: nothing legacy to preserve continuity for -- leave a
@@ -396,6 +532,12 @@ def ensure_imported_profile() -> Optional[str]:
                 profile.reranking_config.top_k_to_rerank = int(reranker_top_k)
         mgr.save_profile(profile)
         set_active_profile(_IMPORTED_ID)
+        if _active_profile_id() == _IMPORTED_ID:
+            # Only confirmed pointer writes get the marker (see the healing
+            # branch above for why) -- if this fails, the next call falls
+            # through to the healing branch (existing is not None, no
+            # marker, pointer still the default) and retries.
+            _mark_first_run_import_done()
         return _IMPORTED_ID
     except Exception as e:
         logger.warning(f"ensure_imported_profile: first-run import failed, continuing without it: {e}")
