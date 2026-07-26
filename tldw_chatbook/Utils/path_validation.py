@@ -8,7 +8,7 @@ escape allowed directories.
 import os
 import time
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 from loguru import logger
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
@@ -361,3 +361,40 @@ def validate_path_simple(
         if isinstance(e, ValueError):
             raise
         raise ValueError(f"Invalid path: {user_path}")
+
+
+def validate_path_multi(
+    user_path: Union[str, Path], roots: Sequence[Union[str, Path]]
+) -> Path:
+    """Validate ``user_path`` against several allowed roots (first match wins).
+
+    Relative paths resolve against ``roots[0]`` (the primary root — callers
+    pass the tool sandbox first so legacy relative-path behavior is
+    unchanged). The rejection message names every consulted root so a
+    denial is actionable.
+
+    Args:
+        user_path: The path provided by the user or model.
+        roots: Allowed base directories, in priority order.
+
+    Returns:
+        The validated absolute path.
+
+    Raises:
+        ValueError: No roots given, or the path escapes all of them.
+    """
+    root_list = [Path(root) for root in roots]
+    if not root_list:
+        raise ValueError("No allowed roots configured for path validation.")
+    candidate = Path(user_path)
+    for index, root in enumerate(root_list):
+        if index > 0 and not candidate.is_absolute():
+            continue  # relative paths anchor to the primary root only
+        try:
+            return validate_path(user_path, root)
+        except ValueError:
+            continue
+    consulted = ", ".join(str(root.resolve()) for root in root_list)
+    raise ValueError(
+        f"Path '{user_path}' is outside every allowed root ({consulted})."
+    )
