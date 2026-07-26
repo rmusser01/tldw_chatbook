@@ -718,7 +718,7 @@ class LibraryIngestJobRegistry:
         that id addresses a row in the *server's* library, and ``media_id`` on a
         job means a row in the local one. Conflating them would point "Open in
         Library" at a wrong or absent local row. Opening a server-ingested item
-        needs a server-aware affordance instead (task-688).
+        needs a server-aware affordance instead (task-700).
 
         Args:
             job_id: The job to finish.

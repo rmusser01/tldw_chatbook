@@ -76,7 +76,7 @@ def test_get_type_group_classifies_urls_not_just_extensions(
     This mapped by ``detect_file_type`` alone, so any extension-less URL fell
     through to ``unsupported`` -- a YouTube link pre-flighted as an unsupported
     *file* while ``classify_ingest_source`` called the same URL ``video`` and the
-    pipeline would have ingested it happily (task-690). The canvas's verdict and
+    pipeline would have ingested it happily (task-702). The canvas's verdict and
     the pipeline's behaviour have to agree, or the screen lies about what will
     happen.
     """

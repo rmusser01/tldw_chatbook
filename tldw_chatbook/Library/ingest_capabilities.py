@@ -504,7 +504,7 @@ def get_type_group(path_or_url: str) -> str:
     landed in ``unsupported``: a YouTube link, the archetypal import, pre-flighted
     as an unsupported *file* even though the pipeline's own
     ``classify_ingest_source`` called it ``video`` and would have ingested it
-    (task-690).
+    (task-702).
 
     Args:
         path_or_url: Local path, or an http(s) URL.

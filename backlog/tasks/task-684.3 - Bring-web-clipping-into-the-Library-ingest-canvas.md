@@ -51,7 +51,7 @@ Two facts from a real 200 shaped the design: the endpoint is SYNCHRONOUS (conten
 
 clip_failure_reason exists because a 200 is not a captured page: the outcome is in the body, so a per-result extraction_successful of False is a failed clip that looks like success at the transport level. Recording that as done would repeat task-677's empty-ingest bug. Mutation-checked.
 
-Two prerequisites had to be fixed first, both filed and both live bugs in their own right: task-690 (a YouTube URL pre-flighted as an unsupported FILE, because grouping went by file extension while the pipeline called the same URL video) and task-697 (the pre-flight's HEAD probe turned its own 403 into 'URL unreachable' and dropped the source -- blocking a Wikipedia page that the server clipped at 200).
+Two prerequisites had to be fixed first, both filed and both live bugs in their own right: task-702 (a YouTube URL pre-flighted as an unsupported FILE, because grouping went by file extension while the pipeline called the same URL video) and task-697 (the pre-flight's HEAD probe turned its own 403 into 'URL unreachable' and dropped the source -- blocking a Wikipedia page that the server clipped at 200).
 
 Scope settings are declared once in the capability schema's new 'web' group, so the form and the request cannot disagree; a test asserts every method offered is in the server's ScrapeMethod enum. Gating the page/depth limits needed OptionField.enabled_when_values, because enabled_when is a truthiness test and every non-empty select choice is truthy -- max_pages would have read as editable even for the single-page method that ignores it.
 

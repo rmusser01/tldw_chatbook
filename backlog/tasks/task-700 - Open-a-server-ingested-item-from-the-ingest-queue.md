@@ -1,5 +1,5 @@
 ---
-id: TASK-688
+id: TASK-700
 title: Open a server-ingested item from the ingest queue
 status: To Do
 assignee: []
