@@ -718,3 +718,86 @@ async def test_handle_runtime_backend_changed_forwards_resolved_authoritative_ba
 
     assert app_like.runtime_policy.state.active_source == "local"
     assert forwarded == ["local"]
+
+
+class TestRuntimePolicyPathIsolation:
+    """The runtime-policy state file must follow the active config profile.
+
+    The file records whether the app is running local or server. Its path was
+    derived from a hardcoded home directory rather than from the config path in
+    effect, so a profile launched with ``TLDW_CONFIG_PATH`` shared the real
+    user's local/server mode: switching a scratch profile to server mode left
+    the default profile in server mode afterwards (task-701).
+
+    That is not merely untidy. It made local/server behaviour untestable without
+    mutating real state, which is why verifying the server-ingest path in
+    task-684.1 had to stop short of putting a test profile into server mode.
+    """
+
+    def test_an_isolated_profile_gets_its_own_policy_file(self, tmp_path, monkeypatch):
+        from tldw_chatbook.runtime_policy import bootstrap
+
+        scratch = tmp_path / "profile" / "config.toml"
+        scratch.parent.mkdir(parents=True)
+        scratch.write_text("[general]\n", encoding="utf-8")
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(scratch))
+
+        resolved = bootstrap.default_runtime_policy_path()
+
+        assert resolved.parent == scratch.parent.resolve(), (
+            f"policy file landed at {resolved}, outside the active profile"
+        )
+        assert resolved.name == "runtime_policy.json"
+
+    def test_two_profiles_do_not_share_a_policy_file(self, tmp_path, monkeypatch):
+        from tldw_chatbook.runtime_policy import bootstrap
+
+        first = tmp_path / "one" / "config.toml"
+        second = tmp_path / "two" / "config.toml"
+        for path in (first, second):
+            path.parent.mkdir(parents=True)
+            path.write_text("[general]\n", encoding="utf-8")
+
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(first))
+        first_path = bootstrap.default_runtime_policy_path()
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(second))
+        second_path = bootstrap.default_runtime_policy_path()
+
+        assert first_path != second_path, (
+            "both profiles resolved to the same runtime-policy file, so one "
+            "profile's local/server mode overwrites the other's"
+        )
+
+    def test_the_default_location_is_unchanged_without_an_override(
+        self, monkeypatch
+    ):
+        """No override must mean exactly the historical path, or existing
+        installs silently lose the mode they had persisted."""
+        from tldw_chatbook.config import DEFAULT_CONFIG_PATH
+        from tldw_chatbook.runtime_policy import bootstrap
+
+        monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
+
+        assert bootstrap.default_runtime_policy_path() == (
+            DEFAULT_CONFIG_PATH.parent / "runtime_policy.json"
+        )
+
+    def test_the_loader_uses_the_active_profile(self, tmp_path, monkeypatch):
+        """The seam that matters: loading for an app must write to the profile's
+        own file, not merely expose a helper that computes the right path."""
+        from types import SimpleNamespace
+
+        from tldw_chatbook.runtime_policy import bootstrap
+
+        scratch = tmp_path / "profile" / "config.toml"
+        scratch.parent.mkdir(parents=True)
+        scratch.write_text("[general]\n", encoding="utf-8")
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(scratch))
+
+        app = SimpleNamespace(app_config={})
+        context = bootstrap.load_runtime_policy_for_app(app)
+        context.persist()
+
+        assert (scratch.parent / "runtime_policy.json").exists(), (
+            "the profile's own policy file was never written"
+        )

@@ -1,9 +1,11 @@
 ---
 id: TASK-701
 title: TLDW_CONFIG_PATH does not isolate the runtime-policy state file
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-26 13:59'
+updated_date: '2026-07-26 18:30'
 labels:
   - config
   - testing
@@ -18,5 +20,7 @@ The runtime-policy state file (which records whether the app is running local or
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A profile launched with TLDW_CONFIG_PATH reads and writes its own runtime-policy state,Switching modes in an isolated profile leaves the default profile's mode untouched,The default location is unchanged when no override is set
+- [x] #1 A profile launched with TLDW_CONFIG_PATH reads and writes its own runtime-policy state
+- [x] #2 Switching modes in an isolated profile leaves the default profile's mode untouched
+- [x] #3 The default location is unchanged when no override is set
 <!-- AC:END -->
