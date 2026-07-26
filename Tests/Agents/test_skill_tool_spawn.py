@@ -126,9 +126,9 @@ def test_skill_tool_respects_subagent_budget(tmp_path):
 class _NCatalogProvider:
     """Catalog of N generic tools, to force the find/load disclosure path.
 
-    DIRECT_DISCLOSE_THRESHOLD is 8; a catalog bigger than that defers all
-    disclosure to find_tools/load_tools instead of direct-disclosing
-    everything up front (see tool_catalog.initial_disclosure).
+    A catalog bigger than DIRECT_DISCLOSE_THRESHOLD defers all disclosure
+    to find_tools/load_tools instead of direct-disclosing everything up
+    front (see tool_catalog.initial_disclosure).
     """
 
     def __init__(self, names):
@@ -165,7 +165,7 @@ class _NamedSkillRunner:
         return spawn(f"RENDERED[{args}]")
 
 
-def _nine_entry_names():
+def _names_exceeding_disclose_threshold():
     # Create enough entries to exceed DIRECT_DISCLOSE_THRESHOLD -- forces the find/load path.
     assert DIRECT_DISCLOSE_THRESHOLD >= 16
     return ["code-review"] + [f"filler{i}" for i in range(DIRECT_DISCLOSE_THRESHOLD)]
@@ -173,7 +173,7 @@ def _nine_entry_names():
 
 def test_undisclosed_skill_tool_is_refused_without_find_load(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    names = _nine_entry_names()
+    names = _names_exceeding_disclose_threshold()
     registry = ToolCatalogRegistry()
     registry.register_provider(_NCatalogProvider(names))
     config = AgentConfig(
@@ -212,7 +212,7 @@ def test_undisclosed_skill_tool_is_refused_without_find_load(tmp_path):
 
 def test_skill_tool_executes_after_find_load_discloses_it(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    names = _nine_entry_names()
+    names = _names_exceeding_disclose_threshold()
     registry = ToolCatalogRegistry()
     registry.register_provider(_NCatalogProvider(names))
     config = AgentConfig(
