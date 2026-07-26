@@ -26,6 +26,9 @@ SOURCE_STATE_PATH = PRODUCTION_ROOT / "runtime_policy" / "source_state.py"
 SCHEDULES_WORKBENCH_PATH = (
     PRODUCTION_ROOT / "UI" / "Screens" / "scheduling" / "schedules_workbench.py"
 )
+SCREEN_STATE_STORE_PATH = (
+    PRODUCTION_ROOT / "UI" / "Navigation" / "screen_state_store.py"
+)
 PROJECTION_NAMES = (
     "current_runtime_backend",
     "runtime_backend",
@@ -583,6 +586,41 @@ def test_runtime_source_state_store_references_are_confined_to_owner_modules() -
     }
 
     assert observed_paths == {BOOTSTRAP_PATH, SOURCE_STATE_PATH}
+
+
+def test_legacy_screen_snapshot_symbols_are_absent_from_production() -> None:
+    violations: list[tuple[str, str]] = []
+    for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        for forbidden in ("_screen_states", "runtime_policy_snapshot"):
+            if forbidden in source:
+                violations.append((str(path.relative_to(PROJECT_ROOT)), forbidden))
+
+    assert violations == []
+
+
+def test_screen_state_store_backing_entries_stay_private_to_owner_module() -> None:
+    violations: list[tuple[str, int]] = []
+    for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
+        if path == SCREEN_STATE_STORE_PATH:
+            continue
+        tree = _parse(path)
+        imports_screen_state_store = any(
+            isinstance(node, ast.ImportFrom)
+            and node.module is not None
+            and node.module.endswith("screen_state_store")
+            and any(alias.name == "ScreenStateStore" for alias in node.names)
+            for node in ast.walk(tree)
+        )
+        for node in ast.walk(tree):
+            direct_access = isinstance(node, ast.Attribute) and node.attr == "_entries"
+            dynamic_access = _constant_dynamic_name(node) == "_entries"
+            if (direct_access or dynamic_access) and (
+                imports_screen_state_store or "screen_state_store" in _chain(node)
+            ):
+                violations.append((str(path.relative_to(PROJECT_ROOT)), node.lineno))
+
+    assert violations == []
 
 
 def test_legacy_state_exports_remain_serialization_compatible() -> None:

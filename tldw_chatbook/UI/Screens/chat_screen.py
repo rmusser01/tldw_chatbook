@@ -12438,12 +12438,11 @@ class ChatScreen(BaseAppScreen):
     # NOTE (task-247, perf): there used to be an on_screen_suspend() override
     # here that called self.save_state() again and discarded the result.
     # app.py already calls save_state() explicitly before switching screens
-    # away from Console (see the pre-navigation save in switch_screen /
-    # _screen_states bookkeeping) and stores that return value -- the second
-    # call here was pure waste (a full O(sessions x messages) native-console
-    # serialization) on every tab switch away from Console. Removed rather
-    # than left as a no-op so it doesn't shadow a future base-class
-    # implementation.
+    # away from Console and offers that return value to ScreenStateStore; the
+    # second call here was pure waste (a full O(sessions x messages)
+    # native-console serialization) on every tab switch away from Console.
+    # Removed rather than left as a no-op so it doesn't shadow a future
+    # base-class implementation.
 
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""

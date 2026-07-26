@@ -11,6 +11,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.color import Color
 from textual.containers import Horizontal, Vertical
+from textual.css.query import QueryError
 from textual.events import Click, DescendantFocus
 from textual.message import Message
 from textual.reactive import reactive
@@ -149,16 +150,31 @@ class SettingsThemeEditor(Vertical):
                 yield Static("Boost", classes="preview-boost-demo")
 
     def on_mount(self) -> None:
-        """Initialize the theme editor."""
-        for color_name in self.BASE_COLORS:
-            self.color_inputs[color_name] = self.query_one(
-                f"#settings-theme-color-{color_name}", Input
-            )
-            self.color_swatches[color_name] = self.query_one(
-                f"#settings-theme-swatch-{color_name}", Static
-            )
+        """Initialize after composed descendants are mounted."""
+        self.call_after_refresh(self._initialize_editor)
 
-        self.load_theme(self.app.theme)
+    def _initialize_editor(self) -> None:
+        """Bind composed controls and load the active theme."""
+        try:
+            color_inputs = {
+                color_name: self.query_one(f"#settings-theme-color-{color_name}", Input)
+                for color_name in self.BASE_COLORS
+            }
+            color_swatches = {
+                color_name: self.query_one(
+                    f"#settings-theme-swatch-{color_name}", Static
+                )
+                for color_name in self.BASE_COLORS
+            }
+            self.color_inputs = color_inputs
+            self.color_swatches = color_swatches
+            self.load_theme(self.app.theme)
+        except QueryError:
+            # Settings can recompose while this callback is queued. A stale,
+            # detached editor must not fail the replacement screen.
+            self.color_inputs.clear()
+            self.color_swatches.clear()
+            return
 
         if "primary" in self.color_inputs:
             self.color_inputs["primary"].add_class("selected")

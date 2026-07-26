@@ -4,6 +4,7 @@ import threading
 from contextlib import asynccontextmanager
 
 import pytest
+from textual.widgets import OptionList
 
 import tldw_chatbook.app as app_module
 from tldw_chatbook.app import TldwCli
@@ -31,12 +32,19 @@ from tldw_chatbook.UI.Screens.schedules_screen import SchedulesScreen
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Screens.settings_config_models import (
+    SettingsCategoryId,
+    SettingsDraft,
+)
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
 from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
+from tldw_chatbook.Widgets.settings_splash_screen_viewer import (
+    SettingsSplashScreenViewer,
+)
+from tldw_chatbook.Widgets.settings_theme_editor import SettingsThemeEditor
 
 
 class _RecordingRecentWorkAdapter:
@@ -728,6 +736,69 @@ async def test_full_app_settings_self_managed_contexts_compose(
 
         assert isinstance(app.screen, SettingsScreen)
         assert app.screen.active_category == category.value
+        if category is SettingsCategoryId.THEME:
+            editor = app.screen.query_one(
+                "#settings-theme-editor",
+                SettingsThemeEditor,
+            )
+            for _ in range(150):
+                if set(editor.color_inputs) == set(editor.BASE_COLORS):
+                    break
+                await pilot.pause(0.01)
+            assert set(editor.color_inputs) == set(editor.BASE_COLORS)
+        else:
+            viewer = app.screen.query_one(
+                "#settings-splash-screen-viewer",
+                SettingsSplashScreenViewer,
+            )
+            card_list = viewer.query_one("#settings-splash-card-list", OptionList)
+            if viewer._cards:
+                for _ in range(150):
+                    if card_list.highlighted == 0:
+                        break
+                    await pilot.pause(0.01)
+                assert card_list.highlighted == 0
+
+
+@pytest.mark.asyncio
+async def test_full_app_settings_drafts_detach_nested_state_across_store_restore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TldwCli()
+
+    async with _mounted_app(app, monkeypatch) as pilot:
+        assert isinstance(app.screen, SettingsScreen)
+        category = SettingsCategoryId.APPEARANCE
+        producer_draft = SettingsDraft(
+            category=category,
+            originals={"palette": {"colors": ["original-blue"]}},
+            values={"palette": {"colors": ["draft-blue"]}},
+        )
+        app.screen._settings_drafts = {category: producer_draft}
+        identity = app._current_runtime_identity()
+
+        await _navigate(app, pilot, "home")
+        producer_draft.values["palette"]["colors"].append("producer-mutation")
+        await _navigate(app, pilot, "settings")
+
+        assert isinstance(app.screen, SettingsScreen)
+        restored_draft = app.screen._settings_drafts[category]
+        assert restored_draft.values == {
+            "palette": {"colors": ["draft-blue"]},
+        }
+        restored_draft.values["palette"]["colors"].append("consumer-mutation")
+
+        later_snapshot = app.screen_state_store.restore("settings", identity)
+        assert later_snapshot is not None
+        later_draft = later_snapshot["settings_drafts"][category]
+        assert later_draft.values == {
+            "palette": {"colors": ["draft-blue"]},
+        }
+        assert producer_draft.values == {
+            "palette": {
+                "colors": ["draft-blue", "producer-mutation"],
+            },
+        }
 
 
 @pytest.mark.asyncio

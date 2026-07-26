@@ -66,13 +66,22 @@ def test_save_and_restore_never_deep_copy_nested_payloads() -> None:
         def __deepcopy__(self, _memo):
             raise AssertionError("screen state store must not deep-copy payloads")
 
-    nested = DeepCopySentinel()
+    nested = {
+        "history": [
+            {"message_id": index, "content": "x" * 256} for index in range(1_000)
+        ],
+        "deepcopy_sentinel": DeepCopySentinel(),
+    }
     store = ScreenStateStore()
     identity = _local_identity()
 
     store.save("console", {"history": nested}, identity)
+    first_restore = store.restore("console", identity)
+    second_restore = store.restore("console", identity)
 
-    assert store.restore("console", identity)["history"] is nested
+    assert first_restore is not second_restore
+    assert first_restore["history"] is nested
+    assert second_restore["history"] is nested
 
 
 @pytest.mark.parametrize("route", ["", "   "])
