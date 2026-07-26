@@ -4,7 +4,7 @@ title: Show remote ingest jobs in the Library ingest queue
 status: To Do
 assignee: []
 created_date: '2026-07-26 04:33'
-updated_date: '2026-07-26 05:31'
+updated_date: '2026-07-26 05:45'
 labels:
   - ingest
   - consolidation
@@ -29,16 +29,15 @@ Remote ingest jobs are monitored in a separate window from local ones, so a user
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-SEQUENCING: this task now comes BEFORE 684.1's routing slice. 684.1's mapping layer landed, but routing a submission has nowhere to record it -- see the registry constraints below -- so the registry work has to precede it.
+Slices A (schema v3), B (row origin) and C (cancelled lifecycle) are DONE. Remaining: the polling worker.
 
-1. Migrate the ingest_jobs table (DB/Library_Ingest_Jobs_DB.py, currently schema v2) to v3:
-   - add origin ('local'/'server'), remote_job_id and batch_id
-   - relax the state CHECK, which today allows only queued/parsing/writing/done/failed; the server also reports cancelled and carries a cancellation_reason
-   - media_id stays local-only and must become nullable in practice: LibraryIngestJobRegistry.mark_done currently *requires* media_id: int, which a server submission never produces, so it needs a server-shaped completion path
-2. Give LibraryIngestJob the matching fields and surface origin on the queue row.
-3. Poll remote state with the existing client APIs (list_media_ingest_jobs(batch_id), get_media_ingest_job(job_id)) on a worker, marshalling updates onto the UI thread the way the parse-pool coordinator already does. MediaIngestJobStatus already carries status, progress_percent, progress_message, error_message, source and batch_id.
-4. Map queue actions: cancel -> cancel_media_ingest_jobs_batch; hide the ones with no remote equivalent.
-5. Tests for row rendering, origin labelling, state transitions and the migration.
+1. Map server status -> IngestJobState in a pure function first (MediaIngestJobStatus.status plus progress_percent/progress_message/error_message/media id), so the mapping is unit-testable without a server. Unknown statuses must not silently become 'done'.
+2. Poll on @work(exclusive=True, thread=True, group=...) -- its OWN group, never exclusive without one.
+3. MARSHALLING HAZARD, already solved once in this file for the parse pool (see _ingest_pool_callback's docstring): Textual's call_from_thread BLOCKS the calling thread on the marshalled call and only guards against the loop being None, not against it shutting down. A poll result arriving as the user quits can park this thread while the quit path waits on it -- mutual deadlock. Mitigation is two-layer: check the shutdown flag on the worker thread BEFORE marshalling, and have the marshalled body no-op on the same flag.
+4. Drive from batch_id via list_media_ingest_jobs, falling back to get_media_ingest_job for a single remote_job_id; both are already on ServerMediaReadingService.
+5. Stop polling once every remote job in the batch is terminal, so a finished batch does not poll forever.
+6. Wire the cancel action to cancel_media_ingest_jobs_batch -> mark_cancelled (the state it produces now exists).
+7. Tests with a fake service: status mapping, terminal stop condition, and that a shutdown flag suppresses marshalling.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
