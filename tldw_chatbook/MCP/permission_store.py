@@ -66,7 +66,11 @@ from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 SCHEMA_VERSION = 1
 STORE_STATES: tuple[str, ...] = ("allow", "ask", "deny")
 DEFAULT_GLOBAL = "ask"
-HIGH_RISK_TAGS = frozenset({"mutates", "process"})
+# task-545 P2: `network` joins the vocabulary so an egress-capable tool
+# cannot execute silently. This is SHARED with MCP resolution (see the two
+# HIGH_RISK_TAGS uses below), so an MCP tool already declaring `network`
+# begins flooring to `ask` — a deliberate, documented behaviour change.
+HIGH_RISK_TAGS = frozenset({"mutates", "process", "network"})
 
 _DEFAULT_PROFILE_ID = "default"
 

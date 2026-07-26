@@ -25,6 +25,27 @@ class _Mutating(Tool):
         return {}
 
 
+class _Networked(Tool):
+    @property
+    def name(self) -> str:
+        return "fetch_thing"
+
+    @property
+    def description(self) -> str:
+        return "d"
+
+    @property
+    def parameters(self) -> dict:
+        return {"type": "object", "properties": {}}
+
+    @property
+    def risk_tags(self) -> tuple[str, ...]:
+        return ("network",)
+
+    async def execute(self, **kwargs):
+        return {}
+
+
 class _FakePermissionStore:
     """Stands in for ``MCPPermissionStore`` -- just enough to count loads."""
 
@@ -296,3 +317,18 @@ def test_stamp_scope_is_reentrant_for_nested_scopes():
             gate.begin_turn()
         assert gate._stamps == {"write_thing": "deny"}
     assert gate._stamps == {"write_thing": "approve_once"}
+
+
+def test_network_tag_floors_inherited_allow_to_ask():
+    """Egress is the exfiltration leg of a prompt-injection chain.
+
+    An untagged read-only fetch would resolve to the built-in allow floor
+    and execute silently, so `network` joins HIGH_RISK_TAGS.
+    """
+    from tldw_chatbook.Agents.builtin_tool_gate import tool_ref
+    from tldw_chatbook.MCP.permission_store import resolve_builtin_state
+
+    state = resolve_builtin_state({}, tool_ref(_Networked()))
+
+    assert state.state == "ask"
+    assert state.risk_floored is True

@@ -115,7 +115,7 @@ def test_ui_label_is_defensive_against_unknown_state():
 
 
 def test_high_risk_tags_constant():
-    assert HIGH_RISK_TAGS == frozenset({"mutates", "process"})
+    assert HIGH_RISK_TAGS == frozenset({"mutates", "process", "network"})
 
 
 # -- resolve_effective_state: precedence --------------------------------------
