@@ -338,3 +338,16 @@ Task 10: complete (commits 89c850f0b + 5cb7f8dec + c4ebdb3e7, review clean after
     with_name() without re-resolving, so a symlinked sidecar would not match.
   - LESSON: "wire X into helper H" is worthless unless you verify H is on the target's
     call path. Reviewers must trace the real execute() path end to end.
+Task 11: complete (commits c075a14cc + 3bce5bcc7, review clean after 1 fix pass)
+  - CRITICAL from the plan's own code: Path.glob() is LAZY, so an invalid pattern
+    ("**foo/*") raises ValueError on first next(), OUTSIDE the try that wrapped only the
+    glob() construction call. Both tools could raise, breaking the never-raise contract.
+    Now only next() is inside the guard, so body-code ValueErrors are not mislabelled.
+  - _MAX_CANDIDATES had ZERO coverage: every prior pattern test short-circuited on the
+    up-front traversal refusal, so glob() was never iterated. Would have passed with the
+    constant deleted. Now mutation-verified.
+  - Implementer found an unlisted cross-cutting dependency: Library/library_skills_state.py
+    _SHADOWED_BUILTIN_NAMES must list every built-in tool name (it is config-gate-blind).
+    Adding built-ins REQUIRES updating it -- not in the plan. Future packs must too.
+  - Empirical: patching _tool_sandbox_root does NOT work for these tools (they bind it by
+    name into files.py); tests must patch _resolve_sandbox_config.
