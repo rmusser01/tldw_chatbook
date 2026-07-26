@@ -353,6 +353,19 @@ def test_detect_cycle_non_cyclic_is_none():
     assert _detect_cycle(_keys("A", "B", "C", "D", "E")) is None
 
 
+def test_console_budget_bounds_spend_not_only_time():
+    """Sub-agents inherit the turn budget by an explicit operator decision.
+
+    Worst case is max_model_turns * (1 + max_subagents) provider turns for
+    one message -- 90 at 30/2. The wall clock bounds that in TIME but not
+    in SPEND, so the Console budget carries a token ceiling.
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import CONSOLE_RUN_BUDGET
+
+    assert CONSOLE_RUN_BUDGET.max_model_turns == 30
+    assert CONSOLE_RUN_BUDGET.max_total_tokens > 0
+
+
 def test_detect_cycle_period4_trips_at_two_repeats():
     # Boundary: MAX_LOOP_PERIOD (4) is the longest period detected.
     assert _detect_cycle(_keys("A", "B", "C", "D", "A", "B", "C", "D")) == (4, 2)

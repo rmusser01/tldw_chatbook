@@ -51,7 +51,7 @@ LOOP_DETECTION_N = 3
 #: >= the default max_steps so it is provably unreachable at engine
 #: defaults; it only becomes the operative limiter for a caller that raises
 #: max_steps to match (see console_agent_bridge.CONSOLE_MAX_MODEL_TURNS).
-DEFAULT_MAX_MODEL_TURNS = 20
+DEFAULT_MAX_MODEL_TURNS = 30
 # Longest tool-call cycle period the runtime detects (A->B->A->B is period 2).
 MAX_LOOP_PERIOD = 4
 
