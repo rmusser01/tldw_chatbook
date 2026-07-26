@@ -1277,6 +1277,17 @@ class ConsoleAgentBridge:
                     lines.append(f"stdout:\n{outcome.stdout}")
                 if outcome.stderr:
                     lines.append(f"stderr:\n{outcome.stderr}")
+                # task-584: report WHAT was produced, never its contents. This
+                # string enters the model's context, and a script's artifact is
+                # not trust-reviewed material -- the listing is name + size, and
+                # the path lets the user (or a file tool, where enabled) open it.
+                if outcome.output_files:
+                    listed = ", ".join(
+                        f"{item['name']} ({item['size']} bytes)"
+                        for item in outcome.output_files
+                    )
+                    lines.append(f"produced {len(outcome.output_files)} file(s): {listed}")
+                    lines.append(f"output directory: {outcome.output_dir}")
                 return ToolResult(ok=True, content="\n".join(lines))
 
         # [console] native_tool_calls kill-switch (Task 5): a caller-supplied

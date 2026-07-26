@@ -148,9 +148,41 @@ Scripts run with:
   remainder is drained and discarded, so a runaway writer can neither exhaust memory nor
   deadlock on a full pipe.
 
-Only stdout, stderr, and the exit code come back to the agent. Files a script writes into
-its working directory are discarded with the scratch directory; files it writes elsewhere
-by absolute path are not.
+## Output files
+
+Files a script writes into its working directory are **kept**. Each run gets its own
+directory under the file-tool sandbox root — by default
+`<user data dir>/tool_sandbox/skill_script_output/` — and the tool result tells the agent
+what was produced:
+
+```
+exit_code: 0
+produced 1 file(s): report.md (2048 bytes)
+output directory: /…/tool_sandbox/skill_script_output/tldw-skill-script-ab12cd
+```
+
+**The listing carries names and sizes only, never contents.** That string enters the
+model's context, and a script's artifact is not trust-reviewed material, so it is
+described rather than pasted.
+
+Two consequences of putting output under the file-tool sandbox root:
+
+- **You can open it.** It is a stable, documented location, not an OS temp directory the
+  system sweeps.
+- **The agent can read it back if you let it.** `read_file` and `list_directory` are
+  confined to that same sandbox root and are surfaced to the agent loop, but remain behind
+  their existing `[tools]` gates (`read_file_enabled`, `list_directory_enabled`), which
+  default to **disabled**. Leave them off and output is yours alone; turn them on and a
+  skill can chain steps across runs.
+
+Retention is bounded by **run count**: the 20 most recent run directories are kept and
+older ones pruned right after each run. A run that produces nothing keeps no directory at
+all, so idle runs do not consume a retention slot.
+
+Files a script writes elsewhere by absolute path are still outside all of this (see
+Residual risks).
+
+Only stdout, stderr, the exit code, and this listing come back to the agent.
 
 ### Current limits
 
