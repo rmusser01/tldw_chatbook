@@ -220,6 +220,13 @@ async def test_bench_detail_pane_shows_metadata_and_target_table(
         probes_line = screen.query_one("#evals-detail-bench-probes")
         assert "Sure" in str(probes_line.renderable)
 
+        # Region, not just query_one success -- a widget can be present in
+        # the DOM and occupy zero space (see evals_screen.py's own module
+        # docstring on the hub's original defect).
+        for metadata_widget in (name, dataset_line, mode_line, top_k_line, probes_line):
+            assert metadata_widget.region.width > 0
+            assert metadata_widget.region.height > 0
+
         for target_id in target_ids.values():
             row = screen.query_one(f"#evals-bench-target-{target_id}")
             assert row.region.width > 0
@@ -309,6 +316,11 @@ async def test_blocked_target_renders_owner_problem_and_next_action(
         assert "Owner:" in callout_text
         assert "Problem:" in callout_text
         assert "Next:" in callout_text
+        # Pinned requirement 3 -- prove this callout is genuinely rendered,
+        # not merely present in the DOM (see the region-check rationale
+        # above and in evals_screen.py's own module docstring).
+        assert callout.region.width > 0
+        assert callout.region.height > 0
 
 
 # ---------------------------------------------------------------------------
@@ -366,13 +378,23 @@ async def test_estimate_shows_call_count_and_time_and_no_cost_for_local_targets(
 
         calls_line = screen.query_one("#evals-inspector-estimate-calls")
         calls_text = str(calls_line.renderable)
-        # 1 snippet * 3 targets = 3 calls (see the fixture).
-        assert "3" in calls_text
-        assert any(char.isdigit() for char in calls_text)
+        # dataset.metadata.sample_count=12 * 3 targets = 36 calls (see the
+        # bench_with_mixed_readiness fixture: a 12-sample dataset and three
+        # targets). Asserted as the exact rendered token -- a bare "3" in
+        # "36" would also satisfy a substring check and could not tell a
+        # correct formula from a materially wrong one. Anchored with
+        # startswith rather than a bare "in" check so a stray extra digit
+        # (e.g. a bug computing 136) could not slip past a substring match.
+        assert calls_text.startswith("36 calls"), calls_text
 
         cost_line = screen.query_one("#evals-inspector-estimate-cost")
-        assert "local" in str(cost_line.renderable)
-        assert "no cost" in str(cost_line.renderable)
+        cost_text = str(cost_line.renderable)
+        assert "local" in cost_text
+        assert "no cost" in cost_text
+
+        for estimate_widget in (calls_line, cost_line):
+            assert estimate_widget.region.width > 0
+            assert estimate_widget.region.height > 0
 
 
 @pytest.mark.asyncio
@@ -415,6 +437,13 @@ async def test_classic_task_detail_shows_run_history_and_deferral_sentence(
 
         deferral = screen.query_one("#evals-detail-classic-deferral")
         assert str(deferral.renderable).strip() == CLASSIC_TASK_DEFERRAL_SENTENCE
+
+        # Pinned requirement 4 (classic tasks: read-only detail + run
+        # history + deferral sentence) -- prove the whole detail is
+        # genuinely rendered, not merely present in the DOM.
+        for classic_widget in (name, run_row, deferral):
+            assert classic_widget.region.width > 0
+            assert classic_widget.region.height > 0
 
 
 @pytest.mark.asyncio
