@@ -1,10 +1,10 @@
 ---
 id: TASK-684.1
 title: Bring server-backed ingestion into the Library ingest canvas
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-26 04:33'
-updated_date: '2026-07-26 04:45'
+updated_date: '2026-07-26 05:05'
 labels:
   - ingest
   - consolidation
