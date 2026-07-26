@@ -36,6 +36,20 @@ class WatchlistPreviewService:
         )
 
         subscription = self._build_subscription(source_config)
+        # Foreign-key enforcement is on for every SubscriptionsDB connection
+        # (task-1a), so url_snapshots.subscription_id -- written by the
+        # execute path below for url/url_list/sitemap sources -- must
+        # reference a real row in `subscriptions`, not the synthetic id
+        # placeholder `_build_subscription` fills in. Seed one here, in this
+        # same throwaway in-memory DB, so the write succeeds without ever
+        # touching the caller's real database: preview still persists
+        # nothing outside `preview_db`, which is discarded when this call
+        # returns.
+        subscription["id"] = preview_db.add_subscription(
+            name=subscription["name"],
+            type=subscription["type"],
+            source=subscription["source"],
+        )
         result = await service._execute_subscription(subscription, preview_db)
         items = list(result.get("items") or [])
         return {
@@ -53,6 +67,9 @@ class WatchlistPreviewService:
             or ""
         )
         subscription: dict[str, Any] = {
+            # Placeholder -- preview() overwrites this with a real row id
+            # seeded into the throwaway in-memory DB before executing, so
+            # any FK-bearing write (e.g. url_snapshots) has a valid parent.
             "id": -1,
             "name": str(source_config.get("name") or "Preview"),
             "type": source_type,

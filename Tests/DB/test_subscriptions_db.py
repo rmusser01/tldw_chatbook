@@ -354,3 +354,53 @@ def test_rebuild_recovers_from_stray_subscription_filters_new_table(tmp_path):
         for r in migrated.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
     assert "subscription_filters_new" not in tables
+
+
+def test_in_memory_db_has_usable_schema():
+    """Regression for task-689. Before the fix, ``_initialize_schema`` built
+    the schema on a connection from ``with closing(self._get_connection())``
+    that was closed immediately after, while the ``.conn`` property used by
+    every other method opened a *different* ``:memory:`` connection -- an
+    entirely separate, empty database in SQLite's model. ``.conn`` therefore
+    had zero tables and any write raised ``OperationalError: no such table``.
+    """
+    db = SubscriptionsDB(":memory:", client_id="probe")
+    tables = {
+        row[0]
+        for row in db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    assert "subscriptions" in tables
+    assert "subscription_items" in tables
+    assert "watchlists" in tables
+
+    # A basic write must succeed against the connection callers actually use.
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    assert db.get_subscription(source_id)["name"] == "ArXiv"
+
+
+def test_in_memory_db_instances_stay_isolated():
+    """Two separate ``:memory:`` instances must not see each other's data --
+    each opens its own private SQLite database, and nothing here shares a
+    cache or file between them."""
+    db_a = SubscriptionsDB(":memory:", client_id="a")
+    db_b = SubscriptionsDB(":memory:", client_id="b")
+
+    db_a.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+
+    assert db_a.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
+    assert db_b.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 0
+
+
+def test_ensure_watchlists_schema_idempotent_on_in_memory_db():
+    """The ``conn=None`` standalone-call path (used directly by
+    test_schema_migration_is_idempotent's file-backed counterpart) must also
+    stay correct against an in-memory instance rather than silently
+    operating on a throwaway, discarded connection."""
+    db = SubscriptionsDB(":memory:", client_id="probe")
+    db._ensure_watchlists_schema()
+    db._ensure_watchlists_schema()
+    tables = {
+        row[0]
+        for row in db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    assert "watchlists" in tables
