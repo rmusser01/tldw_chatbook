@@ -1412,6 +1412,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(SaveRuleRequested)
     def handle_save_rule_requested(self, event: SaveRuleRequested) -> None:
         event.stop()
+        # Clear synchronously here, in the same handler, rather than relying
+        # solely on the pane's own RuleFormVisibilityChanged message: `_save_rule`
+        # below can finish its own snapshot refresh and trigger a full-screen
+        # recompose fast enough to win the race against that separately-posted
+        # message still being processed, which would seed the freshly rebuilt
+        # RulesPane with the just-submitted rule still open for edit (see
+        # `handle_create_source_requested` above for the same fix on the
+        # Sources create form). Clearing here guarantees the screen's mirrored
+        # state is already correct before `run_worker` even starts the async
+        # chain that can recompose.
+        self._rule_form_open = False
+        self._rule_form_editing = None
         self.run_worker(self._save_rule(event.payload), exclusive=True)
 
     @on(EditRuleRequested)

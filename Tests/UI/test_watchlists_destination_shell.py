@@ -1,5 +1,8 @@
 """Tests for the new watchlists screen shell structure."""
 
+import asyncio
+import itertools
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -901,4 +904,84 @@ async def test_bracket_toggle_preserves_in_progress_rule_edit():
         name_input = screen.query_one("#rules-create-name", Input)
         assert name_input.value == "Rule One", (
             "the form must still be pre-filled for the SAME rule being edited"
+        )
+
+
+@pytest.mark.asyncio
+async def test_saving_a_rule_edit_does_not_leave_a_phantom_form_open():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        rule = {
+            "id": "r1",
+            "name": "Rule One",
+            "condition_type": "no_items",
+            "severity": "warning",
+            "enabled": True,
+        }
+        screen._controller.list_alert_rules = AsyncMock(return_value=[rule])
+        # A fast-completing mocked save is exactly the case that lets the
+        # screen's overview-data-triggered recompose win the race against
+        # RulesPane's own RuleFormVisibilityChanged message still bubbling
+        # up to the screen (see `handle_save_rule_requested`).
+        screen._controller.save_alert_rule = AsyncMock(return_value=dict(rule))
+        # `overview_data` is a `recompose=True` reactive that only rebuilds
+        # the screen when the *value* actually changes; the real
+        # `get_overview_data()` return value is otherwise byte-for-byte
+        # identical before and after this mocked save (nothing in the
+        # backing store actually changed), which would mask the race this
+        # test targets. Returning a distinct dict on every call reproduces
+        # the real-world case where a save legitimately changes a count
+        # (e.g. `active_alert_rules`), which is what triggers the recompose.
+        overview_call_count = itertools.count(1)
+
+        async def _fake_overview_data(**_kwargs: Any) -> dict[str, Any]:
+            return {
+                "total_sources": 0,
+                "active_sources": 0,
+                "sources_in_error": 0,
+                "total_items": 0,
+                "new_items": 0,
+                "latest_run_status": "unavailable",
+                "failed_runs": [],
+                "active_alert_rules": next(overview_call_count),
+            }
+
+        screen._controller.get_overview_data = _fake_overview_data
+
+        screen.query_one("#nav-rules", Button).press()
+        await pilot.pause()
+        await _wait_for_table_rows(pilot, "#rules-table", screen, 1)
+
+        rules_pane = screen.query_one("#watchlists-rules-pane", RulesPane)
+        rules_pane.edit_rule(rule)
+        await pilot.pause()
+
+        assert screen.query("#rules-create-name"), "the edit form should be open"
+
+        screen.query_one("#rules-create-submit", Button).press()
+
+        # Drive enough ticks for the save worker to finish and its
+        # overview-data refresh to trigger the screen-level recompose.
+        rebuilt_rules_pane = rules_pane
+        for _ in range(30):
+            await asyncio.sleep(0.02)
+            await pilot.pause()
+            rebuilt_rules_pane = screen.query_one("#watchlists-rules-pane", RulesPane)
+            if rebuilt_rules_pane is not rules_pane:
+                break
+
+        assert rebuilt_rules_pane is not rules_pane, (
+            "the recompose triggered by the save should have rebuilt the pane"
+        )
+        assert rebuilt_rules_pane.show_rule_form is False, (
+            "the rule edit form must be closed after a successful save, not "
+            "reopened pre-filled with the just-submitted rule"
+        )
+        assert not screen.query("#rules-create-name"), (
+            "no rule edit form fields should remain in the DOM after a "
+            "successful save"
         )
