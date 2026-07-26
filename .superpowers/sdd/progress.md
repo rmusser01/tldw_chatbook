@@ -351,3 +351,10 @@ Task 11: complete (commits c075a14cc + 3bce5bcc7, review clean after 1 fix pass)
     Adding built-ins REQUIRES updating it -- not in the plan. Future packs must too.
   - Empirical: patching _tool_sandbox_root does NOT work for these tools (they bind it by
     name into files.py); tests must patch _resolve_sandbox_config.
+Task 9b: complete (commit 535fea515) -- OWNER DECISION APPLIED, legacy widening reversed.
+  Legacy [tools] flags now grant EXACTLY the tool they name (read_file_enabled ->
+  read_file only). New PackResolution NamedTuple (packs, only_tools|None); None =
+  unrestricted, frozenset (even empty) = exact restriction; provider checks
+  `is not None`, never truthiness. Deleted test_either_legacy_flag_enables_the_whole_
+  files_pack (asserted the reversed behaviour). 785 tests green.
+OWNER DECISION 2: do Tasks 12 AND 13 now, accepting rebase conflict surface vs TASK-656.
