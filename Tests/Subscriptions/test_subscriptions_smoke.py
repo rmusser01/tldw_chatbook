@@ -34,9 +34,26 @@ class _TrackedConnection:
 
 
 @pytest.mark.unit
-def test_subscriptions_db_closes_schema_initialization_connection(
+def test_subscriptions_db_schema_initialization_reuses_and_closes_connection(
     tmp_path, monkeypatch
 ):
+    """Updated for task-689.
+
+    Before task-689, ``_initialize_schema`` opened a throwaway connection via
+    ``with closing(self._get_connection()) as conn:`` and closed it
+    immediately -- harmless for a file database (a later connection reaches
+    the same file) but the exact reason a ``:memory:`` database ended up
+    with an empty ``.conn``: the schema landed on a connection nothing else
+    could ever see. This test used to assert that immediate close as the
+    expected behavior; it now asserts the fixed behavior instead.
+
+    ``_initialize_schema`` now runs on ``self.conn``, the thread-local
+    connection every other method reuses, so schema init opens exactly one
+    connection for the whole object, and that connection must still not be
+    leaked -- the original motivation for wrapping schema init in
+    ``closing(...)`` at all (commit ec489c052). It just needs to stay open
+    until ``db.close()``, not close immediately after init.
+    """
     connections = []
     original_connect = base_db_module.sqlite3.connect
 
@@ -49,10 +66,12 @@ def test_subscriptions_db_closes_schema_initialization_connection(
 
     db = SubscriptionsDB(tmp_path / "subscriptions.db")
     try:
-        assert connections
-        assert connections[0].closed is True
+        assert len(connections) == 1
+        assert connections[0].closed is False
     finally:
         db.close()
+
+    assert connections[0].closed is True
 
 
 @pytest.mark.unit

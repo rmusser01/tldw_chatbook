@@ -25,7 +25,7 @@ import json
 import sqlite3
 import threading
 import time
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
@@ -90,8 +90,35 @@ class SubscriptionsDB(BaseDB):
         return conn
 
     def _initialize_schema(self):
-        """Initialize the database schema."""
-        with closing(self._get_connection()) as conn:
+        """Initialize the database schema.
+
+        Runs on ``self.conn`` (the thread-local connection everything else on
+        this thread reuses) rather than a throwaway connection that used to
+        get closed immediately afterwards. For a file-backed database both
+        approaches land on the same file, so it made no observable
+        difference. For ``:memory:``, every ``sqlite3.connect(':memory:')``
+        call opens a brand-new, private, empty database -- so the old
+        close-then-reopen sequence built the schema somewhere the rest of
+        the class could never see, leaving ``.conn`` pointed at zero tables.
+        Matches the pattern ``ChaChaNotes_DB._initialize_schema`` already
+        uses (``self.get_connection()``) for the same reason.
+
+        Trade-off carried over from that same precedent: this only makes the
+        constructing thread's connection schema-bearing. If a *second*
+        thread later touches ``.conn`` on this same in-memory instance, its
+        own thread-local slot is empty, so the ``.conn`` property lazily
+        opens yet another private ``:memory:`` connection with no schema --
+        identical to the limitation already accepted in ``ChaChaNotes_DB``.
+        The only current ``:memory:`` caller, ``WatchlistPreviewService.
+        preview()``, constructs, uses, and discards its instance within a
+        single coroutine on one thread (it is scheduled via
+        ``run_worker(coroutine)``, not ``thread=True``), so this does not
+        apply there today; a future caller that hands an in-memory
+        ``SubscriptionsDB`` across a thread boundary would need a different
+        fix (e.g. a shared-cache ``file::memory:?cache=shared`` URI plus a
+        dedicated keepalive connection).
+        """
+        with self.transaction() as conn:
             conn.executescript("""
             PRAGMA foreign_keys = ON;
             
@@ -322,15 +349,16 @@ class SubscriptionsDB(BaseDB):
                 UPDATE subscription_templates SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
             END;
             """)
-            conn.commit()
-            self._ensure_watchlists_schema(conn)
+        self._ensure_watchlists_schema(conn)
 
     def _ensure_watchlists_schema(self, conn=None):
         """Idempotent migration for watchlists screen schema additions."""
         if conn is None:
-            with closing(self._get_connection()) as conn:
-                self._ensure_watchlists_schema(conn)
-                return
+            # Same in-memory-safe reasoning as _initialize_schema above: reuse
+            # the thread-local connection rather than opening-and-closing a
+            # throwaway one, so this is also correct when called standalone
+            # (e.g. from a test) against an in-memory instance.
+            conn = self.conn
 
         cursor = conn.cursor()
 
