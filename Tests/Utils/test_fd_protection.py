@@ -1,8 +1,15 @@
-"""task-641 round 3: protect_file_descriptors() must never close the real,
-process-shared stdout/stderr file descriptors (1/2).
+"""task-640: consolidated tests for tldw_chatbook.Utils.fd_protection.
 
-Root cause (live re-UAT, faulthandler all-threads dump): Textual's App.run()
-wraps its ENTIRE message loop in
+Supersedes the old Tests/Embeddings/test_embeddings_lib_protect_file_
+descriptors.py (task-641 round 3) now that protect_file_descriptors() has
+been consolidated (task-640 item 5) out of Embeddings/Embeddings_Lib.py,
+Local_Ingestion/transcription_service.py, and TTS/backends/higgs.py into
+this one shared module -- all four now import the SAME function object (see
+``test_all_call_sites_share_the_same_function_object`` below).
+
+Root cause of the underlying bug (kept from the superseded file; still the
+reason these tests exercise the REAL fd numbers 1/2 the function hardcodes):
+Textual's App.run() wraps its ENTIRE message loop in
 ``with redirect_stdout(self._capture_stdout): with
 redirect_stderr(self._capture_stderr): ...`` (textual/app.py ~3491-3492) --
 this reassigns the GLOBAL, process-wide ``sys.stdout``/``sys.stderr`` to
@@ -14,49 +21,27 @@ raise (the capture objects have no real fd), so the except-branch creates
 ``sys.stdout = os.fdopen(1, "w")`` / ``sys.stderr = os.fdopen(2, "w")`` --
 brand-new ``TextIOWrapper`` objects that, by ``os.fdopen``'s default
 ``closefd=True``, OWN and will CLOSE the shared, real fd 1/2 when garbage
-collected.
+collected. ``closefd=False`` is the fix; see the function's own docstring
+for the full root-cause writeup.
 
-The function's own "close any temporary files we created" cleanup
-(``if sys.stdout != original_stdout: sys.stdout.close()``) is DEAD CODE: it
-runs immediately AFTER ``sys.stdout = original_stdout`` on the line above it,
-so the comparison is always False. That reassignment is exactly what drops
-the last reference to the temporary ``os.fdopen(1, "w")``/``os.fdopen(2,
-"w")`` wrappers, and CPython's reference-counting GC finalizes them
-IMMEDIATELY and synchronously right there -- closing the real fd 1/2 before
-the dead check even has a chance to matter. This closes the SAME file
-descriptors Textual's own output ``WriterThread`` writes to via
-``sys.__stderr__`` (captured once, early, at driver init and never
-re-resolved) -- the next compositor write raises ``OSError: [Errno 9] Bad
-file descriptor`` inside ``WriterThread.run()``'s unguarded ``write()``/
-``flush()`` calls, silently killing that daemon thread (Python's default
-``threading.excepthook`` just logs to the now-also-broken stderr). The next
-screen refresh's ``queue.put()`` (Textual's bounded 30-slot output queue,
-nothing left to drain it) then blocks forever -- the exact
-``queue.py:140 in put`` -> ``threading.Condition.wait()`` freeze reproduced
-in every live re-UAT round on this bug.
-
-Empirically verified directly (see task-641's Implementation Notes, Round 3)
-with a throwaway script mimicking Textual's non-fd-backed capture streams:
-calling the real ``protect_file_descriptors()`` under those conditions
-closed the process's real fd 1 AND fd 2 (confirmed via both
-``os.fstat()`` and ``os.write()`` failing with ``OSError(9, 'Bad file
-descriptor')`` immediately afterward).
-
-These tests exercise the REAL fd numbers 1/2 the function hardcodes (there's
-no way to test the actual bug otherwise), but protect the test session's own
-I/O: fd 1/2 are ``os.dup()``-backed up before the test and unconditionally
-``os.dup2()``-restored in a ``finally``, regardless of whether the bug
-reproduces.
+These tests protect the test session's own I/O: fd 1/2 are ``os.dup()``-
+backed up before each test and unconditionally ``os.dup2()``-restored in a
+``finally``, regardless of whether the bug reproduces.
 """
 import os
 import subprocess
 import sys
+import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.Embeddings.Embeddings_Lib import protect_file_descriptors
+from tldw_chatbook.Utils.fd_protection import (
+    protect_file_descriptors,
+    _fd_protection_lock,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -79,6 +64,28 @@ class _NonFdBackedStream:
         pass
 
     # Deliberately no fileno().
+
+
+class _NegativeFilenoStream:
+    """task-640 item 6: some stream implementations return -1 from
+    fileno() instead of raising (rather than lacking fileno() entirely,
+    like _NonFdBackedStream above). protect_file_descriptors()'s detection
+    must still treat this as "not a real usable fd" via the downstream
+    os.fstat(-1) -> OSError('[Errno 9] Bad file descriptor') and take the
+    same except-branch fallback path.
+    """
+
+    def __init__(self):
+        self.written = []
+
+    def write(self, text):
+        self.written.append(text)
+
+    def flush(self):
+        pass
+
+    def fileno(self):
+        return -1
 
 
 @contextmanager
@@ -137,6 +144,31 @@ def test_protect_file_descriptors_does_not_close_real_stdio_when_sys_streams_are
         os.write(2, b"")
 
 
+def test_protect_file_descriptors_handles_fileno_returning_negative_one(monkeypatch):
+    """task-640 item 6: fileno() returning -1 (not raising) must take the
+    same safe fallback path as the AttributeError/no-fileno() case above --
+    os.fstat(-1) raises OSError, which the except-branch also catches."""
+    monkeypatch.setattr(sys, "stdout", _NegativeFilenoStream())
+    monkeypatch.setattr(sys, "stderr", _NegativeFilenoStream())
+
+    with _protected_real_stdio():
+        with protect_file_descriptors():
+            assert not isinstance(sys.stdout, _NegativeFilenoStream)
+
+        assert _fd_usable(1), (
+            "protect_file_descriptors() closed the real fd 1 (stdout) after "
+            "a fileno()->-1 stream -- the os.fstat(-1) OSError path must "
+            "still fall back safely, not close the real fd"
+        )
+        assert _fd_usable(2), (
+            "protect_file_descriptors() closed the real fd 2 (stderr) after "
+            "a fileno()->-1 stream -- the os.fstat(-1) OSError path must "
+            "still fall back safely, not close the real fd"
+        )
+        os.write(1, b"")
+        os.write(2, b"")
+
+
 def test_protect_file_descriptors_restores_original_sys_streams(monkeypatch):
     """The original (non-fd-backed) sys.stdout/sys.stderr objects must be
     back in place after the context manager exits, regardless of the
@@ -164,7 +196,7 @@ def test_protect_file_descriptors_is_a_noop_when_streams_are_already_fd_backed(t
         # honest-to-goodness fd-backed file to make this deterministic.
         real_file = open(tmp_path / "out.txt", "w")
         try:
-            import tldw_chatbook.Embeddings.Embeddings_Lib as lib
+            import tldw_chatbook.Utils.fd_protection as fd_protection
 
             original_fdopen = os.fdopen
             fdopen_calls = []
@@ -178,7 +210,7 @@ def test_protect_file_descriptors_is_a_noop_when_streams_are_already_fd_backed(t
             with mock.patch.object(os, "fdopen", side_effect=_tracking_fdopen):
                 with mock.patch.object(sys, "stdout", real_file):
                     with mock.patch.object(sys, "stderr", real_file):
-                        with lib.protect_file_descriptors():
+                        with fd_protection.protect_file_descriptors():
                             pass
 
             assert fdopen_calls == [], (
@@ -286,7 +318,7 @@ class _NonFdBackedStream:
 sys.stdout = _NonFdBackedStream()
 sys.stderr = _NonFdBackedStream()
 
-from tldw_chatbook.Embeddings.Embeddings_Lib import protect_file_descriptors
+from tldw_chatbook.Utils.fd_protection import protect_file_descriptors
 
 with protect_file_descriptors():
     sys.stdout = sys.__stdout__
@@ -320,3 +352,124 @@ sys.__stderr__.flush()
         f"{result.returncode}, stdout={result.stdout!r}, "
         f"stderr={result.stderr!r})"
     )
+
+
+# --- task-640 items 4/5: the module-level lock and the consolidation it
+# depends on. ---
+
+
+def test_lock_is_held_for_the_full_context_manager_body(monkeypatch):
+    """task-640 item 4: the module-level lock must be held for the ENTIRE
+    CM body, including the protected `yield` region -- not just the
+    sys.stdout/stderr/os.environ setup -- so a second concurrent caller can
+    never start its own save/reassign sequence while one is already in
+    flight. Proven directly against the lock object protect_file_
+    descriptors() actually uses (white-box, but the most deterministic way
+    to prove mutual exclusion without a flaky timing-based test)."""
+    monkeypatch.setattr(sys, "stdout", _NonFdBackedStream())
+    monkeypatch.setattr(sys, "stderr", _NonFdBackedStream())
+
+    with _protected_real_stdio():
+        with protect_file_descriptors():
+            # While inside the yielded region, a second thread attempting
+            # to acquire the SAME lock must block (return False on a short
+            # timeout) -- proving the lock is actually held right now, not
+            # just released after the sys.stdout/stderr swap completes.
+            acquired_elsewhere = []
+
+            def _try_from_other_thread():
+                got = _fd_protection_lock.acquire(timeout=0.2)
+                acquired_elsewhere.append(got)
+                if got:
+                    _fd_protection_lock.release()
+
+            t = threading.Thread(target=_try_from_other_thread)
+            t.start()
+            t.join(timeout=2)
+
+            assert acquired_elsewhere == [False], (
+                "a second thread acquired protect_file_descriptors()'s lock "
+                "while a call was still inside its protected region -- the "
+                "lock does not cover the full context-manager body"
+            )
+
+    # After the context manager has fully exited, the lock must be free
+    # again (no leak).
+    reacquired = _fd_protection_lock.acquire(timeout=1)
+    assert reacquired, "the lock was not released after protect_file_descriptors() exited"
+    _fd_protection_lock.release()
+
+
+def test_protect_file_descriptors_serializes_concurrent_callers(monkeypatch):
+    """task-640 item 4, end-to-end: two threads calling protect_file_
+    descriptors() concurrently must run their protected regions one at a
+    time, never interleaved."""
+    monkeypatch.setattr(sys, "stdout", _NonFdBackedStream())
+    monkeypatch.setattr(sys, "stderr", _NonFdBackedStream())
+
+    events = []
+    events_lock = threading.Lock()
+    a_started = threading.Event()
+    a_may_exit = threading.Event()
+
+    def _record(entry):
+        with events_lock:
+            events.append(entry)
+
+    def thread_a():
+        with protect_file_descriptors():
+            _record(("a", "enter"))
+            a_started.set()
+            # Hold the protected region open so thread B has a real chance
+            # to race in if the lock did not actually serialize them.
+            a_may_exit.wait(timeout=2)
+            _record(("a", "exit"))
+
+    def thread_b():
+        assert a_started.wait(timeout=2), "thread A never entered"
+        with protect_file_descriptors():
+            _record(("b", "enter"))
+            _record(("b", "exit"))
+
+    with _protected_real_stdio():
+        ta = threading.Thread(target=thread_a)
+        tb = threading.Thread(target=thread_b)
+        ta.start()
+        tb.start()
+        # Give thread B a real opportunity to (incorrectly) race in while A
+        # is still holding its region open.
+        time.sleep(0.1)
+        a_may_exit.set()
+        ta.join(timeout=5)
+        tb.join(timeout=5)
+
+    assert events == [("a", "enter"), ("a", "exit"), ("b", "enter"), ("b", "exit")], (
+        f"thread B's protected region overlapped thread A's: {events!r}"
+    )
+
+
+def test_all_call_sites_share_the_same_function_object():
+    """task-640 item 5 regression guard: Embeddings_Lib.py, transcription_
+    service.py, higgs.py, and chatterbox.py's dynamic imports must all
+    resolve to the SAME function object as tldw_chatbook.Utils.
+    fd_protection.protect_file_descriptors -- not independent re-copies.
+    A future accidental re-duplication (a local `def protect_file_
+    descriptors():` reappearing in any of these modules) would fail this
+    identity check even though every individual test above would still
+    pass against whichever copy it imports."""
+    from tldw_chatbook.Utils.fd_protection import (
+        protect_file_descriptors as canonical,
+    )
+    from tldw_chatbook.Embeddings.Embeddings_Lib import (
+        protect_file_descriptors as from_embeddings_lib,
+    )
+    from tldw_chatbook.Local_Ingestion.transcription_service import (
+        protect_file_descriptors as from_transcription_service,
+    )
+    from tldw_chatbook.TTS.backends.higgs import (
+        protect_file_descriptors as from_higgs,
+    )
+
+    assert from_embeddings_lib is canonical
+    assert from_transcription_service is canonical
+    assert from_higgs is canonical
