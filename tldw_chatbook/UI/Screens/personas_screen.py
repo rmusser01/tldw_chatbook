@@ -1890,7 +1890,17 @@ class PersonasScreen(BaseAppScreen):
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
-        await self._render_inspector_avatar()
+        # Fire-and-forget, like the conversations list below: the portrait
+        # needs a DB read and an image decode, and awaiting it inline made
+        # selecting a character wait on both. It also yielded control mid
+        # selection, which let the editor's debounced validation run and clear
+        # a footer the save path had just written. The render carries its own
+        # selection-changed guard, so a late result cannot paint the wrong face.
+        self.run_worker(
+            self._render_inspector_avatar(),
+            group="inspector-avatar",
+            exclusive=True,
+        )
         # Drop any previous character's rows immediately and show a loading
         # placeholder; the worker fills the panel in once the listing returns
         # (or replaces the placeholder with the empty-state copy).

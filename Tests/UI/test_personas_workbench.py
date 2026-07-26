@@ -5999,3 +5999,36 @@ async def test_inspector_avatar_thumbnail_mounts_and_clears() -> None:
         pane.set_avatar_thumbnail(None)
         await pilot.pause()
         assert len(holder.children) == 0
+
+
+async def test_debounced_validation_does_not_erase_a_blocked_save_message(
+    mock_app_instance, stub_characters, monkeypatch
+):
+    """A gated re-validation must not wipe the footer the save path wrote.
+
+    `_run_validation` is debounced and, on an untouched form, rendered nothing
+    by calling `show_validation(())` -- which CLEARS. A blocked save writes
+    "name: required" into that same footer, so any later field/validation churn
+    made the blocker silently vanish while the save stayed blocked. The
+    freshly-opened case is already handled by `load_character`, which clears
+    the footer explicitly.
+    """
+    from textual.widgets import Static
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await pilot.pause()
+        await pilot.click("#personas-library-new")
+        await pilot.pause()
+        editor = screen.query_one(PersonasCharacterEditorWidget)
+        editor.show_validation(("name: required",))
+        await pilot.pause()
+
+        # An untouched form re-validating (the debounced path) must leave it be.
+        editor._user_touched = False
+        editor._run_validation()
+        await pilot.pause()
+
+        footer = screen.query_one("#personas-char-editor-validation", Static)
+        assert "name: required" in str(footer.renderable)
