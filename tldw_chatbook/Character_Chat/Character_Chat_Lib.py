@@ -590,12 +590,26 @@ def get_character_page_for_ui(
     search_term: Optional[str] = None,
     tag: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """UI-shaped page of characters: id/name/description/dates/tags.
+    """Return one UI-shaped page of character summaries.
 
     The description is included (bounded to
     ``CHARACTER_PAGE_DESCRIPTION_MAX_CHARS``) because the library row shows a
     description snippet to make characters recognizable; projecting only the
     dates left every row identified by an identical last-modified stamp.
+
+    Args:
+        db: Characters database to read from.
+        limit: Maximum number of rows to return.
+        offset: Zero-based offset of the page within the filtered set.
+        order_by: Sort key accepted by ``list_character_cards_page``.
+        search_term: Optional full-text filter.
+        tag: Optional tag filter.
+
+    Returns:
+        A list of ``{id, name, description, last_modified, created_at, tags}``
+        dicts, skipping any record without an id. An empty list on read
+        failure -- the library degrades to its empty state rather than raising
+        into the render path.
     """
     try:
         rows = db.list_character_cards_page(

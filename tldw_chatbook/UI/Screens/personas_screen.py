@@ -1938,6 +1938,9 @@ class PersonasScreen(BaseAppScreen):
         self._show_center("#ccp-persona-card-view")
         inspector = self.query_one(PersonasInspectorPane)
         inspector.show_selection(name=entity_name, kind="user_profile")
+        # Drop any previous character's portrait: the rail must never show a
+        # face that belongs to a different selection.
+        inspector.set_avatar_thumbnail(None)
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
@@ -1985,6 +1988,9 @@ class PersonasScreen(BaseAppScreen):
         library.mark_active_row("dictionary", entity_id)
         inspector = self.query_one(PersonasInspectorPane)
         inspector.show_selection(name=entity_name, kind="dictionary")
+        # Drop any previous character's portrait: the rail must never show a
+        # face that belongs to a different selection.
+        inspector.set_avatar_thumbnail(None)
         self.query_one(PersonasDictionaryTryItWidget).set_ready(
             True, "Run the preview to see what this dictionary changes."
         )
@@ -2042,6 +2048,9 @@ class PersonasScreen(BaseAppScreen):
         library.mark_active_row("lore", entity_id)
         inspector = self.query_one(PersonasInspectorPane)
         inspector.show_selection(name=entity_name, kind="lore")
+        # Drop any previous character's portrait: the rail must never show a
+        # face that belongs to a different selection.
+        inspector.set_avatar_thumbnail(None)
         self.query_one(PersonasLoreTryItWidget).set_ready(
             True, "Run the preview to see what this lore book injects."
         )
@@ -4434,11 +4443,13 @@ class PersonasScreen(BaseAppScreen):
             logger.opt(exception=True).debug("Inspector portrait decode failed.")
             ok = False
         # The selection can change while the decode is in flight; a late
-        # render must not paint another character's face into the rail.
+        # render must not paint another character's face into the rail -- and
+        # a late FAILURE must not blank the portrait of whoever is selected
+        # now, so the staleness check comes before any clearing.
+        if str(self.state.selected_entity_id or "") != selected_id:
+            return
         if not ok or not self.is_mounted:
             inspector.set_avatar_thumbnail(None)
-            return
-        if str(self.state.selected_entity_id or "") != selected_id:
             return
         renderable = None
         if mode == "graphics":
