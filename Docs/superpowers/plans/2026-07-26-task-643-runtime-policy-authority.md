@@ -18,6 +18,13 @@
 
 **Reason:** ADR-026 already defines the runtime authority, mutation, projection, thread-affinity, and persistence boundary implemented by this task.
 
+> **Quality-review amendment:** Task 4's public-projection and private-store
+> enforcement steps are superseded by
+> [TASK-643 Structural Ownership Enforcement Design](../specs/2026-07-26-task-643-structural-ownership-enforcement-design.md).
+> Do not resume implementation from the old direct-public-write or alias-flow
+> instructions. A corrective implementation plan must replace those steps
+> after the amended design passes written-spec and user review.
+
 ---
 
 ## Execution Environment
@@ -485,12 +492,16 @@ The guard must parse production Python, not grep comments. Assert:
 - `tldw_chatbook/app.py` neither imports nor instantiates `AppState`;
 - the runtime-policy projection boundary does not read, write, or dynamically
   access `app.app_state`;
-- assignments to `RuntimePolicyContext.state` and calls to its removed `persist()` are absent;
-- assignments to `current_runtime_backend`, `runtime_backend`, and `active_server_id` occur only in `_apply_runtime_policy_to_app`;
-- production calls to `RuntimeSourceStateStore.save()` occur only from `RuntimePolicyContext.commit_state()`.
-- production code outside `RuntimePolicyContext` cannot access its private
-  backing `_store`, and no public `context.store` compatibility property is
-  introduced.
+- `RuntimePolicyContext.state` is a setter-free property and calls to its
+  removed `persist()` are absent;
+- `TldwCli` exposes getter-only public projections backed by the exact private
+  fields and publisher defined in the structural-enforcement design;
+- the private publisher is invoked only by `_apply_runtime_policy_to_app`;
+- production calls to `RuntimeSourceStateStore.save()` occur only from
+  `RuntimePolicyContext.commit_state()`;
+- the uniquely named context backing store has only the exact structural
+  references allowed by the structural-enforcement design, and no public
+  `context.store` compatibility property is introduced.
 
 Add an async bootstrap test whose store raises on save and assert `handle_runtime_backend_changed()` keeps the previous context snapshot and all three app projections, does not invoke the active screen callback, and emits one bounded warning that omits unique path/server sentinels.
 Add a projection test using an app double with no `app_state` attribute and a
@@ -511,8 +522,9 @@ Expected: FAIL on the live `AppState`, fallback projection branch, and screen-ow
 
 Delete the import and `self.app_state = AppState()` from `TldwCli`. Delete the
 `getattr(app, "app_state", ...)` branch and `app_state.runtime_source` write
-from `_apply_runtime_policy_to_app()`; the projection boundary writes exactly
-`current_runtime_backend`, `runtime_backend`, and `active_server_id`. Keep all
+from `_apply_runtime_policy_to_app()`. Implement the getter-only projections,
+private publisher, uniquely named context store, fallback behavior, and exact
+structural checks from the structural-enforcement design. Keep all
 compatibility exports. Change documentation to state that these classes are
 caller-owned serializable compatibility containers and are not the
 application's live authority. Preserve `to_dict()`/`from_dict()` behavior

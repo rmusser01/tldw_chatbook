@@ -35,10 +35,12 @@ compatibility attributes. A stale asynchronous server-capability result is
 discarded instead of overwriting a newer source or server selection.
 Application compatibility projections are updated by a non-throwing
 publication callback owned by the context boundary; they have no independent
-production writers. Context state is read-only; there is no public state setter
-or standalone persistence escape hatch, and the backing store is private. The
-callback writes only the three legacy app projection attributes and does not
-read or write `AppState`.
+production writers. On `TldwCli`, the three legacy attributes are getter-only
+properties backed by uniquely named private projection fields. The callback's
+sole app publisher updates those fields; direct writes through the public
+attributes fail. Context state is read-only; there is no public state setter or
+standalone persistence escape hatch, and the backing store is private. The
+callback does not read or write `AppState`.
 
 Runtime-policy persistence is part of the ADR-022 private-data boundary. Its
 default path is resolved from the effective config path when the context is
