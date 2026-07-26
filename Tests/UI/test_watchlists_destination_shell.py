@@ -35,6 +35,21 @@ class WatchlistsContextHarness(App):
 
 
 @pytest.mark.asyncio
+async def test_watchlists_shell_has_tab_strip_and_panes():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert isinstance(screen, WatchlistsCollectionsScreen)
+        assert screen.query_one("#wl-tabs")
+        assert screen.query_one("#watchlists-list-pane")
+        assert screen.query_one("#watchlists-detail-pane")
+        assert screen.query_one("#watchlists-inspector-pane")
+        assert screen.query_one("#watchlists-backend-select", Select)
+
+
+@pytest.mark.asyncio
 async def test_watchlists_tab_strip_updates_active_section():
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -530,6 +545,29 @@ async def test_watchlists_notifications_section_reads_real_client_inbox():
 # The file has no `watchlists_app` fixture (none existed before this task), so
 # these reuse the same `DestinationHarness` + `_build_test_app()` pattern the
 # rest of this file already uses, rather than inventing a second harness.
+
+
+@pytest.mark.asyncio
+async def test_existing_panes_survive_the_workbench_rehost():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert screen.query("#wl-workbench"), "the workbench container should be mounted"
+        # The panes that existed before must still be mounted, not replaced.
+        # The section navigator was retired for a centre tab strip (Phase C,
+        # task 3); #wl-tabs is its direct successor as "a working
+        # section-switcher is mounted."
+        assert screen.query("#wl-tabs")
+        # Default active_section is "overview", so OverviewPane is what's there
+        # to start; switch to Sources (as the tab-strip test does) to confirm
+        # SourcesPane also still renders inside the re-hosted ITEMS region
+        # rather than being dropped.
+        assert screen.query("#watchlists-overview-pane")
+        screen.query_one("#wl-tab-sources", Button).press()
+        await pilot.pause()
+        assert screen.query("#watchlists-sources-pane")
 
 
 @pytest.mark.asyncio
