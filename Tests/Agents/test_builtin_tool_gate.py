@@ -296,3 +296,60 @@ def test_stamp_scope_is_reentrant_for_nested_scopes():
             gate.begin_turn()
         assert gate._stamps == {"write_thing": "deny"}
     assert gate._stamps == {"write_thing": "approve_once"}
+
+
+# --- task-627 (P2 Task 2): settings-time enumeration -------------------------
+
+
+def test_builtin_permission_rows_lists_live_tools_with_resolved_state():
+    from tldw_chatbook.Agents.builtin_tool_gate import builtin_permission_rows
+
+    rows = builtin_permission_rows({})          # empty payload -> the allow floor
+    by_name = {r.name: r for r in rows}
+    assert "calculator" in by_name and "get_current_datetime" in by_name
+    # Untagged tools resolve to the built-in floor, not the MCP "ask" default.
+    assert by_name["calculator"].effective.state == "allow"
+    assert by_name["calculator"].effective.origin == "builtin_default"
+    assert by_name["calculator"].orphaned is False
+    assert by_name["calculator"].description        # carried for display
+
+
+def test_builtin_permission_rows_reflects_a_stored_override():
+    from tldw_chatbook.Agents.builtin_tool_gate import builtin_permission_rows
+    from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
+
+    payload = {"profiles": {"default": {"servers": {
+        BUILTIN_TOOL_SERVER_KEY: {"tools": {"calculator": {"state": "deny"}}}
+    }}}}
+    row = {r.name: r for r in builtin_permission_rows(payload)}["calculator"]
+    assert row.effective.state == "deny"
+    assert row.effective.origin == "tool_override"
+
+
+def test_builtin_permission_rows_surfaces_orphaned_stored_entries():
+    """A decision stored for a tool a later release removed must still be
+    listed, or the user cannot clear it."""
+    from tldw_chatbook.Agents.builtin_tool_gate import builtin_permission_rows
+    from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
+
+    payload = {"profiles": {"default": {"servers": {
+        BUILTIN_TOOL_SERVER_KEY: {"tools": {"tool_that_no_longer_exists": {"state": "allow"}}}
+    }}}}
+    rows = {r.name: r for r in builtin_permission_rows(payload)}
+    assert rows["tool_that_no_longer_exists"].orphaned is True
+    assert rows["calculator"].orphaned is False
+
+
+def test_builtin_permission_rows_needs_no_agent_run():
+    """Enumeration must not start a run or build a gate."""
+    import tldw_chatbook.Agents.tool_catalog as tc
+    from tldw_chatbook.Agents.builtin_tool_gate import builtin_permission_rows
+
+    calls = []
+    original = tc.build_builtin_gate
+    tc.build_builtin_gate = lambda *a, **k: calls.append(1) or original(*a, **k)
+    try:
+        builtin_permission_rows({})
+    finally:
+        tc.build_builtin_gate = original
+    assert calls == []          # the lazy gate was never built

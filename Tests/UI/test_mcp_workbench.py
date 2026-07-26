@@ -15,6 +15,8 @@ from textual.widgets import Button, Checkbox, ContentSwitcher, DataTable, Input,
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 import tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module
 from tldw_chatbook.MCP.permission_store import (
+    BUILTIN_TOOL_SERVER_KEY,
+    HASH_FREE_SERVER_KEYS,
     EffectiveToolState,
     MCPPermissionStore,
     definition_hash,
@@ -3732,8 +3734,11 @@ class PermissionsHubService(FakeHubService):
         return {(t.server_key, t.name): resolve_effective_state(payload, t) for t in tools}
 
     def set_tool_state(self, server_key, tool_name, ui_state, *, tool=None):
+        # Mirrors `UnifiedControlPlaneService.set_tool_state()`'s
+        # HASH_FREE_SERVER_KEYS exemption (Task 1) -- `agent:builtin`
+        # doesn't need a `HubTool` to fingerprint an "allow".
         hash_value = None
-        if ui_state == "allow":
+        if ui_state == "allow" and server_key not in HASH_FREE_SERVER_KEYS:
             if tool is None:
                 raise ValueError("tool is required to set state 'allow'")
             hash_value = definition_hash(tool.description, tool.input_schema)
@@ -3803,6 +3808,22 @@ def _perm_table_texts(app: App, row_index: int) -> list[str]:
     return [cell.plain if hasattr(cell, "plain") else str(cell) for cell in row]
 
 
+def _perm_all_rows(app: App) -> list[list[str]]:
+    """Every rendered `#mcp-perm-table` row's cell texts, in table order --
+    TASK-627 Task 3's tests use this to locate the built-in section without
+    hard-coding its row index against whatever MCP section a given fixture
+    also renders."""
+    table = app.query_one("#mcp-perm-table", DataTable)
+    return [_perm_table_texts(app, i) for i in range(table.row_count)]
+
+
+def _perm_row_keys(app: App) -> list[str]:
+    table = app.query_one("#mcp-perm-table", DataTable)
+    return [
+        table.coordinate_to_cell_key((i, 0))[0].value for i in range(table.row_count)
+    ]
+
+
 def test_tool_state_label_marker_precedence():
     """`MCPWorkbench._tool_state_label()`'s marker selection, pinned
     directly: config_changed -> "⚠", risk_floored -> "⚑", a plain
@@ -3843,13 +3864,18 @@ async def test_permissions_mode_renders_pinned_grouped_sorted_matrix(tmp_path):
         assert switcher.current == "mcp-mode-canvas-permissions"
 
         table = app.query_one("#mcp-perm-table", DataTable)
-        assert table.row_count == 6
+        # TASK-627 Task 3: 6 MCP rows + the built-in section (server default,
+        # calculator, get_current_datetime), appended AFTER the MCP sections.
+        assert table.row_count == 9
         assert _perm_table_texts(app, 0) == ["Global default", "Ask"]
         assert _perm_table_texts(app, 1) == ["Server default — docs", "Ask"]
         assert _perm_table_texts(app, 2) == ["  fetch", "Ask"]
         assert _perm_table_texts(app, 3) == ["  search", "Ask"]
         assert _perm_table_texts(app, 4) == ["Server default — notes", "Ask"]
         assert _perm_table_texts(app, 5) == ["  list_notes", "Ask"]
+        assert _perm_table_texts(app, 6) == ["Server default — Built-in (agent runtime)", "Allow"]
+        assert _perm_table_texts(app, 7) == ["  calculator", "Allow"]
+        assert _perm_table_texts(app, 8) == ["  get_current_datetime", "Allow"]
 
         expected_keys = [
             "__global__",
@@ -3858,13 +3884,486 @@ async def test_permissions_mode_renders_pinned_grouped_sorted_matrix(tmp_path):
             "local:docs::search",
             "__server__::local:notes",
             "local:notes::list_notes",
+            "__server__::agent:builtin",
+            "agent:builtin::calculator",
+            "agent:builtin::get_current_datetime",
         ]
         for index, expected_key in enumerate(expected_keys):
             row_key, _ = table.coordinate_to_cell_key((index, 0))
             assert row_key.value == expected_key
 
         preview = app.query_one("#mcp-perm-preview", Static)
+        # Fix 2 (PR #906 review): the preview's override count now DOES
+        # include the built-in section -- but this fixture stores no
+        # built-in override at all (server/tool rows above all inherit),
+        # so the sentence is unchanged from before that fix.
         assert str(preview.renderable) == "global default: ask"
+
+
+# -- TASK-627 Task 3: agent-runtime built-in section in Permissions mode ----
+#
+# The built-in section is derived from `builtin_permission_rows()` (Task 2)
+# and `resolve_builtin_state` -- NEVER from `_build_permission_rows()`'s own
+# `tools`/`effective_tool_states()` path (Constraint 1). These tests exercise
+# `MCPWorkbench._sync_permissions_mode()` end to end, the same way the
+# `PermissionsHubService` suite above does.
+
+
+class EmptyCatalogHubService(FakeHubService):
+    """A LOCAL-source service exposing a genuinely EMPTY catalog --
+    `FakeHubService.load_section("external_servers")` seeds a "docs"
+    profile with tool "a", which would let `_last_hub_tools` end up
+    non-empty even under a test that claims to cover "no MCP servers".
+    This override returns `[]` instead, so `_collect_hub_tools()` really
+    does produce zero tools and the built-in section's headline claim (it
+    renders independently of the MCP catalog) is actually exercised."""
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if self.context.selected_source == "local":
+            if effective_section == "external_servers":
+                return []
+            return {"source": "local", "section": effective_section}
+        return {"external_servers": [], "source": "server", "section": "external_servers"}
+
+
+class EmptyCatalogApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = EmptyCatalogHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_permissions_mode_shows_builtin_section_with_no_mcp_servers():
+    """The built-in section must not depend on `_collect_hub_tools()`/the
+    MCP catalog -- it renders even when the catalog is GENUINELY empty
+    (`_last_hub_tools == []`, via `EmptyCatalogHubService` above, not
+    merely a fixture whose seeded MCP rows happen to go unasserted) and
+    the service exposes no `permission_store`/`effective_tool_states` seam
+    at all (`FakeHubService`'s base shape, same as `test_permissions_mode_
+    renders_fail_soft_without_t4_seams`)."""
+    app = EmptyCatalogApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        # The claim this test exists to pin: the MCP catalog is truly empty.
+        assert workbench._last_hub_tools == []
+
+        rows = _perm_all_rows(app)
+        # Only the pinned global row plus the built-in section -- zero MCP
+        # server/tool rows of any kind.
+        assert [row[0] for row in rows] == [
+            "Global default",
+            "Server default — Built-in (agent runtime)",
+            "  calculator",
+            "  get_current_datetime",
+        ]
+        tool_cells = {row[0].strip(): row[1] for row in rows}
+        # Untagged built-ins resolve to the built-in ALLOW floor, not MCP's
+        # "Ask" default -- proves `resolve_builtin_state` (not the MCP
+        # resolver) produced this label.
+        assert tool_cells["calculator"] == "Allow"
+        assert tool_cells["get_current_datetime"] == "Allow"
+
+
+class _FakeLocalServiceWithInventory:
+    """A minimal `local_service` seam -- `_collect_hub_tools()` only reads
+    `get_inventory()` off it -- so `builtin:tldw_chatbook` (the built-in MCP
+    *server*) actually appears in `_last_hub_tools` alongside the
+    `agent:builtin` section this task adds, letting a test assert the two
+    render as genuinely distinct groups rather than merely both existing."""
+
+    def get_inventory(self):
+        return {"tools": [{"name": "search_web", "description": "Search the web."}]}
+
+
+class BuiltinDistinctHubService(PermissionsHubService):
+    def __init__(self, store_path: Path) -> None:
+        super().__init__(store_path)
+        self.local_service = _FakeLocalServiceWithInventory()
+
+
+class BuiltinDistinctApp(App):
+    def __init__(self, store_path: Path) -> None:
+        super().__init__()
+        self.unified_mcp_service = BuiltinDistinctHubService(store_path)
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_builtin_section_is_distinct_from_the_builtin_mcp_server(tmp_path):
+    """Constraint 3: `agent:builtin` (the in-process agent-runtime built-ins
+    this task renders) must never be grouped with, or labeled the same as,
+    `builtin:tldw_chatbook` (the built-in MCP *server*, exposed here via
+    `local_service.get_inventory()`)."""
+    app = BuiltinDistinctApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        row_keys = _perm_row_keys(app)
+        assert "__server__::builtin:tldw_chatbook" in row_keys
+        assert "__server__::agent:builtin" in row_keys
+
+        rows = _perm_all_rows(app)
+        server_row_labels = {row[0] for row in rows if row[0].startswith("Server default")}
+        mcp_builtin_label = "Server default — tldw_chatbook"
+        agent_builtin_label = "Server default — Built-in (agent runtime)"
+        assert mcp_builtin_label in server_row_labels
+        assert agent_builtin_label in server_row_labels
+        assert mcp_builtin_label != agent_builtin_label
+
+        # Neither tool list bleeds into the other's row-key namespace.
+        assert "builtin:tldw_chatbook::calculator" not in row_keys
+        assert "agent:builtin::search_web" not in row_keys
+
+
+@pytest.mark.asyncio
+async def test_stored_deny_for_builtin_renders_off_with_tool_override_marker(tmp_path):
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_tool_state(BUILTIN_TOOL_SERVER_KEY, "calculator", "deny")
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        rows = _perm_all_rows(app)
+        tool_cells = {row[0].strip(): row[1] for row in rows}
+        assert tool_cells["calculator"] == "Off •"
+        # Sibling built-in tool is untouched by calculator's own override.
+        assert tool_cells["get_current_datetime"] == "Allow"
+
+
+@pytest.mark.asyncio
+async def test_orphaned_builtin_row_is_marked_via_tags_cell_not_tool_name(tmp_path):
+    """A stored decision for a built-in tool name no live tool provides
+    must still be listed (`orphaned=True`, Task 2) so the user can clear
+    it -- marked via its Tags cell ("orphaned"), never by decorating the
+    Tool cell/`tool_name` itself: `_row_key()`/`action_cycle_state()`
+    (mcp_permissions_mode.py) read `PermRow.tool_name` verbatim as the
+    tool's store identity, so a decorated name would corrupt the row
+    Task 4's write-back path needs to address."""
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_tool_state(
+        BUILTIN_TOOL_SERVER_KEY, "tool_that_no_longer_exists", "allow"
+    )
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        row_keys = _perm_row_keys(app)
+        assert "agent:builtin::tool_that_no_longer_exists" in row_keys
+        index = row_keys.index("agent:builtin::tool_that_no_longer_exists")
+        cells = _perm_table_texts(app, index)
+        # Tool cell carries the RAW, undecorated stored name -- not
+        # "tool_that_no_longer_exists (orphaned)" or similar.
+        assert cells[0].strip() == "tool_that_no_longer_exists"
+        # The Tags cell (not the Tool cell) carries the orphaned marker.
+        assert cells[-1] == "orphaned"
+
+        # A live built-in tool's row is untouched and NOT marked orphaned.
+        calculator_index = row_keys.index("agent:builtin::calculator")
+        calculator_cells = _perm_table_texts(app, calculator_index)
+        assert calculator_cells[-1] != "orphaned"
+
+
+@pytest.mark.asyncio
+async def test_builtin_enumeration_failure_still_shows_a_cyclable_server_default_row(
+    tmp_path, monkeypatch
+):
+    """Review finding: `_builtin_permission_matrix_rows()` must not hide
+    the pinned "Server default — Built-in (agent runtime)" row when
+    `builtin_permission_rows()` itself fails -- a user's stored built-in
+    server default would otherwise become invisible and impossible to
+    clear/cycle. Only the per-tool rows beneath it are conditional on
+    enumeration succeeding."""
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_server_default(BUILTIN_TOOL_SERVER_KEY, "deny")
+
+    def _raise(payload):
+        raise RuntimeError("builtin registry unavailable")
+
+    monkeypatch.setattr(mcp_workbench_module, "builtin_permission_rows", _raise)
+
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        row_keys = _perm_row_keys(app)
+        assert "__server__::agent:builtin" in row_keys
+        # No tool rows -- enumeration failed -- but the server row survives.
+        assert not [key for key in row_keys if key.startswith("agent:builtin::")]
+
+        rows = _perm_all_rows(app)
+        server_row = next(
+            row for row in rows if row[0] == "Server default — Built-in (agent runtime)"
+        )
+        # The stored server-level "deny" default is still visible (and, per
+        # the "•" override marker, still cyclable back to Inherit).
+        assert server_row[1] == "Off •"
+
+
+# -- TASK-627 Task 4: persisting built-in tool decisions from the UI --------
+#
+# `on_mcp_permissions_mode_state_cycle_requested()` used to resolve EVERY
+# "tool" row's `HubTool` via `_tool_for()` -- which only ever searches
+# `_last_hub_tools`, the MCP catalog. Built-in tools never populate that
+# list (Task 3's built-in section is rendered from `builtin_permission_
+# rows()`, a completely separate path -- Constraint 1), so `_tool_for()`
+# always returned `None` for an `agent:builtin` row. Since `cycle_ui_state`
+# is Inherit -> Allow -> Ask -> Off, the FIRST Space press from the default
+# state always lands on "allow" -- which the vanished-tool guard then
+# rejected before any write, with a factually wrong "no longer in the
+# catalog" toast. `ask`/`deny` were consequently unreachable: you can't
+# advance the ring past the step that's permanently blocked. These tests
+# exercise the first press specifically (a pre-seeded "allow" and cycling
+# from there would miss the bug entirely), plus the rest of the ring, an
+# orphaned row, and an MCP-row regression guard.
+
+
+@pytest.mark.asyncio
+async def test_space_cycle_first_press_on_builtin_tool_persists_allow_no_hash(tmp_path):
+    """The headline bug: a built-in tool row starts at Inherit, so the
+    FIRST Space press cycles straight to "allow" -- exactly the transition
+    the vanished-tool guard used to reject for every built-in row, because
+    `_tool_for()` can never find a `HubTool` for `agent:builtin`. Must
+    persist with no `definition_hash` (Task 1's HASH_FREE_SERVER_KEYS
+    exemption) and raise no error/warning toast.
+    """
+    store_path = tmp_path / "mcp_permissions.json"
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+
+        # Sanity: no explicit override exists yet -- this really is the
+        # first press from Inherit, not a pre-seeded "allow".
+        before = MCPPermissionStore(store_path).get_tool_entry(BUILTIN_TOOL_SERVER_KEY, "calculator")
+        assert before is None
+
+        workbench.post_message(
+            MCPPermissionsMode.StateCycleRequested(
+                row_kind="tool",
+                server_key=BUILTIN_TOOL_SERVER_KEY,
+                tool_name="calculator",
+                new_state="allow",
+            )
+        )
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        entry = MCPPermissionStore(store_path).get_tool_entry(BUILTIN_TOOL_SERVER_KEY, "calculator")
+        assert entry is not None
+        assert entry["state"] == "allow"
+        # No REAL hash was computed/stored -- `set_tool_state()` always
+        # writes the `definition_hash` key alongside an "allow" entry, but
+        # for a HASH_FREE_SERVER_KEYS server it's the sentinel `None`
+        # (never a fingerprint), because no `HubTool` was ever resolved
+        # or hashed for this row.
+        assert entry.get("definition_hash") is None
+
+        assert not any(severity in ("warning", "error") for _, severity in notifications), (
+            f"expected no error/warning toast for a built-in allow cycle, got: {notifications!r}"
+        )
+        # Reflected on the next render without a restart.
+        rows = _perm_all_rows(app)
+        tool_cells = {row[0].strip(): row[1] for row in rows}
+        assert tool_cells["calculator"] == "Allow •"
+
+
+@pytest.mark.asyncio
+async def test_space_cycle_ring_continues_through_ask_deny_and_back_to_inherit_for_builtin(
+    tmp_path,
+):
+    """Once the first-press bug above is fixed, the rest of the ring must
+    also work: allow -> ask -> deny (Off) -> inherit (cleared), each step
+    persisting to the real store."""
+    store_path = tmp_path / "mcp_permissions.json"
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        async def cycle(new_state):
+            workbench.post_message(
+                MCPPermissionsMode.StateCycleRequested(
+                    row_kind="tool",
+                    server_key=BUILTIN_TOOL_SERVER_KEY,
+                    tool_name="calculator",
+                    new_state=new_state,
+                )
+            )
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+        store = MCPPermissionStore(store_path)
+
+        await cycle("allow")
+        assert store.get_tool_entry(BUILTIN_TOOL_SERVER_KEY, "calculator")["state"] == "allow"
+
+        await cycle("ask")
+        assert store.get_tool_entry(BUILTIN_TOOL_SERVER_KEY, "calculator")["state"] == "ask"
+
+        await cycle("deny")
+        assert store.get_tool_entry(BUILTIN_TOOL_SERVER_KEY, "calculator")["state"] == "deny"
+
+        await cycle(None)
+        assert store.get_tool_entry(BUILTIN_TOOL_SERVER_KEY, "calculator") is None
+
+
+@pytest.mark.asyncio
+async def test_space_cycle_on_orphaned_builtin_row_clears_stored_entry(tmp_path):
+    """An orphaned built-in row (a stored decision for a tool name no
+    longer provided by the live registry, Task 2/3) must still be
+    cyclable to Inherit from the UI, clearing its stored entry -- the row
+    exists precisely so the user can clean it up."""
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_tool_state(
+        BUILTIN_TOOL_SERVER_KEY, "tool_that_no_longer_exists", "allow"
+    )
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        row_keys = _perm_row_keys(app)
+        assert "agent:builtin::tool_that_no_longer_exists" in row_keys
+
+        workbench.post_message(
+            MCPPermissionsMode.StateCycleRequested(
+                row_kind="tool",
+                server_key=BUILTIN_TOOL_SERVER_KEY,
+                tool_name="tool_that_no_longer_exists",
+                new_state=None,
+            )
+        )
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        entry = MCPPermissionStore(store_path).get_tool_entry(
+            BUILTIN_TOOL_SERVER_KEY, "tool_that_no_longer_exists"
+        )
+        assert entry is None
+        # The orphaned row itself disappears once its stored entry is
+        # cleared -- `builtin_permission_rows()` only lists a name absent
+        # from the live registry when a stored decision for it exists.
+        row_keys_after = _perm_row_keys(app)
+        assert "agent:builtin::tool_that_no_longer_exists" not in row_keys_after
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_row_cycle_path_unchanged_still_passes_hubtool_and_hashes(tmp_path):
+    """Regression guard for Constraint 2 ("MCP behavior stays byte-
+    identical"): an ordinary MCP tool row's cycle-to-allow must still
+    resolve and pass its `HubTool` through to `set_tool_state()`, and the
+    store must still end up with a `definition_hash` -- the built-in
+    branch must not have swallowed or short-circuited the MCP path."""
+    store_path = tmp_path / "mcp_permissions.json"
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        workbench.post_message(
+            MCPPermissionsMode.StateCycleRequested(
+                row_kind="tool",
+                server_key="local:docs",
+                tool_name="search",
+                new_state="allow",
+            )
+        )
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        entry = MCPPermissionStore(store_path).get_tool_entry("local:docs", "search")
+        assert entry is not None
+        assert entry["state"] == "allow"
+        # An MCP tool's hash is real content -- not merely present, but
+        # exactly what `definition_hash()` computes from the catalog
+        # `HubTool`'s own description/schema (proves `tool=cycled_tool`,
+        # a genuine resolved `HubTool`, was passed through -- a `None`
+        # fallback would have raised instead of reaching this assertion).
+        matching_tool = workbench._tool_for("local:docs", "search")
+        assert matching_tool is not None
+        expected_hash = definition_hash(matching_tool.description, matching_tool.input_schema)
+        assert entry["definition_hash"] == expected_hash
+
+
+class GuardedEffectiveStatesHubService(PermissionsHubService):
+    """T3/Constraint 1 regression guard: `effective_tool_states()` (the MCP
+    resolver's batched entry point, and transitively `resolve_effective_
+    state()`) must NEVER be called with a tool whose `server_key` is the
+    built-in namespace -- built-in rows are only ever resolved through
+    `resolve_builtin_state()` via `builtin_permission_rows()`. `tools` here
+    is always `MCPWorkbench._last_hub_tools`, which the built-in section
+    never populates or reads from -- so this failing is a real regression,
+    not merely testing that nobody happened to call it with the wrong
+    tools this pass."""
+
+    def effective_tool_states(self, tools):
+        for tool in tools:
+            if tool.server_key == BUILTIN_TOOL_SERVER_KEY:
+                pytest.fail(
+                    f"effective_tool_states() called with a built-in tool: {tool.name}"
+                )
+        return super().effective_tool_states(tools)
+
+
+class GuardedEffectiveStatesApp(App):
+    def __init__(self, store_path: Path) -> None:
+        super().__init__()
+        self.unified_mcp_service = GuardedEffectiveStatesHubService(store_path)
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_effective_tool_states_never_called_with_a_builtin_tool(tmp_path):
+    app = GuardedEffectiveStatesApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        # The built-in section still rendered -- the guard above didn't
+        # short-circuit rendering, it only pins that the MCP resolver was
+        # never handed a built-in tool.
+        rows = _perm_all_rows(app)
+        tool_cells = {row[0].strip(): row[1] for row in rows}
+        assert tool_cells["calculator"] == "Allow"
 
 
 @pytest.mark.asyncio
@@ -4038,6 +4537,50 @@ async def test_preview_shows_override_count_when_no_server_selected(tmp_path):
         assert str(preview.renderable) == (
             "search → Allow · global default: ask · 1 override across 1 server"
         )
+
+
+@pytest.mark.asyncio
+async def test_preview_override_count_includes_a_persistent_builtin_override(tmp_path):
+    """Fix 2 (PR #906 review): before this fix, the preview's override
+    count was computed inside `_build_permission_rows()` on its MCP-only
+    `rows` list -- BEFORE `_sync_permissions_mode()` even appended the
+    built-in section -- so a persistent built-in override changed the
+    table cell but never this summary line, contradicting `update_matrix()`
+    's own documented "ALWAYS summarizes the full, UNFILTERED matrix"
+    contract. No MCP-side override exists in this fixture, so the ONE
+    override this pins is unambiguously the built-in one."""
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_tool_state(BUILTIN_TOOL_SERVER_KEY, "calculator", "deny")
+
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        preview = app.query_one("#mcp-perm-preview", Static)
+        assert str(preview.renderable) == (
+            "global default: ask · 1 override across 1 server"
+        )
+
+
+@pytest.mark.asyncio
+async def test_preview_override_count_unaffected_when_no_builtin_override_is_set(tmp_path):
+    """Fix 2 companion: the flip side of the test above -- with zero
+    built-in overrides (this fixture's default shape), the preview must
+    render exactly as it did before Fix 2 (no "0 overrides" segment, no
+    phantom count from the built-in section's own always-present pinned
+    row or its two always-rendered, uncustomized tool rows)."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        preview = app.query_one("#mcp-perm-preview", Static)
+        assert str(preview.renderable) == "global default: ask"
 
 
 @pytest.mark.asyncio
@@ -4300,6 +4843,85 @@ async def test_permissions_mode_pinned_row_selection_clears_inspector_without_cr
         assert app.query_one("#mcp-inspector-permission").display is True
 
         table.move_cursor(row=0)  # __global__ -- pinned row, no tool
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.query_one("#mcp-inspector-permission").display is False
+        assert not list(app.query("#mcp-inspector-tool-name"))
+
+
+@pytest.mark.asyncio
+async def test_permissions_mode_builtin_tool_row_selection_shows_permission_block(tmp_path):
+    """Fix 1 (PR #906 review, code-review round after TASK-627): before
+    this fix, `on_mcp_permissions_mode_row_selected()` resolved every
+    `"tool"` row's `HubTool` via `_tool_for()`, which only ever searches
+    `_last_hub_tools` (the MCP catalog) -- a built-in row is never in that
+    list (Constraint 1/5), so `tool` was always `None` and the handler
+    fell through to `show_tool(None)`, blanking the inspector. This was
+    the only interactive row in the whole matrix that did that -- selected
+    here (row 7, `agent:builtin::calculator`) using the SAME `enter`-press
+    selection path every other permissions-mode test in this file uses."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=7)  # agent:builtin::calculator
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.query_one("#mcp-inspector-permission").display is True
+        permission_text = str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
+        assert permission_text == "calculator — Built-in (agent runtime)"
+        state = str(app.query_one("#mcp-inspector-permission-state", Static).renderable)
+        assert state == "Permission: Allow"
+        # Built-ins have no MCP tool/server/global cascade -- falls back to
+        # the plain per-tool origin sentence, not the three provenance
+        # rungs `show_permission(..., cascade=...)` renders for an MCP row.
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
+        assert origin == "Built-in tools default to allow."
+        assert not list(app.query("#mcp-inspector-permission-cascade-tool"))
+        # Routed through show_permission(), NOT show_tool() -- same
+        # standalone-surface contract as an MCP tool row (Tools mode's own
+        # full tool-detail-plus-Test-Tool block never mounts here).
+        assert not list(app.query("#mcp-inspector-tool-name"))
+
+        # Selecting an MCP row afterwards is unchanged.
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("enter")
+        await pilot.pause()
+        permission_text = str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
+        assert "search" in permission_text and "docs" in permission_text
+        assert list(app.query("#mcp-inspector-permission-cascade-tool"))
+
+
+@pytest.mark.asyncio
+async def test_permissions_mode_builtin_pinned_row_selection_clears_inspector(tmp_path):
+    """Fix 1 companion: the built-in section's OWN pinned "Server default"
+    row (`row_kind == "server"`) must keep the pre-existing pinned-row
+    behavior (clears the inspector) -- only the built-in `"tool"` rows
+    beneath it gained a permission view. Mirrors `test_permissions_mode_
+    pinned_row_selection_clears_inspector_without_crash` above, for the
+    built-in section's own pinned row instead of the global one."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=7)  # agent:builtin::calculator -- populate the block first
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.query_one("#mcp-inspector-permission").display is True
+
+        table.move_cursor(row=6)  # Server default — Built-in (agent runtime)
         await pilot.press("enter")
         await pilot.pause()
 
@@ -5231,7 +5853,10 @@ async def test_space_press_resyncs_reuse_cached_governance_profiles(tmp_path):
         assert service.governance_fetch_calls == 1  # the mount-time full sync
 
         table = app.query_one("#mcp-perm-table", DataTable)
-        assert table.row_count == 3  # global, server default, "search" tool
+        # global, server default, "search" tool + the built-in section
+        # (server default, calculator, get_current_datetime) -- TASK-627
+        # Task 3 appends unconditionally, regardless of source.
+        assert table.row_count == 6
         table.focus()
 
         table.move_cursor(row=2)  # server:main/docs::search

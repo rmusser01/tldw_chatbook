@@ -19,7 +19,11 @@ import pytest
 from tldw_chatbook.MCP.execution_log import MCPExecutionLog
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_store import LocalMCPStore
-from tldw_chatbook.MCP.permission_store import MCPPermissionStore, definition_hash
+from tldw_chatbook.MCP.permission_store import (
+    BUILTIN_TOOL_SERVER_KEY,
+    MCPPermissionStore,
+    definition_hash,
+)
 from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
 )
@@ -319,6 +323,28 @@ def test_set_tool_state_no_store_is_a_noop():
     service.set_tool_state(
         "local:demo", "search", "allow", tool=_tool()
     )  # must not raise
+
+
+def test_set_tool_state_allow_for_builtin_namespace_needs_no_tool(tmp_path):
+    """`agent:builtin` is hash-free (TASK-627 Task 1): `allow` must succeed
+    with no `tool=` argument at all, unlike every MCP `server_key`."""
+    service, _store = _service(tmp_path)
+
+    service.set_tool_state(BUILTIN_TOOL_SERVER_KEY, "write_thing", "allow")
+
+    entry = service.permission_store.get_tool_entry(
+        BUILTIN_TOOL_SERVER_KEY, "write_thing"
+    )
+    assert entry["state"] == "allow"
+
+
+def test_set_tool_state_allow_still_requires_tool_for_mcp_server(tmp_path):
+    """The exemption is namespace-scoped: an MCP `server_key` must still
+    raise without a `tool=` argument."""
+    service, _store = _service(tmp_path)
+
+    with pytest.raises(ValueError):
+        service.set_tool_state("local:demo", "search", "allow")
 
 
 # -- set_server_default / set_global_default / kill switch --------------------

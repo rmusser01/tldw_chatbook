@@ -363,3 +363,43 @@ def test_mcp_resolver_is_unaffected_by_the_builtin_floor():
         stale=False, executable=True,
     )
     assert resolve_effective_state({}, tool).state == "ask"
+
+
+# -- Task 1: HASH_FREE_SERVER_KEYS exemption ----------------------------------
+
+from tldw_chatbook.MCP.permission_store import HASH_FREE_SERVER_KEYS
+
+
+def test_hash_free_keys_contains_exactly_the_builtin_namespace():
+    """Pin the CONTENTS. Adding a remote namespace here would silently
+    disable the rug-pull guard for it -- the one way this change could
+    become a real weakening."""
+    assert HASH_FREE_SERVER_KEYS == frozenset({BUILTIN_TOOL_SERVER_KEY})
+
+
+def test_allow_without_hash_is_permitted_for_the_builtin_namespace(tmp_path):
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+
+    store.set_tool_state(BUILTIN_TOOL_SERVER_KEY, "write_thing", "allow")
+
+    entry = store.get_tool_entry(BUILTIN_TOOL_SERVER_KEY, "write_thing")
+    assert entry["state"] == "allow"
+    assert not entry.get("definition_hash")
+
+
+def test_allow_without_hash_still_raises_for_an_mcp_server(tmp_path):
+    """MCP's guard is unchanged."""
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+
+    with pytest.raises(ValueError, match="definition_hash"):
+        store.set_tool_state("local:docs", "some_tool", "allow")
+
+
+def test_deny_and_clear_need_no_hash_for_either_namespace(tmp_path):
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+
+    store.set_tool_state(BUILTIN_TOOL_SERVER_KEY, "write_thing", "deny")
+    store.set_tool_state("local:docs", "some_tool", "deny")
+    store.set_tool_state(BUILTIN_TOOL_SERVER_KEY, "write_thing", None)
+
+    assert store.get_tool_entry(BUILTIN_TOOL_SERVER_KEY, "write_thing") is None

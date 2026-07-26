@@ -19,6 +19,7 @@ from .execution_log import MCPExecutionLog, RESULT_EXCERPT_LIMIT, build_record
 from .hub_tool_catalog import HubTool
 from .permission_store import (
     EffectiveToolState,
+    HASH_FREE_SERVER_KEYS,
     MCPPermissionStore,
     definition_hash,
     resolve_effective_state,
@@ -2523,16 +2524,18 @@ class UnifiedMCPControlPlaneService:
             tool: Required when ``ui_state`` is ``"allow"`` -- its
                 description/input_schema are fingerprinted into the stored
                 ``definition_hash`` the rug-pull guard compares against
-                later.
+                later. Not required (and not hashed) when ``server_key`` is
+                in ``HASH_FREE_SERVER_KEYS`` (e.g. ``agent:builtin``).
 
         Raises:
-            ValueError: ``ui_state`` is ``"allow"`` but ``tool`` is None.
+            ValueError: ``ui_state`` is ``"allow"``, ``tool`` is None, and
+                ``server_key`` is not in ``HASH_FREE_SERVER_KEYS``.
         """
         store = self.permission_store
         if store is None:
             return
         hash_value: str | None = None
-        if ui_state == "allow":
+        if ui_state == "allow" and server_key not in HASH_FREE_SERVER_KEYS:
             if tool is None:
                 raise ValueError(
                     "tool is required to set state 'allow' (need its description/input_schema)"
