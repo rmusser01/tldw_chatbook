@@ -7,11 +7,15 @@ lived on the screen.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+
+
+if TYPE_CHECKING:
+    from ...Home.dashboard_state import HomeActiveWorkItem
 
 
 logger = logger.bind(module="WatchlistsConsoleHandoff")
@@ -70,12 +74,16 @@ class WatchlistsConsoleHandoff:
         self._latest_console_follow_error_logged = False
         return selected_item
 
-    def resolve_latest_follow_item(self):
+    def resolve_latest_follow_item(self) -> HomeActiveWorkItem | None:
         """Refresh the cached follow item/id ahead of a render pass.
 
         This is the same population logic that used to sit inline in the
         screen's ``compose_content`` (compute the latest follow item, then
         stash its id for the follow-in-console handler to read later).
+
+        Returns:
+            The latest Watchlists-eligible active-work item available to
+            follow in Console, or `None` when none is available.
         """
         latest_console_item = self._latest_console_follow_item()
         self._latest_console_follow_item_id = (

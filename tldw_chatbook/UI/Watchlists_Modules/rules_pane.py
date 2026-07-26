@@ -168,6 +168,17 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
             self.post_message(RuleSelected(rule))
 
     def watch_show_rule_form(self, is_open: bool) -> None:
+        """Tell the owning screen the rule form opened or closed, and on what.
+
+        Mirrors `show_rule_form` (plus which rule, if any, is being edited)
+        into a `RuleFormVisibilityChanged` message so the screen can persist
+        it across a workbench rebuild — see that message's docstring for why
+        this pane cannot just rely on its own reactives surviving a
+        recompose.
+
+        Args:
+            is_open: The form's new visibility.
+        """
         if self.is_mounted:
             editing_rule = self.selected_rule if self._editing_rule_id else None
             self.post_message(RuleFormVisibilityChanged(is_open, editing_rule))

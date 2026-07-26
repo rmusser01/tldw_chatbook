@@ -88,3 +88,23 @@ def test_all_three_centre_regions_may_collapse_at_once():
         layout = layout.toggle(region)
     assert all(layout.is_collapsed(region) for region in CENTRE_REGIONS)
     assert layout.visible() == (Region.LEFT_RAIL, Region.RIGHT_RAIL)
+
+
+def test_collapsed_for_persistence_is_the_collapsed_set_when_not_soloed():
+    # Regression coverage for PR #926 review, Bug 1: when nothing is soloed
+    # there is no pre-solo baseline to prefer, so this must just be `collapsed`.
+    layout = RegionLayout().toggle(Region.RIGHT_RAIL).toggle(Region.LEFT_RAIL)
+    assert layout.collapsed_for_persistence() == layout.collapsed
+
+
+def test_collapsed_for_persistence_returns_the_pre_solo_baseline_while_soloed():
+    # Regression coverage for PR #926 review, Bug 1: `collapsed` while soloed
+    # is the solo-DERIVED view (the other centre panes collapsed around the
+    # soloed one) — not something the user configured. Persisting THAT would
+    # strand a restart in a layout with no `_pre_solo` baseline left to
+    # recover from, so the accessor used for persistence must return the
+    # baseline instead.
+    pre_solo = RegionLayout().toggle(Region.LEFT_RAIL)
+    soloed = pre_solo.solo(Region.ITEMS)
+    assert soloed.collapsed != pre_solo.collapsed  # sanity: solo did derive a new view
+    assert soloed.collapsed_for_persistence() == pre_solo.collapsed

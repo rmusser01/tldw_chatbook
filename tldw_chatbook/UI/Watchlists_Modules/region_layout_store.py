@@ -3,7 +3,12 @@
 Collapse state is UI preference, not data, so it belongs in config rather
 than SubscriptionsDB. Solo is deliberately not persisted — it is a transient
 view mode, and restoring it across restarts would strand the user in a
-layout they did not choose.
+layout they did not choose. While a layout is soloed, `save_region_layout`
+writes the *pre-solo baseline* (`RegionLayout.collapsed_for_persistence`),
+not the solo-derived collapsed set: the latter is what the other centre
+panes look like while isolating the soloed one, not something the user
+configured, and persisting it would leave a restart with no baseline left
+to recover the user's actual layout from.
 """
 
 from __future__ import annotations
@@ -47,6 +52,12 @@ def load_region_layout() -> RegionLayout:
     heuristic that treats "empty" as "apply the first-run default" would
     permanently strand a user who deliberately keeps CONTENT expanded, since
     saving that exact choice looks identical to never having saved anything.
+
+    Returns:
+        The collapse state to apply: the first-run default
+        (`_FIRST_RUN_DEFAULT`) when the config key has never been saved, or
+        the persisted collapsed set otherwise (silently dropping any
+        unrecognized region names or non-sequence stored value).
     """
     raw = get_cli_setting(_SECTION, _KEY, None)
     if raw is None:
@@ -67,8 +78,15 @@ def load_region_layout() -> RegionLayout:
 
 
 def save_region_layout(layout: RegionLayout) -> None:
-    """Write collapse state to config. Solo state is not persisted."""
-    values = sorted(region.value for region in layout.collapsed)
+    """Write collapse state to config. Solo state is not persisted.
+
+    Args:
+        layout: The layout to persist. Only its (solo-resolved) collapsed
+            set is written — see `RegionLayout.collapsed_for_persistence`;
+            `solo_region` and the pre-solo baseline itself never round-trip
+            through config.
+    """
+    values = sorted(region.value for region in layout.collapsed_for_persistence())
     try:
         save_setting_to_cli_config(_SECTION, _KEY, values)
     except Exception:

@@ -70,11 +70,51 @@ def test_load_tolerates_a_non_list_value(monkeypatch):
 
 
 def test_save_never_persists_solo(monkeypatch):
+    """`solo_region` itself must never round-trip through config.
+
+    NOTE (PR #926 review, Bug 1 fix): before the fix this test asserted
+    `["content", "feeds"]` — the solo-DERIVED collapse of the other centre
+    panes — as the persisted value. That encoded the bug: restoring that on
+    the next launch would have applied a plain (non-solo) collapse of FEEDS
+    and CONTENT with no `_pre_solo` baseline left to `Z`-restore from, even
+    though the user never configured that layout by hand. The correct
+    persisted value while soloed is the PRE-solo baseline, which for a solo
+    called directly on a fresh `RegionLayout()` is "nothing collapsed" — see
+    `test_save_while_soloed_persists_the_pre_solo_baseline_not_the_solo_derived_collapse`
+    below for a case where the baseline is non-empty.
+    """
     saved = {}
     monkeypatch.setattr(
         region_layout_store, "save_setting_to_cli_config",
         lambda section, key, value: saved.__setitem__((section, key), value) or True,
     )
     region_layout_store.save_region_layout(RegionLayout().solo(Region.ITEMS))
-    assert sorted(saved[("watchlists", "collapsed_regions")]) == ["content", "feeds"]
+    assert sorted(saved[("watchlists", "collapsed_regions")]) == []
     assert ("watchlists", "solo_region") not in saved
+
+
+def test_save_while_soloed_persists_the_pre_solo_baseline_not_the_solo_derived_collapse(monkeypatch):
+    """Regression test for PR #926 review, Bug 1: saving while soloed must
+    persist what the user had BEFORE soloing, not the solo-derived collapse
+    of the other centre panes — otherwise a restart strands the user in a
+    layout they never configured, with no baseline left to recover from.
+    """
+    saved = {}
+    monkeypatch.setattr(
+        region_layout_store, "save_setting_to_cli_config",
+        lambda section, key, value: saved.__setitem__((section, key), value) or True,
+    )
+    pre_solo = RegionLayout().toggle(Region.LEFT_RAIL)
+    soloed = pre_solo.solo(Region.ITEMS)
+
+    region_layout_store.save_region_layout(soloed)
+    assert sorted(saved[("watchlists", "collapsed_regions")]) == ["left_rail"]
+
+    monkeypatch.setattr(
+        region_layout_store, "get_cli_setting",
+        lambda section, key, default=None: saved.get((section, key), default),
+    )
+    reloaded = region_layout_store.load_region_layout()
+    assert reloaded.collapsed == pre_solo.collapsed
+    assert reloaded != soloed
+    assert reloaded.solo_region is None

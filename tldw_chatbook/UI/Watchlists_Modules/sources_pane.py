@@ -263,6 +263,16 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         self._post_create_draft_changed()
 
     def watch_show_create_form(self, is_open: bool) -> None:
+        """Tell the owning screen the create form opened or closed.
+
+        Mirrors `show_create_form` into a `CreateFormVisibilityChanged`
+        message so the screen can persist it across a workbench rebuild —
+        see that message's docstring for why this pane cannot just rely on
+        its own reactive surviving a recompose.
+
+        Args:
+            is_open: The form's new visibility.
+        """
         if self.is_mounted:
             self.post_message(CreateFormVisibilityChanged(is_open))
 

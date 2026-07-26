@@ -62,6 +62,12 @@ class WatchlistsWorkbench(Horizontal):
     first render. Verified with a minimal repro using an unrelated reactive
     also named ``layout``, so this is a general Widget-subclass constraint,
     not specific to this dataclass.
+
+    Attributes:
+        region_layout: The current collapse/solo state. Setting it
+            (`recompose=True`) unmounts and rebuilds every region, not just
+            the one that changed — see `__init__`'s note on `content` for
+            why that requires factories rather than widget instances.
     """
 
     region_layout: reactive[RegionLayout] = reactive(RegionLayout(), recompose=True)
@@ -72,7 +78,8 @@ class WatchlistsWorkbench(Horizontal):
         content: Mapping[Region, Callable[[], Widget]] | None = None,
         **kwargs: Any,
     ) -> None:
-        """
+        """Build the workbench, seeding `region_layout` without triggering a recompose.
+
         Args:
             layout: Initial collapse/solo state.
             content: Per-region **factories**, not widget instances —
@@ -104,6 +111,16 @@ class WatchlistsWorkbench(Horizontal):
         self.set_reactive(WatchlistsWorkbench.region_layout, layout)
 
     def compose(self) -> ComposeResult:
+        """Render the left rail, the stacked centre, and the right rail.
+
+        Re-runs in full on every `region_layout` change (`recompose=True`),
+        rebuilding all five regions from `self.region_layout` and
+        `self._content` regardless of which single region actually changed.
+
+        Returns:
+            The left-rail region, the centre `Vertical` of FEEDS/ITEMS/
+            CONTENT, and the right-rail region, in that order.
+        """
         yield self._region_widget(Region.LEFT_RAIL)
 
         with Vertical(id="wl-centre", classes="watchlists-centre"):
@@ -119,6 +136,15 @@ class WatchlistsWorkbench(Horizontal):
         the single place that mounts anything. Building children positionally
         avoids the `with container: ... ; yield container` shape, which
         double-mounts — Textual's `with` already adds the container.
+
+        Args:
+            region: The region to build, per `self.region_layout`'s current
+                collapse state.
+
+        Returns:
+            A focusable `Button` header when `region` is collapsed,
+            otherwise a focusable `Vertical` body holding the region's
+            title and its supplied content (or the placeholder stub).
         """
         if self.region_layout.is_collapsed(region):
             # A Button, not a Static: a collapsed region must stay focusable
@@ -149,6 +175,15 @@ class WatchlistsWorkbench(Horizontal):
         return body
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Turn a collapsed-region header click into a `RegionToggled` message.
+
+        Ignores presses from any other button (e.g. content the caller
+        supplied via `content=`) by checking the `wl-header-` id prefix.
+
+        Args:
+            event: The button-press event to inspect and, if it targets a
+                region header, stop from bubbling further.
+        """
         button_id = event.button.id or ""
         prefix = "wl-header-"
         if not button_id.startswith(prefix):

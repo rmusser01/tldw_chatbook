@@ -8,6 +8,7 @@ handoffs keep working while Collections moves under Library.
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -182,6 +183,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # when the open form is for a brand new rule.
         self._rule_form_open = False
         self._rule_form_editing: dict[str, Any] | None = None
+        # Layout-persistence bookkeeping (PR #926 review, Bug 2): avoids
+        # writing to config on every `_apply_layout` call — `on_mount`'s
+        # initial push-back of the just-loaded layout, and every no-op
+        # toggle, would otherwise trigger `save_setting_to_cli_config`'s
+        # synchronous whole-file read-modify-write on the UI thread. See
+        # `_schedule_layout_persist`/`_persist_layout_worker` below.
+        self._last_persisted_collapsed: frozenset[Region] | None = None
+        self._pending_persist_layout: RegionLayout | None = None
+        self._layout_persist_lock = threading.Lock()
         self._controller = WatchlistsBackendController(
             app_instance=app_instance,
             scope_service=getattr(app_instance, "watchlist_scope_service", None),
@@ -201,7 +211,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # at THAT moment. Without also reaching into the mounted workbench via
         # `_apply_layout`, a persisted collapse would silently not render until
         # some unrelated later recompose happened to pick it up.
-        self._apply_layout(load_region_layout())
+        loaded_layout = load_region_layout()
+        # Prime the "last persisted" marker with what we just read (PR #926
+        # review, Bug 2) BEFORE calling `_apply_layout`: this value is by
+        # definition already on disk, so pushing it back into the workbench
+        # here must not itself trigger a redundant write.
+        self._last_persisted_collapsed = loaded_layout.collapsed_for_persistence()
+        self._apply_layout(loaded_layout)
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
         self._load_active_section_data()
@@ -763,7 +779,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
 
     def _apply_layout(self, layout: RegionLayout) -> None:
-        """Set the layout, push it to the workbench, and persist it."""
+        """Set the layout, push it to the workbench, and persist any change.
+
+        Args:
+            layout: The layout to apply. Persistence (see
+                `_schedule_layout_persist`) is skipped entirely when it
+                does not actually change what is on disk — e.g. `on_mount`
+                re-applying the layout it just loaded, or a keypress that
+                happens to leave the persisted collapsed set unchanged.
+        """
         self.region_layout = layout
         try:
             # The workbench reactive is `region_layout`, NOT `layout` —
@@ -773,7 +797,58 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.query_one(WatchlistsWorkbench).region_layout = layout
         except Exception:
             logger.debug("Workbench not mounted yet; layout applies on compose.")
-        save_region_layout(layout)
+        self._schedule_layout_persist(layout)
+
+    def _schedule_layout_persist(self, layout: RegionLayout) -> None:
+        """Persist ``layout`` off the UI thread, skipping genuine no-ops.
+
+        `save_setting_to_cli_config` is a synchronous whole-file
+        read-modify-write plus a full config-cache reload; calling it
+        directly from `_apply_layout` would block the UI event loop on
+        every single `z`/`Z`/`[`/`]` keypress, including calls (like
+        `on_mount`'s initial push) where nothing has actually changed. This
+        repo has already paid for that class of bug once — see the
+        Console's 0.2s tick doing unconditional sqlite work on the event
+        loop (task-280).
+
+        Args:
+            layout: The layout whose solo-resolved collapsed set (see
+                `RegionLayout.collapsed_for_persistence`) should be written
+                to config if it differs from what is already persisted.
+        """
+        collapsed = layout.collapsed_for_persistence()
+        if collapsed == self._last_persisted_collapsed:
+            return
+        self._last_persisted_collapsed = collapsed
+        self._pending_persist_layout = layout
+        self.run_worker(
+            self._persist_layout_worker,
+            exclusive=True,
+            group="wl-layout-persist",
+            thread=True,
+        )
+
+    def _persist_layout_worker(self) -> None:
+        """Write the most recently requested layout to config.
+
+        Runs off the UI thread via `run_worker(thread=True)`. Reads
+        `_pending_persist_layout` fresh, under `_layout_persist_lock`, at
+        the moment this worker actually executes rather than capturing it
+        as an argument at schedule time: Textual's `exclusive=True` cancels
+        a worker still queued in the `"wl-layout-persist"` group, but
+        cannot force an already-running thread-pool call to stop before a
+        newer one starts, so a rapid burst of toggles could otherwise still
+        interleave writes out of order. Reading the shared "latest
+        requested" value inside the lock guarantees that whichever
+        invocation is the last to actually acquire it — necessarily after
+        every `_schedule_layout_persist` call the burst has made so far —
+        writes the true final layout, so the last write always wins.
+        """
+        with self._layout_persist_lock:
+            layout = self._pending_persist_layout
+            if layout is None:
+                return
+            save_region_layout(layout)
 
     def action_toggle_region(self) -> None:
         """Collapse or expand whichever region currently has focus."""

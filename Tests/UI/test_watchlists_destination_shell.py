@@ -654,6 +654,103 @@ async def test_persisted_layout_is_applied_on_mount(monkeypatch):
         assert not screen.query("#watchlists-inspector-pane")
 
 
+# --- PR #926 review, Bug 2: `_apply_layout` used to call `save_region_layout`
+# (a synchronous whole-file config read-modify-write) unconditionally and on
+# the UI thread, including from `on_mount` when nothing had changed. The
+# three tests below cover the fix's two halves: skip the write when the
+# layout is unchanged from what is already persisted, and move any real
+# write off the UI thread via `run_worker(thread=True)`.
+
+
+@pytest.mark.asyncio
+async def test_mounting_with_a_persisted_layout_performs_no_write(monkeypatch):
+    """`on_mount` re-applies whatever `load_region_layout` just returned so
+    the mounted workbench reflects it (see
+    `test_persisted_layout_is_applied_on_mount` above) — but that layout is
+    by definition already on disk, so doing so must not itself schedule a
+    config write."""
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.load_region_layout",
+        lambda: RegionLayout(collapsed=frozenset({Region.RIGHT_RAIL})),
+    )
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: saved.append(layout),
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert saved == []
+
+
+@pytest.mark.asyncio
+async def test_a_real_toggle_performs_exactly_one_write(monkeypatch):
+    """A single genuine layout change schedules exactly one write, and it
+    lands off the UI thread (a plain `run_worker(..., thread=True)` call
+    completes here without the test itself spinning up any thread)."""
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: saved.append(layout),
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        saved.clear()  # `on_mount`'s own (no-op) apply may have run above.
+
+        screen = host.screen_stack[-1]
+        screen.focused_region = Region.ITEMS
+        await pilot.press("z")
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(saved) == 1
+        assert Region.ITEMS in saved[0].collapsed
+
+
+@pytest.mark.asyncio
+async def test_a_burst_of_toggles_persists_only_the_final_state(monkeypatch):
+    """A rapid burst of toggles must not interleave writes out of order —
+    once every worker has drained, the persisted value must match the
+    layout the screen actually ended up with, not some intermediate state
+    from earlier in the burst."""
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: saved.append(layout),
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        saved.clear()  # `on_mount`'s own (no-op) apply may have run above.
+
+        screen = host.screen_stack[-1]
+        screen.focused_region = Region.ITEMS
+        # Fire off several toggles back-to-back with no pause in between, so
+        # scheduling for all of them races ahead of any one write completing.
+        await pilot.press("z")
+        await pilot.press("[")
+        await pilot.press("z")
+        await pilot.press("]")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        final_layout = screen.region_layout
+        assert saved, "a real change occurred, so at least one write must have happened"
+        assert saved[-1].collapsed == final_layout.collapsed_for_persistence()
+
+
 # --- Fix round 1, Finding 1: a bracket press must not destroy a half-typed
 # create-source form. `region_layout` is `recompose=True`, so ANY region
 # toggle — including one on a rail with nothing to do with Sources — rebuilds
