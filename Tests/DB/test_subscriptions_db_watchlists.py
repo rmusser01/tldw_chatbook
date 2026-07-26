@@ -199,3 +199,60 @@ def test_backfill_is_chunked_and_resumable(db):
         "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
         ("searchable",),
     ).fetchone()[0] == 7
+
+
+class _CountingConnection:
+    """Wraps a connection to count execute() calls."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.execute_count = 0
+
+    def execute(self, *args, **kwargs):
+        self.execute_count += 1
+        return self._inner.execute(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def test_counts_bucket_by_watchlist_unassigned_and_all(db):
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
+
+    service = WatchlistBundleService(db)
+    morning = service.create("Morning")
+    security = service.create("Security")
+
+    shared = db.add_subscription(name="HN", type="rss", source="https://b.example/f")
+    lonely = db.add_subscription(name="Orphan", type="rss", source="https://c.example/f")
+
+    service.add_source(morning["id"], shared)
+    service.add_source(security["id"], shared)
+
+    _insert_item(db, shared, "https://b.example/1", "Shared unread", "body")
+    _insert_item(db, lonely, "https://c.example/1", "Orphan unread", "body")
+    with db.transaction() as conn:
+        conn.execute("UPDATE subscription_items SET status = 'reviewed' WHERE url = ?",
+                     ("https://c.example/1",))
+
+    counts = db.get_watchlist_item_counts()
+
+    assert counts[morning["id"]] == {"total": 1, "unread": 1}
+    assert counts[security["id"]] == {"total": 1, "unread": 1}
+    assert counts[-1] == {"total": 1, "unread": 0}   # Unassigned
+    assert counts[-2] == {"total": 2, "unread": 1}   # All sources
+
+
+def test_counts_use_a_single_query_regardless_of_watchlist_count(db, monkeypatch):
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
+
+    service = WatchlistBundleService(db)
+    for index in range(12):
+        service.create(f"List {index}")
+
+    counting = _CountingConnection(db.conn)
+    monkeypatch.setattr(type(db), "conn", property(lambda self: counting))
+
+    db.get_watchlist_item_counts()
+
+    assert counting.execute_count == 1

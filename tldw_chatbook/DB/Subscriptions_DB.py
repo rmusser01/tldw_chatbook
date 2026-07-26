@@ -589,6 +589,56 @@ class SubscriptionsDB(BaseDB):
             )
             return len(rows)
 
+    # Sentinel bucket ids for the watchlists tree roots.
+    UNASSIGNED_BUCKET = -1
+    ALL_SOURCES_BUCKET = -2
+
+    def get_watchlist_item_counts(self) -> Dict[int, Dict[str, int]]:
+        """Item totals and unread counts for every watchlists tree node.
+
+        Returned in a single query so that adding watchlists never adds
+        round-trips. ``SUM(CASE …)`` is used rather than ``COUNT(*) FILTER``
+        to avoid depending on a newer SQLite than the bundled one.
+
+        Returns:
+            Mapping of bucket id to ``{"total": int, "unread": int}``. Bucket
+            ``-1`` is Unassigned (sources in no watchlist) and ``-2`` is All
+            sources. Real watchlist ids are positive.
+        """
+        rows = self.conn.execute(
+            """
+            SELECT ws.watchlist_id AS bucket,
+                   COUNT(si.id) AS total,
+                   SUM(CASE WHEN si.status = 'new' THEN 1 ELSE 0 END) AS unread
+            FROM watchlist_sources ws
+            JOIN subscription_items si ON si.subscription_id = ws.subscription_id
+            GROUP BY ws.watchlist_id
+
+            UNION ALL
+
+            SELECT ?, COUNT(si.id),
+                   SUM(CASE WHEN si.status = 'new' THEN 1 ELSE 0 END)
+            FROM subscription_items si
+            WHERE NOT EXISTS (
+                SELECT 1 FROM watchlist_sources ws
+                WHERE ws.subscription_id = si.subscription_id
+            )
+
+            UNION ALL
+
+            SELECT ?, COUNT(si.id),
+                   SUM(CASE WHEN si.status = 'new' THEN 1 ELSE 0 END)
+            FROM subscription_items si
+            """,
+            (self.UNASSIGNED_BUCKET, self.ALL_SOURCES_BUCKET),
+        ).fetchall()
+
+        return {
+            row[0]: {"total": row[1] or 0, "unread": row[2] or 0}
+            for row in rows
+            if row[0] is not None
+        }
+
     @property
     def conn(self):
         """Thread-local database connection."""
