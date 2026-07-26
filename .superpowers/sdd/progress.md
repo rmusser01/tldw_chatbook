@@ -379,3 +379,30 @@ Task 13: complete (commit 63eb693c3, review clean). ToolExecutor/ToolResultCache
   files still import Tool from tool_executor incl. one pinning class identity.
   6 chat_api_key failures confirmed PRE-EXISTING by git-stash bisection (these are part
   of the earlier unattributed 74).
+Task 14: complete (commit d33bf42e1). TASK-547 closed; TASK-545 P3 checked, P2 left
+  UNchecked (only the read-only files pack shipped). CLAUDE.md rewritten to the pack
+  recipe; orphaned code_audit doc + demo deleted. Found another live instance of the
+  same 2-arg get_cli_setting bug in Local_Ingestion/local_file_ingestion.py:1148 --
+  already tracked upstream, no duplicate filed. task-635 dup already renumbered to 662
+  on origin/dev; this worktree predates that -- flag at rebase.
+
+FINAL WHOLE-BRANCH REVIEW (opus) -> 2 Important + 3 Minor, ALL FIXED in c96a6a718,
+all 5 independently mutation-verified closed by re-review:
+  1. clamp_child_budget dropped max_tool_result_chars (Task 3 added the field, Task 6
+     edited that docstring without noticing) -- a caller's 0=unlimited was silently
+     reset to 16000 for every sub-agent. CROSS-TASK defect, invisible per-task.
+  2. grep_files x uncached denylist = ~2ms/candidate, ~37s per call at _MAX_CANDIDATES
+     and ~66k WARNING lines. Task 10 accepted the uncached cost when only read_file
+     called it once; Task 11 then put it in a loop. CROSS-TASK defect.
+     Fixed with per-call SensitivePathContext (NOT global memoization -- uncached-ness
+     is deliberate so it cannot stale across TLDW_CONFIG_PATH switches). 3.12s -> 0.28s.
+  3. glob/grep raised NotADirectoryError on an unusable sandbox root (never-raise breach).
+  4. Two Tool-Calling docs still taught the deleted ToolExecutor API.
+  5. list_directory listed sensitive FILENAMES (contents never leaked, descent already
+     refused).
+
+STATUS: all 14 tasks + task 9b + final fixes complete. 868 targeted tests green.
+OPEN: full-suite attribution. A 4h17m run at d33bf42e1 gave 74 failed / 15593 passed;
+  6 are bisect-confirmed pre-existing chat_api_key failures. The rest are in areas this
+  branch does not touch, but were NOT individually attributed. A second 4h run on
+  origin/dev would be needed for a true baseline -- recommend doing that once, separately.
