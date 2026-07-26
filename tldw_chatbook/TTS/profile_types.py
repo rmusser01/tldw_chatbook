@@ -20,6 +20,25 @@ from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | Mapping[str, "JsonValue"] | tuple["JsonValue", ...]
 
+_FROZEN_ARRAY_TOKEN = object()
+
+
+class _FrozenJSONArray(tuple):
+    """A tuple created only while freezing validated JSON array input."""
+
+    __slots__ = ()
+
+    def __new__(
+        cls,
+        values: tuple[JsonValue, ...] | list[JsonValue] | object,
+        *,
+        token: object,
+    ) -> "_FrozenJSONArray":
+        if token is not _FROZEN_ARRAY_TOKEN:
+            raise TypeError("internal frozen array construction")
+        return super().__new__(cls, values)
+
+
 _MAX_DISPLAY_NAME_CHARACTERS = 128
 _MAX_PROVIDER_ID_CHARACTERS = 64
 _MAX_OPAQUE_ID_CHARACTERS = 256
@@ -51,14 +70,12 @@ def _is_unsafe_name_character(character: str) -> bool:
 
 
 def _validate_display_name(value: object) -> str:
-    if not isinstance(value, str):
+    if type(value) is not str or any(
+        _is_unsafe_name_character(character) for character in value
+    ):
         raise ProfileValidationError("display_name")
     normalized = value.strip()
-    if (
-        not normalized
-        or len(normalized) > _MAX_DISPLAY_NAME_CHARACTERS
-        or any(_is_unsafe_name_character(character) for character in normalized)
-    ):
+    if not normalized or len(normalized) > _MAX_DISPLAY_NAME_CHARACTERS:
         raise ProfileValidationError("display_name")
     return normalized
 
@@ -119,15 +136,15 @@ def _freeze_json_value(
     depth: int,
     active: set[int],
 ) -> JsonValue:
-    if value is None or isinstance(value, (str, bool)):
+    if value is None:
         return value
-    if isinstance(value, int) and not isinstance(value, bool):
+    if type(value) in (str, bool, int):
         return value
-    if isinstance(value, float):
+    if type(value) is float:
         if not math.isfinite(value):
             raise ProfileValidationError("options")
         return value
-    if not isinstance(value, (Mapping, list)):
+    if not isinstance(value, (Mapping, list, _FrozenJSONArray)):
         raise ProfileValidationError("options")
     if depth > _MAX_OPTIONS_CONTAINER_LEVELS or id(value) in active:
         raise ProfileValidationError("options")
@@ -137,7 +154,7 @@ def _freeze_json_value(
         if isinstance(value, Mapping):
             frozen_mapping: dict[str, JsonValue] = {}
             for key, item in value.items():
-                if not isinstance(key, str):
+                if type(key) is not str:
                     raise ProfileValidationError("options")
                 frozen_mapping[key] = _freeze_json_value(
                     item,
@@ -145,13 +162,16 @@ def _freeze_json_value(
                     active,
                 )
             return MappingProxyType(frozen_mapping)
-        return tuple(
-            _freeze_json_value(
-                item,
-                depth + 1,
-                active,
-            )
-            for item in value
+        return _FrozenJSONArray(
+            (
+                _freeze_json_value(
+                    item,
+                    depth + 1,
+                    active,
+                )
+                for item in value
+            ),
+            token=_FROZEN_ARRAY_TOKEN,
         )
     except Exception:
         raise ProfileValidationError("options") from None
@@ -200,7 +220,10 @@ def canonical_json_options(options: Mapping[str, JsonValue]) -> str:
     """Return validated options as a stable compact UTF-8 JSON document."""
 
     frozen = _freeze_options(options)
-    return _canonical_json_from_frozen(frozen)
+    try:
+        return _canonical_json_from_frozen(frozen)
+    except Exception:
+        raise ProfileValidationError("options") from None
 
 
 def _validate_audio_cpp(
@@ -304,7 +327,10 @@ class TTSGenerationProfile:
         expected_normalized_name = unicodedata.normalize(
             "NFKC", display_name
         ).casefold()
-        if self.normalized_name != expected_normalized_name:
+        if (
+            type(self.normalized_name) is not str
+            or self.normalized_name != expected_normalized_name
+        ):
             raise ProfileValidationError("normalized_name")
         provider_id = _validate_provider_id(self.provider_id)
         model_id = _validate_opaque_id(self.model_id, "model_id")
@@ -320,6 +346,7 @@ class TTSGenerationProfile:
             raise ProfileValidationError("timestamps")
         object.__setattr__(self, "profile_id", profile_id)
         object.__setattr__(self, "display_name", display_name)
+        object.__setattr__(self, "normalized_name", expected_normalized_name)
         object.__setattr__(self, "provider_id", provider_id)
         object.__setattr__(self, "model_id", model_id)
         object.__setattr__(self, "voice_id", voice_id)

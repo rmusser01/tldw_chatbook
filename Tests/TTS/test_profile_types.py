@@ -98,6 +98,16 @@ def test_profile_name_rejects_unsafe_unicode(character: str) -> None:
         _draft(display_name=f"a{character}b")
 
 
+@pytest.mark.parametrize("display_name", ["\tProfile", "Profile\n", "\x1cProfile\x1f"])
+def test_profile_name_rejects_control_whitespace_before_trimming(
+    display_name: str,
+) -> None:
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: display_name$"
+    ):
+        _draft(display_name=display_name)
+
+
 @pytest.mark.parametrize("provider_id", ["OpenAI", "open-ai", "1openai", "a" * 65, ""])
 def test_provider_identifier_must_be_canonical_lower_snake(provider_id: str) -> None:
     with pytest.raises(
@@ -267,6 +277,13 @@ def test_canonical_options_validator_rejects_caller_mappingproxy_tuple_input() -
         canonical_json_options(MappingProxyType({"bad": (1,)}))
 
 
+def test_canonical_options_validator_reencodes_domain_frozen_arrays() -> None:
+    draft = _draft(options={"items": ["first", "second"]})
+
+    assert isinstance(draft.options["items"], tuple)
+    assert canonical_json_options(draft.options) == '{"items":["first","second"]}'
+
+
 def test_options_never_leak_a_caller_mapping_exception() -> None:
     class ExplosiveMapping(Mapping[str, object]):
         def __getitem__(self, key: str) -> object:
@@ -296,6 +313,56 @@ def test_options_never_leak_a_hostile_string_key_sort_error() -> None:
         ProfileValidationError, match=r"^TTS profile validation failed: options$"
     ):
         canonical_json_options({"safe": False, ExplosiveSortKey("bad"): True})
+
+
+def test_options_reject_scalar_subclasses_without_retaining_caller_state() -> None:
+    class StringScalar(str):
+        pass
+
+    class IntegerScalar(int):
+        pass
+
+    class FloatScalar(float):
+        pass
+
+    for scalar in (StringScalar("value"), IntegerScalar(1), FloatScalar(1.0)):
+        with pytest.raises(
+            ProfileValidationError, match=r"^TTS profile validation failed: options$"
+        ):
+            _draft(options={"value": scalar})
+
+
+def test_options_reject_mutable_hash_string_keys_before_retaining_them() -> None:
+    class MutableHashKey(str):
+        hash_value = 1
+
+        def __hash__(self) -> int:
+            return self.hash_value
+
+    key = MutableHashKey("key")
+    options = {key: "value"}
+    MutableHashKey.hash_value = 2
+
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: options$"
+    ):
+        _draft(options=options)
+
+
+def test_options_normalize_second_serialization_failures() -> None:
+    class StatefulSortKey(str):
+        comparisons = 0
+
+        def __lt__(self, other: object) -> bool:
+            type(self).comparisons += 1
+            if type(self).comparisons > 1:
+                raise RuntimeError("secret second serialization failure")
+            return super().__lt__(other)
+
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: options$"
+    ):
+        canonical_json_options({"safe": False, StatefulSortKey("bad"): True})
 
 
 def test_options_reject_excessive_nesting_and_canonical_size() -> None:
@@ -374,6 +441,30 @@ def test_generation_profile_validates_identity_timestamps_and_normalized_name() 
         ProfileValidationError, match=r"^TTS profile validation failed: timestamps$"
     ):
         _profile(created_at=datetime(2026, 7, 27, tzinfo=UTC))
+
+
+def test_generation_profile_rejects_hostile_non_string_normalized_names() -> None:
+    class EqualsAnything:
+        def __eq__(self, other: object) -> bool:
+            return True
+
+    with pytest.raises(
+        ProfileValidationError,
+        match=r"^TTS profile validation failed: normalized_name$",
+    ):
+        _profile(normalized_name=EqualsAnything())
+
+
+def test_generation_profile_rejects_normalized_name_subclasses() -> None:
+    class MutableNormalizedName(str):
+        pass
+
+    supplied = MutableNormalizedName("profile")
+    with pytest.raises(
+        ProfileValidationError,
+        match=r"^TTS profile validation failed: normalized_name$",
+    ):
+        _profile(normalized_name=supplied)
 
 
 def test_repository_values_are_frozen_and_minimal() -> None:
