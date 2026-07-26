@@ -1,6 +1,6 @@
 # Character TTS Generation Profiles with Native audio.cpp Console Speech — Design
 
-**Status:** approved by the user on 2026-07-25; independent spec review pending
+**Status:** approved by the user on 2026-07-25; independent spec review approved on 2026-07-25 after three passes
 **Date:** 2026-07-25
 **Related design:** [audio.cpp TTS Adapter Registry](2026-07-23-audio-cpp-tts-adapter-registry-design.md)
 **Existing ADR:** [ADR-023 — TTS Adapter Registry and audio.cpp Runtime Boundary](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
@@ -793,6 +793,9 @@ cannot collide or follow the currently active server.
 - old blank audio.cpp model/voice values read as explicit modes without startup
   rewrite;
 - Textual sentinel values never persist as empty exact selections;
+- dynamic mode saves write `default_model_mode` and `default_voice_mode` and
+  remove stale exact-value keys, while exact modes round-trip their required
+  model and voice identifiers;
 - successful save updates the next request without restart;
 - validation/file-replacement failure publishes nothing;
 - post-save reconfiguration failure leaves saved preferences authoritative and
