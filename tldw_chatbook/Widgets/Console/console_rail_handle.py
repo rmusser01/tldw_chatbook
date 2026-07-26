@@ -31,6 +31,20 @@ class ConsoleRailHandle(DestinationRailHandle):
         supply them once. ``open_tooltip`` is deliberately not accepted here:
         Console's tooltips are fixed strings derived from ``side``, not
         caller-supplied.
+
+        Args:
+            label: Rail name shown on the handle button. On the right side an
+                inspector label is abbreviated for display; see
+                ``_display_label``.
+            badge: Optional secondary line under the button. On the right side
+                approval and artifact copy is abbreviated to fit eleven
+                columns; see ``_display_badge``.
+            button_id: DOM id for the open button.
+            badge_id: DOM id for the badge static.
+            side: ``"left"`` for the Context rail, ``"right"`` for the
+                Inspector rail. Selects the fixed tooltip and both
+                abbreviation paths.
+            kwargs: Forwarded to ``DestinationRailHandle``.
         """
         super().__init__(
             label=label,
@@ -45,13 +59,24 @@ class ConsoleRailHandle(DestinationRailHandle):
         )
 
     def _display_label(self) -> str:
-        """Compact visible label; full text stays in the tooltip."""
+        """Return the compact visible label; full text stays in the tooltip.
+
+        Returns:
+            ``"Inspector"`` when the right-side label is the inspector's
+            canonical name, otherwise the label unchanged.
+        """
         if self.side != "right":
             return self.label
         return "Inspector" if self.label == CONSOLE_RAIL_INSPECTOR_LABEL else self.label
 
     def _display_badge(self) -> str:
-        """Badge copy that fits the collapsed inspector affordance."""
+        """Return badge copy that fits the collapsed inspector affordance.
+
+        Returns:
+            On the right side, approval counts shortened to ``"<n> appr"`` and
+            ``"artifact"`` to ``"art"``; any other badge, and every left-side
+            badge, unchanged.
+        """
         if self.side != "right":
             return self.badge
         if self.badge == "1 approval":

@@ -188,3 +188,51 @@ def test_console_section_header_is_the_shared_widget():
 
     assert ConsoleRailSectionHeader is DestinationRailSectionHeader
     assert CONSOLE_RAIL_SECTION_TOGGLE_PREFIX == RAIL_SECTION_TOGGLE_PREFIX
+
+
+@pytest.mark.asyncio
+async def test_derived_tooltip_follows_a_label_change_from_sync_state():
+    """A tooltip derived from the label must not go stale when the label changes.
+
+    ``sync_state`` updates ``label`` and recomposes, so a tooltip captured
+    once at construction would keep naming the old rail. Console is immune
+    because it supplies fixed tooltip strings, but any destination relying
+    on the derived default would show the wrong rail name after a sync.
+    """
+    handle = DestinationRailHandle(
+        label="Catalog",
+        button_id="lab-rail-open",
+        badge_id="lab-rail-badge",
+        side="left",
+    )
+    app = _HandleHarness(handle)
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#lab-rail-open", Button).tooltip == "Open Catalog rail"
+
+        handle.sync_state("Sources", "")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.query_one("#lab-rail-open", Button).label.__str__() == "Sources"
+        assert app.query_one("#lab-rail-open", Button).tooltip == "Open Sources rail"
+
+
+@pytest.mark.asyncio
+async def test_explicit_tooltip_is_not_rewritten_by_sync_state():
+    """An explicitly supplied tooltip stays fixed -- that is Console's contract."""
+    handle = DestinationRailHandle(
+        label="Context",
+        button_id="lab-rail-open",
+        badge_id="lab-rail-badge",
+        side="left",
+        open_tooltip="Open Context rail",
+    )
+    app = _HandleHarness(handle)
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        handle.sync_state("Something Else", "")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.query_one("#lab-rail-open", Button).tooltip == "Open Context rail"

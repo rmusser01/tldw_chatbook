@@ -54,7 +54,8 @@ class DestinationRailHandle(Vertical):
             button_id: DOM id for the open button.
             badge_id: DOM id for the badge static.
             side: ``"left"`` or ``"right"``; drives height and CSS class.
-            open_tooltip: Button tooltip. Defaults to ``"Open <label> rail"``.
+            open_tooltip: Fixed button tooltip. When omitted, the tooltip is
+                derived from ``label`` and tracks it across ``sync_state``.
             kwargs: Forwarded to ``Vertical``.
         """
         super().__init__(**kwargs)
@@ -63,12 +64,34 @@ class DestinationRailHandle(Vertical):
         self.button_id = button_id
         self.badge_id = badge_id
         self.side = side
-        self.open_tooltip = open_tooltip or f"Open {label} rail"
+        #: Caller-supplied override, or None to derive from the live label.
+        self._explicit_open_tooltip = open_tooltip
         self.add_class("console-rail-handle")
         self.add_class(f"console-rail-handle-{side}")
 
+    @property
+    def open_tooltip(self) -> str:
+        """Tooltip for the open button.
+
+        Resolved on read rather than captured in ``__init__``: ``sync_state``
+        can rename the rail, and a tooltip derived from the label would
+        otherwise keep naming the previous one after the recompose.
+
+        Returns:
+            The caller's fixed tooltip when one was supplied, else
+            ``"Open <label> rail"`` for the current label.
+        """
+        if self._explicit_open_tooltip is not None:
+            return self._explicit_open_tooltip
+        return f"Open {self.label} rail"
+
     def compose(self) -> ComposeResult:
-        """Render the open button and, when set, the badge."""
+        """Render the open button and, when set, the badge.
+
+        Returns:
+            A ``ComposeResult`` yielding the open button, followed by the
+            badge ``Static`` only when ``badge`` is non-empty.
+        """
         button_width = 11
         button_height: int | str = 3 if self.side == "right" else "100%"
         button = Button(self._display_label(), id=self.button_id, compact=True)
@@ -89,7 +112,12 @@ class DestinationRailHandle(Vertical):
             yield badge
 
     def sync_state(self, label: str, badge: str) -> None:
-        """Refresh label and badge without recomposing the whole screen."""
+        """Refresh label and badge without recomposing the whole screen.
+
+        Args:
+            label: New rail name for the handle button.
+            badge: New badge text; empty string removes the badge.
+        """
         if self.label == label and self.badge == badge:
             return
         self.label = label
@@ -97,11 +125,25 @@ class DestinationRailHandle(Vertical):
         self.call_later(self.recompose)
 
     def _display_label(self) -> str:
-        """Visible button text. Override to abbreviate."""
+        """Return the visible button text.
+
+        Subclass extension point: override to abbreviate a long rail name
+        for the eleven-column handle while leaving the tooltip full.
+
+        Returns:
+            The label as rendered on the button.
+        """
         return self.label
 
     def _display_badge(self) -> str:
-        """Visible badge text. Override to abbreviate."""
+        """Return the visible badge text.
+
+        Subclass extension point: override to abbreviate badge copy that
+        would not fit the collapsed handle.
+
+        Returns:
+            The badge as rendered under the button.
+        """
         return self.badge
 
 
@@ -122,13 +164,27 @@ class DestinationRailSectionHeader(Horizontal):
         open: bool,
         **kwargs: Any,
     ) -> None:
+        """Create a rail section header.
+
+        Args:
+            title: User-facing section title, also used in the toggle tooltip.
+            section_id: Stable id fragment for this section's child widget ids.
+            open: Whether the associated section body starts visible; drives
+                which chevron the toggle shows.
+            kwargs: Forwarded to ``Horizontal``.
+        """
         super().__init__(classes="console-rail-section-header", **kwargs)
         self.title = title
         self.section_id = section_id
         self.open = open
 
     def compose(self) -> ComposeResult:
-        """Render the section title and its collapse/expand toggle."""
+        """Render the section title and its collapse/expand toggle.
+
+        Returns:
+            A ``ComposeResult`` yielding the title ``Static`` then the
+            toggle ``Button``.
+        """
         title = Static(
             self.title,
             id=f"console-rail-section-title-{self.section_id}",
@@ -150,7 +206,11 @@ class DestinationRailSectionHeader(Horizontal):
         yield toggle
 
     def sync_open(self, open: bool) -> None:
-        """Refresh the toggle affordance after body visibility changes."""
+        """Refresh the toggle affordance after body visibility changes.
+
+        Args:
+            open: Whether the section body is now visible.
+        """
         self.open = open
         toggle = self.query_one(
             f"#{RAIL_SECTION_TOGGLE_PREFIX}{self.section_id}",
@@ -160,7 +220,17 @@ class DestinationRailSectionHeader(Horizontal):
         toggle.tooltip = self._toggle_tooltip()
 
     def _toggle_label(self) -> str:
+        """Return the chevron matching the current open state.
+
+        Returns:
+            The expanded glyph when open, the collapsed glyph otherwise.
+        """
         return GLYPH_EXPANDED if self.open else GLYPH_COLLAPSED
 
     def _toggle_tooltip(self) -> str:
+        """Return the toggle tooltip describing the action it performs.
+
+        Returns:
+            ``"Collapse <title>"`` when open, ``"Expand <title>"`` otherwise.
+        """
         return f"Collapse {self.title}" if self.open else f"Expand {self.title}"
