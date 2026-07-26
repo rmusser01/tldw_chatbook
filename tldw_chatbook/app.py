@@ -1820,9 +1820,10 @@ class LibraryIngestQueueMixin:
             candidate = Path(source_path).expanduser()
             if not candidate.is_dir():
                 return None
-        except OSError:
-            # An unreadable/oversized path is not a directory we can expand;
-            # let the normal single-source path report the failure.
+        except (OSError, ValueError):
+            # Unreadable, over-length, or malformed for this platform (Windows
+            # raises ValueError where POSIX raises OSError). Not a directory we
+            # can expand -- let the single-source path report the failure.
             return None
 
         raw_limit = get_cli_setting("library.ingest_directory_scan_limit", 1000)
