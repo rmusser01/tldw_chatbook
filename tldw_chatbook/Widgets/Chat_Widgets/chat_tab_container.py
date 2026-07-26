@@ -157,7 +157,10 @@ class ChatTabContainer(Container):
                 try:
                     title = validate_text_input(title, max_length=100)
                 except Exception as e:
-                    logger.warning(f"Invalid tab title, using default: {e}")
+                    logger.warning(
+                        "Invalid tab title; using default (exception_category={})",
+                        type(e).__name__,
+                    )
                     title = None
 
             # Generate unique tab ID

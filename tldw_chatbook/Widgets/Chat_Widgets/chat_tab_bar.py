@@ -130,7 +130,7 @@ class ChatTabBar(Horizontal):
         if not self.active_tab_id:
             self.set_active_tab(tab_id, emit=False)
 
-        logger.info(f"Added tab: {tab_id} with title: {session_data.title}")
+        logger.info("Added chat tab (tab_id={})", tab_id)
 
     def remove_tab(self, tab_id: str) -> None:
         """
@@ -207,7 +207,7 @@ class ChatTabBar(Horizontal):
             icon = "👤 "
 
         self.tab_buttons[tab_id].label = f"{icon}{new_title}"
-        logger.debug(f"Updated tab {tab_id} title to: {new_title}")
+        logger.debug("Updated chat tab title (tab_id={})", tab_id)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses in the tab bar."""

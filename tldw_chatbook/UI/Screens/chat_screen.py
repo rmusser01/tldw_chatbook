@@ -8447,19 +8447,35 @@ class ChatScreen(BaseAppScreen):
             handoff_payload=payload,
         )
 
-    async def _consume_pending_chat_handoff(self) -> None:
-        payload = getattr(self.app_instance, "pending_chat_handoff", None)
-        if payload is None:
-            return
+    async def _rollback_chat_handoff_tab(
+        self,
+        tab_container: ChatTabContainer,
+        tab_id: str,
+    ) -> bool:
+        """Close one exact ephemeral handoff tab after a failed delivery."""
+        try:
+            await tab_container.close_tab(tab_id)
+        except Exception as exc:
+            logger.warning(
+                "Chat handoff tab cleanup failed (exception_category={})",
+                type(exc).__name__,
+            )
+            return False
+        return tab_id not in tab_container.sessions
 
+    async def _consume_pending_chat_handoff(self) -> None:
         if self._handoff_consumption_in_progress:
             return
 
+        store = self.app_instance.pending_handoffs
+        claim = store.claim(HandoffChannel.CHAT)
+        if claim is None:
+            return
+
         self._handoff_consumption_in_progress = True
+        created_tab_id: str | None = None
         try:
-            payload = ChatHandoffPayload.from_dict(payload)
-            if payload is None:
-                return
+            payload = claim.value
 
             tab_container = self._get_tab_container()
             if tab_container is None:
@@ -8467,23 +8483,73 @@ class ChatScreen(BaseAppScreen):
                 # handoff into the Console live-work lane so the context lands
                 # in Staged Context instead of being dropped with a warning.
                 self._stage_handoff_as_console_live_work(payload)
-                self.app_instance.pending_chat_handoff = None
+                store.acknowledge(claim)
                 return
 
             session_data = self._session_data_for_handoff(payload)
-            tab_id = await tab_container.create_new_tab(session_data=session_data)
-            if not tab_id:
+            created_tab_id = await tab_container.create_new_tab(
+                session_data=session_data
+            )
+            if not created_tab_id:
                 self.app_instance.notify(
                     "Could not create a chat session for this context.",
                     severity="error",
                 )
+                store.release(claim)
                 return
 
-            await tab_container.switch_to_tab_async(tab_id)
-            session = tab_container.sessions.get(tab_id)
-            if session is not None:
-                await self._apply_handoff_to_chat_session(session, payload)
-            self.app_instance.pending_chat_handoff = None
+            await tab_container.switch_to_tab_async(created_tab_id)
+            session = tab_container.sessions.get(created_tab_id)
+            if session is None:
+                raise RuntimeError("created Chat handoff session is unavailable")
+            await self._apply_handoff_to_chat_session(session, payload)
+            store.acknowledge(claim)
+        except asyncio.CancelledError:
+            cleanup_succeeded = (
+                created_tab_id is None
+                or await self._rollback_chat_handoff_tab(
+                    tab_container,
+                    created_tab_id,
+                )
+            )
+            if cleanup_succeeded:
+                store.release(claim)
+            else:
+                store.acknowledge(claim)
+                self.app_instance.notify(
+                    "Chat context could not be applied cleanly. "
+                    "Close the incomplete tab before trying again.",
+                    severity="warning",
+                )
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Chat handoff delivery failed "
+                "(channel={}, revision={}, exception_category={})",
+                claim.channel.value,
+                claim.revision,
+                type(exc).__name__,
+            )
+            cleanup_succeeded = (
+                created_tab_id is None
+                or await self._rollback_chat_handoff_tab(
+                    tab_container,
+                    created_tab_id,
+                )
+            )
+            if cleanup_succeeded:
+                store.release(claim)
+                self.app_instance.notify(
+                    "Could not apply this context to Chat. You can try again.",
+                    severity="error",
+                )
+            else:
+                store.acknowledge(claim)
+                self.app_instance.notify(
+                    "Chat context could not be applied cleanly. "
+                    "Close the incomplete tab before trying again.",
+                    severity="warning",
+                )
         finally:
             self._handoff_consumption_in_progress = False
 
