@@ -837,12 +837,14 @@ once from the combined worktree:
 ```bash
 pytest -q Tests/Packaging/test_installed_distribution.py
 pytest -q Tests/UI/test_product_maturity_phase1_harness.py
-pytest -q
+pytest -q Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_screen_state_full_app.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py Tests/UI/test_product_maturity_phase1_harness.py Tests/Packaging/test_installed_distribution.py Tests/test_application_state_ownership.py
 ```
 
-The final full suite must remain green against the existing baseline of 12,757
-passed and 231 skipped tests. The baseline is evidence, not a license to ignore
-new skips or unrelated failures.
+The authorized integrated suite must remain green and records exact
+pass/skip/warning counts and duration. Raw repository-wide pytest is excluded
+because it would collect retired test/simplified applications; application
+behavior is verified through the normal production `TldwCli` suites above,
+while app-independent owners and static contracts are tested directly.
 
 ## Documentation Supersession
 

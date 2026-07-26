@@ -49,11 +49,13 @@ pytest 8.4.2, and Ruff 0.15.22.
 - Modify `tldw_chatbook/UI/Screens/settings_screen.py`: retain explicit deep-copy-on-restore behavior for nested drafts.
 - Modify comments in `tldw_chatbook/UI/Screens/chat_screen.py` and affected tests that still describe `_screen_states`.
 - Create `Tests/UI/test_screen_state_store.py`: unit contract, thread-affinity, redaction, and shallow-copy cost tests.
-- Modify `Tests/UI/test_screen_navigation.py`: canonical aliases, startup, ordering, fresh construction, failure behavior, and context precedence.
-- Modify `Tests/UI/test_settings_configuration_hub.py`: nested Settings draft isolation.
-- Modify `Tests/UI/test_console_internals_decomposition.py`: large Console snapshot identity/cost sentinel.
-- Modify `Tests/UI/test_home_screen.py`, `Tests/UI/test_destination_shells.py`, and `Tests/UI/test_console_live_work_handoffs.py`: replace fixture assumptions about `_screen_states`.
+- Create `Tests/UI/test_screen_state_full_app.py`: canonical aliases, startup, ordering, fresh construction, failure behavior, context precedence, and nested Settings draft isolation through the normal production `TldwCli` and actual destination screens.
 - Modify `Tests/test_application_state_ownership.py`: prohibit app/consumer `_screen_states` ownership.
+
+Do not modify, run, or cite the retired navigation, Settings,
+Console-internals, Home, destination-shell, or Console-live-work harness
+suites. Application behavior belongs in `test_screen_state_full_app.py`;
+app-independent store and AST behavior is tested directly.
 
 ## Task 1: Implement the Memory-Only Snapshot Owner
 
@@ -198,12 +200,12 @@ git commit -m "feat(navigation): add runtime-scoped screen state owner (task-644
 
 - Modify: `tldw_chatbook/app.py`
 - Modify: `tldw_chatbook/runtime_policy/bootstrap.py`
-- Modify: `Tests/UI/test_screen_navigation.py`
+- Create: `Tests/UI/test_screen_state_full_app.py`
 - Modify: `Tests/RuntimePolicy/test_runtime_policy_bootstrap.py`
 
 - [ ] **Step 1: Write failing canonical-key and navigation-order tests**
 
-Extend the real navigation tests to prove:
+Mount the real `TldwCli` and production screens to prove:
 
 - outgoing save uses the existing canonical `current_tab`;
 - incoming restore uses `current_tab_value` from `resolve_screen_target()`;
@@ -217,26 +219,16 @@ Extend the real navigation tests to prove:
 - each navigation still constructs a fresh screen;
 - explicit Library, Settings, and Watchlists context applies after restore.
 
-Use ordered spy events:
-
-```python
-assert events == [
-    "flush",
-    "save",
-    "construct",
-    "restore",
-    "apply_context",
-    "switch",
-    "publish_current_tab",
-]
-```
+Use observers attached only to actual production screen instances when a
+failure or ordering seam cannot be observed from final mounted state. Do not
+construct a substitute app or screen.
 
 - [ ] **Step 2: Run the focused navigation tests**
 
 Run:
 
 ```bash
-pytest Tests/UI/test_screen_navigation.py -q -k "state or alias or context or flush or fresh"
+pytest Tests/UI/test_screen_state_full_app.py -q -k "alias or context or flush or fresh or restore_failure"
 ```
 
 Expected: at least canonical-alias and store-ownership cases FAIL against `_screen_states`.
@@ -280,7 +272,7 @@ Delete `add_runtime_policy_snapshot()`, `reconcile_saved_screen_state()`, and th
 Run:
 
 ```bash
-pytest Tests/UI/test_screen_navigation.py Tests/RuntimePolicy/test_runtime_policy_bootstrap.py -q
+pytest Tests/UI/test_screen_state_full_app.py Tests/RuntimePolicy/test_runtime_policy_bootstrap.py -q
 ```
 
 Expected: PASS.
@@ -288,7 +280,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit navigation migration**
 
 ```bash
-git add tldw_chatbook/app.py tldw_chatbook/runtime_policy/bootstrap.py Tests/UI/test_screen_navigation.py Tests/RuntimePolicy/test_runtime_policy_bootstrap.py
+git add tldw_chatbook/app.py tldw_chatbook/runtime_policy/bootstrap.py Tests/UI/test_screen_state_full_app.py Tests/RuntimePolicy/test_runtime_policy_bootstrap.py
 git commit -m "refactor(navigation): move snapshots behind canonical owner (task-644)"
 ```
 
@@ -297,7 +289,7 @@ git commit -m "refactor(navigation): move snapshots behind canonical owner (task
 **Files:**
 
 - Modify: `tldw_chatbook/app.py`
-- Modify: `Tests/UI/test_screen_navigation.py`
+- Modify: `Tests/UI/test_screen_state_full_app.py`
 
 - [ ] **Step 1: Write mounted alias-startup regressions**
 
@@ -308,7 +300,7 @@ Parameterize startup defaults `ccp`, `notes`, and `customize`. Run `_push_initia
 Run:
 
 ```bash
-pytest Tests/UI/test_screen_navigation.py -q -k "startup and (ccp or notes or customize or alias)"
+pytest Tests/UI/test_screen_state_full_app.py -q -k "startup or alias"
 ```
 
 Expected: FAIL because `_set_initial_tab()` and the final `_post_mount_setup()` assignment publish the unresolved configured route.
@@ -322,7 +314,7 @@ Delete `_set_initial_tab()`, `self.call_later(self._set_initial_tab)`, and the f
 Run:
 
 ```bash
-pytest Tests/UI/test_screen_navigation.py -q -k "startup or initial or watcher"
+pytest Tests/UI/test_screen_state_full_app.py -q -k "startup or alias"
 ```
 
 Expected: PASS.
@@ -330,7 +322,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit canonical startup**
 
 ```bash
-git add tldw_chatbook/app.py Tests/UI/test_screen_navigation.py
+git add tldw_chatbook/app.py Tests/UI/test_screen_state_full_app.py
 git commit -m "fix(navigation): preserve canonical startup tab identity (task-644)"
 ```
 
@@ -342,22 +334,22 @@ git commit -m "fix(navigation): preserve canonical startup tab identity (task-64
 - Modify: `tldw_chatbook/UI/Screens/workflows_screen.py`
 - Modify: `tldw_chatbook/UI/Screens/schedules_screen.py`
 - Modify: `tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py`
-- Modify: `Tests/UI/test_home_screen.py`
-- Modify: `Tests/UI/test_destination_shells.py`
-- Modify: `Tests/UI/test_console_live_work_handoffs.py`
+- Modify: `Tests/test_application_state_ownership.py`
 
 - [ ] **Step 1: Add failing recent-work owner tests**
 
-For Home and the async Schedules workbench, seed `screen_state_store`, pass the current `RuntimeIdentity`, and assert adapters receive `has_recent_work=True`. Switch runtime identity and assert incompatible snapshots are discarded and adapters receive `False`.
-
-For threaded Workflows and Schedules shells, record thread IDs and assert `has_snapshots()` is called on the app thread before the `thread=True` worker runs. The worker receives a captured boolean and does not touch the store.
+Add a direct AST ownership check proving Home, Workflows, Schedules, and the
+Schedules workbench call `screen_state_store.has_snapshots()` only from the
+known app-loop methods. In particular, the threaded
+`_refresh_latest_console_context` workers must receive a captured boolean and
+must not touch the store.
 
 - [ ] **Step 2: Run tests to verify direct dictionary assumptions**
 
 Run:
 
 ```bash
-pytest Tests/UI/test_home_screen.py Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py -q -k "recent_work or screen_state or snapshot"
+pytest Tests/test_application_state_ownership.py -q -k recent_work_consumers
 ```
 
 Expected: FAIL until fixtures and consumers use the owner.
@@ -378,7 +370,7 @@ For `WorkflowsScreen` and `SchedulesScreen`, compute and store/pass the boolean 
 Run:
 
 ```bash
-pytest Tests/UI/test_home_screen.py Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py -q
+pytest Tests/test_application_state_ownership.py -q -k recent_work_consumers
 ```
 
 Expected: PASS.
@@ -386,7 +378,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit consumer migration**
 
 ```bash
-git add tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/UI/Screens/workflows_screen.py tldw_chatbook/UI/Screens/schedules_screen.py tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py Tests/UI/test_home_screen.py Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py
+git add tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/UI/Screens/workflows_screen.py tldw_chatbook/UI/Screens/schedules_screen.py tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py Tests/test_application_state_ownership.py
 git commit -m "refactor(ui): read recent snapshots through the owner (task-644)"
 ```
 
@@ -396,14 +388,15 @@ git commit -m "refactor(ui): read recent snapshots through the owner (task-644)"
 
 - Modify: `tldw_chatbook/UI/Screens/settings_screen.py`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
-- Modify: `Tests/UI/test_settings_configuration_hub.py`
-- Modify: `Tests/UI/test_console_internals_decomposition.py`
-- Modify: `Tests/UI/test_library_shell.py`
+- Modify: `Tests/UI/test_screen_state_store.py`
+- Modify: `Tests/UI/test_screen_state_full_app.py`
 - Modify: `Tests/test_application_state_ownership.py`
 
 - [ ] **Step 1: Add nested Settings and large Console sentinels**
 
-Settings: save a draft containing nested `originals`/`values`, restore it, mutate the restored screen's draft, and assert neither the producer nor the store's later restore changes.
+Settings: on a mounted production Settings screen, restore a draft containing
+nested `originals`/`values`, mutate the restored screen's draft, and assert the
+producer remains detached.
 
 Console: put a nested history object whose `__deepcopy__()` raises into a snapshot, save/restore through the store, and assert the store never invokes deep copy while returning distinct outer mappings. This pins the cost boundary without using timing assertions.
 
@@ -421,7 +414,7 @@ Allow test-only white-box corruption setup. Update comments that claim `_screen_
 - [ ] **Step 3: Run the focused tests**
 
 ```bash
-pytest Tests/UI/test_screen_state_store.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_internals_decomposition.py Tests/UI/test_library_shell.py Tests/test_application_state_ownership.py -q -k "state or snapshot or draft or ownership"
+pytest Tests/UI/test_screen_state_store.py Tests/UI/test_screen_state_full_app.py Tests/test_application_state_ownership.py -q
 ```
 
 Expected: PASS.
@@ -429,7 +422,7 @@ Expected: PASS.
 - [ ] **Step 4: Commit nested ownership and guards**
 
 ```bash
-git add tldw_chatbook/UI/Screens/settings_screen.py tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_internals_decomposition.py Tests/UI/test_library_shell.py Tests/test_application_state_ownership.py
+git add tldw_chatbook/UI/Screens/settings_screen.py tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_screen_state_store.py Tests/UI/test_screen_state_full_app.py Tests/test_application_state_ownership.py
 git commit -m "test(state): guard snapshot ownership and copy boundaries (task-644)"
 ```
 
@@ -443,11 +436,11 @@ git commit -m "test(state): guard snapshot ownership and copy boundaries (task-6
 - [ ] **Step 1: Run focused and mounted verification**
 
 ```bash
-pytest Tests/UI/test_screen_state_store.py Tests/UI/test_screen_navigation.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_internals_decomposition.py Tests/UI/test_home_screen.py Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py Tests/test_application_state_ownership.py -q
+pytest Tests/UI/test_screen_state_store.py Tests/UI/test_screen_state_full_app.py Tests/test_application_state_ownership.py -q
 python -m compileall -q tldw_chatbook/UI/Navigation tldw_chatbook/UI/Screens
-python -m ruff check tldw_chatbook/UI/Navigation/screen_state_store.py tldw_chatbook/UI/Navigation/__init__.py tldw_chatbook/app.py tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/UI/Screens/workflows_screen.py tldw_chatbook/UI/Screens/schedules_screen.py tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py Tests/UI/test_screen_state_store.py Tests/UI/test_screen_navigation.py Tests/test_application_state_ownership.py
+python -m ruff check tldw_chatbook/UI/Navigation/screen_state_store.py tldw_chatbook/UI/Navigation/__init__.py tldw_chatbook/app.py tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/UI/Screens/workflows_screen.py tldw_chatbook/UI/Screens/schedules_screen.py tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py Tests/UI/test_screen_state_store.py Tests/UI/test_screen_state_full_app.py Tests/test_application_state_ownership.py
 python -m ruff check --ignore F841 tldw_chatbook/UI/Screens/settings_screen.py
-python -m ruff format --check tldw_chatbook/UI/Navigation/screen_state_store.py tldw_chatbook/UI/Navigation/__init__.py tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/UI/Screens/workflows_screen.py tldw_chatbook/UI/Screens/schedules_screen.py tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py Tests/UI/test_screen_state_store.py Tests/UI/test_screen_navigation.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_internals_decomposition.py Tests/UI/test_home_screen.py Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py Tests/test_application_state_ownership.py
+python -m ruff format --check tldw_chatbook/UI/Navigation/screen_state_store.py tldw_chatbook/UI/Navigation/__init__.py tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/UI/Screens/workflows_screen.py tldw_chatbook/UI/Screens/schedules_screen.py tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py Tests/UI/test_screen_state_store.py Tests/UI/test_screen_state_full_app.py Tests/test_application_state_ownership.py
 git diff --check
 ```
 
@@ -455,6 +448,12 @@ Expected: all commands exit 0. `settings_screen.py` has two verified
 pre-tranche F841 diagnostics and, with `app.py`, is already outside the Ruff
 formatter baseline; ignore only F841 for that file and do not create a
 large unrelated formatting diff.
+
+Application behavior in this gate is exercised only through the normal
+production `TldwCli` and actual destination screens. The retired navigation,
+Settings, Console-internals, Home, destination-shell, and Console-live-work
+harness suites are intentionally excluded because they construct surrogate
+applications.
 
 - [ ] **Step 2: Self-review all five acceptance criteria**
 

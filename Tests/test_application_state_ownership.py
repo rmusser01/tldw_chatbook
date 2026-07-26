@@ -35,6 +35,12 @@ CHAT_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen.py"
 STUDY_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "study_screen.py"
 ARTIFACTS_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "artifacts_screen.py"
 ACP_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "acp_screen.py"
+RECENT_WORK_SCREEN_PATHS = (
+    PRODUCTION_ROOT / "UI" / "Screens" / "home_screen.py",
+    PRODUCTION_ROOT / "UI" / "Screens" / "workflows_screen.py",
+    PRODUCTION_ROOT / "UI" / "Screens" / "schedules_screen.py",
+    PRODUCTION_ROOT / "UI" / "Screens" / "scheduling" / "schedules_workbench.py",
+)
 RETIRED_HANDOFF_FIELDS = (
     "pending_chat_handoff",
     "pending_console_launch",
@@ -708,6 +714,53 @@ def test_screen_state_store_backing_entries_stay_private_to_owner_module() -> No
                 violations.append((str(path.relative_to(PROJECT_ROOT)), node.lineno))
 
     assert violations == []
+
+
+def test_recent_work_consumers_use_owner_api_outside_threaded_workers() -> None:
+    expected_scopes = {
+        "tldw_chatbook/UI/Screens/home_screen.py": {
+            ("HomeScreen", "_build_dashboard_input"),
+        },
+        "tldw_chatbook/UI/Screens/workflows_screen.py": {
+            ("WorkflowsScreen", "on_mount"),
+            ("WorkflowsScreen", "_latest_console_follow_item"),
+        },
+        "tldw_chatbook/UI/Screens/schedules_screen.py": {
+            ("SchedulesScreen", "on_mount"),
+            ("SchedulesScreen", "_latest_console_follow_item"),
+        },
+        "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": {
+            ("SchedulesWorkbench", "_latest_console_follow_item_from_adapter"),
+        },
+    }
+    observed: dict[str, set[tuple[str, ...]]] = {}
+    for path in RECENT_WORK_SCREEN_PATHS:
+        relative = str(path.relative_to(PROJECT_ROOT))
+        scoped_calls: set[tuple[str, ...]] = set()
+        for class_node in (
+            node for node in _parse(path).body if isinstance(node, ast.ClassDef)
+        ):
+            for method in (
+                node
+                for node in class_node.body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            ):
+                if any(
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "has_snapshots"
+                    and _chain(node.func.value).endswith(".screen_state_store")
+                    for node in ast.walk(method)
+                ):
+                    scoped_calls.add((class_node.name, method.name))
+        observed[relative] = scoped_calls
+
+    assert observed == expected_scopes
+    assert all(
+        method_name != "_refresh_latest_console_context"
+        for path_scopes in observed.values()
+        for _class_name, method_name in path_scopes
+    )
 
 
 def test_legacy_state_exports_remain_serialization_compatible() -> None:

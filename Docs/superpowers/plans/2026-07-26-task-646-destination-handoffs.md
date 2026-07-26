@@ -523,7 +523,7 @@ git commit -m "test(state): close destination handoff ownership boundary (task-6
 - [ ] **Step 1: Run all focused application-state suites**
 
 ```bash
-pytest Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py Tests/test_application_state_ownership.py -q
+pytest Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_screen_state_full_app.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py Tests/test_application_state_ownership.py -q
 ```
 
 Expected: PASS.
@@ -557,9 +557,9 @@ only the verified pre-tranche diagnostics in `config.py` and
 
 ```bash
 python -m compileall -q tldw_chatbook
-python -m ruff check tldw_chatbook/runtime_policy tldw_chatbook/state tldw_chatbook/app.py tldw_chatbook/UI/Navigation tldw_chatbook/UI/Screens/media_ingest_screen.py tldw_chatbook/UI/Screens/study_screen.py tldw_chatbook/UI/Screens/study_scope_models.py tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/UI/Screens/workflows_screen.py tldw_chatbook/UI/Screens/schedules_screen.py tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Screens/artifacts_screen.py tldw_chatbook/UI/Screens/acp_screen.py tldw_chatbook/Chat/console_live_work.py tldw_chatbook/ACP_Interop/runtime_session.py Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py Tests/UI/test_product_maturity_phase1_harness.py Tests/test_application_state_ownership.py
+python -m ruff check tldw_chatbook/runtime_policy tldw_chatbook/state tldw_chatbook/app.py tldw_chatbook/UI/Navigation tldw_chatbook/UI/Screens/media_ingest_screen.py tldw_chatbook/UI/Screens/study_screen.py tldw_chatbook/UI/Screens/study_scope_models.py tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/UI/Screens/workflows_screen.py tldw_chatbook/UI/Screens/schedules_screen.py tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Screens/artifacts_screen.py tldw_chatbook/UI/Screens/acp_screen.py tldw_chatbook/Chat/console_live_work.py tldw_chatbook/ACP_Interop/runtime_session.py Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_screen_state_full_app.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py Tests/UI/test_product_maturity_phase1_harness.py Tests/test_application_state_ownership.py
 python -m ruff check --ignore F841 tldw_chatbook/config.py tldw_chatbook/UI/Screens/settings_screen.py
-python -m ruff format --check tldw_chatbook/runtime_policy/source_state.py tldw_chatbook/runtime_policy/bootstrap.py tldw_chatbook/runtime_policy/server_capabilities.py tldw_chatbook/state/app_state.py tldw_chatbook/state/__init__.py tldw_chatbook/UI/Navigation tldw_chatbook/UI/Screens/media_ingest_screen.py tldw_chatbook/UI/Screens/study_screen.py tldw_chatbook/UI/Screens/study_scope_models.py tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/UI/Screens/workflows_screen.py tldw_chatbook/UI/Screens/schedules_screen.py tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py tldw_chatbook/UI/Screens/artifacts_screen.py tldw_chatbook/UI/Screens/acp_screen.py tldw_chatbook/Chat/console_live_work.py tldw_chatbook/ACP_Interop/runtime_session.py Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py Tests/UI/test_product_maturity_phase1_harness.py Tests/test_application_state_ownership.py
+python -m ruff format --check tldw_chatbook/runtime_policy/source_state.py tldw_chatbook/runtime_policy/bootstrap.py tldw_chatbook/runtime_policy/server_capabilities.py tldw_chatbook/state/app_state.py tldw_chatbook/state/__init__.py tldw_chatbook/UI/Navigation tldw_chatbook/UI/Screens/media_ingest_screen.py tldw_chatbook/UI/Screens/study_screen.py tldw_chatbook/UI/Screens/study_scope_models.py tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/UI/Screens/workflows_screen.py tldw_chatbook/UI/Screens/schedules_screen.py tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py tldw_chatbook/UI/Screens/artifacts_screen.py tldw_chatbook/UI/Screens/acp_screen.py tldw_chatbook/Chat/console_live_work.py tldw_chatbook/ACP_Interop/runtime_session.py Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_screen_state_full_app.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py Tests/UI/test_product_maturity_phase1_harness.py Tests/test_application_state_ownership.py
 git diff --check
 ```
 
@@ -568,7 +568,7 @@ Expected: all commands exit 0.
 - [ ] **Step 5: Run the authorized integrated suite**
 
 ```bash
-pytest Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py Tests/UI/test_product_maturity_phase1_harness.py Tests/Packaging/test_installed_distribution.py Tests/test_application_state_ownership.py -q
+pytest Tests/RuntimePolicy Tests/UI/test_screen_state_store.py Tests/UI/test_screen_state_full_app.py Tests/UI/test_pending_handoff_store.py Tests/UI/test_pending_handoffs_full_app.py Tests/UI/test_destination_handoffs_full_app.py Tests/UI/test_product_maturity_phase1_harness.py Tests/Packaging/test_installed_distribution.py Tests/test_application_state_ownership.py -q
 ```
 
 Expected: PASS. Record exact pass/skip/warning counts and duration. Raw
