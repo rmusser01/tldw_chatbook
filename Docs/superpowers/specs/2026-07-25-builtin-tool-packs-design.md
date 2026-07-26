@@ -24,10 +24,11 @@ take any action against the substantial subsystems this application already owns
 
 Meanwhile `Tools/tool_executor.py` (System A) holds working `read_file`,
 `list_directory`, `write_file`, `rag_search`, `create_note`, `search_notes`,
-`update_note`, and `web_search` implementations that the Console **never reaches** —
-they are wired only to the deprecated legacy chat path. TASK-545 established that
-System A and the agent runtime (System B) are disjoint systems, and that the
-resolution is to port System A's tools into System B and gate them there.
+`update_note`, and `web_search` implementations that **nothing executes** — TASK-545
+described them as reachable from the deprecated legacy chat path, but that path has
+since been deleted (§4.7). TASK-545 established that System A and the agent runtime
+(System B) are disjoint systems, and that the resolution is to port System A's tools
+into System B and gate them there.
 
 This spec covers that port and what comes after it.
 
@@ -65,8 +66,9 @@ load-bearing for a decision below.
 2. **Granularity:** hybrid. Read paths collapse behind `corpus_search`/`corpus_read`
    with a `kind` discriminator; every mutation and action stays its own named tool so
    the approval card is always specific about what will happen.
-3. **Disclosure:** user-enabled packs bound the catalog, plus an upgraded `find()` so
-   cross-pack discovery works.
+3. **Disclosure:** user-enabled packs bound the catalog. An upgraded `find()` for
+   cross-pack discovery was part of this decision, but §6.1's raised threshold defers
+   it — a modest pack set never reaches `find_tools` at all (§7.1).
 4. **Risk appetite:** full shell execution is in scope, with a command denylist,
    explicit disclosure that it acts outside the workspace, and a sandbox seam. Users
    are to be encouraged toward constrained environments; that guidance is the real
@@ -269,10 +271,28 @@ Two consequences:
    and outlive the executor.
 2. **The `Tool` ABC survives the removal.** `Agents/builtin_tool_gate.py` imports `Tool`
    from `Tools.tool_executor`, and `risk_tags` lives on it. Removal must relocate the
-   ABC rather than delete the module wholesale.
+   ABC rather than delete the module wholesale, and `Tools/__init__.py`'s eager
+   `get_tool_executor`/`reload_tool_executor` re-exports go with it.
 
 This is recorded here because TASK-545's own text predates the deletion campaign and
 will otherwise send an implementer looking for callers that no longer exist.
+
+**Three `Tools/` subsystems need an explicit disposition** so the removal does not take
+them by accident, and because none were considered when the catalog was drawn:
+
+- `code_audit_tool.py` (`CodeAuditTool` + `FileAuditSystem`) audits *System A's own*
+  file operations. With System A gone it audits nothing, and the equivalent record for
+  the new packs already exists in `MCP/execution_log.py`, which built-in decisions
+  already write to. **Remove with System A.**
+- `Tools/Mind_Map/` — mindmap model, mermaid parser, JSON Canvas handler, exporter,
+  renderer. Not part of System A's registry and not reached by the executor.
+  **Leave in place; out of scope.** A future `authoring` tool exposing mermaid/canvas
+  export is a plausible candidate but is not proposed here.
+- `Tools/repo2txt/` — repository flattening. Also not part of the executor registry.
+  **Leave in place; out of scope**, though it is the most promising unclaimed candidate
+  in the tree: a `pack_repo` tool in the `files` pack would give an agent whole-repo
+  context in one call. Deliberately not added now — it would need its own size and
+  token-budget design against §6.2's result cap.
 
 ## 5. The catalog
 
@@ -407,6 +427,12 @@ long run where progressive disclosure pays off is the exception, and it is exact
 run that can afford the tokens. If telemetry later shows long runs dominating, the
 threshold is a single constant to lower.
 
+**The threshold governs the whole catalog, not the pack count.** `initial_disclosure`
+measures `registry.list_catalog()`, which is built-ins ∪ skills ∪ MCP tools. A user with
+three packs (14) plus a handful of skills and a populated MCP server is over 16 and pays
+for progressive disclosure regardless. The benefit lands on users with few or no
+skills/MCP servers — which is the out-of-the-box case this program exists to improve.
+
 **Tests:** a run with a full pack set can load past the old ceiling and still invoke the
 last-loaded tool; a run with a 14-tool catalog discloses directly and issues no
 `find_tools` call.
@@ -476,8 +502,10 @@ if `max_steps` drops below the derived minimum, and validates the new numbers.
 - `BuiltinToolServices` frozen dataclass and its injection at
   `_compose_run_registry_and_allowed`
 - Pack-enablement config keys and defaults, with an unmocked read test (§4.3)
-- TASK-547's `[tools]` reachability fix, since it governs §4.6's root (§4.3)
-- The §4.6 filesystem root policy, shared with §8.4's denylist
+- TASK-547 closed by **removing** `[tools]` and the `Tools_Settings_Window` switches
+  (§4.3, §4.7); the sandbox root moves to the pack config section
+- The §4.6 filesystem root policy, implemented as a **shared path-denylist module** that
+  Phase 4's `run_command` reuses verbatim (§8.4) rather than reimplementing
 - `files` pack, **read-only subset**: `read_file`, `list_directory`, `glob_files`,
   `grep_files`
 
@@ -630,4 +658,6 @@ reserved non-synced scope or a dedicated table is required.
   than merge it.
 - **TASK-659** (agent settings screen) renders the config keys Phase 1 defines, and
   already documents the budget constants §6.6 changes.
-- **TASK-547** (dead `[tools]` config) is the defect §4.3 must not repeat.
+- **TASK-547** (dead `[tools]` config) is closed in Phase 1 by deletion rather than
+  repair (§4.3). Its defect — a config section no reader can reach — is also the trap
+  the new pack section must not reproduce.
