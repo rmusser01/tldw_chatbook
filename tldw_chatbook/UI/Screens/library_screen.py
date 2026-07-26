@@ -15086,8 +15086,17 @@ class LibraryScreen(BaseAppScreen):
         self._open_selected_media_handoff()
 
     @on(Button.Pressed, "#library-workspace-import-sources")
-    def open_workspace_import_sources(self) -> None:
-        self.post_message(NavigateToScreen("ingest"))
+    async def open_workspace_import_sources(self, event: Button.Pressed) -> None:
+        """Open the Import media canvas in place.
+
+        This was the last action still deep-linking to the standalone Ingest
+        screen. Every other route into ingest -- the rail row, the rail-top
+        button, Home's ingest deep link -- mounts the canvas here instead, so
+        this one sent the user to a different screen for the same job (and, once
+        that screen is retired, to nothing at all).
+        """
+        event.stop()
+        await self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
 
     @on(Button.Pressed, "#library-create-local-workspace")
     async def create_local_workspace(self, event: Button.Pressed) -> None:
