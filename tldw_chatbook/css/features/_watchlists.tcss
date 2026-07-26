@@ -72,6 +72,16 @@
     text-wrap: wrap;
 }
 
+/* Collapsed breadcrumb levels (Task 5 fix round 2): muted and left-aligned
+ * so they read as ancestry, not as an action -- distinct from the deepest
+ * level's action buttons directly below them, which keep the default
+ * centered/emphasized Button look.
+ */
+.inspector-breadcrumb {
+    color: $ds-text-muted;
+    text-align: left;
+}
+
 .watchlists-centre {
     width: 1fr;
     min-width: 0;

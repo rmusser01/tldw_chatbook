@@ -38,6 +38,7 @@ from ..Subscription_Modules.notifications_inbox_controller import (
     NotificationsInboxController,
 )
 from ..Watchlists_Modules.inspector_pane import (
+    BreadcrumbScopeSelected,
     CheckNowRequested,
     DeleteRequested,
     EditRuleRequested,
@@ -1014,6 +1015,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         event.stop()
         self._apply_layout(self.region_layout.toggle(event.region))
 
+    def _apply_tree_scope(self, scope: TreeScope) -> None:
+        """The single reconciliation point for "the tree scope is now `scope`".
+
+        Used by both a real tree click (`_on_tree_scope_changed`) and a
+        breadcrumb promotion (`handle_breadcrumb_scope_selected`) -- Task 5
+        fix round 2, Finding 3 -- since promoting a breadcrumb means exactly
+        the same thing a tree click at that node would.
+
+        Clears `selected_entity` (Finding 1): the entity, if any, was
+        selected from a pane row under whatever scope was previously in
+        view. Leaving it in place here is exactly the reproduced bug --
+        select an item under Watchlist 1, switch the tree to Watchlist 2,
+        and the breadcrumb names Watchlist 2 while the actions still act on
+        the Watchlist-1 item, with no indication of the mismatch. Navigating
+        the tree means navigating away from that entity, full stop; there is
+        no "keep both in sync" reading of `_resolve_levels` appending
+        `selected_entity` as deepest that survives this.
+        """
+        self._breadcrumb_labels = self._resolve_breadcrumb_labels(scope)
+        self.selected_entity = None
+        self.selected_scope = scope
+
     @on(TreeScopeChanged)
     def _on_tree_scope_changed(self, event: TreeScopeChanged) -> None:
         """Store the tree's selection on the screen, not the tree.
@@ -1022,16 +1045,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         the create-form draft do: the workbench's `region_layout` is
         `recompose=True`, so a bare rail toggle rebuilds a brand new
         `WatchlistTree` that would otherwise lose the selection.
-
-        `_breadcrumb_labels` is resolved here too (Task 5 fix round 1) --
-        before `selected_scope` is assigned, so `watch_selected_scope`
-        (fired by that assignment) pushes both into the mounted Inspector
-        together, and `_build_inspector_pane` re-seeds both from the same
-        screen state on the next workbench rebuild.
         """
         event.stop()
-        self._breadcrumb_labels = self._resolve_breadcrumb_labels(event.scope)
-        self.selected_scope = event.scope
+        self._apply_tree_scope(event.scope)
+
+    @on(BreadcrumbScopeSelected)
+    def handle_breadcrumb_scope_selected(self, event: BreadcrumbScopeSelected) -> None:
+        """Promote a collapsed breadcrumb level (Task 5 fix round 2, Finding 3).
+
+        `InspectorPane` posts this when a shallower breadcrumb is clicked;
+        until this handler existed, the click -- the literal interaction the
+        spec describes -- did nothing. Delegates to the same reconciliation
+        a real tree click uses, since promoting a breadcrumb IS navigating
+        the tree to that node.
+        """
+        event.stop()
+        self._apply_tree_scope(event.scope)
 
     def watch_selected_scope(self) -> None:
         """Push scope + resolved labels into the live Inspector, if mounted.
@@ -1150,6 +1179,31 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except Exception:
             pass
 
+    def _select_entity(self, entity: dict[str, Any] | None) -> None:
+        """The single reconciliation point for "the deepest selection is now
+        `entity`" (Task 5 fix round 2, Finding 1) -- the other half of
+        `_apply_tree_scope`.
+
+        Resets `selected_scope` back to the tree's root, rather than leaving
+        whatever a PRIOR tree click set in place: Sources/Runs/Items/Rules
+        list rows independent of the tree's scope in this slice (Task 7
+        gives Feeds/Items real scoping; these tabs still don't carry
+        watchlist/source ancestry), so "all" is the only ancestry actually
+        known here. Asserting a specific watchlist/source the entity may not
+        even belong to would be the identical lie in the other direction --
+        exactly what let a Watchlist-2 breadcrumb sit above Watchlist-1's
+        item actions before this fix.
+
+        Only reconciles when selecting a real entity; clearing back to
+        `None` (deletion completing, section switching to Overview, etc.)
+        leaves whatever scope is already in view alone; there is nothing
+        to reconcile against.
+        """
+        self.selected_entity = entity
+        if entity is not None:
+            self._breadcrumb_labels = []
+            self.selected_scope = TreeScope(kind="all")
+
     @on(SectionSelected)
     def handle_section_selected(self, event: SectionSelected) -> None:
         event.stop()
@@ -1189,7 +1243,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_source_selected(self, event: SourceSelected) -> None:
         event.stop()
         self.selected_source = event.source
-        self.selected_entity = event.source
+        self._select_entity(event.source)
 
     @on(CreateFormDraftChanged)
     def handle_source_create_draft_changed(self, event: CreateFormDraftChanged) -> None:
@@ -1211,7 +1265,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_run_selected(self, event: RunSelected) -> None:
         event.stop()
         self.selected_run = event.run
-        self.selected_entity = event.run
+        self._select_entity(event.run)
 
     @on(CreateSourceRequested)
     def handle_create_source_requested(self, event: CreateSourceRequested) -> None:
@@ -1428,7 +1482,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._pending_navigation_run_backend = None
             if had_pending_target:
                 self.selected_run = requested_run
-                self.selected_entity = requested_run
+                # A deep-linked run is a new selection exactly like a user
+                # picking a row (Task 5 fix round 2, Finding 1) -- route it
+                # through the same reconciliation rather than setting
+                # `selected_entity` directly.
+                self._select_entity(requested_run)
             if self.is_mounted:
                 try:
                     runs_pane = self.query_one("#watchlists-runs-pane", RunsPane)
@@ -1538,7 +1596,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_notification_selected(self, event: NotificationSelected) -> None:
         event.stop()
         self.selected_notification = event.notification
-        self.selected_entity = (
+        # Not one of the four handlers the reviewer named, but the identical
+        # bug shape: a notification is an entity like any other, and was
+        # setting `selected_entity` directly, leaving a stale scope in place.
+        self._select_entity(
             {**event.notification, "entity_kind": "client_notification"}
             if event.notification
             else None
@@ -1610,7 +1671,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(ItemSelected)
     def handle_item_selected(self, event: ItemSelected) -> None:
         event.stop()
-        self.selected_entity = event.item
+        self._select_entity(event.item)
 
     @on(RefreshItemsRequested)
     def handle_refresh_items_requested(self, event: RefreshItemsRequested) -> None:
@@ -1641,7 +1702,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(RuleSelected)
     def handle_rule_selected(self, event: RuleSelected) -> None:
         event.stop()
-        self.selected_entity = event.rule
+        self._select_entity(event.rule)
 
     @on(RuleFormVisibilityChanged)
     def handle_rule_form_visibility_changed(

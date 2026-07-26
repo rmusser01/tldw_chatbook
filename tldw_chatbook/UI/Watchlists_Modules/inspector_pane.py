@@ -184,13 +184,39 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             elif deepest.kind == "notification":
                 yield Static("Use the inbox controls to mark read or dismiss.")
             elif deepest.kind == "watchlist":
-                # Bulk actions over the watchlist's member sources. The full
-                # spec table also lists "Add source" and "Rename" here; those
-                # need new message types and a real editor, which is a wider
-                # change than this task's brief -- deferred rather than
-                # invented ad hoc.
-                yield Button("Check now", id="inspector-check-now-button", variant="primary")
-                yield Button("Delete", id="inspector-delete-button", variant="error")
+                # Bulk actions over the watchlist's member sources. Rendered
+                # DISABLED, not omitted (fix round 2, Finding 2): the ids are
+                # shared with the source-level actions and post the same
+                # real messages, but every consumer handler on the screen
+                # early-returns silently on `entity is None` -- there is no
+                # bulk-check/bulk-delete backend behind a bare watchlist
+                # selection, only the per-source one. An enabled button
+                # whose click produces no action, no error, and no toast is
+                # worse than an absent one. The full spec table also lists
+                # "Add source" and "Rename" here; those have no message
+                # types at all yet and stay out of scope entirely, same as
+                # before.
+                yield Button(
+                    "Check now",
+                    id="inspector-check-now-button",
+                    variant="primary",
+                    disabled=True,
+                    tooltip=(
+                        "Unavailable: checking every source in a watchlist at "
+                        "once is not implemented yet. Select one of its "
+                        "sources to check it."
+                    ),
+                )
+                yield Button(
+                    "Delete",
+                    id="inspector-delete-button",
+                    variant="error",
+                    disabled=True,
+                    tooltip=(
+                        "Unavailable: deleting a whole watchlist from here is "
+                        "not implemented yet."
+                    ),
+                )
             else:
                 yield Button("Delete", id="inspector-delete-button", variant="error")
 

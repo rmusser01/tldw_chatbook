@@ -9,6 +9,7 @@ from Tests.UI.test_destination_shells import DestinationHarness, StaticWatchlist
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import BreadcrumbScopeSelected, InspectorPane
+from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
 
@@ -320,3 +321,144 @@ async def test_inspector_breadcrumb_survives_a_left_rail_toggle():
             "screen state, not start back at its class default"
         )
         assert inspector.breadcrumb_labels == ["Morning AI Brief"]
+
+
+# -- Task 5, fix round 2 -----------------------------------------------------
+#
+# Finding 1: `scope` and `selected_entity` drifted -- selecting an entity
+#   never touched `selected_scope`, and changing the tree scope never
+#   touched `selected_entity`, so a stale ancestor and a fresh entity (or
+#   vice versa) could both be shown together, describing two different
+#   things. Finding 2: the watchlist-level Check now/Delete buttons were
+#   enabled but every consumer handler silently no-ops on `entity=None`.
+#   Finding 3: `BreadcrumbScopeSelected` had zero consumers -- clicking a
+#   shallower breadcrumb did nothing.
+
+
+@pytest.mark.asyncio
+async def test_changing_scope_clears_a_stale_entity_selection():
+    """Finding 1's exact reproduction: select an item under one watchlist,
+    then switch the tree to a different watchlist. Before this fix the
+    breadcrumb named the new watchlist while the actions still targeted the
+    old item, with nothing on screen indicating the mismatch.
+    """
+    app = _app_with_watchlists([])
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen._tree_watchlists = [
+            {"id": 1, "name": "First Watchlist"},
+            {"id": 2, "name": "Second Watchlist"},
+        ]
+
+        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1)))
+        await pilot.pause()
+        screen.post_message(ItemSelected({"item_id": "item-1", "title": "RAG Eval"}))
+        await pilot.pause()
+
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        assert inspector.query_one("#inspector-mark-reviewed-button", Button)
+
+        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=2)))
+        await pilot.pause()
+
+        assert screen.selected_entity is None, (
+            "switching the tree scope must drop the now-stale entity selection"
+        )
+        assert inspector.breadcrumb_labels == ["Second Watchlist"]
+        assert not inspector.query("#inspector-mark-reviewed-button"), (
+            "the breadcrumb now names Watchlist 2 -- Watchlist 1's item "
+            "actions must not still be showing beneath it"
+        )
+        assert inspector.query_one("#inspector-check-now-button", Button), (
+            "the deepest level is now the bare watchlist scope, so its own "
+            "action set (not the stale item's) should render"
+        )
+
+
+@pytest.mark.asyncio
+async def test_selecting_an_entity_clears_a_stale_watchlist_ancestor():
+    """The other write direction of Finding 1: browse into a source via the
+    tree, then select an unrelated item from a pane row (its ancestry is
+    not actually known here -- see `_select_entity`'s docstring). The stale
+    source/watchlist breadcrumb must not linger above it.
+    """
+    app = _app_with_watchlists([])
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen._tree_watchlists = [{"id": 1, "name": "Morning AI Brief"}]
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="source", watchlist_id=1, source_id=10))
+        )
+        await pilot.pause()
+        screen.post_message(ItemSelected({"item_id": "item-1", "title": "RAG Eval"}))
+        await pilot.pause()
+
+        assert screen.selected_scope == TreeScope(kind="all")
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        assert inspector.breadcrumb_labels == []
+        assert not inspector.query("#inspector-breadcrumb-0"), (
+            "no breadcrumb ancestor is known for a pane-selected item in "
+            "this slice -- it must not keep showing the tree's old one"
+        )
+        assert inspector.query_one("#inspector-mark-reviewed-button", Button)
+
+
+@pytest.mark.asyncio
+async def test_watchlist_level_actions_are_disabled_not_silently_broken():
+    """Finding 2: Check now/Delete render for a bare watchlist scope but
+    must not be clickable -- no consumer handler acts on `entity=None`, so
+    an enabled button there produced no action, no error, and no toast.
+    """
+    app = _app_with_watchlists([])
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1)))
+        await pilot.pause()
+
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        check_now = inspector.query_one("#inspector-check-now-button", Button)
+        delete = inspector.query_one("#inspector-delete-button", Button)
+        assert check_now.disabled
+        assert delete.disabled
+        assert "not implemented yet" in str(check_now.tooltip or "")
+        assert "not implemented yet" in str(delete.tooltip or "")
+
+
+@pytest.mark.asyncio
+async def test_clicking_breadcrumb_actually_promotes_the_scope():
+    """Finding 3: the click reaching the screen must actually change what's
+    shown, not just get posted into the void -- `BreadcrumbScopeSelected`
+    had zero consumers before this fix.
+    """
+    app = _app_with_watchlists([])
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen._tree_watchlists = [{"id": 1, "name": "Morning AI Brief"}]
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="source", watchlist_id=1, source_id=10))
+        )
+        await pilot.pause()
+
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        assert inspector.query_one("#inspector-breadcrumb-0", Button)
+
+        inspector.query_one("#inspector-breadcrumb-0", Button).press()
+        await pilot.pause()
+
+        assert screen.selected_scope == TreeScope(kind="watchlist", watchlist_id=1)
+        assert inspector.scope == TreeScope(kind="watchlist", watchlist_id=1)
+        assert inspector.breadcrumb_labels == ["Morning AI Brief"]
+        # Promoted to the deepest level now -- it is the whole breadcrumb,
+        # not a collapsed ancestor of something deeper anymore.
+        assert not inspector.query("#inspector-breadcrumb-0")
