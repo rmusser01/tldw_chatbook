@@ -94,7 +94,26 @@ class WatchlistBundleService:
         description: str | None = None,
         tags: Sequence[str] | None = None,
     ) -> dict[str, Any]:
-        """Create a watchlist, auto-suffixing the name on collision."""
+        """Create a watchlist, auto-suffixing the name on collision.
+
+        Args:
+            name: Display name for the watchlist. Leading/trailing
+                whitespace is stripped before storing. If a watchlist with
+                the same name already exists (case-insensitively), a
+                numeric suffix such as ``" (2)"`` is appended until the
+                resolved name is unique.
+            description: Optional free-text description.
+            tags: Optional tags. Stored as a comma-joined string and split
+                back into a list of stripped, non-empty strings on read.
+
+        Returns:
+            The newly created watchlist as a dict with keys ``id``,
+            ``name``, ``description``, ``tags``, ``is_active``, and
+            ``sort_order``.
+
+        Raises:
+            ValueError: If ``name`` is empty or whitespace-only.
+        """
         if not name.strip():
             raise ValueError("watchlist name cannot be empty or whitespace-only")
         with self._db.transaction() as conn:
@@ -106,7 +125,26 @@ class WatchlistBundleService:
             return self._get(conn, cursor.lastrowid)
 
     def rename(self, watchlist_id: int, name: str) -> dict[str, Any]:
-        """Rename a watchlist, auto-suffixing on collision with another row."""
+        """Rename a watchlist, auto-suffixing on collision with another row.
+
+        Args:
+            watchlist_id: id of the watchlist to rename.
+            name: New display name. Leading/trailing whitespace is
+                stripped before storing. If another watchlist already has
+                this name (case-insensitively), a numeric suffix such as
+                ``" (2)"`` is appended until the resolved name is unique.
+                The watchlist being renamed is excluded from that check,
+                so renaming to its own current name (in any case) is a
+                no-op, not a collision.
+
+        Returns:
+            The updated watchlist as a dict (see :meth:`create` for the
+            shape).
+
+        Raises:
+            ValueError: If ``name`` is empty or whitespace-only.
+            KeyError: If no watchlist with ``watchlist_id`` exists.
+        """
         if not name.strip():
             raise ValueError("watchlist name cannot be empty or whitespace-only")
         with self._db.transaction() as conn:
@@ -117,22 +155,54 @@ class WatchlistBundleService:
             return self._get(conn, watchlist_id)
 
     def delete(self, watchlist_id: int) -> None:
-        """Delete a watchlist. Membership cascades; sources are untouched."""
+        """Delete a watchlist. Membership cascades; sources are untouched.
+
+        Args:
+            watchlist_id: id of the watchlist to delete. Deleting an id
+                that does not exist is a no-op.
+
+        Returns:
+            None.
+        """
         with self._db.transaction() as conn:
             conn.execute("DELETE FROM watchlists WHERE id = ?", (watchlist_id,))
 
-    def list_watchlists(self) -> list[dict[str, Any]]:
-        """All watchlists in display order."""
+    def list_watchlists(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        """All watchlists in display order.
+
+        Args:
+            limit: Maximum number of watchlists to return.
+            offset: Number of leading watchlists (in display order) to skip.
+
+        Returns:
+            Watchlist dicts ordered by ``sort_order`` then case-insensitive
+            name.
+        """
         rows = self._db.conn.execute(
             "SELECT id, name, description, tags, is_active, sort_order "
-            "FROM watchlists ORDER BY sort_order, LOWER(name)"
+            "FROM watchlists ORDER BY sort_order, LOWER(name) "
+            "LIMIT ? OFFSET ?",
+            (limit, offset),
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
 
     # --- Membership ---
 
     def add_source(self, watchlist_id: int, subscription_id: int) -> None:
-        """Add a source to a watchlist. Idempotent."""
+        """Add a source to a watchlist. Idempotent.
+
+        Args:
+            watchlist_id: id of the watchlist to add the source to.
+            subscription_id: id of the subscription to add.
+
+        Returns:
+            None.
+
+        Raises:
+            sqlite3.IntegrityError: If ``watchlist_id`` or
+                ``subscription_id`` does not reference an existing row
+                (both columns carry a ``FOREIGN KEY`` constraint).
+        """
         with self._db.transaction() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO watchlist_sources (watchlist_id, subscription_id) "
@@ -141,7 +211,16 @@ class WatchlistBundleService:
             )
 
     def remove_source(self, watchlist_id: int, subscription_id: int) -> None:
-        """Remove a source from a watchlist. The source itself survives."""
+        """Remove a source from a watchlist. The source itself survives.
+
+        Args:
+            watchlist_id: id of the watchlist to remove the source from.
+            subscription_id: id of the subscription to remove. Removing a
+                membership that does not exist is a no-op.
+
+        Returns:
+            None.
+        """
         with self._db.transaction() as conn:
             conn.execute(
                 "DELETE FROM watchlist_sources "
@@ -150,7 +229,17 @@ class WatchlistBundleService:
             )
 
     def list_sources(self, watchlist_id: int) -> list[int]:
-        """Subscription ids belonging to a watchlist."""
+        """Subscription ids belonging to a watchlist.
+
+        Args:
+            watchlist_id: id of the watchlist to list sources for. An id
+                that does not exist, or one with no sources, both yield an
+                empty list -- the two cases are not distinguished.
+
+        Returns:
+            Subscription ids ordered by when they were added to the
+            watchlist, then by id.
+        """
         rows = self._db.conn.execute(
             "SELECT subscription_id FROM watchlist_sources "
             "WHERE watchlist_id = ? ORDER BY added_at, subscription_id",

@@ -84,27 +84,30 @@ def test_run_table_owned_by_db_with_batch_id(db):
 
 def test_batch_id_added_to_preexisting_run_table(tmp_path):
     import sqlite3
+    from contextlib import closing
 
     # A database created before batch_id existed, with the old table shape.
+    # `sqlite3.connect(...)` used as a context manager only wraps a
+    # transaction, not the connection's lifetime -- `closing()` is what
+    # actually guarantees `.close()` runs.
     path = tmp_path / "legacy.db"
-    legacy_conn = sqlite3.connect(path)
-    legacy_conn.executescript("""
-        CREATE TABLE local_watchlist_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_id INTEGER NOT NULL,
-            job_id INTEGER,
-            status TEXT NOT NULL,
-            started_at TEXT,
-            finished_at TEXT,
-            stats_json TEXT,
-            error_msg TEXT,
-            log_text TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-    """)
-    legacy_conn.commit()
-    legacy_conn.close()
+    with closing(sqlite3.connect(path)) as legacy_conn:
+        legacy_conn.executescript("""
+            CREATE TABLE local_watchlist_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id INTEGER NOT NULL,
+                job_id INTEGER,
+                status TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                stats_json TEXT,
+                error_msg TEXT,
+                log_text TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+        """)
+        legacy_conn.commit()
 
     migrated = SubscriptionsDB(str(path), client_id="test")
     assert "batch_id" in _columns(migrated, "local_watchlist_runs")

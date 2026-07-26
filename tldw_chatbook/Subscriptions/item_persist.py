@@ -23,7 +23,25 @@ _VALID_PAIRINGS = {
 
 
 def _json_or_none(value: Any) -> str | None:
-    return json.dumps(value) if value is not None else None
+    """Serialize a value to JSON, collapsing an empty container to ``None``.
+
+    ``categories``, ``enclosures``, ``extracted_data``, and ``alert_matches``
+    are always either ``None``, a list, or a dict -- never a plausible
+    falsy scalar like ``0`` or ``False``. So rather than a general
+    truthiness check (which would also collapse those scalars), this keys
+    specifically on container emptiness: an empty list or dict serializes
+    to ``None`` just like a missing value, matching the old DB-side
+    write path's behavior. Storing the literal string ``"[]"`` instead
+    would make it indistinguishable from a real, non-empty payload to
+    readers that treat "any string" as meaningful, e.g.
+    ``AggregationEngine._parse_categories``, which splits every string on
+    commas and would otherwise manufacture a phantom ``["[]"]`` category.
+    """
+    if value is None:
+        return None
+    if hasattr(value, "__len__") and len(value) == 0:
+        return None
+    return json.dumps(value)
 
 
 def _validate_content_pairing(kind: Any, fmt: Any) -> None:

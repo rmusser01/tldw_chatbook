@@ -51,6 +51,56 @@ def test_persists_full_column_set(db, source_id):
     assert row[9] == "content"
 
 
+def test_empty_containers_persist_as_null_not_empty_json(db, source_id):
+    """Regression for the unification finding (fix round 3).
+
+    The old DB-side path used truthiness (``if item.get("categories")``),
+    so an empty list stored ``NULL``. The old service-side path used
+    ``is not None``, so an empty list stored the string ``"[]"``. The
+    unified helper must keep the conservative (DB-side) behavior --
+    storing ``"[]"`` would make ``AggregationEngine._parse_categories``
+    (which treats any string as comma-separated) manufacture a phantom
+    ``["[]"]`` category.
+    """
+    item = {
+        "url": "https://a.example/1",
+        "title": "T",
+        "content_hash": "h",
+        "content": "body",
+        "categories": [],
+        "enclosures": [],
+    }
+    with db.transaction() as conn:
+        persist_subscription_item(conn, source_id, item, run_id=1, now="2026-07-25T00:00:00Z")
+
+    row = db.conn.execute(
+        "SELECT categories, enclosures FROM subscription_items WHERE url = ?",
+        ("https://a.example/1",),
+    ).fetchone()
+    assert row[0] is None
+    assert row[1] is None
+
+
+def test_non_empty_containers_still_round_trip_as_json(db, source_id):
+    item = {
+        "url": "https://a.example/1",
+        "title": "T",
+        "content_hash": "h",
+        "content": "body",
+        "categories": ["ai", "rag"],
+        "enclosures": [{"url": "https://a.example/audio.mp3"}],
+    }
+    with db.transaction() as conn:
+        persist_subscription_item(conn, source_id, item, run_id=1, now="2026-07-25T00:00:00Z")
+
+    row = db.conn.execute(
+        "SELECT categories, enclosures FROM subscription_items WHERE url = ?",
+        ("https://a.example/1",),
+    ).fetchone()
+    assert row[0] == '["ai", "rag"]'
+    assert row[1] == '[{"url": "https://a.example/audio.mp3"}]'
+
+
 def test_returns_the_real_row_id_on_upsert_not_lastrowid(db, source_id):
     """Regression for fix round 2.
 

@@ -79,6 +79,20 @@ def test_delete_removes_membership_but_not_sources(service, db):
     ).fetchone()[0] == 0
 
 
+def test_list_watchlists_limit_actually_limits(service):
+    for index in range(5):
+        service.create(f"List {index}")
+
+    limited = service.list_watchlists(limit=2)
+    assert len(limited) == 2
+
+    all_of_them = service.list_watchlists()
+    assert len(all_of_them) == 5
+
+    offset_page = service.list_watchlists(limit=2, offset=2)
+    assert [row["name"] for row in offset_page] == [row["name"] for row in all_of_them[2:4]]
+
+
 def test_create_rejects_blank_name(service):
     with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
         service.create("   ")
