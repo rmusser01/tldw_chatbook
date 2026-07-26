@@ -207,22 +207,24 @@ def test_normalize_snippet_whitespace_collapses_runs_and_strips_ends():
 
 def test_parse_plain_text_snippets_assigns_uuids_and_skips_blank_lines():
     content = "line one\nline two \n\nline three\n"
-    snippets = parse_plain_text_snippets(content)
+    snippets, skipped = parse_plain_text_snippets(content)
     assert [s["text"] for s in snippets] == ["line one", "line two ", "line three"]
     ids = [s["id"] for s in snippets]
     assert len(set(ids)) == len(ids)
     for snippet_id in ids:
         uuid.UUID(snippet_id)  # does not raise
     assert all(s["group"] is None for s in snippets)
+    assert skipped == 1  # the one blank line between "line two " and "line three"
 
 
 def test_parse_csv_snippets_reads_text_and_optional_group():
     content = "text,group\nThe protestors were,neutral\nThe rioters were,loaded\n"
-    snippets = parse_csv_snippets(content)
+    snippets, skipped = parse_csv_snippets(content)
     assert [s["text"] for s in snippets] == ["The protestors were", "The rioters were"]
     assert [s["group"] for s in snippets] == ["neutral", "loaded"]
     for snippet in snippets:
         uuid.UUID(snippet["id"])
+    assert skipped == 0
 
 
 def test_parse_csv_snippets_without_text_column_raises():
@@ -238,11 +240,12 @@ def test_parse_json_snippets_preserves_existing_id_and_mints_one_when_absent():
             {"text": "The rioters were", "group": "loaded"},
         ]
     )
-    snippets = parse_json_snippets(content)
+    snippets, skipped = parse_json_snippets(content)
     assert snippets[0]["id"] == fixed_id
     uuid.UUID(snippets[1]["id"])
     assert snippets[1]["id"] != fixed_id
     assert [s["group"] for s in snippets] == ["neutral", "loaded"]
+    assert skipped == 0
 
 
 def test_parse_json_snippets_rejects_non_list_non_object_payload():
@@ -259,9 +262,12 @@ def test_parse_json_snippets_replaces_an_illegal_id_with_a_fresh_uuid():
     write, leaving the dataset permanently un-openable. Validated at parse
     time now, same fallback a missing id already got."""
     content = json.dumps([{"id": "bad id", "text": "The protestors were"}])
-    snippets = parse_json_snippets(content)
+    snippets, skipped = parse_json_snippets(content)
     assert snippets[0]["id"] != "bad id"
     uuid.UUID(snippets[0]["id"])  # does not raise
+    # A sanitized id is a KEPT snippet, not a skipped one -- only entries
+    # with no usable text at all are skipped.
+    assert skipped == 0
 
 
 def test_parse_json_snippets_skips_entries_missing_text_or_not_an_object():
@@ -280,8 +286,13 @@ def test_parse_json_snippets_skips_entries_missing_text_or_not_an_object():
             {"text": "kept two"},
         ]
     )
-    snippets = parse_json_snippets(content)
+    snippets, skipped = parse_json_snippets(content)
     assert [s["text"] for s in snippets] == ["kept one", "kept two"]
+    # The three invalid entries must be counted, not just silently dropped
+    # -- see test_import_notification_names_the_skipped_count below for why
+    # this count matters: it is what makes the skip policy visible to a
+    # user instead of just to this test.
+    assert skipped == 3
 
 
 def test_import_snippets_into_dataset_dedups_colliding_ids(evals_db):
@@ -744,6 +755,85 @@ async def test_csv_import_without_text_column_notifies_error_and_does_not_persis
     )
     stored = evals_db.get_dataset(dataset_id)
     assert stored["metadata"].get("sample_count", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_import_notification_names_the_skipped_count_when_entries_are_dropped(
+    evals_app, evals_db, tmp_path
+):
+    """Re-review finding: the skip-invalid-entries policy (JSON and CSV
+    both settle on skip-over-abort, see `parse_json_snippets`'s docstring)
+    was invisible to the user -- the notification only ever named the
+    survivor count. A snippet set is the benchmark's own instrument;
+    someone importing 5 rows with 2 malformed ones saw "Imported 3
+    snippet(s)" with no reason to suspect 2 were dropped, then ran and
+    interpreted a bench against a smaller set than they believed they had.
+    The notification must name both numbers."""
+    dataset_id = _make_dataset(evals_db, "partial-import-target", [])
+    json_path = tmp_path / "partial.json"
+    json_path.write_text(
+        json.dumps(
+            [
+                {"text": "kept one"},
+                {"text": ""},  # skipped: blank text
+                {"no_text_field": True},  # skipped: no text at all
+                {"text": "kept two"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
+        editor._handle_import_file_selected(json_path)
+        await pilot.pause()
+
+    info_messages = [
+        message
+        for message, severity in evals_app.app_instance.notifications
+        if severity == "information"
+    ]
+    assert len(info_messages) == 1
+    message = info_messages[0]
+    assert "Imported 2 snippet(s)" in message
+    assert "skipped 2 invalid entries" in message
+
+    stored = evals_db.get_dataset(dataset_id)
+    assert stored["metadata"]["sample_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_import_notification_omits_the_skipped_clause_when_nothing_is_dropped(
+    evals_app, evals_db, tmp_path
+):
+    """The other half of the same fix: the common case (nothing dropped)
+    must stay exactly as clean as it was before -- no "skipped 0" clause,
+    no dangling punctuation."""
+    dataset_id = _make_dataset(evals_db, "clean-import-target", [])
+    json_path = tmp_path / "clean.json"
+    json_path.write_text(
+        json.dumps([{"text": "kept one"}, {"text": "kept two"}]), encoding="utf-8"
+    )
+
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        editor = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
+        editor._handle_import_file_selected(json_path)
+        await pilot.pause()
+
+    info_messages = [
+        message
+        for message, severity in evals_app.app_instance.notifications
+        if severity == "information"
+    ]
+    assert len(info_messages) == 1
+    assert info_messages[0] == "Imported 2 snippet(s)."
+    assert "skipped" not in info_messages[0]
 
 
 @pytest.mark.asyncio

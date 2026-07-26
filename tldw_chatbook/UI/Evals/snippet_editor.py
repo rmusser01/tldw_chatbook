@@ -52,7 +52,7 @@ import re
 import uuid
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 from rich.text import Text
 from textual import on
@@ -275,7 +275,26 @@ def import_snippets_into_dataset(
 # ---------------------------------------------------------------------------
 
 
-def parse_plain_text_snippets(content: str) -> list[dict[str, Any]]:
+class ParsedSnippets(NamedTuple):
+    """A parser's result: the snippets it kept, plus how many input rows it
+    dropped. All three parsers share this shape (even
+    ``parse_plain_text_snippets``, whose only skippable "row" is a blank
+    line) so ``_handle_import_file_selected`` can thread a skipped count
+    into its notification without caring which parser produced it.
+
+    The skipped count exists because the skip-invalid-entries policy (see
+    ``parse_json_snippets``'s docstring) would otherwise be invisible: a
+    500-row export with 40 malformed rows used to report only "Imported
+    460 snippet(s)", with nothing naming the other 40 -- silently shrinking
+    the instrument a word bench measures with. See
+    ``_handle_import_file_selected`` for where this becomes user-visible.
+    """
+
+    snippets: list[dict[str, Any]]
+    skipped: int
+
+
+def parse_plain_text_snippets(content: str) -> ParsedSnippets:
     """One snippet per non-empty line. The low-friction import path most
     sets will use, and which therefore cannot express multi-line snippets.
 
@@ -284,16 +303,18 @@ def parse_plain_text_snippets(content: str) -> list[dict[str, Any]]:
     condition this editor's marker exists to surface.
     """
     snippets: list[dict[str, Any]] = []
+    skipped = 0
     for line in content.splitlines():
         if not line:
+            skipped += 1
             continue
         snippets.append(
             {"id": str(uuid.uuid4()), "text": line, "group": None, "note": None}
         )
-    return snippets
+    return ParsedSnippets(snippets, skipped)
 
 
-def parse_csv_snippets(content: str) -> list[dict[str, Any]]:
+def parse_csv_snippets(content: str) -> ParsedSnippets:
     """CSV with a ``text`` column (required, case-insensitive header
     match) and an optional ``group`` column. Cell content is preserved
     verbatim, same reasoning as ``parse_plain_text_snippets``."""
@@ -309,16 +330,18 @@ def parse_csv_snippets(content: str) -> list[dict[str, Any]]:
     group_key = lowered_fieldnames.get("group")
 
     snippets: list[dict[str, Any]] = []
+    skipped = 0
     for row in reader:
         text = row.get(text_key) or ""
         if text == "":
+            skipped += 1
             continue
         group = row.get(group_key) if group_key else None
         group = group if group not in (None, "") else None
         snippets.append(
             {"id": str(uuid.uuid4()), "text": text, "group": group, "note": None}
         )
-    return snippets
+    return ParsedSnippets(snippets, skipped)
 
 
 #: Snippet ids are interpolated as a SUFFIX of Textual widget ids
@@ -350,7 +373,7 @@ def _sanitize_snippet_id(raw_id: Any) -> str:
     return str(uuid.uuid4())
 
 
-def parse_json_snippets(content: str) -> list[dict[str, Any]]:
+def parse_json_snippets(content: str) -> ParsedSnippets:
     """A JSON list of snippet objects, or an object with a ``"snippets"``
     list, for round-tripping an exported set.
 
@@ -383,11 +406,14 @@ def parse_json_snippets(content: str) -> list[dict[str, Any]]:
         )
 
     snippets: list[dict[str, Any]] = []
+    skipped = 0
     for entry in parsed:
         if not isinstance(entry, Mapping):
+            skipped += 1
             continue
         text = entry.get("text")
         if not isinstance(text, str) or text == "":
+            skipped += 1
             continue
         snippet_id = _sanitize_snippet_id(entry.get("id"))
         group = entry.get("group")
@@ -395,7 +421,7 @@ def parse_json_snippets(content: str) -> list[dict[str, Any]]:
         note = entry.get("note")
         note = note if isinstance(note, str) and note != "" else None
         snippets.append({"id": snippet_id, "text": text, "group": group, "note": note})
-    return snippets
+    return ParsedSnippets(snippets, skipped)
 
 
 _IMPORT_PARSERS = {
@@ -571,13 +597,15 @@ class SnippetEditor(Vertical):
 
         parser = _IMPORT_PARSERS.get(file_path.suffix.lower(), parse_plain_text_snippets)
         try:
-            new_snippets = parser(content)
+            new_snippets, skipped_count = parser(content)
         except ValueError as exc:
             self._notify(f"Import failed: {exc}", severity="error")
             return
 
         if not new_snippets:
-            self._notify("No snippets found to import.", severity="warning")
+            message = "No snippets found to import"
+            message += self._skipped_suffix(skipped_count)
+            self._notify(message, severity="warning")
             return
 
         db = self._view_model.db
@@ -590,5 +618,26 @@ class SnippetEditor(Vertical):
             self._notify(str(exc), severity="error")
             return
 
-        self._notify(f"Imported {len(new_snippets)} snippet(s).", severity="information")
+        # The skip-invalid-entries policy (see parse_json_snippets's
+        # docstring) would otherwise be invisible here: a large export with
+        # some malformed rows used to report only the survivor count, with
+        # nothing naming what was dropped -- silently shrinking a word
+        # bench's own instrument. `_skipped_suffix` adds nothing when
+        # skipped_count is 0, so the common case stays clean.
+        message = f"Imported {len(new_snippets)} snippet(s)"
+        message += self._skipped_suffix(skipped_count)
+        self._notify(message, severity="information")
         self.refresh(recompose=True)
+
+    @staticmethod
+    def _skipped_suffix(skipped_count: int) -> str:
+        """The sentence-closing suffix for an import notification: a bare
+        ``"."`` when nothing was dropped, else ``"; skipped N invalid
+        entries."`` (singular for exactly one) -- appended directly to a
+        base message with no trailing punctuation of its own, so the two
+        clauses read as one sentence (``"Imported 460 snippet(s); skipped
+        40 invalid entries."``) rather than two."""
+        if not skipped_count:
+            return "."
+        entry_word = "entry" if skipped_count == 1 else "entries"
+        return f"; skipped {skipped_count} invalid {entry_word}."
