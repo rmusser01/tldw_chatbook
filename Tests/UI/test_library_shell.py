@@ -6403,8 +6403,16 @@ async def test_library_shell_note_conflict_shows_overwrite_reload_and_keeps_user
             message="The version conflict was never reached.",
         )
 
-        assert screen.query("#library-note-conflict-overwrite")
-        assert screen.query("#library-note-conflict-reload")
+        # Wait for the WIDGET, not just the state. ``_wait_for_condition`` above
+        # returns as soon as ``_library_note_autosave_state`` flips to
+        # "conflict", but the buttons only exist after the screen recomposes --
+        # so asserting on the DOM immediately is a race, and it is the one that
+        # made this test fail intermittently in full-file runs while passing in
+        # isolation (task-699). Captured assertion:
+        #   assert screen.query("#library-note-conflict-overwrite")
+        #   AssertionError: assert <DOMQuery ...>   (an empty query is falsy)
+        await _wait_for_selector(screen, pilot, "#library-note-conflict-overwrite")
+        await _wait_for_selector(screen, pilot, "#library-note-conflict-reload")
         meta = str(screen.query_one("#library-note-meta").renderable)
         assert "changed elsewhere" in meta
         assert screen.query_one("#library-note-body", TextArea).text == (
