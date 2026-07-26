@@ -54,6 +54,23 @@ class Tool(ABC):
         """
         return ()
 
+    @property
+    def timeout_seconds(self) -> float:
+        """Per-call wall-clock ceiling, or 0 to use the run's default.
+
+        Concrete with a 0 default so every existing subclass is unchanged.
+        A tool whose real work legitimately outlasts
+        ``RunBudget.max_tool_call_seconds`` (ingestion, transcription)
+        raises this; a tool that must be cut short sooner (``run_command``)
+        lowers it. Note the timeout ABANDONS the worker thread rather than
+        killing it, so a tool raising this must be idempotent or must say
+        so in its timeout message.
+
+        Returns:
+            Seconds, or 0.0 to defer to the run budget.
+        """
+        return 0.0
+
     @abstractmethod
     async def execute(self, **kwargs) -> Dict[str, Any]:
         """
