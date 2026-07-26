@@ -235,3 +235,23 @@ FINAL: whole-branch review (fable) → 1 Important fixed (deferred Select.Change
 PR #863 bot wave: Qodo 5 findings — #4 (:8405 BLANK compose crash) + #5 (:10999 NULL-as-profile) FIXED w/ RED-first tests (exact predicted failures: 'Select.NULL' is None; InvalidSelectValueError Illegal value False); #2/#3 docstrings FIXED; #1 cairosvg DECLINED (SP3 rig precedent on dev, QA-only script). Fixer subagents died twice on server 529/500 + classifier outage — fixes done INLINE by controller. 171 region+adapter green.
 MERGED: PR #863 → dev, merge 7d8820bf1, 2026-07-25 (user approved screens + merge: "aapproved"). Qodo wave: 4 fixed (2 RED-first sentinel bugs) + 1 declined w/ precedent, all threads answered. Post-merge dup-check: 541/565-567 clean; pre-existing pileup grew (505-532, ~28 exact-basename collisions) → task-544 scope note. Memory updated. ===== 541 SDD RUN COMPLETE =====
 FOLLOW-UP STREAM COMPLETE 2026-07-25: 495 → PR #874 (imported-profile query keys, fingerprint-invariant, 541 RAG green); 482 → PR #876 (validate_chroma_persist_directory shared by 2 client sites + 2 producers, fault-injection verified); 544 → PR #877 (28 dup groups resolved, movers → 585-619, zero dups; #846 body prose stale re TASK-507→594); 565/566/567 → PR #882 (5 commits incl. 2 review catches: provider blank-select test + stray RAG-check toast). ALL FOUR PRs OPEN, HELD FOR USER APPROVAL. Reviews: every task Approved; RED evidence independently reproduced by reviewers on all 4 cycles.
+
+---
+
+# Built-in tool packs Phase 0+1 ledger
+Plan: Docs/superpowers/plans/2026-07-25-builtin-tool-packs-phase-0-1.md
+Spec: Docs/superpowers/specs/2026-07-25-builtin-tool-packs-design.md
+Branch: docs/builtin-tool-packs-spec (worktree wt-builtin-tool-packs) off origin/dev f384a2807
+NOTE: the ledger section ABOVE this line belongs to an unrelated plan (startup-perf,
+task 163). Nothing above marks any task of THIS plan complete.
+
+Pre-flight plan fixes (before Task 1, commit below):
+- glob/grep: Path.glob("../**/*") does NOT raise; yields ~1.4M paths. Match-only
+  bound never trips because out-of-root candidates never match, so the tool would
+  walk the filesystem. Added _MAX_CANDIDATES + up-front traversal refusal.
+- _is_within -> public is_within (Task 11 imports it across modules).
+- Task 7 cross-ref said Task 8 replaces the TASK-584 gate loop; it is Task 9.
+
+Tasks: 14. Held pending user confirmation: Task 13 (deletes ToolExecutor +
+Tools_Settings_Window switches app-wide; user is working on TASK-656/627 in
+parallel and may want it after their rebase).

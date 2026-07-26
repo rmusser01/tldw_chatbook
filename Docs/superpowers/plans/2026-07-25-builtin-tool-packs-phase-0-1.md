@@ -773,7 +773,7 @@ In `tool_catalog.py`, change `BuiltinToolProvider.__init__`'s signature and reco
         self._tools = {t.name: t for t in (CalculatorTool(), DateTimeTool())}
 ```
 
-Leave the rest of `__init__` (the TASK-584 gate loop and the `self._gate = gate` line) unchanged — Task 8 replaces the gate loop.
+Leave the rest of `__init__` (the TASK-584 gate loop and the `self._gate = gate` line) unchanged — **Task 9** replaces the gate loop.
 
 - [ ] **Step 5: Run the tests**
 
@@ -1339,10 +1339,15 @@ def is_sensitive_path(candidate: Path) -> bool:
 
 - [ ] **Step 4: Apply it in the file tools' containment check**
 
-In `file_operation_tools.py`, modify `_is_within` so containment also requires the path not be sensitive:
+In `file_operation_tools.py`, rename `_is_within` to a public `is_within` (the `files`
+pack imports it in Task 11, and reaching across modules for a private name is a defect)
+and make containment also require the path not be sensitive. Update the two existing
+call sites in this module, and keep `_is_within = is_within` as a module-local alias only
+if any other caller exists — check with
+`grep -rn "_is_within" tldw_chatbook/ Tests/`.
 
 ```python
-def _is_within(candidate: Path, root: Path) -> bool:
+def is_within(candidate: Path, root: Path) -> bool:
     """Return whether ``candidate`` resolves inside ``root``.
 
     Also refuses credential and gate-state paths outright (see
@@ -1441,12 +1446,36 @@ async def test_grep_files_rejects_a_bad_regex_without_raising(sandbox):
 
 
 @pytest.mark.asyncio
-async def test_glob_files_cannot_escape_the_sandbox(sandbox):
+async def test_glob_files_refuses_parent_traversal(sandbox):
+    """`Path.glob('../**/*')` does not raise -- it yields ~1.4M paths.
+
+    Filtering by containment afterwards still walks all of them, so the
+    pattern is refused up front.
+    """
     from tldw_chatbook.Agents.builtin_packs.files import GlobFiles
 
     result = await GlobFiles().execute(pattern="../**/*")
 
-    assert result["matches"] == []
+    assert "error" in result
+    assert "matches" not in result
+
+
+@pytest.mark.asyncio
+async def test_glob_files_refuses_absolute_patterns(sandbox):
+    from tldw_chatbook.Agents.builtin_packs.files import GlobFiles
+
+    result = await GlobFiles().execute(pattern="/etc/*")
+
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_grep_files_refuses_parent_traversal(sandbox):
+    from tldw_chatbook.Agents.builtin_packs.files import GrepFiles
+
+    result = await GrepFiles().execute(pattern="DEBUG", glob="../**/*.py")
+
+    assert "error" in result
 ```
 
 Add `from pathlib import Path` to the test module's imports.
@@ -1458,13 +1487,36 @@ Expected: FAIL with `ImportError: cannot import name 'GlobFiles'`
 
 - [ ] **Step 3: Implement the two tools**
 
-Append to `builtin_packs/files.py` (before the `TOOLS` assignment), and add `import re` plus `from pathlib import Path` and `from tldw_chatbook.Tools.file_operation_tools import _is_within, _tool_sandbox_root` to its imports:
+Append to `builtin_packs/files.py` (before the `TOOLS` assignment), and add `import re` plus `from pathlib import Path` and `from tldw_chatbook.Tools.file_operation_tools import is_within, _tool_sandbox_root` to its imports:
 
 ```python
 #: Most matches either tool returns. Results also pass through the runtime's
 #: own `max_tool_result_chars` cap, but bounding here keeps the JSON small
 #: enough that the cap rarely has to cut mid-structure.
 _MAX_MATCHES = 200
+
+#: Most filesystem entries either tool will EXAMINE, independent of how many
+#: match. Verified necessary: `Path.glob("../**/*")` does not raise -- it
+#: happily yields ~1.4M paths from a temp dir. Since none of them pass the
+#: containment check, a match-only bound never trips and the tool walks the
+#: entire filesystem. This bound is what actually stops that.
+_MAX_CANDIDATES = 20_000
+
+
+def _rejects_traversal(pattern: str) -> bool:
+    """Whether a glob pattern tries to leave the sandbox root.
+
+    Checked before globbing rather than filtering afterwards: containment
+    filtering alone still pays the cost of walking everything the pattern
+    matched (see ``_MAX_CANDIDATES``).
+
+    Args:
+        pattern: A user- or model-supplied glob pattern.
+
+    Returns:
+        True when the pattern is absolute or contains a `..` component.
+    """
+    return pattern.startswith("/") or ".." in Path(pattern).parts
 
 
 class GlobFiles(Tool):
@@ -1502,16 +1554,18 @@ class GlobFiles(Tool):
         pattern = str(kwargs.get("pattern") or "").strip()
         if not pattern:
             return {"error": "pattern is required"}
+        if _rejects_traversal(pattern):
+            return {"error": "pattern must stay inside the sandbox root"}
         root = _tool_sandbox_root()
         try:
             candidates = root.glob(pattern)
         except (ValueError, NotImplementedError) as exc:
             return {"error": f"invalid pattern: {exc}"}
         matches = []
-        for path in candidates:
-            if len(matches) >= _MAX_MATCHES:
+        for examined, path in enumerate(candidates, start=1):
+            if len(matches) >= _MAX_MATCHES or examined > _MAX_CANDIDATES:
                 break
-            if path.is_file() and _is_within(path, root):
+            if path.is_file() and is_within(path, root):
                 matches.append(str(path))
         return {"matches": sorted(matches)}
 
@@ -1562,16 +1616,20 @@ class GrepFiles(Tool):
 
         root = _tool_sandbox_root()
         glob_pattern = str(kwargs.get("glob") or "**/*")
+        if _rejects_traversal(glob_pattern):
+            return {"error": "glob must stay inside the sandbox root"}
         try:
             candidates = root.glob(glob_pattern)
         except (ValueError, NotImplementedError) as exc:
             return {"error": f"invalid glob: {exc}"}
 
         matches: list[dict] = []
-        for path in sorted(candidates):
-            if len(matches) >= _MAX_MATCHES:
+        # Deliberately NOT sorted(candidates): materialising and sorting the
+        # generator defeats _MAX_CANDIDATES on a broad pattern.
+        for examined, path in enumerate(candidates, start=1):
+            if len(matches) >= _MAX_MATCHES or examined > _MAX_CANDIDATES:
                 break
-            if not path.is_file() or not _is_within(path, root):
+            if not path.is_file() or not is_within(path, root):
                 continue
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
