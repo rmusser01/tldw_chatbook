@@ -9,10 +9,15 @@ from loguru import logger
 import pytest
 
 import tldw_chatbook.app as app_module
+from tldw_chatbook.ACP_Interop.runtime_session import (
+    ACPRuntimeSessionState,
+    acp_session_record_id,
+)
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Screens.acp_screen import ACPScreen
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.study_scope_models import (
     StudyScopeContext,
@@ -101,6 +106,15 @@ async def _wait_for_artifacts_screen(app: TldwCli, pilot) -> ArtifactsScreen:
     raise AssertionError("full app did not mount the production Artifacts screen")
 
 
+async def _wait_for_acp_screen(app: TldwCli, pilot) -> ACPScreen:
+    for _ in range(300):
+        if isinstance(app.screen, ACPScreen) and app.screen.is_mounted:
+            await pilot.pause(0.01)
+            return app.screen
+        await pilot.pause(0.01)
+    raise AssertionError("full app did not mount the production ACP screen")
+
+
 async def _wait_for_artifact_context(
     screen: ArtifactsScreen,
     pilot,
@@ -126,6 +140,17 @@ def _chatbook_record(chatbook_id: int | str, title: str) -> dict[str, Any]:
         "description": f"{title} description",
         "updated_at": "2026-07-26T12:00:00+00:00",
     }
+
+
+def _acp_runtime_state(session_id: str = "session-1") -> ACPRuntimeSessionState:
+    return ACPRuntimeSessionState(
+        runtime_id="runtime-1",
+        runtime_label="Production runtime",
+        session_id=session_id,
+        session_title="Current session",
+        session_status="running",
+        session_payload={"pid": 646},
+    )
 
 
 class InjectedChatbookService:
@@ -846,3 +871,221 @@ async def test_full_app_artifact_worker_cancellation_releases_active_claim(
 
         assert retry is not None
         assert retry.value == "local:chatbook:77"
+
+
+@pytest.mark.asyncio
+async def test_full_app_acp_consumes_exact_current_target_after_real_mount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TldwCli()
+    app.acp_runtime_session_state = _acp_runtime_state()
+    target_id = acp_session_record_id("session-1")
+    assert target_id is not None
+
+    async with _mounted_app(app, monkeypatch) as pilot:
+        notifications: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            app,
+            "notify",
+            lambda message, *, severity="information", **_kwargs: notifications.append(
+                (message, severity)
+            ),
+        )
+        app.pending_handoffs.stage(HandoffChannel.ACP_SESSION_TARGET, target_id)
+
+        app.post_message(NavigateToScreen("acp"))
+        screen = await _wait_for_acp_screen(app, pilot)
+        for _ in range(300):
+            if (
+                not app.pending_handoffs.has_pending(HandoffChannel.ACP_SESSION_TARGET)
+                and notifications
+            ):
+                break
+            await pilot.pause(0.01)
+
+        assert screen.query_one("#acp-session-list-row").has_class(
+            "acp-selected-session-row"
+        )
+        assert screen.query_one("#acp-detail-pane").is_mounted
+        assert notifications == [
+            ("Opened the current ACP session details.", "information")
+        ]
+        assert app.pending_handoffs.claim(HandoffChannel.ACP_SESSION_TARGET) is None
+
+
+@pytest.mark.asyncio
+async def test_full_app_acp_focus_preserves_newer_target_and_runtime_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TldwCli()
+    original_state = _acp_runtime_state()
+    app.acp_runtime_session_state = original_state
+    current_target = acp_session_record_id("session-1")
+    replacement_target = acp_session_record_id("session-2")
+    assert current_target is not None
+    assert replacement_target is not None
+
+    async with _mounted_app(app, monkeypatch, route="acp") as pilot:
+        screen = await _wait_for_acp_screen(app, pilot)
+        detail = screen.query_one("#acp-detail-pane")
+        scroll_calls: list[bool] = []
+        navigation: list[NavigateToScreen] = []
+        notifications: list[tuple[str, str]] = []
+        _intercept_navigation(app, monkeypatch, navigation.append)
+        monkeypatch.setattr(
+            app,
+            "notify",
+            lambda message, *, severity="information", **_kwargs: notifications.append(
+                (message, severity)
+            ),
+        )
+
+        def scroll_visible(*, animate: bool) -> None:
+            scroll_calls.append(animate)
+            app.pending_handoffs.stage(
+                HandoffChannel.ACP_SESSION_TARGET,
+                replacement_target,
+            )
+
+        monkeypatch.setattr(detail, "scroll_visible", scroll_visible)
+        app.pending_handoffs.stage(
+            HandoffChannel.ACP_SESSION_TARGET,
+            current_target,
+        )
+
+        screen._consume_pending_session_target()
+
+        assert scroll_calls == [False]
+        assert screen.query_one("#acp-session-list-row").has_class(
+            "acp-selected-session-row"
+        )
+        assert app.acp_runtime_session_state is original_state
+        assert navigation == []
+        assert notifications == [
+            ("Opened the current ACP session details.", "information")
+        ]
+        replacement = app.pending_handoffs.claim(HandoffChannel.ACP_SESSION_TARGET)
+        assert replacement is not None
+        assert replacement.value == replacement_target
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "state",
+    [
+        ACPRuntimeSessionState(
+            runtime_id="runtime-1",
+            runtime_label="Production runtime",
+        ),
+        _acp_runtime_state("different-session"),
+    ],
+    ids=["no-current-session", "different-current-session"],
+)
+async def test_full_app_acp_stale_target_acknowledges_with_current_only_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+    state: ACPRuntimeSessionState,
+) -> None:
+    app = TldwCli()
+    app.acp_runtime_session_state = state
+    requested_target = acp_session_record_id("requested-session")
+    assert requested_target is not None
+
+    async with _mounted_app(app, monkeypatch, route="acp") as pilot:
+        screen = await _wait_for_acp_screen(app, pilot)
+        notifications: list[tuple[str, str]] = []
+        navigation: list[NavigateToScreen] = []
+        _intercept_navigation(app, monkeypatch, navigation.append)
+        monkeypatch.setattr(
+            app,
+            "notify",
+            lambda message, *, severity="information", **_kwargs: notifications.append(
+                (message, severity)
+            ),
+        )
+        app.pending_handoffs.stage(
+            HandoffChannel.ACP_SESSION_TARGET,
+            requested_target,
+        )
+
+        screen._consume_pending_session_target()
+
+        assert app.acp_runtime_session_state is state
+        assert navigation == []
+        assert notifications == [
+            (
+                "Only the current ACP runtime session is available. "
+                "Return to Console and choose it again.",
+                "warning",
+            )
+        ]
+        probe_target = acp_session_record_id("probe-session")
+        assert probe_target is not None
+        app.pending_handoffs.stage(
+            HandoffChannel.ACP_SESSION_TARGET,
+            probe_target,
+        )
+        probe = app.pending_handoffs.claim(HandoffChannel.ACP_SESSION_TARGET)
+        assert probe is not None
+        assert probe.value == probe_target
+        assert app.pending_handoffs.acknowledge(probe) is True
+
+
+@pytest.mark.asyncio
+async def test_full_app_acp_missing_detail_is_terminal_and_private(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "TASK-646-ACP-PRIVATE-SENTINEL"
+    app = TldwCli()
+    state = _acp_runtime_state(sentinel)
+    app.acp_runtime_session_state = state
+    requested_target = acp_session_record_id(sentinel)
+    assert requested_target is not None
+
+    async with _mounted_app(app, monkeypatch, route="acp") as pilot:
+        screen = await _wait_for_acp_screen(app, pilot)
+        real_query_one = screen.query_one
+        notifications: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            app,
+            "notify",
+            lambda message, *, severity="information", **_kwargs: notifications.append(
+                (message, severity)
+            ),
+        )
+
+        def query_one(selector, *args, **kwargs):
+            if selector == "#acp-detail-pane":
+                raise RuntimeError("detail focus unavailable")
+            return real_query_one(selector, *args, **kwargs)
+
+        monkeypatch.setattr(screen, "query_one", query_one)
+        app.pending_handoffs.stage(
+            HandoffChannel.ACP_SESSION_TARGET,
+            requested_target,
+        )
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, format="{message}")
+        try:
+            screen._consume_pending_session_target()
+        finally:
+            logger.remove(sink_id)
+
+        assert app.acp_runtime_session_state is state
+        assert notifications == [
+            (
+                "Only the current ACP runtime session is available. "
+                "Return to Console and choose it again.",
+                "warning",
+            )
+        ]
+        probe_target = acp_session_record_id("probe-session")
+        assert probe_target is not None
+        app.pending_handoffs.stage(
+            HandoffChannel.ACP_SESSION_TARGET,
+            probe_target,
+        )
+        probe = app.pending_handoffs.claim(HandoffChannel.ACP_SESSION_TARGET)
+        assert probe is not None
+        assert probe.value == probe_target
+        assert app.pending_handoffs.acknowledge(probe) is True
+        assert all(sentinel not in message for message in messages)

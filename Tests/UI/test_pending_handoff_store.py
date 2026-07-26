@@ -564,6 +564,26 @@ def test_acp_session_record_id_normalizes_bare_session_ids() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("target_id", "session_id", "expected"),
+    [
+        ("local:acp_session:session-1", "session-1", True),
+        ("local:acp_session:session-2", "session-1", False),
+        (None, "session-1", False),
+        (object(), "session-1", False),
+        ("local:acp_session:session-1", None, False),
+    ],
+)
+def test_current_acp_session_record_matcher_rejects_malformed_direct_inputs(
+    target_id: Any,
+    session_id: Any,
+    expected: bool,
+) -> None:
+    assert (
+        runtime_session.is_current_acp_session_record(target_id, session_id) is expected
+    )
+
+
 def test_acp_console_launch_uses_canonical_session_record_id() -> None:
     state = runtime_session.ACPRuntimeSessionState(
         runtime_id="runtime-1",

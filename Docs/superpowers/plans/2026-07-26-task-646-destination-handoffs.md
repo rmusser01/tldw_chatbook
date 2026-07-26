@@ -421,7 +421,8 @@ Mounted tests must prove:
 - the existing `#acp-session-list-row` remains the selected current row;
 - `#acp-detail-pane.scroll_visible(animate=False)` is invoked after mount;
 - success shows bounded informational recovery and acknowledges;
-- no runtime session, different current session, malformed defensive fake claim, or missing detail pane shows explicit "only the current ACP runtime session is available" recovery and acknowledges;
+- no runtime session, a different current session, or a missing detail pane shows explicit "only the current ACP runtime session is available" recovery and acknowledges;
+- the app-independent exact-target matcher rejects malformed direct inputs without constructing a fake application, screen, or handoff store;
 - ACP never changes `acp_runtime_session_state`, searches history, or navigates elsewhere;
 - a newer target staged during settlement remains pending.
 
@@ -443,13 +444,15 @@ Add `on_mount()`:
 
 ```python
 def on_mount(self) -> None:
-    super().on_mount()
     self.call_after_refresh(self._consume_pending_session_target)
 ```
 
+`BaseAppScreen`/Textual `Screen` do not define `on_mount()`, so this lifecycle hook
+must not call a nonexistent superclass method.
+
 The consumer claims `ACP_SESSION_TARGET`, reconstructs current ID with `acp_session_record_id(state.session_id)`, and compares complete strings. On exact match, query the current row and detail pane, preserve the row's selected presentation, call `detail.scroll_visible(animate=False)`, notify `"Opened the current ACP session details."`, and acknowledge.
 
-If the session is absent/mismatched or detail focus is unavailable, notify bounded stale/unsupported copy and acknowledge. A malformed value is unreachable through the real store but the consumer should still fail terminally when exercised with a defensive fake. No failure path logs the target or runtime state.
+If the session is absent/mismatched or detail focus is unavailable, notify bounded stale/unsupported copy and acknowledge. A malformed value is unreachable through the real store, so test that defensive case directly against the app-independent exact-target matcher instead of replacing the production app, screen, or handoff store. No failure path logs the target or runtime state.
 
 - [ ] **Step 4: Run ACP mounted flows**
 

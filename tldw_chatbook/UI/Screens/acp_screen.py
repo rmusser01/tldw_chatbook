@@ -9,11 +9,20 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Rule, Static
 
 from ...ACP_Interop.runtime_process import ACPRuntimeProcessResult
-from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
+from ...ACP_Interop.runtime_session import (
+    ACPRuntimeSessionState,
+    is_current_acp_session_record,
+)
+from ..Navigation.pending_handoff_store import HandoffChannel
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from .destination_recovery import DestinationRecoveryState
 
+
+ACP_CURRENT_SESSION_TARGET_UNAVAILABLE = (
+    "Only the current ACP runtime session is available. "
+    "Return to Console and choose it again."
+)
 
 ACP_RUNTIME_NOT_CONFIGURED = DestinationRecoveryState(
     status_label="Runtime not configured",
@@ -54,6 +63,36 @@ class ACPScreen(BaseAppScreen):
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "acp", **kwargs)
+
+    def on_mount(self) -> None:
+        """Consume an owned current-session target after the real pane mounts."""
+        self.call_after_refresh(self._consume_pending_session_target)
+
+    def _consume_pending_session_target(self) -> None:
+        """Focus an exact current ACP target and settle the claimed revision."""
+        store = self.app_instance.pending_handoffs
+        claim = store.claim(HandoffChannel.ACP_SESSION_TARGET)
+        if claim is None:
+            return
+
+        message = ACP_CURRENT_SESSION_TARGET_UNAVAILABLE
+        severity = "warning"
+        try:
+            state = self._runtime_session_state()
+            if is_current_acp_session_record(claim.value, state.session_id):
+                row = self.query_one("#acp-session-list-row")
+                detail = self.query_one("#acp-detail-pane")
+                row.add_class("acp-selected-session-row")
+                detail.scroll_visible(animate=False)
+                message = "Opened the current ACP session details."
+                severity = "information"
+        except Exception:
+            pass
+
+        try:
+            self.notify(message, severity=severity)
+        finally:
+            store.acknowledge(claim)
 
     @staticmethod
     def _display_status(value: str) -> str:

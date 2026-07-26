@@ -33,6 +33,14 @@ def acp_session_record_id(session_id: Any) -> str | None:
     return f"{ACP_SESSION_RECORD_PREFIX}{normalized}"
 
 
+def is_current_acp_session_record(target_id: Any, session_id: Any) -> bool:
+    """Return whether a target is the exact canonical current-session record."""
+    if not isinstance(target_id, str):
+        return False
+    current_record_id = acp_session_record_id(session_id)
+    return current_record_id is not None and target_id == current_record_id
+
+
 @dataclass(frozen=True)
 class ACPRuntimeSessionState:
     """Display and Console handoff contract for ACP runtime/session readiness."""
