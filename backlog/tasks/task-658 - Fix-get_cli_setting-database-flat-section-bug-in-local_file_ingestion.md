@@ -1,7 +1,7 @@
 ---
 id: TASK-658
 title: Fix get_cli_setting("database", {}) flat-section bug in local_file_ingestion.py
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-25'
 labels: [config, bug, ingestion]

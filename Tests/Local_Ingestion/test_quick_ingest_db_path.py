@@ -15,8 +15,6 @@ and ``ingest_local_file`` *are* module-level names in
 patching them on the ``lfi`` module works as expected.
 """
 
-import pytest
-
 
 def test_configured_media_db_path_is_honored(tmp_path, monkeypatch):
     import tldw_chatbook.Local_Ingestion.local_file_ingestion as lfi
