@@ -12,6 +12,8 @@ attributed to a fabricated "default_user" client, which is what sync and
 conflict resolution key off.
 """
 
+import pathlib
+
 import pytest
 
 import tldw_chatbook.Tools.note_management_tools as nmt
@@ -106,7 +108,28 @@ def test_resolver_falls_back_when_settings_are_unavailable(monkeypatch):
 # -- Importing the module must not touch the filesystem ----------------------
 
 
-def test_importing_the_module_does_not_resolve_the_db_path(monkeypatch):
+@pytest.fixture
+def reloadable_module():
+    """Restore `nmt`'s own bindings after a test reloads it.
+
+    `importlib.reload()` re-executes `from ..config import
+    get_chachanotes_db_path`, so a reload performed while that function is
+    patched rebinds it INSIDE `nmt` to the patched object. `monkeypatch`
+    then restores `config`, not `nmt` -- leaving `nmt` bound to the fake for
+    the rest of the pytest session. That poisoned every later test in the
+    process that created a note (caught when it broke
+    `test_builtin_gate_live_tools.py`).
+
+    Reloading once more here, after every patch is undone, re-binds `nmt`
+    to the real functions.
+    """
+    yield nmt
+    import importlib
+
+    importlib.reload(nmt)
+
+
+def test_importing_the_module_does_not_resolve_the_db_path(reloadable_module):
     """Qodo/whole-branch finding: this was computed at module scope.
 
     `get_chachanotes_db_path()` reaches `get_user_data_dir()`, which
@@ -116,31 +139,52 @@ def test_importing_the_module_does_not_resolve_the_db_path(monkeypatch):
     "create_note is silently missing" rather than a normal tool error.
     """
     import importlib
+    from unittest.mock import patch
 
     import tldw_chatbook.config as config_module
 
     def landmine():
         raise AssertionError("get_chachanotes_db_path() called at import time")
 
-    monkeypatch.setattr(config_module, "get_chachanotes_db_path", landmine)
-    # Reload with the landmine installed: the import itself must not call it.
-    importlib.reload(nmt)
+    # A context manager, not monkeypatch: the patch must be gone BEFORE the
+    # fixture's restoring reload runs, or that reload re-binds the fake.
+    with patch.object(config_module, "get_chachanotes_db_path", landmine):
+        importlib.reload(nmt)  # the import itself must not call it
 
-    # ...but it must still be reachable lazily, per call.
-    monkeypatch.setattr(nmt, "get_chachanotes_db_path", lambda: __import__(
-        "pathlib").Path("/tmp/x/db.sqlite"))
-    assert str(nmt._notes_db_base_dir()) == "/tmp/x"
+        # ...but it must still be reachable lazily, per call.
+        with patch.object(
+            nmt, "get_chachanotes_db_path", lambda: pathlib.Path("/tmp/x/db.sqlite")
+        ):
+            assert str(nmt._notes_db_base_dir()) == "/tmp/x"
 
 
-def test_an_unwritable_data_dir_does_not_break_the_import(monkeypatch):
+def test_an_unwritable_data_dir_does_not_break_the_import(reloadable_module):
     """The failure mode that made this a bug rather than a style nit."""
     import importlib
+    from unittest.mock import patch
 
     import tldw_chatbook.config as config_module
 
     def boom():
         raise PermissionError("read-only file system")
 
-    monkeypatch.setattr(config_module, "get_chachanotes_db_path", boom)
-    importlib.reload(nmt)  # must not raise
-    assert nmt.CreateNoteTool().name == "create_note"
+    with patch.object(config_module, "get_chachanotes_db_path", boom):
+        importlib.reload(nmt)  # must not raise
+        assert nmt.CreateNoteTool().name == "create_note"
+
+
+def test_a_reload_does_not_leak_a_patched_binding(reloadable_module):
+    """Regression guard for the leak itself, not just its symptom."""
+    import importlib
+    from unittest.mock import patch
+
+    import tldw_chatbook.config as config_module
+
+    with patch.object(
+        config_module, "get_chachanotes_db_path", lambda: pathlib.Path("/fake/db")
+    ):
+        importlib.reload(nmt)
+    importlib.reload(nmt)  # what the fixture does, asserted inline
+
+    assert nmt.get_chachanotes_db_path is config_module.get_chachanotes_db_path
+    assert "/fake" not in str(nmt._notes_db_base_dir())

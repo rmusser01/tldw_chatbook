@@ -124,7 +124,9 @@ def _heavy_task(self):
 **New Tool**:
 1. Subclass `Tool` (ABC) in `Tools/tool_executor.py`
 2. Implement the `name`, `description`, `parameters` properties and the async `execute(**kwargs)` method
-3. Register the instance via `ToolExecutor.register_tool()` (the singleton executor is obtained through `get_tool_executor()` in `tool_executor.py`); built-in registration is gated by the `[tools]` config section
+3. Add a `GateableTool` row to `_GATEABLE_BUILTINS` in `Agents/tool_catalog.py` (gate key, module, class, tool name)
+4. Pick a `[tools] <name>_enabled` gate key -- it defaults to OFF, and the Settings ▸ Tools screen derives its switches from that same table
+5. Override `risk_tags` if the tool mutates or reads user data; a tagged tool is floored to `ask` and raises an approval card per call
 
 **UI changes:** PRs that change a screen's UI should update the matching
 `Docs/User_Guide/` page (or at least its "Verified against" stamp).
@@ -166,9 +168,9 @@ Key sections:
 
 ### Tool Calling
 - Tool messages are persisted in the ChaChaNotes DB (see `_CURRENT_SCHEMA_VERSION` for the current schema version)
-- `tool_executor.py` handles execution
+- `tool_executor.py` holds only the `Tool` ABC and the two always-on tools; execution lives in `Agents/tool_catalog.py` (`BuiltinToolProvider.invoke`), behind the permission gate. `ToolExecutor` was retired in TASK-545 P3.
 - Provider parsing implemented
-- Status: detection AND execution implemented — `ToolExecutor.execute_tool_call()`/`execute_tool_calls()` run tools; the live Console tool-calling path is the Agents runtime (`Agents/native_tools.py` + `AgentService`, wired through `Chat/console_chat_controller.py`). The legacy event-handler wiring (`worker_events.py`/`chat_streaming_events.py`) was retired in task-577.
+- Status: detection AND execution implemented — the tool-calling path is the Agents runtime (`Agents/native_tools.py` + `AgentService`, wired through `Chat/console_chat_controller.py`). The legacy event-handler wiring (`worker_events.py`/`chat_streaming_events.py`) was retired in task-577.
 
 ### Config Encryption
 - AES-256 with PBKDF2

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Iterable, Mapping, Protocol
+from typing import Any, Iterable, Mapping, NamedTuple, Protocol
 
 from loguru import logger
 
@@ -186,6 +186,85 @@ def build_builtin_gate(*args: Any, **kwargs: Any) -> Any:
     return _build_builtin_gate(*args, **kwargs)
 
 
+class GateableTool(NamedTuple):
+    """A built-in tool that a ``[tools]`` config flag turns on or off.
+
+    Attributes:
+        gate_key: The ``[tools]`` key that enables it (default False).
+        module_name: Module under ``tldw_chatbook.Tools`` defining it.
+        factory_name: Class name to instantiate.
+        tool_name: The name the LLM calls it by.
+    """
+
+    gate_key: str
+    module_name: str
+    factory_name: str
+    tool_name: str
+
+
+#: Built-ins registered unconditionally -- no gate, cannot be turned off.
+ALWAYS_ON_BUILTIN_NAMES: tuple[str, ...] = ("calculator", "get_current_datetime")
+
+#: THE source of truth for config-gateable built-ins. Both
+#: `BuiltinToolProvider.__init__` and the Settings UI derive from this, so
+#: they cannot disagree about which tools exist. The UI needs entries for
+#: tools whose gate is OFF -- which is exactly why it cannot ask a provider,
+#: since a provider only lists what its gates already permit.
+_GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
+    GateableTool(
+        "read_file_enabled", "file_operation_tools", "ReadFileTool", "read_file"
+    ),
+    GateableTool(
+        "list_directory_enabled",
+        "file_operation_tools",
+        "ListDirectoryTool",
+        "list_directory",
+    ),
+    GateableTool(
+        "write_file_enabled", "file_operation_tools", "WriteFileTool", "write_file"
+    ),
+    GateableTool(
+        "create_note_enabled", "note_management_tools", "CreateNoteTool", "create_note"
+    ),
+    GateableTool(
+        "update_note_enabled", "note_management_tools", "UpdateNoteTool", "update_note"
+    ),
+)
+
+
+def gateable_builtin_tools() -> tuple[GateableTool, ...]:
+    """Every config-gateable built-in, whether or not its gate is on.
+
+    Returns:
+        The full table, in registration order.
+    """
+    return _GATEABLE_BUILTINS
+
+
+def build_gateable_tool(entry: GateableTool) -> Any:
+    """Instantiate ``entry``'s tool class.
+
+    Raises rather than returning ``None`` so callers can report *why* a tool
+    is unavailable -- the registration loop logs the exception, and the
+    Settings UI degrades the row.
+
+    Args:
+        entry: The table entry to construct.
+
+    Returns:
+        The instantiated ``Tool``.
+
+    Raises:
+        Exception: Whatever import or construction raised.
+    """
+    import importlib
+
+    module = importlib.import_module(
+        f"..Tools.{entry.module_name}", package=__package__
+    )
+    return getattr(module, entry.factory_name)()
+
+
 class BuiltinToolProvider:
     """Wraps tool_executor's built-in tools behind the provider interface."""
 
@@ -200,29 +279,13 @@ class BuiltinToolProvider:
         # [tools] gates that already govern them, which default to DISABLED:
         # this changes reachability, not the default posture. TASK-545 P2 adds
         # the mutating tools on the same terms.
-        for gate_key, module_name, factory_name in (
-            ("read_file_enabled", "file_operation_tools", "ReadFileTool"),
-            ("list_directory_enabled", "file_operation_tools", "ListDirectoryTool"),
-            # TASK-545 P2: the mutating tools. Same [tools] gate keys that
-            # already govern them on the legacy ToolExecutor path
-            # (tool_executor.py:735/763/789), same default-disabled posture.
-            # These are tagged ("mutates",), so reaching them still costs an
-            # approval -- registration makes them reachable, not automatic.
-            ("write_file_enabled", "file_operation_tools", "WriteFileTool"),
-            ("create_note_enabled", "note_management_tools", "CreateNoteTool"),
-            ("update_note_enabled", "note_management_tools", "UpdateNoteTool"),
-        ):
+        for entry in _GATEABLE_BUILTINS:
             try:
                 from ..config import get_cli_setting
 
-                if not get_cli_setting("tools", gate_key, False):
+                if not get_cli_setting("tools", entry.gate_key, False):
                     continue
-                import importlib
-
-                module = importlib.import_module(
-                    f"..Tools.{module_name}", package=__package__
-                )
-                tool = getattr(module, factory_name)()
+                tool = build_gateable_tool(entry)
             except Exception as exc:  # noqa: BLE001 — an unavailable tool is just absent
                 # Log rather than vanish silently. The gate-off path `continue`s
                 # ABOVE this handler, so reaching here means the user asked for
@@ -231,10 +294,13 @@ class BuiltinToolProvider:
                 # note_management_tools was unimportable on dev for an unknown
                 # period (it imported a name that exists only inside a string
                 # literal in config.py) and nothing surfaced it. The legacy
-                # path logs the same failure (tool_executor.py:725/738/779/805).
-                logger.warning(
-                    f"Could not register builtin tool {factory_name} "
-                    f"(gate {gate_key} is enabled): {exc}"
+                # path logged the same failure before it was retired (P3).
+                # opt(exception=True), not exc_info=True: loguru ignores the
+                # latter, and an import-time failure is undiagnosable without
+                # the traceback naming the module and line.
+                logger.opt(exception=True).warning(
+                    f"Could not register builtin tool {entry.factory_name} "
+                    f"(gate {entry.gate_key} is enabled): {exc}"
                 )
                 continue
             self._tools[tool.name] = tool

@@ -1,7 +1,7 @@
 ---
 id: TASK-658
 title: Fix get_cli_setting("database", {}) flat-section bug in local_file_ingestion.py
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-25'
 labels: [config, bug, ingestion]
@@ -19,8 +19,18 @@ priority: medium
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] `quick_ingest()`'s database-path resolution reads the real `[database]` section from the loaded config, not an unconditional `{}`
-- [ ] Setting `media_db_path` under `[database]` in `config.toml` is honored by `quick_ingest()` when no explicit `db_path` argument is given
-- [ ] Unit test confirms a configured `[database].media_db_path` is used, and that the hardcoded fallback only applies when the section/key is genuinely absent
-- [ ] A quick repo-wide grep for the same `get_cli_setting("<section>", {})` / `get_cli_setting("<section>", [])` pattern is done and any further instances are noted (fixed here or filed) so this bug class does not have a third silent occurrence
+- [x] `quick_ingest()`'s database-path resolution reads the real `[database]` section from the loaded config, not an unconditional `{}`
+- [x] Setting `media_db_path` under `[database]` in `config.toml` is honored by `quick_ingest()` when no explicit `db_path` argument is given
+- [x] Unit test confirms a configured `[database].media_db_path` is used, and that the hardcoded fallback only applies when the section/key is genuinely absent
+- [x] A quick repo-wide grep for the same `get_cli_setting("<section>", {})` / `get_cli_setting("<section>", [])` pattern is done and any further instances are noted (fixed here or filed) so this bug class does not have a third silent occurrence
 <!-- AC:END -->
+
+## Implementation Notes
+
+AC#4's repo-wide sweep (done during TASK-545 P3) found four further live instances of this bug class beyond `quick_ingest()`, none fixed inline — each filed as its own follow-up task so it gets its own fix/verification/test cycle:
+
+- TASK-740 — `Widgets/splash_screen.py` and `Widgets/settings_splash_screen_viewer.py`, `[splash_screen]` (two instances)
+- TASK-741 — `Web_Server/serve.py`, `[web_server]`
+- TASK-742 — `TTS/backends/openai.py`, three no-key calls (`openai_api`/`API`/`app_tts`) — same symptom, slightly different call shape (no key at all rather than a stray non-string second argument)
+
+The underlying bug class itself (rather than each individual call site) is now tracked by TASK-744, which also covers `save_setting_to_cli_config`'s sibling defect.
