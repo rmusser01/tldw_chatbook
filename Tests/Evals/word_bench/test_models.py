@@ -75,6 +75,19 @@ def test_cell_capture_computes_truncated_mass():
     assert cap.top1_mass == pytest.approx(0.6065, abs=1e-3)
 
 
+def test_truncated_mass_clamps_when_observed_mass_exceeds_one():
+    """Float drift, or a provider reporting a slightly inconsistent
+    distribution, must not produce a negative 'unobserved' mass -- Task 3
+    builds its 'other' bucket from this value."""
+    cap = CellCapture(
+        prompt_mode="raw", k_requested=1, k_returned=1, content_offset=0,
+        top_k=(TokenProb(token=" a", logprob=0.5, bytes_=(), token_id=1),),
+        canary="pass", captured_at="2026-07-26T00:00:00Z",
+    )
+    assert cap.truncated_mass == 0.0
+    assert 0.0 <= cap.truncated_mass <= 1.0
+
+
 def test_cell_error_is_distinguishable_from_capture():
     err = CellError(reason="unreachable", detail="connection refused")
     assert err.reason == "unreachable"
