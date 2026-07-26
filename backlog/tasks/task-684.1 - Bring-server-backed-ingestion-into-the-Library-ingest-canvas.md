@@ -20,10 +20,10 @@ Server Sources is the only way to start a server-backed ingest, and it lives in 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 A server-backed ingest can be started from the Library ingest canvas
-- [x] #2 The canvas shows which backend an ingest will run on and lets the user choose when both are available
-- [x] #3 The Local-only quiet line no longer appears when a server backend is configured
-- [x] #4 Starting a server ingest with no server configured explains what to configure
+- [ ] #1 A server-backed ingest can be started from the Library ingest canvas
+- [ ] #2 The canvas shows which backend an ingest will run on and lets the user choose when both are available
+- [ ] #3 The Local-only quiet line no longer appears when a server backend is configured
+- [ ] #4 Starting a server ingest with no server configured explains what to configure
 <!-- AC:END -->
 
 ## Implementation Plan
