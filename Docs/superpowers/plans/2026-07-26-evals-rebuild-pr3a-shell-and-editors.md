@@ -1,10 +1,12 @@
-# Evals Rebuild PR 3 — The Screen
+# Evals Rebuild PR 3a — Shell and Editors
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the Evals card hub with a Console-styled three-pane workbench that runs a word bench and renders its grid.
+**Goal:** Replace the Evals card hub with a Console-styled three-pane workbench you can author and configure a bench in. The results grid follows in PR 3b.
 
-**Architecture:** `EvalsScreen` becomes a normal `BaseAppScreen` with the house three-pane workbench — library rail, detail pane, inspector — driven by *selection state*, not by mounting `Screen` objects inside a `Container`. That architecture is why the current hub renders an empty body. The PR 2 engine supplies every number; this PR adds no measurement logic.
+**Architecture:** `EvalsScreen` becomes a normal `BaseAppScreen` with the house three-pane workbench — library rail, detail pane, inspector — driven by *selection state*, not by mounting `Screen` objects inside a `Container`. That architecture is why the current hub renders an empty body.
+
+**This is PR 3a of two.** It delivers the runner's preflight results, retires the hub, and builds the shell, the bench editor, and the snippet editor. PR 3b adds the results grid, its lenses, empty states, and the stylesheet cleanup. Splitting here keeps each half independently reviewable: 3a is a screen you can author in, 3b is a screen you can read results in.
 
 **Tech Stack:** Python 3.11+, Textual, pytest. No new dependencies.
 
@@ -436,78 +438,24 @@ Selecting a word bench shows name, dataset, prompt mode, top-K, probes, and a ta
 
 ---
 
-### Task 6: Results grid and lenses
-
-**Files:** create `results_grid.py`; test `Tests/UI/test_evals_results_grid.py`
-
-**Interfaces:** consumes `word_bench.storage.load_grid` and every public function in `word_bench.analysis`. Produces `ResultsGrid`, `#evals-lens-selector`, `#evals-baseline-selector`.
-
-This is the screen's centrepiece and the most likely place to misrepresent the engine's numbers.
-
-**Requirements the tests must pin:**
-
-- Five lenses: **Top-1**, **Entropy**, **Probe**, **Coverage**, **Δ baseline**.
-- **Top-1 marks near-ties.** Two identical requests were observed returning the top two tokens in opposite rank order at magnitudes stable to ~0.002. When rank 1 and rank 2 are within a stated threshold, the cell must show the tie rather than a bare winner. A grid that hides this shows spurious differences between statistically identical cells.
-- **Δ baseline never renders a leading `≥`.** PR 2's review disproved the lower-bound claim: crediting an absent token with 0 pulls the value up against the lumping approximation that pulls it down, and neither dominates. Render the number plainly; mark high-truncation cells with `!` and explain in the inspector.
-- Baseline is explicit and switchable between a **column** and a **row**, and the header always states which is active. A divergence with an unstated reference point is the easiest way to mislead yourself.
-- **Entropy passes a shared `k`** via `analysis.effective_k(...)`, and the header states the effective K. Otherwise a K=5 column reads as "more confident" than a K=20 column with no behavioural difference.
-- A failed cell renders `—` with its reason in the inspector; an unrun cell is blank. Never `0` for either — both read as "measured and found nothing".
-- A **warned** column (degenerate canary) carries its warning into the grid, so a divergence caused by an out-of-distribution target is never read as a finding about content.
-- Focusing a cell updates the inspector with its full top-K and probe table; arrow keys move focus. No modal.
-- Keys `l` (lens), `b` (baseline), `s` (sort), `e` (export) register through `ShortcutContext` so the footer stays truthful.
-
----
-
-### Task 7: Empty states, sample bench, export
-
-**Files:** modify `library_rail.py`, `bench_editor.py`, `results_grid.py`; create `sample_bench.py`; test `Tests/UI/test_evals_empty_states.py`
-
-The screen's most common initial condition is zero benches, zero datasets, zero runs — and possibly zero configured providers. The current screen's core failure is looking functional while not being so.
-
-**Requirements:**
-
-- No providers configured → empty state routes to Settings; no target list, no wall of preflight failures.
-- No benches → a **one-click sample bench** (the loaded-nouns snippet set, prewired to a configured target). This is the only way the screen's value is legible before a user invests in authoring anything.
-- No datasets → authoring and import offered side by side.
-- Export writes CSV for the active lens and JSON for the whole run group — snapshot, every cell's top-K, and resolved probe readings.
-
----
-
-### Task 8: Retire the Evals-only stylesheet selectors
-
-**Files:** modify `tldw_chatbook/css/features/_evaluation_unified.tcss`, regenerate the bundle
-
-PR 1 deliberately left this sheet alone: its rules are **unscoped**, and 21 of its 33 selectors have surviving consumers across Chat, Logs, MCP, RAG search, Chatbooks and more. Only these 12 are Evals-only:
-
-```
-.advanced-config-form  .config-grid             .config-toggles
-.cost-display          .dataset-management-form .empty-message
-.model-management-form .quick-start-bar         .results-dashboard
-.suggestion-text       .system-prompt-editor    .template-editor
-```
-
-- [ ] **Step 1: Re-verify each is still unused** by surviving code before deleting — this plan's survey was taken at branch time and other work lands continuously.
-- [ ] **Step 2:** Delete only those 12 rules. **Leave the other 21 selectors untouched.** Deleting the file wholesale would silently restyle unrelated screens.
-- [ ] **Step 3:** Regenerate the bundle via `build_css.py`; never hand-edit it.
-- [ ] **Step 4:** `Tests/UI/test_non_obscuring_focus_contract.py` reads `EVALUATION_UNIFIED` off disk — confirm its 9 pre-existing failures are still exactly 9.
-
----
-
-### Task 9: Live verification
+### Task 6: Live verification (PR 3a)
 
 No code. Uses the `verify` skill.
 
 - [ ] Launch the app in this worktree with a scratch `TLDW_CONFIG_PATH`, navigate Lab → Evals.
-- [ ] **Capture the screen and diff it against the same capture on `origin/dev`.** On dev the body is empty; here it must show the three-pane workbench. This is the inverse of PR 1's gate, where identical captures proved nothing broke — here a *difference* is the proof.
-- [ ] Create the sample bench, run it against the live llama.cpp on `127.0.0.1:9099`, and confirm: readiness badges render, the degenerate canary produces a visible warning, the grid fills row-major, and lens switching works.
+- [ ] **Capture the screen and diff it against the same capture on `origin/dev`.** This gate is the *inverse* of PR 1's: there, identical captures proved nothing broke. Here the captures must **differ** — on `dev` the Evals body is empty, so a matching capture would mean the new screen failed to render too.
+- [ ] Confirm the three panes render, the library rail lists its three sections with counts, and selecting a bench populates the detail pane and the readiness inspector.
+- [ ] Confirm the primary action names its object when a bench is selected and is disabled with a stated reason otherwise.
 - [ ] Confirm no CSS warnings about missing selectors in the log.
-- [ ] Note: `Ctrl+1`..`Ctrl+0` **cannot** be verified through tmux — `send-keys` has no ASCII encoding for ctrl+digit. Assert those in a unit test; never conclude from a tmux probe.
+- [ ] `Ctrl+1`..`Ctrl+0` **cannot** be verified through tmux — `send-keys` has no ASCII encoding for ctrl+digit. Assert those in a unit test; never conclude from a tmux probe.
+
+Running a bench end-to-end is PR 3b's gate, not this one — there is no grid to render yet.
 
 ---
 
 ## Notes for the reviewer
 
 - **The hub was already broken on `dev`** — empty body, verified by before/after capture during PR 1. There is no working behaviour to preserve parity with, so "matches the old screen" is not a valid review standard.
-- **The engine's numbers are not this PR's to change.** Any arithmetic in `results_grid.py` beyond formatting is a defect; the grid calls `analysis.py`.
-- **Three renderings would misrepresent the engine:** a bare Top-1 winner on a near-tie, a `≥` prefix on divergence, and entropy without a shared K. Each is pinned by a test.
-- Schema is unchanged in this PR. `Evals_DB` is touched only by Task 1's snapshot serialization.
+- **Task 3's rule is the point of the PR:** no `Screen` subclass may be mounted inside any workbench container. Detail and inspector content swaps by removing and mounting plain widgets on selection change.
+- Schema is unchanged. `Evals_DB` is touched only by Task 1's snapshot serialization.
+- The results grid does not exist yet. A reviewer should not expect `results_grid.py`, lens controls, or export in this PR.
