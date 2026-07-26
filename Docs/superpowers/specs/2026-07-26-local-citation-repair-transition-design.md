@@ -83,6 +83,24 @@ speculative abstraction.
 Create a focused `tldw_chatbook/Chat/citation_repair.py` module containing only
 bounded, provider-independent contracts and functions.
 
+### Hard limits
+
+The module defines these non-configurable limits:
+
+| Constant | Value | Purpose |
+|---|---:|---|
+| `REPAIR_EVIDENCE_CONTEXT_UTF8_BYTES_MAX` | `SNAPSHOT_TEXT_UTF8_BYTES_MAX` (`64 * 1024`) | Exact evidence context retained for repair |
+| `REPAIR_ALLOWED_ORDINALS_MAX` | `EVIDENCE_ENTRIES_PER_PROMPT_MAX` (`64`) | Allowed ordinal count and maximum ordinal value |
+| `REPAIR_MARKERS_MAX` | `CITATION_OCCURRENCES_MAX` (`512`) | Total eligible well-formed and malformed marker-like tokens scanned in either body |
+| `REPAIR_ANSWER_BODY_UTF8_BYTES_MAX` | `ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX` (`1024 * 1024`) | Initial and repaired body buffer |
+| `REPAIR_FIXED_OVERHEAD_UTF8_BYTES_MAX` | `8 * 1024` | Fixed instruction and literal delimiter content |
+| `REPAIR_REQUEST_UTF8_BYTES_MAX` | `REPAIR_ANSWER_BODY_UTF8_BYTES_MAX + REPAIR_EVIDENCE_CONTEXT_UTF8_BYTES_MAX + REPAIR_FIXED_OVERHEAD_UTF8_BYTES_MAX` (`1,122,304`) | Sum of UTF-8 bytes in the canonical system and user message content before provider adaptation |
+
+These limits are implementation constants, not settings. Exact-limit values
+are accepted and limit-plus-one values fail closed. The fixed instruction and
+literal delimiters must fit the fixed-overhead allocation; changing them
+requires updating its boundary tests.
+
 ### `CitationRepairContract`
 
 The local capture boundary returns an optional immutable contract containing:
@@ -92,7 +110,8 @@ The local capture boundary returns an optional immutable contract containing:
 - the exact prompt evidence context already sent to the initial provider
 - a schema version
 
-The contract validates hard size and count limits. It contains no builder,
+The contract accepts only ordinals in the inclusive range `1..64`, validates
+sorted uniqueness, applies the hard limits above, and contains no builder,
 database handle, source primary key, credential, provider object, or mutable
 request state.
 
@@ -111,17 +130,23 @@ Capture returns no repair contract when:
 ### Structural decision
 
 A pure decision function examines the exact unrendered answer with the
-Markdown-aware canonical marker scanner.
+Markdown-aware canonical marker scanner. Outside fenced code, inline code, and
+escaped literals, a citation-like token is the exact bracket form matched by
+`\[S[0-9,\t ]+\]`. A token is well formed only when its full text matches
+`\[S[1-9][0-9]*\]`. Therefore `[S0]`, `[S01]`, `[S1,S2]`, and comma/ASCII-
+whitespace variants are malformed. A well-formed positive ordinal absent from
+the contract is unknown. Both malformed and unknown tokens are invalid.
 
 It returns one of:
 
 - `not_applicable`: no valid repair contract
 - `valid`: at least one eligible marker exists and every eligible marker
-  ordinal belongs to the contract
-- `repair_required_missing`: no eligible marker exists
-- `repair_required_invalid`: at least one eligible marker uses an unknown
-  ordinal
-- `unavailable`: the answer or marker count exceeds a bound
+  is well formed and belongs to the contract
+- `repair_required_missing`: no eligible citation-like token exists
+- `repair_required_invalid`: at least one eligible token is malformed or uses
+  an unknown ordinal
+- `unavailable`: the answer exceeds its UTF-8 bound or the combined count of
+  eligible well-formed and malformed tokens exceeds `REPAIR_MARKERS_MAX`
 
 Repeated, grouped, and reordered known markers are structurally valid. Markers
 inside fenced code, inline code, or escaped literals are ignored. Structural
@@ -131,9 +156,16 @@ validity never means the cited snapshot supports the claim.
 
 Repair may alter citation marker syntax but no other answer text.
 
-The comparison projection removes each eligible canonical marker group and,
-when present, the single ASCII separator immediately before that group. This
-allows conventional text such as:
+The projection uses the same Markdown-aware token ranges as the structural
+decision, including malformed citation-like tokens in the initial body. It
+walks token ranges from right to left. For each token it deletes the token's
+exact Unicode-codepoint range and also deletes exactly one immediately
+preceding U+0020 SPACE, if present. It never removes tabs, newlines, other
+ASCII whitespace, punctuation, or more than one preceding space. Processing
+right to left makes adjacent `[S1][S2]` and space-separated `[S1] [S2]`
+deterministic without a separate “marker group” rule.
+
+This allows conventional text such as:
 
 ```text
 Original: Aurora began at 09:30 UTC.
@@ -144,9 +176,9 @@ The original and repaired projections must otherwise be byte-for-byte equal
 as UTF-8 text. The projection does not normalize Unicode, punctuation,
 newlines, general whitespace, Markdown, or case.
 
-Unknown positive-ordinal markers are removed from the original projection so
-`[S9]` may be replaced by `[S1]`. Code and escaped literals are not eligible
-markers and remain part of the compared text.
+Unknown and malformed citation-like tokens are removed from the initial
+projection, so `[S9]`, `[S0]`, or `[S1,S2]` may be replaced by `[S1]`. Code and
+escaped literals are not eligible tokens and remain part of the compared text.
 
 A repaired body is selectable only when:
 
@@ -179,9 +211,22 @@ Evidence and answer text are delimited as untrusted data. The instruction:
 - requires returning only the repaired answer
 
 The controller must not replay conversation history. Before dispatch it
-verifies that the complete fixed instruction, evidence block, and answer block
-fit the resolved model window without trimming. If the exact request cannot
-fit, repair is unavailable and the original is selected.
+first applies the UTF-8 request limits above, then verifies the complete
+two-message repair payload fits the resolved model window without trimming.
+It counts the exact canonical system and user messages with
+`count_console_messages_tokens`. The response reservation is the greater of:
+
+- the positive resolved `max_tokens`, or `DEFAULT_RESPONSE_RESERVATION` (`1024`)
+  when `max_tokens` is absent; and
+- the same counter's token estimate for the exact initial answer as one
+  assistant message.
+
+The safety margin is `max(512, resolved_window // 50)`, matching the Console
+history boundary. Dispatch is allowed only when `prompt_tokens +
+response_reservation + safety_margin <= resolved_window`. The reservation is
+not clamped and the payload is never trimmed. If the request byte cap, token
+window lookup/count, or inequality fails, repair is unavailable and the
+original is selected.
 
 Repair chunks are collected off-screen into a bounded buffer. Empty output or
 crossing the answer body byte limit aborts collection and selects the original.
@@ -274,12 +319,12 @@ is placed in presentation metadata.
 Visible copy is:
 
 - while checking or repairing: `Checking citations…`
-- successful selection: `Citation markers repaired · View original attempt`
+- successful selection: `Citations repaired · View original attempt`
 - failed or invalid repair: a concise citation-warning notice
 - canceled repair: `Citation repair canceled`
 
-The repaired notice is structural. It does not show a grounded badge or imply
-support was checked.
+The repaired notice is structural. Every notice test asserts that it does not
+show a grounded badge or imply that support was checked.
 
 ### Original-attempt preview
 
@@ -356,13 +401,18 @@ evidence, source identity, locator, prompt, exception text, or traceback.
 ### Pure contract tests
 
 - contract schema, ordinal uniqueness, count, and byte limits
-- valid, missing, unknown, repeated, grouped, and reordered markers
+- valid, missing, unknown, zero, leading-zero, comma-grouped, repeated,
+  space-separated, adjacent, and reordered markers
 - escaped, inline-code, and fenced-code literals
-- projection equality for insert, replace, remove, and grouped markers
+- projection equality for insert, replace, remove, adjacent, space-separated,
+  malformed, and unknown markers, including the exact one-U+0020 deletion rule
 - rejection of punctuation, case, Unicode, newline, and general-whitespace
   changes
 - empty, oversized, and marker-flood outputs
-- exact bounded repair prompt and untrusted-data delimiters
+- exact-limit and limit-plus-one checks for evidence bytes, ordinals, marker
+  count, answer bytes, fixed overhead, and total request bytes
+- exact bounded repair prompt, untrusted-data delimiters, response reservation,
+  and safety-margin window inequality
 
 ### Controller tests
 
@@ -385,6 +435,9 @@ evidence, source identity, locator, prompt, exception text, or traceback.
   repair sessions
 - presentation metadata contains no governed text
 - notice and action-row signatures update without remounting unrelated rows
+- all checking, success, failure, and canceled notices remain structural and
+  never claim semantic support, verification, grounding, or canonical
+  association
 - original preview toggles with mouse and keyboard
 - preview does not alter message content, copy, TTS, export, or provider history
 - eight-entry LRU eviction and all cleanup paths
