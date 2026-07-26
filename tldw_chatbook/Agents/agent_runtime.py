@@ -640,9 +640,14 @@ def run_agent_loop(
                     result = deps.invoke_tool(call)
 
                 content = result.content if result.ok else f"ERROR: {result.error}"
-                content = _truncate_tool_result(
-                    content, budget.max_tool_result_chars, call.name
-                )
+
+            # Truncate once, unconditionally, regardless of which branch set
+            # `content` above -- the review-hook refusal string (verdict !=
+            # "proceed") and every dispatched-tool result share the same cap
+            # so neither path can enter history unbounded.
+            content = _truncate_tool_result(
+                content, budget.max_tool_result_chars, call.name
+            )
 
             add(STEP_TOOL_RESULT, tool_name=call.name, result=content[:2000])
             _append_tool_result(messages, call, content)
