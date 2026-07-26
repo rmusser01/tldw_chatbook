@@ -3904,32 +3904,67 @@ async def test_permissions_mode_renders_pinned_grouped_sorted_matrix(tmp_path):
 # `PermissionsHubService` suite above does.
 
 
+class EmptyCatalogHubService(FakeHubService):
+    """A LOCAL-source service exposing a genuinely EMPTY catalog --
+    `FakeHubService.load_section("external_servers")` seeds a "docs"
+    profile with tool "a", which would let `_last_hub_tools` end up
+    non-empty even under a test that claims to cover "no MCP servers".
+    This override returns `[]` instead, so `_collect_hub_tools()` really
+    does produce zero tools and the built-in section's headline claim (it
+    renders independently of the MCP catalog) is actually exercised."""
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if self.context.selected_source == "local":
+            if effective_section == "external_servers":
+                return []
+            return {"source": "local", "section": effective_section}
+        return {"external_servers": [], "source": "server", "section": "external_servers"}
+
+
+class EmptyCatalogApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = EmptyCatalogHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
 @pytest.mark.asyncio
 async def test_permissions_mode_shows_builtin_section_with_no_mcp_servers():
-    """The built-in section must not depend on the MCP catalog -- it
-    renders even for a service with zero MCP servers/tools and no
-    `permission_store`/`effective_tool_states` seam at all (the base
-    `FakeHubService`, same fixture `test_permissions_mode_renders_fail_
-    soft_without_t4_seams` uses to pin the MCP-only fail-soft matrix)."""
-    app = WorkbenchApp()
+    """The built-in section must not depend on `_collect_hub_tools()`/the
+    MCP catalog -- it renders even when the catalog is GENUINELY empty
+    (`_last_hub_tools == []`, via `EmptyCatalogHubService` above, not
+    merely a fixture whose seeded MCP rows happen to go unasserted) and
+    the service exposes no `permission_store`/`effective_tool_states` seam
+    at all (`FakeHubService`'s base shape, same as `test_permissions_mode_
+    renders_fail_soft_without_t4_seams`)."""
+    app = EmptyCatalogApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         workbench.set_mode("permissions")
         await pilot.pause()
 
+        # The claim this test exists to pin: the MCP catalog is truly empty.
+        assert workbench._last_hub_tools == []
+
         rows = _perm_all_rows(app)
+        # Only the pinned global row plus the built-in section -- zero MCP
+        # server/tool rows of any kind.
+        assert [row[0] for row in rows] == [
+            "Global default",
+            "Server default — Built-in (agent runtime)",
+            "  calculator",
+            "  get_current_datetime",
+        ]
         tool_cells = {row[0].strip(): row[1] for row in rows}
-        assert "calculator" in tool_cells
-        assert "get_current_datetime" in tool_cells
         # Untagged built-ins resolve to the built-in ALLOW floor, not MCP's
         # "Ask" default -- proves `resolve_builtin_state` (not the MCP
         # resolver) produced this label.
         assert tool_cells["calculator"] == "Allow"
         assert tool_cells["get_current_datetime"] == "Allow"
-
-        server_labels = {row[0] for row in rows}
-        assert "Server default — Built-in (agent runtime)" in server_labels
 
 
 class _FakeLocalServiceWithInventory:
@@ -4004,6 +4039,81 @@ async def test_stored_deny_for_builtin_renders_off_with_tool_override_marker(tmp
         assert tool_cells["calculator"] == "Off •"
         # Sibling built-in tool is untouched by calculator's own override.
         assert tool_cells["get_current_datetime"] == "Allow"
+
+
+@pytest.mark.asyncio
+async def test_orphaned_builtin_row_is_marked_via_tags_cell_not_tool_name(tmp_path):
+    """A stored decision for a built-in tool name no live tool provides
+    must still be listed (`orphaned=True`, Task 2) so the user can clear
+    it -- marked via its Tags cell ("orphaned"), never by decorating the
+    Tool cell/`tool_name` itself: `_row_key()`/`action_cycle_state()`
+    (mcp_permissions_mode.py) read `PermRow.tool_name` verbatim as the
+    tool's store identity, so a decorated name would corrupt the row
+    Task 4's write-back path needs to address."""
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_tool_state(
+        BUILTIN_TOOL_SERVER_KEY, "tool_that_no_longer_exists", "allow"
+    )
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        row_keys = _perm_row_keys(app)
+        assert "agent:builtin::tool_that_no_longer_exists" in row_keys
+        index = row_keys.index("agent:builtin::tool_that_no_longer_exists")
+        cells = _perm_table_texts(app, index)
+        # Tool cell carries the RAW, undecorated stored name -- not
+        # "tool_that_no_longer_exists (orphaned)" or similar.
+        assert cells[0].strip() == "tool_that_no_longer_exists"
+        # The Tags cell (not the Tool cell) carries the orphaned marker.
+        assert cells[-1] == "orphaned"
+
+        # A live built-in tool's row is untouched and NOT marked orphaned.
+        calculator_index = row_keys.index("agent:builtin::calculator")
+        calculator_cells = _perm_table_texts(app, calculator_index)
+        assert calculator_cells[-1] != "orphaned"
+
+
+@pytest.mark.asyncio
+async def test_builtin_enumeration_failure_still_shows_a_cyclable_server_default_row(
+    tmp_path, monkeypatch
+):
+    """Review finding: `_builtin_permission_matrix_rows()` must not hide
+    the pinned "Server default — Built-in (agent runtime)" row when
+    `builtin_permission_rows()` itself fails -- a user's stored built-in
+    server default would otherwise become invisible and impossible to
+    clear/cycle. Only the per-tool rows beneath it are conditional on
+    enumeration succeeding."""
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_server_default(BUILTIN_TOOL_SERVER_KEY, "deny")
+
+    def _raise(payload):
+        raise RuntimeError("builtin registry unavailable")
+
+    monkeypatch.setattr(mcp_workbench_module, "builtin_permission_rows", _raise)
+
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        row_keys = _perm_row_keys(app)
+        assert "__server__::agent:builtin" in row_keys
+        # No tool rows -- enumeration failed -- but the server row survives.
+        assert not [key for key in row_keys if key.startswith("agent:builtin::")]
+
+        rows = _perm_all_rows(app)
+        server_row = next(
+            row for row in rows if row[0] == "Server default — Built-in (agent runtime)"
+        )
+        # The stored server-level "deny" default is still visible (and, per
+        # the "•" override marker, still cyclable back to Inherit).
+        assert server_row[1] == "Off •"
 
 
 class GuardedEffectiveStatesHubService(PermissionsHubService):

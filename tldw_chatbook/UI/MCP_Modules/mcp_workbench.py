@@ -1230,7 +1230,7 @@ class MCPWorkbench(Container):
             logger.warning(f"MCP effective tool state resolution failed: {exc}")
             return {}
 
-    def _builtin_permission_rows(self) -> list:
+    def _builtin_permission_rows(self, payload: dict[str, Any]) -> list:
         """This run's built-in tool rows, resolved by the BUILT-IN resolver.
 
         Deliberately NOT merged into `_resolve_effective_states()`: that
@@ -1240,20 +1240,25 @@ class MCPWorkbench(Container):
         through it would resolve them wrongly AND store an inert flag. See
         the design doc's spike findings for the failure this avoids.
 
-        Fail-soft like every other service seam here: any failure yields an
-        empty list rather than raising into a render pass.
+        `payload` is the SAME dict `_sync_permissions_mode()` already loaded
+        once via `store.load()` for the MCP path (review finding, Task 3
+        fix round) -- this method does NOT read the store itself. A second,
+        independent read here would cost an extra file access every
+        `_sync_children()` pass/Space press, and would open a coherence
+        window: this section's `state_label` would come from a DIFFERENT
+        snapshot than its `cycle_current`/server-default label (derived
+        from the caller's own `servers_payload`, itself sliced from the
+        SAME first read) if a store write raced between the two reads.
+        `payload` may legitimately be `{}` (no `permission_store` seam, or
+        the caller's own read failed) -- `builtin_permission_rows({})` is
+        documented as valid and resolves everything to the built-in ALLOW
+        floor, so the caller's own fail-soft default is sufficient; no
+        second guard is needed here for "no payload available".
+
+        Fail-soft like every other service seam here: any failure in
+        `builtin_permission_rows()` itself yields an empty list rather than
+        raising into a render pass.
         """
-        service = self._service()
-        payload: dict[str, Any] = {}
-        store = getattr(service, "permission_store", None)
-        if store is not None:
-            try:
-                loaded = store.load()
-                if isinstance(loaded, dict):
-                    payload = loaded
-            except Exception as exc:
-                logger.warning(f"builtin permission store read failed: {exc}")
-                payload = {}
         try:
             return builtin_permission_rows(payload)
         except Exception as exc:
@@ -1261,7 +1266,7 @@ class MCPWorkbench(Container):
             return []
 
     def _builtin_permission_matrix_rows(
-        self, servers_payload: Mapping[str, Any]
+        self, payload: dict[str, Any], servers_payload: Mapping[str, Any]
     ) -> list[PermRow]:
         """Render this pass's built-in tool rows as matrix `PermRow`s.
 
@@ -1281,6 +1286,10 @@ class MCPWorkbench(Container):
         `server_key`, there is no code path here that could resolve an
         unrecognized key by inheriting MCP's (or any other) branch.
 
+        `payload`/`servers_payload` are the caller's OWN already-loaded
+        values (see `_builtin_permission_rows()`'s docstring) -- passed
+        straight through, never re-read.
+
         Every tool row's `state_label` is `format_tool_state_label()` of
         the `EffectiveToolState` `_builtin_permission_rows()` already
         resolved via `resolve_builtin_state` (never the MCP resolver) --
@@ -1290,10 +1299,15 @@ class MCPWorkbench(Container):
         ("orphaned") rather than its Tool cell -- `tool_name` stays the
         raw stored name so a future cycle/clear action still addresses the
         right store entry instead of a decorated string.
+
+        The pinned "Server default" row is ALWAYS returned, even when
+        `_builtin_permission_rows()` yields zero tool rows (review finding:
+        enumeration failing must not also hide a user's stored built-in
+        server default, making it invisible and impossible to clear) -- only
+        the per-tool rows beneath it are conditional on that list being
+        non-empty.
         """
-        rows_in = self._builtin_permission_rows()
-        if not rows_in:
-            return []
+        rows_in = self._builtin_permission_rows(payload)
 
         server_entry = servers_payload.get(BUILTIN_TOOL_SERVER_KEY)
         raw_default = (
@@ -1354,6 +1368,12 @@ class MCPWorkbench(Container):
         `permission_store.load()` read -- no extra service I/O beyond that
         (T8's server-source governance fetch, below, is the one exception,
         and T11 now caches it -- see `_server_governance_profiles()`).
+        TASK-627 Task 3: the built-in section (`_builtin_permission_matrix_
+        rows()`, appended below) is rendered from this SAME one read
+        (`payload`/`servers_payload`, passed straight through) -- it must
+        never trigger a second `store.load()` of its own; see that
+        method's docstring for why a second read would also open a
+        state/cycle_current coherence window, not just cost extra I/O.
 
         T10: `effective` is the SAME batch `EffectiveToolState` resolution
         `_sync_children()` already computed once this pass (via
@@ -1455,7 +1475,7 @@ class MCPWorkbench(Container):
         # rows()`'s own grouping -- it renders even when `tools` is empty
         # (no MCP servers configured), since it derives from the live
         # built-in tool registry, not the MCP catalog `tools` came from.
-        rows = rows + self._builtin_permission_matrix_rows(servers_payload)
+        rows = rows + self._builtin_permission_matrix_rows(payload, servers_payload)
         await self.query_one(MCPPermissionsMode).update_matrix(
             rows, kill_switch=kill_switch, preview=preview, echo=echo
         )
