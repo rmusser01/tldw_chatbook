@@ -993,6 +993,45 @@ Load persisted state in `on_mount`, before the first render:
         self._apply_layout(self.region_layout.toggle(event.region))
 ```
 
+**Track focus, or `z` is a lie.** `focused_region` must follow real focus, otherwise every `z` collapses whichever region the reactive happened to default to. Walk up from the focused widget to find its owning region:
+
+```python
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        """Keep `focused_region` in step with whatever actually holds focus."""
+        node = event.widget
+        while node is not None:
+            node_id = getattr(node, "id", None) or ""
+            for prefix in ("wl-region-", "wl-header-"):
+                if node_id.startswith(prefix):
+                    try:
+                        self.focused_region = Region(node_id[len(prefix):])
+                    except ValueError:
+                        pass
+                    return
+            node = node.parent
+```
+
+Add `from textual import events` to the imports. Both prefixes are handled so that focusing a *collapsed* region's header targets that region — otherwise `z` on a collapsed header would expand some other region.
+
+Add this test alongside the others in Step 1:
+
+```python
+@pytest.mark.asyncio
+async def test_focus_drives_which_region_z_collapses(watchlists_app):
+    async with watchlists_app.run_test() as pilot:
+        await pilot.pause()
+        screen = watchlists_app.screen
+        screen.query_one("#wl-region-items").focus()
+        await pilot.pause()
+        assert screen.focused_region == Region.ITEMS
+        await pilot.press("z")
+        await pilot.pause()
+        assert screen.region_layout.is_collapsed(Region.ITEMS)
+        assert not screen.region_layout.is_collapsed(Region.FEEDS)
+```
+
+If `#wl-region-items` is not focusable as composed, give the region bodies `can_focus = True` in `WatchlistsWorkbench._compose_region` rather than weakening this test — a region the keyboard cannot reach cannot be collapsed by keyboard either.
+
 - [ ] **Step 5: Replace the three placeholder columns in `compose_content`**
 
 Replace the three-column body (the `Column 1: Watchlist List` / `Column 2: …` / `Column 3: Status Inspector` containers) with the workbench, keeping the destination header, the backend selector, and the recovery-state rendering exactly as they are:
