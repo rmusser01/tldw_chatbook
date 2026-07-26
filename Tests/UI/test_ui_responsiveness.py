@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 
 
@@ -236,6 +238,7 @@ def test_console_transcript_sync_timer_updates_responsiveness_monitor():
     assert stopped == [True]
 
 
+@pytest.mark.asyncio
 async def test_console_sync_records_worker_lifecycle():
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -271,6 +274,7 @@ async def test_console_sync_records_worker_lifecycle():
     assert monitor.snapshot().active_workers == 0
 
 
+@pytest.mark.asyncio
 async def test_console_session_surface_records_tab_mount_churn():
     from tldw_chatbook.Widgets.Console.console_session_surface import (
         ConsoleSessionSurface,
