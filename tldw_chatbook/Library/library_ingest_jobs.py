@@ -227,6 +227,13 @@ class LibraryIngestJob:
     origin: str = "local"
     remote_job_id: str | None = None
     batch_id: str | None = None
+    #: The id of the media row the SERVER created, read from a finished job's
+    #: ``result``. Deliberately not ``media_id``: that means a row in *this*
+    #: machine's media DB, and the two id spaces are unrelated, so storing a
+    #: server id there would point "Open in Library" at a wrong or absent local
+    #: row. Kept separate so a server-origin job can offer its own affordance
+    #: (task-700) without weakening what ``media_id`` means.
+    remote_media_id: str | None = None
 
 
 class IngestJobStore(Protocol):
@@ -698,7 +705,9 @@ class LibraryIngestJobRegistry:
         self._persist(updated)
         return replace(updated)
 
-    def mark_remote_done(self, job_id: str) -> LibraryIngestJob | None:
+    def mark_remote_done(
+        self, job_id: str, *, remote_media_id: str | None = None
+    ) -> LibraryIngestJob | None:
         """Finish a ``server``-origin job that has no local media row.
 
         ``mark_done`` requires a ``media_id`` because a *local* completion that
@@ -746,6 +755,13 @@ class LibraryIngestJobRegistry:
             state=IngestJobState.DONE,
             finished_at=time.monotonic(),
             finished_at_wall=datetime.now(timezone.utc).isoformat(),
+            # The server's own row id, when it reported one. Not media_id: see
+            # the field's own note on why the two id spaces stay separate.
+            remote_media_id=(
+                str(remote_media_id)
+                if remote_media_id is not None
+                else current.remote_media_id
+            ),
         )
         self._jobs[index] = updated
         self._notify_listeners()
@@ -1118,6 +1134,7 @@ def _job_from_row(row: dict) -> "LibraryIngestJob":
         origin=row.get("origin") or "local",
         remote_job_id=row.get("remote_job_id"),
         batch_id=row.get("batch_id"),
+        remote_media_id=row.get("remote_media_id"),
         # monotonic fields are not round-trippable -- leave defaults.
         submitted_at=0.0,
         started_at=None,
