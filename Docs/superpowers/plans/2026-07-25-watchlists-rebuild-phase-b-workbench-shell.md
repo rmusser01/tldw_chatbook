@@ -568,6 +568,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.reactive import reactive
+from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from .region_layout import CENTRE_REGIONS, Region, RegionLayout
@@ -611,20 +612,25 @@ class WatchlistsWorkbench(Horizontal):
         self.set_reactive(WatchlistsWorkbench.layout, layout)
 
     def compose(self) -> ComposeResult:
-        yield from self._compose_region(Region.LEFT_RAIL)
+        yield self._region_widget(Region.LEFT_RAIL)
 
-        centre = Vertical(id="wl-centre", classes="watchlists-centre")
-        with centre:
+        with Vertical(id="wl-centre", classes="watchlists-centre"):
             for region in CENTRE_REGIONS:
-                yield from self._compose_region(region)
+                yield self._region_widget(region)
 
-        yield from self._compose_region(Region.RIGHT_RAIL)
+        yield self._region_widget(Region.RIGHT_RAIL)
 
-    def _compose_region(self, region: Region) -> ComposeResult:
-        """Render one region: a titled body, or a focusable one-line header."""
+    def _region_widget(self, region: Region) -> Widget:
+        """Build one region: a titled body, or a focusable one-line header.
+
+        Returns a constructed widget rather than yielding, so `compose` stays
+        the single place that mounts anything. Building children positionally
+        avoids the `with container: ... ; yield container` shape, which
+        double-mounts — Textual's `with` already adds the container.
+        """
         if self.layout.is_collapsed(region):
-            # A Button, not a Static: a collapsed region must stay focusable and
-            # clickable, or collapsing it is one-way.
+            # A Button, not a Static: a collapsed region must stay focusable
+            # and clickable, or collapsing it is one-way.
             header = Button(
                 f"▸ {REGION_TITLES[region]}",
                 id=f"wl-header-{region.value}",
@@ -632,17 +638,17 @@ class WatchlistsWorkbench(Horizontal):
             )
             header.add_class("watchlists-region-header")
             header.tooltip = f"Expand {REGION_TITLES[region]}"
-            yield header
-            return
+            return header
 
         body = Vertical(
+            Static(REGION_TITLES[region], classes="watchlists-region-title"),
+            Static(REGION_PLACEHOLDERS[region], classes="watchlists-region-placeholder"),
             id=f"wl-region-{region.value}",
             classes=f"watchlists-region watchlists-region-{region.value}",
         )
-        with body:
-            yield Static(REGION_TITLES[region], classes="watchlists-region-title")
-            yield Static(REGION_PLACEHOLDERS[region], classes="watchlists-region-placeholder")
-        yield body
+        # Regions must be keyboard-reachable, or `z` cannot target them.
+        body.can_focus = True
+        return body
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
