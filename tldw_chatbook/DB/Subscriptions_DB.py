@@ -339,37 +339,77 @@ class SubscriptionsDB(BaseDB):
         for row in cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"):
             existing_check = row[0]
         if existing_check and "'include'" not in existing_check:
-            cursor.execute("""
-                CREATE TABLE subscription_filters_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    subscription_id INTEGER,
-                    name TEXT NOT NULL,
-                    is_active BOOLEAN DEFAULT 1,
-                    conditions TEXT NOT NULL,
-                    action TEXT NOT NULL CHECK(action IN ('auto_ingest','auto_ignore','tag','priority','notify','include','exclude','flag')),
-                    action_params TEXT,
-                    priority INTEGER DEFAULT 0,
-                    is_include_required BOOLEAN DEFAULT 0,
-                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+            # This rebuild predates FK enforcement (Task 1a) and may run
+            # against a real database that already has a subscription_filters
+            # row whose subscription_id no longer exists -- the orphan
+            # condition Task 1a exists to stop *creating*, not to clean up
+            # retroactively (cleanup is out of scope; already-orphaned rows
+            # must survive). Copying such a row into subscription_filters_new,
+            # which declares the FK, would raise IntegrityError now that
+            # enforcement is on. Disable enforcement for this rebuild only,
+            # then restore it -- this is the documented SQLite procedure for
+            # a table rebuild that must tolerate pre-existing violations.
+            #
+            # PRAGMA foreign_keys is a no-op while a transaction is pending,
+            # so commit immediately before toggling it off, and again after
+            # the rebuild before toggling it back on. Read the pragma back
+            # rather than assuming the toggle took effect.
+            conn.commit()
+            cursor.execute("PRAGMA foreign_keys = OFF;")
+            if cursor.execute("PRAGMA foreign_keys").fetchone()[0] != 0:
+                raise RuntimeError(
+                    "Could not disable foreign_keys enforcement for the "
+                    "subscription_filters rebuild; refusing to risk a "
+                    "silent partial migration."
                 )
-            """)
-            cursor.execute("""
-                INSERT INTO subscription_filters_new
-                    (id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at)
-                SELECT id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at
-                FROM subscription_filters
-            """)
-            cursor.execute("DROP TABLE subscription_filters")
-            cursor.execute("ALTER TABLE subscription_filters_new RENAME TO subscription_filters")
-            cursor.execute("""
-                CREATE TRIGGER IF NOT EXISTS update_subscription_filters_timestamp
-                AFTER UPDATE ON subscription_filters
-                BEGIN
-                    UPDATE subscription_filters SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
-                END
-            """)
+            try:
+                cursor.execute("""
+                    CREATE TABLE subscription_filters_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        subscription_id INTEGER,
+                        name TEXT NOT NULL,
+                        is_active BOOLEAN DEFAULT 1,
+                        conditions TEXT NOT NULL,
+                        action TEXT NOT NULL CHECK(action IN ('auto_ingest','auto_ignore','tag','priority','notify','include','exclude','flag')),
+                        action_params TEXT,
+                        priority INTEGER DEFAULT 0,
+                        is_include_required BOOLEAN DEFAULT 0,
+                        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+                    )
+                """)
+                cursor.execute("""
+                    INSERT INTO subscription_filters_new
+                        (id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at)
+                    SELECT id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at
+                    FROM subscription_filters
+                """)
+                cursor.execute("DROP TABLE subscription_filters")
+                cursor.execute("ALTER TABLE subscription_filters_new RENAME TO subscription_filters")
+                cursor.execute("""
+                    CREATE TRIGGER IF NOT EXISTS update_subscription_filters_timestamp
+                    AFTER UPDATE ON subscription_filters
+                    BEGIN
+                        UPDATE subscription_filters SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+                    END
+                """)
+                conn.commit()
+            except Exception:
+                # Roll back any partial rebuild so no pending transaction
+                # remains -- otherwise the PRAGMA restore below would be a
+                # silent no-op and leave enforcement off for the rest of
+                # this connection's life, reintroducing the bug Task 1a
+                # fixed.
+                conn.rollback()
+                raise
+            finally:
+                cursor.execute("PRAGMA foreign_keys = ON;")
+                if cursor.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+                    logger.error(
+                        "Failed to re-enable foreign_keys enforcement after "
+                        "the subscription_filters rebuild."
+                    )
 
         # Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)")
