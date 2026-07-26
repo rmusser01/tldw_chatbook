@@ -419,3 +419,39 @@ def test_short_deadline_bounds_the_call_with_a_live_grandchild(tmp_path):
     assert "SPAWNED" in result.stdout, "output read before the deadline must survive"
     grandchild_pid = int(marker.read_text())
     assert _pid_is_dead(grandchild_pid), "a run must not leave descendants behind"
+
+
+def test_throwaway_home_is_removed_even_when_the_spawn_fails(tmp_path, monkeypatch):
+    """task-584 follow-up: cleanup must not sit on the normal return path.
+
+    Popen itself can raise OSError, and several paths after mkdtemp can throw,
+    so an exception must not leak the throwaway HOME directory under the OS
+    temp area where it would accumulate over repeated failures.
+    """
+    import tempfile as _tempfile
+
+    import tldw_chatbook.Skills_Interop.skill_script_runner as runner
+
+    created: list[str] = []
+    real_mkdtemp = _tempfile.mkdtemp
+
+    def tracking_mkdtemp(*args, **kwargs):
+        path = real_mkdtemp(*args, **kwargs)
+        created.append(path)
+        return path
+
+    monkeypatch.setattr(runner.tempfile, "mkdtemp", tracking_mkdtemp)
+
+    def exploding_popen(*args, **kwargs):
+        raise OSError("spawn failed")
+
+    monkeypatch.setattr(runner.subprocess, "Popen", exploding_popen)
+
+    with pytest.raises(OSError):
+        runner.run_script_subprocess(
+            [sys.executable, "-c", "pass"], cwd=tmp_path, limits=ScriptRunLimits()
+        )
+
+    assert created, "the throwaway HOME should have been created"
+    for path in created:
+        assert not os.path.exists(path), f"leaked temp dir on the failure path: {path}"

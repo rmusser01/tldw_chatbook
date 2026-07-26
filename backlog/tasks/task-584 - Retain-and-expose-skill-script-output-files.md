@@ -1,7 +1,7 @@
 ---
 id: TASK-584
 title: Retain and expose skill script output files
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-25 15:05'
 labels:
@@ -24,11 +24,11 @@ Sketch of the options to weigh: persist the scratch directory under the existing
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A decision is recorded on whether the agent can read produced files, or only the user can, with the reasoning
-- [ ] #2 Files a script produces survive the run and are reachable at a documented location
-- [ ] #3 Retention and cleanup are defined and enforced, so output cannot accumulate without bound
-- [ ] #4 If the agent can read output, that read path is contained and size-capped, and cannot reach outside the run's own output directory
-- [ ] #5 Produced files cannot be written into a skill's own bundle, so a run cannot invalidate its own fingerprints or plant trust-invisible content
-- [ ] #6 The tool result reports what was produced without dumping file contents into the transcript
-- [ ] #7 Docs/Features/Skills-Script-Execution.md is updated — it currently states plainly that produced files are discarded
+- [x] #1 A decision is recorded on whether the agent can read produced files, or only the user can, with the reasoning
+- [x] #2 Files a script produces survive the run and are reachable at a documented location
+- [x] #3 Retention and cleanup are defined and enforced, so output cannot accumulate without bound
+- [x] #4 If the agent can read output, that read path is contained and size-capped, and cannot reach outside the run's own output directory
+- [x] #5 Produced files cannot be written into a skill's own bundle, so a run cannot invalidate its own fingerprints or plant trust-invisible content
+- [x] #6 The tool result reports what was produced without dumping file contents into the transcript
+- [x] #7 Docs/Features/Skills-Script-Execution.md is updated — it currently states plainly that produced files are discarded
 <!-- AC:END -->
