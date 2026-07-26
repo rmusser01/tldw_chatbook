@@ -3238,91 +3238,53 @@ class ToolsSettingsWindow(Container):
             # Get tool configuration from config
             tools_config = self.config_data.get("tools", {})
 
-            # Get available tools from the tool executor
-            from ..Tools import get_tool_executor
-
-            executor = get_tool_executor()
-            available_tools = executor.get_available_tools()
+            from ..Agents.tool_catalog import (
+                ALWAYS_ON_BUILTIN_NAMES,
+                build_gateable_tool,
+                gateable_builtin_tools,
+            )
 
             yield Label("Available Tools", classes="settings-label")
             yield Static(
-                "Enable or disable tools for LLM interactions:",
+                "Enable tools for the agent. Tools with a risk tag always ask "
+                "for approval before each call -- enabling one makes it "
+                "reachable, not automatic.",
                 classes="section-description",
             )
 
-            # Create a switch for each available tool
-            for tool_info in available_tools:
-                tool_name = tool_info["function"]["name"]
-                tool_description = tool_info["function"]["description"]
+            for tool_name in ALWAYS_ON_BUILTIN_NAMES:
+                with Horizontal(classes="tool-item"):
+                    with Container(classes="tool-info"):
+                        yield Label(tool_name, classes="tool-name")
+                        yield Static(
+                            "Always available", classes="tool-description"
+                        )
 
-                # Check if tool is enabled (default to True if not specified)
-                is_enabled = tools_config.get(f"{tool_name}_enabled", True)
+            for entry in gateable_builtin_tools():
+                try:
+                    tool = build_gateable_tool(entry)
+                    description = tool.description
+                    tags = ", ".join(tool.risk_tags)
+                except Exception as exc:  # noqa: BLE001 — degrade the row, not the screen
+                    logger.warning(
+                        f"Could not describe builtin tool {entry.factory_name}: {exc}"
+                    )
+                    description = "Unavailable on this system."
+                    tags = ""
+
+                # Parentheses, NOT brackets: Textual parses [reads] as markup.
+                label = f"{entry.tool_name}  ({tags})" if tags else entry.tool_name
+                is_enabled = bool(tools_config.get(entry.gate_key, False))
 
                 with Horizontal(classes="tool-item"):
                     yield Switch(
                         value=is_enabled,
-                        id=f"tool-switch-{tool_name}",
+                        id=f"tool-switch-{entry.tool_name}",
                         classes="tool-switch",
                     )
                     with Container(classes="tool-info"):
-                        yield Label(f"{tool_name}", classes="tool-name")
-                        yield Static(tool_description, classes="tool-description")
-
-            # Tool-specific settings section
-            with Collapsible(title="Tool Configuration", collapsed=True):
-                yield Label("Timeout Settings", classes="settings-label")
-
-                # Tool execution timeout
-                timeout = tools_config.get("timeout_seconds", 30)
-                yield Label("Tool Execution Timeout (seconds):", classes="form-label")
-                yield Input(
-                    value=str(timeout),
-                    id="tool-timeout-input",
-                    type="integer",
-                    placeholder="30",
-                )
-
-                # Max concurrent executions
-                max_workers = tools_config.get("max_workers", 4)
-                yield Label("Max Concurrent Tool Executions:", classes="form-label")
-                yield Input(
-                    value=str(max_workers),
-                    id="tool-max-workers-input",
-                    type="integer",
-                    placeholder="4",
-                )
-
-                # Cache settings
-                yield Label("Cache Settings", classes="settings-label")
-                yield Checkbox(
-                    "Enable tool result caching",
-                    value=tools_config.get("cache_enabled", False),
-                    id="tool-cache-enabled",
-                )
-
-                cache_max_size = tools_config.get("cache_max_size", 100)
-                yield Label("Cache Max Size (entries):", classes="form-label")
-                yield Input(
-                    value=str(cache_max_size),
-                    id="tool-cache-max-size-input",
-                    type="integer",
-                    placeholder="100",
-                )
-
-                cache_ttl = tools_config.get("cache_default_ttl", 3600)
-                yield Label("Cache Default TTL (seconds):", classes="form-label")
-                yield Input(
-                    value=str(cache_ttl),
-                    id="tool-cache-ttl-input",
-                    type="integer",
-                    placeholder="3600",
-                )
-
-                yield Checkbox(
-                    "Persist cache to disk",
-                    value=tools_config.get("cache_persist", True),
-                    id="tool-cache-persist",
-                )
+                        yield Label(label, classes="tool-name")
+                        yield Static(description, classes="tool-description")
 
             # Save and reset buttons
             with Horizontal(classes="button-row"):
@@ -4220,93 +4182,30 @@ Thank you for using tldw-chatbook! 🎉
     async def _save_tool_settings(self) -> None:
         """Save Tool Settings to the configuration file."""
         try:
-            saved_count = 0
-            tools_config = {}
+            from ..Agents.tool_catalog import gateable_builtin_tools
+            from ..config import (
+                load_cli_config_and_ensure_existence,
+                save_settings_to_cli_config,
+            )
 
-            # Get available tools
-            from ..Tools import get_tool_executor
-
-            executor = get_tool_executor()
-            available_tools = executor.get_available_tools()
-
-            # Save enabled/disabled state for each tool
-            for tool_info in available_tools:
-                tool_name = tool_info["function"]["name"]
-                switch_id = f"tool-switch-{tool_name}"
+            updates: dict = {}
+            for entry in gateable_builtin_tools():
                 try:
-                    switch = self.query_one(f"#{switch_id}", Switch)
-                    tools_config[f"{tool_name}_enabled"] = switch.value
-                    saved_count += 1
-                except Exception:
-                    pass
+                    switch = self.query_one(f"#tool-switch-{entry.tool_name}", Switch)
+                except Exception:  # noqa: BLE001 — a row that isn't mounted
+                    continue
+                updates[entry.gate_key] = switch.value
 
-            # Save timeout settings
-            try:
-                timeout = int(self.query_one("#tool-timeout-input", Input).value)
-                tools_config["timeout_seconds"] = timeout
-                saved_count += 1
-            except Exception:
-                pass
-
-            # Save max workers
-            try:
-                max_workers = int(
-                    self.query_one("#tool-max-workers-input", Input).value
-                )
-                tools_config["max_workers"] = max_workers
-                saved_count += 1
-            except Exception:
-                pass
-
-            # Save cache settings
-            try:
-                cache_enabled = self.query_one("#tool-cache-enabled", Checkbox).value
-                tools_config["cache_enabled"] = cache_enabled
-                saved_count += 1
-            except Exception:
-                pass
-
-            try:
-                cache_max_size = int(
-                    self.query_one("#tool-cache-max-size-input", Input).value
-                )
-                tools_config["cache_max_size"] = cache_max_size
-                saved_count += 1
-            except Exception:
-                pass
-
-            try:
-                cache_ttl = int(self.query_one("#tool-cache-ttl-input", Input).value)
-                tools_config["cache_default_ttl"] = cache_ttl
-                saved_count += 1
-            except Exception:
-                pass
-
-            try:
-                cache_persist = self.query_one("#tool-cache-persist", Checkbox).value
-                tools_config["cache_persist"] = cache_persist
-                saved_count += 1
-            except Exception:
-                pass
-
-            # Save the entire tools section
-            if save_setting_to_cli_config("tools", None, tools_config):
+            # Merges: [tools] keys with no switch here are left untouched, so
+            # a save can never silently disable a hand-edited flag. The old
+            # single-key save helper, called with a dict value and no key,
+            # raised KeyError: 'None' -- there is no section-replacement API.
+            if save_settings_to_cli_config({"tools": updates}):
                 self.app_instance.notify(
-                    f"Tool Settings saved! ({saved_count} settings)",
+                    f"Tool Settings saved! ({len(updates)} settings)",
                     severity="information",
                 )
-
-                # Update the config data
                 self.config_data = load_cli_config_and_ensure_existence()
-
-                # Reload the tool executor with new settings
-                from ..Tools import reload_tool_executor
-
-                reload_tool_executor()
-
-                self.app_instance.notify(
-                    "Tool executor reloaded with new settings", severity="information"
-                )
             else:
                 self.app_instance.notify(
                     "Failed to save Tool Settings", severity="error"
@@ -4318,36 +4217,26 @@ Thank you for using tldw-chatbook! 🎉
             )
 
     async def _reset_tool_settings(self) -> None:
-        """Reset Tool Settings to default values."""
+        """Reset Tool Settings to defaults (every gated tool OFF)."""
         try:
-            # Get available tools
-            from ..Tools import get_tool_executor
+            from ..Agents.tool_catalog import gateable_builtin_tools
 
-            executor = get_tool_executor()
-            available_tools = executor.get_available_tools()
-
-            # Reset all tool switches to enabled (default)
-            for tool_info in available_tools:
-                tool_name = tool_info["function"]["name"]
-                switch_id = f"tool-switch-{tool_name}"
+            reset_count = 0
+            for entry in gateable_builtin_tools():
                 try:
-                    switch = self.query_one(f"#{switch_id}", Switch)
-                    switch.value = True  # Default is enabled
-                except Exception:
-                    pass
+                    switch = self.query_one(f"#tool-switch-{entry.tool_name}", Switch)
+                except Exception:  # noqa: BLE001 — a row that isn't mounted
+                    continue
+                # Defaults are DISABLED. The previous implementation reset every
+                # switch to True, which would now enable mutating tools.
+                switch.value = False
+                reset_count += 1
 
-            # Reset timeout settings
-            self.query_one("#tool-timeout-input", Input).value = "30"
-            self.query_one("#tool-max-workers-input", Input).value = "4"
-
-            # Reset cache settings
-            self.query_one("#tool-cache-enabled", Checkbox).value = False
-            self.query_one("#tool-cache-max-size-input", Input).value = "100"
-            self.query_one("#tool-cache-ttl-input", Input).value = "3600"
-            self.query_one("#tool-cache-persist", Checkbox).value = True
-
-            self.app_instance.notify("Tool Settings reset to defaults!")
-
+            self.app_instance.notify(
+                f"Tool Settings reset to defaults ({reset_count} tools disabled). "
+                "Save to apply.",
+                severity="information",
+            )
         except Exception as e:
             self.app_instance.notify(
                 f"Error resetting Tool Settings: {e}", severity="error"
