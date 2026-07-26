@@ -21,15 +21,6 @@ class _WidgetHost(App):
         yield self.widget_under_test
 
 
-class _ScreenHost(App):
-    def __init__(self, screen):
-        super().__init__()
-        self.screen_under_test = screen
-
-    async def on_mount(self) -> None:
-        await self.push_screen(self.screen_under_test)
-
-
 def _assert_button_tooltips(root, expected_tooltips: dict[str, str]) -> None:
     for button_id, expected_tooltip in expected_tooltips.items():
         button = root.query_one(f"#{button_id}", Button)

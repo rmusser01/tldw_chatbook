@@ -76,7 +76,16 @@ def test_removed_module_file_is_absent(rel_path: str) -> None:
 
 @pytest.mark.parametrize("stem", REMOVED_STEMS)
 def test_no_source_imports_removed_module(stem: str) -> None:
-    """No production or test source imports a retired module."""
+    """No production or test source imports a retired module.
+
+    Caveat: the regex below is line-based and does not match multi-line
+    parenthesized imports, backslash-continued imports, `import a, b` comma
+    form, or a dynamically constructed `importlib` string. It is a
+    best-effort net, not a guarantee. `test_removed_module_file_is_absent`
+    above is the load-bearing half of this guard: a stale import of a module
+    whose file is actually gone raises `ImportError` at collection time
+    regardless of whether this regex catches it first.
+    """
     pattern = re.compile(rf"(?:^|\s)(?:from|import)\s+[\w.]*\b{re.escape(stem)}\b")
     offenders: list[str] = []
     for base in ("tldw_chatbook", "Tests"):
