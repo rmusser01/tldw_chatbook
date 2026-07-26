@@ -1549,11 +1549,21 @@ class ChatScreen(BaseAppScreen):
             await self._activate_native_console_session(entry.native_session_id)
             return
         if entry.conversation_id:
-            await self._resume_console_workspace_conversation(
+            resumed = await self._resume_console_workspace_conversation(
                 entry.conversation_id,
                 target_scope_type=entry.scope_type or None,
                 target_workspace_id=entry.workspace_id,
             )
+            if resumed is False:
+                # TASK-717: record missing - same honest feedback and broken
+                # marking as the rail row path (resume no longer self-toasts
+                # for this failure class).
+                self._mark_console_conversation_row_broken(entry.conversation_id)
+                self.app_instance.notify(
+                    "This saved conversation could not be loaded - "
+                    "its record is missing.",
+                    severity="warning",
+                )
 
     async def _create_native_console_session_from_active_context(self) -> None:
         """Create and focus a native Console session in the active workspace context."""
@@ -4696,17 +4706,43 @@ class ChatScreen(BaseAppScreen):
                 row.loading = loading
                 return
 
+    def _mark_console_conversation_row_broken(self, conversation_id: str) -> None:
+        """Record a conversation whose record is missing and refresh the rail.
+
+        TASK-717: openability cannot be known at render time without probing
+        the DB per row, so rows are marked lazily after the first informative
+        failure and stay visibly broken for the rest of the session.
+        """
+        target = str(conversation_id or "").strip()
+        if not target:
+            return
+        broken = getattr(self, "_console_broken_conversation_ids", None)
+        if broken is None:
+            broken = set()
+            self._console_broken_conversation_ids = broken
+        if target in broken:
+            return
+        broken.add(target)
+        self._sync_console_workspace_context()
+
     async def _resume_console_workspace_conversation(
         self,
         conversation_id: str,
         *,
         target_scope_type: str | None = None,
         target_workspace_id: str | None = None,
-    ) -> bool:
-        """Load a persisted saved conversation into a native Console session."""
+    ) -> bool | None:
+        """Load a persisted saved conversation into a native Console session.
+
+        Returns:
+            True on success; None on a transient failure this method already
+            notified about (service unavailable / load error); False when the
+            conversation record is missing - the caller owns that failure's
+            feedback (TASK-717).
+        """
         target = str(conversation_id or "").strip()
         if not target:
-            return False
+            return None
         # TASK-339: keystrokes typed while the conversation tree loads
         # belong to the resumed session — snapshot the composer now.
         self._capture_console_draft_switch_snapshot()
@@ -4723,7 +4759,7 @@ class ChatScreen(BaseAppScreen):
                 "Saved conversation resume is unavailable in this build.",
                 severity="warning",
             )
-            return False
+            return None
 
         try:
             # Task 8: raise the depth/root caps well past the service defaults
@@ -4741,13 +4777,12 @@ class ChatScreen(BaseAppScreen):
                 "Unable to load this saved conversation.",
                 severity="error",
             )
-            return False
+            return None
 
         if not isinstance(tree, dict) or not tree.get("conversation"):
-            self.app_instance.notify(
-                "Saved conversation was not found.",
-                severity="warning",
-            )
+            # TASK-717: missing record - the caller owns this failure's UX
+            # (honest toast + marking the row visibly broken), so do not
+            # stack a second notification here.
             return False
 
         conversation = tree.get("conversation")
@@ -5319,6 +5354,8 @@ class ChatScreen(BaseAppScreen):
                     ),
                     source_kind="membership",
                     updated_sort=str(getattr(membership, "created_at", "") or ""),
+                    openable=conversation_id
+                    not in getattr(self, "_console_broken_conversation_ids", set()),
                 )
                 rows.append(self._apply_console_browser_star_state(row, starred_ids))
         return rows
@@ -15116,8 +15153,16 @@ class ChatScreen(BaseAppScreen):
                 if resumed:
                     await self._refresh_console_conversation_browser_after_selection()
                     return
+                if resumed is None:
+                    # Transient failure; the resume path already explained it.
+                    return
+                # TASK-717: the record is missing - say so honestly (Library
+                # has no affordance for a nonexistent record) and mark the
+                # row visibly broken so it stops presenting as openable.
+                self._mark_console_conversation_row_broken(row_conversation_id)
                 self.app_instance.notify(
-                    "Open this saved conversation from Library before switching here.",
+                    "This saved conversation could not be loaded - "
+                    "its record is missing.",
                     severity="warning",
                 )
                 return

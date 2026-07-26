@@ -3147,6 +3147,13 @@ ConsoleSystemPromptModal {
     color: $ds-text-muted;
 }
 
+/* TASK-717: conversation rows whose record is proven missing render dim and
+   inert instead of impersonating openable chats. */
+.console-workspace-conversation-row-broken {
+    color: $ds-text-muted;
+    text-style: italic;
+}
+
 .console-workspace-action-row {
     height: auto;
     min-height: 1;
