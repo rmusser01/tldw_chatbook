@@ -10,6 +10,7 @@ import traceback
 from collections.abc import AsyncIterator, Awaitable, Mapping
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -21,6 +22,10 @@ from Tests.TTS.adapter_fakes import FakeAdapterFactory, provider_spec
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSSettingsSaveEvent,
+)
+from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+    TTSCompleteEvent,
+    TTSEventHandler,
 )
 from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
 from tldw_chatbook.TTS.adapter_registry import (
@@ -214,6 +219,253 @@ def test_tts_guide_documents_exact_legacy_routes_and_working_example() -> None:
     assert 'internal_model_id = "openai_official_tts-1"' in usage
     assert "generate_audio_stream(request, internal_model_id)" in usage
     assert "tts_service.synthesize(" not in usage
+
+
+@pytest.mark.asyncio
+async def test_console_tts_metrics_use_only_the_safe_slice_one_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_values = (
+        "PRIVATE_MODEL_ID",
+        "[PRIVATE_VOICE_ID]",
+        "PRIVATE CHARACTER RESPONSE TEXT",
+        "https://user:password@private-audio.invalid:8181",
+        "PRIVATE_AUDIO_CPP_CREDENTIAL",
+        "/private/local/audio/path.wav",
+        "PRIVATE_CHARACTER_AUTHORITY",
+        "PRIVATE_RAW_UPSTREAM_DETAIL",
+    )
+    metric_calls: list[tuple[str, str, float | int, dict[str, Any]]] = []
+    log_messages: list[str] = []
+
+    async def stream() -> AsyncIterator[bytes]:
+        yield b"RIFF"
+        yield b"\x24\x00\x00\x00WAVE" + b"\x00" * 32
+
+    class Response:
+        provider_id = "audio_cpp"
+        model_id = private_values[0]
+        audio_format = "wav"
+        content_type = "audio/wav"
+        metadata = {
+            "origin": private_values[3],
+            "credential": private_values[4],
+            "local_path": private_values[5],
+            "authority": private_values[6],
+            "upstream": private_values[7],
+        }
+
+        def __init__(self) -> None:
+            self.byte_stream = stream()
+            self.close_calls = 0
+
+        async def aclose(self) -> None:
+            self.close_calls += 1
+            await self.byte_stream.aclose()
+
+    response = Response()
+
+    class Service:
+        def preferences_snapshot(self) -> SimpleNamespace:
+            return SimpleNamespace(provider_id="audio_cpp")
+
+        async def synthesize_default(
+            self,
+            *,
+            text: str,
+            voice_override: str | None = None,
+            progress_sink: object = None,
+        ) -> Response:
+            assert text == private_values[2]
+            assert voice_override == private_values[1]
+            del progress_sink
+            return response
+
+    class Handler(TTSEventHandler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.messages: list[object] = []
+
+        async def post_message(self, message: object) -> None:
+            self.messages.append(message)
+
+    def capture_counter(
+        name: str,
+        value: int = 1,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        metric_calls.append((name, "counter", value, dict(labels or {})))
+
+    def capture_histogram(
+        name: str,
+        value: float,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        metric_calls.append((name, "histogram", value, dict(labels or {})))
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_counter",
+        capture_counter,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_histogram",
+        capture_histogram,
+    )
+    handler = Handler()
+    handler._tts_service = Service()
+    sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
+    try:
+        await handler._generate_tts(
+            private_values[2],
+            "console-private-metrics",
+            private_values[1],
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert response.close_calls == 1
+    assert len(metric_calls) == 2
+    assert {kind for _name, kind, _value, _labels in metric_calls} == {
+        "counter",
+        "histogram",
+    }
+    for _name, _kind, _value, labels in metric_calls:
+        assert labels == {
+            "provider_id": "audio_cpp",
+            "resolution_source": "explicit_override",
+            "outcome_code": "success",
+        }
+    histogram = next(call for call in metric_calls if call[1] == "histogram")
+    assert isinstance(histogram[2], float)
+    assert histogram[2] >= 0.0
+
+    rendered = repr(metric_calls) + "\n".join(log_messages)
+    for private_value in private_values:
+        assert private_value not in rendered
+    assert all(
+        prohibited not in labels
+        for _name, _kind, _value, labels in metric_calls
+        for prohibited in (
+            "model",
+            "model_id",
+            "voice",
+            "voice_id",
+            "text",
+            "url",
+            "credential",
+            "configuration",
+            "path",
+            "authority",
+            "upstream",
+        )
+    )
+
+    await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "expected_copy", "expected_outcome"),
+    (
+        (
+            TTSProviderReconfiguringError("PRIVATE_RECONFIGURING_DETAIL"),
+            "TTS settings are being applied; retry shortly",
+            "reconfiguring",
+        ),
+        (
+            TTSProviderUnavailableError("PRIVATE_UNAVAILABLE_DETAIL"),
+            "TTS is unavailable; check STTS Settings and Retry/Reconnect",
+            "unavailable",
+        ),
+        (
+            TTSConfigurationRevisionError("PRIVATE_REVISION_DETAIL"),
+            "TTS settings changed before speech started; retry",
+            "revision_mismatch",
+        ),
+    ),
+)
+async def test_console_tts_lifecycle_errors_use_bounded_actionable_copy(
+    failure: Exception,
+    expected_copy: str,
+    expected_outcome: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metric_calls: list[tuple[str, str, float | int, dict[str, Any]]] = []
+    log_messages: list[str] = []
+
+    class Service:
+        def preferences_snapshot(self) -> SimpleNamespace:
+            return SimpleNamespace(provider_id="audio_cpp")
+
+        async def synthesize_default(
+            self,
+            *,
+            text: str,
+            voice_override: str | None = None,
+            progress_sink: object = None,
+        ) -> None:
+            del text, voice_override, progress_sink
+            raise failure
+
+    class Handler(TTSEventHandler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.messages: list[object] = []
+
+        async def post_message(self, message: object) -> None:
+            self.messages.append(message)
+
+    def capture_counter(
+        name: str,
+        value: int = 1,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        metric_calls.append((name, "counter", value, dict(labels or {})))
+
+    def capture_histogram(
+        name: str,
+        value: float,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        metric_calls.append((name, "histogram", value, dict(labels or {})))
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_counter",
+        capture_counter,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_histogram",
+        capture_histogram,
+    )
+    handler = Handler()
+    handler._tts_service = Service()
+    sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
+    try:
+        await handler._generate_tts(
+            "PRIVATE_FAILURE_TEXT",
+            "console-private-error",
+            None,
+        )
+    finally:
+        logger.remove(sink_id)
+
+    completions = [
+        message for message in handler.messages if isinstance(message, TTSCompleteEvent)
+    ]
+    assert len(completions) == 1
+    assert completions[0].error == expected_copy
+    assert len(expected_copy) < 100
+    assert len(metric_calls) == 2
+    for _name, _kind, _value, labels in metric_calls:
+        assert labels == {
+            "provider_id": "audio_cpp",
+            "resolution_source": "global",
+            "outcome_code": expected_outcome,
+        }
+
+    rendered = repr(metric_calls) + "\n".join(log_messages) + repr(completions)
+    assert str(failure) not in rendered
+    assert "PRIVATE_FAILURE_TEXT" not in rendered
 
 
 @pytest.mark.asyncio

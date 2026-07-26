@@ -63,9 +63,11 @@ class _FakeApp:
 @pytest.mark.asyncio
 async def test_console_speak_autoplay_when_no_legacy_widget_claims_message(tmp_path):
     """No legacy widget claims the message id (the Console case) -> the
-    handler must post TTSPlaybackEvent(action="play") itself."""
-    audio_file = tmp_path / "clip.mp3"
-    audio_file.write_bytes(b"fake-audio-bytes")
+    handler must post TTSPlaybackEvent(action="play") itself after the native
+    complete-WAV artifact has been published."""
+    audio_file = tmp_path / "clip.wav"
+    complete_wav = b"RIFF\x24\x00\x00\x00WAVE" + b"\x00" * 32
+    audio_file.write_bytes(complete_wav)
 
     fake_app = _FakeApp(widgets=())
     event = TTSCompleteEvent(message_id="console-msg-1", audio_file=audio_file)
@@ -76,6 +78,7 @@ async def test_console_speak_autoplay_when_no_legacy_widget_claims_message(tmp_p
     assert len(playback_events) == 1
     assert playback_events[0].action == "play"
     assert playback_events[0].message_id == "console-msg-1"
+    assert audio_file.read_bytes() == complete_wav
 
 
 @pytest.mark.asyncio
