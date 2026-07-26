@@ -347,3 +347,53 @@ def test_progress_still_lands_while_a_job_stays_running():
     job = registry.jobs()[0]
     assert job.state is IngestJobState.PARSING
     assert job.progress, "progress from a still-running job must be recorded"
+
+
+def test_a_finished_job_records_the_servers_media_id_not_a_local_one():
+    """The server's row id is captured, and kept out of ``media_id``.
+
+    A completed job's ``result`` carries the id of the row the SERVER made
+    (confirmed live). It addresses the server's library, so storing it in
+    ``media_id`` -- which means a row in *this* machine's DB -- would point
+    "Open in Library" at a wrong or absent local row. Both must therefore hold
+    at once: the id is recorded, and the local field stays empty (task-700).
+    """
+    registry = LibraryIngestJobRegistry()
+    _server_job(registry, remote_job_id="281")
+
+    status = _status(281, "completed")
+    status.result = {
+        "status": "Success",
+        "media_id": 1125,
+        "media_uuid": "bee6d9a0-931f-4c11-a87a-07ddebc66443",
+    }
+
+    assert reconcile_remote_ingest_jobs(registry, [status]) == 1
+
+    job = registry.jobs()[0]
+    assert job.state is IngestJobState.DONE
+    assert job.remote_media_id == "1125"
+    assert not job.media_id, "a server id must never land in the local media_id"
+
+
+def test_a_finished_job_without_a_media_id_records_none():
+    """Not every result carries one; absence must not become a bogus id."""
+    registry = LibraryIngestJobRegistry()
+    _server_job(registry, remote_job_id="282")
+
+    status = _status(282, "completed")
+    status.result = {"status": "Success", "error": None}
+
+    reconcile_remote_ingest_jobs(registry, [status])
+
+    assert registry.jobs()[0].remote_media_id is None
+
+
+def test_a_result_that_is_absent_entirely_is_tolerated():
+    registry = LibraryIngestJobRegistry()
+    _server_job(registry, remote_job_id="283")
+
+    reconcile_remote_ingest_jobs(registry, [_status(283, "completed")])
+
+    assert registry.jobs()[0].state is IngestJobState.DONE
+    assert registry.jobs()[0].remote_media_id is None
