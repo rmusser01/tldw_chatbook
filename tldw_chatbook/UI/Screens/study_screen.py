@@ -21,6 +21,7 @@ from textual.widgets import Button
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.pending_handoff_store import HandoffChannel
 from ..Study_Window import StudyWindow
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Workbench.workbench_widgets import DestinationHeader
@@ -97,11 +98,7 @@ class StudyScreen(BaseAppScreen):
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "study", **kwargs)
-        pending_scope = getattr(app_instance, "pending_study_scope_context", None)
-        if isinstance(pending_scope, StudyScopeContext):
-            self.scope_state = self._derive_scope_state(pending_scope)
-        else:
-            self.scope_state = StudyScopeState(backend=self._runtime_backend())
+        self.scope_state = StudyScopeState(backend=self._runtime_backend())
         self._effective_scope_key: ScopeKey = self._scope_key(self.scope_state)
         self.study_dashboard: Optional[StudyDashboard] = None
         self.quiz_session_widget: Optional[QuizSessionWidget] = None
@@ -110,7 +107,6 @@ class StudyScreen(BaseAppScreen):
         self._recent_deck_titles: list[str] = []
         self._recent_quiz_titles: list[str] = []
         self._latest_source_study_pack: dict[str, Any] | None = None
-        self._pending_initial_section = self._consume_pending_initial_section()
 
     @property
     def current_scope(self) -> StudyScopeState:
@@ -364,29 +360,6 @@ class StudyScreen(BaseAppScreen):
                 tuple(scope_context.source_items or ())
             ),
         )
-
-    def _consume_pending_scope_context(self) -> Optional[StudyScopeContext]:
-        pending = getattr(self.app_instance, "pending_study_scope_context", None)
-        if pending is None:
-            return None
-        self.app_instance.pending_study_scope_context = None
-        return pending
-
-    def _consume_pending_initial_section(self) -> Optional[str]:
-        pending = getattr(self.app_instance, "pending_study_initial_section", None)
-        if pending is None:
-            return None
-        self.app_instance.pending_study_initial_section = None
-        normalized = str(pending or "").strip()
-        if normalized in self._VALID_INITIAL_SECTIONS:
-            return normalized
-        return None
-
-    def _apply_pending_initial_section(self) -> None:
-        if self._pending_initial_section is None:
-            return
-        self.current_section = self._pending_initial_section
-        self._pending_initial_section = None
 
     def _current_scope_context(self) -> StudyScopeContext:
         return self.scope_state.as_context()
@@ -1195,6 +1168,51 @@ class StudyScreen(BaseAppScreen):
         await self._refresh_dashboard_snapshot()
         self.sync_shell_from_window()
 
+    async def _apply_pending_scope_handoff(self, *, study_window: Any) -> bool:
+        store = self.app_instance.pending_handoffs
+        claim = store.claim(HandoffChannel.STUDY_SCOPE)
+        if claim is None:
+            return False
+        try:
+            await self._apply_scope_context_and_refresh(
+                claim.value,
+                study_window=study_window,
+                force_controller_notify=True,
+            )
+        except asyncio.CancelledError:
+            store.release(claim)
+            raise
+        except Exception as exc:
+            store.release(claim)
+            logger.warning(
+                "Study scope handoff failed (exception_category={}).",
+                type(exc).__name__,
+            )
+        else:
+            store.acknowledge(claim)
+        return True
+
+    def _apply_pending_section_handoff(self) -> None:
+        store = self.app_instance.pending_handoffs
+        claim = store.claim(HandoffChannel.STUDY_INITIAL_SECTION)
+        if claim is None:
+            self._apply_section_layout()
+            return
+
+        previous_section = self.current_section
+        try:
+            self.current_section = claim.value
+            self._apply_section_layout()
+        except Exception as exc:
+            self.current_section = previous_section
+            store.release(claim)
+            logger.warning(
+                "Study section handoff failed (exception_category={}).",
+                type(exc).__name__,
+            )
+        else:
+            store.acknowledge(claim)
+
     async def on_mount(self) -> None:
         """Initialize Study features when screen is mounted."""
         super().on_mount()
@@ -1202,20 +1220,18 @@ class StudyScreen(BaseAppScreen):
 
         study_window = self.query_one(StudyWindow)
 
-        pending_scope_context = self._consume_pending_scope_context()
-        scope_context = pending_scope_context or self._current_scope_context()
-        await self._apply_scope_context_and_refresh(
-            scope_context,
-            study_window=study_window,
-            force_controller_notify=pending_scope_context is not None,
-        )
+        if not await self._apply_pending_scope_handoff(study_window=study_window):
+            await self._apply_scope_context_and_refresh(
+                self._current_scope_context(),
+                study_window=study_window,
+            )
 
         if hasattr(study_window, "load_saved_sessions"):
             await study_window.load_saved_sessions()
 
         if hasattr(study_window, "initialize"):
             await study_window.initialize()
-        self._apply_section_layout()
+        self._apply_pending_section_handoff()
         self.sync_shell_from_window()
 
     async def on_screen_suspend(self) -> None:
@@ -1235,18 +1251,16 @@ class StudyScreen(BaseAppScreen):
         logger.debug("Study screen resumed")
 
         study_window = self.query_one(StudyWindow)
-        scope_context = (
-            self._consume_pending_scope_context() or self._current_scope_context()
-        )
-        await self._apply_scope_context_and_refresh(
-            scope_context, study_window=study_window
-        )
+        if not await self._apply_pending_scope_handoff(study_window=study_window):
+            await self._apply_scope_context_and_refresh(
+                self._current_scope_context(),
+                study_window=study_window,
+            )
 
         if self.current_study_session:
             if hasattr(study_window, "restore_session"):
                 await study_window.restore_session(self.current_study_session)
-        self._apply_pending_initial_section()
-        self._apply_section_layout()
+        self._apply_pending_section_handoff()
         self.sync_shell_from_window()
 
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Any
 
+from loguru import logger
 import pytest
 
 import tldw_chatbook.app as app_module
@@ -10,7 +12,11 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
-from tldw_chatbook.UI.Screens.study_scope_models import StudyScopeContext
+from tldw_chatbook.UI.Screens.study_scope_models import (
+    StudyScopeContext,
+    StudySourceItem,
+)
+from tldw_chatbook.UI.Screens.study_screen import StudyScreen
 
 
 def _configure_startup(
@@ -73,6 +79,15 @@ def _intercept_navigation(
         return real_post_message(message)
 
     monkeypatch.setattr(app, "post_message", post_message)
+
+
+async def _wait_for_study_screen(app: TldwCli, pilot) -> StudyScreen:
+    for _ in range(300):
+        if isinstance(app.screen, StudyScreen) and app.screen.is_mounted:
+            await pilot.pause(0.01)
+            return app.screen
+        await pilot.pause(0.01)
+    raise AssertionError("full app did not mount the production Study screen")
 
 
 @pytest.mark.asyncio
@@ -230,3 +245,157 @@ async def test_full_app_console_primary_action_rejects_noncanonical_target(
         assert notifications == [
             ("Console action target could not be opened. Try again.", "warning")
         ]
+
+
+@pytest.mark.asyncio
+async def test_full_app_study_handoff_overrides_restored_scope_and_section(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TldwCli()
+    incoming = StudyScopeContext(
+        material_title="Incoming material",
+        source_items=(
+            StudySourceItem(
+                source_type="media",
+                source_id="media-1",
+                locator={"page": 7},
+            ),
+        ),
+    )
+
+    async with _mounted_app(app, monkeypatch) as pilot:
+        app.screen_state_store.save(
+            "study",
+            {
+                "study_scope": {
+                    "scope_type": "global",
+                    "material_title": "Restored material",
+                },
+                "study_section": "quizzes",
+            },
+            app._current_runtime_identity(),
+        )
+
+        app.open_study_screen(incoming, initial_section="flashcards")
+        screen = await _wait_for_study_screen(app, pilot)
+
+        for _ in range(300):
+            if (
+                screen.scope_state.material_title == "Incoming material"
+                and screen.current_section == "flashcards"
+            ):
+                break
+            await pilot.pause(0.01)
+
+        assert screen.scope_state.material_title == "Incoming material"
+        assert screen.scope_state.source_items[0].locator == {"page": "7"}
+        assert screen.current_section == "flashcards"
+        assert app.pending_handoffs.claim(HandoffChannel.STUDY_SCOPE) is None
+        assert app.pending_handoffs.claim(HandoffChannel.STUDY_INITIAL_SECTION) is None
+
+
+@pytest.mark.asyncio
+async def test_full_app_study_scope_failure_releases_only_scope_and_redacts_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "TASK-646-STUDY-PRIVATE-SENTINEL"
+    app = TldwCli()
+
+    async with _mounted_app(app, monkeypatch, route="study") as pilot:
+        screen = await _wait_for_study_screen(app, pilot)
+        app.pending_handoffs.stage(
+            HandoffChannel.STUDY_SCOPE,
+            StudyScopeContext(material_title=sentinel),
+        )
+        app.pending_handoffs.stage(
+            HandoffChannel.STUDY_INITIAL_SECTION,
+            "flashcards",
+        )
+
+        async def fail_scope(*_args, **_kwargs) -> None:
+            raise ValueError(sentinel)
+
+        monkeypatch.setattr(screen, "_apply_scope_context_and_refresh", fail_scope)
+        messages: list[str] = []
+        sink_id = logger.add(messages.append, format="{message}")
+        try:
+            await screen.on_screen_resume()
+        finally:
+            logger.remove(sink_id)
+
+        scope_retry = app.pending_handoffs.claim(HandoffChannel.STUDY_SCOPE)
+        assert scope_retry is not None
+        assert scope_retry.value.material_title == sentinel
+        assert app.pending_handoffs.claim(HandoffChannel.STUDY_INITIAL_SECTION) is None
+        assert screen.current_section == "flashcards"
+        assert any("exception_category=ValueError" in message for message in messages)
+        assert all(sentinel not in message for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_full_app_study_scope_cancellation_releases_and_reraises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TldwCli()
+
+    async with _mounted_app(app, monkeypatch, route="study") as pilot:
+        screen = await _wait_for_study_screen(app, pilot)
+        app.pending_handoffs.stage(
+            HandoffChannel.STUDY_SCOPE,
+            StudyScopeContext(material_title="cancelled"),
+        )
+        started = asyncio.Event()
+        never_finish = asyncio.Event()
+
+        async def block_scope(*_args, **_kwargs) -> None:
+            started.set()
+            await never_finish.wait()
+
+        monkeypatch.setattr(screen, "_apply_scope_context_and_refresh", block_scope)
+        resume = asyncio.create_task(screen.on_screen_resume())
+        await asyncio.wait_for(started.wait(), timeout=2)
+        assert app.pending_handoffs.claim(HandoffChannel.STUDY_SCOPE) is None
+        resume.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await resume
+
+        retry = app.pending_handoffs.claim(HandoffChannel.STUDY_SCOPE)
+        assert retry is not None
+        assert retry.value.material_title == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_full_app_study_newer_scope_survives_older_consumer_acknowledge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TldwCli()
+
+    async with _mounted_app(app, monkeypatch, route="study") as pilot:
+        screen = await _wait_for_study_screen(app, pilot)
+        app.pending_handoffs.stage(
+            HandoffChannel.STUDY_SCOPE,
+            StudyScopeContext(material_title="first"),
+        )
+        started = asyncio.Event()
+        continue_apply = asyncio.Event()
+
+        async def block_scope(*_args, **_kwargs) -> None:
+            started.set()
+            await continue_apply.wait()
+
+        monkeypatch.setattr(screen, "_apply_scope_context_and_refresh", block_scope)
+        resume = asyncio.create_task(screen.on_screen_resume())
+        await asyncio.wait_for(started.wait(), timeout=2)
+        assert app.pending_handoffs.claim(HandoffChannel.STUDY_SCOPE) is None
+
+        app.pending_handoffs.stage(
+            HandoffChannel.STUDY_SCOPE,
+            StudyScopeContext(material_title="replacement"),
+        )
+        continue_apply.set()
+        await resume
+
+        replacement = app.pending_handoffs.claim(HandoffChannel.STUDY_SCOPE)
+        assert replacement is not None
+        assert replacement.value.material_title == "replacement"
