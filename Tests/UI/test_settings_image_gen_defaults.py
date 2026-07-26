@@ -734,6 +734,61 @@ def test_probe_modelstudio_unauthenticated_reachability_only(monkeypatch):
     assert result == ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
 
 
+def test_probe_fal_unauthenticated_reachability_only(monkeypatch):
+    """fal's queue API has no models-listing route -- reachability-only,
+    same treatment as novita/modelstudio, even when a key is present."""
+    calls = []
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=200, calls=calls))
+    result = probe_backend("fal", {"base_url": "http://127.0.0.1:9900"}, "some-key")
+    assert result == ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
+    # Reachability-only means the base_url itself is hit -- no /models path,
+    # no Authorization header built from the key.
+    assert calls[0][0] == "http://127.0.0.1:9900"
+    assert calls[0][1] == {}
+
+
+def test_probe_fal_any_answer_counts_even_non_2xx(monkeypatch):
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=404))
+    result = probe_backend("fal", {"base_url": "http://127.0.0.1:9900"}, None)
+    assert result == ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
+
+
+def test_probe_gemini_reachable_2xx(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=200, calls=calls))
+    result = probe_backend("gemini", {"base_url": "http://127.0.0.1:9900"}, "goog-real-key")
+    assert result == ImageGenProbeResult(ok=True, badge="Reachable")
+    url, headers = calls[0]
+    assert url == "http://127.0.0.1:9900/models"
+    assert headers == {"x-goog-api-key": "goog-real-key"}
+
+
+def test_probe_gemini_auth_failed_401_with_key(monkeypatch):
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=401))
+    result = probe_backend("gemini", {"base_url": "http://127.0.0.1:9900"}, "goog-bad-key")
+    assert result == ImageGenProbeResult(ok=False, badge="Auth failed")
+
+
+def test_probe_gemini_auth_failed_403_with_key(monkeypatch):
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=403))
+    result = probe_backend("gemini", {"base_url": "http://127.0.0.1:9900"}, "goog-bad-key")
+    assert result == ImageGenProbeResult(ok=False, badge="Auth failed")
+
+
+def test_probe_gemini_other_http_status_with_key(monkeypatch):
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=500))
+    result = probe_backend("gemini", {"base_url": "http://127.0.0.1:9900"}, "goog-real-key")
+    assert result == ImageGenProbeResult(ok=False, badge="Unreachable: HTTP 500")
+
+
+def test_probe_no_key_gemini_reachable_auth_unverified(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sigd.httpx, "Client", _fake_client_cls(response=200, calls=calls))
+    result = probe_backend("gemini", {"base_url": "http://127.0.0.1:9900"}, None)
+    assert result == ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
+    assert calls[0][1] == {}  # no x-goog-api-key header sent
+
+
 def test_probe_unknown_backend_id_raises():
     with pytest.raises(ValueError):
         probe_backend("not-a-real-backend", {}, None)

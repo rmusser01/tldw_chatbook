@@ -37,6 +37,7 @@ from tldw_chatbook.Image_Generation.config import (
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
+    BACKEND_IDS,
     ImageGenProbeResult,
     effective_placeholder,
 )
@@ -254,7 +255,7 @@ async def test_env_key_shows_env_source_line(scratch_config, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_save_revert_disabled_test_buttons_enabled(scratch_config):
-    """Save/Revert stay disabled with nothing staged, but the six Test
+    """Save/Revert stay disabled with nothing staged, but the eight Test
     buttons (task 6: wired to `probe_backend`) are clickable regardless of
     dirty state -- a probe reads the CURRENT form values, so it is useful
     even with no unsaved edits at all."""
@@ -268,14 +269,7 @@ async def test_save_revert_disabled_test_buttons_enabled(scratch_config):
 
         assert panel.query_one("#settings-imagegen-save", Button).disabled
         assert panel.query_one("#settings-imagegen-revert", Button).disabled
-        for backend_id in (
-            "stable_diffusion_cpp",
-            "swarmui",
-            "openrouter",
-            "novita",
-            "together",
-            "modelstudio",
-        ):
+        for backend_id in BACKEND_IDS:
             assert not panel.query_one(
                 f"#settings-imagegen-test-{backend_id}", Button
             ).disabled
@@ -769,14 +763,11 @@ _PROBE_BACKEND_PATCH_TARGET = (
     "tldw_chatbook.UI.Screens.settings_screen.image_gen_probe_backend"
 )
 
-_ALL_BACKEND_IDS = (
-    "stable_diffusion_cpp",
-    "swarmui",
-    "openrouter",
-    "novita",
-    "together",
-    "modelstudio",
-)
+# The real BACKEND_IDS -- aliased here (rather than a hand-copied tuple) so
+# this file can't silently under-cover a future backend addition the way it
+# did for fal/gemini (task-7 fix: this used to be a hardcoded six-entry
+# tuple that never grew when the schema did).
+_ALL_BACKEND_IDS = BACKEND_IDS
 
 
 @pytest.mark.asyncio
@@ -920,7 +911,7 @@ api_key = "sk-saved-key"
 
 @pytest.mark.asyncio
 async def test_probe_renders_badge_and_reenables_buttons(scratch_config, monkeypatch):
-    """All six Test buttons disable for the duration of one probe (gated
+    """All eight Test buttons disable for the duration of one probe (gated
     via a real `threading.Event` on the probe's own worker thread) and
     re-enable once it completes; the result badge lands on the right
     backend's status Static."""
@@ -1224,19 +1215,20 @@ enabled_backends = ["openrouter", "swarmui"]
         screen._select_category("image_generation")
         await pilot.pause(0.2)
 
-        for backend_id in (
-            "stable_diffusion_cpp",
-            "swarmui",
-            "openrouter",
-            "novita",
-            "together",
-            "modelstudio",
-        ):
+        for backend_id in BACKEND_IDS:
             row = screen.query_one(f"#settings-imagegen-backend-{backend_id}")
             test_btn = screen.query_one(f"#settings-imagegen-test-{backend_id}", Button)
             cb = screen.query_one(
                 f"#settings-imagegen-enabled-{backend_id}", Checkbox
             )
+            # task-7: eight rows (was six) no longer all fit within these
+            # small terminal sizes without scrolling -- scroll each row into
+            # view first (same pattern already used below for save_btn)
+            # before checking its click target, so a row pushed off-screen
+            # by the two new backends isn't mistaken for "something else
+            # intercepts the click."
+            row.scroll_visible(animate=False)
+            await pilot.pause(0.1)
             row_right = row.region.x + row.region.width
             test_right = test_btn.region.x + test_btn.region.width
             assert test_right <= row_right, (
@@ -1309,14 +1301,7 @@ enabled_backends = ["openrouter"]
         select.value = Select.NULL
         await pilot.pause()
 
-        for backend_id in (
-            "stable_diffusion_cpp",
-            "swarmui",
-            "openrouter",
-            "novita",
-            "together",
-            "modelstudio",
-        ):
+        for backend_id in BACKEND_IDS:
             marker = panel.query_one(
                 f"#settings-imagegen-default-marker-{backend_id}", Static
             )

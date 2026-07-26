@@ -36,6 +36,8 @@ from tldw_chatbook.Image_Generation.config import (
 )
 from tldw_chatbook.Image_Generation.listing import (
     _IMAGE_LISTING_NONCRITICAL_EXCEPTIONS,
+    _is_fal_configured,
+    _is_gemini_configured,
     _is_modelstudio_configured,
     _is_novita_configured,
     _is_openrouter_configured,
@@ -54,6 +56,8 @@ BACKEND_IDS: tuple[str, ...] = (
     "novita",
     "together",
     "modelstudio",
+    "fal",
+    "gemini",
 )
 
 BACKEND_LABELS: dict[str, str] = {
@@ -63,6 +67,8 @@ BACKEND_LABELS: dict[str, str] = {
     "novita": "Novita",
     "together": "Together",
     "modelstudio": "ModelStudio",
+    "fal": "fal.ai",
+    "gemini": "Gemini (AI Studio)",
 }
 
 # backend_id -> the listing.py is_configured check to reuse (never
@@ -74,6 +80,8 @@ _CONFIGURED_CHECKS = {
     "novita": _is_novita_configured,
     "together": _is_together_configured,
     "modelstudio": _is_modelstudio_configured,
+    "fal": _is_fal_configured,
+    "gemini": _is_gemini_configured,
 }
 
 
@@ -125,6 +133,21 @@ FIELD_SCHEMA: dict[str, tuple[FieldSpec, ...]] = {
         FieldSpec("base_url", "Base URL", "url"),
         FieldSpec("default_model", "Default model", "text"),
         FieldSpec("region", "Region", "text"),
+        FieldSpec("timeout_seconds", "Timeout (seconds)", "int", min_value=1),
+        FieldSpec("api_key", "API key", "secret"),
+    ),
+    # fal's `poll_interval_seconds` stays config-only in v1 (matches
+    # novita/modelstudio's own poll_interval_seconds precedent -- neither is
+    # in the curated editor either).
+    "fal": (
+        FieldSpec("base_url", "Base URL", "url"),
+        FieldSpec("default_model", "Default model", "text"),
+        FieldSpec("timeout_seconds", "Timeout (seconds)", "int", min_value=1),
+        FieldSpec("api_key", "API key", "secret"),
+    ),
+    "gemini": (
+        FieldSpec("base_url", "Base URL", "url"),
+        FieldSpec("default_model", "Default model", "text"),
         FieldSpec("timeout_seconds", "Timeout (seconds)", "int", min_value=1),
         FieldSpec("api_key", "API key", "secret"),
     ),
@@ -716,9 +739,13 @@ def _probe_swarmui(base_url: str) -> ImageGenProbeResult:
 
 
 def _probe_reachability_only(base_url: str) -> ImageGenProbeResult:
-    """novita/modelstudio: neither has a confirmed cheap authenticated GET
-    (see ``probe_backend``'s docstring) -- unauthenticated reachability
-    only, so auth is never actually verified."""
+    """novita/modelstudio/fal: none of these has a confirmed cheap
+    authenticated GET (see ``probe_backend``'s docstring) -- unauthenticated
+    reachability only, so auth is never actually verified. fal's queue API
+    (``queue.fal.run``) has no models-listing route either -- this is a
+    plain reachability GET on the configured base, same shape as
+    ``_probe_swarmui`` but reporting the honest "auth unverified" badge
+    (unlike swarmui, which has no auth concept at all)."""
     _response, blocked_badge = _guarded_get(base_url)
     if blocked_badge is not None:
         return ImageGenProbeResult(ok=False, badge=blocked_badge)
@@ -729,6 +756,27 @@ def _probe_openai_compatible(base_url: str, secret: str | None) -> ImageGenProbe
     """openrouter/together: OpenAI-compatible ``GET {base_url}/models``."""
     url = f"{base_url.rstrip('/')}/models"
     headers = {"Authorization": f"Bearer {secret}"} if secret else None
+    response, blocked_badge = _guarded_get(url, headers=headers)
+    if blocked_badge is not None:
+        return ImageGenProbeResult(ok=False, badge=blocked_badge)
+    if not secret:
+        return ImageGenProbeResult(ok=True, badge="Reachable (auth unverified)")
+    if response.status_code in (401, 403):
+        return ImageGenProbeResult(ok=False, badge="Auth failed")
+    if 200 <= response.status_code < 300:
+        return ImageGenProbeResult(ok=True, badge="Reachable")
+    return ImageGenProbeResult(ok=False, badge=f"Unreachable: HTTP {response.status_code}")
+
+
+def _probe_gemini(base_url: str, secret: str | None) -> ImageGenProbeResult:
+    """gemini: authenticated ``GET {base_url}/models``, key in the
+    ``x-goog-api-key`` header -- Google's models-listing route is cheap and
+    exists on the same base as the image-generation endpoint, so (unlike
+    novita/modelstudio/fal) this is a full auth-verified probe, mirroring
+    ``_probe_openai_compatible``'s shape with Gemini's own header/auth
+    semantics."""
+    url = f"{base_url.rstrip('/')}/models"
+    headers = {"x-goog-api-key": secret} if secret else None
     response, blocked_badge = _guarded_get(url, headers=headers)
     if blocked_badge is not None:
         return ImageGenProbeResult(ok=False, badge=blocked_badge)
@@ -785,12 +833,19 @@ def probe_backend(
     - ``openrouter``/``together``: OpenAI-compatible ``GET
       {base_url}/models``, authenticated when a secret is available -- see
       ``_probe_openai_compatible``.
-    - ``novita``/``modelstudio``: unauthenticated reachability only.
-      Novita's adapter (``novita_image_adapter.py``) only exposes the
+    - ``novita``/``modelstudio``/``fal``: unauthenticated reachability
+      only. Novita's adapter (``novita_image_adapter.py``) only exposes the
       async submit/poll routes (``/v3/async/txt2img``,
       ``/v3/async/task-result``) -- no cheap authenticated GET was
       confirmed in this codebase's adapter, so novita is probed the same
       way as modelstudio rather than guessing at an unconfirmed endpoint.
+      fal's queue API (``queue.fal.run``) has no models-listing route
+      either -- same reachability-only treatment.
+    - ``gemini``: authenticated ``GET {base_url}/models`` with the key in
+      ``x-goog-api-key`` -- Google's models-listing route is a cheap,
+      confirmed authenticated GET on the same base as image generation, so
+      gemini gets a full auth-verified probe like openrouter/together
+      rather than reachability-only.
 
     Every network probe runs the SSRF egress check
     (``Utils.egress.check_url_or_raise``) before any request.
@@ -822,6 +877,8 @@ def probe_backend(
         return _probe_swarmui(base_url)
     if backend_id in ("openrouter", "together"):
         return _probe_openai_compatible(base_url, secret)
-    if backend_id in ("novita", "modelstudio"):
+    if backend_id == "gemini":
+        return _probe_gemini(base_url, secret)
+    if backend_id in ("novita", "modelstudio", "fal"):
         return _probe_reachability_only(base_url)
     raise ValueError(f"unknown backend_id: {backend_id!r}")
