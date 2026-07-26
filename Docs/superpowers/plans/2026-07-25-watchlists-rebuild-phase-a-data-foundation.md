@@ -652,7 +652,7 @@ Add as a public method on `SubscriptionsDB`, directly after `_ensure_watchlists_
                 """
                 SELECT id, title, content, author
                 FROM subscription_items
-                WHERE id NOT IN (SELECT rowid FROM subscription_items_fts)
+                WHERE id NOT IN (SELECT rowid FROM subscription_items_fts_docsize)
                 ORDER BY id
                 LIMIT ?
                 """,
