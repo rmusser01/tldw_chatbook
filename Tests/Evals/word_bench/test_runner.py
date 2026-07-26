@@ -63,9 +63,9 @@ async def test_runner_fills_the_grid_row_major(db, config, targets, snippets):
 async def test_every_cell_is_persisted(db, config, targets, snippets):
     task_id = save_bench(db, config)
     runner = WordBenchRunner(db, lambda t: FakeClient([]))
-    group_id = await runner.run(config, targets, snippets, task_id)
+    outcome = await runner.run(config, targets, snippets, task_id)
 
-    grid = load_grid(db, group_id)
+    grid = load_grid(db, outcome.group_id)
     assert len(grid["cells"]) == 4
 
 
@@ -73,10 +73,10 @@ async def test_every_cell_is_persisted(db, config, targets, snippets):
 async def test_failed_cells_are_persisted_too(db, config, targets, snippets):
     task_id = save_bench(db, config)
     runner = WordBenchRunner(db, lambda t: FakeClient([], fail_target="steered"))
-    group_id = await runner.run(config, targets, snippets, task_id)
+    outcome = await runner.run(config, targets, snippets, task_id)
 
     base, steered = targets[0].id, targets[1].id
-    grid = load_grid(db, group_id)
+    grid = load_grid(db, outcome.group_id)
     assert isinstance(grid["cells"][("s1", steered)], CellError)
     assert isinstance(grid["cells"][("s1", base)], CellCapture)
 
@@ -108,9 +108,9 @@ async def test_cancel_stops_the_run_and_keeps_completed_cells(db, config, target
 
     task_id = save_bench(db, config)
     runner = WordBenchRunner(db, lambda t: CancellingClient(order))
-    group_id = await runner.run(config, targets, snippets, task_id, cancel_token=token)
+    outcome = await runner.run(config, targets, snippets, task_id, cancel_token=token)
 
-    grid = load_grid(db, group_id)
+    grid = load_grid(db, outcome.group_id)
     assert len(grid["cells"]) == 2, "a cancelled run is a real, partial measurement"
 
 
@@ -132,9 +132,9 @@ async def test_cancelled_run_rows_read_cancelled_not_pending(db, config, targets
 
     task_id = save_bench(db, config)
     runner = WordBenchRunner(db, lambda t: CancellingClient(order))
-    group_id = await runner.run(config, targets, snippets, task_id, cancel_token=token)
+    outcome = await runner.run(config, targets, snippets, task_id, cancel_token=token)
 
-    runs = db.list_runs(run_group_id=group_id)
+    runs = db.list_runs(run_group_id=outcome.group_id)
     assert len(runs) == len(targets)
     for run in runs:
         assert run["status"] == "cancelled"
@@ -145,9 +145,9 @@ async def test_cancelled_run_rows_read_cancelled_not_pending(db, config, targets
 async def test_completed_run_rows_read_completed(db, config, targets, snippets):
     task_id = save_bench(db, config)
     runner = WordBenchRunner(db, lambda t: FakeClient([]))
-    group_id = await runner.run(config, targets, snippets, task_id)
+    outcome = await runner.run(config, targets, snippets, task_id)
 
-    runs = db.list_runs(run_group_id=group_id)
+    runs = db.list_runs(run_group_id=outcome.group_id)
     assert len(runs) == len(targets)
     for run in runs:
         assert run["status"] == "completed"
@@ -159,9 +159,9 @@ async def test_degenerate_canary_propagates_onto_every_cell(db, config, targets,
     """The preflight warning must not be lost between preflight and grid."""
     task_id = save_bench(db, config)
     runner = WordBenchRunner(db, lambda t: FakeClient([], canary="degenerate"))
-    group_id = await runner.run(config, targets, snippets, task_id)
+    outcome = await runner.run(config, targets, snippets, task_id)
 
-    grid = load_grid(db, group_id)
+    grid = load_grid(db, outcome.group_id)
     assert all(c.canary == "degenerate" for c in grid["cells"].values())
 
 
@@ -171,10 +171,25 @@ async def test_canary_pass_verdict_is_also_stamped_onto_every_cell(db, config, t
     not the client's placeholder 'unchecked'."""
     task_id = save_bench(db, config)
     runner = WordBenchRunner(db, lambda t: FakeClient([], canary="pass"))
-    group_id = await runner.run(config, targets, snippets, task_id)
+    outcome = await runner.run(config, targets, snippets, task_id)
 
-    grid = load_grid(db, group_id)
+    grid = load_grid(db, outcome.group_id)
     assert all(c.canary == "pass" for c in grid["cells"].values())
+
+
+@pytest.mark.asyncio
+async def test_run_returns_preflight_results_per_target(db, config, targets, snippets):
+    """PR 3 renders readiness from these; re-running preflight could disagree."""
+    task_id = save_bench(db, config)
+    runner = WordBenchRunner(db, lambda t: FakeClient([], canary="degenerate"))
+    outcome = await runner.run(config, targets, snippets, task_id)
+
+    assert outcome.group_id
+    assert set(outcome.preflight) == {t.id for t in targets}
+    for result in outcome.preflight.values():
+        assert result.state == "ok"
+        assert result.canary == "degenerate"
+        assert result.is_warned is True
 
 
 @pytest.mark.asyncio

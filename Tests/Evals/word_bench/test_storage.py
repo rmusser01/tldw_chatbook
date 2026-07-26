@@ -168,6 +168,51 @@ def test_bench_edit_leaves_dataset_id_untouched(db, config, targets):
     assert load_bench(db, task_id).dataset_id == original_dataset_id
 
 
+def test_snapshot_carries_preflight_so_a_reloaded_grid_can_explain_a_column(
+    db, config, targets, snippets
+):
+    """A grid opened next week must still say why a column is empty, without
+    re-contacting the provider."""
+    from tldw_chatbook.Evals.word_bench.models import PreflightResult
+
+    task_id = save_bench(db, config)
+    preflight = {
+        targets[0].id: PreflightResult(state="ok", k_returned=20, canary="pass"),
+        targets[1].id: PreflightResult(
+            state="unreachable", k_returned=None, canary="unchecked",
+            detail="connection refused",
+        ),
+    }
+    group_id, _ = create_run_group(
+        db, task_id, config, targets, snippets, preflight=preflight
+    )
+
+    grid = load_grid(db, group_id)
+    assert grid["preflight"][targets[1].id].state == "unreachable"
+    assert grid["preflight"][targets[1].id].status_label == "Unavailable"
+    assert grid["preflight"][targets[1].id].detail == "connection refused"
+
+
+def test_load_grid_defaults_preflight_for_run_groups_written_before_this_change(
+    db, config, targets, snippets
+):
+    """A run group's snapshot predating the preflight key must still load --
+    not raise -- with an empty preflight mapping rather than the caller
+    having to special-case a missing key."""
+    task_id = save_bench(db, config)
+    group_id, run_ids = create_run_group(db, task_id, config, targets, snippets)
+
+    # Simulate data written before this change: strip "preflight" out of the
+    # stored snapshot entirely, rather than leaving it present-but-empty.
+    for run_id in run_ids.values():
+        overrides = db.get_run(run_id)["config_overrides"]
+        overrides["snapshot"].pop("preflight", None)
+        db.update_run(run_id, {"config_overrides": overrides})
+
+    grid = load_grid(db, group_id)
+    assert grid["preflight"] == {}
+
+
 def test_load_grid_drains_every_page_of_results(db, config, targets):
     """get_run_results is paginated (default limit=1000); a grid with more
     cells than one page must still load in full, or the missing cells would

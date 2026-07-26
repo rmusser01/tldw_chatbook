@@ -10,6 +10,7 @@ frequently single-slot, and concurrent requests either queue or 503.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Callable, Optional, Protocol, Sequence
 
 from loguru import logger
@@ -21,6 +22,20 @@ from .models import (
 from .storage import create_run_group, save_cell
 
 ProgressFn = Callable[[int, int], None]
+
+
+@dataclass(frozen=True)
+class RunOutcome:
+    """What a run produced, beyond the cells themselves.
+
+    ``preflight`` is returned rather than discarded because the screen renders
+    readiness badges, recovery callouts, and the effective-K header from it.
+    Re-running preflight to recover this would double the canary calls and
+    could report a verdict the run itself never saw.
+    """
+
+    group_id: str
+    preflight: dict[str, PreflightResult]
 
 
 class CaptureClientLike(Protocol):
@@ -64,8 +79,8 @@ class WordBenchRunner:
         task_id: str,
         progress: Optional[ProgressFn] = None,
         cancel_token: Optional[CancelToken] = None,
-    ) -> str:
-        """Execute the grid and return its run group id."""
+    ) -> RunOutcome:
+        """Execute the grid and return its run group id and preflight verdicts."""
         for target in targets:
             if not target.is_valid_for_mode(config.prompt_mode):
                 raise ValueError(
@@ -77,11 +92,13 @@ class WordBenchRunner:
 
         # Preflight before any measurement, so a dead or degenerate target is
         # known up front rather than discovered N cells in.
+        results: dict[str, PreflightResult] = {}
         canaries: dict[str, str] = {}
         for target in targets:
             result = await clients[target.id].preflight(
                 target, config.prompt_mode, config.top_k
             )
+            results[target.id] = result
             canaries[target.id] = result.canary
             if result.is_warned:
                 logger.warning(
@@ -91,7 +108,7 @@ class WordBenchRunner:
                 )
 
         group_id, run_ids = create_run_group(
-            self._db, task_id, config, targets, snippets
+            self._db, task_id, config, targets, snippets, preflight=results
         )
         for run_id in run_ids.values():
             self._db.update_run_status(run_id, "running")
@@ -108,7 +125,7 @@ class WordBenchRunner:
                     )
                     for run_id in run_ids.values():
                         self._db.update_run_status(run_id, "cancelled")
-                    return group_id
+                    return RunOutcome(group_id=group_id, preflight=results)
 
                 result = await clients[target.id].capture(
                     snippet.text, target, config.prompt_mode, config.top_k
@@ -123,7 +140,7 @@ class WordBenchRunner:
         for run_id in run_ids.values():
             self._db.update_run_status(run_id, "completed")
 
-        return group_id
+        return RunOutcome(group_id=group_id, preflight=results)
 
     @staticmethod
     def _stamp_canary(

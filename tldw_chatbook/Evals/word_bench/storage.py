@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from ...DB.Evals_DB import EvalsDB
 from .capture_client import NEUTRAL_SAMPLER
@@ -23,6 +23,7 @@ from .models import (
     BenchConfig,
     CellCapture,
     CellError,
+    PreflightResult,
     Snippet,
     Target,
     TokenProb,
@@ -108,13 +109,20 @@ def load_bench(db: EvalsDB, task_id: str) -> BenchConfig:
 
 
 def _snapshot(
-    config: BenchConfig, targets: Sequence[Target], snippets: Sequence[Snippet]
+    config: BenchConfig,
+    targets: Sequence[Target],
+    snippets: Sequence[Snippet],
+    preflight: Optional[Mapping[str, PreflightResult]] = None,
 ) -> dict[str, Any]:
     """The fully-resolved configuration a grid renders from.
 
     Snippet TEXT is stored, not only ids and hashes, so a grid still renders
     after its dataset is edited or deleted. The hash then serves its real
     purpose: flagging "this snippet was edited after the run".
+
+    ``preflight`` is snapshotted as plain dicts (not re-run) so that a grid
+    reopened later explains a column's readiness from what the run itself
+    saw, rather than risking a fresh preflight that disagrees.
     """
     return {
         "bench_name": config.name,
@@ -134,6 +142,16 @@ def _snapshot(
             {"id": s.id, "text": s.text, "text_hash": s.text_hash, "group": s.group}
             for s in snippets
         ],
+        "preflight": {
+            target_id: {
+                "state": result.state,
+                "k_returned": result.k_returned,
+                "canary": result.canary,
+                "detail": result.detail,
+                "checked_at": result.checked_at,
+            }
+            for target_id, result in (preflight or {}).items()
+        },
     }
 
 
@@ -143,10 +161,11 @@ def create_run_group(
     config: BenchConfig,
     targets: Sequence[Target],
     snippets: Sequence[Snippet],
+    preflight: Optional[Mapping[str, PreflightResult]] = None,
 ) -> tuple[str, dict[str, str]]:
     """Create one eval_runs row per target, sharing a run_group_id."""
     group_id = uuid.uuid4().hex
-    snapshot = _snapshot(config, targets, snippets)
+    snapshot = _snapshot(config, targets, snippets, preflight)
     run_ids: dict[str, str] = {}
 
     for target in targets:
@@ -247,11 +266,14 @@ def load_grid(
             run. Overridable so tests can force multiple pages cheaply.
 
     Returns:
-        ``{"snapshot": …, "cells": {(snippet_id, target_id): cell}}``.
+        ``{"snapshot": …, "cells": {(snippet_id, target_id): cell},
+        "preflight": {target_id: PreflightResult}}``.
         The snapshot is the run's own, never the live task's. A missing
         cell means "not yet run" (see save_cell), so every result page for
         every run in the group must be drained in full -- a truncated page
         would silently read as unrun cells rather than lost ones.
+        ``preflight`` defaults to ``{}`` for run groups written before this
+        key existed, rather than raising on the missing key.
 
     Raises:
         ValueError: If no runs share this run_group_id.
@@ -266,6 +288,16 @@ def load_grid(
 
     overrides = runs[0].get("config_overrides") or {}
     snapshot = overrides.get("snapshot", {})
+    preflight = {
+        target_id: PreflightResult(
+            state=result["state"],
+            k_returned=result.get("k_returned"),
+            canary=result.get("canary", "unchecked"),
+            detail=result.get("detail", ""),
+            checked_at=result.get("checked_at", ""),
+        )
+        for target_id, result in (snapshot.get("preflight") or {}).items()
+    }
 
     cells: dict[tuple[str, str], CellCapture | CellError] = {}
     for run in runs:
@@ -286,4 +318,4 @@ def load_grid(
                 break
             offset += page_size
 
-    return {"snapshot": snapshot, "cells": cells}
+    return {"snapshot": snapshot, "cells": cells, "preflight": preflight}
