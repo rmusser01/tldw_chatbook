@@ -200,6 +200,12 @@ class LibraryIngestJob:
     progress: dict[str, Any] | None = None
     error_detail: dict[str, Any] | None = None
     content_hash: str | None = None
+    #: Where this job runs. ``"local"`` uses the in-process parse/write
+    #: pipeline; ``"server"`` was submitted to the tldw server's ingest-jobs
+    #: API, so it has no local ``media_id`` and is tracked by the ids below.
+    origin: str = "local"
+    remote_job_id: str | None = None
+    batch_id: str | None = None
 
 
 class IngestJobStore(Protocol):
@@ -378,6 +384,7 @@ class LibraryIngestJobRegistry:
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         detected_type: str = "",
         ingest_options: dict[str, Any] | None = None,
+        origin: str = "local",
     ) -> LibraryIngestJob:
         """Append a new ``QUEUED`` job.
 
@@ -393,6 +400,10 @@ class LibraryIngestJobRegistry:
                 already known at submission time. Optional; defaults to
                 ``""`` when not yet known.
             ingest_options: Per-type ingestion options snapshot.
+            origin: ``"local"`` for the in-process pipeline, ``"server"`` for
+                a submission to the server's ingest-jobs API. A server job
+                carries no local ``media_id``; call ``attach_remote`` once
+                the server has issued its ids.
 
         Returns:
             The newly created ``QUEUED`` job (a registry-owned copy).
@@ -410,6 +421,7 @@ class LibraryIngestJobRegistry:
             submitted_at=time.monotonic(),
             detected_type=detected_type,
             ingest_options=ingest_options or {},
+            origin=origin,
         )
         self._jobs.append(job)
         self._notify_listeners()
@@ -445,6 +457,41 @@ class LibraryIngestJobRegistry:
             if job.job_id == job_id:
                 return index
         return None
+
+    def attach_remote(
+        self,
+        job_id: str,
+        *,
+        remote_job_id: str | None = None,
+        batch_id: str | None = None,
+    ) -> LibraryIngestJob | None:
+        """Record the server-side ids for a submitted ``server``-origin job.
+
+        The ids only exist once the server has accepted the submission, so they
+        arrive after ``submit``. Kept separate from the state transitions
+        because attaching ids is not itself a lifecycle change -- the job stays
+        in whatever state it was in.
+
+        Args:
+            job_id: The job to annotate.
+            remote_job_id: The server's job id, when it issued one.
+            batch_id: The server's batch id, when it issued one.
+
+        Returns:
+            The updated job (a copy), or ``None`` when ``job_id`` is unknown.
+            Unknown ids never raise, matching the other registry mutators.
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        job = self._jobs[index]
+        if remote_job_id is not None:
+            job.remote_job_id = str(remote_job_id)
+        if batch_id is not None:
+            job.batch_id = str(batch_id)
+        self._notify_listeners()
+        self._persist(job)
+        return replace(job)
 
     def mark_parsing(
         self, job_id: str, *, detected_type: str = ""
@@ -925,6 +972,9 @@ def _job_from_row(row: dict) -> "LibraryIngestJob":
         error_detail=json.loads(row["error_detail"]) if row.get("error_detail") else None,
         progress=json.loads(row["progress"]) if row.get("progress") else None,
         content_hash=row.get("content_hash"),
+        origin=row.get("origin") or "local",
+        remote_job_id=row.get("remote_job_id"),
+        batch_id=row.get("batch_id"),
         # monotonic fields are not round-trippable -- leave defaults.
         submitted_at=0.0,
         started_at=None,
