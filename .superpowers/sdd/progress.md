@@ -290,3 +290,33 @@ Task 7: complete (commit 86dce1799, review clean)
     all later tasks/tests.
   - frozen=True blocks field reassignment only; the referenced service objects stay
     mutable. Shipped docstring does not overclaim (report did, harmlessly).
+Task 8: complete (commits 4d09dafaf + type/docstring fix, review clean)
+  - Pack registry + files pack created. tool_catalog.py deliberately untouched (Task 9).
+    Implementer caught the plan's stale "Modify tool_catalog.py" header and consulted
+    this ledger to confirm -- correct call.
+  - Contract verified genuinely enforceable: ReadFileTool/ListDirectoryTool have no
+    __init__ and their name/description/parameters are static literals, risk_tags
+    defaults to () on the base Tool. Only execute() resolves the sandbox root, and the
+    subclasses override no path logic -- confinement preserved.
+  - test_every_pack_tool_constructs_with_services_none iterates PACKS.values(), so it
+    auto-covers future packs.
+  - Minor left deliberately: unused `import pytest` in test_builtin_packs.py stays --
+    Task 11 appends @pytest.fixture/@pytest.mark.asyncio tests to that file.
+Task 9: complete (commits ad75cbaeb + 2eb4aa51c, review clean after 1 fix pass)
+  - Packs now drive BuiltinToolProvider; TASK-584 per-tool loop gone. Default posture
+    still DISABLED (pinned by test_defaults_to_no_packs_enabled + test_file_tools_absent_by_default).
+  - Unmocked config test works as planned: TLDW_CONFIG_PATH + load_cli_config_and_
+    ensure_existence(force_reload=True) were both real. Teardown restores _CONFIG_CACHE
+    and _CONFIG_CACHE_SOURCE (verified to be the only two globals consulted).
+  - 2 Important fixed, BOTH from the plan's reference code: (1) deprecation warning fired
+    every turn (provider rebuilt per run) vs spec's "log once" -- reused
+    Internal_Prompts/resolver.py's _warned_ids idiom, fixture-scoped so tests stay
+    independent; (2) `except Exception:` discarded the exception -- now includes it,
+    matching builtin_tool_gate.py's f-string convention.
+!! OPEN DECISION FOR USER (do not merge without it): the legacy fallback maps EITHER
+   [tools] read_file_enabled OR list_directory_enabled to the WHOLE files pack, so a user
+   who deliberately enabled only read_file now also gets list_directory. Spec text
+   ("become pack-level enablement; a per-tool flag and a pack flag governing the same
+   tool is one control too many") sanctions it, but it widens an existing user's
+   deliberate config during what is framed as a compatibility migration. Reviewer's
+   unsoftened read: needs owner sign-off. Batching with the Task 13 question.
