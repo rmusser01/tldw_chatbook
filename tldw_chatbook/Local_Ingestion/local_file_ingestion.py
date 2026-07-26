@@ -1187,6 +1187,7 @@ def quick_ingest(
         Ingestion result dictionary
     """
     from ..config import get_cli_setting
+    from ..Utils.path_validation import validate_path_simple
 
     if db_path is None:
         # Three-argument form. `get_cli_setting("database", {})` put a
@@ -1198,7 +1199,12 @@ def quick_ingest(
             "media_db_path",
             "~/.local/share/tldw_cli/tldw_cli_media_v2.db",
         )
-        db_path = Path(db_path).expanduser()
+        # Expand BEFORE validating: validate_path_simple rejects a literal
+        # "~/" as a traversal pattern, and the default above is one. Matches
+        # the newer config.py db-path accessors (get_workspaces_db_path etc.).
+        db_path = validate_path_simple(
+            Path(db_path).expanduser(), require_exists=False
+        )
 
     # Initialize database
     media_db = MediaDatabase(str(db_path), client_id="quick_ingest")

@@ -68,3 +68,40 @@ def test_fallback_applies_only_when_the_key_is_absent(tmp_path, monkeypatch):
 
     lfi.quick_ingest(tmp_path / "some_file.txt")
     assert "tldw_cli_media_v2.db" in seen["db_path"]
+    # The default is a literal "~/..." string, and validate_path_simple counts
+    # "~/" among its traversal patterns. If validation ever runs BEFORE
+    # expanduser(), this assertion fails for every user on a default config.
+    assert "~" not in seen["db_path"]
+
+
+def test_a_traversal_path_in_config_is_rejected(tmp_path, monkeypatch):
+    """A config-sourced db_path is validated before it reaches the filesystem."""
+    import pytest
+
+    import tldw_chatbook.Local_Ingestion.local_file_ingestion as lfi
+    import tldw_chatbook.config as config_module
+
+    opened = []
+
+    class _FakeMediaDatabase:
+        def __init__(self, db_path, client_id):
+            opened.append(db_path)
+
+        def close_connection(self):
+            pass
+
+    monkeypatch.setattr(lfi, "MediaDatabase", _FakeMediaDatabase)
+    monkeypatch.setattr(lfi, "ingest_local_file", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            "/tmp/../../etc/evil.db"
+            if (section, key) == ("database", "media_db_path")
+            else default
+        ),
+    )
+
+    with pytest.raises(ValueError):
+        lfi.quick_ingest(tmp_path / "some_file.txt")
+    assert opened == [], "the database must not be opened on a rejected path"

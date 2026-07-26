@@ -295,7 +295,10 @@ class BuiltinToolProvider:
                 # period (it imported a name that exists only inside a string
                 # literal in config.py) and nothing surfaced it. The legacy
                 # path logged the same failure before it was retired (P3).
-                logger.warning(
+                # opt(exception=True), not exc_info=True: loguru ignores the
+                # latter, and an import-time failure is undiagnosable without
+                # the traceback naming the module and line.
+                logger.opt(exception=True).warning(
                     f"Could not register builtin tool {entry.factory_name} "
                     f"(gate {entry.gate_key} is enabled): {exc}"
                 )

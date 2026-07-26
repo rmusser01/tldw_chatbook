@@ -3267,7 +3267,9 @@ class ToolsSettingsWindow(Container):
                     description = tool.description
                     tags = ", ".join(tool.risk_tags)
                 except Exception as exc:  # noqa: BLE001 — degrade the row, not the screen
-                    logger.warning(
+                    # opt(exception=True): loguru ignores exc_info=True, and the
+                    # row only says "Unavailable" without the traceback.
+                    logger.opt(exception=True).warning(
                         f"Could not describe builtin tool {entry.factory_name}: {exc}"
                     )
                     description = "Unavailable on this system."
