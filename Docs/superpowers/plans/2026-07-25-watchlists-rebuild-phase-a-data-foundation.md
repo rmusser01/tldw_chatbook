@@ -695,6 +695,10 @@ git commit -m "feat(watchlists): add FTS5 index over items with chunked backfill
 
 **The bug being fixed:** two INSERT paths write disjoint column sets. `Subscriptions_DB.py:1322` writes `canonical_url`, `previous_hash`, `change_percentage`, `diff_summary`, `change_type` but drops `status`/`run_id`/`alert_matches`. `local_watchlists_service.py:1301` does the reverse. Neither writes body text, even though `local_watchlists_service.py:878` normalizes a `content` value before discarding it.
 
+**Both paths must be routed, not just one** (ruling, 2026-07-25 — the original steps wired only `local_watchlists_service`). `Subscriptions_DB._add_subscription_item` is reachable from `record_check_result`, which `Scheduling/scheduler/handlers/watchlist_check_handler.py:108` calls, and ADR-019 makes that handler the future execution authority for watchlist checks. Left unrouted, flipping `scheduling.watchlist_checks_enabled` would silently write items with no body text and no run linkage.
+
+Its existing `SELECT` guard on canonical_url + content_hash **stays**; only the raw `INSERT` delegates. The two paths deduplicate differently — the old one on a canonicalised URL, the shared function on raw `url` via `ON CONFLICT` — and keeping the guard preserves canonicalisation-based dedup exactly. Standardising the two rules was considered and rejected: it would silently split URLs differing only by trailing slash or case into separate rows.
+
 - [ ] **Step 1: Write the failing test**
 
 Create `Tests/Subscriptions/test_item_persist.py`:
@@ -837,8 +841,12 @@ def persist_subscription_item(
 ) -> None:
     """Insert or update one item, writing the full column set.
 
-    Existing ``reviewed`` and ``ignored`` statuses are preserved across
-    re-fetches; anything else resets to ``new``.
+    Existing ``reviewed``, ``ignored`` and ``ingested`` statuses are preserved
+    across re-fetches; anything else resets to ``new``. ``ingested`` is
+    included because it is set by a user action and ``execute_run`` re-upserts
+    every kept item on every run — without it, handled items resurface as
+    unread on the next poll. ``error`` deliberately resets, since a successful
+    re-fetch should clear a prior error.
 
     Args:
         conn: An open connection inside a transaction.
@@ -882,7 +890,7 @@ def persist_subscription_item(
             diff_summary = excluded.diff_summary,
             change_type = excluded.change_type,
             status = CASE
-                WHEN subscription_items.status IN ('reviewed', 'ignored')
+                WHEN subscription_items.status IN ('reviewed', 'ignored', 'ingested')
                 THEN subscription_items.status
                 ELSE 'new'
             END,
