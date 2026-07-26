@@ -51,6 +51,7 @@ from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
 # identity via `persisted_conversation_id`, `SessionScopeHolder` for
 # unpersisted sessions, `EffectiveScope` state.
 from ...Event_Handlers.Chat_Events.chat_rag_events import (
+    capture_console_staged_evidence_for_chat,
     resolve_effective_scope_for_chat,
     resolve_scope_for_session,
 )
@@ -360,7 +361,10 @@ from ...Workspaces import (
 )
 from ...Widgets.compact_model_bar import CompactModelBar
 from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
-from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
+from ..Views.RAGSearch.search_handoff import (
+    build_library_rag_console_live_work_payload,
+    build_library_rag_evidence_bundle,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -3402,6 +3406,7 @@ class ChatScreen(BaseAppScreen):
                 skills_service=getattr(self.app_instance, "skills_scope_service", None),
                 chat_dictionary_applier=self._console_chat_dictionary_applier,
                 world_info_applier=self._console_world_info_applier,
+                rag_capture_provider=self._capture_console_staged_rag,
             )
         self._console_chat_controller.on_submission_accepted = (
             self._on_console_submission_accepted
@@ -3424,6 +3429,15 @@ class ChatScreen(BaseAppScreen):
         )
         self._sync_console_chat_core_state()
         return self._console_chat_controller
+
+    async def _capture_console_staged_rag(self, draft: str):
+        """Resolve the current staged Library-RAG bundle for one Console send."""
+
+        return await capture_console_staged_evidence_for_chat(
+            self.app_instance,
+            self._consume_pending_console_launch(),
+            user_message=draft,
+        )
 
     def _sync_console_chat_core_state(self) -> ConsoleProviderSelection:
         """Push current workspace/provider selection into native Console services."""
@@ -9015,14 +9029,21 @@ class ChatScreen(BaseAppScreen):
             return
         if outcome.results:
             result = outcome.results[0]
+            launch_payload = build_library_rag_console_live_work_payload(
+                result,
+                query=request.query,
+            )
+            launch_payload["evidence_bundle"] = build_library_rag_evidence_bundle(
+                outcome.results,
+                query=request.query,
+            ).to_payload()
+            launch_payload["requested_top_k"] = request.top_k
+            launch_payload["search_mode"] = request.mode
             self._stage_console_library_rag_launch(
                 ConsoleLiveWorkLaunch.from_values(
                     source="Library Search/RAG",
                     title=result.title,
-                    payload=build_library_rag_console_live_work_payload(
-                        result,
-                        query=request.query,
-                    ),
+                    payload=launch_payload,
                     status="staged",
                     recovery=CONSOLE_LIBRARY_RAG_RECOVERY_COPY,
                     action_label="Review evidence in Console",

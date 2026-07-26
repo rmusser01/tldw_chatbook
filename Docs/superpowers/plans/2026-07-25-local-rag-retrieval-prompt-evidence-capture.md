@@ -43,8 +43,8 @@
 
 ## ADR check
 
-ADR required: yes  
-ADR path: `backlog/decisions/024-rag-citation-provenance-and-source-resolution.md`  
+ADR required: yes
+ADR path: `backlog/decisions/024-rag-citation-provenance-and-source-resolution.md`
 Reason: This plan implements ADR-024’s local retrieval-run and exact prompt-boundary evidence capture contracts. It does not introduce a new architectural choice.
 
 ---
@@ -56,7 +56,7 @@ Reason: This plan implements ADR-024’s local retrieval-run and exact prompt-bo
 - Create: `Tests/Chat/test_citation_trace_builder.py`
 - Create: `tldw_chatbook/Chat/citation_trace_builder.py`
 
-- [ ] **Step 1: Write failing constructor and privacy tests**
+- [x] **Step 1: Write failing constructor and privacy tests**
 
 Add tests that construct the builder with a fixed `LocalCitationIdentityContext`,
 `CitationFingerprintCodec`, `request_id`, and `generation_id`. Assert:
@@ -81,7 +81,7 @@ assert "secret query" not in repr(builder)
 Also assert frozen identity inputs are validated and the builder cannot be
 constructed without a local authority/profile binding.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run:
 
@@ -92,7 +92,7 @@ Run:
 Expected: collection/import failure because `citation_trace_builder.py` does
 not exist.
 
-- [ ] **Step 3: Implement the minimal builder constructor**
+- [x] **Step 3: Implement the minimal builder constructor**
 
 Create a mutable class whose public collection properties return tuples. Keep
 secret material private and redact it from `repr`:
@@ -118,7 +118,7 @@ class CitationTraceBuilder:
 
 The builder must not expose a generic `seal()` in this task.
 
-- [ ] **Step 4: Write failing retrieval-run tests**
+- [x] **Step 4: Write failing retrieval-run tests**
 
 Define narrow typed inputs such as `LocalRetrievalCandidateCapture` and
 `LocalRetrievalRunMetadata`; do not import `SearchResult` into the Chat layer
@@ -156,7 +156,7 @@ Reject duplicate/unknown run references, non-finite scores, excess candidates,
 unknown metadata fields, path/URL-shaped metadata values, and payloads beyond
 existing model caps.
 
-- [ ] **Step 5: Run and verify RED, then implement retrieval capture**
+- [x] **Step 5: Run and verify RED, then implement retrieval capture**
 
 Run the focused test, confirm failures are caused by the missing method, then
 implement only enough to create `EvidenceRun` and `EvidenceRunPayload` using:
@@ -170,7 +170,7 @@ Serialize only the typed metadata model into
 `EvidenceRunPayload.retrieval_metadata`. Never log query, title, source
 identity, locator, lineage, or fingerprints.
 
-- [ ] **Step 6: Write failing prompt-set tests**
+- [x] **Step 6: Write failing prompt-set tests**
 
 Test exact bytes, stable ordinals, transformations, and run linkage:
 
@@ -200,7 +200,7 @@ Assert no prompt set is created for zero evidence, ordinals are unique,
 snapshots use keyed exact/comparison fingerprints, and no partial state is
 appended when validation fails.
 
-- [ ] **Step 7: Run and verify RED, implement prompt capture, then run GREEN**
+- [x] **Step 7: Run and verify RED, implement prompt capture, then run GREEN**
 
 Build all Pydantic objects before mutating builder lists so a failure is atomic.
 Use `MarkerNamespace.CHATBOOK_S_V1`. The builder remains unsealed and
@@ -214,7 +214,7 @@ Run:
 
 Expected: all tests pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add Tests/Chat/test_citation_trace_builder.py \
@@ -234,7 +234,7 @@ git commit -m "feat(rag): add request-scoped citation trace builder"
 - Modify: `tldw_chatbook/RAG_Search/pipeline_functions_simple.py`
 - Modify: `tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py`
 
-- [ ] **Step 1: Write failing source-normalization tests**
+- [x] **Step 1: Write failing source-normalization tests**
 
 Cover the three allowed local families and common aliases:
 
@@ -267,7 +267,7 @@ initialization, and execution fallback must not write that marker; the retained
 prior score is then classified from reliable prior metadata or as `LEGACY`.
 Never infer BM25 or normalized similarity semantics from a bare float.
 
-- [ ] **Step 2: Run RED, then implement a strict allowlisted normalizer**
+- [x] **Step 2: Run RED, then implement a strict allowlisted normalizer**
 
 The normalizer may retain only:
 
@@ -281,7 +281,7 @@ Do not copy arbitrary metadata, URLs, paths, or citation dictionaries into
 source identity or locator fields. Resolver-family tasks will add typed native
 locators later.
 
-- [ ] **Step 3: Write failing canonical formatter tests**
+- [x] **Step 3: Write failing canonical formatter tests**
 
 Test that one formatting function produces both the provider context and the
 exact per-entry blocks:
@@ -310,7 +310,7 @@ Include:
   excluded
 - no snapshots for omitted candidates
 
-- [ ] **Step 4: Run RED, implement the formatter, then run GREEN**
+- [x] **Step 4: Run RED, implement the formatter, then run GREEN**
 
 Build each block as:
 
@@ -322,7 +322,7 @@ exact submitted content
 Use a single calculation for returned context and snapshot text. Never parse
 the aggregate context afterward to reconstruct entries.
 
-- [ ] **Step 5: Write failing prompt-boundary authority tests**
+- [x] **Step 5: Write failing prompt-boundary authority tests**
 
 Test a fresh, uncached post-retrieval check:
 
@@ -333,7 +333,7 @@ Test a fresh, uncached post-retrieval check:
 - conversations remain excluded under an active local RAG scope
 - an `empty` or failed authority/existence read rejects every entry
 
-- [ ] **Step 6: Implement the fresh authority/existence seam and run GREEN**
+- [x] **Step 6: Implement the fresh authority/existence seam and run GREEN**
 
 Add an explicit uncached mode to the existing scope-resolution seam and a
 batched current-existence query for all three local source families. Prompt
@@ -343,7 +343,7 @@ pre-retrieval `EffectiveScope` or `ScopeCache` for this decision. Query/read
 errors fail closed. The check consumes canonical item IDs, not display titles
 or raw metadata, and runs before marker ordinals are assigned.
 
-- [ ] **Step 7: Correct semantic source propagation test-first**
+- [x] **Step 7: Correct semantic source propagation test-first**
 
 Add focused regressions proving:
 
@@ -368,7 +368,7 @@ Run:
 
 Expected: all tests pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add Tests/RAG/test_local_citation_capture.py \
@@ -388,7 +388,7 @@ git commit -m "feat(rag): format exact canonical prompt evidence"
 - Modify: `Tests/Chat/test_citation_trace_repository.py`
 - Modify: `tldw_chatbook/Chat/citation_trace_repository.py`
 
-- [ ] **Step 1: Write failing readiness/factory tests**
+- [x] **Step 1: Write failing readiness/factory tests**
 
 Test:
 
@@ -408,7 +408,7 @@ assert builder is not None
 Also cover missing identity, missing fingerprint key, and persisted identity
 mismatch. None of these states may break ordinary RAG generation.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 ../../.venv/bin/python -m pytest \
@@ -418,7 +418,7 @@ mismatch. None of these states may break ordinary RAG generation.
 
 Expected: failures because the factory does not exist.
 
-- [ ] **Step 3: Implement the minimal safe factory**
+- [x] **Step 3: Implement the minimal safe factory**
 
 The repository owns access to `_fingerprint_codec`; do not add a public secret
 or codec property. Re-read the persisted identity before issuing a builder, as
@@ -439,7 +439,7 @@ def create_local_trace_builder(
 Return `None` for unavailable prerequisites and use only non-content diagnostic
 codes if logging is necessary.
 
-- [ ] **Step 4: Run GREEN and broader repository tests**
+- [x] **Step 4: Run GREEN and broader repository tests**
 
 ```bash
 ../../.venv/bin/python -m pytest \
@@ -449,7 +449,7 @@ codes if logging is necessary.
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Tests/Chat/test_citation_trace_repository.py \
@@ -468,7 +468,7 @@ git commit -m "feat(rag): compose local citation capture securely"
 - Modify: `Tests/RAG/test_scope_pipeline_enforcement.py`
 - Modify: `tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py`
 
-- [ ] **Step 1: Write failing capture-aware API tests**
+- [x] **Step 1: Write failing capture-aware API tests**
 
 Add a frozen result wrapper:
 
@@ -491,7 +491,7 @@ legacy = await get_rag_context_for_chat(app, "query")
 assert isinstance(legacy, str)
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 ../../.venv/bin/python -m pytest \
@@ -499,7 +499,7 @@ assert isinstance(legacy, str)
   Tests/RAG/test_rag_ui_integration.py -q
 ```
 
-- [ ] **Step 3: Implement opt-in capture without changing pipeline tuples**
+- [x] **Step 3: Implement opt-in capture without changing pipeline tuples**
 
 At request start:
 
@@ -528,7 +528,7 @@ RED/GREEN change. Log only mode, counts, timing, and fixed non-content reason
 codes; never log the user query, formatted context, title, identity, locator,
 lineage, snapshot, fingerprint, or `str(ValidationError)`.
 
-- [ ] **Step 4: Test all pipeline selection branches**
+- [x] **Step 4: Test all pipeline selection branches**
 
 Parameterize `plain`, `semantic`, `hybrid`, and a custom pipeline. The tests
 may monkeypatch their `perform_*` functions to return the same ranked results;
@@ -551,7 +551,7 @@ Add log-capture assertions using unique sentinel query/title/content strings.
 Neither successful capture, malformed-result rejection, nor validation failure
 may place the sentinels into log messages.
 
-- [ ] **Step 5: Run focused GREEN and compatibility suites**
+- [x] **Step 5: Run focused GREEN and compatibility suites**
 
 ```bash
 ../../.venv/bin/python -m pytest \
@@ -564,7 +564,7 @@ may place the sentinels into log messages.
 
 Expected: all tests pass and the old string-return assertions remain valid.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add Tests/RAG/test_local_citation_capture.py \
@@ -576,106 +576,62 @@ git commit -m "feat(rag): capture local retrieval and prompt evidence"
 
 ---
 
-### Task 5: Keep the builder alive across the current request worker
+### Task 5: Keep the builder alive across the current Console generation request
 
 **Files:**
 
-- Modify: `Tests/Event_Handlers/Chat_Events/test_chat_events.py`
-- Create: `Tests/Event_Handlers/test_worker_local_citation_capture.py`
-- Create: `Tests/Chat/test_chat_function_local_citation_boundary.py`
-- Modify: `tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py`
-- Modify: `tldw_chatbook/Event_Handlers/worker_events.py`
-- Modify: `tldw_chatbook/Chat/Chat_Functions.py`
+- Create: `Tests/Chat/test_console_local_citation_boundary.py`
+- Create: `Tests/UI/test_console_local_citation_capture.py`
+- Modify: `Tests/RAG/test_local_citation_capture.py`
+- Modify: `tldw_chatbook/Chat/console_chat_controller.py`
+- Modify: `tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py`
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
 
-- [ ] **Step 1: Write a failing chat-send seam test**
+- [x] **Step 1: Rebase the boundary plan onto the native Console architecture**
 
-Assert the send handler uses `get_rag_context_capture_for_chat()` and forwards
-the same builder object as an internal-only worker keyword. Canonical context
-must use the existing `media_content`/`selected_parts` seam instead of being
-concatenated into `message`, because `Chat_Functions.chat()` applies chat
-dictionary transformations to `message` before provider dispatch:
+Latest `dev` retired the legacy `chat_events.py` send path planned originally.
+The live boundary is now `ChatScreen` → `ConsoleChatController.submit_draft()`
+→ direct provider or agent dispatch. Keep the retired entrypoints absent and
+port the same request-local ownership and exact prompt-boundary guarantees to
+the native Console path.
 
-```python
-assert captured_chat_wrapper_kwargs["citation_trace_builder"] is builder
-assert captured_chat_wrapper_kwargs["message"] == original_user_message
-assert captured_chat_wrapper_kwargs["media_content"] == {
-    "evidence": captured.context,
-}
-assert captured_chat_wrapper_kwargs["selected_parts"] == ["evidence"]
-```
+- [x] **Step 2: Write failing Console prompt-boundary tests**
 
-- [ ] **Step 2: Write failing worker and real provider-boundary tests**
-
-Assert `chat_wrapper_function()` removes `citation_trace_builder` before
-calling `core_chat_function`, so it cannot reach provider adapters or generic
-payload parameter routing. It must leave canonical `media_content` and
-`selected_parts` intact. The wrapper keeps the object in a local variable for
-the lifetime of generation, then drops it because answer-attempt capture is the
-next task.
-
-In `Tests/Chat/test_chat_function_local_citation_boundary.py`, call the real
-`Chat_Functions.chat()` with:
+Cover:
 
 - canonical evidence containing unique title/body sentinels
 - an evidence block with intentional leading/trailing whitespace
 - a chat-dictionary entry that would mutate those sentinels if it saw them
-- `media_content={"evidence": canonical_context}`
-- `selected_parts=["evidence"]`
-- a patched `chat_api_call` that captures `messages_payload`
+- stored/visible user text remains the original draft
+- the ordinary prompt still receives dictionary/world-info transformations
+- canonical evidence is added only after those transforms
+- exact snapshots reach both direct-provider and agent payloads byte for byte
+- multimodal image parts remain unchanged
+- the request-local builder remains alive through generation and is then
+  released
+- capture failures log fixed structural diagnostics without sentinels
 
-Assert every `EvidenceSnapshotPayload.snapshot_text` remains an exact substring
-of the provider-bound user text after `process_user_input()` runs, while the
-ordinary user prompt still receives its configured dictionary transformation.
-The whitespace-bearing snapshot must also match byte for byte despite
-`Chat_Functions.chat()` assembling the overall message with `.strip()`. This is
-the terminal prompt-boundary proof for this task.
+- [x] **Step 3: Stage and reauthorize the complete Console evidence bundle**
 
-- [ ] **Step 3: Run RED, implement the minimal threading seam, then run GREEN**
+Stage every retrieved Library-RAG result, not only the first display result.
+At send time, validate the serialized `EvidenceBundle`, reject non-local or
+unavailable references, re-read source existence and active scope without the
+cache, format the canonical markers once, and record the run plus exact prompt
+evidence set. If no repository/builder is available, preserve the compatible
+context-only behavior.
 
-When `citation_builder is None`, keep the current legacy behavior byte for byte:
-prepend the old RAG context to `message` and pass empty `media_content` /
-`selected_parts`. When a builder exists, keep `message` free of canonical
-evidence and pass the canonical context through the dedicated RAG seam above.
-Do not store the builder on `app`, a module global, a sidecar, or SQLite. Do not
-log or serialize it.
+- [x] **Step 4: Thread request-local capture through native generation**
 
-Sanitize existing logs on this modified path:
+Inject a request-local capture provider into `ConsoleChatController`. Keep the
+builder in a local variable across the awaited direct-provider or agent
+generation; never store, log, serialize, or persist it. Canonical evidence is
+prefixed after ordinary prompt transforms, while the no-builder compatibility
+path preserves its prior ordering.
 
-- `chat_rag_events.py`: log mode/count/timing only, never raw query or
-  validation exception text
-- `chat_events.py`: log message length/history count, never message previews
-- `Chat_Functions.py`: log content types and lengths only, never input text,
-  prompt previews, provider-payload text previews, custom-prompt text, answer
-  previews, or post-generation replacement previews
+- [x] **Step 5: Verify and commit the native Console port**
 
-Tests must attach capture handlers with unique query, prompt, title, snapshot,
-and answer sentinels and assert none appear in emitted records. Validation
-failures log a fixed reason code, not `str(ValidationError)`. Exercise both the
-real local pipeline functions and streaming/non-streaming worker paths so
-downstream query and answer logging is covered.
-
-Run:
-
-```bash
-../../.venv/bin/python -m pytest \
-  Tests/Event_Handlers/Chat_Events/test_chat_events.py \
-  Tests/Event_Handlers/test_worker_local_citation_capture.py \
-  Tests/Chat/test_chat_function_local_citation_boundary.py \
-  Tests/RAG/test_local_citation_capture.py \
-  Tests/Chat/test_citation_trace_builder.py -q
-```
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py \
-  tldw_chatbook/Event_Handlers/worker_events.py \
-  tldw_chatbook/Chat/Chat_Functions.py \
-  Tests/Event_Handlers/Chat_Events/test_chat_events.py \
-  Tests/Event_Handlers/test_worker_local_citation_capture.py \
-  Tests/Chat/test_chat_function_local_citation_boundary.py
-git commit -m "feat(rag): carry citation builder through generation request"
-```
+The final touched-code gate is recorded in Task 6. Commit the Console port with
+the task closeout after the rebased diff is reviewed.
 
 ---
 
@@ -686,65 +642,56 @@ git commit -m "feat(rag): carry citation builder through generation request"
 - Modify: `Docs/superpowers/specs/2026-07-23-rag-citation-provenance-design.md`
 - Modify: `backlog/tasks/task-553.13 - Capture-local-RAG-retrieval-runs-and-exact-prompt-evidence-sets.md`
 
-- [ ] **Step 1: Update implementation links and boundary notes**
+- [x] **Step 1: Update implementation links and boundary notes**
 
 Record that workstreams 10 is implemented while workstreams 11–30 remain
 follow-ons. Do not mark the epic complete.
 
-- [ ] **Step 2: Run formatting/static checks**
+- [x] **Step 2: Run formatting/static checks**
 
 ```bash
-../../.venv/bin/python -m ruff check \
-  tldw_chatbook/Chat/citation_trace_builder.py \
-  tldw_chatbook/Chat/citation_trace_repository.py \
-  tldw_chatbook/RAG_Search/local_citation_capture.py \
-  tldw_chatbook/RAG_Search/pipeline_functions_simple.py \
+../../.venv/bin/ruff check \
+  tldw_chatbook/Chat/console_chat_controller.py \
   tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py \
-  tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py \
-  tldw_chatbook/Event_Handlers/worker_events.py \
-  tldw_chatbook/Chat/Chat_Functions.py \
-  Tests/Chat/test_citation_trace_builder.py \
-  Tests/Chat/test_chat_function_local_citation_boundary.py \
-  Tests/RAG/test_local_citation_capture.py \
-  Tests/Event_Handlers/test_worker_local_citation_capture.py
+  tldw_chatbook/UI/Screens/chat_screen.py \
+  Tests/Chat/test_console_local_citation_boundary.py \
+  Tests/UI/test_console_local_citation_capture.py \
+  Tests/RAG/test_local_citation_capture.py
 ```
 
 Expected: no findings in changed files.
 
-- [ ] **Step 3: Run the complete focused regression set**
+Result: `ruff check` passed for the six citation/Console-RAG code and test
+files. `ruff format --check` passed for the three touched test files. The large
+native Console modules retain the current `dev` formatting baseline to avoid
+unrelated mechanical churn.
 
-```bash
-../../.venv/bin/python -m pytest \
-  Tests/Chat/test_citation_trace_builder.py \
-  Tests/Chat/test_citation_trace_models.py \
-  Tests/Chat/test_citation_trace_identity.py \
-  Tests/Chat/test_citation_trace_repository.py \
-  Tests/Chat/test_chat_persistence_service.py \
-  Tests/Chat/test_chat_function_local_citation_boundary.py \
-  Tests/Event_Handlers/Chat_Events/test_chat_events.py \
-  Tests/Event_Handlers/test_worker_local_citation_capture.py \
-  Tests/RAG/test_local_citation_capture.py \
-  Tests/RAG/test_rag_ui_integration.py \
-  Tests/RAG/test_scope_pipeline_enforcement.py \
-  Tests/RAG/test_semantic_honest_states.py \
-  Tests/RAG/test_fusion.py -q
-```
+- [x] **Step 3: Run the complete focused regression set**
+
+Run the three direct citation files plus only the existing Console seams changed
+by the native port: provider dictionary/world-info ordering, Library-RAG
+staging/authority display, query validation, and retired-entrypoint guards.
 
 Expected: zero failures.
 
-- [ ] **Step 4: Run repository-wide verification without concurrent pytest**
+Result: `110 passed, 1 dependency-version warning in 25.74s`.
 
-First verify no other pytest process is active, then run:
+- [x] **Step 4: Record the repository-wide verification deviation**
 
-```bash
-../../.venv/bin/python -m pytest
-```
+The repository-wide run was stopped at the user's direction after several
+hours, and all lingering broad `tldw_chatbook` UI/RAG pytest processes were
+terminated. Verification is intentionally limited to touched code for this
+task.
 
-Expected: zero failures. If unrelated baseline failures exist, record exact
-node IDs and compare them against a fresh `origin/dev` worktree before making
-any completion claim.
+Two failures encountered while narrowing the gate reproduce on pristine
+`origin/dev` (`af2aee6cd`) and are tracked separately:
 
-- [ ] **Step 5: Review the diff and task acceptance criteria**
+- TASK-761:
+  `Tests/UI/test_console_dictionary_send_integration.py::test_native_send_applies_conversation_dictionary_agent_branch`
+- TASK-762:
+  `Tests/UI/test_console_internals_decomposition.py::test_console_rag_action_without_service_stages_recoverable_blocker`
+
+- [x] **Step 5: Review the diff and task acceptance criteria**
 
 ```bash
 git diff --check
@@ -761,16 +708,16 @@ Confirm:
 - no partial builder persistence
 - disabled mode preserves existing prompt bytes
 - exact captured snapshot blocks compose the provider context
-- no answer-attempt, marker-occurrence, repair, UI, resolver, server, or sync
-  scope leaked into this task
+- no answer-attempt, marker-occurrence, repair, citation-presentation/source-open
+  UI, resolver, server, or sync scope leaked into this task
 
-- [ ] **Step 6: Complete Backlog hygiene**
+- [x] **Step 6: Complete Backlog hygiene**
 
 Check all six acceptance criteria, add concise implementation notes with test
 evidence and the ADR-024 link, and set TASK-553.13 to Done only after every DoD
 gate passes.
 
-- [ ] **Step 7: Commit documentation/task closeout**
+- [x] **Step 7: Commit documentation/task closeout**
 
 ```bash
 git add \

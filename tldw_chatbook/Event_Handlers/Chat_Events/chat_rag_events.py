@@ -5,6 +5,7 @@
 import asyncio
 import copy
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
@@ -13,12 +14,14 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 from loguru import logger
 
 # Local Imports
+from ...Chat.citation_evidence_models import EvidenceBundle
 from ...Chat.citation_source_locators import CanonicalSourceKind
 from ...Chat.citation_trace_builder import (
     CitationTraceBuilder,
     LocalRetrievalRunMetadata,
 )
 from ...Chat.citation_trace_identity import new_opaque_id
+from ...Chat.citation_trace_models import RETRIEVAL_CANDIDATES_PER_RUN_MAX
 from ...Chat.rag_scope import (
     CONVERSATION_METADATA_SCOPE_KEY,
     EffectiveScope,
@@ -1514,6 +1517,175 @@ async def _capture_local_pipeline_results(
     except Exception:
         logger.error("Canonical RAG capture failed; reason=canonical_capture_failure")
         return LocalRagContextResult(None, None)
+
+
+async def capture_console_staged_evidence_for_chat(
+    app: "TldwCli",
+    launch: Any,
+    *,
+    user_message: str,
+) -> LocalRagContextResult:
+    """Capture Console-staged local evidence at the provider prompt boundary.
+
+    Console Library-RAG retrieval is staged separately from the eventual
+    generation request. This adapter re-validates the serialized evidence
+    bundle, re-reads local source authority, formats the exact prompt blocks,
+    and creates a generation-scoped builder only when canonical capture is
+    available.
+
+    Args:
+        app: Running app with local source databases and citation repository.
+        launch: Current ``ConsoleLiveWorkLaunch``-like staged context.
+        user_message: Current Console draft, used only when the staged bundle
+            has no retrieval query.
+
+    Returns:
+        Exact provider context plus an optional request-local citation builder.
+    """
+
+    payload = getattr(launch, "payload", None)
+    if not isinstance(payload, Mapping):
+        return LocalRagContextResult(None, None)
+    bundle_payload = payload.get("evidence_bundle")
+    if not isinstance(bundle_payload, Mapping):
+        return LocalRagContextResult(None, None)
+    try:
+        bundle = EvidenceBundle.from_payload(bundle_payload)
+    except Exception:
+        logger.warning(
+            "Console RAG evidence unavailable; reason=invalid_evidence_bundle"
+        )
+        return LocalRagContextResult(None, None)
+
+    normalized: list[NormalizedLocalResult] = []
+    rejected_count = 0
+    for reference in bundle.available_references():
+        if reference.source_owner.strip().lower() != "local":
+            rejected_count += 1
+            continue
+        metadata: Dict[str, Any] = {
+            "source_type": reference.source_type,
+            "source_id": reference.source_id,
+        }
+        chunk_id = reference.metadata.get("chunk_id")
+        if isinstance(chunk_id, str) and chunk_id:
+            metadata["chunk_id"] = chunk_id
+        result_id = (
+            chunk_id if isinstance(chunk_id, str) and chunk_id else reference.source_id
+        )
+        try:
+            normalized.append(
+                normalize_local_result(
+                    {
+                        "source": reference.source_type,
+                        "id": result_id,
+                        "title": reference.title,
+                        "content": reference.snippet,
+                        "score": (
+                            reference.score if reference.score is not None else 0.0
+                        ),
+                        "metadata": metadata,
+                    },
+                    candidate_rank=len(normalized) + 1,
+                )
+            )
+        except LocalResultNormalizationError:
+            rejected_count += 1
+    if rejected_count:
+        logger.info(
+            "Console RAG evidence excluded; "
+            f"count={rejected_count}; reason=not_canonical_local_evidence"
+        )
+    if not normalized:
+        return LocalRagContextResult(None, None)
+
+    request_session = _capture_request_scope_session(app)
+    authorization = await _authorize_local_results_for_prompt(
+        app,
+        tuple(normalized),
+        request_session=request_session,
+    )
+    if not authorization.completed:
+        logger.warning(
+            "Console RAG evidence unavailable; reason=prompt_authority_failure"
+        )
+        return LocalRagContextResult(None, None)
+    formatted = format_local_evidence_context(
+        authorization.candidates,
+        max_length=sum(
+            len(candidate.title) + len(candidate.content) + 32
+            for candidate in authorization.candidates
+        ),
+    )
+    context = formatted.context if formatted.context.strip() else None
+    if context is None:
+        return LocalRagContextResult(None, None)
+
+    builder = _create_local_capture_builder(app)
+    if builder is None:
+        return LocalRagContextResult(context, None)
+
+    try:
+        scope_resolution = await resolve_scope_for_session(
+            app,
+            request_session,
+            use_cache=False,
+        )
+        source_kinds = tuple(
+            dict.fromkeys(
+                candidate.source_kind for candidate in authorization.candidates
+            )
+        )
+        requested_top_k = payload.get("requested_top_k", len(normalized))
+        if isinstance(requested_top_k, bool):
+            requested_top_k = len(normalized)
+        try:
+            requested_top_k = int(requested_top_k)
+        except (TypeError, ValueError):
+            requested_top_k = len(normalized)
+        requested_top_k = max(
+            1,
+            min(requested_top_k, RETRIEVAL_CANDIDATES_PER_RUN_MAX),
+        )
+        captured_at = datetime.now(UTC)
+        run_id = builder.record_retrieval_run(
+            stage="console_rag",
+            raw_query=bundle.query or user_message,
+            candidates=tuple(
+                candidate.to_candidate_capture(candidate_rank=rank)
+                for rank, candidate in enumerate(
+                    authorization.candidates,
+                    start=1,
+                )
+            ),
+            retrieval_metadata=LocalRetrievalRunMetadata(
+                search_mode="console_rag",
+                requested_top_k=requested_top_k,
+                max_context_characters=len(context),
+                rerank_enabled=False,
+                source_kinds=source_kinds,
+                scope_state=scope_resolution.effective.state,
+            ),
+            started_at=captured_at,
+            ended_at=captured_at,
+        )
+        builder.record_prompt_evidence_set(
+            run_id=run_id,
+            evidence=formatted.entries,
+            created_at=captured_at,
+        )
+    except Exception:
+        logger.error(
+            "Console canonical RAG capture failed; reason=canonical_capture_failure"
+        )
+        return LocalRagContextResult(None, None)
+
+    logger.info(
+        "Console canonical RAG capture completed; "
+        f"candidates={len(authorization.candidates)}; "
+        f"prompt_entries={len(formatted.entries)}"
+    )
+    return LocalRagContextResult(context, builder)
 
 
 async def get_rag_context_capture_for_chat(

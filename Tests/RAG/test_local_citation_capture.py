@@ -16,6 +16,11 @@ from pydantic import ValidationError
 from tldw_chatbook.Chat.citation_provenance_runtime import (
     CitationProvenanceRuntimePolicy,
 )
+from tldw_chatbook.Chat.citation_evidence_models import (
+    EvidenceBundle,
+    EvidenceReference,
+)
+from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.citation_source_locators import CanonicalSourceKind
 from tldw_chatbook.Chat.citation_trace_builder import (
     CitationTraceBuilder,
@@ -1139,6 +1144,103 @@ def test_local_rag_context_result_is_frozen():
 
     with pytest.raises(FrozenInstanceError):
         result.context = "changed"
+
+
+@pytest.mark.asyncio
+async def test_console_staged_local_evidence_records_exact_prompt_capture():
+    query = "CONSOLE_PRIVATE_QUERY_SENTINEL_TASK_553_13"
+    title = "CONSOLE_PRIVATE_TITLE_SENTINEL_TASK_553_13"
+    snippet = "  CONSOLE_PRIVATE_BODY_SENTINEL_TASK_553_13  \n\t"
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository)
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title=title,
+        payload={
+            "requested_top_k": 5,
+            "search_mode": "rag",
+            "evidence_bundle": EvidenceBundle(
+                bundle_id="bundle-1",
+                query=query,
+                references=(
+                    EvidenceReference(
+                        evidence_id="S1",
+                        source_id="m1",
+                        source_type="media",
+                        title=title,
+                        snippet=snippet,
+                        authority_label="local",
+                        source_owner="local",
+                        score=0.75,
+                    ),
+                ),
+            ).to_payload(),
+        },
+        status="staged",
+    )
+
+    captured = await cre.capture_console_staged_evidence_for_chat(
+        app,
+        launch,
+        user_message="ordinary prompt",
+    )
+
+    assert captured.context == f"[S1] MEDIA — {title}\n{snippet}"
+    assert captured.citation_builder is repository.builders[0]
+    run_payload = captured.citation_builder.evidence_run_payloads[0]
+    assert run_payload.raw_query is None
+    assert run_payload.query_fingerprint is not None
+    assert run_payload.retrieval_metadata == {
+        "max_context_characters": len(captured.context),
+        "requested_top_k": 5,
+        "rerank_enabled": False,
+        "scope_state": "unscoped",
+        "search_mode": "console_rag",
+        "source_kinds": ["media_db"],
+    }
+    assert [candidate.rank for candidate in run_payload.candidates] == [1]
+    snapshot = captured.citation_builder.evidence_snapshot_payloads[0]
+    assert snapshot.snapshot_text == captured.context
+    assert snapshot.snapshot_text.encode("utf-8").endswith(snippet.encode("utf-8"))
+
+
+@pytest.mark.asyncio
+async def test_console_staged_local_evidence_without_repository_keeps_context():
+    title = "Legacy staged source"
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title=title,
+        payload={
+            "evidence_bundle": EvidenceBundle(
+                bundle_id="bundle-legacy",
+                query="legacy query",
+                references=(
+                    EvidenceReference(
+                        evidence_id="S1",
+                        source_id="m1",
+                        source_type="media",
+                        title=title,
+                        snippet="legacy body",
+                        authority_label="local",
+                        source_owner="local",
+                        score=0.5,
+                    ),
+                ),
+            ).to_payload(),
+        },
+        status="staged",
+    )
+
+    captured = await cre.capture_console_staged_evidence_for_chat(
+        _CaptureApp(),
+        launch,
+        user_message="ordinary prompt",
+    )
+
+    assert captured == cre.LocalRagContextResult(
+        context="[S1] MEDIA — Legacy staged source\nlegacy body",
+        citation_builder=None,
+    )
 
 
 @pytest.mark.asyncio

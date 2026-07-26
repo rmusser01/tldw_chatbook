@@ -9,7 +9,7 @@ import threading
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
 from uuid import uuid4
 
 from tldw_chatbook.Chat.attachment_core import (
@@ -553,6 +553,7 @@ class ConsoleChatController:
         skill_substitution_enabled: bool = True,
         chat_dictionary_applier: "Callable[[str | None, str], str] | None" = None,
         world_info_applier: "Callable[[str | None, str, list], str] | None" = None,
+        rag_capture_provider: "Callable[[str], Awaitable[Any]] | None" = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -581,6 +582,7 @@ class ConsoleChatController:
         self._skill_substitution_enabled = skill_substitution_enabled
         self._chat_dictionary_applier = chat_dictionary_applier
         self._world_info_applier = world_info_applier
+        self._rag_capture_provider = rag_capture_provider
         self.run_state = ConsoleRunState()
         self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
         #: Optional owner hook invoked once a submit is accepted (user message
@@ -766,6 +768,7 @@ class ConsoleChatController:
 
         if pendings:
             self.store.clear_pending_attachments(session.id)
+        citation_trace_builder = None
         try:
             provider_messages = self._provider_messages_for_session(
                 session.id, annotate_ids=True
@@ -789,12 +792,25 @@ class ConsoleChatController:
                 self.store.append_message(
                     session.id, role=ConsoleMessageRole.SYSTEM, content=note
                 )
+            citation_context, citation_trace_builder = await self._capture_rag_context(
+                clean_draft
+            )
+            if citation_context and citation_trace_builder is None:
+                provider_messages = self._prepend_evidence_context(
+                    provider_messages,
+                    citation_context,
+                )
             provider_messages = await self._apply_chat_dictionaries(
                 provider_messages, session.id
             )
             provider_messages = await self._apply_world_info(
                 provider_messages, session.id
             )
+            if citation_context and citation_trace_builder is not None:
+                provider_messages = self._prepend_evidence_context(
+                    provider_messages,
+                    citation_context,
+                )
             prefill, prefill_from_one_shot = self._resolve_submit_prefill(session.id)
         except BaseException:
             # Any failure between the optimistic echo and the confirmed turn
@@ -824,15 +840,18 @@ class ConsoleChatController:
             content="",
             persist=self.store.persistence is not None,
         )
-        return await self._stream_assistant_response(
-            resolution=resolution,
-            provider_messages=provider_messages,
-            assistant_message_id=assistant.id,
-            prefill=prefill,
-            prefill_from_one_shot=prefill_from_one_shot,
-            skill_bindings=skill_bindings,
-            skill_bundle_block=skill_bundle_block,
-        )
+        try:
+            return await self._stream_assistant_response(
+                resolution=resolution,
+                provider_messages=provider_messages,
+                assistant_message_id=assistant.id,
+                prefill=prefill,
+                prefill_from_one_shot=prefill_from_one_shot,
+                skill_bindings=skill_bindings,
+                skill_bundle_block=skill_bundle_block,
+            )
+        finally:
+            del citation_trace_builder
 
     def new_session(
         self,
@@ -3328,6 +3347,76 @@ class ConsoleChatController:
             should_clear_draft=False,
             visible_copy=visible_copy,
         )
+
+    async def _capture_rag_context(self, draft: str) -> tuple[str | None, Any | None]:
+        """Resolve optional staged RAG context without exposing request state."""
+
+        provider = self._rag_capture_provider
+        if provider is None:
+            return None, None
+        try:
+            captured = await provider(draft)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error(
+                "Console RAG capture unavailable; reason=capture_provider_failure"
+            )
+            return None, None
+        context = getattr(captured, "context", None)
+        builder = getattr(captured, "citation_builder", None)
+        if not isinstance(context, str) or not context.strip():
+            return None, builder
+        return context, builder
+
+    @staticmethod
+    def _prepend_evidence_context(
+        provider_messages: list[dict[str, Any]],
+        context: str,
+    ) -> list[dict[str, Any]]:
+        """Prefix exact evidence to the final provider-only user message."""
+
+        final_index = next(
+            (
+                index
+                for index in range(len(provider_messages) - 1, -1, -1)
+                if provider_messages[index].get("role")
+                == ConsoleMessageRole.USER.value
+            ),
+            None,
+        )
+        if final_index is None:
+            return provider_messages
+        prefix = f"Evidence: {context}\n\n---\n\n"
+        message = provider_messages[final_index]
+        content = message.get("content")
+        if isinstance(content, str):
+            new_content: Any = prefix + content
+        elif isinstance(content, list):
+            new_content = list(content)
+            text_index = next(
+                (
+                    index
+                    for index, part in enumerate(new_content)
+                    if isinstance(part, dict)
+                    and part.get("type") == "text"
+                    and isinstance(part.get("text"), str)
+                ),
+                None,
+            )
+            if text_index is None:
+                new_content.insert(0, {"type": "text", "text": prefix})
+            else:
+                text_part = new_content[text_index]
+                new_content[text_index] = {
+                    **text_part,
+                    "text": prefix + text_part["text"],
+                }
+        else:
+            return provider_messages
+        updated = list(provider_messages)
+        updated[final_index] = {**message, "content": new_content}
+        return updated
 
     def _notify_submission_accepted(self) -> None:
         """Invoke the owner accepted-hook without letting UI errors kill the run."""
