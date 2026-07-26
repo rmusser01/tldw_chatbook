@@ -28,8 +28,8 @@ from typing import Any
 
 from loguru import logger
 
+from .base import Tool
 from .tool_executor import (
-    Tool,
     ToolExecutor,
     DateTimeTool,
     CalculatorTool,

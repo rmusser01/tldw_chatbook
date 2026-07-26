@@ -15,7 +15,7 @@ from collections import defaultdict
 
 from loguru import logger
 
-from .tool_executor import Tool
+from .base import Tool
 
 
 @dataclass

@@ -7,7 +7,7 @@ This tool allows LLMs to search the knowledge base using the RAG system.
 from typing import Dict, Any
 from loguru import logger
 
-from . import Tool
+from .base import Tool
 
 
 class RAGSearchTool(Tool):

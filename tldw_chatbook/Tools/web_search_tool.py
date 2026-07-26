@@ -7,7 +7,7 @@ This tool allows LLMs to search the web using various search engines.
 from typing import Dict, Any
 from loguru import logger
 
-from . import Tool
+from .base import Tool
 from ..Web_Scraping.WebSearch_APIs import perform_websearch
 
 

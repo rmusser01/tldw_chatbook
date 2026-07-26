@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any
 from loguru import logger
 
-from . import Tool
+from .base import Tool
 from ..Utils.path_validation import validate_path
 from ..Utils.sensitive_paths import is_sensitive_path
 

@@ -133,3 +133,25 @@ def test_render_tool_protocol_contains_schemas_and_fence_first_rule():
 def test_render_empty_schema_list_is_answer_directly():
     rendered = render_tool_protocol([])
     assert rendered == ""
+
+
+def test_tool_abc_lives_in_a_module_free_of_the_executor():
+    """The ABC must outlive ToolExecutor's removal.
+
+    builtin_tool_gate imports Tool for risk_tags, so deleting the executor
+    module wholesale would break the permission gate.
+    """
+    import inspect
+
+    import tldw_chatbook.Tools.base as base
+
+    assert inspect.isclass(base.Tool)
+    assert not hasattr(base, "ToolExecutor")
+    assert not hasattr(base, "get_tool_executor")
+
+
+def test_tool_executor_reexports_the_same_abc():
+    from tldw_chatbook.Tools.base import Tool as BaseTool
+    from tldw_chatbook.Tools.tool_executor import Tool as LegacyTool
+
+    assert BaseTool is LegacyTool

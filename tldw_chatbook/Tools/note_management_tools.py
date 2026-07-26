@@ -7,7 +7,7 @@ These tools allow LLMs to create, search, update, and manage notes.
 from typing import Dict, Any
 from loguru import logger
 
-from . import Tool
+from .base import Tool
 from ..Notes.Notes_Library import NotesInteropService
 from ..config import USER_DB_BASE_DIR
 

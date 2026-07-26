@@ -22,7 +22,7 @@ from tldw_chatbook.MCP.permission_store import (
     GatedToolRef,
     resolve_builtin_state,
 )
-from tldw_chatbook.Tools.tool_executor import Tool
+from tldw_chatbook.Tools.base import Tool
 
 #: Stamp values that permit execution for this turn.
 _PERMITTING = {"approve_once", "approve_session", "always_allow"}

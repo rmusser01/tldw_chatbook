@@ -24,7 +24,7 @@ from tldw_chatbook.Tools.file_operation_tools import (
     _tool_sandbox_root,
     is_within,
 )
-from tldw_chatbook.Tools.tool_executor import Tool
+from tldw_chatbook.Tools.base import Tool
 
 
 class ReadFile(ReadFileTool):
