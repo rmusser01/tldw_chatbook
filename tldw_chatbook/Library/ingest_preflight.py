@@ -12,7 +12,11 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from tldw_chatbook.Library.ingest_capabilities import get_tooling_warnings, get_type_group
+from tldw_chatbook.Library.ingest_capabilities import (
+    UNSUPPORTED_GROUP,
+    get_tooling_warnings,
+    get_type_group,
+)
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import is_http_url
 from tldw_chatbook.Utils.path_validation import validate_path_simple
@@ -163,6 +167,11 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
                 type_groups.setdefault(group, []).append(str(file_path))
                 total_size += _safe_size(file_path)
             for group in type_groups:
+                if group == UNSUPPORTED_GROUP:
+                    # No amount of installing makes these ingestible, so there
+                    # is no tooling warning to raise for them -- they are
+                    # counted separately in the summary instead.
+                    continue
                 warnings.extend(get_tooling_warnings(group))
         else:
             errors.append(f"Path is neither a file nor a directory: {path_or_url}")

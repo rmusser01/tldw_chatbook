@@ -213,6 +213,65 @@ class TestAnalyzePath:
         result = analyze_path(str(tmp_path))
         assert result.warnings == [{"feature": "test", "group": "pdf"}]
 
+    def test_single_unsupported_file_is_grouped_not_raised(self, tmp_path: Path) -> None:
+        """An unsupported file belongs in its own group, not in an exception.
+
+        ``get_type_group`` returns ``"unsupported"`` by design so the summary
+        can surface those files separately, but the capability lookup has no
+        such group, so asking it for tooling warnings raised ``KeyError`` and
+        replaced the entire pre-flight summary with a raw error string
+        (task-661).
+        """
+        (tmp_path / "notes.xyz").write_text("nope")
+
+        result = analyze_path(str(tmp_path / "notes.xyz"))
+
+        assert result.errors == []
+        assert result.type_groups.get("unsupported") == [str(tmp_path / "notes.xyz")]
+        assert result.total_files == 1
+
+    def test_directory_with_one_unsupported_file_still_summarises(
+        self, tmp_path: Path
+    ) -> None:
+        """One unsupported file must not destroy the summary for the rest.
+
+        Any real folder is likely to hold a ``.json``, ``.jpg`` or ``.srt``
+        alongside the content, and a single one of them used to abort the
+        whole analysis -- losing the file count, the size, the type breakdown
+        and, critically, the tooling warnings that feed the guardrail.
+        """
+        (tmp_path / "a.pdf").write_bytes(b"%PDF")
+        (tmp_path / "b.txt").write_text("plain")
+        (tmp_path / "cover.jpg").write_bytes(b"jpg")
+
+        result = analyze_path(str(tmp_path))
+
+        assert result.errors == []
+        assert result.total_files == 3
+        assert len(result.type_groups["pdf"]) == 1
+        assert len(result.type_groups["generic"]) == 1
+        assert result.type_groups["unsupported"] == [str(tmp_path / "cover.jpg")]
+
+    def test_unsupported_file_in_directory_does_not_block_tooling_warnings(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Supported groups still report their tooling warnings."""
+        (tmp_path / "a.pdf").write_bytes(b"%PDF")
+        (tmp_path / "cover.jpg").write_bytes(b"jpg")
+
+        def fake_warnings(group: str) -> list[dict]:
+            return [{"feature": "test", "group": group}]
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Library.ingest_preflight.get_tooling_warnings",
+            fake_warnings,
+        )
+
+        result = analyze_path(str(tmp_path))
+
+        assert {"feature": "test", "group": "pdf"} in result.warnings
+        assert not any(w["group"] == "unsupported" for w in result.warnings)
+
     def test_reachable_url(self) -> None:
         mock_response = MagicMock()
         mock_response.__enter__ = MagicMock(return_value=mock_response)

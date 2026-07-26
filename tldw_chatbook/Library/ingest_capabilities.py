@@ -211,6 +211,12 @@ def _install_hint(feature_id: str) -> dict[str, str]:
     }
 
 
+#: Sentinel group returned by :func:`get_type_group` for files this app has no
+#: handler for. It is deliberately *not* a key of ``_TYPE_GROUPS``: it has no
+#: capabilities, options or tooling of its own. Callers group these files so
+#: the pre-flight summary can count them separately.
+UNSUPPORTED_GROUP = "unsupported"
+
 _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
     "pdf": TypeGroupCapabilities(
         group="pdf",
@@ -371,7 +377,7 @@ def get_type_group(path_or_url: str) -> str:
     try:
         file_type = detect_file_type(path_or_url)
     except FileIngestionError:
-        return "unsupported"
+        return UNSUPPORTED_GROUP
 
     if file_type == "pdf":
         return "pdf"
@@ -405,8 +411,16 @@ def get_tooling_warnings(group: str) -> list[dict[str, Any]]:
 
     Returns:
         List of warning dictionaries with ``feature``, ``label``, ``hint``,
-        and ``command`` keys.
+        and ``command`` keys. Empty for :data:`UNSUPPORTED_GROUP`, which has
+        no tooling to be missing -- installing something would not make those
+        files ingestible.
+
+    Raises:
+        KeyError: If ``group`` is neither a known type group nor the
+            unsupported sentinel.
     """
+    if group == UNSUPPORTED_GROUP:
+        return []
     capabilities = get_capabilities(group)
     warnings: list[dict[str, Any]] = []
 
