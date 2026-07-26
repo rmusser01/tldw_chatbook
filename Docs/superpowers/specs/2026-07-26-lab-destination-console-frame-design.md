@@ -215,26 +215,51 @@ bindings and the frame's `[` / `]` coexist without conflict.
 navigation**; caching one caused an exception-free full-UI freeze root-caused 2026-07-11. Immediate
 bracket cycling would therefore construct and throw away a ~360–790 ms screen per keypress.
 
-So brackets do not navigate:
+So brackets do not navigate. **`[` / `]` move focus to the adjacent mode chip**, and nothing else:
 
-- `[` / `]` move a **preview** selection along the mode strip. No navigation, no mount.
-- `Enter` commits the previewed mode — one `NavigateToScreen`, one mount.
-- `Escape` drops the preview back to the active mode.
+- preview is Textual's native `:focus` styling, already in the bundle (`Button:focus`, line 954)
+- `Enter` is ordinary `Button` activation on the focused chip, which already posts
+  `NavigateToScreen` via `lab_mode_strip.py:101-108`
+- `Tab` is ordinary focus movement away from the strip. `Escape` is deliberately **not** given a
+  strip meaning: `EvalsScreen` already binds it to `action_evals_back` (`evals_screen.py:31`), and
+  a competing strip binding would shadow that on one of the three modes only.
 
-Cycling Models → Evals builds **zero** intermediate screens. This needs no in-flight guard, no
-debounce timer, and no race with the fresh-screen rule, and it is ordinary menu semantics.
+Cycling Models → Evals builds **zero** intermediate screens. No in-flight guard, no debounce timer,
+no race with the fresh-screen rule, and no new state machine, CSS class, or cancel path — focus is
+the preview.
 
-**Preview must be visually distinct from active**, or the user cannot tell "where I am" from "where
-Enter would take me". The previewed chip carries `is-previewed`, styled differently from
-`is-active` — and, like every other chip rule here, declared **app-tier** in `features/_lab.tcss`,
-never in `DEFAULT_CSS`. When no preview is pending, no chip carries `is-previewed`.
+Two consequences worth stating plainly. Brackets are printable keys, so text inputs consume them
+first; they act only from button or list focus, exactly as Personas documents at
+`personas_screen.py:237-239`. And `Enter` on the *already active* chip is a deliberate no-op —
+`_handle_mode_chip` returns without posting when the route matches.
+
+An earlier draft of this spec had `[` / `]` set a separate preview state committed by a
+screen-level `Enter` binding. That does not work: if `[` fired at all, focus was on a button or
+list, so `Enter` is consumed by that focused widget and activates it instead of committing. The
+preview would have been enterable but not committable.
 
 ### Lazy body mount
 
-The frame composes header, mode strip, and rail, then mounts the body from `call_after_refresh` so
-the first paint is not blocked by body construction. This improves *all* navigation into Models,
-not only cycling — the ~0.5–0.8 s moves after first paint rather than before it. It does not reduce
-total work, and the body must be mounted before any test or caller queries into it.
+The frame composes header, mode strip, and rail, then constructs and mounts the body from
+`call_after_refresh` so first paint is not blocked. This improves *all* navigation into Models, not
+only cycling — the ~0.5–0.8 s moves after first paint rather than before it. It does not reduce
+total work.
+
+**Deferred construction breaks every caller that assumes the body already exists**, and there are
+five today:
+
+| Site | Method | Failure without a fix |
+|---|---|---|
+| `stts_screen.py:55` | `on_mount` | `self.stts_window or self.query_one(STTSWindow)` — attribute is `None` and the query raises `NoMatches`, on **every** visit to Speech |
+| `stts_screen.py:67` | `on_screen_suspend` | same pattern |
+| `stts_screen.py:77` | `on_screen_resume` | same pattern |
+| `evals_screen.py:58` | `action_evals_back` (Escape) | bare `query_one(EvalsWindowV3)` before the body mounts |
+| `evals_screen.py:69` | `action_evals_open` (digits `1..6`) | same |
+
+The frame therefore fires an explicit **`on_lab_body_ready()`** hook once the body is mounted.
+Screen initialization that touches the body moves into that hook, and the two Evals actions guard
+on the body being present rather than assuming it. This is the same hazard as the `on_mount`
+override above and is fixed the same way: no required work runs where the body may not exist yet.
 
 ## Rail contents and lift seams
 
@@ -394,18 +419,22 @@ Mirroring `test_console_workbench_contract.py`:
 |---|---|
 | geometry at width 100: rail 26 + collapsed handle 11 + body ≥ 63 | the width contract |
 | rail collapse round-trips config **and survives a mode switch** | why collapse lives in config, not `save_state` |
-| `[` / `]` move the preview without navigating; `Enter` commits; `Escape` cancels | zero intermediate mounts |
-| the previewed chip renders distinctly from the active chip | preview being invisible or confusable with active |
-| the body is queryable after mount despite `call_after_refresh` deferral | lazy mounting breaking callers or tests |
+| `[` / `]` move focus to the adjacent chip and navigate nothing; `Enter` on a focused chip commits | zero intermediate mounts |
+| `on_lab_body_ready()` fires after the body mounts, and Speech's init runs there | the five deferred-body call sites |
+| Escape and digits `1..6` on Evals are safe before the body mounts | `action_evals_back` / `action_evals_open` raising `NoMatches` |
 | `EvalsScreen` has bare digits `1..6` **and** `[` / `]` | binding merge across the MRO |
 | the active mode chip's **rendered label** is present | PR0's bug, which a class-only assertion misses |
 | empty inspector renders the honest empty state | not a blank box |
 
-### No-regression — must pass untouched
+### No-regression
 
-`test_lab_mode_strip.py` · `test_destination_shells.py` (its `SCREEN_BY_ROUTE` suite) ·
-`test_workbench_route_inventory.py` · `test_command_palette_shell_routes.py` ·
+Must pass untouched through **every** PR: `test_destination_shells.py` (its `SCREEN_BY_ROUTE`
+suite) · `test_workbench_route_inventory.py` · `test_command_palette_shell_routes.py` ·
 `test_evals_screen_shell.py`
+
+`test_lab_mode_strip.py` must pass untouched through **PR0 and PR1**. PR2 deliberately changes the
+strip's keyboard behavior, so that suite is legitimately *extended* there — do not treat its
+needing changes in PR2 as a regression signal, and do not weaken it to keep it green.
 
 And critically `test_console_rail_sections.py` plus the Console/Personas/Home/Library rail tests.
 **Those passing with zero edits is the proof that subclassing beat migrating.** If they need
@@ -433,8 +462,8 @@ mode.
 
 | PR | Contents |
 |---|---|
-| **PR0** | creates `features/_lab.tcss` + registers it; `.lab-mode-chip.is-active` app-tier rule + rendered-label test; live look at `.library-collection-row` |
+| **PR0** | creates `features/_lab.tcss`, registers it in `CSS_MODULES`, **regenerates and commits the checked-in `tldw_cli_modular.tcss` via `build_css`**; `.lab-mode-chip.is-active` app-tier rule + rendered-label test; live look at `.library-collection-row` |
 | **PR1** | `Widgets/destination_rail.py` pure base; `ConsoleRailHandle` becomes a subclass; no consumer edits |
-| **PR2** | `LabScreen` frame, `LabWorkbench`, `LabRailLayout`, `LabRailStore`, extends `features/_lab.tcss`, preview/commit mode keys, lazy body mount; all three screens inherit |
+| **PR2** | `LabScreen` frame, `LabWorkbench`, `LabRailLayout`, `LabRailStore`, extends `features/_lab.tcss`, focus-based mode keys, lazy body mount + `on_lab_body_ready()`; all three screens inherit |
 | **PR3** | Models rail lift |
 | **PR4** | Speech rail lift, capability panel, IA removals |
