@@ -180,12 +180,48 @@ direct, captured, qualified, imported, and constant-string dynamic references
 elsewhere.
 
 Settings no longer calls the loader after saving a new server configuration.
-It reloads `app.app_config`, rebinds
-`RuntimeServerContextProvider` through a focused
-`rebind_app_config()` operation, and calls
-`handle_runtime_backend_changed()`. The provider rebind updates its config
-mapping, upserts the legacy-config target, and invalidates any cached client
-before the existing context commit selects the new server identity.
+It writes `base_url` and `auth_token` through one
+`save_settings_to_cli_config()` batch and checks the result, avoiding the
+current partial two-write update. If that save fails, it does not reload,
+rebind, or report success. After a successful save, it reloads the saved
+configuration into a local `refreshed_config` value and passes that value to
+`handle_runtime_backend_changed()` as an explicit configuration override. It
+does not assign `app.app_config` first.
+
+`handle_runtime_backend_changed()` is the single app-level rebind
+coordinator. Before mutating the app, provider, target store, or client cache,
+it asks `set_authoritative_runtime_source()` to derive and validate the
+candidate binding from the explicit configuration override and durably commit
+that candidate through the already-installed context. The helper accepts the
+override only for candidate derivation; it does not install the mapping on the
+app or provider. A `False` compare-and-swap result is a failed commit, not a
+successful return of whichever newer snapshot happens to exist.
+
+If derivation, compare-and-swap, or persistence fails, the coordinator returns
+`False`. It leaves the context state and revision, projection tuple,
+`app.app_config`, provider configuration, configured-target store/default,
+cached client, and active screen unchanged. Settings emits no success notice
+and performs no Sync v2 preparation on that path. The already-successful
+Settings file update remains on disk for an explicit retry or the next
+startup; the coordinator does not claim cross-file transactional rollback.
+
+After a successful commit, and before any awaited screen callback, the
+coordinator installs `refreshed_config` on `app.app_config` and calls a focused
+`RuntimeServerContextProvider.rebind_app_config()` operation. The provider
+first replaces its config mapping and detaches its cached client/key, with
+client-close failures contained and logged only by exception category. It then
+best-effort upserts the derived legacy-config target. Target-store failure is
+contained: the newly committed authority remains usable through the
+provider's existing config-derived fallback, and a subsequent successful
+rebind may repair the materialized target/default. The post-commit provider
+rebind is therefore non-throwing for these cleanup/materialization failures.
+
+`handle_runtime_backend_changed()` only notifies the active screen after a
+successful coordinated commit/rebind. That callback is a post-commit observer:
+its exception is contained with category-only diagnostics and cannot be
+reported as an activation rollback. The coordinator returns `True` because the
+authority and provider binding are already committed. The local source path
+uses the same Boolean success contract without a configuration override.
 
 The app context identity does not change. Long-lived consumers—including
 `ServicePolicyEnforcer`, `RuntimeServerContextProvider`,
@@ -311,12 +347,15 @@ spelling, alias propagation, or control-flow interpretation.
    the one private publisher; the three public properties immediately reflect
    one coherent pair.
 
-When Settings changes the configured server, it reloads configuration and
-rebinds the server-context provider, but it does not repeat steps 1–2. It
-derives and commits the new binding through the already-installed context.
+When Settings changes the configured server, it loads a candidate
+configuration without publishing it, derives and durably commits the new
+binding through the already-installed context, then installs the same
+configuration on the app and provider before notifying the active screen. It
+does not repeat steps 1–2.
 
 Persistence failure leaves the context snapshot, revision, private projection
-fields, active screen, and target-status side effects unchanged.
+tuple, app and provider configuration, configured target/default, cached
+client, active screen, and target-status side effects unchanged.
 
 ## Compatibility
 
@@ -362,8 +401,18 @@ The implementation must demonstrate red-to-green tests for:
 - a Settings server rebind preserving context identity while the enforcer,
   server-context provider, capability service, and Home observe the committed
   state;
+- a Settings rebind whose runtime-store failure retains the old app/provider
+  config, cache, target/default, context, projection, and active screen;
+- a forced compare-and-swap rejection following the same no-side-effect
+  failure path;
+- a failed batched Settings save causing no reload, rebind, partial
+  base-URL/token activation, or success notification;
 - the provider rebind refreshing its config mapping/default legacy target and
-  invalidating its cached client;
+  invalidating its cached client only after the authoritative commit;
+- a legacy-target upsert failure leaving the new committed authority usable
+  through the provider's refreshed-config fallback;
+- a throwing active-screen callback occurring only after commit, remaining
+  bounded, and not converting a committed activation into a `False` result;
 - direct, mangled, and constant-string access to the private projection
   callback failing structural checks;
 - deletion of the old alias/scope/control-flow visitors.

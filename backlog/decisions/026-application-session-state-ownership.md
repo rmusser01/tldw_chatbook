@@ -47,6 +47,22 @@ Context state is read-only; there is no public state setter or standalone
 persistence escape hatch, and both the backing store and projection callback
 are private. The callback does not read or write `AppState`.
 
+Settings saves the changed URL and token in one checked configuration batch,
+loads that configuration as an unpublished candidate, and passes it to one
+app-level coordinator. The coordinator derives and durably commits the new
+runtime binding through the existing context before changing
+`app.app_config`, provider configuration, configured targets/defaults, client
+cache, or the active screen. A failed commit leaves all of those observers on
+the old binding. After commit, provider configuration and cache invalidation
+are installed before screen notification. Legacy-target materialization is
+best-effort and non-authoritative: if it fails, the provider's refreshed
+configuration remains the fallback for the already-committed binding.
+The active-screen callback is a contained post-commit observer; its failure
+cannot be represented as if the committed binding rolled back.
+Because the Settings TOML and runtime-policy JSON are separate durable files,
+a successful Settings save is retained for retry/startup when the subsequent
+runtime-policy commit fails; no cross-file rollback is claimed.
+
 Runtime-policy persistence is part of the ADR-022 private-data boundary. Its
 default path is resolved from the effective config path when the context is
 constructed, including `TLDW_CONFIG_PATH` overrides. Existing files are

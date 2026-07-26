@@ -656,8 +656,19 @@ the projection boundary invokes the sole private publisher behind the three
 getter-only properties; it neither reads nor writes a root `AppState`.
 
 The application installs one `RuntimePolicyContext` identity for its lifetime.
-Settings changes rebind the existing context and refresh the server-context
-provider's configuration instead of loading and installing another authority.
+Settings changes persist the server URL and token in one checked configuration
+batch, then pass a locally loaded candidate configuration to one app-level
+coordinator instead of loading and installing another authority.
+The coordinator durably commits the existing context before publishing the
+candidate configuration to the app/provider or invalidating provider state.
+Commit failure leaves the old binding, configuration, target/default, cache,
+projection, and screen unchanged. After commit, provider config/cache
+installation precedes screen notification; legacy-target materialization is
+best-effort because the refreshed provider config remains a usable fallback.
+The screen callback is a contained post-commit observer and cannot turn an
+already-committed switch into a reported rollback.
+The successful Settings-file write is not rolled back if the separate
+runtime-policy commit fails; it remains available for retry/startup.
 
 ## Migration Tasks
 

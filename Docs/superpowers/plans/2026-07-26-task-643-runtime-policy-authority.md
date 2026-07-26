@@ -26,6 +26,10 @@
 > Do not resume implementation from the old direct-public-write or alias-flow
 > instructions. A corrective implementation plan must replace those steps
 > after the amended design passes written-spec and user review.
+> The corrective plan must also implement the design's commit-first Settings
+> coordinator. Assigning refreshed app/provider configuration, invalidating a
+> cached client, or materializing a legacy target before the authoritative
+> commit is forbidden.
 
 ---
 
@@ -493,6 +497,7 @@ git commit -m "fix(runtime-policy): discard superseded capability probes (task-6
 - Modify: `tldw_chatbook/runtime_policy/server_context.py`
 - Modify: `Tests/RuntimePolicy/test_runtime_policy_bootstrap.py`
 - Modify: `Tests/RuntimePolicy/test_server_context_provider.py`
+- Modify: `Tests/UI/test_settings_configuration_hub.py`
 - Create: `Tests/test_application_state_ownership.py`
 
 - [ ] **Step 1: Write failing integration and AST guard tests**
@@ -526,6 +531,22 @@ Add an async bootstrap test whose store raises on save and assert `handle_runtim
 Add a projection test using an app double with no `app_state` attribute and a
 second double whose trap property fails if `app_state` is accessed; both must
 receive only the three compatibility projection attributes.
+Add Settings/coordinator tests proving a refreshed configuration remains
+unpublished when the runtime store fails: app/provider configuration, provider
+cache, configured target/default, context, projections, and screen callback
+all retain their previous values. Add a provider test that forces legacy-target
+upsert failure after a successful commit and proves the refreshed
+configuration fallback can still resolve the new committed binding.
+Force `commit_state()` to return `False` in a separate coordinator test and
+assert it follows the same no-side-effect failure path rather than treating
+the context's current snapshot as this request's successful commit.
+Make the active-screen callback throw in a post-commit test and assert the
+coordinator retains the committed binding, emits only bounded category
+metadata, and returns `True`.
+Add a Settings test that forces the single batched URL/token save to fail and
+proves no reload, coordinator call, partial activation, or success
+notification occurs. A separate test records that a successful Settings save
+remains on disk when the later runtime-policy commit fails.
 
 - [ ] **Step 2: Run tests to verify failure**
 
@@ -543,35 +564,49 @@ Delete the import and `self.app_state = AppState()` from `TldwCli`. Delete the
 `getattr(app, "app_state", ...)` branch and `app_state.runtime_source` write
 from `_apply_runtime_policy_to_app()`. Implement the getter-only projections,
 single private projection tuple, private publisher, uniquely named context
-store and callback, one-time installation, Settings/provider rebind, static
-fallback detection, and exact structural checks from the
+store and callback, one-time installation, commit-first Settings/provider
+rebind, static fallback detection, and exact structural checks from the
 structural-enforcement design. Keep all
 compatibility exports. Change documentation to state that these classes are
 caller-owned serializable compatibility containers and are not the
 application's live authority. Preserve `to_dict()`/`from_dict()` behavior
 byte-for-byte.
 
-- [ ] **Step 4: Contain runtime persistence failure at the app boundary**
+- [ ] **Step 4: Coordinate a failure-atomic Settings/provider rebind**
 
-Wrap `set_authoritative_runtime_source()` in `handle_runtime_backend_changed()`:
+Extend `set_authoritative_runtime_source()` with an optional explicit
+configuration used only to derive the candidate server binding. Extend
+`handle_runtime_backend_changed()` with the same optional configuration and a
+Boolean success result. Settings must load its saved configuration into a
+local value and pass it to this coordinator without first assigning
+`app.app_config`. Replace the two per-key Settings writes with one checked
+`save_settings_to_cli_config()` batch; abort before reload/rebind if it fails.
 
-```python
-try:
-    updated_state = set_authoritative_runtime_source(self, normalized_backend)
-except Exception as exc:
-    logger.warning(
-        "Runtime source change was not committed "
-        "(exception_category={})",
-        type(exc).__name__,
-    )
-    self.notify(
-        "Runtime source could not be changed; the previous source remains active.",
-        severity="warning",
-    )
-    return
-```
+The coordinator must derive and durably commit first. On failure it returns
+`False` without changing app/provider configuration, target/default, cache,
+projection, or screen. On success it assigns the candidate app configuration,
+invokes a focused provider rebind, and only then awaits the screen callback.
+`set_authoritative_runtime_source()` must surface a `False` compare-and-swap
+result as failure; returning the context's newer snapshot is not proof that
+this request committed.
+The provider rebind must install its config and detach its cache before
+best-effort legacy-target upsert. Cache-close and target-upsert failures are
+contained with bounded category-only diagnostics; refreshed config remains a
+usable fallback for the committed binding. Settings emits success and starts
+Sync v2 preparation only when the coordinator succeeds. Do not attempt to roll
+back a successful Settings-file write after a later runtime-policy failure;
+report that activation failed and leave the saved values available for
+retry/startup.
 
-Do not include `exc`, paths, endpoints, labels, or state in logs. Remove the no-policy projection fallback: production startup always installs the context. In Media Ingest and Study, update only screen-owned view state and let the app projection callback remain the sole writer.
+Treat the awaited active-screen callback as a contained post-commit observer.
+Its failure may produce bounded category-only diagnostics, but the coordinator
+must retain the committed binding and return `True`.
+
+Do not include exception values, paths, endpoints, labels, configuration, or
+state in logs. Remove the no-policy projection fallback: production startup
+always installs the context. In Media Ingest and Study, update only
+screen-owned view state and let the app projection callback remain the sole
+writer.
 
 - [ ] **Step 5: Run compatibility and ownership tests**
 
@@ -579,7 +614,7 @@ Run:
 
 ```bash
 pytest Tests/test_application_state_ownership.py Tests/RuntimePolicy -q
-pytest Tests/UI/test_media_ingest_window_rebuilt.py Tests/UI/test_study_screen.py -q
+pytest Tests/UI/test_media_ingest_window_rebuilt.py Tests/UI/test_study_screen.py Tests/UI/test_settings_configuration_hub.py -q
 ```
 
 Expected: PASS, including legacy state serialization.
@@ -587,7 +622,7 @@ Expected: PASS, including legacy state serialization.
 - [ ] **Step 6: Commit application detachment**
 
 ```bash
-git add tldw_chatbook/app.py tldw_chatbook/state tldw_chatbook/UI/Screens/media_ingest_screen.py tldw_chatbook/UI/Screens/study_screen.py Tests/test_application_state_ownership.py Tests/RuntimePolicy/test_runtime_policy_bootstrap.py Tests/UI/test_media_ingest_window_rebuilt.py Tests/UI/test_study_screen.py
+git add tldw_chatbook/app.py tldw_chatbook/state tldw_chatbook/runtime_policy/server_context.py tldw_chatbook/UI/Screens/media_ingest_screen.py tldw_chatbook/UI/Screens/study_screen.py tldw_chatbook/UI/Screens/settings_screen.py Tests/test_application_state_ownership.py Tests/RuntimePolicy/test_runtime_policy_bootstrap.py Tests/RuntimePolicy/test_server_context_provider.py Tests/UI/test_media_ingest_window_rebuilt.py Tests/UI/test_study_screen.py Tests/UI/test_settings_configuration_hub.py
 git commit -m "refactor(app): detach legacy root state authority (task-643)"
 ```
 
@@ -602,21 +637,25 @@ git commit -m "refactor(app): detach legacy root state authority (task-643)"
 
 ```bash
 pytest Tests/RuntimePolicy -q
-pytest Tests/test_application_state_ownership.py Tests/UI/test_media_ingest_window_rebuilt.py Tests/UI/test_study_screen.py -q
-python -m compileall -q tldw_chatbook/runtime_policy tldw_chatbook/state
-python -m ruff check tldw_chatbook/runtime_policy tldw_chatbook/state tldw_chatbook/app.py tldw_chatbook/UI/Screens/media_ingest_screen.py tldw_chatbook/UI/Screens/study_screen.py Tests/RuntimePolicy Tests/test_application_state_ownership.py
+pytest Tests/test_application_state_ownership.py Tests/UI/test_media_ingest_window_rebuilt.py Tests/UI/test_study_screen.py Tests/UI/test_settings_configuration_hub.py -q
+python -m compileall -q tldw_chatbook/runtime_policy tldw_chatbook/state tldw_chatbook/app.py tldw_chatbook/UI/Screens/settings_screen.py
+python -m ruff check tldw_chatbook/runtime_policy tldw_chatbook/state tldw_chatbook/app.py tldw_chatbook/UI/Screens/media_ingest_screen.py tldw_chatbook/UI/Screens/study_screen.py Tests/RuntimePolicy Tests/test_application_state_ownership.py Tests/UI/test_settings_configuration_hub.py
+python -m ruff check --ignore F841 tldw_chatbook/UI/Screens/settings_screen.py
 python -m ruff check --ignore F841 tldw_chatbook/config.py
-python -m ruff format --check tldw_chatbook/runtime_policy/source_state.py tldw_chatbook/runtime_policy/bootstrap.py tldw_chatbook/runtime_policy/server_capabilities.py tldw_chatbook/state/app_state.py tldw_chatbook/state/__init__.py tldw_chatbook/UI/Screens/media_ingest_screen.py tldw_chatbook/UI/Screens/study_screen.py Tests/RuntimePolicy Tests/test_application_state_ownership.py
+python -m ruff format --check tldw_chatbook/runtime_policy/source_state.py tldw_chatbook/runtime_policy/bootstrap.py tldw_chatbook/runtime_policy/server_capabilities.py tldw_chatbook/runtime_policy/server_context.py tldw_chatbook/state/app_state.py tldw_chatbook/state/__init__.py tldw_chatbook/UI/Screens/media_ingest_screen.py tldw_chatbook/UI/Screens/study_screen.py Tests/RuntimePolicy Tests/test_application_state_ownership.py Tests/UI/test_settings_configuration_hub.py
 git diff --check
 ```
 
 Expected: all commands exit 0. `config.py` has two verified pre-tranche F841
-diagnostics and is already outside the Ruff formatter baseline, so the scoped
-command ignores only F841 there and the format gate intentionally excludes
-that file plus the pre-existing unformatted `app.py`. Do not expand TASK-643
-into unrelated baseline cleanup. If the repository environment lacks the
-`ruff` module, use the repository's installed `ruff` executable and record
-that exact command.
+diagnostics and is already outside the Ruff formatter baseline.
+`settings_screen.py` also has two verified pre-tranche F841 diagnostics and
+pre-existing whole-file formatter drift. The scoped checks ignore only F841
+there, and the format gate intentionally excludes `config.py`,
+`settings_screen.py`, and the pre-existing unformatted `app.py`; review the
+Settings diff itself for local formatting. Do not expand TASK-643 into
+unrelated baseline cleanup. If the repository environment lacks the `ruff`
+module, use the repository's installed `ruff` executable and record that exact
+command.
 
 - [ ] **Step 2: Review privacy and ownership sentinels**
 
