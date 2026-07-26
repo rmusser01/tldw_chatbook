@@ -6,8 +6,10 @@ from textual.containers import Grid, Vertical
 from textual.reactive import reactive
 from textual.widgets import DataTable, Static
 
+from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
-class OverviewPane(Vertical):
+
+class OverviewPane(RecomposeCaptureGuard, Vertical):
     """Dashboard cards and recent failed runs for watchlists."""
 
     data = reactive({}, recompose=True)

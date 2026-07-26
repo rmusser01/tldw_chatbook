@@ -10,6 +10,8 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Static
 
+from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+
 
 class NotificationSelected(Message):
     """Posted when the user selects a local notification."""
@@ -39,7 +41,7 @@ class DismissNotificationRequested(Message):
         super().__init__()
 
 
-class NotificationsPane(Vertical):
+class NotificationsPane(RecomposeCaptureGuard, Vertical):
     """Review and update the local client-notification inbox."""
 
     notifications = reactive[list[dict[str, Any]]]([], recompose=True)

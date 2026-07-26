@@ -10,6 +10,7 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import ConsoleRetrievalScopeState
 from tldw_chatbook.Chat.rag_scope import SCOPE_EMPTY_NOTICE_TEMPLATE, SCOPE_REASON_EMPTY
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 ROW_ID = "console-retrieval-scope-row"
 LABEL_ID = "console-retrieval-scope-label"
@@ -28,7 +29,7 @@ EDIT_LABEL = "Edit"
 CLEAR_LABEL = "Clear"
 
 
-class ConsoleRetrievalScopeRow(Horizontal):
+class ConsoleRetrievalScopeRow(RecomposeCaptureGuard, Horizontal):
     """Compact Inspector row summarizing the active conversation's RAG scope.
 
     Sits directly below the Sources (staged-context) tray in the Inspector

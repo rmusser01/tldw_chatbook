@@ -28,6 +28,7 @@ from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationSectionState,
 )
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
 # One vocabulary for persisted-but-not-archived chats across surfaces:
@@ -285,7 +286,7 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         yield value_widget
 
 
-class ConsoleWorkspaceContextTray(Vertical):
+class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     """Render workspace selection, conversation scope, and recovery copy."""
 
     class Relabeled(Message):

@@ -9,6 +9,8 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Input, Select, Static
 
+from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+
 
 class ItemSelected(Message):
     """Posted when the user selects an item in the items table."""
@@ -22,7 +24,7 @@ class RefreshItemsRequested(Message):
     """Posted when the user requests a refresh of the items list."""
 
 
-class ItemsPane(Vertical):
+class ItemsPane(RecomposeCaptureGuard, Vertical):
     """Content item list and filter for watchlists."""
 
     items = reactive[list[dict[str, Any]]]([], recompose=True)

@@ -10,6 +10,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
 CONSOLE_SETTINGS_SUMMARY_MAX_HEIGHT = 9
@@ -19,7 +20,7 @@ CONSOLE_SETTINGS_BUTTON_MAX_WIDTH = 14
 CONSOLE_SETTINGS_ROW_HEIGHT = 1
 
 
-class ConsoleSettingsSummary(Vertical):
+class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
     """Render compact Console session settings rows."""
 
     def __init__(self, state: ConsoleSettingsSummaryState, **kwargs: Any) -> None:

@@ -9,6 +9,8 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch
 
+from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+
 
 class RuleSelected(Message):
     """Posted when the user selects an alert rule in the rules table."""
@@ -38,7 +40,7 @@ class EditRuleRequested(Message):
         super().__init__()
 
 
-class RulesPane(Vertical):
+class RulesPane(RecomposeCaptureGuard, Vertical):
     """Alert rule list and editor for watchlists."""
 
     rules = reactive[list[dict[str, Any]]]([], recompose=True)

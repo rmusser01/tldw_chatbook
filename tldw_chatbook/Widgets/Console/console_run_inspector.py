@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleInspectorAction,
     ConsoleInspectorState,
 )
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
 _ROW_IDS = {
@@ -132,7 +133,7 @@ _ACTION_GROUPS = {
 }
 
 
-class ConsoleRunInspector(Vertical):
+class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
     """Render Console run readiness, recovery, and action affordances."""
 
     def __init__(self, state: ConsoleInspectorState, **kwargs: Any) -> None:

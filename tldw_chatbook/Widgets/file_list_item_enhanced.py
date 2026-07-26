@@ -11,6 +11,8 @@ from textual.widget import Widget
 from textual.reactive import reactive
 from loguru import logger
 
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+
 
 class FileListItemEnhanced(ListItem):
     """
@@ -157,7 +159,7 @@ class FileListItemEnhanced(ListItem):
         self.refresh()
 
 
-class FileListEnhanced(Widget):
+class FileListEnhanced(RecomposeCaptureGuard, Widget):
     """
     Enhanced file list widget that uses FileListItemEnhanced.
 

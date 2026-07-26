@@ -27,6 +27,7 @@ from textual.message import Message
 #
 # Local imports
 from tldw_chatbook.TTS.audiobook_generator import Chapter
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 #
 #######################################################################################################################
 #
@@ -55,7 +56,7 @@ class ChapterPreviewEvent(Message):
 # Chapter Editor Widget
 
 
-class ChapterEditorWidget(Widget):
+class ChapterEditorWidget(RecomposeCaptureGuard, Widget):
     """Enhanced chapter editor with visual editing capabilities"""
 
     DEFAULT_CSS = """

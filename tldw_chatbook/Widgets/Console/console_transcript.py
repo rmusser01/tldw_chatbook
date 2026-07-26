@@ -44,6 +44,7 @@ from tldw_chatbook.Widgets.Console.console_generation_card import (
     ConsoleGenerationCardSpec,
     generation_card_signature,
 )
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
@@ -420,7 +421,7 @@ class ConsoleTranscriptActionButton(Button):
         action_buttons[(current_index + offset) % len(action_buttons)].focus()
 
 
-class ConsoleTranscriptEmptyPanel(Vertical):
+class ConsoleTranscriptEmptyPanel(RecomposeCaptureGuard, Vertical):
     """Actionable Console transcript empty state, driven by a setup card state."""
 
     def __init__(

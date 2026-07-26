@@ -12,6 +12,8 @@ from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Static
 from textual.worker import get_current_worker
 
+from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+
 
 class RunSelected(Message):
     """Posted when the user selects a run in the runs table."""
@@ -37,7 +39,7 @@ class RerunRunRequested(Message):
         super().__init__()
 
 
-class RunsPane(Vertical):
+class RunsPane(RecomposeCaptureGuard, Vertical):
     """Run list and run inspector for watchlists."""
 
     runs = reactive[list[dict[str, Any]]]([], recompose=True)
