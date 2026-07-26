@@ -67,6 +67,14 @@ SCHEMA_VERSION = 1
 STORE_STATES: tuple[str, ...] = ("allow", "ask", "deny")
 DEFAULT_GLOBAL = "ask"
 HIGH_RISK_TAGS = frozenset({"mutates", "process"})
+#: Risk tags that floor an INHERITED ``allow`` to ``ask`` for in-process
+#: built-ins. A superset of ``HIGH_RISK_TAGS``: built-ins additionally
+#: treat filesystem reads as prompt-worthy, because an agent reading
+#: arbitrary sandbox files is a disclosure risk even though it mutates
+#: nothing. MCP deliberately keeps ``HIGH_RISK_TAGS`` -- widening the
+#: shared set would make remote tools carrying ``"reads"`` start
+#: prompting, which is not this phase's call to make.
+BUILTIN_HIGH_RISK_TAGS = HIGH_RISK_TAGS | frozenset({"reads"})
 
 _DEFAULT_PROFILE_ID = "default"
 
@@ -687,9 +695,11 @@ def resolve_builtin_state(
       would flip ``config_changed`` and re-prompt every user at upgrade
       time. ``config_changed`` is therefore always False here.
 
-    The high-risk floor is unchanged: an INHERITED ``allow`` (not an
-    explicit tool override) whose tags intersect ``HIGH_RISK_TAGS`` is
-    downgraded to ``ask`` with ``risk_floored=True``.
+    The high-risk floor: an INHERITED ``allow`` (not an explicit tool
+    override) whose tags intersect ``BUILTIN_HIGH_RISK_TAGS`` is
+    downgraded to ``ask`` with ``risk_floored=True``. That set is a
+    superset of MCP's ``HIGH_RISK_TAGS`` -- built-ins additionally floor
+    on ``"reads"``.
 
     Args:
         payload: A loaded permission-store payload (``{}`` is valid and
@@ -723,7 +733,7 @@ def resolve_builtin_state(
     if (
         origin != "tool_override"
         and state == "allow"
-        and set(tool.tags) & HIGH_RISK_TAGS
+        and set(tool.tags) & BUILTIN_HIGH_RISK_TAGS
     ):
         state = "ask"
         risk_floored = True

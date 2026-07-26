@@ -257,6 +257,7 @@ def test_store_states_and_default_global_constants():
 from tldw_chatbook.MCP.permission_store import (
     BUILTIN_TOOL_SERVER_KEY,
     GatedToolRef,
+    HIGH_RISK_TAGS,
     resolve_builtin_state,
 )
 
@@ -403,3 +404,71 @@ def test_deny_and_clear_need_no_hash_for_either_namespace(tmp_path):
     store.set_tool_state(BUILTIN_TOOL_SERVER_KEY, "write_thing", None)
 
     assert store.get_tool_entry(BUILTIN_TOOL_SERVER_KEY, "write_thing") is None
+
+
+# -- P2 Task 1: built-in-only risk vocabulary ---------------------------------
+
+from tldw_chatbook.MCP.permission_store import BUILTIN_HIGH_RISK_TAGS
+
+
+def test_builtin_risk_set_is_a_strict_superset_of_the_mcp_set():
+    """Built-ins floor on everything MCP does, plus reads."""
+    assert HIGH_RISK_TAGS < BUILTIN_HIGH_RISK_TAGS
+    assert "reads" in BUILTIN_HIGH_RISK_TAGS
+    assert "reads" not in HIGH_RISK_TAGS
+
+
+def test_mcp_high_risk_set_is_unchanged():
+    """Pin the CONTENTS: widening this set would make remote MCP tools
+    carrying the new tag start prompting, which P2 must not cause."""
+    assert HIGH_RISK_TAGS == frozenset({"mutates", "process"})
+
+
+def test_reads_tag_floors_an_inherited_builtin_allow_to_ask():
+    eff = resolve_builtin_state({}, _ref(name="read_file", tags=("reads",)))
+    assert eff.state == "ask"
+    assert eff.risk_floored is True
+
+
+def test_reads_tag_does_not_floor_an_mcp_tool():
+    """The asymmetry is deliberate: only resolve_builtin_state learned the
+    new tag. An MCP tool inheriting `allow` keeps it despite the tag."""
+    from tldw_chatbook.MCP.permission_store import resolve_effective_state
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    tool = HubTool(
+        server_key="local:x", server_label="x", source="local",
+        name="t", description="d", input_schema=None, tags=("reads",),
+        stale=False, executable=True,
+    )
+    eff = resolve_effective_state(_payload(global_default="allow"), tool)
+    assert eff.state == "allow"
+    assert eff.risk_floored is False
+
+
+def test_mutates_still_floors_an_mcp_tool():
+    """Negative control for the test above: MCP's own flooring still works,
+    so a passing `test_reads_tag_does_not_floor_an_mcp_tool` proves the tag
+    was not added to HIGH_RISK_TAGS -- not merely that flooring is broken."""
+    from tldw_chatbook.MCP.permission_store import resolve_effective_state
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    tool = HubTool(
+        server_key="local:x", server_label="x", source="local",
+        name="t", description="d", input_schema=None, tags=("mutates",),
+        stale=False, executable=True,
+    )
+    eff = resolve_effective_state(_payload(global_default="allow"), tool)
+    assert eff.state == "ask"
+    assert eff.risk_floored is True
+
+
+def test_explicit_builtin_tool_override_beats_the_reads_floor():
+    """An explicit user choice is still not floored -- same rule the
+    `mutates` path already follows."""
+    eff = resolve_builtin_state(
+        _payload(tool_state="allow"), _ref(tags=("reads",))
+    )
+    assert eff.state == "allow"
+    assert eff.origin == "tool_override"
+    assert eff.risk_floored is False
