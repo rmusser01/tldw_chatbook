@@ -1,4 +1,5 @@
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
@@ -66,3 +67,105 @@ def test_read_write_work_under_dotted_ancestor_root(monkeypatch, tmp_path):
     # exempted from the hidden-file check.
     bad_result = asyncio.run(fot.ReadFileTool().execute(file_path=".secret"))
     assert "error" in bad_result
+
+
+# ---------------------------------------------------------------------------
+# Sensitive-path coverage at the tool boundary (denylist-unreachable fix).
+#
+# `Tests/conftest.py`'s autouse `isolate_test_environment` fixture already
+# redirects HOME to a per-test tmp directory, so `os.environ["HOME"]` below
+# is that isolated home, not the real machine's.
+#
+# Each scenario deliberately configures `file_sandbox_root` to CONTAIN the
+# denied path with NO dotted path component in the *relative* portion
+# between root and target. That is the one configuration in which the bug
+# is observable: `Utils.path_validation.validate_path`'s own hidden-file
+# check would otherwise reject any ".dotted" component in the relative path
+# on its own, masking whether `Utils.sensitive_paths.is_sensitive_path` ever
+# ran at all. Isolating that confound is what makes these tests actually
+# prove the fix rather than incidentally pass for an unrelated reason.
+# ---------------------------------------------------------------------------
+
+
+def test_read_file_refuses_sensitive_file_even_when_sandbox_root_contains_it(
+    monkeypatch,
+):
+    """CRITICAL fix: read_file must not read config.toml just because a
+    widened sandbox root happens to contain it.
+    """
+    home = Path(os.environ["HOME"])
+    sandbox = home / ".config" / "tldw_cli"
+    sandbox.mkdir(parents=True, exist_ok=True)
+    (sandbox / "config.toml").write_text("api_key = 'super-secret'\n")
+
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
+
+    result = asyncio.run(fot.ReadFileTool().execute(file_path="config.toml"))
+
+    assert "error" in result
+    assert "super-secret" not in str(result)
+
+
+def test_write_file_refuses_to_overwrite_sensitive_file(monkeypatch):
+    """CRITICAL fix: write_file must not overwrite mcp_permissions.json --
+    that would be a one-step bypass of the whole permission gate -- just
+    because the configured sandbox root contains it.
+    """
+    home = Path(os.environ["HOME"])
+    sandbox = home / ".config" / "tldw_cli"
+    sandbox.mkdir(parents=True, exist_ok=True)
+    target = sandbox / "mcp_permissions.json"
+    target.write_text('{"version": 1}')
+
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
+
+    result = asyncio.run(
+        fot.WriteFileTool().execute(
+            file_path="mcp_permissions.json", content='{"pwned": true}'
+        )
+    )
+
+    assert "error" in result
+    assert target.read_text() == '{"version": 1}'  # untouched
+
+
+def test_list_directory_refuses_sensitive_directory_as_its_own_target(monkeypatch):
+    """CRITICAL fix: list_directory's own top-level target was never checked
+    against the denylist -- only ``is_within``'s recursive-descent guard
+    was, and that only gates whether a walk *descends into a subdirectory*.
+    Root is set directly to ``~/.config/gcloud`` so the listing target is
+    the sandbox root itself (``directory_path="."``).
+    """
+    home = Path(os.environ["HOME"])
+    sandbox = home / ".config" / "gcloud"
+    sandbox.mkdir(parents=True, exist_ok=True)
+    (sandbox / "credentials.db").write_text("oauth-refresh-token-marker")
+
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
+
+    result = asyncio.run(fot.ListDirectoryTool().execute(directory_path="."))
+
+    assert "error" in result
+    assert "credentials.db" not in str(result)
+
+
+def test_read_file_refuses_this_apps_own_sqlite_db(monkeypatch):
+    """Finding 2: this app's SQLite DBs live under ``get_user_data_dir()``,
+    a SIBLING of ``~/.config/tldw_cli`` (not beneath it), so the static
+    credential-path list cannot express their location. Uses the real,
+    unmocked ``config.get_chachanotes_db_path()`` so this proves resolution
+    happens through the app's own accessor, not a path hardcoded in the
+    test (or in ``sensitive_paths.py``).
+    """
+    from tldw_chatbook import config as app_config
+
+    db_path = app_config.get_chachanotes_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db_path.write_text("not a real sqlite file, just a marker")
+
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: db_path.parent.resolve())
+
+    result = asyncio.run(fot.ReadFileTool().execute(file_path=db_path.name))
+
+    assert "error" in result
+    assert "marker" not in str(result)

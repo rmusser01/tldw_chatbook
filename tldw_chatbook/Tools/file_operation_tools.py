@@ -10,6 +10,7 @@ from loguru import logger
 
 from . import Tool
 from ..Utils.path_validation import validate_path
+from ..Utils.sensitive_paths import is_sensitive_path
 
 
 def _resolve_sandbox_config() -> str:
@@ -21,11 +22,14 @@ def _resolve_sandbox_config() -> str:
 
 
 def is_within(candidate: Path, root: Path) -> bool:
-    """Return whether ``candidate`` resolves inside ``root``.
+    """Return whether ``candidate`` resolves inside ``root`` and is not sensitive.
 
-    Also refuses credential and gate-state paths outright (see
-    ``Utils.sensitive_paths``), so widening the configured root can never
-    expose them.
+    Sole caller is ``ListDirectoryTool``'s recursive-descent guard, which uses
+    it to decide whether a recursive listing may descend into a given
+    subdirectory. It does not by itself cover a tool's own top-level target:
+    ``ReadFileTool``, ``WriteFileTool`` and ``ListDirectoryTool`` each call
+    ``Utils.sensitive_paths.is_sensitive_path`` directly on their target
+    before touching the filesystem, independently of this function.
 
     Args:
         candidate: Path to test.
@@ -35,12 +39,10 @@ def is_within(candidate: Path, root: Path) -> bool:
         True only when the fully-resolved candidate is the root or below it
         AND is not a sensitive path.
     """
-    from ..Utils.sensitive_paths import is_sensitive_path
-
     try:
         resolved = candidate.resolve()
         root_resolved = root.resolve()
-    except OSError:
+    except (OSError, RuntimeError):
         return False
     if is_sensitive_path(resolved):
         return False
@@ -109,6 +111,15 @@ class ReadFileTool(Tool):
             # Validate the path
             validated_path = validate_path(file_path, _tool_sandbox_root())
             path = Path(validated_path)
+
+            # Refuse credential, gate-state, and app-database paths outright,
+            # regardless of the sandbox root (see Utils.sensitive_paths). This
+            # must run before any filesystem access below.
+            if is_sensitive_path(path):
+                return {
+                    "file_path": file_path,
+                    "error": f"Refused: '{file_path}' is a protected path and cannot be read",
+                }
 
             # Check if file exists
             if not path.exists():
@@ -215,6 +226,15 @@ class ListDirectoryTool(Tool):
             sandbox_root = _tool_sandbox_root()
             validated_path = validate_path(directory_path, sandbox_root)
             path = Path(validated_path)
+
+            # Refuse credential, gate-state, and app-database paths outright,
+            # regardless of the sandbox root (see Utils.sensitive_paths). This
+            # must run before any filesystem access below.
+            if is_sensitive_path(path):
+                return {
+                    "directory_path": directory_path,
+                    "error": f"Refused: '{directory_path}' is a protected path and cannot be listed",
+                }
 
             # Check if directory exists
             if not path.exists():
@@ -389,6 +409,15 @@ class WriteFileTool(Tool):
             # Validate the path
             validated_path = validate_path(file_path, _tool_sandbox_root())
             path = Path(validated_path)
+
+            # Refuse credential, gate-state, and app-database paths outright,
+            # regardless of the sandbox root (see Utils.sensitive_paths). This
+            # must run before any filesystem access below.
+            if is_sensitive_path(path):
+                return {
+                    "file_path": file_path,
+                    "error": f"Refused: '{file_path}' is a protected path and cannot be written",
+                }
 
             # Check if we're overwriting an existing file
             file_exists = path.exists()

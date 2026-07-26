@@ -52,3 +52,40 @@ def test_symlink_into_a_sensitive_dir_cannot_smuggle_a_path_past_the_check(
     innocent_looking.symlink_to(real_ssh / "id_rsa")
 
     assert is_sensitive_path(innocent_looking)
+
+
+def test_this_apps_own_sqlite_dbs_are_refused():
+    """Finding 2: the app's SQLite DBs live under
+    ``config.get_user_data_dir()`` -- a SIBLING of ``~/.config/tldw_cli``
+    (not beneath it) -- so the static ``_SENSITIVE_DIRS``/``_SENSITIVE_FILES``
+    entries cannot express their location. Resolution goes through the
+    app's own accessors (``config.get_*_db_path``), not a hardcoded path.
+
+    `Tests/conftest.py`'s autouse environment-isolation fixture already
+    redirects HOME (and hence ``get_user_data_dir()``) to a per-test tmp
+    directory, so this does not touch the real user's data.
+    """
+    from tldw_chatbook import config as app_config
+
+    for accessor_name in (
+        "get_chachanotes_db_path",
+        "get_prompts_db_path",
+        "get_media_db_path",
+    ):
+        db_path = getattr(app_config, accessor_name)()
+        assert is_sensitive_path(db_path), f"{accessor_name}() should be sensitive"
+
+
+def test_ordinary_file_next_to_a_sensitive_db_is_still_allowed():
+    """Coverage is per-file, not a directory-wide refusal.
+
+    Marking the whole ``get_user_data_dir()`` tree sensitive would also
+    blanket the default file-tool sandbox root nested inside it
+    (``<user data dir>/tool_sandbox``), breaking ordinary reads/writes under
+    the shipped default. Only the specific known database files are
+    refused.
+    """
+    from tldw_chatbook import config as app_config
+
+    sibling = app_config.get_chachanotes_db_path().parent / "notes.md"
+    assert not is_sensitive_path(sibling)
