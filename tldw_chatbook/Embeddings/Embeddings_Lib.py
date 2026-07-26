@@ -240,6 +240,17 @@ def protect_file_descriptors():
     freeze traced via ``faulthandler`` all-threads dumps, confirmed
     empirically. ``closefd=False`` is the fix: a throwaway text wrapper
     around a fd it does not own must never be allowed to close that fd.
+
+    task-634 round-3 review: the ``finally`` block must never close
+    "whatever is currently in ``sys.stdout``/``sys.stderr``" -- if code
+    inside the protected ``yield`` (e.g. a nested library call) reassigns
+    ``sys.stdout``/``sys.stderr`` itself and leaves it there (for example
+    ``sys.stdout = sys.__stdout__``), that would hand the SAME cleanup
+    logic a REAL, fd-owning stream to close -- reopening the exact
+    WriterThread-killing hazard through a different door. Only the wrapper
+    objects THIS function itself creates (tracked via ``created_out``/
+    ``created_err``, assigned once at creation and never re-read from
+    ``sys.stdout``/``sys.stderr``) are ever closed here.
     """
     # Save original file descriptors
     original_stdout = sys.stdout
@@ -248,6 +259,13 @@ def protect_file_descriptors():
 
     # Save original environment
     env_backup = os.environ.copy()
+
+    # Tracks ONLY the wrapper object(s) this function itself creates below
+    # -- never read back from sys.stdout/sys.stderr at cleanup time (see
+    # docstring). A single shared devnull (the fallback path) is assigned
+    # to both; closing it twice is harmless.
+    created_out = None
+    created_err = None
 
     try:
         # Ensure we have real file descriptors, not wrapped objects
@@ -267,11 +285,17 @@ def protect_file_descriptors():
             # them, whether explicitly or via GC finalization. See this
             # function's docstring (task-634 round 3).
             try:
-                sys.stdout = os.fdopen(1, "w", closefd=False)
-                sys.stderr = os.fdopen(2, "w", closefd=False)
+                created_out = os.fdopen(1, "w", closefd=False)
+                created_err = os.fdopen(2, "w", closefd=False)
+                sys.stdout = created_out
+                sys.stderr = created_err
             except OSError:
-                # If that fails, use devnull as a fallback
+                # If that fails, use devnull as a fallback. This process
+                # DOES fully own this file, so it's fine (and correct) to
+                # close it in the finally below.
                 devnull = open(os.devnull, "w")
+                created_out = devnull
+                created_err = devnull
                 sys.stdout = devnull
                 sys.stderr = devnull
 
@@ -290,28 +314,25 @@ def protect_file_descriptors():
         yield
 
     finally:
-        # Close any temporary stream we created BEFORE restoring sys.stdout/
-        # sys.stderr -- doing the comparison AFTER already reassigning them
-        # back to original_stdout/original_stderr (the previous ordering)
-        # compared the just-restored value against itself, always False, so
-        # this cleanup silently never ran (task-634 round 3). closefd=False
-        # above already makes that harmless for fd 1/2 specifically, but
-        # this ordering is still correct hygiene for the devnull fallback
-        # (which this process DOES fully own and should close).
-        temp_stdout = sys.stdout
-        temp_stderr = sys.stderr
+        # Always restore the TRUE originals, regardless of what code inside
+        # `yield` may have reassigned sys.stdout/sys.stderr to.
         sys.stdout = original_stdout
         sys.stderr = original_stderr
         sys.stdin = original_stdin
 
-        if temp_stdout is not original_stdout and hasattr(temp_stdout, "close"):
+        # Close ONLY the wrapper(s) this function created -- NEVER whatever
+        # currently sits in sys.stdout/sys.stderr (task-634 round-3 review;
+        # see docstring). closefd=False already makes the fdopen(1/2) case
+        # harmless either way, but this also correctly closes the devnull
+        # fallback, which this process does fully own.
+        if created_out is not None:
             try:
-                temp_stdout.close()
+                created_out.close()
             except Exception:
                 pass
-        if temp_stderr is not original_stderr and hasattr(temp_stderr, "close"):
+        if created_err is not None and created_err is not created_out:
             try:
-                temp_stderr.close()
+                created_err.close()
             except Exception:
                 pass
 

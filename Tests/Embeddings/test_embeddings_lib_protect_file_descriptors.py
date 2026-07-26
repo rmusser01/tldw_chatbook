@@ -49,12 +49,16 @@ I/O: fd 1/2 are ``os.dup()``-backed up before the test and unconditionally
 reproduces.
 """
 import os
+import subprocess
 import sys
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.Embeddings.Embeddings_Lib import protect_file_descriptors
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class _NonFdBackedStream:
@@ -183,3 +187,136 @@ def test_protect_file_descriptors_is_a_noop_when_streams_are_already_fd_backed(t
             )
         finally:
             real_file.close()
+
+
+# --- task-634 round-3 review: the finally block must close ONLY the
+# wrapper(s) protect_file_descriptors() itself created -- never whatever
+# happens to be sitting in sys.stdout/sys.stderr when the context manager
+# exits. If code inside the protected `yield` (e.g. a nested library call)
+# reassigns sys.stdout/sys.stderr to some OTHER real, fd-owning stream and
+# leaves it there (the reviewer's example: `sys.stdout = sys.__stdout__`),
+# the earlier "close whatever sys.stdout currently holds" cleanup would
+# close THAT foreign stream -- for something like sys.__stdout__, that
+# closes the real fd 1 and reproduces the exact WriterThread-killing freeze
+# through a different door than the original round-3 bug. ---
+
+
+def test_finally_closes_only_self_created_wrapper_not_a_foreign_stream_left_behind(
+    monkeypatch, tmp_path
+):
+    """RED for the round-3 review finding: a foreign, fd-owning stream a
+    nested call leaves in sys.stdout must survive untouched, while the
+    wrapper protect_file_descriptors() itself created (no longer referenced
+    by sys.stdout by the time `finally` runs) must still be closed."""
+    monkeypatch.setattr(sys, "stdout", _NonFdBackedStream())
+    monkeypatch.setattr(sys, "stderr", _NonFdBackedStream())
+
+    foreign_stdout = open(tmp_path / "foreign_stdout.txt", "w")
+    foreign_stderr = open(tmp_path / "foreign_stderr.txt", "w")
+
+    with _protected_real_stdio():
+        try:
+            our_wrapper_out = None
+            our_wrapper_err = None
+            with protect_file_descriptors():
+                # protect_file_descriptors() has replaced sys.stdout/
+                # sys.stderr with its own fdopen(1/2, closefd=False)
+                # wrappers -- capture them, then simulate a nested library
+                # call (e.g. inside AutoTokenizer/AutoModel.from_pretrained)
+                # reassigning sys.stdout/sys.stderr to some OTHER stream it
+                # owns and never restoring it.
+                our_wrapper_out = sys.stdout
+                our_wrapper_err = sys.stderr
+                sys.stdout = foreign_stdout
+                sys.stderr = foreign_stderr
+
+            assert not foreign_stdout.closed, (
+                "protect_file_descriptors() closed a foreign stream a "
+                "nested call left in sys.stdout -- it must only ever close "
+                "wrappers it created itself"
+            )
+            assert not foreign_stderr.closed, (
+                "protect_file_descriptors() closed a foreign stream a "
+                "nested call left in sys.stderr -- it must only ever close "
+                "wrappers it created itself"
+            )
+            assert our_wrapper_out is not None and our_wrapper_out.closed, (
+                "protect_file_descriptors() failed to close its OWN "
+                "temporary wrapper because sys.stdout no longer pointed "
+                "at it by the time the context manager exited"
+            )
+            assert our_wrapper_err is not None and our_wrapper_err.closed, (
+                "protect_file_descriptors() failed to close its OWN "
+                "temporary wrapper because sys.stderr no longer pointed "
+                "at it by the time the context manager exited"
+            )
+        finally:
+            foreign_stdout.close()
+            foreign_stderr.close()
+
+
+def test_finally_never_closes_sys_dunder_stdout_left_behind_by_nested_code():
+    """The reviewer's exact scenario: a nested call reassigns sys.stdout to
+    sys.__stdout__ itself (the real, process-shared stream object) and
+    leaves it there. protect_file_descriptors() must never close it --
+    that would be the WriterThread freeze through a different door.
+
+    Deliberately run in an isolated SUBPROCESS rather than in-process:
+    closing sys.__stdout__/sys.__stderr__'s underlying TextIOWrapper
+    objects is NOT something os.dup()/os.dup2() fd-number restoration (as
+    used by the other tests in this file) can undo -- once the wrapper
+    OBJECT itself is marked closed, every later write through
+    sys.__stdout__/sys.__stderr__ specifically raises `ValueError: I/O
+    operation on closed file`, regardless of what real fd number 1/2 later
+    point at. Reproducing this in-process was confirmed (during this fix's
+    own development) to corrupt the running pytest process's own stderr
+    reporting for the remainder of the session. A subprocess contains the
+    blast radius entirely to a throwaway child process.
+    """
+    script = f"""
+import sys
+sys.path.insert(0, {str(REPO_ROOT)!r})
+
+class _NonFdBackedStream:
+    def write(self, text):
+        pass
+    def flush(self):
+        pass
+
+sys.stdout = _NonFdBackedStream()
+sys.stderr = _NonFdBackedStream()
+
+from tldw_chatbook.Embeddings.Embeddings_Lib import protect_file_descriptors
+
+with protect_file_descriptors():
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
+
+# protect_file_descriptors()'s own finally block already restored
+# sys.stdout/sys.stderr back to our no-op _NonFdBackedStream by this point
+# (correct behavior -- it must always restore the TRUE original) -- so
+# print()/sys.stdout here would go nowhere. Write through sys.__stdout__/
+# sys.__stderr__ directly instead: if protect_file_descriptors() closed
+# them, this raises ValueError("I/O operation on closed file") and the
+# subprocess exits non-zero.
+sys.__stdout__.write("stdout-still-alive\\n")
+sys.__stdout__.flush()
+sys.__stderr__.write("stderr-still-alive\\n")
+sys.__stderr__.flush()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert (
+        result.returncode == 0
+        and "stdout-still-alive" in result.stdout
+        and "stderr-still-alive" in result.stderr
+    ), (
+        "protect_file_descriptors() closed sys.__stdout__/sys.__stderr__ "
+        f"left behind by nested code (subprocess returncode="
+        f"{result.returncode}, stdout={result.stdout!r}, "
+        f"stderr={result.stderr!r})"
+    )
