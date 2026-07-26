@@ -20,6 +20,10 @@ class HandoffChannel(StrEnum):
     CONSOLE_PROMPT_INSERT = "console_prompt_insert"
 
 
+class HandoffValueError(ValueError):
+    """A staged value could not be normalized and structurally detached."""
+
+
 T = TypeVar("T")
 
 
@@ -56,7 +60,7 @@ class PendingHandoffStore:
         """Normalize and replace the latest pending value for a channel."""
         self._assert_owner_thread()
         slot = self._slot_for(channel)
-        normalized = self._copy_value(channel, value)
+        normalized = self._detached_value(channel, value)
         slot.revision += 1
         slot.pending = (slot.revision, normalized)
         return slot.revision
@@ -76,7 +80,7 @@ class PendingHandoffStore:
         if slot.in_flight is not None or slot.pending is None:
             return None
         revision, retained_value = slot.pending
-        delivered_value = self._copy_value(channel, retained_value)
+        delivered_value = self._detached_value(channel, retained_value)
         claim = HandoffClaim(
             channel=channel,
             revision=revision,
@@ -124,6 +128,15 @@ class PendingHandoffStore:
         if not isinstance(claim, HandoffClaim):
             raise TypeError("handoff settlement requires a HandoffClaim")
         return self._slot_for(claim.channel)
+
+    @classmethod
+    def _detached_value(cls, channel: HandoffChannel, value: Any) -> Any:
+        try:
+            return cls._copy_value(channel, value)
+        except MemoryError:
+            raise
+        except Exception:
+            raise HandoffValueError("handoff value could not be normalized") from None
 
     @staticmethod
     def _copy_value(channel: HandoffChannel, value: Any) -> Any:

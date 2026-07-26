@@ -5,6 +5,7 @@ from .base_app_screen import BaseAppScreen
 from .pending_handoff_store import (
     HandoffChannel,
     HandoffClaim,
+    HandoffValueError,
     PendingHandoffStore,
 )
 from .screen_state_store import RuntimeIdentity, ScreenStateStore
@@ -15,6 +16,7 @@ __all__ = [
     "BaseAppScreen",
     "HandoffChannel",
     "HandoffClaim",
+    "HandoffValueError",
     "PendingHandoffStore",
     "RuntimeIdentity",
     "ScreenStateStore",

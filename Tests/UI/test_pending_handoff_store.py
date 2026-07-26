@@ -206,7 +206,7 @@ def test_prompt_rejects_empty_text_without_mutating_existing_pending(
     store = PendingHandoffStore()
     store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, "existing prompt")
 
-    with pytest.raises(ValueError, match="non-empty"):
+    with pytest.raises(ValueError, match="normalized"):
         store.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, prompt)
 
     claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)

@@ -332,6 +332,11 @@ from tldw_chatbook.config import (
     get_chachanotes_db_lazy,
 )
 from .UI.Navigation.main_navigation import NavigateToScreen
+from .UI.Navigation.pending_handoff_store import (
+    HandoffChannel,
+    HandoffValueError,
+    PendingHandoffStore,
+)
 from .UI.Navigation.screen_state_store import RuntimeIdentity, ScreenStateStore
 from .UI.Navigation.screen_registry import resolve_screen_target
 from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
@@ -3054,15 +3059,11 @@ class TldwCli(
         )
         load_runtime_policy_for_app(self)
         self.screen_state_store = ScreenStateStore()
+        self.pending_handoffs = PendingHandoffStore()
         self.service_policy_enforcer = (
             ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
         )
         self.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
-        self.pending_chat_handoff: Optional[ChatHandoffPayload] = None
-        self.pending_console_launch: Optional[
-            ConsoleLiveWorkLaunch | Dict[str, Any]
-        ] = None
-        self.pending_console_prompt_insert: Optional[str] = None
         self.pending_study_scope_context: Optional[StudyScopeContext] = None
         self.pending_study_initial_section: Optional[str] = None
         self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
@@ -3503,7 +3504,12 @@ class TldwCli(
             )
             return
 
-        self.pending_chat_handoff = payload
+        if not self._stage_handoff(
+            HandoffChannel.CHAT,
+            payload,
+            recovery="Chat context could not be staged. Try again.",
+        ):
+            return
         self.post_message(NavigateToScreen(TAB_CHAT))
 
     def stage_console_prompt_insert(self, text: str) -> None:
@@ -3523,7 +3529,12 @@ class TldwCli(
         Args:
             text: The prompt's ``user_prompt`` body to insert.
         """
-        self.pending_console_prompt_insert = text
+        if not self._stage_handoff(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            text,
+            recovery="Console prompt could not be staged. Review it and try again.",
+        ):
+            return
         self.post_message(NavigateToScreen(TAB_CHAT))
 
     def open_console_for_live_work(
@@ -3537,15 +3548,35 @@ class TldwCli(
         action_label: str | None = None,
     ) -> None:
         """Open Console for live work launched from another destination."""
-        self.pending_console_launch = ConsoleLiveWorkLaunch.from_values(
-            source=source,
-            title=title,
-            payload=payload,
-            status=status,
-            recovery=recovery,
-            action_label=action_label,
-        )
+        if not self._stage_handoff(
+            HandoffChannel.CONSOLE_LIVE_WORK,
+            {
+                "source": source,
+                "title": title,
+                "payload": payload,
+                "status": status,
+                "recovery": recovery,
+                "action_label": action_label,
+            },
+            recovery="Console live work could not be staged. Try again.",
+        ):
+            return
         self.post_message(NavigateToScreen(TAB_CHAT))
+
+    def _stage_handoff(
+        self,
+        channel: HandoffChannel,
+        value: Any,
+        *,
+        recovery: str,
+    ) -> bool:
+        """Stage one typed handoff without exposing its value in recovery."""
+        try:
+            self.pending_handoffs.stage(channel, value)
+        except HandoffValueError:
+            self.notify(recovery, severity="warning")
+            return False
+        return True
 
     def get_acp_runtime_session_state(self) -> ACPRuntimeSessionState:
         """Return current ACP runtime/session state for ACP and Console surfaces."""
