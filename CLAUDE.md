@@ -122,9 +122,9 @@ def _heavy_task(self):
 4. Add event handlers
 
 **New Tool**:
-1. Subclass `Tool` (ABC) in `Tools/tool_executor.py`
+1. Subclass `Tool` (ABC) in `Tools/base.py`
 2. Implement the `name`, `description`, `parameters` properties and the async `execute(**kwargs)` method
-3. Register the instance via `ToolExecutor.register_tool()` (the singleton executor is obtained through `get_tool_executor()` in `tool_executor.py`); built-in registration is gated by the `[tools]` config section
+3. Add the class to a pack module's `TOOLS` under `Agents/builtin_packs/`; packs are enabled via `[agent_tools] enabled_packs`
 
 **UI changes:** PRs that change a screen's UI should update the matching
 `Docs/User_Guide/` page (or at least its "Verified against" stamp).
@@ -166,9 +166,9 @@ Key sections:
 
 ### Tool Calling
 - Tool messages are persisted in the ChaChaNotes DB (see `_CURRENT_SCHEMA_VERSION` for the current schema version)
-- `tool_executor.py` handles execution
+- Built-in tools dispatch through `Agents/tool_catalog.py`'s `BuiltinToolProvider` (packs in `Agents/builtin_packs/`)
 - Provider parsing implemented
-- Status: detection AND execution implemented — `ToolExecutor.execute_tool_call()`/`execute_tool_calls()` run tools; the live Console tool-calling path is the Agents runtime (`Agents/native_tools.py` + `AgentService`, wired through `Chat/console_chat_controller.py`). The legacy event-handler wiring (`worker_events.py`/`chat_streaming_events.py`) was retired in task-577.
+- Status: detection AND execution implemented — the live Console tool-calling path is the Agents runtime (`Agents/native_tools.py` + `AgentService`, wired through `Chat/console_chat_controller.py`); built-ins are gated by the `agent:builtin` permission matrix. The legacy `Tools/tool_executor.py` dispatcher and event-handler wiring (`worker_events.py`/`chat_streaming_events.py`) were retired in task-577 and task-545.
 
 ### Config Encryption
 - AES-256 with PBKDF2
