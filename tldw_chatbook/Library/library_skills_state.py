@@ -72,6 +72,14 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # still shadows a real builtin the moment a user enables the gate.
         "read_file",
         "list_directory",
+        # TASK-545 P2's mutating tools. Same rationale as the two above:
+        # CONFIG-GATED, so the drift guard (which builds a
+        # BuiltinToolProvider with default config) cannot see them. A skill
+        # named `write_file` shadows a real builtin the moment a user turns
+        # the gate on.
+        "write_file",
+        "create_note",
+        "update_note",
     )
 )
 

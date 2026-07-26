@@ -196,19 +196,31 @@ class BuiltinToolProvider:
         # reachable from here, so retained script output -- deliberately written
         # under the file-tool sandbox root -- had no consumer. Behind the SAME
         # [tools] gates that already govern them, which default to DISABLED:
-        # this changes reachability, not the default posture.
-        for gate_key, factory_name in (
-            ("read_file_enabled", "ReadFileTool"),
-            ("list_directory_enabled", "ListDirectoryTool"),
+        # this changes reachability, not the default posture. TASK-545 P2 adds
+        # the mutating tools on the same terms.
+        for gate_key, module_name, factory_name in (
+            ("read_file_enabled", "file_operation_tools", "ReadFileTool"),
+            ("list_directory_enabled", "file_operation_tools", "ListDirectoryTool"),
+            # TASK-545 P2: the mutating tools. Same [tools] gate keys that
+            # already govern them on the legacy ToolExecutor path
+            # (tool_executor.py:735/763/789), same default-disabled posture.
+            # These are tagged ("mutates",), so reaching them still costs an
+            # approval -- registration makes them reachable, not automatic.
+            ("write_file_enabled", "file_operation_tools", "WriteFileTool"),
+            ("create_note_enabled", "note_management_tools", "CreateNoteTool"),
+            ("update_note_enabled", "note_management_tools", "UpdateNoteTool"),
         ):
             try:
                 from ..config import get_cli_setting
 
                 if not get_cli_setting("tools", gate_key, False):
                     continue
-                from ..Tools import file_operation_tools as _file_tools
+                import importlib
 
-                tool = getattr(_file_tools, factory_name)()
+                module = importlib.import_module(
+                    f"..Tools.{module_name}", package=__package__
+                )
+                tool = getattr(module, factory_name)()
             except Exception:  # noqa: BLE001 — an unavailable tool is just absent
                 continue
             self._tools[tool.name] = tool
