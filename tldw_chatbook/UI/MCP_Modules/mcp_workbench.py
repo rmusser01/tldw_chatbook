@@ -19,6 +19,7 @@ from textual.message import Message
 from textual.widgets import ContentSwitcher
 from textual.worker import Worker
 
+from tldw_chatbook.Agents.builtin_tool_gate import builtin_permission_rows
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
@@ -27,7 +28,13 @@ from tldw_chatbook.MCP.hub_tool_catalog import (
     server_tools_from_inventory,
 )
 from tldw_chatbook.MCP.mcp_import import ImportCandidate
-from tldw_chatbook.MCP.permission_store import DEFAULT_GLOBAL, STORE_STATES, EffectiveToolState
+from tldw_chatbook.MCP.permission_store import (
+    BUILTIN_DEFAULT_STATE,
+    BUILTIN_TOOL_SERVER_KEY,
+    DEFAULT_GLOBAL,
+    STORE_STATES,
+    EffectiveToolState,
+)
 from tldw_chatbook.MCP.readiness import (
     HubAction,
     ReadinessSnapshot,
@@ -126,6 +133,17 @@ def _cycled_ui_label(state: str | None) -> str:
     if state is None:
         return "Inherit"
     return EffectiveToolState(state=state, origin="tool_override").ui_label
+
+
+# Task 3 (built-in permissions UI, TASK-627): the Permissions matrix's
+# built-in-tool section label -- deliberately distinct from "tldw_chatbook"
+# (`hub_tool_catalog.builtin_tools_from_inventory()`'s label for the
+# built-in MCP *server*, key `"builtin:tldw_chatbook"`). That is a
+# different execution path (an MCP-exposed wrapper) from the in-process
+# agent-runtime built-ins (`BUILTIN_TOOL_SERVER_KEY`, `"agent:builtin"`)
+# this section renders -- Constraint 3 requires the UI never let a user
+# mistake one for the other.
+_BUILTIN_SECTION_LABEL = "Built-in (agent runtime)"
 
 
 def _safe_exception_text(exc: BaseException) -> str:
@@ -1212,6 +1230,112 @@ class MCPWorkbench(Container):
             logger.warning(f"MCP effective tool state resolution failed: {exc}")
             return {}
 
+    def _builtin_permission_rows(self) -> list:
+        """This run's built-in tool rows, resolved by the BUILT-IN resolver.
+
+        Deliberately NOT merged into `_resolve_effective_states()`: that
+        method calls `effective_tool_states()`, which applies MCP semantics
+        (ask-floor + hash check) and calls `store.mark_config_changed()` --
+        a rug-pull marker `resolve_builtin_state` ignores. Routing built-ins
+        through it would resolve them wrongly AND store an inert flag. See
+        the design doc's spike findings for the failure this avoids.
+
+        Fail-soft like every other service seam here: any failure yields an
+        empty list rather than raising into a render pass.
+        """
+        service = self._service()
+        payload: dict[str, Any] = {}
+        store = getattr(service, "permission_store", None)
+        if store is not None:
+            try:
+                loaded = store.load()
+                if isinstance(loaded, dict):
+                    payload = loaded
+            except Exception as exc:
+                logger.warning(f"builtin permission store read failed: {exc}")
+                payload = {}
+        try:
+            return builtin_permission_rows(payload)
+        except Exception as exc:
+            logger.warning(f"builtin permission row enumeration failed: {exc}")
+            return []
+
+    def _builtin_permission_matrix_rows(
+        self, servers_payload: Mapping[str, Any]
+    ) -> list[PermRow]:
+        """Render this pass's built-in tool rows as matrix `PermRow`s.
+
+        Task 3 (built-in permissions UI, TASK-627): a SIBLING section to
+        the MCP matrix `_build_permission_rows()` builds -- appended after
+        it in `_sync_permissions_mode()`, never merged into it, and never
+        threaded through that method's `tools`/`effective` arguments (this
+        section's tools are never part of `_last_hub_tools` -- see
+        Constraint 1/5). Namespaced entirely under `BUILTIN_TOOL_SERVER_KEY`
+        ("agent:builtin") and labeled `_BUILTIN_SECTION_LABEL`, distinct
+        from the built-in MCP *server* ("tldw_chatbook",
+        `builtin:tldw_chatbook`) per Constraint 3 -- the two must never
+        share a row key or a label a user could mistake for the same
+        thing. This is also this method's Constraint 4 (fail closed):
+        because every row built here hard-codes `BUILTIN_TOOL_SERVER_KEY`
+        rather than accepting or branching on an externally supplied
+        `server_key`, there is no code path here that could resolve an
+        unrecognized key by inheriting MCP's (or any other) branch.
+
+        Every tool row's `state_label` is `format_tool_state_label()` of
+        the `EffectiveToolState` `_builtin_permission_rows()` already
+        resolved via `resolve_builtin_state` (never the MCP resolver) --
+        same marker precedence (`⚠`/`⚑`/`•`) as every MCP row, so the two
+        sections read consistently. An orphaned stored entry (a decision
+        for a tool a later release removed) is marked via its Tags cell
+        ("orphaned") rather than its Tool cell -- `tool_name` stays the
+        raw stored name so a future cycle/clear action still addresses the
+        right store entry instead of a decorated string.
+        """
+        rows_in = self._builtin_permission_rows()
+        if not rows_in:
+            return []
+
+        server_entry = servers_payload.get(BUILTIN_TOOL_SERVER_KEY)
+        raw_default = (
+            server_entry.get("default") if isinstance(server_entry, Mapping) else None
+        )
+        if raw_default in STORE_STATES:
+            server_state_label = (
+                f"{EffectiveToolState(state=raw_default, origin='server_default').ui_label} •"
+            )
+            server_cycle_current: str | None = raw_default
+        else:
+            # Inherit: nothing explicit at the server level -- shown as the
+            # BUILT-IN allow floor (`BUILTIN_DEFAULT_STATE`), never the MCP
+            # global default (Constraint 1: built-ins never inherit MCP's
+            # posture).
+            server_state_label = EffectiveToolState(
+                state=BUILTIN_DEFAULT_STATE, origin="builtin_default"
+            ).ui_label
+            server_cycle_current = None
+
+        matrix_rows: list[PermRow] = [
+            PermRow(
+                kind="server", server_key=BUILTIN_TOOL_SERVER_KEY,
+                server_label=_BUILTIN_SECTION_LABEL, tool_name=None,
+                state_label=server_state_label, tags_label="—",
+                cycle_current=server_cycle_current,
+            )
+        ]
+        for row in rows_in:
+            matrix_rows.append(
+                PermRow(
+                    kind="tool", server_key=BUILTIN_TOOL_SERVER_KEY,
+                    server_label=_BUILTIN_SECTION_LABEL, tool_name=row.name,
+                    state_label=format_tool_state_label(row.effective),
+                    tags_label="orphaned" if row.orphaned else "—",
+                    cycle_current=self._raw_tool_state(
+                        servers_payload, BUILTIN_TOOL_SERVER_KEY, row.name
+                    ),
+                )
+            )
+        return matrix_rows
+
     async def _sync_permissions_mode(
         self,
         effective: dict[tuple[str, str], EffectiveToolState] | None = None,
@@ -1326,6 +1450,12 @@ class MCPWorkbench(Container):
         # `_cascade_for_tool()` -- same "computed once, reused" precedent as
         # `_last_effective_states` immediately above.
         self._last_cascade = cascade_map
+        # TASK-627 Task 3: the agent-runtime built-in section, appended
+        # AFTER the MCP sections and never merged into `_build_permission_
+        # rows()`'s own grouping -- it renders even when `tools` is empty
+        # (no MCP servers configured), since it derives from the live
+        # built-in tool registry, not the MCP catalog `tools` came from.
+        rows = rows + self._builtin_permission_matrix_rows(servers_payload)
         await self.query_one(MCPPermissionsMode).update_matrix(
             rows, kill_switch=kill_switch, preview=preview, echo=echo
         )

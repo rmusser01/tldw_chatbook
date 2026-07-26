@@ -15,6 +15,7 @@ from textual.widgets import Button, Checkbox, ContentSwitcher, DataTable, Input,
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 import tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module
 from tldw_chatbook.MCP.permission_store import (
+    BUILTIN_TOOL_SERVER_KEY,
     EffectiveToolState,
     MCPPermissionStore,
     definition_hash,
@@ -3803,6 +3804,22 @@ def _perm_table_texts(app: App, row_index: int) -> list[str]:
     return [cell.plain if hasattr(cell, "plain") else str(cell) for cell in row]
 
 
+def _perm_all_rows(app: App) -> list[list[str]]:
+    """Every rendered `#mcp-perm-table` row's cell texts, in table order --
+    TASK-627 Task 3's tests use this to locate the built-in section without
+    hard-coding its row index against whatever MCP section a given fixture
+    also renders."""
+    table = app.query_one("#mcp-perm-table", DataTable)
+    return [_perm_table_texts(app, i) for i in range(table.row_count)]
+
+
+def _perm_row_keys(app: App) -> list[str]:
+    table = app.query_one("#mcp-perm-table", DataTable)
+    return [
+        table.coordinate_to_cell_key((i, 0))[0].value for i in range(table.row_count)
+    ]
+
+
 def test_tool_state_label_marker_precedence():
     """`MCPWorkbench._tool_state_label()`'s marker selection, pinned
     directly: config_changed -> "⚠", risk_floored -> "⚑", a plain
@@ -3843,13 +3860,18 @@ async def test_permissions_mode_renders_pinned_grouped_sorted_matrix(tmp_path):
         assert switcher.current == "mcp-mode-canvas-permissions"
 
         table = app.query_one("#mcp-perm-table", DataTable)
-        assert table.row_count == 6
+        # TASK-627 Task 3: 6 MCP rows + the built-in section (server default,
+        # calculator, get_current_datetime), appended AFTER the MCP sections.
+        assert table.row_count == 9
         assert _perm_table_texts(app, 0) == ["Global default", "Ask"]
         assert _perm_table_texts(app, 1) == ["Server default — docs", "Ask"]
         assert _perm_table_texts(app, 2) == ["  fetch", "Ask"]
         assert _perm_table_texts(app, 3) == ["  search", "Ask"]
         assert _perm_table_texts(app, 4) == ["Server default — notes", "Ask"]
         assert _perm_table_texts(app, 5) == ["  list_notes", "Ask"]
+        assert _perm_table_texts(app, 6) == ["Server default — Built-in (agent runtime)", "Allow"]
+        assert _perm_table_texts(app, 7) == ["  calculator", "Allow"]
+        assert _perm_table_texts(app, 8) == ["  get_current_datetime", "Allow"]
 
         expected_keys = [
             "__global__",
@@ -3858,13 +3880,176 @@ async def test_permissions_mode_renders_pinned_grouped_sorted_matrix(tmp_path):
             "local:docs::search",
             "__server__::local:notes",
             "local:notes::list_notes",
+            "__server__::agent:builtin",
+            "agent:builtin::calculator",
+            "agent:builtin::get_current_datetime",
         ]
         for index, expected_key in enumerate(expected_keys):
             row_key, _ = table.coordinate_to_cell_key((index, 0))
             assert row_key.value == expected_key
 
         preview = app.query_one("#mcp-perm-preview", Static)
+        # TASK-627 Task 3: the policy preview sentence is unaffected by the
+        # built-in section -- it's scoped to `_build_permission_rows()`'s
+        # own MCP rows only (no requirement to summarize built-ins here).
         assert str(preview.renderable) == "global default: ask"
+
+
+# -- TASK-627 Task 3: agent-runtime built-in section in Permissions mode ----
+#
+# The built-in section is derived from `builtin_permission_rows()` (Task 2)
+# and `resolve_builtin_state` -- NEVER from `_build_permission_rows()`'s own
+# `tools`/`effective_tool_states()` path (Constraint 1). These tests exercise
+# `MCPWorkbench._sync_permissions_mode()` end to end, the same way the
+# `PermissionsHubService` suite above does.
+
+
+@pytest.mark.asyncio
+async def test_permissions_mode_shows_builtin_section_with_no_mcp_servers():
+    """The built-in section must not depend on the MCP catalog -- it
+    renders even for a service with zero MCP servers/tools and no
+    `permission_store`/`effective_tool_states` seam at all (the base
+    `FakeHubService`, same fixture `test_permissions_mode_renders_fail_
+    soft_without_t4_seams` uses to pin the MCP-only fail-soft matrix)."""
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        rows = _perm_all_rows(app)
+        tool_cells = {row[0].strip(): row[1] for row in rows}
+        assert "calculator" in tool_cells
+        assert "get_current_datetime" in tool_cells
+        # Untagged built-ins resolve to the built-in ALLOW floor, not MCP's
+        # "Ask" default -- proves `resolve_builtin_state` (not the MCP
+        # resolver) produced this label.
+        assert tool_cells["calculator"] == "Allow"
+        assert tool_cells["get_current_datetime"] == "Allow"
+
+        server_labels = {row[0] for row in rows}
+        assert "Server default — Built-in (agent runtime)" in server_labels
+
+
+class _FakeLocalServiceWithInventory:
+    """A minimal `local_service` seam -- `_collect_hub_tools()` only reads
+    `get_inventory()` off it -- so `builtin:tldw_chatbook` (the built-in MCP
+    *server*) actually appears in `_last_hub_tools` alongside the
+    `agent:builtin` section this task adds, letting a test assert the two
+    render as genuinely distinct groups rather than merely both existing."""
+
+    def get_inventory(self):
+        return {"tools": [{"name": "search_web", "description": "Search the web."}]}
+
+
+class BuiltinDistinctHubService(PermissionsHubService):
+    def __init__(self, store_path: Path) -> None:
+        super().__init__(store_path)
+        self.local_service = _FakeLocalServiceWithInventory()
+
+
+class BuiltinDistinctApp(App):
+    def __init__(self, store_path: Path) -> None:
+        super().__init__()
+        self.unified_mcp_service = BuiltinDistinctHubService(store_path)
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_builtin_section_is_distinct_from_the_builtin_mcp_server(tmp_path):
+    """Constraint 3: `agent:builtin` (the in-process agent-runtime built-ins
+    this task renders) must never be grouped with, or labeled the same as,
+    `builtin:tldw_chatbook` (the built-in MCP *server*, exposed here via
+    `local_service.get_inventory()`)."""
+    app = BuiltinDistinctApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        row_keys = _perm_row_keys(app)
+        assert "__server__::builtin:tldw_chatbook" in row_keys
+        assert "__server__::agent:builtin" in row_keys
+
+        rows = _perm_all_rows(app)
+        server_row_labels = {row[0] for row in rows if row[0].startswith("Server default")}
+        mcp_builtin_label = "Server default — tldw_chatbook"
+        agent_builtin_label = "Server default — Built-in (agent runtime)"
+        assert mcp_builtin_label in server_row_labels
+        assert agent_builtin_label in server_row_labels
+        assert mcp_builtin_label != agent_builtin_label
+
+        # Neither tool list bleeds into the other's row-key namespace.
+        assert "builtin:tldw_chatbook::calculator" not in row_keys
+        assert "agent:builtin::search_web" not in row_keys
+
+
+@pytest.mark.asyncio
+async def test_stored_deny_for_builtin_renders_off_with_tool_override_marker(tmp_path):
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_tool_state(BUILTIN_TOOL_SERVER_KEY, "calculator", "deny")
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        rows = _perm_all_rows(app)
+        tool_cells = {row[0].strip(): row[1] for row in rows}
+        assert tool_cells["calculator"] == "Off •"
+        # Sibling built-in tool is untouched by calculator's own override.
+        assert tool_cells["get_current_datetime"] == "Allow"
+
+
+class GuardedEffectiveStatesHubService(PermissionsHubService):
+    """T3/Constraint 1 regression guard: `effective_tool_states()` (the MCP
+    resolver's batched entry point, and transitively `resolve_effective_
+    state()`) must NEVER be called with a tool whose `server_key` is the
+    built-in namespace -- built-in rows are only ever resolved through
+    `resolve_builtin_state()` via `builtin_permission_rows()`. `tools` here
+    is always `MCPWorkbench._last_hub_tools`, which the built-in section
+    never populates or reads from -- so this failing is a real regression,
+    not merely testing that nobody happened to call it with the wrong
+    tools this pass."""
+
+    def effective_tool_states(self, tools):
+        for tool in tools:
+            if tool.server_key == BUILTIN_TOOL_SERVER_KEY:
+                pytest.fail(
+                    f"effective_tool_states() called with a built-in tool: {tool.name}"
+                )
+        return super().effective_tool_states(tools)
+
+
+class GuardedEffectiveStatesApp(App):
+    def __init__(self, store_path: Path) -> None:
+        super().__init__()
+        self.unified_mcp_service = GuardedEffectiveStatesHubService(store_path)
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_effective_tool_states_never_called_with_a_builtin_tool(tmp_path):
+    app = GuardedEffectiveStatesApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        # The built-in section still rendered -- the guard above didn't
+        # short-circuit rendering, it only pins that the MCP resolver was
+        # never handed a built-in tool.
+        rows = _perm_all_rows(app)
+        tool_cells = {row[0].strip(): row[1] for row in rows}
+        assert tool_cells["calculator"] == "Allow"
 
 
 @pytest.mark.asyncio
@@ -5231,7 +5416,10 @@ async def test_space_press_resyncs_reuse_cached_governance_profiles(tmp_path):
         assert service.governance_fetch_calls == 1  # the mount-time full sync
 
         table = app.query_one("#mcp-perm-table", DataTable)
-        assert table.row_count == 3  # global, server default, "search" tool
+        # global, server default, "search" tool + the built-in section
+        # (server default, calculator, get_current_datetime) -- TASK-627
+        # Task 3 appends unconditionally, regardless of source.
+        assert table.row_count == 6
         table.focus()
 
         table.move_cursor(row=2)  # server:main/docs::search
