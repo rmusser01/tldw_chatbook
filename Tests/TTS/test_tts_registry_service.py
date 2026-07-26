@@ -402,6 +402,85 @@ async def test_admitted_execution_failure_releases_lease_and_service_slot() -> N
 
 
 @pytest.mark.asyncio
+async def test_admitted_operation_rejects_response_provider_mismatch_and_closes_once() -> (
+    None
+):
+    private_provider = "PRIVATE_ADAPTER_RESPONSE_PROVIDER"
+    stream_iterations = 0
+
+    class MismatchedProviderAdapter(FakeAdapter):
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: ProgressSink | None = None,
+        ) -> TTSAudioResponse:
+            del progress_sink
+            self.synthesize_calls += 1
+
+            async def stream() -> AsyncGenerator[bytes, None]:
+                nonlocal stream_iterations
+                stream_iterations += 1
+                yield b"must not be consumed"
+
+            async def cleanup() -> None:
+                self.response_close_calls += 1
+
+            return TTSAudioResponse(
+                provider_id=private_provider,
+                model_id=request.model_id,
+                audio_format=request.response_format,
+                content_type="audio/mpeg",
+                byte_stream=stream(),
+                cleanup=cleanup,
+            )
+
+    class CountingReleaseRegistry(TTSAdapterRegistry):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.release_calls = 0
+
+        async def _release(self, slot: Any, record: Any) -> None:
+            self.release_calls += 1
+            await super()._release(slot, record)
+
+    adapter = MismatchedProviderAdapter("openai")
+    registry = registry_for_adapter(
+        adapter,
+        registry_type=CountingReleaseRegistry,
+    )
+    assert isinstance(registry, CountingReleaseRegistry)
+    service = TTSService(registry, max_concurrent_operations=1)
+    unexpected_response: TTSAudioResponse | None = None
+    try:
+        with pytest.raises(TTSOperationError) as captured:
+            unexpected_response = await service.synthesize(tts_request())
+
+        error = captured.value
+        assert error.code == "audio_response_invalid"
+        assert str(error) == "TTS adapter returned invalid audio"
+        assert error.retryable is False
+        assert error.recovery_action == "check_provider"
+        assert error.operation_id
+        assert error.__context__ is None
+        assert private_provider not in repr(error)
+        assert stream_iterations == 0
+        assert adapter.response_close_calls == 1
+        assert registry.release_calls == 1
+        assert service._operation_limit._value == 1
+        assert registry._total_leases() == 0
+        assert service._admitted_operations == set()
+        assert service._responses == set()
+    finally:
+        if unexpected_response is not None:
+            await unexpected_response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+    assert adapter.response_close_calls == 1
+    assert registry.release_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_cancelled_admission_releases_service_slot_once() -> None:
     adapter = FakeAdapter("openai")
     registry = registry_for_adapter(adapter)

@@ -111,7 +111,7 @@ class TTSRequestAdmissionCoordinator:
     def __init__(
         self,
         service: TTSService,
-        preferences: TTSPreferencesSnapshot,
+        preferences: TTSPreferencesSnapshot | None,
     ) -> None:
         self._service = service
         self._preferences = preferences
@@ -119,8 +119,8 @@ class TTSRequestAdmissionCoordinator:
         self._gate = _WriterPreferredGate()
         self._publication_lock = asyncio.Lock()
 
-    def preferences_snapshot(self) -> TTSPreferencesSnapshot:
-        """Return the current immutable global TTS preference snapshot."""
+    def preferences_snapshot(self) -> TTSPreferencesSnapshot | None:
+        """Return canonical preferences, or None while unconfigured."""
         return self._preferences
 
     def preferences_generation(self) -> int:
@@ -152,6 +152,10 @@ class TTSRequestAdmissionCoordinator:
             reservation = await self._service._reserve_operation_capacity()
             async with self._gate.read():
                 preferences = self._preferences
+                if preferences is None:
+                    raise TTSProviderUnavailableError(
+                        "TTS default provider is not configured"
+                    )
                 model_id = await self._resolve_model(preferences)
                 revision = self._service.configuration_revision(preferences.provider_id)
                 request = self._build_request(

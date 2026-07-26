@@ -19,6 +19,7 @@ from loguru import logger
 
 import tldw_chatbook.TTS as tts
 from Tests.TTS.adapter_fakes import FakeAdapterFactory, provider_spec
+from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSSettingsSaveEvent,
@@ -364,6 +365,97 @@ async def test_console_tts_metrics_use_only_the_safe_slice_one_allowlist(
 
 
 @pytest.mark.asyncio
+async def test_console_invalid_initial_provider_is_unconfigured_without_private_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_values = (
+        "PRIVATE_INITIAL_PROVIDER",
+        "PRIVATE_INITIAL_MODEL",
+        "PRIVATE_INITIAL_VOICE",
+        "PRIVATE_INITIAL_TEXT",
+    )
+    service = build_default_tts_service(
+        {
+            "APP_TTS_CONFIG": {
+                "default_provider": private_values[0],
+                "default_model_mode": "exact",
+                "default_model": private_values[1],
+                "default_voice_mode": "exact",
+                "default_voice": private_values[2],
+                "default_format": "wav",
+                "default_speed": 1.0,
+            }
+        }
+    )
+    metric_calls: list[tuple[str, dict[str, Any]]] = []
+    log_messages: list[str] = []
+
+    class Handler(TTSEventHandler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.messages: list[object] = []
+
+        async def post_message(self, message: object) -> None:
+            self.messages.append(message)
+
+    def capture_counter(
+        name: str,
+        value: int = 1,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        del value
+        metric_calls.append((name, dict(labels or {})))
+
+    def capture_histogram(
+        name: str,
+        value: float,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        del value
+        metric_calls.append((name, dict(labels or {})))
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_counter",
+        capture_counter,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_histogram",
+        capture_histogram,
+    )
+    handler = Handler()
+    handler._tts_service = service
+    sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
+    try:
+        await handler._generate_tts(
+            private_values[3],
+            "console-invalid-initial-provider",
+            None,
+        )
+    finally:
+        logger.remove(sink_id)
+        await handler.cleanup_tts_resources()
+        await service.close()
+        await service.wait_closed()
+
+    completions = [
+        message for message in handler.messages if isinstance(message, TTSCompleteEvent)
+    ]
+    assert len(completions) == 1
+    assert (
+        completions[0].error
+        == "TTS is unavailable; check STTS Settings and Retry/Reconnect"
+    )
+    assert service.preferences_snapshot() is None
+    assert metric_calls == []
+    assert handler._audio_files == {}
+    assert all(slot.active is None for slot in service.registry._slots.values())
+
+    rendered = repr(metric_calls) + "\n".join(log_messages) + repr(completions)
+    for private_value in private_values:
+        assert private_value not in rendered
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("response_provider", "response_model", "response_format"),
     (
@@ -387,43 +479,71 @@ async def test_console_malformed_response_metadata_is_an_audio_contract_error(
     metric_calls: list[tuple[str, str, float | int, dict[str, Any]]] = []
     log_messages: list[str] = []
     stream_iterations = 0
+    response_close_calls = 0
 
     async def stream() -> AsyncIterator[bytes]:
         nonlocal stream_iterations
         stream_iterations += 1
         yield b"must not be consumed"
 
-    class Response:
-        def __init__(self) -> None:
-            self.provider_id = response_provider
-            self.model_id = response_model
-            self.audio_format = response_format
-            self.content_type = "audio/wav"
-            self.metadata = {"private": private_values[2]}
-            self.byte_stream = stream()
-            self.close_calls = 0
+    async def close_response() -> None:
+        nonlocal response_close_calls
+        response_close_calls += 1
 
-        async def aclose(self) -> None:
-            self.close_calls += 1
-            await self.byte_stream.aclose()
+    response = TTSAudioResponse(
+        provider_id=response_provider,  # type: ignore[arg-type]
+        model_id=response_model,  # type: ignore[arg-type]
+        audio_format=response_format,  # type: ignore[arg-type]
+        content_type="audio/wav",
+        metadata={"private": private_values[2]},
+        byte_stream=stream(),
+        cleanup=close_response,
+    )
 
-    response = Response()
+    class Adapter:
+        async def ensure_ready(self) -> None:
+            return
 
-    class Service:
-        def preferences_snapshot(self) -> SimpleNamespace:
-            return SimpleNamespace(provider_id="audio_cpp")
-
-        async def synthesize_default(
+        async def synthesize(
             self,
-            *,
-            text: str,
-            voice_override: str | None = None,
+            request: TTSRequest,
             progress_sink: object = None,
-        ) -> Response:
-            assert text == private_values[3]
-            assert voice_override is None
+        ) -> TTSAudioResponse:
+            assert request.provider_id == "audio_cpp"
+            assert request.text == private_values[3]
             del progress_sink
             return response
+
+        async def close(self) -> None:
+            return
+
+    adapter = Adapter()
+    registry = TTSAdapterRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=lambda _config: adapter,
+                initial_config={},
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(
+        registry,
+        preferences_snapshot=TTSPreferencesSnapshot(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="model",
+            voice_mode="server_default",
+            voice_id=None,
+            response_format="wav",
+            speed=1.0,
+        ),
+    )
 
     class Handler(TTSEventHandler):
         def __init__(self) -> None:
@@ -456,7 +576,7 @@ async def test_console_malformed_response_metadata_is_an_audio_contract_error(
         capture_histogram,
     )
     handler = Handler()
-    handler._tts_service = Service()
+    handler._tts_service = service
     sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
     try:
         await handler._generate_tts(
@@ -467,6 +587,8 @@ async def test_console_malformed_response_metadata_is_an_audio_contract_error(
     finally:
         logger.remove(sink_id)
         await handler.cleanup_tts_resources()
+        await service.close()
+        await service.wait_closed()
 
     completions = [
         message for message in handler.messages if isinstance(message, TTSCompleteEvent)
@@ -476,7 +598,7 @@ async def test_console_malformed_response_metadata_is_an_audio_contract_error(
         completions[0].error
         == "The TTS service returned invalid audio; check provider compatibility"
     )
-    assert response.close_calls == 1
+    assert response_close_calls == 1
     assert stream_iterations == 0
     assert len(metric_calls) == 2
     for _name, _kind, _value, labels in metric_calls:

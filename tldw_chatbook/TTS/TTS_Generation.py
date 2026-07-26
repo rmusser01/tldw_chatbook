@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal
+from uuid import uuid4
 
 from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.adapter_registry import (
@@ -20,6 +21,7 @@ from tldw_chatbook.TTS.adapter_types import (
     CleanupCallback,
     ProgressSink,
     TTSAudioResponse,
+    TTSOperationError,
     TTSProgress,
     TTSProviderCatalog,
     TTSProviderDescriptor,
@@ -322,6 +324,19 @@ class _AdmittedTTSOperation:
             raise
 
         try:
+            response_provider_id = response.provider_id
+            admitted_provider_id = self._resources._lease.provider_id
+            if (
+                type(response_provider_id) is not str
+                or response_provider_id != admitted_provider_id
+            ):
+                raise TTSOperationError(
+                    code="audio_response_invalid",
+                    message="TTS adapter returned invalid audio",
+                    retryable=False,
+                    operation_id=uuid4().hex,
+                    recovery_action="check_provider",
+                )
             managed_response = self._manage_response(response, self._resources)
         except BaseException as error:
 
@@ -412,10 +427,16 @@ class TTSService:
         self._settings_publication_tasks: set[asyncio.Task[TTSSettingsPublication]] = (
             set()
         )
-        initial_preferences = (
+        candidate_preferences = (
             TTSPreferencesSnapshot.from_settings({})
             if preferences_snapshot is None
             else preferences_snapshot
+        )
+        canonical_provider_ids = frozenset(self._canonical_provider_ids())
+        initial_preferences = (
+            candidate_preferences
+            if candidate_preferences.provider_id in canonical_provider_ids
+            else None
         )
         self._request_admission = TTSRequestAdmissionCoordinator(
             self,
@@ -520,8 +541,8 @@ class TTSService:
         operation = await self.admit(request)
         return await operation.synthesize(progress_sink)
 
-    def preferences_snapshot(self) -> TTSPreferencesSnapshot:
-        """Return the current immutable default TTS preference snapshot."""
+    def preferences_snapshot(self) -> TTSPreferencesSnapshot | None:
+        """Return canonical default preferences, or None while unconfigured."""
         return self._request_admission.preferences_snapshot()
 
     def preferences_generation(self) -> int:
@@ -587,6 +608,12 @@ class TTSService:
     def provider_descriptors(self) -> tuple[TTSProviderDescriptor, ...]:
         """Return ordered provider metadata without materializing adapters."""
         return self.registry.descriptors()
+
+    def _canonical_provider_ids(self) -> tuple[str, ...]:
+        """Return ordered exact provider IDs admitted by this service."""
+        return tuple(
+            descriptor.provider_id for descriptor in self.registry.descriptors()
+        )
 
     def configuration_revision(self, provider_id: str) -> int:
         """Return the current registry configuration revision for a provider.
@@ -696,9 +723,7 @@ class TTSService:
         ):
             raise ValueError("foreground timeout must be finite and non-negative")
 
-        canonical_ids = tuple(
-            descriptor.provider_id for descriptor in self.registry.descriptors()
-        )
+        canonical_ids = self._canonical_provider_ids()
         canonical_id_set = frozenset(canonical_ids)
         if preferences.provider_id not in canonical_id_set:
             raise ValueError("preferences must use a canonical registered provider ID")

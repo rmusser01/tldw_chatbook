@@ -463,9 +463,9 @@ class TTSEventHandler:
                 if (
                     not isinstance(response.provider_id, str)
                     or not response.provider_id
-                    or (provider_id is not None and response.provider_id != provider_id)
                 ):
                     raise _TTSResponseContractError
+                provider_id = response.provider_id
                 if not isinstance(response.model_id, str) or not response.model_id:
                     raise _TTSResponseContractError
                 audio_format = self._response_audio_format(response.audio_format)
@@ -695,6 +695,11 @@ class TTSEventHandler:
                 return "The TTS service is busy; retry shortly"
             if error.code == "generation_timeout":
                 return "TTS generation timed out; retry"
+            if error.code == "audio_response_invalid":
+                return (
+                    "The TTS service returned invalid audio; "
+                    "check provider compatibility"
+                )
             return "TTS generation failed; retry"
         if isinstance(error, _TTSResponseContractError):
             return (

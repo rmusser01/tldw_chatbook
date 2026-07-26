@@ -249,12 +249,22 @@ class _BlockingFile:
 
 
 class _DefaultService:
-    def __init__(self, response: _Response) -> None:
+    def __init__(
+        self,
+        response: _Response,
+        *,
+        snapshot_provider_id: str | None = None,
+    ) -> None:
         self.response = response
+        self.snapshot_provider_id = (
+            response.provider_id
+            if snapshot_provider_id is None
+            else snapshot_provider_id
+        )
         self.calls: list[tuple[str, str | None, object]] = []
 
     def preferences_snapshot(self) -> SimpleNamespace:
-        return SimpleNamespace(provider_id=self.response.provider_id)
+        return SimpleNamespace(provider_id=self.snapshot_provider_id)
 
     async def synthesize_default(
         self,
@@ -387,6 +397,87 @@ async def test_console_audio_cpp_request_uses_native_default_without_rewriting_i
         await handler.cleanup_tts_resources()
         await service.close()
         await service.wait_closed()
+
+    assert artifact is not None
+    assert not artifact.exists()
+
+
+@pytest.mark.asyncio
+async def test_console_accepts_admitted_response_when_provider_snapshot_is_stale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timeline: list[str] = []
+    response = _Response(_RecordingStream(_WAV_CHUNKS, timeline))
+    service = _DefaultService(response, snapshot_provider_id="openai")
+    handler = _Handler()
+    handler._tts_service = service
+    handler._temp_manager = _RecordingTempManager(tmp_path)
+    metric_calls: list[tuple[str, dict[str, Any]]] = []
+
+    def capture_counter(
+        name: str,
+        value: int = 1,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        del value
+        metric_calls.append((name, dict(labels or {})))
+
+    def capture_histogram(
+        name: str,
+        value: float,
+        labels: dict[str, Any] | None = None,
+    ) -> None:
+        del value
+        metric_calls.append((name, dict(labels or {})))
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_counter",
+        capture_counter,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Metrics.metrics_logger.log_histogram",
+        capture_histogram,
+    )
+    artifact: Path | None = None
+    try:
+        await handler._generate_tts(
+            "Character response",
+            "console-stale-provider-snapshot",
+            None,
+        )
+        completion = next(
+            message
+            for message in handler.messages
+            if isinstance(message, TTSCompleteEvent)
+        )
+        artifact = completion.audio_file
+
+        assert completion.error is None
+        assert artifact is not None
+        assert artifact.read_bytes() == b"".join(_WAV_CHUNKS)
+        assert response.close_calls == 1
+        assert response.byte_stream.close_calls == 1
+        assert metric_calls == [
+            (
+                "tts_generation_total",
+                {
+                    "provider_id": "audio_cpp",
+                    "resolution_source": "global",
+                    "outcome_code": "success",
+                },
+            ),
+            (
+                "tts_generation_latency_seconds",
+                {
+                    "provider_id": "audio_cpp",
+                    "resolution_source": "global",
+                    "outcome_code": "success",
+                },
+            ),
+        ]
+    finally:
+        await handler.cleanup_tts_resources()
 
     assert artifact is not None
     assert not artifact.exists()

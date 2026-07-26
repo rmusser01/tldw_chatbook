@@ -430,6 +430,57 @@ def _native_service(
 
 
 @pytest.mark.asyncio
+async def test_invalid_initial_provider_is_unconfigured_and_publication_recovers() -> (
+    None
+):
+    private_provider = "PRIVATE_INITIAL_PROVIDER"
+    adapter = _CapturingAdapter("audio_cpp")
+    service, registry = _native_service(
+        adapter,
+        _snapshot(
+            provider_id=private_provider,
+            model_id="Private/Initial/Model",
+        ),
+    )
+    recovered_snapshot = _snapshot(model_id="Model/Recovered")
+    response: TTSAudioResponse | None = None
+    try:
+        with pytest.raises(TTSProviderUnavailableError) as captured:
+            await service.synthesize_default(text="Blocked initial request")
+
+        assert str(captured.value) == "TTS default provider is not configured"
+        assert private_provider not in repr(captured.value)
+        assert service.preferences_snapshot() is None
+        assert service._operation_limit._value == 4
+        assert registry._total_leases() == 0
+        assert adapter.requests == []
+
+        publication = service.begin_preferences_publication(
+            recovered_snapshot,
+            {},
+            lambda: generation_module.TTSSettingsPersistenceOutcome(
+                True,
+                True,
+                None,
+            ),
+        )
+        result = await _wait_bounded(publication.completion)
+
+        assert result.published is True
+        assert service.preferences_snapshot() == recovered_snapshot
+        assert service.preferences_generation() == publication.generation
+
+        response = await service.synthesize_default(text="Recovered request")
+        assert [request.provider_id for request in adapter.requests] == ["audio_cpp"]
+        assert [request.model_id for request in adapter.requests] == ["Model/Recovered"]
+    finally:
+        if response is not None:
+            await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_audio_cpp_exact_default_is_admitted_without_rewriting_values() -> None:
     adapter = _CapturingAdapter("audio_cpp")
     snapshot = _snapshot(
