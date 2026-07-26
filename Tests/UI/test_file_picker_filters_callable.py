@@ -43,31 +43,10 @@ def test_create_filter_helper_is_callable_and_matches():
     assert f(Path("x.txt")) is False
 
 
-def test_eval_dialogs_dataset_filters_are_callable():
-    import tldw_chatbook.Widgets.Evals.eval_dialogs as ed
-
-    # The Filters live inline in a method/function; rebuild the exact spec.
-    filters = Filters(
-        (
-            "Dataset Files",
-            lambda p: p.suffix.lower() in (".json", ".jsonl", ".csv", ".parquet"),
-        ),
-        ("JSON Files", lambda p: p.suffix.lower() in (".json", ".jsonl")),
-        ("CSV Files", lambda p: p.suffix.lower() == ".csv"),
-        ("Parquet Files", lambda p: p.suffix.lower() == ".parquet"),
-        ("All Files", lambda p: True),
-    )
-    _assert_filters_callable(filters)
-    # And guard the source no longer contains a list/glob tester.
-    src = Path(ed.__file__).read_text(encoding="utf-8")
-    assert '("Dataset Files", ["' not in src
-
-
 @pytest.mark.parametrize(
     "module_path",
     [
         "tldw_chatbook/Widgets/file_picker_dialog.py",
-        "tldw_chatbook/Widgets/Evals/eval_dialogs.py",
         "tldw_chatbook/Widgets/transcription_history_viewer.py",
         "tldw_chatbook/UI/CCP_Modules/ccp_character_handler.py",
         "tldw_chatbook/UI/CCP_Modules/ccp_dictionary_handler.py",

@@ -36,6 +36,9 @@ REMOVED_MODULES: tuple[str, ...] = (
     "tldw_chatbook/Widgets/Evals/cost_estimation_widget.py",
     "tldw_chatbook/Widgets/Evals/eval_config_dialogs.py",
     "tldw_chatbook/Widgets/Evals/eval_results_widgets.py",
+    "tldw_chatbook/Widgets/Evals/eval_additional_dialogs.py",
+    "tldw_chatbook/Widgets/Evals/eval_dialogs.py",
+    "tldw_chatbook/Widgets/Evals/sample_browser_dialog.py",
 )
 
 #: Module basenames that must not appear in any import statement.
@@ -56,6 +59,9 @@ REMOVED_STEMS: tuple[str, ...] = (
     "cost_estimation_widget",
     "eval_config_dialogs",
     "eval_results_widgets",
+    "eval_additional_dialogs",
+    "eval_dialogs",
+    "sample_browser_dialog",
 )
 
 
