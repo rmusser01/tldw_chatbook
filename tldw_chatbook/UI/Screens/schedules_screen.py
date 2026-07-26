@@ -20,6 +20,7 @@ from ...Home.dashboard_state import (
 )
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.screen_state_store import RuntimeIdentity
 from .destination_recovery import DestinationRecoveryState
 
 
@@ -49,11 +50,19 @@ class SchedulesScreen(BaseAppScreen):
 
     def on_mount(self) -> None:
         super().on_mount()
-        self._refresh_latest_console_context()
+        runtime_identity = RuntimeIdentity.from_state(
+            self.app_instance.runtime_policy.state
+        )
+        has_recent_work = self.app_instance.screen_state_store.has_snapshots(
+            runtime_identity
+        )
+        self._refresh_latest_console_context(has_recent_work)
 
     @work(exclusive=True, thread=True)
-    def _refresh_latest_console_context(self) -> None:
-        latest_console_item = self._latest_console_follow_item_from_adapter()
+    def _refresh_latest_console_context(self, has_recent_work: bool) -> None:
+        latest_console_item = self._latest_console_follow_item_from_adapter(
+            has_recent_work
+        )
         latest_console_launch = None
         if latest_console_item is None:
             latest_console_launch = self._latest_reading_digest_console_launch()
@@ -78,16 +87,21 @@ class SchedulesScreen(BaseAppScreen):
             self.refresh(recompose=True)
 
     def _latest_console_follow_item(self):
-        return self._latest_console_follow_item_from_adapter()
+        runtime_identity = RuntimeIdentity.from_state(
+            self.app_instance.runtime_policy.state
+        )
+        has_recent_work = self.app_instance.screen_state_store.has_snapshots(
+            runtime_identity
+        )
+        return self._latest_console_follow_item_from_adapter(has_recent_work)
 
-    def _latest_console_follow_item_from_adapter(self):
+    def _latest_console_follow_item_from_adapter(self, has_recent_work: bool):
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
         build_dashboard_input = getattr(adapter, "build_dashboard_input", None)
         if not callable(build_dashboard_input):
             return None
         try:
             providers = getattr(self.app_instance, "providers_models", {}) or {}
-            has_recent_work = bool(getattr(self.app_instance, "_screen_states", {}))
             dashboard_input = build_dashboard_input(
                 providers_models=providers,
                 has_recent_work=has_recent_work,

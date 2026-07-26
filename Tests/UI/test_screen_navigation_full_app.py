@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from contextlib import asynccontextmanager
 
 import pytest
@@ -9,6 +10,10 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_MODE,
     WATCHLISTS_NAV_CONTEXT_SECTION,
+)
+from tldw_chatbook.Home.dashboard_state import (
+    HomeActiveWorkItem,
+    HomeDashboardInput,
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_NOTES,
@@ -22,11 +27,53 @@ from tldw_chatbook.UI.Navigation.screen_state_store import (
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+from tldw_chatbook.UI.Screens.schedules_screen import SchedulesScreen
+from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
+    SchedulesWorkbench,
+)
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
+from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
+
+
+class _RecordingRecentWorkAdapter:
+    """Record the narrow Home adapter contract without impersonating the app."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[bool, int]] = []
+
+    def build_dashboard_input(
+        self,
+        *,
+        providers_models,
+        has_recent_work: bool,
+    ) -> HomeDashboardInput:
+        self.calls.append((has_recent_work, threading.get_ident()))
+        return HomeDashboardInput(
+            model_ready=bool(providers_models),
+            has_recent_work=has_recent_work,
+            active_work_items=(
+                HomeActiveWorkItem(
+                    item_id="workflow:run:task-644",
+                    title="Workflow run",
+                    source="workflows",
+                    status="running",
+                    detail_route="workflows",
+                    console_available=True,
+                ),
+                HomeActiveWorkItem(
+                    item_id="schedule:run:task-644",
+                    title="Schedule run",
+                    source="Schedules",
+                    status="running",
+                    detail_route="schedules",
+                    console_available=True,
+                ),
+            ),
+        )
 
 
 def _configure_startup(
@@ -140,6 +187,145 @@ async def test_full_app_constructs_screen_state_owner_from_runtime_authority(
         assert app._current_runtime_identity() == RuntimeIdentity.from_state(
             app.runtime_policy.state
         )
+
+
+@pytest.mark.parametrize("seed_incompatible", [False, True])
+@pytest.mark.asyncio
+async def test_full_app_home_recent_work_uses_runtime_compatible_store_snapshots(
+    monkeypatch: pytest.MonkeyPatch,
+    seed_incompatible: bool,
+) -> None:
+    app = TldwCli()
+    adapter = _RecordingRecentWorkAdapter()
+    app.home_active_work_adapter = adapter
+    current_identity = app._current_runtime_identity()
+    if seed_incompatible:
+        seeded_identity = (
+            RuntimeIdentity("server", "https://task-644-server.example")
+            if current_identity.active_source == "local"
+            else RuntimeIdentity("local")
+        )
+    else:
+        seeded_identity = current_identity
+    app.screen_state_store.save(
+        "chat",
+        {"recent_work": "task-644"},
+        seeded_identity,
+    )
+
+    async with _mounted_app(app, monkeypatch, "home"):
+        assert adapter.calls
+        assert {has_recent_work for has_recent_work, _thread_id in adapter.calls} == {
+            not seed_incompatible
+        }
+        assert app.screen_state_store.has_snapshots(current_identity) is (
+            not seed_incompatible
+        )
+
+
+@pytest.mark.parametrize(
+    ("registered_route", "screen_class"),
+    [
+        ("workflows", WorkflowsScreen),
+        (None, SchedulesScreen),
+    ],
+)
+@pytest.mark.asyncio
+async def test_full_app_threaded_recent_work_consumers_capture_on_app_thread(
+    monkeypatch: pytest.MonkeyPatch,
+    registered_route: str | None,
+    screen_class: type,
+) -> None:
+    app_thread_id = threading.get_ident()
+    store_call_threads: list[int] = []
+    real_has_snapshots = ScreenStateStore.has_snapshots
+
+    def recording_has_snapshots(
+        store: ScreenStateStore,
+        identity: RuntimeIdentity,
+    ) -> bool:
+        store_call_threads.append(threading.get_ident())
+        return real_has_snapshots(store, identity)
+
+    monkeypatch.setattr(
+        ScreenStateStore,
+        "has_snapshots",
+        recording_has_snapshots,
+    )
+    app = TldwCli()
+    adapter = _RecordingRecentWorkAdapter()
+    app.home_active_work_adapter = adapter
+
+    async with _mounted_app(app, monkeypatch) as pilot:
+        app.screen_state_store.save(
+            "chat",
+            {"recent_work": "task-644"},
+            app._current_runtime_identity(),
+        )
+        if registered_route is not None:
+            await _navigate(app, pilot, registered_route)
+        else:
+            await app.switch_screen(screen_class(app))
+            await pilot.pause()
+
+        for _ in range(150):
+            if getattr(app.screen, "_latest_console_context_loaded", False):
+                break
+            await pilot.pause(0.01)
+
+        assert isinstance(app.screen, screen_class)
+        assert app.screen._latest_console_context_loaded is True
+
+    assert store_call_threads
+    assert set(store_call_threads) == {app_thread_id}
+    assert adapter.calls
+    assert {has_recent_work for has_recent_work, _thread_id in adapter.calls} == {True}
+    assert any(thread_id != app_thread_id for _recent, thread_id in adapter.calls)
+
+
+@pytest.mark.asyncio
+async def test_full_app_async_schedules_reads_recent_work_on_app_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_thread_id = threading.get_ident()
+    store_call_threads: list[int] = []
+    real_has_snapshots = ScreenStateStore.has_snapshots
+
+    def recording_has_snapshots(
+        store: ScreenStateStore,
+        identity: RuntimeIdentity,
+    ) -> bool:
+        store_call_threads.append(threading.get_ident())
+        return real_has_snapshots(store, identity)
+
+    monkeypatch.setattr(
+        ScreenStateStore,
+        "has_snapshots",
+        recording_has_snapshots,
+    )
+    app = TldwCli()
+    adapter = _RecordingRecentWorkAdapter()
+    app.home_active_work_adapter = adapter
+
+    async with _mounted_app(app, monkeypatch) as pilot:
+        app.screen_state_store.save(
+            "chat",
+            {"recent_work": "task-644"},
+            app._current_runtime_identity(),
+        )
+        await _navigate(app, pilot, "schedules")
+
+        screen = app.screen
+        assert isinstance(screen, SchedulesWorkbench)
+        item = await screen._latest_console_follow_item_from_adapter()
+
+        assert getattr(item, "item_id", None) == "schedule:run:task-644"
+
+    assert store_call_threads
+    assert set(store_call_threads) == {app_thread_id}
+    assert adapter.calls
+    assert {has_recent_work for has_recent_work, _thread_id in adapter.calls} == {True}
+    assert {thread_id for _recent, thread_id in adapter.calls} == {app_thread_id}
 
 
 @pytest.mark.asyncio
