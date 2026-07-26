@@ -13,6 +13,7 @@ labels:
 dependencies: []
 references:
   - Docs/superpowers/specs/2026-07-26-local-citation-repair-transition-design.md
+  - Docs/superpowers/plans/2026-07-26-local-citation-repair-transition.md
   - Docs/superpowers/specs/2026-07-23-rag-citation-provenance-design.md
   - backlog/decisions/024-rag-citation-provenance-and-source-resolution.md
 parent_task_id: TASK-553
@@ -38,11 +39,15 @@ Keep local RAG answers visibly provisional until citation markers are structural
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Publish and independently review the approved design contract.
-2. Define pure bounded repair contracts, structural validation, and unchanged-claim selection rules.
-3. Carry repair eligibility through local capture and wire one cancellable controller-owned repair session across direct and agent replies.
-4. Add safe transient Console presentation and current-session original-attempt reveal without changing durable message content.
-5. Add focused contract, controller, store, UI, privacy, and compatibility tests and record scoped verification.
+Detailed implementation plan:
+`Docs/superpowers/plans/2026-07-26-local-citation-repair-transition.md`
+
+1. Define pure bounded repair contracts, structural validation, unchanged-claim selection, exact prompt construction, and model-window checks.
+2. Carry repair eligibility independently of canonical-builder readiness and add a content-free synthesized-fallback signal across direct and agent gateway calls.
+3. Add explicit terminal persistence deferral, atomic repaired-body replacement, and safe transient presentation state.
+4. Wire one controller-owned repair session through the shared direct/agent post-generation seam with phase-aware cancellation and one terminal write.
+5. Add honest notices and a bounded current-session original-attempt preview without changing message content, persistence, provider history, TTS, or exports.
+6. Run only scoped touched-code tests/static checks, perform self-review, and record verification and implementation notes.
 
 ADR required: no
 ADR path: backlog/decisions/024-rag-citation-provenance-and-source-resolution.md

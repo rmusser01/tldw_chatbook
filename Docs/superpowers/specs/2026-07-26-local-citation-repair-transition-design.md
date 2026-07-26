@@ -3,7 +3,7 @@
 **Date:** 2026-07-26
 **Backlog:** TASK-553.15
 **Parent:** TASK-553
-**Status:** Approved for written-spec review
+**Status:** Approved for implementation
 **ADR required:** no
 **ADR path:** `backlog/decisions/024-rag-citation-provenance-and-source-resolution.md`
 
@@ -260,11 +260,14 @@ contains:
 
 It is not stored in the message/session serialization model.
 
-Repair eligibility is independent of canonical builder readiness. The store
-therefore gains an explicit `defer_terminal_persistence` argument for an empty
-assistant placeholder requested with `persist=True`. The argument:
+Repair eligibility is independent of canonical builder readiness and of
+whether the Console has a persistence backend. The store therefore gains an
+explicit `defer_terminal_persistence` argument for an empty assistant
+placeholder. The argument:
 
 - is valid only for an empty, attachment-free assistant placeholder
+- records in-memory provisional-selection eligibility even when `persist=False`
+  or no persistence backend exists
 - arms terminal persistence whenever a persistence backend exists, even when
   no citation finalizer is installed
 - does not consult canonical-write readiness
@@ -279,10 +282,14 @@ When no builder is ready and persistence exists, terminal completion performs
 one ordinary stable-ID write of the selected body. A no-op citation finalizer
 must not be used to simulate repair deferral.
 
-The store also gains one atomic
+The in-memory provisional-selection entry and the persistence-deferral entry
+are distinct: the former authorizes same-row body selection in every Console
+mode, while the latter exists only when a terminal write could occur. Cleanup
+releases both. The store also gains one atomic
 `replace_deferred_terminal_body(message_id, selected_body)` operation. It
-accepts only a deferred, attachment-free assistant message still in
-`pending`/`streaming` state and a non-empty bounded body. In one synchronous
+accepts only a provisionally selection-eligible, attachment-free assistant
+message still in `pending`/`streaming` state and a non-empty bounded body. This
+includes in-memory operation without a persistence backend. In one synchronous
 mutation it replaces `message.content`, collapses the stream buffer to exactly
 that body, updates the materialization count, and leaves status and persistence
 unchanged. Only successful repaired selection calls it. The UI can therefore
