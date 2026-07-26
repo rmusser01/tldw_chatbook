@@ -174,6 +174,12 @@ from tldw_chatbook.Library.server_ingest_request import (
     ServerIngestUnsupported,
     build_server_ingest_kwargs,
 )
+from tldw_chatbook.Library.web_clip_request import (
+    NotAWebClipSource,
+    build_web_clip_kwargs,
+    clip_failure_reason,
+    is_web_clip_source,
+)
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
     IngestJobState,
@@ -1972,7 +1978,16 @@ class LibraryIngestQueueMixin:
             return first_job
 
         if self._resolve_ingest_backend() == "server":
-            return self._submit_server_ingest_job(
+            # A web page goes to the clipper, not the ingest-jobs API: that API
+            # has no media type for one. A local ingest needs no such branch --
+            # classify_ingest_source already routes an article through the
+            # pipeline's own extractor.
+            submit_remote = (
+                self._submit_web_clip_job
+                if is_web_clip_source(source_path)
+                else self._submit_server_ingest_job
+            )
+            return submit_remote(
                 source_path=source_path,
                 ingest_options=ingest_options or {},
                 title=title,
@@ -2735,6 +2750,109 @@ class LibraryIngestQueueMixin:
         )
         self._send_server_ingest_job(job.job_id, kwargs)
         return job
+
+    def _submit_web_clip_job(
+        self,
+        *,
+        source_path: str,
+        ingest_options: dict[str, Any],
+        title: str,
+        author: str,
+        keywords: tuple[str, ...],
+        perform_analysis: bool,
+    ) -> LibraryIngestJob:
+        """Queue a ``server``-origin job that clips a web page.
+
+        A page cannot go through the ingest-jobs API -- it has no media type for
+        one -- so this uses the clipper endpoint instead. That endpoint is
+        synchronous and issues no job or batch id, so unlike a server file
+        ingest there is nothing to attach or poll: the job settles when the call
+        returns (task-684.3).
+
+        Returns:
+            The queued job, or an already-``FAILED`` one when the source cannot
+            be clipped at all.
+        """
+        try:
+            kwargs = build_web_clip_kwargs(
+                source_path,
+                options=ingest_options,
+                title=title,
+                author=author,
+                keywords=keywords,
+            )
+        except NotAWebClipSource as exc:
+            job = self.library_ingest_jobs.submit(
+                source_path=source_path,
+                title=title,
+                author=author,
+                keywords=keywords,
+                perform_analysis=perform_analysis,
+                origin="server",
+                ingest_options=ingest_options,
+            )
+            failed = self.library_ingest_jobs.mark_failed(
+                job.job_id, error=str(exc), permanent=True
+            )
+            return failed if failed is not None else job
+
+        job = self.library_ingest_jobs.submit(
+            source_path=source_path,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            detected_type="web",
+            origin="server",
+            ingest_options=ingest_options,
+        )
+        self._send_web_clip_job(job.job_id, kwargs)
+        return job
+
+    @work(group="library_ingest_remote_submit")
+    async def _send_web_clip_job(self, job_id: str, kwargs: dict[str, Any]) -> None:
+        """Clip a page on the server and settle the job on the answer.
+
+        Shares the submit worker group with ``_send_server_ingest_job``: both are
+        one-shot submissions on the user's behalf, and neither should be able to
+        pile up.
+        """
+        service = getattr(self, "server_media_reading_service", None)
+        clip = getattr(service, "ingest_web_content", None)
+        if not callable(clip):
+            self.library_ingest_jobs.mark_failed(
+                job_id,
+                error=(
+                    "No server backend is configured, so this page cannot be "
+                    "clipped on the server. Configure one in Settings, or switch "
+                    "this Library to Local."
+                ),
+                permanent=True,
+            )
+            return
+
+        self.library_ingest_jobs.mark_parsing(job_id, detected_type="web")
+        try:
+            response = await clip(**kwargs)
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Web clip failed for job {job_id}."
+            )
+            self.library_ingest_jobs.mark_failed(
+                job_id, error=f"The server could not clip the page: {exc}"
+            )
+            return
+
+        # A 200 is not a captured page: the endpoint reports its outcome in the
+        # body, so an extraction that found nothing arrives as success.
+        reason = clip_failure_reason(response)
+        if reason is not None:
+            self.library_ingest_jobs.mark_failed(job_id, error=reason)
+            return
+
+        # No media id comes back, so this finishes like a remote job: done, with
+        # "Open in Library" withheld because the content is in the server's.
+        self.library_ingest_jobs.mark_remote_done(job_id)
 
     @work(group="library_ingest_remote_submit")
     async def _send_server_ingest_job(

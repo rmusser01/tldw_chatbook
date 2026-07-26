@@ -2411,3 +2411,124 @@ async def test_opting_in_without_server_mode_still_ingests_locally(
             await _wait_for_runner_idle(app, pilot)
 
     assert service.submissions == []
+
+
+class _RecordingClipService:
+    """Captures web clips and returns a live-shaped clip response."""
+
+    def __init__(self, *, extracted: bool = True, fail: bool = False) -> None:
+        self.clips: list[dict] = []
+        self.submissions: list[dict] = []
+        self.extracted = extracted
+        self.fail = fail
+
+    async def ingest_web_content(self, **kwargs):
+        self.clips.append(kwargs)
+        if self.fail:
+            raise RuntimeError("scraper unavailable")
+        return {
+            "status": "success",
+            "message": "Web content processed",
+            "count": 1,
+            "results": [
+                {
+                    "url": kwargs["urls"][0],
+                    "title": "Untitled",
+                    "author": "Unknown",
+                    "content": "Body" if self.extracted else "",
+                    "extraction_successful": self.extracted,
+                }
+            ],
+        }
+
+    async def submit_ingest_jobs(self, **kwargs):
+        self.submissions.append(kwargs)
+        return {"batch_id": "batch-9", "jobs": [{"id": 1}]}
+
+    async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100, offset: int = 0):
+        return {"batch_id": batch_id, "jobs": []}
+
+
+@pytest.mark.asyncio
+async def test_a_page_goes_to_the_clipper_and_a_file_does_not(tmp_path: Path) -> None:
+    """Routing must split on what the source *is*, not on the backend alone.
+
+    The ingest-jobs API has no media type for a web page -- ``server_media_type_for``
+    refuses one deliberately -- so sending a page there fails. A page belongs to
+    the clipper endpoint and a file to the jobs API, with one backend switch
+    covering both (task-684.3).
+    """
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    service = _RecordingClipService()
+    app.server_media_reading_service = service
+    audio = _write_text_file(tmp_path, "talk.mp3", "not really audio")
+
+    with _server_ingest_preference():
+        async with app.run_test() as pilot:
+            _use_server_runtime(app)
+            app.submit_library_ingest_job(source_path="https://example.com/post")
+            app.submit_library_ingest_job(source_path=str(audio))
+            for _ in range(_POLL_ATTEMPTS):
+                if service.clips and service.submissions:
+                    break
+                await pilot.pause(_POLL_INTERVAL)
+
+    assert [c["urls"] for c in service.clips] == [["https://example.com/post"]]
+    assert service.submissions, "the file never reached the ingest-jobs API"
+    assert "urls" not in service.submissions[0] or service.submissions[0].get(
+        "file_paths"
+    ), "a local file must be sent as a file, not a url"
+
+
+@pytest.mark.asyncio
+async def test_a_clipped_page_finishes_in_the_queue(tmp_path: Path) -> None:
+    """A clip settles on the synchronous answer -- there is no job to poll."""
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.server_media_reading_service = _RecordingClipService()
+
+    with _server_ingest_preference():
+        async with app.run_test() as pilot:
+            _use_server_runtime(app)
+            app.submit_library_ingest_job(source_path="https://example.com/post")
+            for _ in range(_POLL_ATTEMPTS):
+                states = {j.state for j in app.library_ingest_jobs.jobs()}
+                if states == {IngestJobState.DONE}:
+                    break
+                await pilot.pause(_POLL_INTERVAL)
+            else:
+                raise AssertionError(f"clip never finished; states={states}")
+
+    job = app.library_ingest_jobs.jobs()[0]
+    assert job.origin == "server"
+    # No media id comes back from the clipper, so "Open in Library" stays
+    # withheld: the content is in the server's library, not this machine's.
+    assert not job.media_id
+
+
+@pytest.mark.asyncio
+async def test_a_clip_that_extracted_nothing_fails_rather_than_reporting_done(
+    tmp_path: Path,
+) -> None:
+    """A 200 is not a captured page.
+
+    The endpoint answers 200 with its outcome in the body, so an extraction that
+    found nothing arrives as transport-level success. Recording it as done would
+    repeat the empty-ingest bug guarded against in task-677.
+    """
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+    app.server_media_reading_service = _RecordingClipService(extracted=False)
+
+    with _server_ingest_preference():
+        async with app.run_test() as pilot:
+            _use_server_runtime(app)
+            app.submit_library_ingest_job(source_path="https://example.com/post")
+            for _ in range(_POLL_ATTEMPTS):
+                states = {j.state for j in app.library_ingest_jobs.jobs()}
+                if states == {IngestJobState.FAILED}:
+                    break
+                await pilot.pause(_POLL_INTERVAL)
+            else:
+                raise AssertionError(f"empty clip was not failed; states={states}")
+
+    job = app.library_ingest_jobs.jobs()[0]
+    assert "extracted" in (job.error or "").lower()

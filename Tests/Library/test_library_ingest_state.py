@@ -1198,3 +1198,35 @@ def test_server_mode_plus_a_configured_server_offers_the_switch():
 
     assert state.show_backend_switch is True
     assert "this machine" in state.server_quiet_line.lower()
+
+
+def test_a_page_source_offers_its_scope_settings_in_the_canvas_state():
+    """AC#3: the clipper's scope settings survive the move into the canvas.
+
+    The canvas renders one option group per pre-flight type group, reading each
+    group's fields from the capability schema -- so a page source has to reach
+    the state as the ``web`` group, and that group has to declare the scope
+    settings the retired window exposed (scrape_method plus the page/depth
+    limits). Asserting on the schema the canvas actually consults is what keeps
+    this from passing while the screen shows nothing.
+    """
+    from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+    from tldw_chatbook.Library.ingest_preflight import analyze_path
+    from unittest.mock import MagicMock, patch
+
+    response = MagicMock()
+    response.__enter__ = MagicMock(return_value=response)
+    response.__exit__ = MagicMock(return_value=False)
+    with patch(
+        "tldw_chatbook.Library.ingest_preflight.urlopen", return_value=response
+    ):
+        preflight = analyze_path("https://example.com/some-post")
+
+    assert list(preflight.type_groups) == ["web"], (
+        "a page must reach the canvas as the web group, not as an unsupported file"
+    )
+
+    # get_capabilities is exactly what the canvas calls per group; a group it
+    # cannot answer for raises rather than rendering (task-673).
+    fields = {f.name for f in get_capabilities("web").fields}
+    assert {"scrape_method", "max_pages", "max_depth"} <= fields
