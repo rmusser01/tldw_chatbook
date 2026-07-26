@@ -382,6 +382,16 @@ class SubscriptionsDB(BaseDB):
                     "silent partial migration."
                 )
             try:
+                # CREATE TABLE runs in autocommit in Python's sqlite3 module
+                # (only DML gets an implicit transaction), so the
+                # conn.rollback() in the except below cannot undo it. If a
+                # previous run of this rebuild died after creating this table
+                # but before the rename below, `_new` survives indefinitely
+                # and every later open hits "table subscription_filters_new
+                # already exists" here -- permanently. Drop it first so a
+                # stray table from an earlier failed attempt never blocks a
+                # fresh one.
+                cursor.execute("DROP TABLE IF EXISTS subscription_filters_new")
                 cursor.execute("""
                     CREATE TABLE subscription_filters_new (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -421,6 +431,12 @@ class SubscriptionsDB(BaseDB):
                 # this connection's life, reintroducing the bug Task 1a
                 # fixed.
                 conn.rollback()
+                # conn.rollback() does not remove subscription_filters_new
+                # itself (CREATE TABLE is autocommit -- see the comment
+                # above), so this attempt's own partially-built table would
+                # otherwise become the exact stray table the DROP above
+                # exists to guard against, for the next open.
+                cursor.execute("DROP TABLE IF EXISTS subscription_filters_new")
                 raise
             finally:
                 cursor.execute("PRAGMA foreign_keys = ON;")
@@ -510,6 +526,11 @@ class SubscriptionsDB(BaseDB):
         # External-content FTS over items, matching the pattern used by
         # character_cards_fts / conversations_fts / media_fts. Triggers rather
         # than explicit index writes, so every INSERT path stays indexed.
+        #
+        # Do NOT add `columnsize=0` to the fts5 options below: that option
+        # removes the `_docsize` shadow table, which both the guarded delete
+        # legs below and `backfill_items_fts()` depend on to answer "has this
+        # rowid actually been written into the FTS index yet".
         cursor.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS subscription_items_fts USING fts5(
                 title,
@@ -526,18 +547,48 @@ class SubscriptionsDB(BaseDB):
                 VALUES (new.id, new.title, new.content, new.author);
             END
         """)
+        # subscription_items_fts is an external-content FTS5 table: its
+        # 'delete' command is only legal for a rowid that is actually present
+        # in the index (has a row in the `_docsize` shadow table). This
+        # migration creates the index over a `subscription_items` table that
+        # may already hold rows from before this branch existed, so without a
+        # guard the very first UPDATE/DELETE of a pre-existing, never-indexed
+        # item would fire 'delete' against a rowid FTS5 has never seen --
+        # FTS5 rejects the whole statement, and it surfaces to the caller as
+        # "database disk image is malformed" even though nothing is actually
+        # corrupt. Guard the delete legs on index membership so an unindexed
+        # row is skipped instead of fatal. `_au`'s insert leg stays
+        # unconditional, so a skipped/unindexed row simply becomes indexed on
+        # its next update.
+        #
+        # These two triggers are dropped and recreated unconditionally
+        # (rather than `CREATE ... IF NOT EXISTS`) so that a database that
+        # already ran the previous, unguarded versions of these triggers on
+        # this branch picks up the fix too -- `IF NOT EXISTS` would otherwise
+        # silently keep the old, unguarded trigger bodies in place. This is
+        # idempotent: re-running it just drops-and-recreates the same guarded
+        # triggers again.
+        #
+        # Do not split `_au` into two separate triggers (one delete, one
+        # insert): SQLite does not guarantee firing order between multiple
+        # triggers on the same event, and an insert-then-guarded-delete
+        # ordering would corrupt the index.
+        cursor.execute("DROP TRIGGER IF EXISTS subscription_items_fts_ad")
         cursor.execute("""
-            CREATE TRIGGER IF NOT EXISTS subscription_items_fts_ad
+            CREATE TRIGGER subscription_items_fts_ad
             AFTER DELETE ON subscription_items BEGIN
                 INSERT INTO subscription_items_fts(subscription_items_fts, rowid, title, content, author)
-                VALUES ('delete', old.id, old.title, old.content, old.author);
+                SELECT 'delete', old.id, old.title, old.content, old.author
+                WHERE EXISTS (SELECT 1 FROM subscription_items_fts_docsize WHERE id = old.id);
             END
         """)
+        cursor.execute("DROP TRIGGER IF EXISTS subscription_items_fts_au")
         cursor.execute("""
-            CREATE TRIGGER IF NOT EXISTS subscription_items_fts_au
+            CREATE TRIGGER subscription_items_fts_au
             AFTER UPDATE ON subscription_items BEGIN
                 INSERT INTO subscription_items_fts(subscription_items_fts, rowid, title, content, author)
-                VALUES ('delete', old.id, old.title, old.content, old.author);
+                SELECT 'delete', old.id, old.title, old.content, old.author
+                WHERE EXISTS (SELECT 1 FROM subscription_items_fts_docsize WHERE id = old.id);
                 INSERT INTO subscription_items_fts(rowid, title, content, author)
                 VALUES (new.id, new.title, new.content, new.author);
             END
@@ -564,11 +615,21 @@ class SubscriptionsDB(BaseDB):
         truthfully answers "has this rowid been indexed yet".
 
         Args:
-            chunk_size: Maximum rows to index in this call.
+            chunk_size: Maximum rows to index in this call. Must be >= 1.
 
         Returns:
             Number of rows indexed. ``0`` means the backfill is complete.
+
+        Raises:
+            ValueError: If ``chunk_size`` is less than 1. A non-positive
+                value would make ``LIMIT ?`` return zero rows regardless of
+                how large the real backlog is, and this method would then
+                report ``0`` ("complete") while unindexed rows remain --
+                silently stranding them once this becomes the repair path
+                for legacy rows the guarded FTS triggers skip.
         """
+        if chunk_size < 1:
+            raise ValueError(f"chunk_size must be >= 1, got {chunk_size!r}")
         with self.transaction() as conn:
             rows = conn.execute(
                 """

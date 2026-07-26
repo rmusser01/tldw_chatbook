@@ -201,6 +201,212 @@ def test_backfill_is_chunked_and_resumable(db):
     ).fetchone()[0] == 7
 
 
+def _drop_ai_trigger(db):
+    """Simulate a pre-existing (legacy) row: with no `_ai` trigger, a row
+    inserted afterwards is never written into the FTS index, exactly like a
+    row that already existed in `subscription_items` before this migration
+    ever ran on a real upgraded database."""
+    db.conn.execute("DROP TRIGGER subscription_items_fts_ai")
+    db.conn.commit()
+
+
+def test_update_of_unindexed_legacy_item_succeeds(db):
+    """Regression for Finding 1 (final review). Before the guard, `_au`'s
+    delete leg unconditionally fired 'delete' against `old.id` even when
+    that rowid was never in the FTS index -- illegal for an external-content
+    FTS5 table, so FTS5 rejected the whole UPDATE statement."""
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    _drop_ai_trigger(db)
+    _insert_item(db, source_id, "https://a.example/1", "Legacy", "alpha content")
+
+    # Confirm the row really is unindexed first, or this test would pass
+    # vacuously.
+    assert db.conn.execute("SELECT COUNT(*) FROM subscription_items_fts_docsize").fetchone()[0] == 0
+
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscription_items SET content = 'beta content' WHERE url = ?",
+            ("https://a.example/1",),
+        )
+
+    row = db.conn.execute(
+        "SELECT content FROM subscription_items WHERE url = ?", ("https://a.example/1",)
+    ).fetchone()
+    assert row["content"] == "beta content"
+    # The insert leg of `_au` stays unconditional, so the row is indexed now.
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
+        ("beta",),
+    ).fetchone()[0] == 1
+    # Raises DatabaseError if the FTS index is actually corrupt.
+    db.conn.execute("INSERT INTO subscription_items_fts(subscription_items_fts) VALUES ('integrity-check')")
+
+
+def test_delete_of_unindexed_legacy_item_succeeds(db):
+    """Regression for Finding 1 (final review). Same illegal-'delete' bug as
+    the UPDATE case, via `_ad` this time."""
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    _drop_ai_trigger(db)
+    _insert_item(db, source_id, "https://a.example/1", "Legacy", "alpha content")
+
+    assert db.conn.execute("SELECT COUNT(*) FROM subscription_items_fts_docsize").fetchone()[0] == 0
+
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM subscription_items WHERE url = ?", ("https://a.example/1",))
+
+    assert db.conn.execute("SELECT COUNT(*) FROM subscription_items").fetchone()[0] == 0
+    # Raises DatabaseError if the FTS index is actually corrupt.
+    db.conn.execute("INSERT INTO subscription_items_fts(subscription_items_fts) VALUES ('integrity-check')")
+
+
+def test_cascade_delete_of_parent_with_unindexed_items_succeeds(db):
+    """Regression for Finding 1 (final review). Deleting a source cascades
+    to its items via FK ON DELETE CASCADE, which fires `_ad` once per item --
+    all of them unindexed here, exercising the same guard at cascade scale."""
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    _drop_ai_trigger(db)
+    _insert_item(db, source_id, "https://a.example/1", "Legacy 1", "alpha content")
+    _insert_item(db, source_id, "https://a.example/2", "Legacy 2", "beta content")
+
+    assert db.conn.execute("SELECT COUNT(*) FROM subscription_items_fts_docsize").fetchone()[0] == 0
+
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM subscriptions WHERE id = ?", (source_id,))
+
+    assert db.conn.execute("SELECT COUNT(*) FROM subscription_items").fetchone()[0] == 0
+    # Raises DatabaseError if the FTS index is actually corrupt.
+    db.conn.execute("INSERT INTO subscription_items_fts(subscription_items_fts) VALUES ('integrity-check')")
+
+
+def test_fts_index_passes_integrity_check_after_mixed_mutations(db):
+    """The guard must only skip 'delete' for rows that were never indexed --
+    it must not corrupt the index for rows that legitimately are indexed and
+    are mutated in the same batch as an unindexed row being removed. fts5's
+    'integrity-check' command raises if the index and the external content
+    table disagree.
+
+    Note: unlike the three tests above, this scenario does not reproduce
+    Finding 1 against the pre-fix triggers -- FTS5 only rejects a 'delete'
+    command when the index has never been written to at all (fully virgin
+    docsize/segment state). Here the first `_insert_item` call (with `_ai`
+    still active) writes a real row first, so the index is no longer virgin
+    by the time the second, unindexed row is deleted, and even the unguarded
+    trigger treats that delete as a harmless no-op. This test exists as
+    belt-and-suspenders coverage for the guarded triggers, not as a
+    regression reproduction.
+    """
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    _insert_item(db, source_id, "https://a.example/indexed", "Indexed", "alpha content")
+
+    _drop_ai_trigger(db)
+    _insert_item(db, source_id, "https://a.example/legacy", "Legacy", "beta content")
+
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscription_items SET content = 'alpha updated' WHERE url = ?",
+            ("https://a.example/indexed",),
+        )
+        conn.execute("DELETE FROM subscription_items WHERE url = ?", ("https://a.example/legacy",))
+
+    # Raises DatabaseError if the FTS index is actually corrupt.
+    db.conn.execute("INSERT INTO subscription_items_fts(subscription_items_fts) VALUES ('integrity-check')")
+
+
+def test_backfill_converges_after_guarded_delete_skips_legacy_row(db):
+    """Regression for Finding 1 (final review). A guarded, skipped delete
+    must not disturb `_docsize` bookkeeping for the rows that remain -- a
+    later `backfill_items_fts` call must still index them and converge."""
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    _drop_ai_trigger(db)
+    _insert_item(db, source_id, "https://a.example/keep", "Keep", "alpha content")
+    _insert_item(db, source_id, "https://a.example/gone", "Gone", "beta content")
+
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM subscription_items WHERE url = ?", ("https://a.example/gone",))
+
+    assert db.conn.execute("SELECT COUNT(*) FROM subscription_items_fts_docsize").fetchone()[0] == 0
+
+    indexed = db.backfill_items_fts(chunk_size=10)
+    assert indexed == 1
+    assert db.backfill_items_fts(chunk_size=10) == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
+        ("alpha",),
+    ).fetchone()[0] == 1
+
+
+def test_backfill_rejects_non_positive_chunk_size(db):
+    """Regression for Finding 3 (final review). `LIMIT 0` silently returns
+    zero rows, so a non-positive chunk_size would make this method report
+    "0 remaining" (complete) while a real backlog remains."""
+    with pytest.raises(ValueError):
+        db.backfill_items_fts(chunk_size=0)
+    with pytest.raises(ValueError):
+        db.backfill_items_fts(chunk_size=-5)
+
+
+def test_guarded_triggers_replace_old_unguarded_ones_in_place(tmp_path):
+    """Regression for Finding 1's migration concern (final review).
+
+    Both `_ad` and `_au` were created with `CREATE TRIGGER IF NOT EXISTS` on
+    an earlier version of this branch, without the index-membership guard.
+    A database that already opened under that code has those old, unguarded
+    trigger bodies on disk. `IF NOT EXISTS` would silently keep them in
+    place forever -- the fix must `DROP TRIGGER IF EXISTS` first so the next
+    open actually replaces them, not just skip because a same-named trigger
+    already exists.
+
+    Rather than hand-authoring an entire legacy schema, build a real,
+    fully-migrated database with the current code, then downgrade just the
+    two FTS triggers back to their old, unguarded bodies -- reproducing
+    exactly the state Finding 1 describes: a database on which this branch's
+    migration has already run once, before this fix existed.
+    """
+    path = tmp_path / "already_ran_unguarded_triggers.db"
+    db = SubscriptionsDB(str(path), client_id="setup")
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+
+    _drop_ai_trigger(db)
+    _insert_item(db, source_id, "https://a.example/1", "Legacy", "alpha content")
+
+    db.conn.executescript("""
+        DROP TRIGGER subscription_items_fts_ad;
+        DROP TRIGGER subscription_items_fts_au;
+        -- The old, unguarded trigger bodies -- exactly what shipped before
+        -- this fix.
+        CREATE TRIGGER subscription_items_fts_ad
+        AFTER DELETE ON subscription_items BEGIN
+            INSERT INTO subscription_items_fts(subscription_items_fts, rowid, title, content, author)
+            VALUES ('delete', old.id, old.title, old.content, old.author);
+        END;
+        CREATE TRIGGER subscription_items_fts_au
+        AFTER UPDATE ON subscription_items BEGIN
+            INSERT INTO subscription_items_fts(subscription_items_fts, rowid, title, content, author)
+            VALUES ('delete', old.id, old.title, old.content, old.author);
+            INSERT INTO subscription_items_fts(rowid, title, content, author)
+            VALUES (new.id, new.title, new.content, new.author);
+        END;
+    """)
+    db.conn.commit()
+
+    # Reopen: this is the "next open" the finding describes.
+    migrated = SubscriptionsDB(str(path), client_id="test")
+
+    # If DROP TRIGGER IF EXISTS were missing, this open would have kept the
+    # old bodies (CREATE TRIGGER IF NOT EXISTS is a no-op when the name
+    # already exists), and this UPDATE would raise
+    # sqlite3.DatabaseError: database disk image is malformed.
+    with migrated.transaction() as conn:
+        conn.execute(
+            "UPDATE subscription_items SET content = 'beta content' WHERE url = ?",
+            ("https://a.example/1",),
+        )
+
+    assert migrated.conn.execute(
+        "SELECT content FROM subscription_items WHERE url = ?", ("https://a.example/1",)
+    ).fetchone()[0] == "beta content"
+
+
 class _CountingConnection:
     """Wraps a connection to count execute() calls."""
 

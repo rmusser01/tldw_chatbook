@@ -250,3 +250,107 @@ def test_legacy_orphaned_filter_survives_action_check_widening(tmp_path):
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"
     ).fetchone()[0]
     assert "'include'" in check_sql
+
+
+def test_rebuild_recovers_from_stray_subscription_filters_new_table(tmp_path):
+    """Regression for Finding 2 (final review).
+
+    Python's sqlite3 module only opens an implicit transaction for DML --
+    CREATE TABLE runs in autocommit. So the ``conn.rollback()`` in the
+    subscription_filters rebuild's ``except`` branch cannot remove
+    ``subscription_filters_new`` if anything after the CREATE fails; that
+    table survives on disk. On the next open, the unguarded
+    ``CREATE TABLE subscription_filters_new`` in ``_ensure_watchlists_schema``
+    then raises ``OperationalError: table subscription_filters_new already
+    exists`` -- and ``SubscriptionsDB`` can never be constructed again.
+    """
+    import sqlite3
+
+    path = tmp_path / "stray_new_table.db"
+    legacy_conn = sqlite3.connect(path)
+    legacy_conn.executescript("""
+        CREATE TABLE subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL CHECK(type IN ('rss', 'atom', 'json_feed', 'url', 'url_list', 'podcast', 'sitemap', 'api')),
+            source TEXT NOT NULL,
+            description TEXT,
+            tags TEXT,
+            priority INTEGER DEFAULT 3 CHECK(priority BETWEEN 1 AND 5),
+            folder TEXT,
+            check_frequency INTEGER DEFAULT 3600,
+            last_checked DATETIME,
+            last_successful_check DATETIME,
+            last_error TEXT,
+            error_count INTEGER DEFAULT 0,
+            consecutive_failures INTEGER DEFAULT 0,
+            is_active BOOLEAN DEFAULT 1,
+            is_paused BOOLEAN DEFAULT 0,
+            auto_pause_threshold INTEGER DEFAULT 10,
+            auth_config TEXT,
+            custom_headers TEXT,
+            rate_limit_config TEXT,
+            extraction_method TEXT DEFAULT 'auto',
+            extraction_rules TEXT,
+            processing_options TEXT,
+            auto_ingest BOOLEAN DEFAULT 0,
+            notification_config TEXT,
+            change_threshold FLOAT DEFAULT 0.1,
+            ignore_selectors TEXT,
+            etag TEXT,
+            last_modified TEXT,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE subscription_filters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subscription_id INTEGER,
+            name TEXT NOT NULL,
+            is_active BOOLEAN DEFAULT 1,
+            conditions TEXT NOT NULL,
+            action TEXT NOT NULL CHECK(action IN ('auto_ingest', 'auto_ignore', 'tag', 'priority', 'notify')),
+            action_params TEXT,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+        );
+        -- Left behind by an earlier rebuild attempt that died after the
+        -- CREATE TABLE but before the rename -- autocommit DDL means this
+        -- table is exactly what a crash (or the pre-fix except handler)
+        -- leaves on disk.
+        CREATE TABLE subscription_filters_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subscription_id INTEGER,
+            name TEXT NOT NULL
+        );
+    """)
+    legacy_conn.execute(
+        "INSERT INTO subscriptions (id, name, type, source) VALUES (1, 'ArXiv', 'rss', 'https://a.example/feed')"
+    )
+    legacy_conn.execute(
+        "INSERT INTO subscription_filters (subscription_id, name, conditions, action) "
+        "VALUES (1, 'include ai', '{}', 'auto_ingest')"
+    )
+    legacy_conn.commit()
+    legacy_conn.close()
+
+    # Must not raise "table subscription_filters_new already exists".
+    migrated = SubscriptionsDB(str(path), client_id="test")
+
+    check_sql = migrated.conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"
+    ).fetchone()[0]
+    assert "'include'" in check_sql
+
+    row = migrated.conn.execute(
+        "SELECT subscription_id, name FROM subscription_filters"
+    ).fetchone()
+    assert row[0] == 1
+    assert row[1] == "include ai"
+
+    # The stray table is consumed by the rebuild, not left behind again.
+    tables = {
+        r[0]
+        for r in migrated.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    assert "subscription_filters_new" not in tables
