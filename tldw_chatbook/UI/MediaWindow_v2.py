@@ -58,6 +58,8 @@ MEDIA_EMPTY_STATE_COPY = (
     "Details, analysis, save/export, and Use in Chat actions appear after a media item is selected."
 )
 
+ANALYSIS_FAILED_MESSAGE = "*Analysis generation failed - no valid response text*"
+
 
 class MediaWindow(Container):
     """
@@ -1402,6 +1404,28 @@ class MediaWindow(Container):
         except Exception:
             pass
 
+    async def _reset_analysis_failure_state(self, media_id: Optional[str]) -> None:
+        """Reset the analysis viewer after a failed analysis generation.
+
+        Updates the analysis display to the shared failure message and clears
+        the viewer panel's ``current_analysis`` pointer so Save/Edit can't act
+        on a prior successful analysis while the panel shows a failure
+        message, then refreshes the button states to match. Saved history in
+        ``all_analyses`` is left untouched -- only the current (unsaved)
+        pointer resets.
+        """
+        try:
+            analysis_display = self.viewer_panel.query_one(
+                "#analysis-display", Markdown
+            )
+            await analysis_display.update(ANALYSIS_FAILED_MESSAGE)
+            self.viewer_panel.current_analysis = None
+            self.viewer_panel._update_analysis_button_states()
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Error resetting analysis display for media_id={media_id}: {e}"
+            )
+
     @on(MediaAnalysisRequestEvent)
     def handle_analysis_request(self, event: MediaAnalysisRequestEvent) -> None:
         """Handle media analysis request."""
@@ -1691,30 +1715,14 @@ class MediaWindow(Container):
                     self.app_instance.notify(
                         "Failed to generate analysis", severity="error"
                     )
-                    # Reset analysis display on failure
-                    try:
-                        analysis_display = self.viewer_panel.query_one(
-                            "#analysis-display", Markdown
-                        )
-                        await analysis_display.update(
-                            "*Analysis generation failed - no valid response text*"
-                        )
-                    except Exception as e:
-                        logger.error(f"Error resetting analysis display: {e}")
+                    # Reset analysis display and viewer state on failure
+                    await self._reset_analysis_failure_state(event.media_id)
 
             except Exception as e:
                 logger.opt(exception=True).error(f"Error performing analysis: {e}")
                 self.app_instance.notify(f"Error: {str(e)[:100]}", severity="error")
-                # Reset analysis display on failure
-                try:
-                    analysis_display = self.viewer_panel.query_one(
-                        "#analysis-display", Markdown
-                    )
-                    await analysis_display.update(
-                        "*Analysis generation failed - no valid response text*"
-                    )
-                except Exception as e:
-                    logger.error(f"Error resetting analysis display: {e}")
+                # Reset analysis display and viewer state on failure
+                await self._reset_analysis_failure_state(event.media_id)
 
         # Run the analysis in a worker
         self.run_worker(perform_analysis(), exclusive=True)
