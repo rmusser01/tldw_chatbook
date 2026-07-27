@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from functools import cache
 from pathlib import Path
+import re
 import warnings
 
 import pytest
@@ -197,6 +198,10 @@ RETIRED_TAB_INITIALIZERS_MODULE = "tldw_chatbook.Event_Handlers.tab_initializers
 INGEST_EVENTS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "ingest_events.py"
 INGEST_UTILS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "ingest_utils.py"
 WORKER_EVENTS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "worker_events.py"
+MEDIA_INGEST_WORKERS_PATH = (
+    PRODUCTION_ROOT / "Event_Handlers" / "media_ingest_workers.py"
+)
+TLDW_API_EVENTS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "tldw_api_events.py"
 STUDY_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "study_screen.py"
 ARTIFACTS_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "artifacts_screen.py"
 ACP_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "acp_screen.py"
@@ -250,12 +255,33 @@ def _constant_dynamic_name(node: ast.AST) -> str | None:
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id in {"getattr", "setattr", "delattr"}
+        and node.func.id in {"getattr", "setattr", "delattr", "hasattr"}
         and len(node.args) >= 2
         and isinstance(node.args[1], ast.Constant)
         and isinstance(node.args[1].value, str)
     ):
         return node.args[1].value
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+        and (
+            (
+                isinstance(node.func.value, ast.Call)
+                and isinstance(node.func.value.func, ast.Name)
+                and node.func.value.func.id == "vars"
+                and len(node.func.value.args) == 1
+            )
+            or (
+                isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr == "__dict__"
+            )
+        )
+    ):
+        return node.args[0].value
     if (
         isinstance(node, ast.Subscript)
         and isinstance(node.slice, ast.Constant)
@@ -416,6 +442,18 @@ def _root_app_occurrences(
         ):
             found.append((relative, f"dynamic_{node.func.id}", node.lineno))
         elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and _constant_dynamic_name(node) == target
+            and _is_root_mapping_expression(
+                node.func.value,
+                _is_root_app_expression,
+            )
+            and not _is_root_app_expression(node.func.value)
+        ):
+            found.append((relative, "mapping_get", node.lineno))
+        elif (
             isinstance(node, ast.Subscript)
             and _is_root_mapping_expression(
                 node.value,
@@ -527,6 +565,17 @@ class _TldwCliRootOccurrenceCollector(ast.NodeVisitor):
             and node.args[1].value == self.target
         ):
             self._record(f"dynamic_{node.func.id}", node.lineno)
+        elif (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and _constant_dynamic_name(node) == self.target
+            and _is_root_mapping_expression(
+                node.func.value,
+                self._is_root_receiver,
+            )
+            and not self._is_root_receiver(node.func.value)
+        ):
+            self._record("mapping_get", node.lineno)
         self.generic_visit(node)
 
     def visit_Subscript(self, node: ast.Subscript) -> None:
@@ -656,6 +705,9 @@ del owner.retired_state
 getattr(owner, "retired_state")
 setattr(owner, "retired_state", value)
 delattr(owner, "retired_state")
+hasattr(owner, "retired_state")
+vars(owner).get("retired_state")
+owner.__dict__.get("retired_state")
 mapping["retired_state"]
 """
         )
@@ -664,7 +716,7 @@ mapping["retired_state"]
 
     assert kinds.count("attribute_store") == 3
     assert kinds.count("attribute_del") == 1
-    assert kinds.count("dynamic_name") == 3
+    assert kinds.count("dynamic_name") == 6
     assert kinds.count("subscript_name") == 1
 
 
@@ -685,6 +737,8 @@ del screen.app.__dict__["ingest_active_view"]
 vars(self.window.app)["ingest_active_view"]
 vars(self.window.app)["ingest_active_view"] = value
 del vars(self.window.app)["ingest_active_view"]
+vars(screen.app).get("ingest_active_view")
+self.window.app.__dict__.get("ingest_active_view")
 destination.ingest_active_view
 """
     )
@@ -696,7 +750,7 @@ destination.ingest_active_view
     )
     occurrences = _root_app_occurrences(path, "ingest_active_view")
 
-    assert {line for _path, _kind, line in occurrences} == set(range(1, 13))
+    assert {line for _path, _kind, line in occurrences} == set(range(1, 15))
     assert sorted(kind for _path, kind, _line in occurrences) == sorted(
         (
             "attribute_load",
@@ -711,6 +765,8 @@ destination.ingest_active_view
             "mapping_load",
             "mapping_store",
             "mapping_del",
+            "mapping_get",
+            "mapping_get",
         )
     )
 
@@ -736,6 +792,8 @@ def test_tldw_cli_root_guard_detects_only_root_owned_syntax(
         vars(self)["ingest_active_view"]
         vars(self)["ingest_active_view"] = value
         del vars(self)["ingest_active_view"]
+        vars(self).get("ingest_active_view")
+        self.__dict__.get("ingest_active_view")
         handler(reactive_attr="ingest_active_view")
         destination.ingest_active_view = value
         ingest_active_view = value
@@ -751,9 +809,9 @@ def test_tldw_cli_root_guard_detects_only_root_owned_syntax(
     occurrences = _tldw_cli_occurrences("ingest_active_view")
     assert {line for _path, _kind, _scopes, line in occurrences} == {
         2,
-        *range(5, 19),
+        *range(5, 21),
     }
-    assert all(line not in {19, 20} for _path, _kind, _scopes, line in occurrences)
+    assert all(line not in {21, 22} for _path, _kind, _scopes, line in occurrences)
 
     method_occurrences = _tldw_cli_occurrences("watch_ingest_active_view")
     assert [(kind, line) for _path, kind, _scopes, line in method_occurrences] == [
@@ -1010,6 +1068,61 @@ def test_retired_destination_root_companions_are_absent() -> None:
     }
 
     assert violations == {}
+
+
+def test_retired_tldw_api_worker_context_and_pipeline_are_absent() -> None:
+    """Keep the unproducible pre-Library ingest completion graph deleted."""
+    context_name = "_last_tldw_api_request_context"
+    context_occurrences = _production_occurrences(context_name)
+
+    retired_paths = [
+        str(path.relative_to(PROJECT_ROOT))
+        for path in (MEDIA_INGEST_WORKERS_PATH, TLDW_API_EVENTS_PATH)
+        if path.exists()
+    ]
+    retired_screen_paths = [
+        str(path.relative_to(PROJECT_ROOT))
+        for path in sorted(PRODUCTION_ROOT.rglob("*.py"))
+        if path.stem.casefold() in {"mediaingestscreen", "media_ingest_screen"}
+    ]
+
+    graph_violations: list[tuple[str, str, int]] = []
+    exact_api_calls = re.compile(r"""(["'])api_calls\1""")
+    for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
+        relative = str(path.relative_to(PROJECT_ROOT))
+        source = path.read_text(encoding="utf-8")
+        for line_number, line in enumerate(source.splitlines(), start=1):
+            if exact_api_calls.search(line):
+                graph_violations.append(
+                    (relative, "worker_group:api_calls", line_number)
+                )
+            if "media_ingest_workers" in line:
+                graph_violations.append(
+                    (relative, "module:media_ingest_workers", line_number)
+                )
+            if "#tldw-api-" in line:
+                graph_violations.append((relative, "selector:#tldw-api-*", line_number))
+            if "tldw_api_events" in line:
+                graph_violations.append(
+                    (relative, "module:tldw_api_events", line_number)
+                )
+
+    retired_symbols = {
+        name: _production_occurrences(name)
+        for name in (
+            "MediaIngestScreen",
+            "handle_tldw_api_worker_failure",
+            "handle_tldw_api_worker_success",
+            "_handle_api_calls",
+        )
+        if _production_occurrences(name)
+    }
+
+    assert context_occurrences == []
+    assert retired_paths == []
+    assert retired_screen_paths == []
+    assert graph_violations == []
+    assert retired_symbols == {}
 
 
 def test_retired_tab_initializer_package_and_imports_stay_absent() -> None:

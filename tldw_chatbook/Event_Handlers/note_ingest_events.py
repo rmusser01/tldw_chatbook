@@ -631,15 +631,14 @@ async def handle_ingest_notes_import_now_button_pressed(
         # T167: `on_import_success_notes`/`on_import_failure_notes` above
         # were previously dead code -- nothing in this module or app.py's
         # generic worker-state dispatch (`on_worker_state_changed` ->
-        # `WorkerHandlerRegistry`, whose only groups are "api_calls",
-        # "ollama_api", "model_download", "transformers_download") ever
-        # invoked them for the "file_operations" group this worker runs
-        # in, so the post-import status-area summary, the chat-notes
-        # sidebar refresh, and (now) the Library notes-canvas refresh
-        # never actually fired. Since this worker is a plain coroutine
-        # (no `thread=True`), it runs on the main event loop, so calling
-        # these UI-touching callbacks directly here -- rather than relying
-        # on that dead dispatch path -- is safe.
+        # `WorkerHandlerRegistry`, where no registered handler owned the
+        # "file_operations" group this worker runs in) ever invoked them,
+        # so the post-import status-area summary, the chat-notes sidebar
+        # refresh, and (now) the Library notes-canvas refresh never actually
+        # fired. Since this worker is a plain coroutine (no `thread=True`),
+        # it runs on the main event loop, so calling these UI-touching
+        # callbacks directly here -- rather than relying on that dead
+        # dispatch path -- is safe.
         try:
             results = await import_worker_notes()
         except Exception as e:
