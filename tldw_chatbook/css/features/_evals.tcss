@@ -264,6 +264,16 @@
     color: $ds-text-muted;
 }
 
+/* TASK-1036: the run view's degenerate-canary callout -- same
+   .ds-recovery-callout base styling (border/background/padding, from
+   components/_agentic_terminal.tcss) as #evals-inspector-bench's own
+   callout above, plus the identical trailing margin so it reads as the
+   same design element on both views, per the design contract's "bench
+   view and run view agree on how prominently it is presented". */
+#evals-grid-canary-callout {
+    margin: 0 0 1 0;
+}
+
 #evals-grid-controls {
     height: auto;
     margin: 0 0 1 0;
