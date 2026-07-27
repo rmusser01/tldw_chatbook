@@ -33,6 +33,9 @@ SCREEN_STATE_STORE_PATH = (
 HANDOFF_STORE_PATH = PRODUCTION_ROOT / "UI" / "Navigation" / "pending_handoff_store.py"
 CHAT_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen.py"
 CHAT_SCREEN_STATE_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen_state.py"
+MEDIA_WINDOW_PATH = PRODUCTION_ROOT / "UI" / "MediaWindow_v2.py"
+MEDIA_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "media_screen.py"
+MEDIA_EVENTS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "media_events.py"
 LEGACY_CHAT_ROOT_NAMES = (
     "rag_expansion_provider_value",
     "chat_sidebar_collapsed",
@@ -138,6 +141,18 @@ LEGACY_CCP_HANDLER_PATHS = (
     PRODUCTION_ROOT / "Event_Handlers" / "character_ingest_events.py",
     PRODUCTION_ROOT / "Event_Handlers" / "prompt_ingest_events.py",
     PRODUCTION_ROOT / "Event_Handlers" / "worker_handlers" / "ai_generation_handler.py",
+)
+LEGACY_MEDIA_ROOT_NAMES = (
+    "media_active_view",
+    "_initial_media_view_slug",
+    "current_media_type_filter_slug",
+    "current_media_type_filter_display_name",
+    "media_current_page",
+    "current_loaded_media_item",
+    "_media_search_timers",
+    "_media_search_generation",
+    "_initial_media_view",
+    "media_runtime_state",
 )
 INGEST_EVENTS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "ingest_events.py"
 INGEST_UTILS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "ingest_utils.py"
@@ -1166,6 +1181,55 @@ def test_tldw_cli_has_no_root_provider_descriptor_or_access() -> None:
     collector.visit(app_class)
 
     assert collector.occurrences == []
+
+
+def test_tldw_cli_has_no_retired_media_destination_state() -> None:
+    app_class = _class_definition(APP_PATH, "TldwCli")
+    violations = {}
+    for name in LEGACY_MEDIA_ROOT_NAMES:
+        collector = _NamedOccurrenceCollector(APP_PATH, name)
+        collector.visit(app_class)
+        if collector.occurrences:
+            violations[name] = collector.occurrences
+
+    assert violations == {}
+
+
+def test_media_runtime_state_is_constructed_only_by_the_destination() -> None:
+    app_occurrences = _occurrences(APP_PATH, "MediaRuntimeState")
+    screen_occurrences = _occurrences(MEDIA_SCREEN_PATH, "MediaRuntimeState")
+    window_occurrences = _occurrences(MEDIA_WINDOW_PATH, "MediaRuntimeState")
+
+    assert app_occurrences == []
+    assert screen_occurrences == []
+    assert any(
+        kind == "name_load" and "MediaWindow.__init__" in ".".join(scopes)
+        for _path, kind, scopes, _line in window_occurrences
+    )
+
+
+def test_media_window_has_no_duplicate_media_active_view_descriptor() -> None:
+    media_window_class = _class_definition(MEDIA_WINDOW_PATH, "MediaWindow")
+    collector = _NamedOccurrenceCollector(MEDIA_WINDOW_PATH, "media_active_view")
+    collector.visit(media_window_class)
+
+    assert collector.occurrences == []
+
+
+def test_media_events_module_contains_contracts_not_root_handlers() -> None:
+    module = _parse(MEDIA_EVENTS_PATH)
+    module_functions = [
+        node.name
+        for node in module.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    module_classes = {
+        node.name for node in module.body if isinstance(node, ast.ClassDef)
+    }
+
+    assert module_functions == []
+    assert "MediaMetadataUpdateEvent" in module_classes
+    assert "MediaTypeSelectedEvent" not in module_classes
 
 
 def test_tldw_cli_has_no_constant_reactive_attribute_dispatch() -> None:

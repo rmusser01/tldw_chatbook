@@ -43,9 +43,7 @@ from textual.app import App, ComposeResult, ScreenStackError
 from textual.widgets import (
     Static,
     Button,
-    Input,
     RichLog,
-    ListView,
     Switch,
     Markdown,
 )
@@ -60,7 +58,6 @@ from textual.command import Hit, Hits, Provider
 from functools import partial
 from pathlib import Path
 
-from tldw_chatbook.Utils.text import slugify
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 
 # from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
@@ -237,7 +234,7 @@ from .config import (
     persist_cli_config_for_shutdown,
     set_encryption_password,
 )
-from .Event_Handlers import worker_events, media_events
+from .Event_Handlers import worker_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSRequestEvent,
     TTSCompleteEvent,
@@ -336,7 +333,6 @@ from .UI.Navigation.screen_state_store import RuntimeIdentity, ScreenStateStore
 from .UI.Navigation.screen_registry import resolve_screen_target
 from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
-from .UI.Screens.media_runtime_state import MediaRuntimeState
 from .UI.Screens.study_scope_models import StudyScopeContext
 
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
@@ -2738,9 +2734,9 @@ class LibraryIngestQueueMixin:
     def _resolve_ingest_backend(self) -> str:
         """Return the backend a new ingest should run on: ``local`` or ``server``.
 
-        Deliberately its **own** preference rather than the Library's browse
-        scope (``media_runtime_state.runtime_backend``). Reusing the browse
-        scope looked tidier -- one notion of "which backend am I on" -- but it
+        Deliberately its **own** preference rather than the Media destination's
+        browse scope. Reusing the browse scope looked tidier -- one notion of
+        "which backend am I on" -- but it
         would mean a user who switched scope to look at server-side media and
         then imported a file had that file leave their machine without ever
         asking for it. ``build_library_ingest_state``'s own contract is explicit
@@ -3498,11 +3494,6 @@ class TldwCli(
     ui_responsiveness_monitor: UIResponsivenessMonitor | None = None
     _ui_responsiveness_heartbeat_timer: Optional[Timer] = None
 
-    # Reactives for retained destination sidebars
-    media_active_view: reactive[Optional[str]] = reactive(
-        None
-    )  # Added for Media tab navigation
-
     # Reactive variables for selected note details
     current_selected_note_id: reactive[Optional[str]] = reactive(None)
     current_selected_note_version: reactive[Optional[int]] = reactive(None)
@@ -3529,37 +3520,11 @@ class TldwCli(
         None
     )  # Timestamp of last save
 
-    # Media Tab
+    # Media services and type catalog
     _media_types_for_ui: List[str] = []
-    _initial_media_view_slug: Optional[str] = reactive(
-        slugify("All Media")
-    )  # Default to "All Media" slug
-
-    current_media_type_filter_slug: reactive[Optional[str]] = reactive(
-        slugify("All Media")
-    )  # Slug for filtering
-    current_media_type_filter_display_name: reactive[Optional[str]] = reactive(
-        "All Media"
-    )  # Display name
-    media_current_page: reactive[int] = reactive(1)  # Search results pagination
-
-    # current_media_search_term: reactive[str] = reactive("") # Handled by inputs directly
-    current_loaded_media_item: reactive[Optional[Dict[str, Any]]] = reactive(None)
-    _media_search_timers: Dict[str, Timer] = {}  # For debouncing per media type
-    # task-283 (B4): per-type_slug staleness generation, incremented each time a
-    # debounced media search starts; the DB call now runs via asyncio.to_thread,
-    # which an exclusive worker/timer cannot cancel mid-flight, so this guards
-    # against an older, slower search overwriting a newer one's results.
-    # Annotation only -- the dict is created per-instance in __init__ because a
-    # class-level {} would be mutated in place and shared across TldwCli
-    # instances in one process (PR #683 review).
-    _media_search_generation: Dict[str, int]
 
     # Add media_types_for_ui to store fetched types
     media_types_for_ui: List[str] = []
-    _initial_media_view: Optional[str] = (
-        "media-view-video-audio"  # Default to the first sub-tab
-    )
     media_db: Optional[MediaDatabase] = None
     # Search Tab's active sub-view reactives
     search_active_sub_tab: reactive[Optional[str]] = reactive(None)
@@ -3609,9 +3574,6 @@ class TldwCli(
 
         # Tab switching optimization
         self._initialized_tabs = set()  # Track which tabs have been initialized
-
-        # task-283 (B4): per-instance -- see the class-level annotation.
-        self._media_search_generation = {}
 
         # Reduce logging in production
         if not os.environ.get("TLDW_DEBUG"):
@@ -3700,7 +3662,6 @@ class TldwCli(
         self.onnx_server_process = None
         self._llm_server_launch_claims = {}
         self._llm_server_lifecycle_lock = threading.RLock()
-        self.media_current_page = 1
         self._startup_phases["attribute_init"] = time.perf_counter() - phase_start
         log_histogram(
             "app_startup_phase_duration_seconds",
@@ -3782,10 +3743,6 @@ class TldwCli(
         if not hasattr(self, "_media_types_for_ui"):
             self._media_types_for_ui = ["Error: Media DB not loaded"]
 
-        initial_media_runtime_backend = self._resolve_initial_media_runtime_backend()
-        self.media_runtime_state = MediaRuntimeState(
-            runtime_backend=initial_media_runtime_backend
-        )
         self.local_media_reading_service = LocalMediaReadingService(
             self.media_db, app_config=self.app_config
         )
@@ -6628,68 +6585,6 @@ class TldwCli(
                 f"Unexpected error in watch_search_active_sub_tab: {e_watch}"
             )
 
-        # ############################################
-        # --- Media Loaded Item Watcher ---
-        # ############################################
-        async def watch_current_loaded_media_item(
-            self, media_data: Optional[Dict[str, Any]]
-        ) -> None:
-            """Watcher to display details when a media item is loaded."""
-            if not self._ui_ready:
-                self.loguru_logger.debug(
-                    "watch_current_loaded_media_item: UI not ready, returning."
-                )
-                return
-
-            type_slug = self.current_media_type_filter_slug
-            if not type_slug:
-                self.loguru_logger.warning(
-                    "watch_current_loaded_media_item: type_slug is not set, cannot update details display."
-                )
-                return
-
-            details_display_widget_id = f"media-details-display-{type_slug}"
-            try:
-                # Target Markdown widget
-                details_display = self.query_one(
-                    f"#{details_display_widget_id}", Markdown
-                )
-
-                if media_data:
-                    # Special formatting for "analysis-review"
-                    if type_slug == "analysis-review":
-                        title = media_data.get("title", "Untitled")
-                        url = media_data.get("url", "No URL")
-                        analysis_content = media_data.get("analysis_content", "")
-                        if not analysis_content:
-                            analysis_content = "No analysis available for this item."
-                        markdown_details_string = f"## {title}\n\n**URL:** {url}\n\n### Analysis\n{analysis_content}"
-                    else:
-                        # Use the existing format_media_details_as_markdown function from media_events
-                        markdown_details_string = (
-                            media_events.format_media_details_as_markdown(
-                                self, media_data
-                            )
-                        )
-
-                    await details_display.update(
-                        markdown_details_string
-                    )  # Use await and update()
-                    # self.notify(f"Details for '{media_data.get('title', 'N/A')}' displayed via watcher.") # Optional notification
-                else:
-                    await details_display.update(
-                        "### No media item loaded or item cleared."
-                    )  # Use await and update()
-
-            except QueryError:
-                self.loguru_logger.warning(
-                    f"watch_current_loaded_media_item: Could not find Markdown details display '#{details_display_widget_id}' for slug '{type_slug}' to update."
-                )
-            except Exception as e:
-                self.loguru_logger.opt(exception=True).error(
-                    f"Error in watch_current_loaded_media_item: {e}"
-                )
-
     # ############################################
     # --- Ingest Tab Watcher ---
     # ############################################
@@ -8249,72 +8144,12 @@ class TldwCli(
                 f"Ingest active view already set to '{self.ingest_active_view}'. No change made by _activate_initial_ingest_view."
             )
 
-    def watch_media_active_view(
-        self, old_view: Optional[str], new_view: Optional[str]
-    ) -> None:
-        """Notify MediaWindow when media_active_view changes."""
-        # Temporarily disabled - MediaWindow handles its own navigation via MediaTypeSelectedEvent
-        pass
-        # if not self._ui_ready:
-        #     self.loguru_logger.debug("watch_media_active_view: UI not ready.")
-        #     return
-        #
-        # if self.current_tab == TAB_MEDIA:
-        #     try:
-        #         media_window = self.query_one(MediaWindow)
-        #         # Sync the MediaWindow's own media_active_view
-        #         media_window.media_active_view = new_view
-        #         # Call the watcher manually to trigger the view change
-        #         if new_view:
-        #             media_window.watch_media_active_view(old_view, new_view)
-        #         self.loguru_logger.info(f"Notified MediaWindow of view change: {old_view} -> {new_view}")
-        #     except QueryError:
-        #         self.loguru_logger.error("MediaWindow not found for view update.")
-        #     except Exception as e:
-        #         self.loguru_logger.error(f"Error updating MediaWindow view: {e}", exc_info=True)
-
-
     ########################################################################
     #
     # --- EVENT DISPATCHERS ---
     #
     ########################################################################
     # Notes editor changes are handled inside the Library screen, not dispatched here.
-
-    async def on_input_changed(self, event: Input.Changed) -> None:
-        """Route retained root-level input events to their destination owners."""
-        input_id = event.input.id
-        current_active_tab = self.current_tab
-        # --- Notes input events are handled inside the Library screen, not here ---
-        if (
-            input_id
-            and input_id.startswith("media-search-input-")
-            and current_active_tab == TAB_MEDIA
-        ):
-            await media_events.handle_media_search_input_changed(
-                self, input_id, event.value
-            )
-        elif (
-            input_id
-            and input_id.startswith("media-keyword-filter-")
-            and current_active_tab == TAB_MEDIA
-        ):
-            await media_events.handle_media_search_input_changed(
-                self,
-                input_id.replace("media-keyword-filter-", "media-search-input-"),
-                event.value,
-            )
-        # Add more specific input handlers if needed, e.g., for title inputs if they need live validation/reaction
-
-    async def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Route retained root-level list selections to destination owners."""
-        list_view_id = event.list_view.id
-        if (
-            list_view_id
-            and list_view_id.startswith("media-list-view-")
-            and self.current_tab == TAB_MEDIA
-        ):
-            await media_events.handle_media_list_item_selected(self, event)
 
     async def on_switch_changed(self, event: Switch.Changed) -> None:
         """Handles changes in Switch widgets."""
@@ -8323,12 +8158,6 @@ class TldwCli(
 
         if switch_id == "notes-auto-save-toggle":
             await self.handle_notes_auto_save_toggle(event)
-
-    @on(media_events.MediaMetadataUpdateEvent)
-    async def on_media_metadata_update(
-        self, event: media_events.MediaMetadataUpdateEvent
-    ) -> None:
-        await media_events.handle_media_metadata_update(self, event)
 
     # Collections/Tags event handlers
     @on(Message)

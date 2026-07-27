@@ -857,7 +857,7 @@ def test_app_uses_screen_navigation_and_wires_media_services():
     assert isinstance(app.local_media_reading_service, LocalMediaReadingService)
     assert isinstance(app.server_media_reading_service, ServerMediaReadingService)
     assert isinstance(app.media_reading_scope_service, MediaReadingScopeService)
-    assert app.media_runtime_state.runtime_backend == "local"
+    assert not hasattr(app, "media_runtime_state")
     assert (
         app.auth_account_scope_service.server_context_provider
         is app.server_context_provider
@@ -1154,16 +1154,20 @@ def test_app_wires_local_and_server_skills_services():
     assert isinstance(app.prompt_chatbook_scope_service, PromptChatbookScopeService)
 
 
-def test_media_screen_uses_shared_runtime_state():
+def test_media_screen_constructs_destination_local_runtime_state():
     app = _build_test_app()
     screen = MediaScreen(app)
 
     widgets = list(screen.compose_content())
 
     assert len(widgets) == 2  # destination header + media window
-    assert screen.media_runtime_state is app.media_runtime_state
+    assert not hasattr(app, "media_runtime_state")
+    assert not hasattr(screen, "media_runtime_state")
     assert screen.media_window is widgets[1]
-    assert screen.media_window.runtime_state is app.media_runtime_state
+    assert (
+        screen.media_window.runtime_state.runtime_backend
+        == app.get_authoritative_runtime_source()
+    )
 
 
 @pytest.mark.asyncio
