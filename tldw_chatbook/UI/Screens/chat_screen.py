@@ -11307,20 +11307,23 @@ class ChatScreen(BaseAppScreen):
             self._focus_console_composer_if_needed(force=True)
             return False
         controller = self._ensure_console_chat_controller()
-        refusal = controller.send_refusal_copy(controller.store.active_session_id)
+        target_session_id = controller.store.active_session_id
+        refusal = controller.send_refusal_copy(target_session_id)
         if refusal:
             self._restore_console_send_stash(stash)
             self.app_instance.notify(refusal, severity="warning")
             return False
         self._console_inflight_send_stash = stash
         self._note_console_follow_intent()
-        # group="console-run": a dedicated group so UI-sync kicks can never
-        # cancel an in-flight run (TASK-228 — ungrouped exclusive workers all
-        # share Textual's default group and cancel each other).
+        # group=f"console-run-{session_id}": a PER-SESSION group (parallel-
+        # agents spec Sec2) so UI-sync kicks -- and sends in OTHER sessions --
+        # can never cancel this session's in-flight run (TASK-228 originated
+        # the dedicated group; scoping it per session keeps concurrent
+        # sessions' exclusive workers from cancelling each other).
         self.run_worker(
             self._submit_console_native_draft(draft),
             exclusive=True,
-            group="console-run",
+            group=f"console-run-{target_session_id}",
         )
         return True
 
@@ -12237,8 +12240,8 @@ class ChatScreen(BaseAppScreen):
         selected prompt's own text is written back into the composer via the
         same paste-semantics seam `/prompt` uses.
         `"summarize-up-to"` runs the boundary-summary flow (SP2 Task 3) on an
-        exclusive `console-run` worker, gated on `is_send_allowed` the same way
-        restore is (never mutates while a run is streaming).
+        exclusive `console-run-{session_id}` worker, gated on `is_send_allowed`
+        the same way restore is (never mutates while a run is streaming).
 
         A `ModalScreen` blocks session switching while the rewind modal is up,
         so today this is theoretical -- but the callback still re-checks the
@@ -12267,14 +12270,15 @@ class ChatScreen(BaseAppScreen):
             # Gate BEFORE spawning: an exclusive console-run worker cancels any
             # in-flight run at creation time, before the controller's own
             # rejection can run -- refuse first, like the regenerate path.
-            refusal = controller.send_refusal_copy(controller.store.active_session_id)
+            target_session_id = controller.store.active_session_id
+            refusal = controller.send_refusal_copy(target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return
             self.run_worker(
                 self._summarize_console_up_to(controller, choice.message_id),
                 exclusive=True,
-                group="console-run",
+                group=f"console-run-{target_session_id}",
             )
             return
         if choice.kind != "restore":
@@ -13287,14 +13291,15 @@ class ChatScreen(BaseAppScreen):
             # Gate BEFORE spawning: an exclusive console-run worker cancels the
             # in-flight run at creation time, before the controller's own
             # rejection can run — the screen must refuse, like the submit path.
-            refusal = controller.send_refusal_copy(controller.store.active_session_id)
+            target_session_id = controller.store.active_session_id
+            refusal = controller.send_refusal_copy(target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return True
             self.run_worker(
                 self._retry_console_message(controller, message_id),
                 exclusive=True,
-                group="console-run",
+                group=f"console-run-{target_session_id}",
             )
             return True
         if action_id == "regenerate" and result.status == "wip":
@@ -13307,14 +13312,15 @@ class ChatScreen(BaseAppScreen):
                 await self._regenerate_console_generation_variant(message_id)
                 return True
             controller = self._ensure_console_chat_controller()
-            refusal = controller.send_refusal_copy(controller.store.active_session_id)
+            target_session_id = controller.store.active_session_id
+            refusal = controller.send_refusal_copy(target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return True
             self.run_worker(
                 self._regenerate_console_message(controller, message_id),
                 exclusive=True,
-                group="console-run",
+                group=f"console-run-{target_session_id}",
             )
             return True
         if (
@@ -13395,14 +13401,15 @@ class ChatScreen(BaseAppScreen):
             return True
         if action_id == "continue" and result.status == "continue_requested":
             controller = self._ensure_console_chat_controller()
-            refusal = controller.send_refusal_copy(controller.store.active_session_id)
+            target_session_id = controller.store.active_session_id
+            refusal = controller.send_refusal_copy(target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return True
             self.run_worker(
                 self._continue_console_message(controller, message_id),
                 exclusive=True,
-                group="console-run",
+                group=f"console-run-{target_session_id}",
             )
             return True
         severity = "information" if result.status in {"completed", "wip"} else "warning"
@@ -13938,7 +13945,8 @@ class ChatScreen(BaseAppScreen):
             # Gate BEFORE spawning: an exclusive console-run worker cancels the
             # in-flight run at creation time, before the controller's own
             # rejection can run -- the screen must refuse, like the submit path.
-            refusal = controller.send_refusal_copy(controller.store.active_session_id)
+            target_session_id = controller.store.active_session_id
+            refusal = controller.send_refusal_copy(target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return
@@ -13947,7 +13955,7 @@ class ChatScreen(BaseAppScreen):
                     controller, message_id, result.text
                 ),
                 exclusive=True,
-                group="console-run",
+                group=f"console-run-{target_session_id}",
             )
 
         await self.app.push_screen(
