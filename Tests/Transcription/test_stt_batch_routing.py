@@ -91,7 +91,16 @@ def test_exact_faster_whisper_retains_requested_language_and_task() -> None:
     assert route.target_language == "en"
 
 
-@pytest.mark.parametrize("provider", ["parakeet", "faster", "faster-whisper-large"])
+@pytest.mark.parametrize(
+    "provider",
+    [
+        "parakeet",
+        "faster",
+        "faster-whisper-large",
+        " PARAKEET-ONNX ",
+        "Faster-Whisper",
+    ],
+)
 def test_unknown_providers_are_rejected_without_prefix_matching(provider: str) -> None:
     with pytest.raises(BatchSTTRoutingError):
         resolve_batch_stt_route(provider=provider, language="en")

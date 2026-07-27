@@ -129,7 +129,7 @@ def resolve_batch_stt_route(
 
 
 def _normalize_provider(provider: str | None) -> str:
-    return _DEFAULT_PROVIDER if provider is None else provider.strip().lower()
+    return _DEFAULT_PROVIDER if provider is None or provider == "" else provider
 
 
 def _normalize_language(language: str | None, *, default: str | None) -> str | None:
