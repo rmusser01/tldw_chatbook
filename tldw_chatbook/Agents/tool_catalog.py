@@ -229,6 +229,12 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
     GateableTool(
         "update_note_enabled", "note_management_tools", "UpdateNoteTool", "update_note"
     ),
+    GateableTool(
+        "glob_files_enabled", "file_operation_tools", "GlobFiles", "glob_files"
+    ),
+    GateableTool(
+        "grep_files_enabled", "file_operation_tools", "GrepFiles", "grep_files"
+    ),
 )
 
 
