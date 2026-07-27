@@ -102,10 +102,12 @@ class NotesSyncService:
             db: Database instance
             config_path: Path to store sync profiles and configuration
         """
+        from ..config import _get_effective_config_path
+
         self.notes_service = notes_service
         self.db = db
-        self.config_path = (
-            config_path or Path.home() / ".config" / "tldw_cli" / "sync_profiles.json"
+        self.config_path = config_path or (
+            _get_effective_config_path().parent / "sync_profiles.json"
         )
         self.sync_engine = NotesSyncEngine(notes_service, db)
         self.profiles: Dict[str, SyncProfile] = {}

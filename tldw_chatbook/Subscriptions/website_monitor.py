@@ -66,10 +66,12 @@ class WebsiteMonitor:
         Args:
             db: Subscriptions database instance
         """
+        from ..config import _get_effective_config_path
+
         self.db = db
         self.baseline_manager = BaselineManager(db)
         self.feed_monitor = FeedMonitor(RateLimiter(), SecurityValidator())
-        self.feed_cache_dir = Path.home() / ".config" / "tldw_cli" / "feed_cache"
+        self.feed_cache_dir = _get_effective_config_path().parent / "feed_cache"
         self.feed_cache_dir.mkdir(parents=True, exist_ok=True)
 
     async def monitor_website(self, subscription: Dict[str, Any]) -> Dict[str, Any]:

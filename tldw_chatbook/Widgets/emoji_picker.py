@@ -54,17 +54,31 @@ ProcessedEmoji = Dict[
 ]  # {'char': str, 'name': str, 'category': str, 'aliases': List[str]}
 
 # Storage for recently used emojis
-RECENT_EMOJIS_FILE = Path.home() / ".config" / "tldw_cli" / "recent_emojis.json"
 MAX_RECENT_EMOJIS = 30
+
+
+def _recent_emojis_path() -> Path:
+    """Return the recent-emojis file path, honoring ``TLDW_CONFIG_PATH``.
+
+    Resolved lazily (at call time, not import time) via
+    ``config._get_effective_config_path()`` -- the same directory the
+    config file itself lives in -- rather than a ``Path.home()/".config"/
+    "tldw_cli"`` literal that always lands in the real config directory
+    regardless of which profile is active (TASK-865).
+    """
+    from ..config import _get_effective_config_path
+
+    return _get_effective_config_path().parent / "recent_emojis.json"
 
 
 def load_recent_emojis() -> List[str]:
     """Load recently used emojis from file."""
     try:
-        if RECENT_EMOJIS_FILE.exists():
+        recent_emojis_file = _recent_emojis_path()
+        if recent_emojis_file.exists():
             import json
 
-            with open(RECENT_EMOJIS_FILE, "r", encoding="utf-8") as f:
+            with open(recent_emojis_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 return data.get("recent", [])[:MAX_RECENT_EMOJIS]
     except Exception:
@@ -75,8 +89,9 @@ def load_recent_emojis() -> List[str]:
 def save_recent_emoji(emoji_char: str) -> None:
     """Save an emoji to the recently used list."""
     try:
+        recent_emojis_file = _recent_emojis_path()
         # Ensure config directory exists
-        RECENT_EMOJIS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        recent_emojis_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Load existing recent emojis
         recent = load_recent_emojis()
@@ -94,7 +109,7 @@ def save_recent_emoji(emoji_char: str) -> None:
         # Save back
         import json
 
-        with open(RECENT_EMOJIS_FILE, "w", encoding="utf-8") as f:
+        with open(recent_emojis_file, "w", encoding="utf-8") as f:
             json.dump({"recent": recent}, f, ensure_ascii=False, indent=2)
     except Exception:
         pass  # Fail silently for recent emojis

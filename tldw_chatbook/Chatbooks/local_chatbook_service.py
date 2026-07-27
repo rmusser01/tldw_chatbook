@@ -99,13 +99,9 @@ class LocalChatbookService:
                 return (
                     Path(db_path).expanduser().with_name("tldw_chatbook_chatbooks.json")
                 )
-        return (
-            Path.home()
-            / ".local"
-            / "share"
-            / "tldw_cli"
-            / "tldw_chatbook_chatbooks.json"
-        )
+        from ..Utils.paths import get_user_data_dir
+
+        return get_user_data_dir() / "tldw_chatbook_chatbooks.json"
 
     @staticmethod
     def _utc_now() -> str:

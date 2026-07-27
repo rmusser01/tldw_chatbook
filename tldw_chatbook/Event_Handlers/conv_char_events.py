@@ -4241,7 +4241,9 @@ async def handle_conv_char_export_text_button_pressed(
             filename = f"conversation_{app.current_ccp_conversation_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
         # Save to default export directory
-        export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
+        from ..config import get_user_data_dir
+
+        export_dir = get_user_data_dir() / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
         export_path = export_dir / filename
 
@@ -4302,7 +4304,9 @@ async def handle_conv_char_export_json_button_pressed(
             filename = f"conversation_{app.current_ccp_conversation_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
         # Save to default export directory
-        export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
+        from ..config import get_user_data_dir
+
+        export_dir = get_user_data_dir() / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
         export_path = export_dir / filename
 
@@ -4353,7 +4357,9 @@ async def handle_ccp_export_character_button_pressed(
             char_data.get("name", "character").replace("/", "_").replace("\\", "_")
         )
 
-        export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
+        from ..config import get_user_data_dir
+
+        export_dir = get_user_data_dir() / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
 
         # Always export as JSON

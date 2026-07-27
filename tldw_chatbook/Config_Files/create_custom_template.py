@@ -6,12 +6,14 @@ This will create/update the user's personal note_templates.json file.
 """
 
 import json
-from pathlib import Path
+
+from tldw_chatbook.config import _get_effective_config_path
 
 
 def create_custom_template():
-    # User config path
-    user_config_dir = Path.home() / ".config" / "tldw_cli"
+    # User config path -- honors TLDW_CONFIG_PATH so this writes to the same
+    # file the running app's profile actually reads (TASK-865).
+    user_config_dir = _get_effective_config_path().parent
     user_templates_path = user_config_dir / "note_templates.json"
 
     # Create directory if needed
