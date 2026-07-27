@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import multiprocessing
 import sqlite3
 import threading
 import traceback
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
@@ -39,6 +41,19 @@ CALLER_ID = UUID("20000000-0000-0000-8000-000000000002")
 
 class _ControlFlow(BaseException):
     """Test-only caller control-flow signal."""
+
+
+class _HostileSQLiteErrorCode(sqlite3.IntegrityError):
+    """Integrity error whose extended-code lookup raises a supplied signal."""
+
+    def __init__(self, signal: BaseException) -> None:
+        super().__init__("UNIQUE constraint failed: secret-hostile-code-message")
+        self._signal = signal
+
+    def __getattribute__(self, name: str) -> Any:
+        if name == "sqlite_errorcode":
+            raise object.__getattribute__(self, "_signal")
+        return super().__getattribute__(name)
 
 
 class _SequenceCallable:
@@ -149,6 +164,234 @@ def _external_execute(
         connection.execute(statement, parameters)
     finally:
         connection.close()
+
+
+def _install_insert_constraint_trigger(
+    database_path: Path,
+    constraint_kind: str,
+) -> None:
+    scripts = {
+        "notnull": """
+            CREATE TABLE constraint_probe(value TEXT NOT NULL);
+            CREATE TRIGGER force_profile_insert_constraint
+            BEFORE INSERT ON tts_generation_profiles
+            BEGIN
+                INSERT INTO constraint_probe(value) VALUES (NULL);
+            END;
+        """,
+        "check": """
+            CREATE TABLE constraint_probe(value INTEGER CHECK(value > 0));
+            CREATE TRIGGER force_profile_insert_constraint
+            BEFORE INSERT ON tts_generation_profiles
+            BEGIN
+                INSERT INTO constraint_probe(value) VALUES (-1);
+            END;
+        """,
+        "trigger": """
+            CREATE TRIGGER force_profile_insert_constraint
+            BEFORE INSERT ON tts_generation_profiles
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'UNIQUE constraint failed: secret-real-trigger-message'
+                );
+            END;
+        """,
+        "datatype": """
+            CREATE TABLE constraint_probe(value INTEGER) STRICT;
+            CREATE TRIGGER force_profile_insert_constraint
+            BEFORE INSERT ON tts_generation_profiles
+            BEGIN
+                INSERT INTO constraint_probe(value) VALUES ('not-an-integer');
+            END;
+        """,
+        "rowid": """
+            CREATE TABLE constraint_probe(value TEXT);
+            INSERT INTO constraint_probe(rowid, value) VALUES (1, 'first');
+            CREATE TRIGGER force_profile_insert_constraint
+            BEFORE INSERT ON tts_generation_profiles
+            BEGIN
+                INSERT INTO constraint_probe(rowid, value) VALUES (1, 'duplicate');
+            END;
+        """,
+        "foreignkey": """
+            CREATE TABLE constraint_parent(id INTEGER PRIMARY KEY);
+            CREATE TABLE constraint_probe(
+                parent_id INTEGER REFERENCES constraint_parent(id)
+            );
+            CREATE TRIGGER force_profile_insert_constraint
+            BEFORE INSERT ON tts_generation_profiles
+            BEGIN
+                INSERT INTO constraint_probe(parent_id) VALUES (1);
+            END;
+        """,
+    }
+    connection = sqlite3.connect(database_path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.executescript(scripts[constraint_kind])
+    finally:
+        connection.close()
+
+
+def _assert_real_insert_constraint_code(
+    database_path: Path,
+    expected_code: int,
+) -> None:
+    connection = sqlite3.connect(database_path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        with pytest.raises(sqlite3.IntegrityError) as caught:
+            connection.execute(
+                """
+                INSERT INTO tts_generation_profiles (
+                    profile_id,
+                    display_name,
+                    normalized_name,
+                    provider_id,
+                    model_id,
+                    voice_id,
+                    response_format,
+                    speed,
+                    options_json,
+                    revision,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "f0000000-0000-4000-8000-00000000000f",
+                    "Constraint Probe",
+                    "constraint probe",
+                    "openai",
+                    "tts-1",
+                    "alloy",
+                    "mp3",
+                    1.0,
+                    "{}",
+                    1,
+                    CREATED_AT.isoformat(),
+                    CREATED_AT.isoformat(),
+                ),
+            )
+        assert caught.value.sqlite_errorcode == expected_code
+    finally:
+        connection.close()
+
+
+def _install_no_action_delete_probe(
+    database_path: Path,
+    profile_id: UUID,
+) -> None:
+    connection = sqlite3.connect(database_path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            """
+            CREATE TABLE delete_constraint_probe(
+                profile_id TEXT NOT NULL
+                    REFERENCES tts_generation_profiles(profile_id)
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO delete_constraint_probe(profile_id) VALUES (?)",
+            (str(profile_id),),
+        )
+    finally:
+        connection.close()
+
+
+def _assert_real_delete_constraint_code(
+    database_path: Path,
+    profile_id: UUID,
+    expected_code: int,
+) -> None:
+    connection = sqlite3.connect(database_path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        with pytest.raises(sqlite3.IntegrityError) as caught:
+            connection.execute(
+                "DELETE FROM tts_generation_profiles WHERE profile_id = ?",
+                (str(profile_id),),
+            )
+        assert caught.value.sqlite_errorcode == expected_code
+    finally:
+        connection.close()
+
+
+def _spawn_profile_collision(
+    database_path: str,
+    connection: Connection,
+    release: Any,
+    display_name: str,
+) -> None:
+    async def create_after_release() -> tuple[object, ...]:
+        repository = profile_repository.TTSProfileRepository(Path(database_path))
+        opened = False
+        try:
+            await repository.open()
+            opened = True
+            connection.send(("ready", None))
+            if not release.wait(10.0):
+                raise TimeoutError("parent did not release profile collision")
+            try:
+                created = await repository.create_profile(
+                    _draft(display_name),
+                    profile_id=GENERATED_ID,
+                )
+            except ProfileRepositoryError as error:
+                return (
+                    "failure",
+                    error.code,
+                    str(error),
+                    error.__cause__ is None,
+                    error.__context__ is None,
+                    tuple(str(note) for note in getattr(error, "__notes__", ())),
+                )
+            return (
+                "success",
+                str(created.value.profile_id),
+                created.value.normalized_name,
+            )
+        finally:
+            if opened:
+                await repository.close()
+
+    try:
+        outcome = asyncio.run(create_after_release())
+        connection.send(("outcome", outcome))
+    except BaseException as error:
+        try:
+            connection.send(("child_error", type(error).__name__))
+        except (BrokenPipeError, EOFError, OSError):
+            pass
+        raise
+    finally:
+        connection.close()
+
+
+async def _initialize_empty_repository(database_path: Path) -> None:
+    async with _opened_repository(database_path) as repository:
+        assert (await repository.list_profiles()).value.total == 0
+
+
+async def _assert_spawned_race_store_is_usable(database_path: Path) -> None:
+    async with _opened_repository(database_path) as repository:
+        page = (await repository.list_profiles()).value
+        assert page.total == 1
+        assert len(page.profiles) == 1
+        winner = page.profiles[0]
+        assert winner.profile_id == GENERATED_ID
+        assert winner.normalized_name == "race name"
+        assert winner.revision == 1
+
+        recovered = await repository.create_profile(
+            _draft("After Race"),
+            profile_id=CALLER_ID,
+        )
+        assert recovered.value.profile_id == CALLER_ID
+        assert (await repository.get_profile(CALLER_ID)).value == recovered.value
 
 
 def _fail_next_commit(
@@ -587,6 +830,205 @@ async def test_create_conflicts_do_not_overwrite_uuid_or_normalized_name(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("constraint_kind", "expected_sqlite_code"),
+    [
+        ("notnull", 1299),
+        ("check", 275),
+        ("trigger", 1811),
+        ("datatype", 3091),
+        ("rowid", 2579),
+        ("foreignkey", 787),
+    ],
+)
+async def test_create_maps_real_unexpected_extended_constraints_to_operation_failed(
+    tmp_path: Path,
+    constraint_kind: str,
+    expected_sqlite_code: int,
+) -> None:
+    database_path = tmp_path / f"secret-{constraint_kind}-constraint.sqlite3"
+    trigger_secret = "secret-real-trigger-message"
+
+    async with _opened_repository(database_path) as repository:
+        await asyncio.to_thread(
+            _install_insert_constraint_trigger,
+            database_path,
+            constraint_kind,
+        )
+        await asyncio.to_thread(
+            _assert_real_insert_constraint_code,
+            database_path,
+            expected_sqlite_code,
+        )
+
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.create_profile(
+                _draft("Unexpected Constraint"),
+                profile_id=GENERATED_ID,
+            )
+
+        _assert_safe_error(
+            caught.value,
+            "operation_failed",
+            trigger_secret,
+            str(database_path),
+        )
+        assert (await repository.list_profiles()).value.total == 0
+
+        await asyncio.to_thread(
+            _external_execute,
+            database_path,
+            "DROP TRIGGER force_profile_insert_constraint",
+        )
+        recovered = await repository.create_profile(
+            _draft("Recovered"),
+            profile_id=GENERATED_ID,
+        )
+        assert recovered.value.profile_id == GENERATED_ID
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "sqlite_errorcode", "expected_repository_code"),
+    [
+        ("create", 2067, "conflict"),
+        ("create", 1555, "conflict"),
+        ("create", 787, "operation_failed"),
+        ("update", 2067, "conflict"),
+        ("update", 1555, "conflict"),
+        ("update", 787, "operation_failed"),
+        ("delete", 787, "conflict"),
+        ("delete", 2067, "operation_failed"),
+        ("delete", 1555, "operation_failed"),
+        ("create", 19, "operation_failed"),
+        ("create", 25363, "operation_failed"),
+        ("create", None, "operation_failed"),
+    ],
+)
+async def test_integrity_extended_code_classification_is_operation_specific(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    sqlite_errorcode: int | None,
+    expected_repository_code: str,
+) -> None:
+    database_path = tmp_path / "secret-constructed-constraint.sqlite3"
+    profile_id = UUID("f1000000-0000-4000-8000-00000000000f")
+    secret = "secret-constructed-constraint-message"
+    error = sqlite3.IntegrityError(f"UNIQUE constraint failed: {secret}")
+    if sqlite_errorcode is not None:
+        setattr(error, "sqlite_errorcode", sqlite_errorcode)
+
+    async with _opened_repository(database_path) as repository:
+        if operation != "create":
+            await repository.create_profile(
+                _draft("Existing"),
+                profile_id=profile_id,
+            )
+
+        def fail_encode(_profile: TTSGenerationProfile) -> dict[str, object]:
+            raise error
+
+        def fail_get(
+            _connection: sqlite3.Connection,
+            _profile_id: UUID,
+        ) -> TTSGenerationProfile:
+            raise error
+
+        with monkeypatch.context() as patch:
+            if operation in {"create", "update"}:
+                patch.setattr(profile_repository, "encode_profile", fail_encode)
+            else:
+                patch.setattr(repository, "_worker_get_profile", fail_get)
+
+            with pytest.raises(ProfileRepositoryError) as caught:
+                if operation == "create":
+                    await repository.create_profile(
+                        _draft("Injected Create"),
+                        profile_id=profile_id,
+                    )
+                elif operation == "update":
+                    await repository.update_profile(
+                        profile_id,
+                        1,
+                        _draft("Injected Update"),
+                    )
+                else:
+                    await repository.delete_profile(profile_id)
+
+        _assert_safe_error(
+            caught.value,
+            expected_repository_code,
+            secret,
+            str(database_path),
+        )
+        page = (await repository.list_profiles()).value
+        assert page.total == (0 if operation == "create" else 1)
+
+
+@pytest.mark.asyncio
+async def test_hostile_integrity_error_code_maps_safely_without_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "secret-hostile-error-code.sqlite3"
+    secret = "secret-hostile-error-code-context"
+    error = _HostileSQLiteErrorCode(ValueError(secret))
+
+    async with _opened_repository(database_path) as repository:
+
+        def fail_encode(_profile: TTSGenerationProfile) -> dict[str, object]:
+            raise error
+
+        with monkeypatch.context() as patch:
+            patch.setattr(profile_repository, "encode_profile", fail_encode)
+            with pytest.raises(ProfileRepositoryError) as caught:
+                await repository.create_profile(
+                    _draft("Hostile Code"),
+                    profile_id=GENERATED_ID,
+                )
+
+        _assert_safe_error(
+            caught.value,
+            "operation_failed",
+            secret,
+            str(database_path),
+        )
+        assert (await repository.list_profiles()).value.total == 0
+
+
+@pytest.mark.asyncio
+async def test_integrity_error_code_control_flow_is_preserved_after_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    signal = _ControlFlow()
+    error = _HostileSQLiteErrorCode(signal)
+
+    async with _opened_repository(database_path) as repository:
+
+        def fail_encode(_profile: TTSGenerationProfile) -> dict[str, object]:
+            raise error
+
+        with monkeypatch.context() as patch:
+            patch.setattr(profile_repository, "encode_profile", fail_encode)
+            with pytest.raises(_ControlFlow) as caught:
+                await repository.create_profile(
+                    _draft("Control Flow Code"),
+                    profile_id=GENERATED_ID,
+                )
+
+        assert caught.value is signal
+        assert (await repository.list_profiles()).value.total == 0
+        recovered = await repository.create_profile(
+            _draft("Control Flow Code"),
+            profile_id=GENERATED_ID,
+        )
+        assert recovered.value.profile_id == GENERATED_ID
+
+
+@pytest.mark.asyncio
 async def test_get_missing_and_corrupt_rows_fail_with_safe_specific_codes(
     tmp_path: Path,
 ) -> None:
@@ -943,7 +1385,7 @@ async def test_delete_rejects_corrupt_target_without_discarding_it(
 
 
 @pytest.mark.asyncio
-async def test_foreign_key_restricted_delete_maps_to_conflict_without_policy(
+async def test_foreign_key_restricted_delete_trigger_maps_to_conflict_for_assignment(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "profiles.sqlite3"
@@ -986,11 +1428,153 @@ async def test_foreign_key_restricted_delete_maps_to_conflict_without_policy(
                 encoded["updated_at"],
             ),
         )
+        await asyncio.to_thread(
+            _assert_real_delete_constraint_code,
+            database_path,
+            profile_id,
+            1811,
+        )
 
         with pytest.raises(ProfileRepositoryError) as conflict:
             await repository.delete_profile(profile_id)
 
         _assert_safe_error(conflict.value, "conflict")
+        assert (await repository.get_profile(profile_id)).value == profile
+
+
+@pytest.mark.asyncio
+async def test_foreign_key_no_action_delete_maps_to_conflict(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    profile_id = UUID("92500000-0000-4000-8000-000000000009")
+
+    async with _opened_repository(database_path) as repository:
+        profile = (
+            await repository.create_profile(
+                _draft("No Action Assigned"),
+                profile_id=profile_id,
+            )
+        ).value
+        await asyncio.to_thread(
+            _install_no_action_delete_probe,
+            database_path,
+            profile_id,
+        )
+        await asyncio.to_thread(
+            _assert_real_delete_constraint_code,
+            database_path,
+            profile_id,
+            787,
+        )
+
+        with pytest.raises(ProfileRepositoryError) as conflict:
+            await repository.delete_profile(profile_id)
+
+        _assert_safe_error(conflict.value, "conflict")
+        assert (await repository.get_profile(profile_id)).value == profile
+
+        await asyncio.to_thread(
+            _external_execute,
+            database_path,
+            "DROP TABLE delete_constraint_probe",
+        )
+        assert (await repository.delete_profile(profile_id)).value is None
+
+
+@pytest.mark.asyncio
+async def test_unrelated_delete_trigger_maps_to_operation_failed_without_assignment(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "secret-unrelated-delete-trigger.sqlite3"
+    profile_id = UUID("92600000-0000-4000-8000-000000000009")
+    secret = "secret-unrelated-delete-trigger-message"
+
+    async with _opened_repository(database_path) as repository:
+        profile = (
+            await repository.create_profile(
+                _draft("Unrelated Trigger"),
+                profile_id=profile_id,
+            )
+        ).value
+        await asyncio.to_thread(
+            _external_execute,
+            database_path,
+            f"""
+            CREATE TRIGGER force_profile_delete_constraint
+            BEFORE DELETE ON tts_generation_profiles
+            BEGIN
+                SELECT RAISE(ABORT, 'FOREIGN KEY constraint failed: {secret}');
+            END
+            """,
+        )
+        await asyncio.to_thread(
+            _assert_real_delete_constraint_code,
+            database_path,
+            profile_id,
+            1811,
+        )
+
+        with pytest.raises(ProfileRepositoryError) as failed:
+            await repository.delete_profile(profile_id)
+
+        _assert_safe_error(
+            failed.value,
+            "operation_failed",
+            secret,
+            str(database_path),
+        )
+        assert (await repository.get_profile(profile_id)).value == profile
+
+        await asyncio.to_thread(
+            _external_execute,
+            database_path,
+            "DROP TRIGGER force_profile_delete_constraint",
+        )
+        assert (await repository.delete_profile(profile_id)).value is None
+
+
+@pytest.mark.asyncio
+async def test_delete_trigger_post_check_failure_maps_safely_to_operation_failed(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "secret-delete-post-check.sqlite3"
+    profile_id = UUID("92700000-0000-4000-8000-000000000009")
+    secret = "secret-delete-post-check-trigger"
+
+    async with _opened_repository(database_path) as repository:
+        profile = (
+            await repository.create_profile(
+                _draft("Post Check Failure"),
+                profile_id=profile_id,
+            )
+        ).value
+        await asyncio.to_thread(
+            _external_execute,
+            database_path,
+            "DROP TABLE character_tts_assignments",
+        )
+        await asyncio.to_thread(
+            _external_execute,
+            database_path,
+            f"""
+            CREATE TRIGGER force_profile_delete_constraint
+            BEFORE DELETE ON tts_generation_profiles
+            BEGIN
+                SELECT RAISE(ABORT, '{secret}');
+            END
+            """,
+        )
+
+        with pytest.raises(ProfileRepositoryError) as failed:
+            await repository.delete_profile(profile_id)
+
+        _assert_safe_error(
+            failed.value,
+            "operation_failed",
+            secret,
+            str(database_path),
+        )
         assert (await repository.get_profile(profile_id)).value == profile
 
 
@@ -1254,50 +1838,83 @@ async def test_hostile_codec_failure_is_recreated_without_context(
         )
 
 
-@pytest.mark.asyncio
-async def test_two_open_repositories_resolve_sqlite_constraint_race_safely(
+@pytest.mark.parametrize("attempt", range(5))
+def test_spawned_repositories_resolve_sqlite_constraint_race_safely(
     tmp_path: Path,
+    attempt: int,
 ) -> None:
-    database_path = tmp_path / "profiles.sqlite3"
-    first = profile_repository.TTSProfileRepository(
-        database_path,
-        _clock=lambda: CREATED_AT,
-        _uuid_factory=lambda: GENERATED_ID,
-    )
-    second = profile_repository.TTSProfileRepository(
-        database_path,
-        _clock=lambda: CREATED_AT,
-        _uuid_factory=lambda: CALLER_ID,
-    )
-    await first.open()
-    await second.open()
-    try:
-        outcomes = await asyncio.gather(
-            first.create_profile(
-                _draft("Ｒａｃｅ Ｎａｍｅ"),
-                profile_id=GENERATED_ID,
-            ),
-            second.create_profile(
-                _draft("race name"),
-                profile_id=CALLER_ID,
-            ),
-            return_exceptions=True,
-        )
+    database_path = tmp_path / f"profiles-{attempt}.sqlite3"
+    asyncio.run(_initialize_empty_repository(database_path))
+    context = multiprocessing.get_context("spawn")
+    release = context.Event()
+    display_names = ("Ｒａｃｅ Ｎａｍｅ", "race name")
+    receivers: list[Connection] = []
+    child_connections: list[Connection] = []
+    started_processes: list[Any] = []
+    exitcodes: list[int | None] = []
+    outcomes: list[tuple[object, ...]] = []
 
-        successes = [
-            outcome for outcome in outcomes if type(outcome) is ProfileStoreResult
-        ]
-        failures = [
-            outcome for outcome in outcomes if type(outcome) is ProfileRepositoryError
-        ]
-        assert len(successes) == len(failures) == 1
-        _assert_safe_error(cast(ProfileRepositoryError, failures[0]), "conflict")
-        winning_page = (await first.list_profiles()).value
-        assert winning_page.total == 1
-        assert winning_page.profiles[0].normalized_name == "race name"
+    try:
+        for display_name in display_names:
+            receiver, child_connection = context.Pipe(duplex=False)
+            process = context.Process(
+                target=_spawn_profile_collision,
+                args=(
+                    str(database_path),
+                    child_connection,
+                    release,
+                    display_name,
+                ),
+            )
+            receivers.append(receiver)
+            child_connections.append(child_connection)
+            process.start()
+            started_processes.append(process)
+            child_connection.close()
+
+        for receiver in receivers:
+            assert receiver.poll(15.0), "spawned repository did not report ready"
+            assert receiver.recv() == ("ready", None)
+
+        release.set()
+        for receiver in receivers:
+            assert receiver.poll(15.0), "spawned repository did not report outcome"
+            message = receiver.recv()
+            assert message[0] == "outcome", message
+            outcomes.append(cast(tuple[object, ...], message[1]))
     finally:
-        await first.close()
-        await second.close()
+        release.set()
+        for child_connection in child_connections:
+            child_connection.close()
+        for process in started_processes:
+            process.join(10.0)
+            if process.is_alive():
+                process.terminate()
+                process.join(5.0)
+            if process.is_alive():
+                process.kill()
+                process.join(5.0)
+            exitcodes.append(process.exitcode)
+        for receiver in receivers:
+            receiver.close()
+        for process in started_processes:
+            process.close()
+
+    assert exitcodes == [0, 0]
+    successes = [outcome for outcome in outcomes if outcome[0] == "success"]
+    failures = [outcome for outcome in outcomes if outcome[0] == "failure"]
+    assert successes == [("success", str(GENERATED_ID), "race name")]
+    assert failures == [
+        (
+            "failure",
+            "conflict",
+            "TTS profile repository failed: conflict",
+            True,
+            True,
+            (),
+        )
+    ]
+    asyncio.run(_assert_spawned_race_store_is_usable(database_path))
 
 
 @pytest.mark.asyncio

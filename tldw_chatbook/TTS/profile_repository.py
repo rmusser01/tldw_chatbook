@@ -10,7 +10,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Generic, TypeVar, cast
+from typing import Generic, Literal, TypeVar, cast
 from unicodedata import category as _unicode_category
 from unicodedata import normalize as _unicode_normalize
 from uuid import UUID, uuid4
@@ -42,6 +42,13 @@ _MAX_NORMALIZED_SEARCH_CHARACTERS = 512
 _MAX_NORMALIZED_SEARCH_BYTES = 2_048
 _UNSAFE_SEARCH_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _unicode_ord = ord
+# SQLite extended result codes are ABI-stable.  Keeping the exact values here
+# also supports Python builds that do not expose every named sqlite3 constant.
+_SQLITE_CONSTRAINT_FOREIGNKEY = 787
+_SQLITE_CONSTRAINT_PRIMARYKEY = 1_555
+_SQLITE_CONSTRAINT_TRIGGER = 1_811
+_SQLITE_CONSTRAINT_UNIQUE = 2_067
+_TransactionOperation = Literal["create", "read", "update", "delete"]
 _PROFILE_SELECT = """
 SELECT
     profile_id,
@@ -175,6 +182,63 @@ def _validate_page_offset(value: object) -> int:
 
 def _escape_like_literal(value: str) -> str:
     return value.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+
+
+def _read_sqlite_errorcode(error: sqlite3.IntegrityError) -> int | None:
+    """Read one exact extended result code without inspecting error text."""
+
+    code: object = None
+    code_error: BaseException | None = None
+    try:
+        code = error.sqlite_errorcode
+    except BaseException as caught:
+        code_error = caught
+
+    if code_error is not None:
+        if not isinstance(code_error, Exception):
+            raise code_error
+        return None
+    if type(code) is not int:
+        return None
+    return cast(int, code)
+
+
+def _profile_has_assignment(
+    connection: sqlite3.Connection,
+    profile_id: UUID | None,
+) -> bool | None:
+    """Check one schema-owned delete restriction, failing closed."""
+
+    inspection_error: BaseException | None = None
+    assignment_exists: bool | None = None
+    try:
+        if type(profile_id) is not UUID:
+            raise ValueError
+        row = connection.execute(
+            """
+            SELECT EXISTS(
+                SELECT 1
+                FROM character_tts_assignments
+                WHERE profile_id = ?
+            )
+            """,
+            (encode_uuid(profile_id),),
+        ).fetchone()
+        if (
+            row is not None
+            and len(row) == 1
+            and type(row[0]) is int
+            and row[0] in (0, 1)
+        ):
+            assignment_exists = row[0] == 1
+    except BaseException as error:
+        inspection_error = error
+
+    if inspection_error is not None:
+        if not isinstance(inspection_error, Exception):
+            raise inspection_error
+        return None
+    return assignment_exists
 
 
 def _fresh_repository_error(
@@ -712,8 +776,8 @@ class TTSProfileRepository:
         return self._worker_transaction(
             connection,
             create,
+            operation_kind="create",
             immediate=True,
-            constraint_code="conflict",
         )
 
     def _worker_get_profile(
@@ -770,6 +834,7 @@ class TTSProfileRepository:
         return self._worker_transaction(
             connection,
             read_page,
+            operation_kind="read",
             immediate=False,
         )
 
@@ -830,8 +895,8 @@ class TTSProfileRepository:
         return self._worker_transaction(
             connection,
             update,
+            operation_kind="update",
             immediate=True,
-            constraint_code="conflict",
         )
 
     def _worker_delete_profile(
@@ -853,8 +918,9 @@ class TTSProfileRepository:
         self._worker_transaction(
             connection,
             delete,
+            operation_kind="delete",
             immediate=True,
-            constraint_code="conflict",
+            delete_profile_id=profile_id,
         )
 
     def _worker_require_round_trip(
@@ -879,8 +945,9 @@ class TTSProfileRepository:
         connection: sqlite3.Connection,
         operation: Callable[[], _T],
         *,
+        operation_kind: _TransactionOperation,
         immediate: bool,
-        constraint_code: str | None = None,
+        delete_profile_id: UUID | None = None,
     ) -> _T:
         body_error: BaseException | None = None
         value: _T | None = None
@@ -912,10 +979,44 @@ class TTSProfileRepository:
             except BaseException as error:
                 cleanup_error = error
 
-        if constraint_code is not None and isinstance(
-            body_error, sqlite3.IntegrityError
-        ):
-            body_error = _repository_error(constraint_code)
+        if isinstance(body_error, sqlite3.IntegrityError):
+            classification_error: BaseException | None = None
+            sqlite_errorcode: int | None = None
+            try:
+                sqlite_errorcode = _read_sqlite_errorcode(body_error)
+                expected_conflict = (
+                    operation_kind in ("create", "update")
+                    and sqlite_errorcode
+                    in (
+                        _SQLITE_CONSTRAINT_PRIMARYKEY,
+                        _SQLITE_CONSTRAINT_UNIQUE,
+                    )
+                ) or (
+                    operation_kind == "delete"
+                    and sqlite_errorcode == _SQLITE_CONSTRAINT_FOREIGNKEY
+                )
+                if (
+                    not expected_conflict
+                    and operation_kind == "delete"
+                    and sqlite_errorcode == _SQLITE_CONSTRAINT_TRIGGER
+                    and rollback_error is None
+                ):
+                    expected_conflict = (
+                        _profile_has_assignment(
+                            connection,
+                            delete_profile_id,
+                        )
+                        is True
+                    )
+            except BaseException as error:
+                classification_error = error
+
+            if classification_error is not None:
+                body_error = classification_error
+            else:
+                body_error = _repository_error(
+                    "conflict" if expected_conflict else "operation_failed"
+                )
         _raise_with_cleanup_precedence(
             body_error,
             rollback_error,
