@@ -40,6 +40,7 @@ from .provider_model_resolution import (
 )
 from .settings_config_models import SettingsCategoryId
 from ...Chat.chat_persistence_service import ChatPersistenceService
+from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import ConsoleChatController
 from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
     console_attachable_dictionaries,
@@ -297,6 +298,9 @@ from ...Widgets.Console import (
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
+from ...Widgets.Console.console_citation_sources_modal import (
+    selected_valid_evidence_ordinals,
+)
 from ...Widgets.Console.console_generation_card import (
     ConsoleGenerationCardSpec,
     generation_card_signature,
@@ -2145,6 +2149,11 @@ class ChatScreen(BaseAppScreen):
         self._console_transcript_sync_timer: Any | None = None
         self._console_sync_in_progress = False
         self._console_sync_requested = False
+        self._console_citation_counts: dict[str, int] = {}
+        self._console_citation_input_signature: (
+            tuple[str | None, tuple[tuple[str, str, str, str], ...]] | None
+        ) = None
+        self._console_citation_request_generation = 0
         self._last_native_transcript_refresh_key: tuple[int, tuple[Any, ...]] | None = (
             None
         )
@@ -10972,6 +10981,157 @@ class ChatScreen(BaseAppScreen):
             return []
         return store.messages_for_session(store.active_session_id)
 
+    @staticmethod
+    def _console_citation_message_body(message: Any) -> str:
+        """Return the exact currently selected body for one Console message."""
+        variants = getattr(message, "variants", None)
+        if variants is not None:
+            try:
+                body = variants.current.content
+            except (AttributeError, IndexError):
+                body = getattr(message, "content", "")
+        else:
+            body = getattr(message, "content", "")
+        return body if isinstance(body, str) else ""
+
+    def _console_citation_signature(
+        self,
+        messages: list[Any],
+    ) -> tuple[str | None, tuple[tuple[str, str, str, str], ...]]:
+        """Return the active-session signature for eligible citation lookups."""
+        store = self._ensure_console_chat_store()
+        eligible: list[tuple[str, str, str, str]] = []
+        for message in messages:
+            if (
+                getattr(message, "role", None) is not ConsoleMessageRole.ASSISTANT
+                or getattr(message, "status", None) != "complete"
+            ):
+                continue
+            native_message_id = getattr(message, "id", None)
+            persisted_message_id = getattr(message, "persisted_message_id", None)
+            if (
+                not isinstance(native_message_id, str)
+                or not native_message_id
+                or not isinstance(persisted_message_id, str)
+                or not persisted_message_id
+            ):
+                continue
+            eligible.append(
+                (
+                    native_message_id,
+                    persisted_message_id,
+                    self._console_citation_message_body(message),
+                    "complete",
+                )
+            )
+        return (store.active_session_id, tuple(eligible))
+
+    def _console_citation_repository(self) -> Any | None:
+        """Return the active local repository, failing closed on DB mismatch."""
+        repository = getattr(
+            self.app_instance,
+            "citation_trace_repository",
+            None,
+        )
+        if repository is None:
+            return None
+        app_db = getattr(self.app_instance, "chachanotes_db", None)
+        if (
+            app_db is not None
+            and getattr(repository, "db", None) is not app_db
+        ):
+            return None
+        return repository
+
+    def _sync_console_citation_count_discovery(self, messages: list[Any]) -> None:
+        """Dispatch one count lookup worker when eligible inputs change."""
+        signature = self._console_citation_signature(messages)
+        if signature == self._console_citation_input_signature:
+            return
+
+        self._console_citation_input_signature = signature
+        self._console_citation_request_generation += 1
+        generation = self._console_citation_request_generation
+        self._console_citation_counts = {}
+        repository = self._console_citation_repository()
+        if repository is None or not signature[1]:
+            return
+        self.run_worker(
+            self._discover_console_citation_counts(
+                repository,
+                signature,
+                generation,
+            ),
+            exclusive=True,
+            group="console-citation-counts",
+        )
+
+    @staticmethod
+    def _read_console_citation_counts(
+        repository: Any,
+        eligible: tuple[tuple[str, str, str, str], ...],
+    ) -> dict[str, int]:
+        """Read verified non-governed trace metadata into integer counts."""
+        counts: dict[str, int] = {}
+        for native_message_id, persisted_message_id, current_body, _status in eligible:
+            try:
+                result = repository.get_active_trace_for_current_message(
+                    persisted_message_id,
+                    current_body,
+                )
+                summary = getattr(result, "summary", None)
+                if (
+                    getattr(result, "state", None)
+                    is not ActiveCitationTraceState.ACTIVE
+                    or summary is None
+                    or not repository.verify_active_trace_result(result)
+                ):
+                    continue
+                evidence_ordinals = selected_valid_evidence_ordinals(summary.trace)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if evidence_ordinals:
+                counts[native_message_id] = len(evidence_ordinals)
+        return counts
+
+    def _apply_console_citation_counts(
+        self,
+        signature: tuple[str | None, tuple[tuple[str, str, str, str], ...]],
+        generation: int,
+        counts: Mapping[str, int],
+    ) -> bool:
+        """Apply count-only results when their full captured input is current."""
+        if (
+            generation != self._console_citation_request_generation
+            or signature != self._console_citation_input_signature
+            or signature
+            != self._console_citation_signature(self._native_console_messages())
+        ):
+            return False
+        eligible_ids = {item[0] for item in signature[1]}
+        self._console_citation_counts = {
+            message_id: count
+            for message_id, count in counts.items()
+            if message_id in eligible_ids and type(count) is int and count > 0
+        }
+        return True
+
+    async def _discover_console_citation_counts(
+        self,
+        repository: Any,
+        signature: tuple[str | None, tuple[tuple[str, str, str, str], ...]],
+        generation: int,
+    ) -> None:
+        """Discover citation footer counts off-loop and refresh current rows."""
+        counts = await asyncio.to_thread(
+            self._read_console_citation_counts,
+            repository,
+            signature[1],
+        )
+        if not self._apply_console_citation_counts(signature, generation, counts):
+            return
+        await self._sync_native_console_chat_ui()
+
     def _native_console_transcript_fingerprint(
         self, messages: list[Any]
     ) -> tuple[Any, ...]:
@@ -11019,6 +11179,7 @@ class ChatScreen(BaseAppScreen):
 
         messages = self._native_console_messages()
         if transcript is not None:
+            self._sync_console_citation_count_discovery(messages)
             message_ids = {message.id for message in messages}
             controller = self._console_chat_controller
             for message_id in tuple(self._console_original_attempt_previews):
@@ -11043,6 +11204,7 @@ class ChatScreen(BaseAppScreen):
                 )
                 self._pending_console_swipe_selection = None
             transcript.set_messages(messages)
+            transcript.set_citation_counts(self._console_citation_counts.copy())
             transcript.set_original_attempt_previews(
                 self._console_original_attempt_previews.copy()
             )
@@ -11122,6 +11284,7 @@ class ChatScreen(BaseAppScreen):
                 # or clears even when the message set is otherwise unchanged.
                 summary_boundary_id,
                 tuple(sorted(self._console_original_attempt_previews.items())),
+                tuple(sorted(self._console_citation_counts.items())),
             )
             if refresh_key != self._last_native_transcript_refresh_key:
                 await transcript.refresh_messages()
