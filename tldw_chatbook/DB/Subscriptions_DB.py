@@ -332,6 +332,32 @@ class SubscriptionsDB(BaseDB):
                 FOREIGN KEY (job_id) REFERENCES subscriptions(id) ON DELETE CASCADE
             );
 
+            -- Per-site scraping configuration (rate limits, headers,
+            -- extraction/change-detection rules) used by SiteConfigManager.
+            -- Owned here, not by CharactersRAGDB: SiteConfigManager always
+            -- points its CharactersRAGDB connection at *this* database's
+            -- file (get_subscriptions_db_path()), so this table has always
+            -- physically lived in the subscriptions database file even
+            -- though it used to be declared -- lazily, at runtime -- by the
+            -- wrong class. Same reasoning as local_watchlist_runs and
+            -- local_watchlist_alert_rules above: a lazily-created table can
+            -- never race an additive migration that needs it to already
+            -- exist, and this is the last such table in this package.
+            -- SiteConfigManager still reads/writes it through its own
+            -- CharactersRAGDB connection (unchanged) -- it now also opens a
+            -- SubscriptionsDB against the same path first, purely so this
+            -- schema (below) is guaranteed to have run.
+            CREATE TABLE IF NOT EXISTS site_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain TEXT UNIQUE NOT NULL,
+                config_data TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_site_configs_domain
+            ON site_configs(domain);
+
             -- Create indices
             CREATE INDEX IF NOT EXISTS idx_subscriptions_priority_active ON subscriptions(priority DESC, is_active, is_paused);
             CREATE INDEX IF NOT EXISTS idx_subscriptions_tags ON subscriptions(tags);
