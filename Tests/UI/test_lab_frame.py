@@ -402,3 +402,85 @@ async def test_screen_level_recompose_repopulates_rail_inspector_and_body(
             screen.query_one(_ProbeBody) is not None
         ), "body missing after screen-level recompose"
         assert screen.body_ready_calls == body_ready_before + 1
+
+
+class _CountingLabScreen(_ProbeLabScreen):
+    """Counts widget writes so an idle refresh can be proven to write nothing."""
+
+    def __init__(self, app_instance, **kwargs):
+        super().__init__(app_instance, chips=(LabStatusChip("servers", "Servers: none running"),), **kwargs)
+        self.header_syncs = 0
+        self.chip_text = "Servers: none running"
+
+    def lab_status_chips(self) -> tuple[LabStatusChip, ...]:
+        return (LabStatusChip("servers", self.chip_text),)
+
+    def lab_header_state(self) -> WorkbenchHeaderState:
+        return WorkbenchHeaderState(
+            title="Probe", subtitle="probe mode", status=self.header_status
+        )
+
+    header_status = "ready"
+
+
+@pytest.mark.asyncio
+async def test_an_idle_refresh_writes_nothing_but_a_changed_value_still_lands(monkeypatch):
+    """`refresh_lab_status` runs on a 2s timer; unchanged values must not repaint.
+
+    Both `Static.update()` and `DestinationHeader.sync_state()` refresh
+    unconditionally, so without the equality guard every tick of a screen
+    where nothing happened repainted the header's three Statics plus every
+    chip and inspector row. Counting `Static.refresh` calls is the oracle:
+    asserting only that the text is correct would pass either way.
+    """
+    _disable_splash_race(monkeypatch)
+    app, screen = _mount(_CountingLabScreen)
+    async with app.run_test() as pilot:
+        await app.push_screen(screen)
+        await pilot.pause()
+        await pilot.pause()
+
+        chip = screen.query_one("#lab-status-chip-servers", Static)
+        writes = {"n": 0}
+        original = chip.update
+
+        def counting_update(*args, **kwargs):
+            writes["n"] += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(chip, "update", counting_update)
+
+        screen.refresh_lab_status()   # seeds the cache
+        screen.refresh_lab_status()   # idle tick
+        screen.refresh_lab_status()   # idle tick
+        idle_writes = writes["n"]
+
+        screen.chip_text = "Servers: 1 running"
+        screen.refresh_lab_status()
+        assert writes["n"] > idle_writes, "a changed chip value was not written"
+        assert chip.renderable == "Servers: 1 running" or str(chip.renderable) == "Servers: 1 running"
+
+        before = writes["n"]
+        screen.refresh_lab_status()
+        assert writes["n"] == before, (
+            f"idle refresh repainted the chip ({writes['n'] - before} extra writes)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_recompose_clears_the_render_cache(monkeypatch):
+    """Stale cache entries after a recompose could skip a write to a fresh widget."""
+    _disable_splash_race(monkeypatch)
+    app, screen = _mount(_CountingLabScreen)
+    async with app.run_test() as pilot:
+        await app.push_screen(screen)
+        await pilot.pause()
+        await pilot.pause()
+        screen.refresh_lab_status()
+        assert screen._last_rendered, "cache never populated"
+        assert screen._last_header_state is not None
+
+        await screen.recompose()
+        await pilot.pause()
+        assert screen._last_rendered == {}, "render cache survived a recompose"
+        assert screen._last_header_state is None

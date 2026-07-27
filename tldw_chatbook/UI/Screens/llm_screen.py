@@ -10,6 +10,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from ..Lab_Modules.lab_server_status import (
+    LabServerRow,
     read_server_rows,
     server_row_id,
     server_row_text,
@@ -74,13 +75,55 @@ class LLMScreen(LabScreen):
         #: body -- so it already survives the teardown; starting a second
         #: one alongside it would be a real leak.
         self._status_poll_started = False
+        #: Server rows snapshotted for the duration of one
+        #: ``refresh_lab_status`` pass; None outside one. See
+        #: :meth:`_current_server_rows`.
+        self._server_rows_snapshot: tuple[LabServerRow, ...] | None = None
+
+    def _current_server_rows(self) -> tuple[LabServerRow, ...]:
+        """Return server liveness, shared across one refresh pass.
+
+        ``refresh_lab_status`` calls three hooks that each need this --
+        ``lab_header_state``, ``lab_status_chips`` and
+        ``lab_inspector_rows``. Reading independently meant three separate
+        ``poll()`` sweeps per tick, and a server exiting between them could
+        render a header badge, a chip count and an inspector row that
+        disagree with each other on the same frame.
+
+        Returns:
+            The snapshot taken by :meth:`refresh_lab_status`, or a fresh
+            read when called outside a refresh (e.g. from ``compose``).
+        """
+        if self._server_rows_snapshot is not None:
+            return self._server_rows_snapshot
+        return read_server_rows(self.app_instance)
+
+    def refresh_lab_status(self) -> None:
+        """Snapshot server liveness once, then refresh through the frame."""
+        self._server_rows_snapshot = read_server_rows(self.app_instance)
+        try:
+            super().refresh_lab_status()
+        finally:
+            self._server_rows_snapshot = None
 
     def lab_header_state(self) -> WorkbenchHeaderState:
-        """Return the Models destination header copy."""
+        """Return the Models destination header copy and live readiness.
+
+        The status is derived, not constant: it reads ``running`` while any
+        local server tracked by :data:`LAB_SERVER_SOURCES` is alive and
+        ``ready`` otherwise. It was hardcoded to ``"ready"``, which made the
+        badge decoration wearing a status label -- it could never change, so
+        it never told the user anything. ``refresh_lab_status`` re-syncs the
+        header on the same poll as the chip, so the two never disagree.
+
+        Returns:
+            Header state whose ``status`` reflects current server liveness.
+        """
+        rows = self._current_server_rows()
         return WorkbenchHeaderState(
             title="Models",
             subtitle="Manage providers, models, and endpoints.",
-            status="ready",
+            status="running" if any(row.running for row in rows) else "ready",
         )
 
     def lab_status_chips(self) -> tuple[LabStatusChip, ...]:
@@ -89,7 +132,7 @@ class LLMScreen(LabScreen):
         Returns:
             A single chip summarising how many local servers are alive.
         """
-        rows = read_server_rows(self.app_instance)
+        rows = self._current_server_rows()
         return (LabStatusChip(chip_id="servers", text=servers_chip_text(rows)),)
 
     def compose_lab_rail(self) -> ComposeResult:
@@ -110,7 +153,7 @@ class LLMScreen(LabScreen):
     def compose_lab_inspector(self) -> ComposeResult:
         """Yield the running-server list."""
         yield Static("Running servers", classes="lab-rail-section")
-        for row in read_server_rows(self.app_instance):
+        for row in self._current_server_rows():
             yield Static(
                 server_row_text(row),
                 id=server_row_id(row.name),
@@ -126,7 +169,7 @@ class LLMScreen(LabScreen):
         """
         return tuple(
             LabInspectorRow(row_id=server_row_id(row.name), text=server_row_text(row))
-            for row in read_server_rows(self.app_instance)
+            for row in self._current_server_rows()
         )
 
     def build_lab_body(self) -> Widget:

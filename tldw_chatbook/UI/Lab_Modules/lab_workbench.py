@@ -21,11 +21,19 @@ from textual.widgets import Button, Static
 from ...Widgets.destination_rail import DestinationRailHandle
 from .lab_rail_layout import LAB_RAIL_INSPECTOR, LAB_RAIL_LEFT, LabRailLayout
 
-#: Width of the expanded catalog rail. Sized to the longest rail label
-#: ("Speech Recognition", 18 characters) plus padding and frame border, and
-#: chosen against Console's observed ~34 -- Console's rail holds conversation
-#: titles, Lab's holds fixed short labels.
-LAB_RAIL_WIDTH = 26
+#: Bounds of the expanded catalog rail, mirroring `#lab-rail` in
+#: features/_lab.tcss. The rail is fractional (`width: 1fr` against the
+#: body's `4fr`) and merely clamped by these: a fixed 26 measured 26 cells at
+#: 80, 120 and 200 columns alike -- 32.5% of an 80-column terminal for a list
+#: whose longest label is 14 characters. Every sibling rail in the app is
+#: fractional (`#mcp-hub-rail` is `3fr` with `min-width: 24`).
+#:
+#: The minimum is sized to the longest rail label across all three Lab modes
+#: ("Speech Recognition", 18 characters) plus padding, border and the
+#: active row's accent bar. Measured, not estimated: at 20 the 15-character
+#: "Download Models" rendered as "Download". Matches `#mcp-hub-rail`.
+LAB_RAIL_MIN_WIDTH = 24
+LAB_RAIL_MAX_WIDTH = 32
 #: Width of the expanded inspector.
 LAB_INSPECTOR_WIDTH = 30
 #: Width of a collapsed rail's handle, matching Console's.

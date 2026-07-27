@@ -160,4 +160,8 @@ async def test_the_footer_advertises_the_mode_keys():
         # `shortcut_text` is the assertable surface; AppFooterStatus has no
         # render() of its own. Existing hint tests use the same property.
         assert "[ / ]" in footer.shortcut_text
-        assert "Switch mode" in footer.shortcut_text
+        # "Move mode focus", not "Switch mode": the action moves focus along
+        # the strip and never navigates -- the adjacent `Enter  Go` hint is
+        # the half that commits. The footer must not promise otherwise.
+        assert "Move mode focus" in footer.shortcut_text
+        assert "Switch mode" not in footer.shortcut_text

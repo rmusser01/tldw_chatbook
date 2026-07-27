@@ -328,6 +328,11 @@ class EvalsScreen(BaseAppScreen):
                     status="ready",
                 ),
                 id="evals-destination-header",
+                # Same one-row header as the other two Lab modes. Without it
+                # this screen keeps the stacked 5-row block and its mode
+                # strip sits four rows below Models', so the chips jump on
+                # every switch.
+                classes="lab-header-inline",
             )
             yield LabModeStrip(active_route="evals", id="lab-mode-strip")
             with Horizontal(
