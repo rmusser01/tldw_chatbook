@@ -746,14 +746,42 @@ class ConsoleChatController:
         return self._run_states.get(session_id) or ConsoleRunState()
 
     def run_states(self) -> dict[str, ConsoleRunState]:
-        """Snapshot copy of every session with a recorded run state (fleet UX, cap count)."""
+        """Raw map snapshot incl. entries for closed sessions.
+
+        This is the UNFILTERED ``self._run_states`` copy -- it can contain
+        orphaned entries for sessions ``ConsoleChatStore.close_session`` has
+        already removed (closing never touches the controller's map). Use
+        ``in_flight_run_count`` (or ``_live_busy_session_ids``) for cap/fleet
+        math; those exclude orphans. This raw snapshot is for callers that
+        want the full recorded history regardless of session lifetime.
+        """
         return dict(self._run_states)
 
+    def _live_busy_session_ids(self) -> list[str]:
+        """Busy session ids that still exist in the store, insertion-ordered.
+
+        Intersects ``self._run_states`` with ``store.sessions()``: a session
+        closed mid-VALIDATING leaves its entry in the map behind (Task 1
+        review finding), and neither cap/fleet math nor the refusal copy's
+        session list may count or name a session that no longer exists.
+        Shared by ``in_flight_run_count`` and ``send_refusal_copy`` so both
+        apply the same live-session filter.
+        """
+        live_ids = {session.id for session in self.store.sessions()}
+        return [
+            sid
+            for sid, state in self._run_states.items()
+            if sid in live_ids and not state.is_send_allowed
+        ]
+
     def in_flight_run_count(self) -> int:
-        """Count of sessions whose recorded run currently disallows a new send."""
-        return sum(
-            1 for state in self._run_states.values() if not state.is_send_allowed
-        )
+        """Count of LIVE sessions whose recorded run currently disallows a new send.
+
+        Excludes orphaned entries for sessions the store no longer has (see
+        ``_live_busy_session_ids``) -- consumers (cap math, fleet UX) must
+        never see a closed session's stale run inflate this count.
+        """
+        return len(self._live_busy_session_ids())
 
     @property
     def max_parallel_runs(self) -> int:
@@ -784,23 +812,19 @@ class ConsoleChatController:
            so a NEW send (from any session, including an idle one) must
            wait.
 
-        The cap's busy list is intersected with ``store.sessions()``: a
-        session closed mid-VALIDATING leaves its entry in
-        ``self._run_states`` behind (``ConsoleChatStore.close_session``
-        never touches the controller's map -- Task 1 review finding), and
-        a session that no longer exists must not consume a cap slot or be
-        named in the refusal copy.
+        The cap's busy list comes from ``_live_busy_session_ids`` (shared
+        with ``in_flight_run_count``): a session closed mid-VALIDATING
+        leaves its entry in ``self._run_states`` behind
+        (``ConsoleChatStore.close_session`` never touches the controller's
+        map -- Task 1 review finding), and a session that no longer exists
+        must not consume a cap slot or be named in the refusal copy.
         """
         if not self.run_state_for(session_id).is_send_allowed:
             return "A run is already running in this tab."
-        live_sessions = {session.id: session for session in self.store.sessions()}
-        busy_ids = [
-            sid
-            for sid, state in self._run_states.items()
-            if sid in live_sessions and not state.is_send_allowed
-        ]
+        busy_ids = self._live_busy_session_ids()
         if len(busy_ids) < self.max_parallel_runs:
             return None
+        live_sessions = {session.id: session for session in self.store.sessions()}
         titles = [live_sessions[sid].title for sid in busy_ids[:3]]
         suffix = f" and {len(busy_ids) - 3} more" if len(busy_ids) > 3 else ""
         return (
@@ -4720,7 +4744,7 @@ class ConsoleChatController:
             # (append_steps/set_status), and `supersede_run_tree` are not
             # covered). Left uncaught here, run_state would stay STREAMING
             # forever and every future send on every session would be
-            # rejected ("A Console run is already running.") until app
+            # rejected ("A run is already running in this tab.") until app
             # restart (Plan-B Task 6 Critical 1). Mirror the legacy stream
             # path's catch-all above, including the Task-1 variant-restore
             # semantics: `begin_variant_stream`/`prepare_message_retry`
@@ -5540,5 +5564,11 @@ class ConsoleChatController:
         return ConsoleSubmitResult(
             accepted=False,
             should_clear_draft=False,
-            visible_copy="A Console run is already running.",
+            # Must match the screen gate's `send_refusal_copy` own-session
+            # copy (parallel-agents spec §4) -- a rapid double-send can hit
+            # this internal defense-in-depth check instead of the screen's
+            # gate (the loser of the exclusive-worker creation race), and a
+            # mismatched copy there would read as two different bugs instead
+            # of one lost race.
+            visible_copy="A run is already running in this tab.",
         )

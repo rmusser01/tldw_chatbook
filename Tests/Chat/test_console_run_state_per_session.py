@@ -194,10 +194,13 @@ def test_orphaned_closed_session_does_not_consume_cap_slot(
 ):
     """Carried finding from Task 1's review: closing a session mid-VALIDATING
     leaves an orphaned entry in the per-session run-state map (``close_session``
-    never touches ``controller._run_states``). The cap must not count it --
-    ``send_refusal_copy`` intersects its busy list with ``store.sessions()``
-    so a session that no longer exists can't consume a cap slot or appear in
-    the refusal copy's session list.
+    never touches ``controller._run_states``). Neither cap/fleet math
+    (``in_flight_run_count``) nor the refusal copy (``send_refusal_copy``) may
+    count or name a session that no longer exists in the store -- both share
+    the ``_live_busy_session_ids`` filter. ``run_states()`` stays the RAW map
+    on purpose (contract split, review round 2): it still surfaces the
+    orphaned entry for callers that want the full recorded history, while
+    every cap/fleet consumer must go through the live-filtered accessors.
     """
     controller, session_a, session_b = controller_with_two_sessions
     monkeypatch.setattr(
@@ -209,7 +212,10 @@ def test_orphaned_closed_session_does_not_consume_cap_slot(
     controller.store.close_session(session_a)
 
     assert session_a not in {session.id for session in controller.store.sessions()}
-    # The orphaned entry is still in the map...
-    assert controller.in_flight_run_count() == 1
-    # ...but it must not occupy the cap's single slot for the surviving session.
+    # Live-filtered cap/fleet math excludes the orphan entirely...
+    assert controller.in_flight_run_count() == 0
+    # ...but the RAW map snapshot still holds it (contract split: run_states()
+    # is not cap/fleet math and is never filtered).
+    assert session_a in controller.run_states()
+    # It must not occupy the cap's single slot for the surviving session.
     assert controller.send_refusal_copy(session_b) is None
