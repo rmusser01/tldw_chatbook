@@ -182,15 +182,25 @@ assignment, generation settings, generation log.
 **Audio Effects.** One line stating what it will be and that it is not built,
 naming the future studio view.
 
-## Open decision
+## Resolved: Settings vs Playground ownership
 
-**Settings vs Playground ownership.** These overlap: Settings configures
-providers, the Playground selects and tunes them. Recommendation, to be
-confirmed: **Settings owns persisted defaults; the Playground owns
-session-scoped overrides** that do not write back. The Playground's tuning
-group edits the current experiment; Settings edits what the app uses
-everywhere. Without this split the two views become two places to do the
-same thing.
+**Settings owns persisted defaults. The Playground owns session-scoped
+overrides that do not write back.**
+
+Settings edits what the app uses everywhere -- including Console's dictation
+and AudioBook generation. The Playground edits the current experiment: you
+change a voice or a temperature to hear the difference, and leaving the
+screen does not silently rewrite your configuration.
+
+Consequences that phases must honour:
+
+- A Playground override is visibly an override. The chip shows the effective
+  value; the fact that it differs from the saved default is stated, not
+  implied.
+- The Playground offers an explicit "save as default" path, because the
+  purpose is to *identify what works best* and then keep it. Comparison
+  without a way to commit the winner is half a tool.
+- Settings never reads Playground state. One direction only.
 
 ## Acceptance criteria
 
@@ -256,14 +266,20 @@ consumer goes, the code goes with it in the same change.
 
 Each phase ships independently and is reviewable on its own.
 
-1. **Playground** — the grammar, the axis/knob split, result history.
-   Highest value: it is the view the purpose statement is about.
-2. **Speech Recognition** — worst current defects (23-cell panel, bottom
-   pinning, clipped privacy copy).
-3. **Voice Cloning** — promote to a view inside the frame.
-4. **TTS Settings** — 73 controls; needs the ownership decision resolved.
+1. **Playground** — the grammar, the axis/knob split, result history,
+   override-vs-default handling. It is the view the purpose statement is
+   about, and it establishes the pattern the other five follow.
+2. **TTS Settings** — the largest surface at 79 controls and where most
+   provider parameters actually live. Moved ahead of the others: "configure"
+   is half the brief, the axis/knob split buys the most here, and phase 1's
+   override model is meaningless until the defaults it overrides have a
+   proper home.
+3. **Speech Recognition** — worst remaining visual defects (23-cell panel,
+   bottom pinning, clipped privacy copy).
+4. **Voice Cloning** — promote to a view inside the frame.
 5. **AudioBook/Podcast** — least broken; mostly grammar alignment.
-6. **Audio Effects** — placeholder view.
+6. **Audio Effects** — placeholder view, and the point at which
+   `STTS_Window.py` should be deletable.
 
 ## Non-goals
 
