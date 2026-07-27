@@ -120,6 +120,13 @@ class LabScreen(BaseAppScreen):
         #: refresh timer logs a stale/unknown chip or row once rather than
         #: forever.
         self._warned_ids: set[str] = set()
+        #: Last text written to each chip/inspector-row id, and the last
+        #: header state synced. ``refresh_lab_status`` skips any write whose
+        #: value is unchanged, so an idle screen repaints nothing. Both are
+        #: cleared on recompose, where the widgets themselves are rebuilt
+        #: and whatever they last displayed is gone with them.
+        self._last_rendered: dict[str, str] = {}
+        self._last_header_state: WorkbenchHeaderState | None = None
 
     def _warn_once(self, key: str, message: str, *args: Any) -> None:
         """Log a warning the first time ``key`` is seen this screen instance.
@@ -289,6 +296,11 @@ class LabScreen(BaseAppScreen):
             # (e.g. the user navigated away mid-recompose) -- normal race,
             # nothing left to populate.
             return
+        # The widgets these tracked no longer exist; a stale entry could
+        # only cause `refresh_lab_status` to skip a write to a brand-new
+        # widget that happens to match an old value.
+        self._last_rendered.clear()
+        self._last_header_state = None
         self._populate_regions()
         self.call_after_refresh(self._mount_lab_body)
 
@@ -393,28 +405,44 @@ class LabScreen(BaseAppScreen):
         The header is re-synced too, so a mode whose readiness is derived
         rather than constant (Models reports ``running`` while any local
         server is alive) keeps its badge honest between polls.
+
+        Every write is guarded by an equality check against what was last
+        rendered. ``Static.update()`` and ``sync_state()`` refresh
+        unconditionally, and Models polls this every two seconds, so an
+        unguarded pass repainted the header's three Statics plus every chip
+        and inspector row on every tick of an idle screen -- servers change
+        state rarely, and the steady state is that nothing changed at all.
         """
-        try:
-            self.query_one(
-                "#lab-destination-header", DestinationHeader
-            ).sync_state(self.lab_header_state())
-        except QueryError:
-            self._warn_once(
-                "header",
-                "Lab destination header missing; readiness badge not refreshed.",
-            )
-        for chip in self.lab_status_chips():
+        header_state = self.lab_header_state()
+        if header_state != self._last_header_state:
             try:
-                self.query_one(f"#lab-status-chip-{chip.chip_id}", Static).update(
-                    chip.text
+                self.query_one(
+                    "#lab-destination-header", DestinationHeader
+                ).sync_state(header_state)
+            except QueryError:
+                self._warn_once(
+                    "header",
+                    "Lab destination header missing; readiness badge not refreshed.",
                 )
+            else:
+                self._last_header_state = header_state
+        for chip in self.lab_status_chips():
+            key = f"lab-status-chip-{chip.chip_id}"
+            if self._last_rendered.get(key) == chip.text:
+                continue
+            try:
+                self.query_one(f"#{key}", Static).update(chip.text)
             except QueryError:
                 self._warn_once(
                     f"chip:{chip.chip_id}",
                     "Unknown Lab status chip id {!r}; ignoring.",
                     chip.chip_id,
                 )
+            else:
+                self._last_rendered[key] = chip.text
         for row in self.lab_inspector_rows():
+            if self._last_rendered.get(row.row_id) == row.text:
+                continue
             try:
                 self.query_one(f"#{row.row_id}", Static).update(row.text)
             except QueryError:
@@ -423,6 +451,8 @@ class LabScreen(BaseAppScreen):
                     "Unknown Lab inspector row id {!r}; ignoring.",
                     row.row_id,
                 )
+            else:
+                self._last_rendered[row.row_id] = row.text
 
     # -- collapse --------------------------------------------------------
 
