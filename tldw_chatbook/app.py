@@ -481,6 +481,9 @@ from tldw_chatbook.Subscriptions.fts_backfill import (  # noqa: E402
     FTSBackfillError,
     backfill_subscription_items_fts,
 )
+from tldw_chatbook.Subscriptions.watchlist_bundle_service import (  # noqa: E402
+    WatchlistBundleService,
+)
 from tldw_chatbook.Translation_Interop import (  # noqa: E402
     ServerTranslationService,
     TranslationScopeService,
@@ -5471,6 +5474,7 @@ class TldwCli(
             server_service=self.server_watchlists_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self.watchlist_bundle_service = WatchlistBundleService(subscriptions_db)
         self.local_media_reading_service.notification_dispatcher = (
             self.notification_dispatch_service
         )

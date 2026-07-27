@@ -366,3 +366,25 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     def watch_selected_source(self, source: dict[str, Any] | None) -> None:
         if self.is_mounted:
             self.post_message(SourceSelected(source))
+        self._update_action_buttons()
+
+    def _update_action_buttons(self) -> None:
+        """Keep Preview/Check-now in step with this pane's own selection.
+
+        `selected_source` is deliberately not `recompose=True` (a selection
+        change must not rebuild the table under the user), so the `disabled=`
+        values `compose()` baked in never move on their own -- exactly the
+        reason `RunsPane` already carries a method of this name for Cancel
+        and Re-run. Without it the two buttons keep whatever state the last
+        *recompose* happened to leave them in: armed against a source the
+        screen has since deselected (whole-branch review, Finding 4), or
+        greyed out over a source the user just clicked.
+        """
+        try:
+            preview_button = self.query_one("#sources-preview-button", Button)
+            check_now_button = self.query_one("#sources-check-now-button", Button)
+        except Exception:
+            return
+        disabled = self.selected_source is None
+        preview_button.disabled = disabled
+        check_now_button.disabled = disabled

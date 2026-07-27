@@ -1137,9 +1137,22 @@ async def test_watchlists_collections_lists_local_snapshot_from_services():
         button = screen.query_one("#wc-attach-to-console", Button)
 
         assert "Local Watchlists snapshot" in text
-        assert "Watchlists (showing up to 5): 2" in text
-        assert "Research feeds" in text
-        assert "Vendor changelogs" in text
+        # Phase C task 7 fix round 1, Finding 1: the Console-staging block
+        # collapsed from "count line + one row per snapshot record" to a
+        # single line naming the tree scope that pressing Stage would send.
+        # The records it used to list resolve, via `list_watch_items` ->
+        # `list_sources` -> `get_all_subscriptions`, to the same
+        # `subscriptions` table the Feeds region's own scoped rows read, so
+        # rendering both printed every source twice in one box. The
+        # "services feed this pane" contract this test exists for is
+        # unchanged and still pinned by `button.disabled` and the
+        # `list_watch_items` call assertion below.
+        assert "Local Watchlists snapshot: All sources" in text
+        assert "Research feeds" not in text, (
+            "the snapshot's records must not be re-listed under the Feeds "
+            "region's own scoped rows"
+        )
+        assert "Vendor changelogs" not in text
         assert "Saved article" not in text
         assert button.disabled is False
 
@@ -1295,7 +1308,14 @@ async def test_watchlists_collections_attach_to_console_uses_listed_context():
     assert payload.source == "watchlists_collections"
     assert payload.item_type == "wc-context"
     assert payload.title == "Local Watchlists snapshot"
-    assert "Research feeds" in payload.body
+    # Fix round 1, Finding 1: the body is now the tree scope's own sources
+    # (here: the default "all" scope over this harness's empty subscriptions
+    # DB) rather than the unscoped snapshot listing. Selecting a watchlist
+    # and then staging must stage that watchlist -- pinned with real seeded
+    # rows in Tests/Watchlists/test_watchlists_collections_screen.py.
+    assert "All sources" in payload.body
+    assert payload.metadata["scope_kind"] == "all"
+    assert payload.metadata["source_count"] == 0
     assert "Saved article" not in payload.body
     assert payload.metadata["watchlist_count"] == 1
     assert "collection_count" not in payload.metadata
@@ -1318,7 +1338,6 @@ async def test_watchlists_collections_preserves_safe_comparison_titles_and_rejec
         await _wait_for_wc_snapshot(screen, pilot)
         text = _visible_text(screen)
 
-        assert "Model A < Model B > Baseline" in text
         assert "javascript:alert(1)" not in text
         assert "alert(1)" not in text
 
@@ -1326,9 +1345,15 @@ async def test_watchlists_collections_preserves_safe_comparison_titles_and_rejec
         await _wait_for_mock_call(app.open_chat_with_handoff, pilot)
 
     payload = app.open_chat_with_handoff.call_args.args[0]
-    assert "Model A < Model B > Baseline" in payload.body
+    # Fix round 1, Finding 1: the snapshot's titles are no longer rendered
+    # or enumerated in the body (see the staging-block collapse above), but
+    # they still travel in the metadata through the *same* `_record_title` /
+    # `_safe_text` sanitise-and-validate pass this test exists to guard --
+    # comparison operators survive it, a `javascript:` URL does not.
+    assert "Model A < Model B > Baseline" in payload.metadata["watchlist_titles"]
     assert "javascript:alert(1)" not in payload.body
     assert "alert(1)" not in payload.body
+    assert not any("alert(1)" in title for title in payload.metadata["watchlist_titles"])
 
 
 # The legacy thin-shell Personas tests that lived here were retired with the

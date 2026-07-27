@@ -247,6 +247,85 @@ class WatchlistBundleService:
         ).fetchall()
         return [row[0] for row in rows]
 
+    def list_source_rows(self, watchlist_id: int) -> list[dict[str, Any]]:
+        """Sources in a watchlist, with the fields a tree row needs.
+
+        ``list_sources`` returns bare ids; resolving each to a name would be
+        one query per source inside a render. This joins instead, so expanding
+        a watchlist costs exactly one query no matter how many sources it has.
+
+        Args:
+            watchlist_id: The watchlist whose sources to list.
+
+        Returns:
+            One dict per source with ``id``, ``name`` and ``type``, in the
+            order the sources were added.
+        """
+        rows = self._db.conn.execute(
+            """
+            SELECT s.id, s.name, s.type
+            FROM watchlist_sources ws
+            JOIN subscriptions s ON s.id = ws.subscription_id
+            WHERE ws.watchlist_id = ?
+            ORDER BY ws.added_at, s.id
+            """,
+            (watchlist_id,),
+        ).fetchall()
+        return [{"id": row[0], "name": row[1], "type": row[2]} for row in rows]
+
+    def list_all_source_rows(self) -> list[dict[str, Any]]:
+        """Every source, in the shape the tree and Feeds region render.
+
+        One statement, not a fan-out: the "all sources" scope must cost the
+        same one query regardless of how many sources exist, the same
+        reasoning `list_source_rows` documents for a single watchlist.
+
+        Returns:
+            One dict per source with ``id``, ``name`` and ``type``, ordered
+            case-insensitively by name then id.
+        """
+        rows = self._db.conn.execute(
+            "SELECT id, name, type FROM subscriptions ORDER BY LOWER(name), id"
+        ).fetchall()
+        return [{"id": row[0], "name": row[1], "type": row[2]} for row in rows]
+
+    def list_unassigned_source_rows(self) -> list[dict[str, Any]]:
+        """Sources belonging to no watchlist.
+
+        These are otherwise unreachable from a watchlist-only tree, which is
+        why the tree carries a permanent Unassigned root and the Feeds
+        region needs its own resolver for this scope.
+
+        Returns:
+            One dict per unassigned source with ``id``, ``name`` and
+            ``type``, ordered case-insensitively by name then id.
+        """
+        rows = self._db.conn.execute(
+            """
+            SELECT s.id, s.name, s.type
+            FROM subscriptions s
+            WHERE NOT EXISTS (
+                SELECT 1 FROM watchlist_sources ws WHERE ws.subscription_id = s.id
+            )
+            ORDER BY LOWER(s.name), s.id
+            """
+        ).fetchall()
+        return [{"id": row[0], "name": row[1], "type": row[2]} for row in rows]
+
+    def get_watchlist_item_counts(self) -> dict[int, dict[str, int]]:
+        """Item totals and unread counts for every watchlists tree node.
+
+        Thin delegation to ``SubscriptionsDB.get_watchlist_item_counts()`` (a
+        single query returning every bucket) so the tree's loader can reach
+        both of its inputs -- this and ``list_watchlists()`` -- through this
+        service alone, the same as ``list_source_rows`` above, rather than
+        needing a second accessor to ``SubscriptionsDB`` directly.
+
+        Returns:
+            Mapping of bucket id to ``{"total": int, "unread": int}``.
+        """
+        return self._db.get_watchlist_item_counts()
+
     # --- Migration ---
 
     MIGRATION_KEY = "folders_to_watchlists"

@@ -306,7 +306,7 @@ TEMPLATES['custom_reasoning'] = get_custom_template()
 Add custom metrics to the calculator:
 
 ```python
-from tldw_chatbook.Evals.metrics_calculator import MetricsCalculator
+from tldw_chatbook.Evals.eval_runner import MetricsCalculator
 
 class CustomMetricsCalculator(MetricsCalculator):
     """Extended metrics calculator."""

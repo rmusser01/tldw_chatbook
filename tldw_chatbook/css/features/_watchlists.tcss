@@ -46,12 +46,45 @@
     min-height: 0;
 }
 
-.watchlists-region-left_rail,
-.watchlists-region-right_rail {
+.watchlists-region-left_rail {
     width: 28;
     min-width: 0;
     height: 100%;
     border: round $ds-grid-line;
+}
+
+/* Widened from 28 (Task 5): at 26 usable columns every Inspector action
+ * label truncated -- "Stage Watchlists Cont", "Open current Watchlis",
+ * "Console follow unavai" -- measured live at 235x52. 34 fits the longest
+ * label ("Stage Watchlists Context in Console") close to on one line; the
+ * `Button` rule below wraps as a fallback for whatever still does not fit,
+ * rather than clipping it.
+ *
+ * Keeps its region border (Task 6, fix round 3): the ONE box per region is
+ * drawn by the region wrapper, and the pane inside is stripped by ID below
+ * (`#watchlists-inspector-pane`). See that rule for why the region, not the
+ * pane, is the survivor.
+ */
+.watchlists-region-right_rail {
+    width: 34;
+    min-width: 0;
+    height: 100%;
+    border: round $ds-grid-line;
+}
+
+.watchlists-region-right_rail Button {
+    width: 100%;
+    text-wrap: wrap;
+}
+
+/* Collapsed breadcrumb levels (Task 5 fix round 2): muted and left-aligned
+ * so they read as ancestry, not as an action -- distinct from the deepest
+ * level's action buttons directly below them, which keep the default
+ * centered/emphasized Button look.
+ */
+.inspector-breadcrumb {
+    color: $ds-text-muted;
+    text-align: left;
 }
 
 .watchlists-centre {
@@ -61,26 +94,194 @@
     min-height: 0;
 }
 
-/* FEEDS only ever hosts a short (<=5-line) source-count summary, but before
- * this rebalance it shared an equal `1fr` with ITEMS -- which hosts all six
- * section panes and their DataTables -- and CONTENT. At 160x42 that handed
- * FEEDS 11 rows for a handful of Static lines while ITEMS, doing all the
- * work, got the same 11 (Finding 5). `height: auto` lets FEEDS take only
- * what its content needs so ITEMS/CONTENT split what is left.
+/* FEEDS shared an equal `1fr` with ITEMS -- which hosts all six section
+ * panes and their DataTables -- and CONTENT (Finding 5). At 160x42 that
+ * handed FEEDS 11 rows for a handful of Static lines while ITEMS, doing all
+ * the work, got the same 11. `height: auto` lets FEEDS take only what its
+ * content needs so ITEMS/CONTENT split what is left.
+ *
+ * Task 5's premise that FEEDS "only ever hosts a short (<=5-line)
+ * source-count summary" died in Task 3 when the section tab strip moved
+ * into `_build_list_pane`: Task 7 gives FEEDS the real, scope-driven feeds
+ * list, which can run to dozens of sources. Unbounded `height: auto` would
+ * let that list grow without limit and push ITEMS/CONTENT clean out of the
+ * viewport -- the opposite failure from the one this rebalance fixed.
+ *
+ * `max-height: 12` + `overflow-y: auto` caps it instead: FEEDS grows to fit
+ * small lists, stops at the cap, and scrolls internally past it -- verified
+ * scrollable, not clipped, with 40 synthetic rows
+ * (Tests/Watchlists/test_watchlists_workbench.py).
+ *
+ * Fix round 1 shipped `max-height: 10`, one row BELOW the measured true
+ * empty-state need of 11 (the tab strip, the "Sources" title, "No sources
+ * yet.", and the Create/Import button row, inside the pane's own border) --
+ * so even zero sources scrolled. That was wrong: a ceiling below the
+ * content's own minimum is a clip with a scrollbar, not the intended
+ * "grows to fit, caps, then scrolls" behaviour. Fix round 2 corrects it by
+ * also giving ITEMS a bigger share than CONTENT (below: `2fr` vs `1fr`,
+ * CONTENT is still the Phase-D placeholder stub and does not need equal
+ * billing with the real list pane yet) rather than shrinking FEEDS further.
+ *
+ * With ITEMS/CONTENT at `2fr`/`1fr`, the invariant
+ * (`test_watchlists_items_region_is_taller_than_feeds_region_when_expanded`,
+ * unedited) needs `items > feeds` where, once FEEDS is forced to its cap by
+ * overflowing content, `items ~= (budget - cap) * 2/3` for a fixed
+ * `budget = feeds + items + content` (constant per viewport: measured 34
+ * rows at the guard suite's 160x42, 44 at the app's real 235x52 -- both
+ * confirmed by direct region-height measurement in a temporary pytest
+ * addition, not assumed). Solving at 160x42: `items > cap` holds through
+ * `cap = 13` (`items = 14`, margin 1) and breaks at `cap = 14`
+ * (`items = 13 < feeds = 14`) -- confirmed empirically by forcing FEEDS's
+ * real content to overflow 40 synthetic rows inside the full chrome-wrapped
+ * screen (not just the standalone-workbench harness, which has a different,
+ * more generous budget and would have understated how tight 160x42 actually
+ * is).
+ *
+ * The cap is `12`, not that maximum of 13, deliberately. 13 holds only at
+ * terminal height >= 42: at 160x41 the budget drops to 33 and 13 ties
+ * (`items = 13`). 12 still gives `items = 14` at both budgets, so the
+ * invariant survives a 41-row terminal -- a real size on a laptop with a
+ * menu bar -- and survives any future change that consumes one more row
+ * above the workbench. It clears the 11-row empty-state need with a row to
+ * spare, so zero sources still does not scroll
+ * (`Tests/UI/test_destination_visual_parity_correction.py::
+ * test_watchlists_feeds_empty_state_fits_without_scrolling`). Taking the
+ * maximum here would have bought one row of feed visibility for a boundary
+ * that inverts on the next viewport down.
+ *
+ * Fix round 3 re-measured all of the above after moving the border from the
+ * pane to the region (below): the numbers are unchanged, because the region
+ * gains exactly the two rows the pane gives up. Re-swept at 160x42 with 40
+ * sources: cap=12 -> items=14, cap=13 -> items=14, cap=14 -> items=13
+ * (inverts). That constraint had no executable form until round 3 -- the
+ * empty state never reaches the cap, so the older guard could not exercise
+ * it. It is now pinned by
+ * `test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds`,
+ * which forces the overflow inside the real screen; anything that consumes
+ * another row above the workbench fails it rather than silently inverting.
+ *
+ * Keeps its region border (Task 6, fix round 3). Round 1 dropped it and let
+ * the pane's own border stand instead, which was wrong three ways, all
+ * measured: (a) region borders are `round` and pane borders are `solid`, so
+ * the screen drew round corners on LEFT_RAIL/CONTENT and square corners on
+ * FEEDS/ITEMS/RIGHT_RAIL; (b) `overflow-y: auto` scrolls this wrapper, and
+ * the pane's border rows were *inside* the scrolled content -- at scroll top
+ * the box's bottom edge was off-screen and at scroll end its top edge was,
+ * so the one surviving border was an open-ended box; (c) the wrapper's
+ * scrollbar painted in its own gutter, outside the box the pane drew. The
+ * border belongs on the widget that scrolls.
  */
 .watchlists-region-feeds {
     width: 100%;
     height: auto;
     min-height: 0;
+    max-height: 12;
+    overflow-y: auto;
     border: round $ds-grid-line;
 }
 
-.watchlists-region-items,
+/* Companion fix for the region title's removal above: `#watchlists-list-pane`
+ * (FEEDS's supplied pane) is one of a shared group of destination panes
+ * given `height: 100%` by ID in `components/_agentic_terminal.tcss` -- an ID
+ * selector, so `.destination-workbench-pane`'s own `height: 100%` was never
+ * actually the rule in effect here, and no class-based override here could
+ * outrank it (verified empirically: a descendant selector combining
+ * `.watchlists-region-feeds` with `.destination-workbench-pane`, strictly
+ * higher specificity than the plain class rule, still lost to the ID rule
+ * above). `100%` of a region sized `height: auto` (FEEDS is
+ * the only region styled that way) is circular -- the parent's size is
+ * supposed to come FROM this child -- and before this task that circularity
+ * was masked by the region title `Static` acting as a plain `height: 1`
+ * sibling. With the title gone (a real content pane no longer needs a
+ * second, wrong heading), the sole remaining child inherited the ambiguity
+ * outright and Textual collapsed it to unreadable. This ID selector, same
+ * specificity as the shared rule but declared later in the bundle (features/
+ * loads after components/ in build_css.py), wins on source order and lets
+ * the pane size to its own content instead.
+ */
+#watchlists-list-pane {
+    height: auto;
+}
+
+/* Exactly one box per region (Task 6, fix round 3): the *region wrapper*
+ * draws it and the pane inside draws none, rather than the other way round.
+ *
+ * These three ids are declared in `components/_agentic_terminal.tcss` (the
+ * shared destination-pane block, ~line 3544) with `border: solid
+ * $ds-grid-line`. An ID selector here matches that block's specificity
+ * exactly and wins on source order -- `features/` loads after `components/`
+ * in `build_css.py` -- so this narrows to Watchlists' three panes and
+ * touches none of the other destinations that share that block. (The same
+ * lever the `#watchlists-list-pane` height rule above already uses; an
+ * earlier round wrongly believed stripping the border required editing the
+ * shared `.destination-workbench-pane` class and thus 13 other screens.)
+ *
+ * Suppressing the PANE rather than the REGION is what makes the five region
+ * boxes uniformly `round`, keeps FEEDS's border fixed while its content
+ * scrolls beneath it, and puts FEEDS's scrollbar inside the box that owns
+ * it -- see the note on `.watchlists-region-feeds` above for the three
+ * defects the other direction produced.
+ */
+#watchlists-list-pane,
+#watchlists-detail-pane,
+#watchlists-inspector-pane {
+    border: none;
+}
+
+/* ITEMS keeps its region border (Task 6, fix round 3) -- the pane inside is
+ * stripped by the rule above.
+ *
+ * `2fr` (fix round 2, human-authorised lever change): previously an equal
+ * `1fr` with CONTENT, which is what forced FEEDS's cap down to a value
+ * below its own empty-state need in round 1 -- with an equal split, ITEMS
+ * only ever gets half of whatever FEEDS leaves, so at 160x42 (34-row
+ * budget) FEEDS=11 left 23, split 11/12, tying ITEMS instead of exceeding
+ * it. Giving ITEMS a bigger share fixes this at its root: CONTENT is still
+ * an inert placeholder stub (Phase D replaces it with the real article
+ * reader), so handing it equal billing with the real, working list pane
+ * wastes rows today regardless of FEEDS's cap. See the derivation on
+ * `.watchlists-region-feeds` above for the resulting cap value this split
+ * makes possible.
+ */
+.watchlists-region-items {
+    width: 100%;
+    height: 2fr;
+    min-height: 0;
+    border: round $ds-grid-line;
+}
+
 .watchlists-region-content {
     width: 100%;
     height: 1fr;
     min-height: 0;
     border: round $ds-grid-line;
+}
+
+/* Solo must actually fill the centre (Task 6, fix round 3, Finding 3).
+ *
+ * `Z` (`action_solo_region` -> `RegionLayout.solo`) collapses the other two
+ * centre regions to one-line headers. FEEDS is the only capped region, so a
+ * soloed FEEDS stayed pinned at its `max-height` while the two collapsed
+ * headers took one row each -- measured at 100x40 with 40 sources:
+ * `feeds=13@y0, items=1@y13, content=1@y14`, leaving 25 of 40 centre rows
+ * blank under a 13-row window scrolling 44 rows of content. Solo-ITEMS and
+ * solo-CONTENT already filled correctly; only the capped region was
+ * degenerate.
+ *
+ * The cap exists so a long feeds list cannot crowd ITEMS/CONTENT. When they
+ * are collapsed there is nothing to crowd, so the cap is lifted (to the full
+ * centre height) and the region takes the remaining space. `_region_widget`
+ * adds `.watchlists-region-sole-centre` for exactly that state -- see its
+ * comment for why it keys on "only expanded centre region" rather than on
+ * `RegionLayout.solo_region`.
+ *
+ * Must stay AFTER `.watchlists-region-feeds` above: both are single-class
+ * selectors, so this only wins the `height`/`max-height` tie on source
+ * order.
+ */
+.watchlists-region-sole-centre {
+    height: 1fr;
+    max-height: 100%;
 }
 
 .watchlists-region-title {
@@ -120,4 +321,78 @@
     width: 16;
     min-width: 0;
     max-width: 16;
+}
+
+/* Section tab strip (Task 3, styled in Task 6 fix round 3 -- folded in by
+ * the reviewer because the active section was invisible).
+ *
+ * `WatchlistsTabStrip.__init__` pins the strip to `height: 1`, and
+ * `.watchlists-tab` carried no styling of its own, so the active tab picked
+ * up the global `.is-active { border: round $ds-action-focus }`
+ * (`components/_agentic_terminal.tcss`). A `round` border needs 2 lines
+ * before it has a content line at all, so inside a 1-row strip the button
+ * rendered as its own top border and nothing else: the active section's
+ * LABEL never painted, which is the one thing the strip exists to show.
+ *
+ * Fixed here rather than in the shared sheet: that global rule is used by
+ * many screens, and it is overridden the same way wherever a height-1
+ * control meets it -- `#mcp-hub-rail Button.mcp-rail-row.is-active` and
+ * `#mcp-mode-strip .mcp-mode-chip.is-active` in `_agentic_terminal.tcss`
+ * both carry exactly this `border: none` + `text-style: bold underline`
+ * pair. This mirrors the MCP mode strip, which is the same widget shape (a
+ * one-row strip of mode chips), rather than inventing a new active look.
+ */
+.watchlists-tab-strip Button.watchlists-tab {
+    width: auto;
+    min-width: 10;
+    height: 1;
+    padding: 0 1;
+    border: none;
+}
+
+.watchlists-tab-strip .watchlists-tab.is-active {
+    border: none;
+    text-style: bold underline;
+}
+
+/* Focus must not impersonate the active tab (bold underline above), and the
+ * active tab must stay legible while focused -- same split the MCP mode
+ * strip uses.
+ */
+.watchlists-tab-strip .watchlists-tab:focus,
+.watchlists-tab-strip .watchlists-tab:hover:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+    outline: none;
+    border: none;
+}
+
+.watchlists-tab-strip .watchlists-tab.is-active:focus,
+.watchlists-tab-strip .watchlists-tab.is-active:hover:focus {
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: bold underline;
+    outline: none;
+    border: none;
+}
+
+/* One scoped source per row in FEEDS (Task 7, fix round 1, Finding 1).
+ *
+ * `height: 1` is the load-bearing part: `.watchlists-region-feeds` is capped
+ * at `max-height: 12` and scrolls, and that cap was derived (see its own
+ * comment above) against one-row children. A `Static` sizes to `auto` by
+ * default, so a long feed name -- these come from remote titles and OPML
+ * imports, not from us -- would wrap to two or three rows and silently eat
+ * the region's budget. Pinning the row height keeps the list scanning as a
+ * list and keeps the cap arithmetic true.
+ *
+ * `color` separates the rows from the scope heading above them
+ * (`.watchlists-column-title`, bold primary) without a second border or an
+ * indent, matching how `.watchlists-region-placeholder` sits under a title.
+ */
+.watchlist-feed-source-row {
+    height: 1;
+    width: 100%;
+    color: $ds-text-muted;
 }
