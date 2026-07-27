@@ -82,8 +82,8 @@ def resolve_batch_stt_route(
             request cannot be fulfilled.
     """
     requested_provider = _normalize_provider(provider)
-    requested_language = _normalize_language(language, default="en")
-    normalized_target = _normalize_language(target_language, default=None)
+    requested_language = _normalize_source_language(language)
+    normalized_target = _normalize_target_language(target_language)
 
     if requested_provider == _FASTER_WHISPER_PROVIDER:
         return _faster_whisper_route(
@@ -132,9 +132,17 @@ def _normalize_provider(provider: str | None) -> str:
     return _DEFAULT_PROVIDER if provider is None else provider
 
 
-def _normalize_language(language: str | None, *, default: str | None) -> str | None:
+def _normalize_source_language(language: str | None) -> str:
+    """Normalize a source language, defaulting omitted values to English."""
     if language is None or not language.strip():
-        return default
+        return "en"
+    return language.strip().lower()
+
+
+def _normalize_target_language(language: str | None) -> str | None:
+    """Normalize an optional target language."""
+    if language is None or not language.strip():
+        return None
     return language.strip().lower()
 
 

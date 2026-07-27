@@ -1,5 +1,7 @@
 """Tests for the dependency-free batch speech-to-text routing policy."""
 
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
@@ -116,3 +118,40 @@ def test_language_codes_are_normalized_and_missing_language_defaults_to_english(
 
     assert route.requested_language == "de"
     assert missing.requested_language == "en"
+
+
+@pytest.mark.parametrize(
+    ("provider", "language", "target_language", "parakeet_defaults_enabled"),
+    [
+        ("default", "en", None, False),
+        ("default", "en", None, True),
+        ("default", "de", None, True),
+        ("default", "auto", None, True),
+        ("default", "en", "fr", True),
+        ("parakeet-onnx", "en", None, False),
+        ("parakeet-onnx", "de", None, False),
+        ("faster-whisper", "ja", "en", False),
+    ],
+)
+def test_successful_routes_are_local_int8(
+    provider: str,
+    language: str,
+    target_language: str | None,
+    parakeet_defaults_enabled: bool,
+) -> None:
+    route = resolve_batch_stt_route(
+        provider=provider,
+        language=language,
+        target_language=target_language,
+        parakeet_defaults_enabled=parakeet_defaults_enabled,
+    )
+
+    assert route.precision == "int8"
+    assert route.local_files_only is True
+
+
+def test_routes_are_immutable() -> None:
+    route = resolve_batch_stt_route(provider="faster-whisper", language="en")
+
+    with pytest.raises(FrozenInstanceError):
+        setattr(route, "provider", "parakeet-onnx")
