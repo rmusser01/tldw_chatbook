@@ -9,9 +9,12 @@ indirection to work around -- patching `fot._resolve_sandbox_config`
 reaches every caller directly.
 """
 
+import json
+import subprocess
 import time
 from pathlib import Path
 
+import psutil
 import pytest
 
 import tldw_chatbook.Tools.file_operation_tools as fot
@@ -563,3 +566,297 @@ def test_grep_files_timeout_resolves_through_the_tool_catalog_registry():
 
     assert registry.timeout_for("grep_files") == GrepFiles().timeout_seconds
     assert registry.timeout_for("grep_files") == 20.0
+
+
+# ---------------------------------------------------------------------------
+# TASK-843: the regex search itself now runs in a killable child process
+# (`_run_grep_subprocess` / `_grep_worker.py`) rather than in-process, so a
+# catastrophic-backtracking pattern's CPU burn is bounded even AFTER the
+# tool call has returned -- unlike the run loop's own thread-based
+# `_call_with_timeout` (`Agents/agent_service.py`), which abandons a hung
+# worker thread rather than killing it, because Python cannot forcibly kill
+# a thread. These pin that guarantee directly, at the process level.
+# ---------------------------------------------------------------------------
+
+
+def test_grep_subprocess_kills_the_worker_process_on_timeout(tmp_path, monkeypatch):
+    """The core TASK-843 guarantee: once the internal subprocess timeout
+    elapses, the child is actually killed -- not merely abandoned. Proven
+    two ways: (a) the call returns close to the timeout, not the many
+    seconds the pathological pattern would otherwise cost, and (b) the
+    captured child pid no longer exists immediately after return.
+    """
+    real_popen = subprocess.Popen
+    captured: dict = {}
+
+    def spying_popen(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        captured["pid"] = proc.pid
+        return proc
+
+    monkeypatch.setattr(fot.subprocess, "Popen", spying_popen)
+
+    danger = tmp_path / "danger.txt"
+    danger.write_text("a" * 28 + "X\n")
+
+    start = time.perf_counter()
+    result = fot._run_grep_subprocess(
+        pattern=r"(a+)+$",
+        file_paths=[str(danger)],
+        max_matches=fot._MAX_MATCHES,
+        # Deliberately large so the FULL pathological line reaches
+        # regex.search inside the worker, unclamped by the line-length
+        # cap -- isolates what the subprocess boundary alone buys,
+        # independent of _MAX_GREP_LINE_SEARCH_CHARS.
+        max_line_search_chars=10_000,
+        max_lines_scanned=fot._MAX_GREP_LINES_SCANNED,
+        max_file_bytes=fot._MAX_GREP_FILE_BYTES,
+        timeout_seconds=1.5,
+    )
+    elapsed = time.perf_counter() - start
+
+    assert "error" in result
+    assert "timed out" in result["error"]
+    # Bounded near the 1.5s ceiling -- NOT the ~11.7s this exact pattern
+    # takes to complete uncapped (see the module-level comment on
+    # `_MAX_GREP_LINE_SEARCH_CHARS` for that measurement).
+    assert elapsed < 4.0, f"took {elapsed:.2f}s -- is the subprocess actually being killed?"
+    assert "pid" in captured
+    assert not psutil.pid_exists(captured["pid"]), (
+        "child process must be killed on timeout, not left running"
+    )
+
+
+@pytest.mark.asyncio
+async def test_grep_files_execute_survives_a_pathological_pattern_without_raising(
+    sandbox, monkeypatch
+):
+    """End-to-end through the async `GrepFiles.execute()` -- never raises,
+    reports a timeout error, and returns well within a bounded wall-clock
+    budget even for a pattern that would otherwise run for many seconds.
+    """
+    monkeypatch.setattr(fot, "_GREP_SUBPROCESS_TIMEOUT_SECONDS", 1.5)
+    (sandbox / "danger.txt").write_text("a" * 28 + "X\n")
+
+    start = time.perf_counter()
+    result = await fot.GrepFiles().execute(pattern=r"(a+)+$", glob="danger.txt")
+    elapsed = time.perf_counter() - start
+
+    assert "error" in result
+    assert elapsed < 4.0
+
+
+def test_run_grep_subprocess_returns_error_dict_when_popen_cannot_start(monkeypatch):
+    """Never raises, even if the OS refuses to spawn the worker at all."""
+
+    def boom(*args, **kwargs):
+        raise OSError("no more processes")
+
+    monkeypatch.setattr(fot.subprocess, "Popen", boom)
+
+    result = fot._run_grep_subprocess(
+        pattern="x",
+        file_paths=["/tmp/does-not-matter.txt"],
+        max_matches=200,
+        max_line_search_chars=500,
+        max_lines_scanned=200_000,
+        max_file_bytes=5_000_000,
+        timeout_seconds=5.0,
+    )
+
+    assert "error" in result
+
+
+def test_run_grep_subprocess_reports_a_nonzero_worker_exit(monkeypatch):
+    """A worker that exits nonzero (crash, not a normal error-JSON path) is
+    reported as a plain error dict, never raised.
+    """
+
+    class _FakeProc:
+        pid = 999999
+        returncode = 1
+
+        def communicate(self, input=None, timeout=None):
+            return "", "boom: unhandled exception in worker"
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(fot.subprocess, "Popen", lambda *a, **k: _FakeProc())
+
+    result = fot._run_grep_subprocess(
+        pattern="x",
+        file_paths=[],
+        max_matches=200,
+        max_line_search_chars=500,
+        max_lines_scanned=200_000,
+        max_file_bytes=5_000_000,
+        timeout_seconds=5.0,
+    )
+
+    assert "error" in result
+    assert "boom" in result["error"]
+
+
+def test_run_grep_subprocess_reports_malformed_worker_output(monkeypatch):
+    """Non-JSON (or non-dict-JSON) stdout from the worker is a plain error,
+    never an uncaught exception.
+    """
+
+    class _FakeProc:
+        pid = 999998
+        returncode = 0
+
+        def communicate(self, input=None, timeout=None):
+            return "not valid json {{{", ""
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(fot.subprocess, "Popen", lambda *a, **k: _FakeProc())
+
+    result = fot._run_grep_subprocess(
+        pattern="x",
+        file_paths=[],
+        max_matches=200,
+        max_line_search_chars=500,
+        max_lines_scanned=200_000,
+        max_file_bytes=5_000_000,
+        timeout_seconds=5.0,
+    )
+
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_grep_files_ordinary_search_still_delegates_to_a_subprocess(
+    sandbox, monkeypatch
+):
+    """Sanity check that the normal (non-pathological) path still routes
+    through `_run_grep_subprocess` -- i.e. this isn't accidentally bypassed
+    for the common case, which would silently regress the TASK-843 fix.
+    """
+    calls: list[str] = []
+    real = fot._run_grep_subprocess
+
+    def spy(pattern, file_paths, **kwargs):
+        calls.append(pattern)
+        return real(pattern, file_paths, **kwargs)
+
+    monkeypatch.setattr(fot, "_run_grep_subprocess", spy)
+
+    result = await fot.GrepFiles().execute(pattern="DEBUG", glob="**/*.py")
+
+    assert calls == ["DEBUG"]
+    assert len(result["matches"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# `_grep_worker.py` itself: a standalone script, deliberately with no import
+# of `tldw_chatbook`. Exercised directly (both as a plain function and as a
+# real subprocess) so its own error handling is pinned independently of
+# `_run_grep_subprocess`.
+# ---------------------------------------------------------------------------
+
+
+def _load_worker_module():
+    import importlib.util
+
+    worker_path = Path(fot.__file__).with_name("_grep_worker.py")
+    spec = importlib.util.spec_from_file_location("_grep_worker_under_test", worker_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_grep_worker_run_search_matches_ordinary_content(tmp_path):
+    worker = _load_worker_module()
+    target = tmp_path / "a.txt"
+    target.write_text("hello DEBUG world\n")
+
+    result = worker.run_search(
+        {
+            "pattern": "DEBUG",
+            "file_paths": [str(target)],
+            "max_matches": 200,
+            "max_line_search_chars": 500,
+            "max_lines_scanned": 200_000,
+            "max_file_bytes": 5_000_000,
+        }
+    )
+
+    assert len(result["matches"]) == 1
+    assert result["matches"][0]["line"] == "hello DEBUG world"
+
+
+def test_grep_worker_run_search_rejects_invalid_regex():
+    worker = _load_worker_module()
+    result = worker.run_search(
+        {
+            "pattern": "([",
+            "file_paths": [],
+            "max_matches": 200,
+            "max_line_search_chars": 500,
+            "max_lines_scanned": 200_000,
+            "max_file_bytes": 5_000_000,
+        }
+    )
+    assert "error" in result
+
+
+def test_grep_worker_run_search_handles_a_malformed_request():
+    worker = _load_worker_module()
+    result = worker.run_search({"pattern": "x"})  # missing required keys
+    assert "error" in result
+
+
+def test_grep_worker_script_reports_malformed_json_on_stdin_without_crashing():
+    """Exercises the worker as a REAL subprocess -- confirms it always
+    exits 0 and always writes valid JSON, even fed garbage.
+    """
+    import sys
+
+    worker_path = Path(fot.__file__).with_name("_grep_worker.py")
+    proc = subprocess.run(
+        [sys.executable, "-S", str(worker_path)],
+        input="not json {{{",
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert proc.returncode == 0
+    parsed = json.loads(proc.stdout)
+    assert "error" in parsed
+
+
+def test_grep_worker_script_end_to_end_via_real_subprocess(tmp_path):
+    """The worker script invoked exactly the way `_run_grep_subprocess`
+    invokes it in production -- proves the protocol works, not just the
+    in-process `run_search` function.
+    """
+    import sys
+
+    target = tmp_path / "notes.txt"
+    target.write_text("first line\nDEBUG marker line\nlast line\n")
+    worker_path = Path(fot.__file__).with_name("_grep_worker.py")
+    request = json.dumps(
+        {
+            "pattern": "DEBUG",
+            "file_paths": [str(target)],
+            "max_matches": 200,
+            "max_line_search_chars": 500,
+            "max_lines_scanned": 200_000,
+            "max_file_bytes": 5_000_000,
+        }
+    )
+    proc = subprocess.run(
+        [sys.executable, "-S", str(worker_path)],
+        input=request,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert proc.returncode == 0
+    parsed = json.loads(proc.stdout)
+    assert len(parsed["matches"]) == 1
+    assert parsed["matches"][0]["line"] == "DEBUG marker line"

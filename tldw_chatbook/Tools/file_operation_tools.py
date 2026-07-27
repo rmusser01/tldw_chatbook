@@ -4,7 +4,11 @@ File Operation Tools for LLM function calling.
 These tools allow LLMs to perform safe file operations with proper validation.
 """
 
+import asyncio
+import json
 import re
+import subprocess
+import sys
 from pathlib import Path, PureWindowsPath
 from typing import Dict, Any, Iterator
 
@@ -584,7 +588,8 @@ _MAX_CANDIDATES = 20_000
 _MAX_GREP_FILE_BYTES = 5_000_000
 
 #: Length cap on the slice of each line actually handed to `regex.search`
-#: in `GrepFiles.execute`. Python's `re` module has no match timeout, and a
+#: in the grep worker (`_grep_worker.py`, spawned by `_run_grep_subprocess`
+#: -- TASK-843). Python's `re` module has no match timeout, and a
 #: catastrophic-backtracking pattern (e.g. `(a+)+$`) burns CPU
 #: superlinearly in input length -- measured on this branch,
 #: `re.compile(r'(a+)+$').search('a' * 30 + 'X')` alone took ~47s, and the
@@ -593,24 +598,20 @@ _MAX_GREP_FILE_BYTES = 5_000_000
 #: result was truncated (to 500 chars, below) -- and since
 #: `_MAX_GREP_FILE_BYTES` bounds one *file*, not one *line*, that full
 #: line could be up to ~5,000,000 characters for a file with no
-#: newlines. This is the only mitigation here that genuinely constrains
-#: that worst case, because a tool call that times out (see
-#: `GrepFiles.timeout_seconds` below) does NOT stop the search already in
-#: flight: `Agents/agent_service.py`'s `_call_with_timeout` abandons the
-#: still-running worker thread rather than killing it -- Python has no
-#: way to kill a thread. Capping the input size turns "scales with file
-#: size, effectively unbounded" into "bounded by a small, fixed
-#: constant" -- it does NOT make catastrophic backtracking fast. A
-#: sufficiently adversarial pattern run against even a
+#: newlines. This remains the FIRST line of defence -- cheap, and it
+#: shrinks the ordinary (non-pathological) cost of every search -- but on
+#: its own it does not make catastrophic backtracking fast, only smaller:
+#: a sufficiently adversarial pattern run against even a
 #: `_MAX_GREP_LINE_SEARCH_CHARS`-length slice can still be expensive (our
-#: own repro above needed only 30 characters to already run ~47s); this
-#: constant shrinks the exposure, it does not eliminate it. A complete
-#: fix needs either a regex engine that supports match timeouts or
-#: running the search in a killable subprocess. The partial mitigation
-#: here is acceptable because `grep_files` carries the `"reads"` risk
-#: tag (see `GrepFiles.risk_tags`), which floors its permission to
-#: `ask`: a human approves every individual call, which is part of why
-#: this is an acceptable trade-off rather than a full fix.
+#: own repro above needed only 30 characters to already run ~47s). What
+#: actually bounds the CPU a pathological pattern can consume AFTER the
+#: tool call returns is `_run_grep_subprocess`/`_grep_worker.py`: the
+#: search itself now runs in a separate, killable process rather than the
+#: in-process worker THREAD `Agents/agent_service.py`'s
+#: `_call_with_timeout` uses for every other tool -- a timed-out THREAD is
+#: abandoned (Python cannot kill one), but a timed-out PROCESS is
+#: `Popen.kill()`ed. See `_run_grep_subprocess`'s docstring for exactly
+#: what that does and does not guarantee.
 _MAX_GREP_LINE_SEARCH_CHARS = 500
 
 #: Total number of lines `GrepFiles.execute` will read across ALL
@@ -626,6 +627,18 @@ _MAX_GREP_LINE_SEARCH_CHARS = 500
 #: cost of many ordinary (non-pathological) per-line searches, not the
 #: cost of any single catastrophic one.
 _MAX_GREP_LINES_SCANNED = 200_000
+
+#: Wall-clock ceiling for the grep worker SUBPROCESS itself (TASK-843),
+#: passed to `_run_grep_subprocess`. Deliberately shorter than
+#: `GrepFiles.timeout_seconds` (20.0s): this is the timeout that actually
+#: matters for bounding CPU, because unlike the run loop's own
+#: thread-based `_call_with_timeout` (which ABANDONS a hung worker
+#: thread), this one ends in `Popen.kill()` -- a subprocess genuinely can
+#: be killed. Leaving ~2s of headroom below the outer 20.0s covers
+#: candidate-gathering plus process spawn/teardown, so the kill fires (and
+#: the child's CPU consumption actually stops) at or before the point the
+#: agent is told the call failed, not sometime after.
+_GREP_SUBPROCESS_TIMEOUT_SECONDS = 18.0
 
 
 def _rejects_traversal(pattern: str) -> bool:
@@ -930,6 +943,155 @@ class GlobFiles(Tool):
             return {"error": f"Failed to glob files: {exc}"}
 
 
+#: Absolute path to the standalone worker module `_run_grep_subprocess`
+#: spawns (TASK-843). Resolved relative to this file (not a package import)
+#: so it works identically whether `tldw_chatbook` is installed editable
+#: or as a built wheel -- see `_grep_worker.py`'s own docstring for why it
+#: is a plain script with no import of this package at all.
+_GREP_WORKER_SCRIPT = str(Path(__file__).with_name("_grep_worker.py"))
+
+
+def _run_grep_subprocess(
+    pattern: str,
+    file_paths: list[str],
+    *,
+    max_matches: int,
+    max_line_search_chars: int,
+    max_lines_scanned: int,
+    max_file_bytes: int,
+    timeout_seconds: float,
+) -> dict:
+    """Run the regex-vs-file-content search in a killable child process.
+
+    TASK-843: completes the catastrophic-backtracking mitigation
+    `_MAX_GREP_LINE_SEARCH_CHARS`/`_MAX_GREP_LINES_SCANNED`/
+    `GrepFiles.timeout_seconds` left open by themselves. Those bound the
+    WORST CASE to a small, finite amount of work, but none of them can
+    stop a pathological pattern's CPU burn once it starts: Python's `re`
+    has no match timeout, and `Agents/agent_service.py`'s
+    `_call_with_timeout` (the run loop's own per-tool-call ceiling)
+    ABANDONS its worker thread on timeout rather than killing it --
+    Python cannot forcibly kill a thread, so that CPU burn outlives the
+    agent's own timeout report, and repeated calls accumulate. A
+    subprocess is different: `Popen.kill()` sends SIGKILL (POSIX) /
+    calls `TerminateProcess` (Windows), and the OS enforces that
+    unconditionally, regardless of what the process is doing.
+
+    Why a subprocess rather than the third-party `regex` module (which
+    supports `timeout=`): `regex` is not a direct OR declared optional
+    dependency of this project (checked against `pyproject.toml`) -- it is
+    only present at all, transitively, through unrelated optional extras
+    (`nltk`/`transformers`/`dateparser`, pulled in by the RAG/embeddings
+    extras). `grep_files` is a core built-in, reachable with no extras
+    installed; depending on `regex` here would make a currently-optional,
+    transitive package a hard requirement for the base install. A
+    subprocess adds no new dependency and works with the stdlib `re`
+    already in use.
+
+    This function is a BLOCKING call (`Popen.communicate(timeout=...)`);
+    `GrepFiles.execute` runs it via `asyncio.to_thread` rather than
+    awaiting it directly, so it never blocks the event loop.
+
+    What this DOES guarantee: once `timeout_seconds` elapses, the child
+    process is killed and its CPU consumption stops -- the search cannot
+    keep burning CPU past that deadline the way the in-process,
+    thread-based mitigation could. The worker also self-limits its own
+    CPU time via `resource.setrlimit(RLIMIT_CPU, ...)` on POSIX (see
+    `_grep_worker.py`), so an ORPHANED worker -- e.g. if this process
+    itself were killed before ever reaching the `kill()` call below --
+    still self-terminates rather than running unbounded.
+
+    What this does NOT guarantee: the child can still burn real CPU for
+    up to `timeout_seconds` before it is killed (down from unbounded
+    before this task, but not zero), and every `grep_files` call now pays
+    a small, fixed process spawn/teardown cost (~15-20ms locally with the
+    `-S` flag below, negligible against the ~18s ceiling) whether the
+    pattern is pathological or not. `RLIMIT_CPU` is POSIX-only; the
+    `communicate(timeout=)` + `kill()` path is the guarantee that holds on
+    every platform, including Windows.
+
+    Args:
+        pattern: The regular expression to search for. `GrepFiles.execute`
+            already validates (compiles) it before ever calling this
+            function, so a malformed pattern should never reach here --
+            the worker re-validates anyway rather than trusting that.
+        file_paths: Absolute paths to search, in order. Every path here
+            MUST already be fully validated by the caller (containment,
+            the sensitive-path denylist, the hidden-component rule) --
+            neither this function nor the worker it spawns performs any
+            of that validation, and must never be handed a path the
+            caller has not already cleared.
+        max_matches: Same bound as `_MAX_MATCHES` -- stop once this many
+            matches are found.
+        max_line_search_chars: Same bound as `_MAX_GREP_LINE_SEARCH_CHARS`.
+        max_lines_scanned: Same bound as `_MAX_GREP_LINES_SCANNED`.
+        max_file_bytes: Same bound as `_MAX_GREP_FILE_BYTES`.
+        timeout_seconds: Wall-clock ceiling for the whole subprocess call
+            (typically `_GREP_SUBPROCESS_TIMEOUT_SECONDS`).
+
+    Returns:
+        Dict with a `matches` list of `{path, line_number, line}` dicts on
+        success, or an `error` string -- never raises.
+    """
+    request = json.dumps(
+        {
+            "pattern": pattern,
+            "file_paths": file_paths,
+            "max_matches": max_matches,
+            "max_line_search_chars": max_line_search_chars,
+            "max_lines_scanned": max_lines_scanned,
+            "max_file_bytes": max_file_bytes,
+        }
+    )
+    try:
+        proc = subprocess.Popen(
+            # "-S": skip `site` initialization. The worker imports only
+            # stdlib (`json`/`re`/`sys`/`pathlib`, optionally `resource`),
+            # none of which needs site-packages, and this measurably
+            # shrinks interpreter startup (~15ms vs ~20ms, locally) paid
+            # on every single grep_files call.
+            [sys.executable, "-S", _GREP_WORKER_SCRIPT],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as exc:
+        return {"error": f"could not start grep worker process: {exc}"}
+
+    try:
+        stdout, stderr = proc.communicate(input=request, timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        # The ONE line that actually bounds a pathological pattern's CPU
+        # exposure past this call's return: a thread cannot be killed, a
+        # process can.
+        proc.kill()
+        try:
+            proc.communicate(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            logger.error(f"grep worker (pid {proc.pid}) did not exit even after SIGKILL")
+        return {
+            "error": (
+                f"grep search timed out after {timeout_seconds:g}s and was "
+                "terminated"
+            )
+        }
+
+    if proc.returncode != 0:
+        return {
+            "error": (
+                f"grep worker failed (exit {proc.returncode}): "
+                f"{(stderr or '').strip()[:500]}"
+            )
+        }
+    try:
+        parsed = json.loads(stdout)
+    except (json.JSONDecodeError, TypeError):
+        return {"error": "grep worker produced malformed output"}
+    if not isinstance(parsed, dict):
+        return {"error": "grep worker produced malformed output"}
+    return parsed
+
 
 class GrepFiles(Tool):
     """`grep_files` -- content search across the sandbox and workspace roots."""
@@ -971,22 +1133,29 @@ class GrepFiles(Tool):
 
     @property
     def timeout_seconds(self) -> float:
-        """Modest per-call ceiling; does NOT stop a search already running.
+        """Overall per-call ceiling for the run loop's own accounting.
 
         A legitimate search over the candidate bound (`_MAX_CANDIDATES`
         files, `_MAX_GREP_LINES_SCANNED` lines total) is comfortably fast:
         locally measured, 200,000 lines against a realistic non-pathological
-        pattern complete in well under a second. 20s leaves generous
-        headroom above that for a slower disk or a loaded system, while
-        still being far tighter than the run's own default
-        (`RunBudget.max_tool_call_seconds`, 300s at defaults) -- so a
-        pathological call is reported back to the agent as timed out much
-        sooner. It does NOT bound how long a pathological pattern's search
-        itself keeps running: see `_MAX_GREP_LINE_SEARCH_CHARS` for that,
-        and note that `_call_with_timeout` (`Agents/agent_service.py`)
-        abandons the worker thread rather than killing it, so the search
-        keeps burning CPU in the background past this deadline regardless
-        of the value chosen here.
+        pattern complete in well under a second, plus the search
+        subprocess's own small, fixed spawn cost (TASK-843; see
+        `_run_grep_subprocess`). 20s leaves generous headroom above that
+        for a slower disk or a loaded system, while still being far
+        tighter than the run's own default (`RunBudget.max_tool_call_
+        seconds`, 300s at defaults) -- so a pathological call is reported
+        back to the agent as timed out much sooner.
+
+        Unlike before TASK-843, a pathological pattern's CPU burn no
+        longer keeps running unbounded past this deadline: the actual
+        search now runs in a subprocess bounded by its OWN, shorter
+        internal ceiling (`_GREP_SUBPROCESS_TIMEOUT_SECONDS`), which ends
+        in `Popen.kill()` rather than `_call_with_timeout`
+        (`Agents/agent_service.py`) abandoning a worker thread it cannot
+        actually kill. This property's value still governs when the run
+        loop itself gives up and reports failure; see
+        `_run_grep_subprocess`'s docstring for exactly what does and does
+        not stop once that happens.
 
         Returns:
             20.0 seconds.
@@ -1003,13 +1172,19 @@ class GrepFiles(Tool):
         merged via `_iter_candidates_across_roots`, with
         `_MAX_CANDIDATES` applied globally across all roots, not per root.
 
-        The supplied `pattern` is compiled with Python's `re`, which has no
-        match timeout. To keep a catastrophic-backtracking pattern's worst
-        case finite and small rather than scaling with file size, each
-        line is searched only up to `_MAX_GREP_LINE_SEARCH_CHARS`, and the
-        total number of lines read across the whole call is capped at
-        `_MAX_GREP_LINES_SCANNED`. Neither bound makes such a pattern fast
-        -- see the comments on those constants -- only bounded.
+        TASK-843: the supplied `pattern` is compiled with Python's `re`,
+        which has no match timeout. Each candidate file's content is only
+        ever searched a length-capped slice at a time
+        (`_MAX_GREP_LINE_SEARCH_CHARS`), and the total number of lines
+        read across the whole call is capped
+        (`_MAX_GREP_LINES_SCANNED`) -- both bound the WORST CASE to a
+        small, finite amount of work, and remain in place as the cheap
+        first line of defence. What actually stops a pathological
+        pattern's CPU burn from continuing after this call returns is
+        that the search itself now runs in a separate, killable
+        subprocess (`_run_grep_subprocess`) rather than in this process --
+        see that function's docstring for exactly what it does and does
+        not guarantee.
 
         Args:
             pattern: Python regular expression to search for.
@@ -1026,7 +1201,7 @@ class GrepFiles(Tool):
         if not raw_pattern:
             return {"error": "pattern is required"}
         try:
-            regex = re.compile(raw_pattern)
+            re.compile(raw_pattern)
         except re.error as exc:
             return {"error": f"invalid regular expression: {exc}"}
 
@@ -1047,63 +1222,35 @@ class GrepFiles(Tool):
             # GlobFiles.execute above.
             sensitive_ctx = resolve_sensitive_context()
 
-            matches: list[dict] = []
-            # Total lines read across ALL files this invocation, checked
-            # alongside `len(matches)` below so a corpus of many small-line
-            # files can't extend the invocation's total scan cost past
-            # _MAX_GREP_LINES_SCANNED even though each file individually
-            # stays under _MAX_GREP_FILE_BYTES.
-            lines_scanned = 0
+            # Candidate discovery (containment, sensitivity, hidden-component,
+            # _MAX_CANDIDATES) happens HERE, in-process -- none of it runs the
+            # user-supplied regex, so none of it needs the subprocess
+            # boundary below. Only the actual content search does.
+            candidate_paths: list[str] = []
             try:
                 for path in _iter_candidates_across_roots(
                     glob_pattern, usable_roots, sensitive_ctx
                 ):
-                    if (
-                        len(matches) >= _MAX_MATCHES
-                        or lines_scanned >= _MAX_GREP_LINES_SCANNED
-                    ):
-                        break
-                    try:
-                        if path.stat().st_size > _MAX_GREP_FILE_BYTES:
-                            continue
-                    except OSError:
-                        continue
-                    # Streamed line-by-line rather than `read_text()` +
-                    # `splitlines()` (which would materialize the whole
-                    # file, and a second full copy split into lines, in
-                    # memory at once): one large file in an allowed root
-                    # previously forced a large peak allocation. The
-                    # per-file byte cap above still bounds the worst case
-                    # for a single pathological line with no newline.
-                    try:
-                        with path.open("r", encoding="utf-8", errors="replace") as fh:
-                            for number, line in enumerate(fh, start=1):
-                                lines_scanned += 1
-                                # Search only a length-capped slice of the
-                                # line, never the full line -- see
-                                # _MAX_GREP_LINE_SEARCH_CHARS above for why
-                                # this is the only genuine bound on a
-                                # catastrophic-backtracking pattern's
-                                # worst-case runtime, and what it does NOT
-                                # buy.
-                                if regex.search(line[:_MAX_GREP_LINE_SEARCH_CHARS]):
-                                    matches.append(
-                                        {
-                                            "path": str(path),
-                                            "line_number": number,
-                                            "line": line.rstrip("\n")[:500],
-                                        }
-                                    )
-                                if (
-                                    len(matches) >= _MAX_MATCHES
-                                    or lines_scanned >= _MAX_GREP_LINES_SCANNED
-                                ):
-                                    break
-                    except OSError:
-                        continue
+                    candidate_paths.append(str(path))
             except (ValueError, NotImplementedError) as exc:
                 return {"error": f"invalid glob: {exc}"}
-            return {"matches": matches}
+
+            if not candidate_paths:
+                return {"matches": []}
+
+            result = await asyncio.to_thread(
+                _run_grep_subprocess,
+                raw_pattern,
+                candidate_paths,
+                max_matches=_MAX_MATCHES,
+                max_line_search_chars=_MAX_GREP_LINE_SEARCH_CHARS,
+                max_lines_scanned=_MAX_GREP_LINES_SCANNED,
+                max_file_bytes=_MAX_GREP_FILE_BYTES,
+                timeout_seconds=_GREP_SUBPROCESS_TIMEOUT_SECONDS,
+            )
+            if "error" in result:
+                return result
+            return {"matches": result.get("matches", [])}
         except OSError as exc:
             return {"error": f"sandbox root is not usable: {exc}"}
         except Exception as exc:
