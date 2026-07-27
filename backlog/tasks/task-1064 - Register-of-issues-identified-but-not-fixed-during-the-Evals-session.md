@@ -17,7 +17,7 @@ priority: medium
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Everything surfaced during the Evals rebuild and its follow-up work that was verified but deliberately left unfixed. Each item below is independently actionable and can be split into its own task; they are collected here so none is lost.
 
-Findings that already have their own tasks are not repeated: TASK-1022 (ADR-019 rollback), TASK-1034/1035/1036 (Evals UAT).
+Findings that already have their own tasks are not repeated: TASK-1022 (ADR-019 rollback), and TASK-1034 / TASK-1076 / TASK-1036 (Evals UAT). All four are on `dev`. The UAT trio was filed as 1034/1035/1036; 1035 was renumbered to 1076 after colliding with another session's Done task of that id, so the reference above names the surviving ids.
 
 ---
 
