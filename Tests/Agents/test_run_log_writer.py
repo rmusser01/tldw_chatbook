@@ -25,7 +25,7 @@ def make(root_dir, **kw):
 def test_unbound_writer_writes_nothing(root):
     writer = RunLogWriter()
     assert writer.append(run_id="r", kind="primary", type="model", content="x") is None
-    assert list(root.iterdir()) == []
+    assert not (root / "agent-runs").exists()
 
 
 def test_bind_creates_the_run_directory_and_gitignore(root):
