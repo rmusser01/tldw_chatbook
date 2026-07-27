@@ -1,7 +1,8 @@
-"""Pure reader over the app's five local-server process handles.
+"""Pure reader over the app's local-server process handles.
 
-Ollama is deliberately excluded -- see the docstring on
-``lab_server_status.LAB_SERVER_SOURCES`` -- so it is not exercised here.
+Covers all six, Ollama included: it was excluded while nothing assigned
+``app.ollama_server_process``, and dev's ``server_lifecycle`` refactor
+removed that reason (task-886).
 """
 
 from __future__ import annotations
@@ -36,7 +37,11 @@ class _FakeApp:
 
 def test_all_six_servers_are_reported_even_when_none_run():
     rows = read_server_rows(_FakeApp())
-    assert len(rows) == len(LAB_SERVER_SOURCES) == len(LAB_SERVER_SOURCES)
+    # The literal 6 is the point of this assertion: comparing len(rows) to
+    # len(LAB_SERVER_SOURCES) alone is satisfied by any tuple of any size,
+    # including one a bad edit silently shortened. Pinning the number means
+    # dropping a provider fails here, and adding one is a deliberate edit.
+    assert len(rows) == len(LAB_SERVER_SOURCES) == 6
     assert all(row.running is False for row in rows)
 
 

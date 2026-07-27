@@ -140,20 +140,14 @@ class ModelSearchWidget(Container):
         # Results list directly without container wrapper
         yield ListView(id="results-list", classes="results-list")
 
-    def on_mount(self) -> None:
-        """Show the pre-browse state; do NOT reach the network yet.
-
-        This used to `call_after_refresh(self._initial_browse)`, which hit
-        huggingface.co on mount. The widget lives inside
-        `llm-view-download-models`, which `LLMManagementWindow.compose()`
-        builds eagerly -- so every visit to the Models screen fired an
-        unrequested live request, for users who never open Download Models,
-        and it contributed to that screen's 488-787ms mount. The browse now
-        waits until the view is actually activated
-        (`ensure_initial_browse`, called from
-        `LLMManagementWindow.watch_active_view`).
-        """
-        self._show_pre_browse_message()
+    # No `on_mount` here on purpose. It used to
+    # `call_after_refresh(self._initial_browse)`, which reaches
+    # huggingface.co. This widget lives inside `llm-view-download-models`,
+    # which `LLMManagementWindow.compose()` builds eagerly, so every visit
+    # to the Models screen fired an unrequested live request -- including
+    # for users who never open Download Models -- and it fed that screen's
+    # 488-787ms mount cost. The browse waits for `ensure_initial_browse`,
+    # called from `LLMManagementWindow.watch_active_view`.
 
     def ensure_initial_browse(self) -> None:
         """Run the first browse, once, when the view is actually shown.
@@ -172,21 +166,6 @@ class ModelSearchWidget(Container):
         # Just perform search without setting select value
         self.browsing_mode = True
         self.perform_search()
-
-    def _show_pre_browse_message(self) -> None:
-        """State the list is empty because nothing has been fetched yet.
-
-        An unexplained empty list reads as "no models exist"; this says the
-        browse has not run, which is the truth until the view is opened.
-        """
-        try:
-            results_list = self.query_one("#results-list", ListView)
-        except QueryError:
-            return
-        results_list.clear()
-        results_list.append(
-            ListItem(Static("Open this view to browse popular models."))
-        )
 
     def watch_is_loading(self, is_loading: bool) -> None:
         """Update UI when loading state changes."""
@@ -378,8 +357,19 @@ class ModelSearchWidget(Container):
         await results_list.clear()
 
         if not results and not self.is_loading:
+            # "No models found" is only true once something has been looked
+            # for. Before the first browse the list is empty because nothing
+            # has been fetched, and saying "none found" there reads as "none
+            # exist". Deciding it here rather than writing a placeholder at
+            # mount is what makes it stick: `watch_results` fires on the
+            # initial empty `results` and would overwrite any earlier copy.
+            message = (
+                "No models found"
+                if self._initial_browse_done
+                else "Open this view to browse popular models."
+            )
             await results_list.append(
-                ListItem(Static("No models found", classes="loading-message"))
+                ListItem(Static(message, classes="loading-message"))
             )
             return
 
