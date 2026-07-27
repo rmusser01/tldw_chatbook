@@ -16,6 +16,14 @@ This is a multi-layer feature. Rather than spec it all at once, it is decomposed
 ### What already exists in tldw_chatbook (and how we treat it)
 
 - A **complete but orphaned SwarmUI stack** lives under `tldw_chatbook/Media_Creation/` (`swarmui_client.py`, `image_generation_service.py`, `generation_templates.py`) plus a `SwarmUIWidget` and an event layer with a DB-save TODO stub pointing at a `media_generations` table that was never built. It is mounted only in a *legacy* settings sidebar the active Console chat does not use, and `[media_creation]` config never existed, so it is wired to nothing.
+> **Update 2026-07-27 (TASK-1010):** the `SwarmUIWidget` and its `tldw_chatbook/Widgets/Media_Creation/`
+> package have since been deleted — this is the "separate follow-up task" anticipated at the end of the
+> next bullet. It had no mount point at all by then: the legacy settings sidebar that once hosted it was
+> retired, and its `generate_image` could never have run (it called `run_until_complete()` inside the loop
+> `@work(thread=True)` on an `async def` had already started). The three files this section protects —
+> `swarmui_client.py`, `image_generation_service.py`, `generation_templates.py` under the **top-level**
+> `tldw_chatbook/Media_Creation/` — are untouched and still live.
+
 - **We do not touch or delete this code in Phase 1** (finding A1). Deleting `swarmui_client.py` / `image_generation_service.py` would break live imports in `swarmui_widget.py`, `swarmui_events.py`, and `settings_sidebar.py`. Instead we build the new package cleanly alongside it. Two pieces are explicitly **kept for reuse in later phases**: `generation_templates.py` (14 "Style" presets → the reference card's "Style: Anime Base") and `ImageGenerationService.extract_context_from_messages` (chat-context → prompt). A separate follow-up task will remove the dead SwarmUI chain once the new package supersedes it.
 
 ### The source we port from
