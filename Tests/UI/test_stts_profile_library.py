@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import sys
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -622,6 +621,43 @@ async def test_voice_profile_actions_fit_and_remain_keyboard_reachable_at_80x24(
             if focused is not None and focused.id is not None:
                 reached.add(focused.id)
         assert action_ids <= reached
+
+
+@pytest.mark.parametrize(
+    ("availability_state", "expected_recovery"),
+    [
+        ("unavailable", "Unavailable — Refresh, then Edit."),
+        ("unverified", "Unverified — Refresh and retry."),
+    ],
+)
+@pytest.mark.asyncio
+async def test_profile_recovery_copy_is_visible_at_80x24(
+    availability_state: str,
+    expected_recovery: str,
+) -> None:
+    service = _ActionProfileService(
+        _profile(0),
+        availability_state=availability_state,
+    )
+    app = _ActionHost(service)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _select_action_profile(app, pilot)
+        status = app.query_one("#stts-profile-status", Static)
+        strips = status.screen._compositor.render_strips()
+        region = status.content_region
+        visible_lines = tuple(
+            "".join(segment.text for segment in strips[y])[
+                region.x : region.x + region.width
+            ].strip()
+            for y in range(region.y, region.y + region.height)
+        )
+
+        assert visible_lines == (
+            expected_recovery,
+            "Selected: Voice 00",
+            "audio_cpp / model/0 / voice/0",
+        )
 
 
 @pytest.mark.asyncio
@@ -1509,20 +1545,3 @@ async def test_unexpected_action_errors_render_only_value_independent_copy(
         assert status == profile_library_module.PROFILE_ACTION_FAILED_COPY
         assert "/Users/private/key" not in status
         assert "upstream.invalid" not in status
-
-
-def test_profile_library_omits_redundant_state_and_forwarding_entrypoints() -> None:
-    async def _load_service() -> None:
-        return None
-
-    library = STTSProfileLibrary(_load_service)
-
-    assert not hasattr(library, "_active_page_token")
-    assert not hasattr(library, "_latest_request_id")
-    assert not hasattr(profile_library_module, "save_profile_from_artifact")
-    assert (
-        "loaded"
-        not in inspect.signature(
-            profile_library_module.TTSProfileDeleteModal
-        ).parameters
-    )

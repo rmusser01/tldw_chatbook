@@ -1106,22 +1106,16 @@ class STTSProfileLibrary(Widget):
         availability = self._row_availability.get(str(profile.profile_id))
         state = "Checking" if availability is None else availability.state.title()
         voice = profile.voice_id if profile.voice_id is not None else "Server default"
-        recovery = ""
         if availability is not None and availability.state == "unavailable":
-            recovery = (
-                "\nRecovery: Refresh, then Edit. Persisted exact values will "
-                "not be replaced."
-            )
+            status_line = "Unavailable — Refresh, then Edit."
         elif availability is not None and availability.state == "unverified":
-            recovery = (
-                "\nRecovery: Refresh and retry. Persisted exact values remain "
-                "unchanged."
-            )
+            status_line = "Unverified — Refresh and retry."
+        else:
+            status_line = f"{state}."
         self._set_status(
+            f"{status_line}\n"
             f"Selected: {profile.display_name}\n"
-            f"Provider: {profile.provider_id}  Model: {profile.model_id}  "
-            f"Voice: {voice}  Availability: {state}"
-            f"{recovery}"
+            f"{profile.provider_id} / {profile.model_id} / {voice}"
         )
 
     def _action_target_is_current(self, loaded: LoadedTTSProfile) -> bool:
