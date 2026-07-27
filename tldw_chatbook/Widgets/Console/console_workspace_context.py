@@ -1119,13 +1119,25 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         most-urgent glyph across the section's full pre-cap contents,
         computed in `conversation_browser_state`), it is appended to the
         header label -- same plain-string threading and `markup=False`
-        Static the group-header marker already uses. An expanded section
-        shows its own rows'/groups' markers, so its header stays unchanged.
+        Static the group-header marker already uses.
+
+        TASK-912 review fix round 1: an expanded flat section (Starred/
+        Chats -- `"workspaces"` never carries its own `rows`, so this is
+        always empty there) is subject to the identical per-section row cap
+        as a workspace group, and shows every row's own marker just like an
+        expanded group does -- UNLESS the section's row count exceeds the
+        cap, in which case `section.capped_run_marker` (the most-urgent
+        glyph among only the hidden overflow rows) is borrowed onto the
+        header instead, mirroring `_compose_conversation_browser_group_
+        header` exactly. A visible marked row within the cap needs no
+        header echo, which is exactly what `capped_run_marker` excludes.
         """
 
         label = section.label
         if section.collapsed and section.run_marker:
             label = f"{label} {section.run_marker}"
+        elif not section.collapsed and section.capped_run_marker:
+            label = f"{label} {section.capped_run_marker}"
         with Horizontal(classes="console-conversation-browser-section-header"):
             title = self._static(
                 label,

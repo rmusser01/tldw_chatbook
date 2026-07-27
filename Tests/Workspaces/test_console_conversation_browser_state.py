@@ -1057,3 +1057,120 @@ def test_collapsed_group_capped_marker_field_stays_a_pure_computation():
     assert group.collapsed is True
     assert group.capped_run_marker == "●"
     assert group.run_marker == "●"
+
+
+# TASK-912 review fix round 1 (CRITICAL): the identical cap bug survived in
+# the flat Starred/Chats sections -- `_build_row_section` applies the exact
+# same `CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT` cap to a section's own
+# `rows`, so an expanded Chats section (the default once it has rows, and
+# the section most likely to exceed the cap in real use) could push a
+# marked row past the cap with no marker surfaced anywhere. These mirror
+# the group tests above exactly, against a flat section instead.
+
+
+def _chat_rows_with_markers(markers_by_index):
+    """`n` global Chats-section rows, newest-first by construction
+    (descending `updated_sort`) so display order matches `range(n)` exactly.
+    ``markers_by_index`` maps a row index to the `run_marker` it carries."""
+    n = CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3
+    return tuple(
+        _row(
+            f"chat-{i}",
+            f"Chat {i}",
+            scope_type="global",
+            workspace_id=None,
+            workspace_label="Chats",
+            updated_sort=f"2026-07-{31 - i:02d}T00:00:00",
+            run_marker=markers_by_index.get(i, ""),
+        )
+        for i in range(n)
+    )
+
+
+def test_expanded_chats_section_capped_row_marker_surfaces_on_header():
+    marked_index = CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 1  # beyond the cap
+    rows = _chat_rows_with_markers({marked_index: "●"})
+    state = build_console_conversation_browser_state(
+        rows=rows, active_workspace_id="ws-a"
+    )
+
+    chats = _section(state, "chats")
+    assert chats.collapsed is False
+    assert len(chats.rows) == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
+    assert chats.capped_run_marker == "●"
+
+
+def test_expanded_chats_section_visible_row_marker_does_not_surface_capped_marker():
+    marked_index = 2  # well within the cap -- already visible in chats.rows
+    rows = _chat_rows_with_markers({marked_index: "●"})
+    state = build_console_conversation_browser_state(
+        rows=rows, active_workspace_id="ws-a"
+    )
+
+    chats = _section(state, "chats")
+    assert chats.collapsed is False
+    assert chats.rows[marked_index].run_marker == "●"
+    assert chats.capped_run_marker == ""
+    # `run_marker` (the full-row aggregate) still reflects it -- it is the
+    # rendering layer, not the pure-state layer, that decides which field
+    # applies.
+    assert chats.run_marker == "●"
+
+
+def test_expanded_chats_section_capped_marker_picks_most_urgent_of_hidden_rows_only():
+    cap = CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
+    rows = _chat_rows_with_markers(
+        {
+            0: "◆",  # visible (index 0 < cap) -- must not affect capped_run_marker
+            cap: "✓",  # hidden, least urgent
+            cap + 1: "●",  # hidden, more urgent than "✓"
+        }
+    )
+    state = build_console_conversation_browser_state(
+        rows=rows, active_workspace_id="ws-a"
+    )
+
+    chats = _section(state, "chats")
+    # Urgency: RUNNING ("●") outranks FINISHED_OK ("✓") -- same table as
+    # `_most_urgent_run_marker` uses everywhere else (AC#3). The visible
+    # "◆" (most urgent of all three) is excluded from this aggregate.
+    assert chats.capped_run_marker == "●"
+
+
+def test_collapsed_chats_section_capped_marker_field_stays_a_pure_computation():
+    """`capped_run_marker` is computed unconditionally like `run_marker` --
+    a collapsed section simply never has it rendered (the header already
+    shows `run_marker`, the full aggregate, in that case)."""
+    marked_index = CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 1
+    rows = _chat_rows_with_markers({marked_index: "●"})
+    state = build_console_conversation_browser_state(
+        rows=rows,
+        active_workspace_id="ws-a",
+        group_collapse_preferences={"section:chats": True},
+    )
+
+    chats = _section(state, "chats")
+    assert chats.collapsed is True
+    assert chats.capped_run_marker == "●"
+    assert chats.run_marker == "●"
+
+
+def test_workspaces_section_capped_run_marker_is_always_empty():
+    """The `"workspaces"` section holds no `rows` of its own (its content
+    lives in `groups`, each with its own `capped_run_marker`) -- its
+    `capped_run_marker` field must stay a harmless empty default rather
+    than a stale/misleading value."""
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row(
+                "conv-a",
+                "Alpha",
+                workspace_id="ws-a",
+                workspace_label="Workspace A",
+                run_marker="●",
+            ),
+        ),
+        active_workspace_id="ws-a",
+    )
+
+    assert _section(state, "workspaces").capped_run_marker == ""
