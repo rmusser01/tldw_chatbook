@@ -1780,6 +1780,7 @@ class TTSProfileRepository:
             _fsync_directory(stage_path.parent)
             _require_restore_time(deadline)
             self._require_configured_path_matches(active_path, "restore_failed")
+            _require_restore_time(deadline)
             os.replace(stage_path, active_path)
             replaced = True
             stage_path = None

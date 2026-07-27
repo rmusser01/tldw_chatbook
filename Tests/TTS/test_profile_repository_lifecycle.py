@@ -4348,6 +4348,65 @@ async def test_restore_stage_consuming_deadline_does_not_create_recovery_or_repl
 
 
 @pytest.mark.asyncio
+async def test_restore_deadline_expiring_during_pre_replace_path_check_does_not_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    candidate = tmp_path / "candidate.sqlite3"
+    await _create_profile_store(candidate, "Candidate")
+    repository = _repository(database_path)
+    await repository.open()
+    await repository.create_profile(
+        _draft("Original"),
+        UUID("00000000-0000-4000-8000-000000000099"),
+    )
+    now = 0.0
+    path_checks = 0
+    pre_replace_check_seen = False
+    replace_called = False
+    real_path_check = repository._require_configured_path_matches
+    real_replace = module.os.replace
+
+    def expiring_path_check(active_path: Path, failure_code: str) -> None:
+        nonlocal now, path_checks, pre_replace_check_seen
+        real_path_check(active_path, failure_code)
+        path_checks += 1
+        if path_checks == 6:
+            pre_replace_check_seen = True
+            now = 11.0
+
+    def observed_replace(source: object, destination: object) -> None:
+        nonlocal replace_called
+        replace_called = True
+        real_replace(source, destination)
+
+    monkeypatch.setattr(module, "_monotonic", lambda: now)
+    monkeypatch.setattr(
+        repository,
+        "_require_configured_path_matches",
+        expiring_path_check,
+    )
+    monkeypatch.setattr(module.os, "replace", observed_replace)
+
+    try:
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.restore_from(candidate, timeout_seconds=10.0)
+
+        _assert_safe_error(caught.value, "restore_failed", str(database_path))
+        assert pre_replace_check_seen is True
+        assert replace_called is False
+        assert repository.state is ProfileRepositoryState.OPEN
+        assert repository.generation == 2
+        page = await repository.list_profiles()
+        assert [profile.display_name for profile in page.value.profiles] == ["Original"]
+        await _assert_exclusive_lease_blocked(database_path)
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
 async def test_restore_deadline_expiring_during_final_path_check_does_not_publish(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
