@@ -160,21 +160,38 @@ class MCPTools:
     async def search_conversations(
         self, query: str, limit: int = 10, character_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """Search conversations by content.
+        """Search conversations by message content.
 
         Args:
-            query: Search query
-            limit: Maximum number of results
-            character_id: Optional character ID to filter by
+            query: Search query (FTS5 syntax, matched against message text).
+            limit: Maximum number of conversations to return.
+            character_id: Optional character ID to filter results by.
 
         Returns:
-            List of matching conversations
+            List of matching conversations, each with id/title/preview/
+            created/character_id/message_count.
+
+        Note:
+            This used to call ``self.chachanotes_db.search_all_content``,
+            which does not exist anywhere on ``CharactersRAGDB`` (TASK-985).
+            The real accessor, ``search_conversations_by_content(search_query,
+            limit)``, returns conversation rows (``conversations`` table
+            columns plus an aggregated ``message_count``) with no inline
+            message content to preview -- the ``conversations`` table has no
+            content column at all. Rather than guess at a substitute (e.g.
+            truncating the title), ``preview`` is sourced from a second,
+            deliberate query per matching conversation:
+            ``search_messages_by_content(content_query=query,
+            conversation_id=..., limit=1)``, the best-matching *message* in
+            that conversation against the same FTS index. That is real
+            seeded data -- the actual message text that made the
+            conversation match ``query`` -- not fabricated from an
+            unrelated field.
         """
         try:
             results = await asyncio.to_thread(
-                self.chachanotes_db.search_all_content,
+                self.chachanotes_db.search_conversations_by_content,
                 search_query=query,
-                content_type="conversation",
                 limit=limit,
             )
 
@@ -183,13 +200,26 @@ class MCPTools:
                 if character_id and result.get("character_id") != character_id:
                     continue
 
+                preview = ""
+                matching_messages = await asyncio.to_thread(
+                    self.chachanotes_db.search_messages_by_content,
+                    content_query=query,
+                    conversation_id=result["id"],
+                    limit=1,
+                )
+                if matching_messages:
+                    message_content = matching_messages[0].get("content") or ""
+                    preview = (
+                        message_content[:200] + "..."
+                        if len(message_content) > 200
+                        else message_content
+                    )
+
                 conversations.append(
                     {
                         "id": result["id"],
                         "title": result["title"],
-                        "preview": result["content"][:200] + "..."
-                        if len(result["content"]) > 200
-                        else result["content"],
+                        "preview": preview,
                         "created": result["created_at"],
                         "character_id": result.get("character_id"),
                         "message_count": result.get("message_count", 0),

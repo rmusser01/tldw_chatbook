@@ -8309,6 +8309,56 @@ def get_chunk_text(db_instance: MediaDatabase, chunk_uuid: str) -> Optional[str]
         raise DatabaseError(f"Failed get chunk text {chunk_uuid}") from e
 
 
+def get_chunk_by_uuid(
+    db_instance: MediaDatabase, chunk_uuid: str
+) -> Optional[Dict[str, Any]]:
+    """Retrieves a chunk's row data (not just its text) by UUID.
+
+    Companion to `get_chunk_text`: that helper returns only the bare
+    `chunk_text` string, with no way to tell which media item a chunk
+    belongs to or where it falls in the source document. This returns the
+    columns `UnvectorizedMediaChunks` actually has for a single-chunk
+    lookup: `id`, `uuid`, `media_id`, `chunk_text`, `chunk_index`,
+    `start_char`, `end_char`, and `chunk_type`. There is no `embedding_id`
+    column on this table at all -- chunks are correlated with vector-store
+    entries by this same UUID, not a separate id -- so callers must not
+    expect one.
+
+    Currently queries `UnvectorizedMediaChunks`. Ensures both the chunk and
+    its parent Media item are active (`deleted=0`).
+
+    Args:
+        db_instance (MediaDatabase): An initialized Database instance.
+        chunk_uuid (str): The UUID of the chunk (`UnvectorizedMediaChunks.uuid`).
+
+    Returns:
+        Optional[Dict[str, Any]]: The chunk's row data if found and active,
+        otherwise None.
+
+    Raises:
+        TypeError: If `db_instance` is not a Database object.
+        DatabaseError: For database query errors.
+    """
+    if not isinstance(db_instance, MediaDatabase):
+        raise TypeError("db_instance required.")
+    target_table = "UnvectorizedMediaChunks"
+    try:
+        query = (
+            f"SELECT c.id, c.uuid, c.media_id, c.chunk_text, c.chunk_index, "
+            f"c.start_char, c.end_char, c.chunk_type "
+            f"FROM {target_table} c JOIN Media m ON c.media_id = m.id "
+            f"WHERE c.uuid = ? AND c.deleted = 0 AND m.deleted = 0"
+        )
+        cursor = db_instance.execute_query(query, (chunk_uuid,))
+        result = cursor.fetchone()
+        return dict(result) if result else None
+    except (DatabaseError, sqlite3.Error) as e:
+        logger.error(
+            f"Error getting chunk by UUID {chunk_uuid} '{db_instance.db_path_str}': {e}"
+        )
+        raise DatabaseError(f"Failed to get chunk by UUID {chunk_uuid}") from e
+
+
 def get_all_content_from_database(db_instance: MediaDatabase) -> List[Dict[str, Any]]:
     """
     Retrieves basic identifying information for all active, non-trashed media items.

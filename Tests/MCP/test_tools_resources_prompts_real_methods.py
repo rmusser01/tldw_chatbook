@@ -41,6 +41,27 @@ value); ``tags``/``template`` on notes and ``message_count`` on characters
 are a different, non-mechanical case (no such column/aggregation exists at
 all) and are called out in TASK-983's Implementation Notes rather than
 guessed at here.
+
+TASK-985 fixes two further call sites of the same overall shape, deliberately
+left for a follow-up because the fix needed a design decision rather than a
+mechanical rename:
+
+- ``MCPTools.search_conversations`` called ``search_all_content``, which does
+  not exist on ``CharactersRAGDB`` at all. The real accessor,
+  ``search_conversations_by_content``, returns conversation rows with no
+  content column to preview from, so ``preview`` is now sourced from a
+  second, real query per matching conversation:
+  ``search_messages_by_content(conversation_id=...)``, the actual matching
+  message text.
+- ``MCPResources.get_rag_chunk_resource`` called ``get_chunk_by_id``, which
+  does not exist on ``MediaDatabase``. The nearest real accessor,
+  ``get_chunk_text``, keys on a UUID rather than an int id and returns only
+  bare text with no metadata at all, so a sibling accessor,
+  ``get_chunk_by_uuid`` (added alongside this fix), is used instead --
+  UUID-keyed, returning the chunk's real ``media_id``/``start_char``/
+  ``end_char``/``chunk_index``/``chunk_type`` columns. There is no
+  ``embedding_id`` column on ``UnvectorizedMediaChunks`` at all, so it is
+  dropped rather than guessed at.
 """
 
 from __future__ import annotations
@@ -74,6 +95,34 @@ def _seed_transcript(media_db: MediaDatabase, media_id: int, text: str) -> None:
                 'test_client', 0)
         """,
         (media_id, text, f"transcript-uuid-{media_id}"),
+        commit=True,
+    )
+
+
+def _seed_chunk(
+    media_db: MediaDatabase,
+    media_id: int,
+    chunk_uuid: str,
+    chunk_text: str,
+    chunk_index: int = 0,
+    start_char: int = 0,
+    end_char: int = 0,
+) -> None:
+    """Insert an UnvectorizedMediaChunks row directly with a known uuid.
+
+    ``process_unvectorized_chunks`` (the public writer for this table)
+    generates its own UUID internally and never returns it, so there is no
+    public way to seed a chunk with a UUID the test can assert against
+    afterwards -- same rationale as `_seed_transcript` above.
+    """
+    media_db.execute_query(
+        """
+        INSERT INTO UnvectorizedMediaChunks
+            (media_id, chunk_text, chunk_index, start_char, end_char,
+             chunk_type, uuid, last_modified, version, client_id, deleted)
+        VALUES (?, ?, ?, ?, ?, 'text', ?, datetime('now'), 1, 'test_client', 0)
+        """,
+        (media_id, chunk_text, chunk_index, start_char, end_char, chunk_uuid),
         commit=True,
     )
 
@@ -243,3 +292,106 @@ def test_generate_document_prompt_executes_against_real_db(tmp_path):
     assert len(result) == 1
     assert "get_conversation_messages" not in result[0]["content"]
     assert "Hello there" in result[0]["content"]
+
+
+def test_search_conversations_uses_a_real_content_search_accessor(tmp_path):
+    """TASK-985: `search_all_content` never existed on `CharactersRAGDB`.
+    The real accessor, `search_conversations_by_content`, returns
+    conversation rows with no content column, so `preview` must be sourced
+    from the best-matching *message* in that conversation instead (a
+    second, real query), not fabricated from the title."""
+    from tldw_chatbook.MCP.tools import MCPTools
+
+    chachanotes_db, media_db = _real_dbs(tmp_path)
+    tools = MCPTools(chachanotes_db, media_db)
+
+    conversation_id = chachanotes_db.add_conversation({"title": "Trip Planning"})
+    chachanotes_db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "Let's book the flight to Kyoto next spring.",
+            "role": "user",
+        }
+    )
+
+    results = asyncio.run(tools.search_conversations(query="Kyoto", limit=5))
+
+    assert results and "error" not in results[0]
+    assert results[0]["id"] == conversation_id
+    assert results[0]["title"] == "Trip Planning"
+    assert "Kyoto" in results[0]["preview"]
+    assert results[0]["message_count"] == 1
+
+
+def test_search_conversations_filters_by_character_id(tmp_path):
+    """The character_id filter reads `result.get("character_id")` off the
+    conversation row returned by `search_conversations_by_content` -- a
+    real `conversations.character_id` column -- so a non-matching filter
+    must exclude the conversation instead of raising."""
+    from tldw_chatbook.MCP.tools import MCPTools
+
+    chachanotes_db, media_db = _real_dbs(tmp_path)
+    tools = MCPTools(chachanotes_db, media_db)
+
+    conversation_id = chachanotes_db.add_conversation({"title": "Trip Planning"})
+    chachanotes_db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "Let's book the flight to Kyoto next spring.",
+            "role": "user",
+        }
+    )
+
+    results = asyncio.run(
+        tools.search_conversations(query="Kyoto", limit=5, character_id=999)
+    )
+
+    assert results == []
+
+
+def test_get_rag_chunk_resource_uses_a_real_media_db_accessor(tmp_path):
+    """TASK-985: `get_chunk_by_id` never existed on `MediaDatabase`, and the
+    id scheme was an integer -- the real accessor (`get_chunk_by_uuid`,
+    added alongside this fix) keys on the chunk's UUID and has no
+    `embedding_id` to report (the column doesn't exist on
+    `UnvectorizedMediaChunks`)."""
+    from tldw_chatbook.MCP.resources import MCPResources
+
+    chachanotes_db, media_db = _real_dbs(tmp_path)
+    resources = MCPResources(chachanotes_db, media_db)
+
+    media_id, _uuid, _msg = media_db.add_media_with_keywords(
+        title="Kyoto Guide", media_type="document", content="fallback content"
+    )
+    chunk_uuid = "chunk-uuid-1234"
+    _seed_chunk(
+        media_db,
+        media_id,
+        chunk_uuid,
+        "Kinkaku-ji is a Zen Buddhist temple in Kyoto.",
+        start_char=0,
+        end_char=46,
+    )
+
+    result = asyncio.run(resources.get_rag_chunk_resource(chunk_uuid))
+
+    assert result["name"] not in ("Error", "Not Found")
+    assert "Kinkaku-ji is a Zen Buddhist temple in Kyoto." in result["content"]
+    assert "Kyoto Guide" in result["content"]
+    assert result["metadata"]["media_id"] == media_id
+    assert result["metadata"]["start_char"] == 0
+    assert result["metadata"]["end_char"] == 46
+    assert "embedding_id" not in result["metadata"]
+
+
+def test_get_rag_chunk_resource_reports_not_found_for_unknown_uuid(tmp_path):
+    from tldw_chatbook.MCP.resources import MCPResources
+
+    chachanotes_db, media_db = _real_dbs(tmp_path)
+    resources = MCPResources(chachanotes_db, media_db)
+
+    result = asyncio.run(resources.get_rag_chunk_resource("does-not-exist"))
+
+    assert result["name"] == "Not Found"
