@@ -104,10 +104,18 @@ def mock_config_path(monkeypatch, temp_config_path: Path):
 
     monkeypatch.setattr(tldw_chatbook.config, 'DEFAULT_CONFIG_PATH', temp_config_path)
 
-    # If load_cli_config_and_ensure_existence has its own reference to the original path (e.g. via default arg)
-    # it might need to be mocked or reloaded. However, direct setattr should be effective for module-level constants.
-    # For this setup, we assume that when ToolsSettingsWindow calls load_cli_config_and_ensure_existence,
-    # it will see the monkeypatched DEFAULT_CONFIG_PATH.
+    # `_get_effective_config_path()` (the function every read/write path in
+    # this module actually calls -- `load_cli_config_and_ensure_existence`,
+    # `get_provider_readiness`, `save_setting_to_cli_config`, etc.) checks the
+    # `TLDW_CONFIG_PATH` environment variable FIRST and only falls back to
+    # `DEFAULT_CONFIG_PATH` when it is unset. Tests/conftest.py's autouse
+    # `isolate_test_environment` fixture always sets `TLDW_CONFIG_PATH` (to a
+    # sandbox path under a DIFFERENT `tmp_path`-derived directory) for every
+    # test in the suite, so the `DEFAULT_CONFIG_PATH` patch above is silently
+    # ineffective for any code that resolves its path through that function --
+    # it keeps reading/writing the global sandbox file, never `temp_config_path`.
+    # Re-pointing the env var here is what actually redirects those calls.
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(temp_config_path))
 
 
 @pytest.fixture
