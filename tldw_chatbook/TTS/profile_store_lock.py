@@ -262,63 +262,55 @@ class ProfileStoreLease:
         except BaseException as error:
             primary_error = error
 
-        cleanup_error: BaseException | None = None
-        state_error: BaseException | None = None
-        recovery_error: BaseException | None = None
-        state_inspection_error: BaseException | None = None
-        retry_cleanup_error: BaseException | None = None
-        forced_state_error: BaseException | None = None
+        recovery_errors: list[BaseException] = []
         if handle is not None:
             try:
-                cleanup_error = _unlock_and_close(
+                self._recover_acquisition_handle(
                     handle,
                     may_be_locked=may_be_locked,
+                    errors=recovery_errors,
                 )
-                if handle.closed:
-                    state_error = self._clear_handle_state(handle)
-                else:
-                    state_error = self._retain_residual_handle(handle)
             except BaseException as error:
-                recovery_error = error
-
-            if recovery_error is None:
-                for candidate in (cleanup_error, state_error):
-                    if candidate is not None and not isinstance(candidate, Exception):
-                        recovery_error = candidate
-                        break
-
-            state_needs_forced_repair = False
-            try:
-                current_handle = self._handle
-                if handle.closed:
-                    state_needs_forced_repair = current_handle is handle
-                else:
-                    state_needs_forced_repair = (
-                        current_handle is not handle
-                        and _residual_target_is_replaceable(current_handle, handle)
+                recovery_errors.append(error)
+                if not isinstance(error, Exception):
+                    # A complete recovery operation is replayed only after its
+                    # one promised control-flow interruption has been consumed.
+                    self._recover_acquisition_handle(
+                        handle,
+                        may_be_locked=may_be_locked,
+                        errors=recovery_errors,
                     )
-            except BaseException as error:
-                state_inspection_error = error
-            if recovery_error is not None or state_needs_forced_repair:
-                # Recovery promises at most one control-flow interruption.
-                # Retry cleanup after an interruption or untruthful normal state
-                # repair, then bypass hostile subclass assignment behavior.
-                retry_cleanup_error = _unlock_and_close(
-                    handle,
-                    may_be_locked=may_be_locked,
-                )
-                forced_state_error = self._force_recovery_state(handle)
 
-        _raise_recovery_failure(
-            primary_error,
-            recovery_error,
-            state_inspection_error,
-            cleanup_error,
-            state_error,
-            retry_cleanup_error,
-            forced_state_error,
-        )
+        _raise_recovery_failure(primary_error, *recovery_errors)
         raise ProfileRepositoryError("operation_failed")
+
+    def _recover_acquisition_handle(
+        self,
+        handle: BinaryIO,
+        *,
+        may_be_locked: bool,
+        errors: list[BaseException],
+    ) -> None:
+        """Clean and reconcile one acquisition handle as a complete operation."""
+
+        cleanup_error = _unlock_and_close(handle, may_be_locked=may_be_locked)
+        if cleanup_error is not None:
+            errors.append(cleanup_error)
+
+        state_error: BaseException | None = None
+        try:
+            if handle.closed:
+                state_error = self._clear_handle_state(handle)
+            else:
+                state_error = self._retain_residual_handle(handle)
+        except Exception as error:
+            state_error = error
+        if state_error is not None:
+            errors.append(state_error)
+
+        forced_state_error = self._force_recovery_state(handle)
+        if forced_state_error is not None:
+            errors.append(forced_state_error)
 
     def _clear_handle_state(self, expected_handle: BinaryIO) -> BaseException | None:
         """Identity-normalize a matching closed handle."""
@@ -353,7 +345,7 @@ class ProfileStoreLease:
                     object.__setattr__(self, "_handle", None)
             elif _residual_target_is_replaceable(current_handle, handle):
                 object.__setattr__(self, "_handle", handle)
-        except BaseException as error:
+        except Exception as error:
             return error
         return None
 

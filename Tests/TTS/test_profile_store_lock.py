@@ -468,6 +468,24 @@ class _NonClosingRealHandle:
         self.delegate.close()
 
 
+class _InterruptingNonClosingRealHandle(_NonClosingRealHandle):
+    def __init__(
+        self,
+        delegate: BinaryIO,
+        interrupt: BaseException | None,
+    ) -> None:
+        super().__init__(delegate)
+        self.interrupt = interrupt
+        self.closed_reads = 0
+
+    @property
+    def closed(self) -> bool:
+        self.closed_reads += 1
+        if self.interrupt is not None and self.closed_reads == 2:
+            raise self.interrupt
+        return self.delegate.closed
+
+
 def _patch_open(
     monkeypatch: pytest.MonkeyPatch,
     handle: _RecordingHandle,
@@ -917,7 +935,7 @@ def test_acquire_recovery_interrupt_retries_real_lock_cleanup(
 
     target_line = _source_line(
         ProfileStoreLease.acquire,
-        "_unlock_and_close(",
+        "self._recover_acquisition_handle(",
         occurrence=0,
     )
     database_path = tmp_path / "profiles.sqlite3"
@@ -992,7 +1010,7 @@ def test_acquire_recovery_interrupt_forces_nonclosed_handle_adoption(
     monkeypatch.setattr(portalocker, "unlock", lambda current_handle: None)
     target_line = _source_line(
         ProfileStoreLease.acquire,
-        "_unlock_and_close(",
+        "self._recover_acquisition_handle(",
         occurrence=0,
     )
     lease = FailingTransferLease(tmp_path / "profiles.sqlite3")
@@ -1025,6 +1043,157 @@ def test_acquire_recovery_interrupt_forces_nonclosed_handle_adoption(
         sys.settrace(None)
         handle.fail_close = False
         lease.release()
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    ["current_handle", "local_closed", "replaceability", "forced_assignment"],
+)
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(16)])
+def test_acquire_replays_complete_recovery_after_state_inspection_interrupt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+    interrupt: BaseException,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    original_open = Path.open
+    original_unlock = portalocker.unlock
+    opened_handles: list[_InterruptingNonClosingRealHandle] = []
+    trace_target_line: int | None = None
+    if boundary == "replaceability":
+        trace_target_line = _source_line(
+            ProfileStoreLease._force_recovery_state,
+            "elif _residual_target_is_replaceable(",
+        )
+    elif boundary == "forced_assignment":
+        trace_target_line = _source_line(
+            ProfileStoreLease._force_recovery_state,
+            'object.__setattr__(self, "_handle", handle)',
+        )
+
+    class FailingRecoveryLease(ProfileStoreLease):
+        def __init__(self) -> None:
+            self.inject_state_read = False
+            self.handle_reads = 0
+            self.assignment_attempts = 0
+            super().__init__(database_path, ProfileStoreLockMode.EXCLUSIVE)
+            self.inject_state_read = True
+
+        def __getattribute__(self, name: str) -> Any:
+            if name == "_handle" and object.__getattribute__(
+                self,
+                "inject_state_read",
+            ):
+                handle_reads = object.__getattribute__(self, "handle_reads") + 1
+                object.__setattr__(self, "handle_reads", handle_reads)
+                if boundary == "current_handle" and handle_reads == 3:
+                    raise interrupt
+            return super().__getattribute__(name)
+
+        def __setattr__(self, name: str, value: object) -> None:
+            if (
+                name == "_handle"
+                and opened_handles
+                and value is opened_handles[0]
+                and getattr(self, "inject_state_read", False)
+            ):
+                object.__setattr__(
+                    self,
+                    "assignment_attempts",
+                    self.assignment_attempts + 1,
+                )
+                raise RuntimeError("assignment-private-secret")
+            super().__setattr__(name, value)
+
+    def open_first_as_interrupting_nonclosing(
+        path: Path,
+        *args: Any,
+        **kwargs: Any,
+    ) -> BinaryIO:
+        delegate = cast(BinaryIO, original_open(path, *args, **kwargs))
+        if opened_handles:
+            return delegate
+        handle = _InterruptingNonClosingRealHandle(
+            delegate,
+            interrupt if boundary == "local_closed" else None,
+        )
+        opened_handles.append(handle)
+        return cast(BinaryIO, handle)
+
+    lease = FailingRecoveryLease()
+
+    def interrupt_once(
+        frame: FrameType,
+        event: str,
+        argument: Any,
+    ) -> _TraceFunction | None:
+        if (
+            getattr(frame, "f_code", None)
+            is ProfileStoreLease._force_recovery_state.__code__
+            and event == "line"
+            and getattr(frame, "f_lineno", None) == trace_target_line
+        ):
+            sys.settrace(None)
+            raise interrupt
+        return interrupt_once
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "open", open_first_as_interrupting_nonclosing)
+            patch.setattr(
+                portalocker,
+                "unlock",
+                lambda current_handle: (_ for _ in ()).throw(
+                    OSError("unlock-private-secret")
+                ),
+            )
+
+            try:
+                if trace_target_line is not None:
+                    sys.settrace(interrupt_once)
+                with pytest.raises(type(interrupt)) as exc_info:
+                    lease.acquire()
+            finally:
+                sys.settrace(None)
+
+            assert exc_info.value is interrupt
+            assert lease.assignment_attempts >= 2
+            assert len(opened_handles) == 1
+            handle = opened_handles[0]
+            assert handle.closed is False
+            assert lease._handle is handle
+            assert lease.acquired is True
+
+            contender = ProfileStoreLease(
+                database_path,
+                ProfileStoreLockMode.EXCLUSIVE,
+                timeout_seconds=0.02,
+                check_interval_seconds=0.005,
+            )
+            with pytest.raises(ProfileRepositoryError) as contender_exc_info:
+                contender.acquire()
+            _assert_safe_repository_error(contender_exc_info.value, "lock_timeout")
+    finally:
+        sys.settrace(None)
+        if opened_handles:
+            handle = opened_handles[0]
+            handle.fail_close = False
+            if lease._handle is handle:
+                lease.release()
+            elif not handle.closed:
+                try:
+                    original_unlock(cast(BinaryIO, handle))
+                finally:
+                    handle.close()
+
+    with ProfileStoreLease(
+        database_path,
+        ProfileStoreLockMode.EXCLUSIVE,
+        timeout_seconds=0.05,
+        check_interval_seconds=0.005,
+    ) as recovered:
+        assert recovered.acquired is True
 
 
 def test_acquire_interrupt_after_assignment_before_return_releases_real_lock(
