@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import traceback
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import FrozenInstanceError, fields
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -47,6 +47,7 @@ from tldw_chatbook.TTS.profile_types import (
 _CREATED_AT = datetime(2026, 7, 27, 12, tzinfo=UTC)
 _PROFILE_ID = UUID("11111111-1111-4111-8111-111111111111")
 _DUPLICATE_ID = UUID("22222222-2222-4222-8222-222222222222")
+_UNSET = object()
 
 
 def _profile(
@@ -122,6 +123,7 @@ def _model(
 
 def _capability_snapshot(
     *,
+    provider_id: str = "audio_cpp",
     configuration_revision: int = 3,
     state: str = "complete",
     models: tuple[TTSModelInfo, ...] = (),
@@ -131,11 +133,11 @@ def _capability_snapshot(
     health_state: str = "available",
 ) -> TTSNativeCapabilitySnapshot:
     return TTSNativeCapabilitySnapshot(
-        provider_id="audio_cpp",
+        provider_id=provider_id,
         configuration_revision=configuration_revision,
         state=state,  # type: ignore[arg-type]
         catalog=TTSProviderCatalog(
-            provider_id="audio_cpp",
+            provider_id=provider_id,
             revision=catalog_revision,
             health=ProviderHealth(
                 state=health_state,  # type: ignore[arg-type]
@@ -196,6 +198,12 @@ class _FakeRepository:
         self.advance_generation_during_count = False
         self.coordinator_probe: Callable[[], bool] | None = None
         self.coordinator_active_at_repository_calls: list[bool] = []
+        self.list_result: object = _UNSET
+        self.create_result: object = _UNSET
+        self.update_result: object = _UNSET
+        self.delete_result: object = _UNSET
+        self.count_result: object = _UNSET
+        self.create_boundary: _AsyncBoundary | None = None
 
     def _record_coordinator_state(self) -> None:
         self.coordinator_active_at_repository_calls.append(
@@ -210,6 +218,8 @@ class _FakeRepository:
     ) -> ProfileStoreResult[TTSProfilePage]:
         self._record_coordinator_state()
         self.calls.append(("list", (search, limit, offset)))
+        if self.list_result is not _UNSET:
+            return cast(ProfileStoreResult[TTSProfilePage], self.list_result)
         return ProfileStoreResult(generation=self.generation, value=self.page)
 
     async def create_profile(
@@ -223,8 +233,15 @@ class _FakeRepository:
         self.calls.append(
             ("create", (draft, profile_id, expected_generation, self.generation))
         )
+        if self.create_boundary is not None:
+            await self.create_boundary.wait()
         if self.create_error is not None:
             raise self.create_error
+        if self.create_result is not _UNSET:
+            return cast(
+                ProfileStoreResult[TTSGenerationProfile],
+                self.create_result,
+            )
         persisted = _profile(
             profile_id=self.created_profile_id if profile_id is None else profile_id,
             display_name=draft.display_name,
@@ -260,6 +277,11 @@ class _FakeRepository:
         )
         if self.update_error is not None:
             raise self.update_error
+        if self.update_result is not _UNSET:
+            return cast(
+                ProfileStoreResult[TTSGenerationProfile],
+                self.update_result,
+            )
         return ProfileStoreResult(
             generation=self.generation,
             value=_profile(
@@ -290,6 +312,8 @@ class _FakeRepository:
         )
         if self.delete_error is not None:
             raise self.delete_error
+        if self.delete_result is not _UNSET:
+            return cast(ProfileStoreResult[None], self.delete_result)
         return ProfileStoreResult(generation=self.generation, value=None)
 
     async def assignment_count(
@@ -298,6 +322,8 @@ class _FakeRepository:
     ) -> ProfileStoreResult[int]:
         self._record_coordinator_state()
         self.calls.append(("count", (profile_id, self.generation)))
+        if self.count_result is not _UNSET:
+            return cast(ProfileStoreResult[int], self.count_result)
         generation = (
             self.generation if self.count_generation is None else self.count_generation
         )
@@ -308,6 +334,27 @@ class _FakeRepository:
         if self.advance_generation_during_count:
             self.generation += 1
         return result
+
+
+class _AsyncBoundary:
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.settled = asyncio.Event()
+
+    async def wait(self) -> None:
+        self.entered.set()
+        try:
+            await self.release.wait()
+        finally:
+            self.settled.set()
+
+
+class _HostileResult:
+    def __getattribute__(self, _name: str) -> object:
+        raise RuntimeError(
+            "https://user:credential@example.test/private/path submitted text"
+        )
 
 
 class _ExplodingSequence(Sequence[object]):
@@ -358,16 +405,20 @@ class _FakeTTSService:
         self.stale_decision = False
         self.reconfigure_after_decision = False
         self.capability_hook: Callable[[], None] | None = None
+        self.capability_boundary: _AsyncBoundary | None = None
+        self.revision_boundary: _AsyncBoundary | None = None
         self.read_side_active = False
 
     async def get_native_capability_snapshot(
         self,
         provider_id: str,
-        exact_voice_model_ids: tuple[str, ...],
+        exact_voice_model_ids: Iterable[str],
     ) -> TTSNativeCapabilitySnapshot:
         self.capability_calls.append((provider_id, tuple(exact_voice_model_ids)))
         if self.capability_hook is not None:
             self.capability_hook()
+        if self.capability_boundary is not None:
+            await self.capability_boundary.wait()
         return self.snapshot
 
     def configuration_revision(self, provider_id: str) -> int:
@@ -382,6 +433,8 @@ class _FakeTTSService:
         self.revision_decisions.append((provider_id, expected_revision))
         self.read_side_active = True
         try:
+            if self.revision_boundary is not None:
+                await self.revision_boundary.wait()
             await asyncio.sleep(0)
             if self.stale_decision or self.revision != expected_revision:
                 raise TTSConfigurationRevisionError(
@@ -414,8 +467,8 @@ def _service(
     )
     return (
         TTSProfileService(
-            selected_repository,  # type: ignore[arg-type]
-            selected_tts_service,  # type: ignore[arg-type]
+            selected_repository,
+            selected_tts_service,
         ),
         selected_repository,
         selected_tts_service,
@@ -617,6 +670,25 @@ async def test_list_profiles_delegates_with_fixed_fifty_row_limit() -> None:
     assert page.repository_generation == 7
     assert page.profiles == repository.page.profiles
     assert page.total == 81
+
+
+@pytest.mark.asyncio
+async def test_list_profiles_rejects_hostile_repository_result_safely() -> None:
+    repository = _FakeRepository()
+    repository.list_result = _HostileResult()
+    service, repository, _tts_service = _service(repository=repository)
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.list_profiles()
+
+    _assert_safe_service_error(
+        caught.value,
+        "operation_failed",
+        "credential",
+        "/private/path",
+        "submitted text",
+    )
+    assert [name for name, _value in repository.calls] == ["list"]
 
 
 @pytest.mark.asyncio
@@ -911,6 +983,70 @@ async def test_later_reconfiguration_does_not_roll_back_admitted_create() -> Non
     assert [name for name, _value in repository.calls] == ["create"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid_result",
+    (
+        "hostile_envelope",
+        "hostile_value",
+        "wrong_generation",
+        "changed_generation_fields",
+        "wrong_revision",
+    ),
+)
+async def test_create_from_artifact_rejects_hostile_repository_result(
+    invalid_result: str,
+) -> None:
+    repository = _FakeRepository()
+    persisted = _profile(
+        display_name="Saved",
+        model_id="selected-model",
+        voice_id="selected-voice",
+    )
+    if invalid_result == "hostile_envelope":
+        repository.create_result = _HostileResult()
+    elif invalid_result == "hostile_value":
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_HostileResult(),
+        )
+    elif invalid_result == "wrong_generation":
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation + 1,
+            value=persisted,
+        )
+    elif invalid_result == "changed_generation_fields":
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(
+                persisted,
+                model_id="https://user:credential@example.test/private/path",
+            ),
+        )
+    else:
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(persisted, revision=2),
+        )
+    service, repository, tts_service = _service(repository=repository)
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.create_from_artifact(
+            "Saved",
+            _artifact(selection=_selection()),
+        )
+
+    _assert_safe_service_error(
+        caught.value,
+        "operation_failed",
+        "credential",
+        "/private/path",
+        "submitted text",
+    )
+    assert tts_service.revision_decisions == [("audio_cpp", 3)]
+    assert [name for name, _value in repository.calls] == ["create"]
+
+
 def test_profile_service_error_codes_are_bounded_and_value_independent() -> None:
     error = ProfileServiceError(
         "https://user:credential@example.test/private/path submitted text"
@@ -923,6 +1059,16 @@ def test_profile_service_error_codes_are_bounded_and_value_independent() -> None
         "/private/path",
         "submitted text",
     )
+
+
+def test_profile_service_requires_repository_generation_protocol_member() -> None:
+    repository = _FakeRepository()
+    del repository.generation
+
+    with pytest.raises(ProfileServiceError) as caught:
+        TTSProfileService(repository, _FakeTTSService())
+
+    _assert_safe_service_error(caught.value, "operation_failed")
 
 
 @pytest.mark.asyncio
@@ -968,6 +1114,118 @@ async def test_rename_only_is_derived_from_loaded_generation_fields() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid_result",
+    (
+        "hostile_envelope",
+        "hostile_value",
+        "wrong_generation",
+        "changed_generation_fields",
+        "changed_profile_id",
+        "wrong_revision",
+    ),
+)
+async def test_update_rejects_hostile_repository_result(
+    invalid_result: str,
+) -> None:
+    repository = _FakeRepository()
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(revision=4),
+    )
+    draft = TTSProfileDraft(
+        display_name="Renamed",
+        provider_id=loaded.profile.provider_id,
+        model_id=loaded.profile.model_id,
+        voice_id=loaded.profile.voice_id,
+        response_format=loaded.profile.response_format,
+        speed=loaded.profile.speed,
+        options=loaded.profile.options,
+    )
+    persisted = _profile(
+        profile_id=loaded.profile.profile_id,
+        display_name=draft.display_name,
+        revision=loaded.profile.revision + 1,
+    )
+    if invalid_result == "hostile_envelope":
+        repository.update_result = _HostileResult()
+    elif invalid_result == "hostile_value":
+        repository.update_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_HostileResult(),
+        )
+    elif invalid_result == "wrong_generation":
+        repository.update_result = ProfileStoreResult(
+            generation=repository.generation + 1,
+            value=persisted,
+        )
+    elif invalid_result == "changed_generation_fields":
+        repository.update_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(
+                persisted,
+                model_id="https://user:credential@example.test/private/path",
+            ),
+        )
+    elif invalid_result == "changed_profile_id":
+        repository.update_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(persisted, profile_id=_DUPLICATE_ID),
+        )
+    else:
+        repository.update_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(
+                persisted,
+                revision=loaded.profile.revision + 2,
+            ),
+        )
+    service, repository, tts_service = _service(repository=repository)
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.update_profile(loaded, draft)
+
+    _assert_safe_service_error(
+        caught.value,
+        "operation_failed",
+        "credential",
+        "/private/path",
+        "submitted text",
+    )
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+    assert [name for name, _value in repository.calls] == ["update"]
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_stale_loaded_generation_before_capability_work() -> None:
+    service, repository, tts_service = _service(
+        tts_service=_FakeTTSService(_capability_snapshot(models=(_model("model-b"),)))
+    )
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation - 1,
+        profile=_profile(),
+    )
+    changed = TTSProfileDraft(
+        display_name="Changed",
+        provider_id="audio_cpp",
+        model_id="model-b",
+        voice_id=None,
+        response_format="wav",
+        speed=1.0,
+        options={},
+    )
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await service.update_profile(loaded, changed)
+
+    assert caught.value.code == "stale"
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+    assert repository.calls == []
+
+
+@pytest.mark.asyncio
 async def test_generation_edit_requires_fresh_authority_and_revision_decision() -> None:
     tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-b"),)))
     service, repository, tts_service = _service(tts_service=tts_service)
@@ -1007,7 +1265,7 @@ async def test_generation_edit_requires_fresh_authority_and_revision_decision() 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("snapshot", "code"),
+    ("snapshot", "code", "revision_decisions"),
     (
         (
             _capability_snapshot(
@@ -1015,18 +1273,21 @@ async def test_generation_edit_requires_fresh_authority_and_revision_decision() 
                 models=(_model("model-b"),),
             ),
             "profile_unverified",
+            (),
         ),
         (
             _capability_snapshot(
                 models=(_model("different-model"),),
             ),
             "profile_unavailable",
+            (("audio_cpp", 3),),
         ),
     ),
 )
 async def test_generation_edit_rejects_non_authoritative_capability(
     snapshot: TTSNativeCapabilitySnapshot,
     code: str,
+    revision_decisions: tuple[tuple[str, int], ...],
 ) -> None:
     tts_service = _FakeTTSService(snapshot)
     service, repository, tts_service = _service(tts_service=tts_service)
@@ -1048,6 +1309,124 @@ async def test_generation_edit_rejects_non_authoritative_capability(
         await service.update_profile(loaded, changed)
 
     _assert_safe_service_error(caught.value, code)
+    assert tts_service.capability_calls == [("audio_cpp", ())]
+    assert tts_service.revision_decisions == list(revision_decisions)
+    assert repository.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "negative_evidence",
+    (
+        "missing_model",
+        "unsupported_format",
+        "server_default_disallowed",
+        "exact_voice_absent",
+        "voice_model_missing",
+    ),
+)
+async def test_stale_complete_negative_capability_checks_revision_first(
+    negative_evidence: str,
+) -> None:
+    voice_id = (
+        "wanted"
+        if negative_evidence in {"exact_voice_absent", "voice_model_missing"}
+        else None
+    )
+    models = ()
+    voice_results: dict[str, TTSVoiceDiscoveryResult] = {}
+    if negative_evidence == "unsupported_format":
+        models = (_model("model-b", formats=("mp3",)),)
+    elif negative_evidence == "server_default_disallowed":
+        models = (_model("model-b", server_default=False),)
+    elif negative_evidence == "exact_voice_absent":
+        models = (_model("model-b"),)
+        voice_results["model-b"] = TTSVoiceDiscoveryResult(
+            provider_id="audio_cpp",
+            model_id="model-b",
+            catalog_revision=9,
+            voices=("other",),
+            state="complete",
+        )
+    elif negative_evidence == "voice_model_missing":
+        voice_results["model-b"] = TTSVoiceDiscoveryResult(
+            provider_id="audio_cpp",
+            model_id="model-b",
+            catalog_revision=9,
+            voices=(),
+            state="model_missing",
+        )
+
+    tts_service = _FakeTTSService(
+        _capability_snapshot(
+            configuration_revision=3,
+            models=models,
+            voice_results=voice_results,
+        )
+    )
+    tts_service.revision = 4
+    service, repository, tts_service = _service(tts_service=tts_service)
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(),
+    )
+    changed = TTSProfileDraft(
+        display_name="Changed",
+        provider_id="audio_cpp",
+        model_id="model-b",
+        voice_id=voice_id,
+        response_format="wav",
+        speed=1.0,
+        options={},
+    )
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.update_profile(loaded, changed)
+
+    _assert_safe_service_error(
+        caught.value,
+        "stale_configuration",
+        "credential",
+        "example.test",
+        "/private/path",
+    )
+    expected_voice_models = () if voice_id is None else ("model-b",)
+    assert tts_service.capability_calls == [
+        ("audio_cpp", expected_voice_models),
+    ]
+    assert tts_service.revision_decisions == [("audio_cpp", 3)]
+    assert repository.calls == []
+
+
+@pytest.mark.asyncio
+async def test_complete_capability_rejects_mismatched_provider_before_decision() -> (
+    None
+):
+    tts_service = _FakeTTSService(
+        _capability_snapshot(
+            provider_id="future_native",
+            models=(_model("model-b"),),
+        )
+    )
+    service, repository, tts_service = _service(tts_service=tts_service)
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(),
+    )
+    changed = TTSProfileDraft(
+        display_name="Changed",
+        provider_id="audio_cpp",
+        model_id="model-b",
+        voice_id=None,
+        response_format="wav",
+        speed=1.0,
+        options={},
+    )
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.update_profile(loaded, changed)
+
+    _assert_safe_service_error(caught.value, "operation_failed")
     assert tts_service.capability_calls == [("audio_cpp", ())]
     assert tts_service.revision_decisions == []
     assert repository.calls == []
@@ -1127,6 +1506,104 @@ async def test_duplicate_copies_immutable_loaded_version_at_revision_one() -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid_result",
+    (
+        "hostile_envelope",
+        "hostile_value",
+        "wrong_generation",
+        "changed_generation_fields",
+        "reused_profile_id",
+        "wrong_revision",
+    ),
+)
+async def test_duplicate_rejects_hostile_repository_result(
+    invalid_result: str,
+) -> None:
+    repository = _FakeRepository()
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(),
+    )
+    persisted = _profile(
+        profile_id=_DUPLICATE_ID,
+        display_name="Duplicate",
+    )
+    if invalid_result == "hostile_envelope":
+        repository.create_result = _HostileResult()
+    elif invalid_result == "hostile_value":
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_HostileResult(),
+        )
+    elif invalid_result == "wrong_generation":
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation + 1,
+            value=persisted,
+        )
+    elif invalid_result == "changed_generation_fields":
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(
+                persisted,
+                model_id="https://user:credential@example.test/private/path",
+            ),
+        )
+    elif invalid_result == "reused_profile_id":
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(
+                persisted,
+                profile_id=loaded.profile.profile_id,
+            ),
+        )
+    else:
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(persisted, revision=2),
+        )
+    service, repository, tts_service = _service(
+        repository=repository,
+        tts_service=_FakeTTSService(_capability_snapshot(models=(_model("model-a"),))),
+    )
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.duplicate_profile(loaded, "Duplicate")
+
+    _assert_safe_service_error(
+        caught.value,
+        "operation_failed",
+        "credential",
+        "/private/path",
+        "submitted text",
+    )
+    assert tts_service.capability_calls == [("audio_cpp", ())]
+    assert tts_service.revision_decisions == [("audio_cpp", 3)]
+    assert [name for name, _value in repository.calls] == ["create"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_rejects_stale_loaded_generation_before_capability_work() -> (
+    None
+):
+    service, repository, tts_service = _service(
+        tts_service=_FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
+    )
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation - 1,
+        profile=_profile(),
+    )
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await service.duplicate_profile(loaded, "Duplicate")
+
+    assert caught.value.code == "stale"
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+    assert repository.calls == []
+
+
+@pytest.mark.asyncio
 async def test_duplicate_requires_fresh_authoritative_capability() -> None:
     tts_service = _FakeTTSService(
         _capability_snapshot(
@@ -1181,6 +1658,29 @@ async def test_assignment_count_returns_only_loaded_repository_generation() -> N
 
 
 @pytest.mark.asyncio
+async def test_assignment_count_rejects_hostile_repository_result_safely() -> None:
+    repository = _FakeRepository()
+    repository.count_result = _HostileResult()
+    service, repository, _tts_service = _service(repository=repository)
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(),
+    )
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.assignment_count(loaded)
+
+    _assert_safe_service_error(
+        caught.value,
+        "operation_failed",
+        "credential",
+        "/private/path",
+        "submitted text",
+    )
+    assert [name for name, _value in repository.calls] == ["count"]
+
+
+@pytest.mark.asyncio
 async def test_delete_supplies_loaded_generation_and_leaves_protection_to_repository() -> (
     None
 ):
@@ -1221,6 +1721,151 @@ async def test_delete_succeeds_without_capability_or_count_preflight() -> None:
     assert [name for name, _value in repository.calls] == ["delete"]
     assert tts_service.capability_calls == []
     assert tts_service.revision_decisions == []
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_hostile_repository_result_safely() -> None:
+    repository = _FakeRepository()
+    repository.delete_result = _HostileResult()
+    service, repository, _tts_service = _service(repository=repository)
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(),
+    )
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.delete_profile(loaded)
+
+    _assert_safe_service_error(
+        caught.value,
+        "operation_failed",
+        "credential",
+        "/private/path",
+        "submitted text",
+    )
+    assert [name for name, _value in repository.calls] == ["delete"]
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_stale_loaded_generation_before_repository_work() -> None:
+    service, repository, tts_service = _service()
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation - 1,
+        profile=_profile(),
+    )
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await service.delete_profile(loaded)
+
+    assert caught.value.code == "stale"
+    assert repository.calls == []
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+
+
+@pytest.mark.asyncio
+async def test_cancellation_propagates_unchanged_from_capability_wait() -> None:
+    boundary = _AsyncBoundary()
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
+    tts_service.capability_boundary = boundary
+    service, repository, tts_service = _service(tts_service=tts_service)
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(),
+    )
+    existing_tasks = set(asyncio.all_tasks())
+    operation = asyncio.create_task(
+        service.duplicate_profile(loaded, "Duplicate"),
+        name="profile_service_capability_wait",
+    )
+    async with asyncio.timeout(1):
+        await boundary.entered.wait()
+    cancellation_identity = object()
+
+    operation.cancel(cancellation_identity)
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await operation
+
+    assert caught.value.args == (cancellation_identity,)
+    assert caught.value.args[0] is cancellation_identity
+    assert boundary.settled.is_set()
+    assert not boundary.release.is_set()
+    assert operation.done()
+    assert operation not in asyncio.all_tasks()
+    assert set(asyncio.all_tasks()) == existing_tasks
+    assert tts_service.capability_calls == [("audio_cpp", ())]
+    assert tts_service.revision_decisions == []
+    assert repository.calls == []
+
+
+@pytest.mark.asyncio
+async def test_cancellation_propagates_unchanged_from_revision_decision_wait() -> None:
+    boundary = _AsyncBoundary()
+    tts_service = _FakeTTSService()
+    tts_service.revision_boundary = boundary
+    service, repository, tts_service = _service(tts_service=tts_service)
+    existing_tasks = set(asyncio.all_tasks())
+    operation = asyncio.create_task(
+        service.create_from_artifact(
+            "Saved",
+            _artifact(selection=_selection()),
+        ),
+        name="profile_service_revision_wait",
+    )
+    async with asyncio.timeout(1):
+        await boundary.entered.wait()
+    cancellation_identity = object()
+
+    operation.cancel(cancellation_identity)
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await operation
+
+    assert caught.value.args == (cancellation_identity,)
+    assert caught.value.args[0] is cancellation_identity
+    assert boundary.settled.is_set()
+    assert not boundary.release.is_set()
+    assert operation.done()
+    assert operation not in asyncio.all_tasks()
+    assert set(asyncio.all_tasks()) == existing_tasks
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == [("audio_cpp", 3)]
+    assert not tts_service.read_side_active
+    assert repository.calls == []
+
+
+@pytest.mark.asyncio
+async def test_cancellation_propagates_unchanged_from_repository_wait() -> None:
+    boundary = _AsyncBoundary()
+    repository = _FakeRepository()
+    repository.create_boundary = boundary
+    service, repository, tts_service = _service(repository=repository)
+    existing_tasks = set(asyncio.all_tasks())
+    operation = asyncio.create_task(
+        service.create_from_artifact(
+            "Saved",
+            _artifact(selection=_selection()),
+        ),
+        name="profile_service_repository_wait",
+    )
+    async with asyncio.timeout(1):
+        await boundary.entered.wait()
+    cancellation_identity = object()
+
+    operation.cancel(cancellation_identity)
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await operation
+
+    assert caught.value.args == (cancellation_identity,)
+    assert caught.value.args[0] is cancellation_identity
+    assert boundary.settled.is_set()
+    assert not boundary.release.is_set()
+    assert operation.done()
+    assert operation not in asyncio.all_tasks()
+    assert set(asyncio.all_tasks()) == existing_tasks
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == [("audio_cpp", 3)]
+    assert [name for name, _value in repository.calls] == ["create"]
+    assert repository.coordinator_active_at_repository_calls == [False]
 
 
 @pytest.mark.asyncio

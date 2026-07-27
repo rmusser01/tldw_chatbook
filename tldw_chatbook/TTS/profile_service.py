@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import islice
 from types import MappingProxyType
-from typing import Any, Literal, TypeAlias, TypeVar, cast
+from typing import Any, Literal, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
 from uuid import UUID
 
 from tldw_chatbook.TTS.adapter_types import (
@@ -25,12 +25,12 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileServiceError,
     ProfileValidationError,
 )
-from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_types import (
+    ProfileStoreResult,
     TTSGenerationProfile,
     TTSProfileDraft,
+    TTSProfilePage,
 )
-from tldw_chatbook.TTS.TTS_Generation import TTSService
 
 ProfileAvailabilityState: TypeAlias = Literal[
     "available",
@@ -43,6 +43,7 @@ _PROFILE_PROVIDER_ID = "audio_cpp"
 _PROFILE_RESPONSE_FORMAT = "wav"
 _PROFILE_SPEED = 1.0
 _PROFILE_PAGE_LIMIT = 50
+_TTS_GENERATION_PROFILE_TYPE: type[TTSGenerationProfile] = TTSGenerationProfile
 _BoundedValue = TypeVar("_BoundedValue")
 _AVAILABILITY_RECOVERY: Mapping[
     ProfileAvailabilityState,
@@ -54,6 +55,65 @@ _AVAILABILITY_RECOVERY: Mapping[
         "unverified": "refresh",
     }
 )
+
+
+@runtime_checkable
+class _ProfileRepositoryProtocol(Protocol):
+    @property
+    def generation(self) -> int: ...
+
+    async def list_profiles(
+        self,
+        search: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> ProfileStoreResult[TTSProfilePage]: ...
+
+    async def create_profile(
+        self,
+        draft: TTSProfileDraft,
+        profile_id: UUID | None = None,
+        *,
+        expected_generation: int | None = None,
+    ) -> ProfileStoreResult[TTSGenerationProfile]: ...
+
+    async def update_profile(
+        self,
+        profile_id: UUID,
+        expected_revision: int,
+        draft: TTSProfileDraft,
+        *,
+        expected_generation: int,
+    ) -> ProfileStoreResult[TTSGenerationProfile]: ...
+
+    async def delete_profile(
+        self,
+        profile_id: UUID,
+        *,
+        expected_generation: int,
+    ) -> ProfileStoreResult[None]: ...
+
+    async def assignment_count(
+        self,
+        profile_id: UUID,
+    ) -> ProfileStoreResult[int]: ...
+
+
+@runtime_checkable
+class _ProfileTTSServiceProtocol(Protocol):
+    def configuration_revision(self, provider_id: str) -> int: ...
+
+    async def get_native_capability_snapshot(
+        self,
+        provider_id: str,
+        exact_voice_model_ids: Iterable[str],
+    ) -> TTSNativeCapabilitySnapshot: ...
+
+    async def require_current_configuration_revision(
+        self,
+        provider_id: str,
+        expected_revision: int,
+    ) -> None: ...
 
 
 def _validate_nonnegative_integer(value: object, code: str) -> int:
@@ -296,31 +356,20 @@ class TTSProfileService:
 
     def __init__(
         self,
-        repository: TTSProfileRepository,
-        tts_service: TTSService,
+        repository: _ProfileRepositoryProtocol,
+        tts_service: _ProfileTTSServiceProtocol,
     ) -> None:
-        if not isinstance(repository, TTSProfileRepository):
-            repository_methods = (
-                "assignment_count",
-                "create_profile",
-                "delete_profile",
-                "list_profiles",
-                "update_profile",
-            )
-            if not all(
-                callable(getattr(repository, name, None)) for name in repository_methods
+        validation_failed = False
+        try:
+            if not isinstance(repository, _ProfileRepositoryProtocol) or not isinstance(
+                tts_service,
+                _ProfileTTSServiceProtocol,
             ):
-                raise ProfileServiceError("operation_failed")
-        if not isinstance(tts_service, TTSService):
-            service_methods = (
-                "configuration_revision",
-                "get_native_capability_snapshot",
-                "require_current_configuration_revision",
-            )
-            if not all(
-                callable(getattr(tts_service, name, None)) for name in service_methods
-            ):
-                raise ProfileServiceError("operation_failed")
+                validation_failed = True
+        except Exception:  # noqa: BLE001 - hostile collaborators fail closed
+            validation_failed = True
+        if validation_failed:
+            raise ProfileServiceError("operation_failed")
         self._repository = repository
         self._tts_service = tts_service
 
@@ -346,13 +395,24 @@ class TTSProfileService:
             failed = True
         if failed or result is None:
             raise ProfileServiceError("operation_failed")
-        if result.generation != self._repository.generation:
-            raise ProfileRepositoryError("stale")
-        return TTSProfilePageSnapshot(
-            repository_generation=result.generation,
-            profiles=result.value.profiles,
-            total=result.value.total,
-        )
+        generation, value = self._extract_store_result(result)
+        self._require_repository_generation(generation)
+        if type(value) is not TTSProfilePage:
+            raise ProfileServiceError("operation_failed")
+        page = cast(TTSProfilePage, value)
+        validation_failed = False
+        snapshot = None
+        try:
+            snapshot = TTSProfilePageSnapshot(
+                repository_generation=generation,
+                profiles=page.profiles,
+                total=page.total,
+            )
+        except Exception:  # noqa: BLE001 - hostile results fail closed
+            validation_failed = True
+        if validation_failed or snapshot is None:
+            raise ProfileServiceError("operation_failed")
+        return snapshot
 
     async def observe_availability(
         self,
@@ -447,6 +507,7 @@ class TTSProfileService:
             selection.provider_id,
             selection.configuration_revision,
         )
+        repository_generation = self._current_repository_generation()
 
         failed = False
         result = None
@@ -458,11 +519,18 @@ class TTSProfileService:
             failed = True
         if failed or result is None:
             raise ProfileServiceError("operation_failed")
-        if result.generation != self._repository.generation:
-            raise ProfileRepositoryError("stale")
+        value = self._require_admitted_store_result(
+            result,
+            repository_generation,
+        )
+        profile = self._require_profile_mutation_result(
+            value,
+            draft,
+            expected_revision=1,
+        )
         return LoadedTTSProfile(
-            repository_generation=result.generation,
-            profile=result.value,
+            repository_generation=repository_generation,
+            profile=profile,
         )
 
     async def update_profile(
@@ -473,6 +541,7 @@ class TTSProfileService:
         """Update one exact loaded revision after service-owned validation."""
 
         self._validate_loaded_and_draft(loaded, draft)
+        self._require_repository_generation(loaded.repository_generation)
         if not _selection_is_profile_safe(
             draft.provider_id,
             draft.response_format,
@@ -498,13 +567,19 @@ class TTSProfileService:
             failed = True
         if failed or result is None:
             raise ProfileServiceError("operation_failed")
-        self._require_mutation_result_generation(
+        value = self._require_admitted_store_result(
+            result,
             loaded.repository_generation,
-            result.generation,
+        )
+        profile = self._require_profile_mutation_result(
+            value,
+            draft,
+            expected_revision=loaded.profile.revision + 1,
+            required_profile_id=loaded.profile.profile_id,
         )
         return LoadedTTSProfile(
-            repository_generation=result.generation,
-            profile=result.value,
+            repository_generation=loaded.repository_generation,
+            profile=profile,
         )
 
     async def duplicate_profile(
@@ -515,6 +590,7 @@ class TTSProfileService:
         """Copy the immutable loaded version under a new profile identity."""
 
         self._validate_loaded(loaded)
+        self._require_repository_generation(loaded.repository_generation)
         source = loaded.profile
         draft = TTSProfileDraft(
             display_name=display_name,
@@ -547,13 +623,19 @@ class TTSProfileService:
             failed = True
         if failed or result is None:
             raise ProfileServiceError("operation_failed")
-        self._require_mutation_result_generation(
+        value = self._require_admitted_store_result(
+            result,
             loaded.repository_generation,
-            result.generation,
+        )
+        profile = self._require_profile_mutation_result(
+            value,
+            draft,
+            expected_revision=1,
+            forbidden_profile_id=source.profile_id,
         )
         return LoadedTTSProfile(
-            repository_generation=result.generation,
-            profile=result.value,
+            repository_generation=loaded.repository_generation,
+            profile=profile,
         )
 
     async def assignment_count(self, loaded: LoadedTTSProfile) -> int:
@@ -571,18 +653,19 @@ class TTSProfileService:
             failed = True
         if failed or result is None:
             raise ProfileServiceError("operation_failed")
-        self._require_mutation_result_generation(
+        value = self._require_admitted_store_result(
+            result,
             loaded.repository_generation,
-            result.generation,
         )
-        if type(result.value) is not int or result.value < 0:
+        if type(value) is not int or value < 0:
             raise ProfileValidationError("assignment_count")
-        return result.value
+        return value
 
     async def delete_profile(self, loaded: LoadedTTSProfile) -> None:
         """Delete one loaded profile while retaining repository protection."""
 
         self._validate_loaded(loaded)
+        self._require_repository_generation(loaded.repository_generation)
         failed = False
         result = None
         try:
@@ -596,11 +679,11 @@ class TTSProfileService:
             failed = True
         if failed or result is None:
             raise ProfileServiceError("operation_failed")
-        self._require_mutation_result_generation(
+        value = self._require_admitted_store_result(
+            result,
             loaded.repository_generation,
-            result.generation,
         )
-        if result.value is not None:
+        if value is not None:
             raise ProfileServiceError("operation_failed")
 
     def preview_preset(
@@ -626,20 +709,97 @@ class TTSProfileService:
             availability=availability.state,
         )
 
+    @staticmethod
+    def _extract_store_result(result: object) -> tuple[int, object]:
+        if type(result) is not ProfileStoreResult:
+            raise ProfileServiceError("operation_failed")
+        store_result = cast(ProfileStoreResult[object], result)
+        extraction_failed = False
+        generation = 0
+        value: object = None
+        try:
+            generation = store_result.generation
+            value = store_result.value
+        except Exception:  # noqa: BLE001 - hostile results fail closed
+            extraction_failed = True
+        if extraction_failed or type(generation) is not int or generation < 0:
+            raise ProfileServiceError("operation_failed")
+        return generation, value
+
+    def _current_repository_generation(self) -> int:
+        read_failed = False
+        generation = 0
+        try:
+            generation = self._repository.generation
+        except Exception:  # noqa: BLE001 - hostile collaborators fail closed
+            read_failed = True
+        if read_failed or type(generation) is not int or generation < 0:
+            raise ProfileServiceError("operation_failed")
+        return generation
+
     def _require_repository_generation(self, expected_generation: int) -> None:
-        if self._repository.generation != expected_generation:
+        if self._current_repository_generation() != expected_generation:
             raise ProfileRepositoryError("stale")
 
-    def _require_mutation_result_generation(
+    def _require_admitted_store_result(
         self,
+        result: object,
         expected_generation: int,
-        result_generation: int,
-    ) -> None:
-        if (
-            result_generation != expected_generation
-            or self._repository.generation != expected_generation
-        ):
-            raise ProfileRepositoryError("stale")
+    ) -> object:
+        result_generation, value = self._extract_store_result(result)
+        self._require_repository_generation(expected_generation)
+        if result_generation != expected_generation:
+            raise ProfileServiceError("operation_failed")
+        return value
+
+    @classmethod
+    def _require_profile_mutation_result(
+        cls,
+        value: object,
+        draft: TTSProfileDraft,
+        *,
+        expected_revision: int,
+        required_profile_id: UUID | None = None,
+        forbidden_profile_id: UUID | None = None,
+    ) -> TTSGenerationProfile:
+        if type(value) is not _TTS_GENERATION_PROFILE_TYPE:
+            raise ProfileServiceError("operation_failed")
+        profile = cast(TTSGenerationProfile, value)
+        validation_failed = False
+        valid = False
+        try:
+            revalidated = TTSGenerationProfile(
+                profile_id=profile.profile_id,
+                display_name=profile.display_name,
+                normalized_name=profile.normalized_name,
+                provider_id=profile.provider_id,
+                model_id=profile.model_id,
+                voice_id=profile.voice_id,
+                response_format=profile.response_format,
+                speed=profile.speed,
+                options=profile.options,
+                revision=profile.revision,
+                created_at=profile.created_at,
+                updated_at=profile.updated_at,
+            )
+            valid = (
+                revalidated == profile
+                and cls._generation_fields_match(profile, draft)
+                and profile.revision == expected_revision
+                and (
+                    required_profile_id is None
+                    or profile.profile_id == required_profile_id
+                )
+                and (
+                    forbidden_profile_id is None
+                    or profile.profile_id != forbidden_profile_id
+                )
+            )
+        except Exception:  # noqa: BLE001 - hostile results fail closed
+            validation_failed = True
+        if validation_failed or not valid:
+            raise ProfileServiceError("operation_failed")
+        return profile
 
     def _current_configuration_revision(self) -> int:
         failed = False
@@ -691,6 +851,12 @@ class TTSProfileService:
             raise ProfileServiceError("operation_failed")
         if snapshot.state != "complete":
             raise ProfileServiceError("profile_unverified")
+        if snapshot.provider_id != _PROFILE_PROVIDER_ID:
+            raise ProfileServiceError("operation_failed")
+        await self._require_configuration_revision(
+            _PROFILE_PROVIDER_ID,
+            snapshot.configuration_revision,
+        )
         state = self._classify_selection(
             provider_id=draft.provider_id,
             model_id=draft.model_id,
@@ -704,10 +870,6 @@ class TTSProfileService:
             raise ProfileServiceError("profile_unavailable")
         if state != "available":
             raise ProfileServiceError("profile_unverified")
-        await self._require_configuration_revision(
-            draft.provider_id,
-            snapshot.configuration_revision,
-        )
 
     @staticmethod
     def _validate_loaded(loaded: LoadedTTSProfile) -> None:
