@@ -4,10 +4,9 @@
 # Imports
 from typing import TYPE_CHECKING, Optional, List, Dict, NamedTuple
 import asyncio
+import io
 import json
 import os
-import shutil
-import sqlite3
 import sys
 import tempfile
 from datetime import datetime
@@ -44,8 +43,9 @@ from textual import on
 # Local Imports
 from tldw_chatbook.config import (
     load_cli_config_and_ensure_existence,
-    DEFAULT_CONFIG_PATH,
     save_setting_to_cli_config,
+    replace_cli_config,
+    export_cli_config_snapshot,
     API_MODELS_BY_PROVIDER,
     check_encryption_needed,
     get_detected_api_providers,
@@ -60,12 +60,18 @@ from tldw_chatbook.config import (
     get_evals_db_path,
     get_rag_indexing_db_path,
     get_subscriptions_db_path,
+    get_user_data_dir,
 )
 from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
-from ..DB.Client_Media_DB_v2 import MediaDatabase
-from ..DB.Prompts_DB import PromptsDatabase
+from ..DB.private_sqlite import (
+    SQLiteRestoreIndeterminateError,
+    connect_private_sqlite,
+    copy_private_sqlite,
+    restore_private_sqlite,
+)
 from ..Utils.path_validation import validate_path_simple
+from ..Utils.private_paths import create_private_text, secure_private_directory
 from .Outputs_Panel import OutputsPanel
 from .Sharing_Panel import SharingPanel
 from .Widgets import ConfigSearchResult, UIElementSearchEngine
@@ -74,6 +80,10 @@ from ..Chat.provider_readiness import (
     provider_config_key,
     chat_api_key_field_state,
     chat_api_key_value_to_persist,
+)
+from ..Chatbooks.database_paths import (
+    get_chatbook_database_paths,
+    get_private_chatbooks_dir,
 )
 
 #
@@ -94,6 +104,15 @@ class _BackupManifestPublication(NamedTuple):
 #######################################################################################################################
 #
 # Functions:
+
+SETTINGS_DATABASES = (
+    ("chachanotes", "ChaChaNotes", "tldw_chatbook_ChaChaNotes"),
+    ("prompts", "Prompts", "tldw_cli_prompts"),
+    ("media", "Media", "tldw_cli_media_v2"),
+    ("evals", "Evals", "tldw_cli_evals"),
+    ("rag", "RAG", "tldw_cli_rag_indexing"),
+    ("subscriptions", "Subscriptions", "tldw_cli_subscriptions"),
+)
 
 
 class ToolsSettingsWindow(Container):
@@ -4277,19 +4296,7 @@ Thank you for using tldw-chatbook! 🎉
             # Parse the TOML to validate it
             config_data = toml.loads(config_text_area.text)
 
-            # Ensure the config directory exists
-            DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-            # Write the configuration to file
-            with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
-                toml.dump(config_data, f)
-
-            # Force reload the configuration to update all caches
-            from tldw_chatbook.config import load_settings
-
-            self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
-            # Also reload the main settings cache
-            load_settings(force_reload=True)
+            self.config_data = replace_cli_config(config_data)
 
             self.app_instance.notify(
                 "Configuration saved successfully!", severity="successful"
@@ -5215,14 +5222,7 @@ Thank you for using tldw-chatbook! 🎉
     async def _export_configuration(self) -> None:
         """Export configuration to a backup file."""
         try:
-            import datetime
-
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = DEFAULT_CONFIG_PATH.parent / f"config_backup_{timestamp}.toml"
-
-            with open(backup_path, "w") as f:
-                toml.dump(self.config_data, f)
-
+            backup_path = export_cli_config_snapshot(self.config_data)
             self.app_instance.notify(f"Configuration exported to {backup_path}")
         except Exception as e:
             self.app_instance.notify(
@@ -5752,38 +5752,17 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             vacuumed = []
 
-            # Vacuum ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
-            if chachanotes_path.exists():
-                db = CharactersRAGDB(str(chachanotes_path), "vacuum_operation")
-                db.vacuum()
-                db.close_connection()
-                vacuumed.append("ChaChaNotes")
-
-            # Vacuum Prompts database
-            prompts_path = get_prompts_db_path()
-            if prompts_path.exists():
-                db = PromptsDatabase(str(prompts_path), "vacuum_operation")
-                db.vacuum()
-                db.close_connection()
-                vacuumed.append("Prompts")
-
-            # Vacuum Media database
-            media_path = Path(
-                db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-                )
-            ).expanduser()
-            if media_path.exists():
-                db = MediaDatabase(str(media_path), "vacuum_operation")
-                db.vacuum()
-                db.close_connection()
-                vacuumed.append("Media")
+            for db_name, display_name, _backup_stem in SETTINGS_DATABASES:
+                db_path = self._get_database_path(db_name, db_config)
+                if not db_path or not db_path.exists():
+                    continue
+                conn = connect_private_sqlite("settings.vacuum", db_path)
+                try:
+                    conn.execute("VACUUM")
+                    conn.commit()
+                finally:
+                    conn.close()
+                vacuumed.append(display_name)
 
             # Update UI from worker thread
             self.app.call_from_thread(
@@ -6008,7 +5987,11 @@ Thank you for using tldw-chatbook! 🎉
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
             backup_root = Path.home() / ".local" / "share" / "tldw_cli" / "backups"
-            backup_root.mkdir(parents=True, exist_ok=True)
+            secure_private_directory(
+                backup_root,
+                create=True,
+                application_owned=True,
+            )
             backup_dir = Path(
                 tempfile.mkdtemp(
                     dir=backup_root,
@@ -6049,7 +6032,7 @@ Thank you for using tldw-chatbook! 🎉
             staged_backups: list[tuple[str, Path, Path]] = []
             for name, source_path, backup_path in candidates:
                 self._raise_if_textual_worker_cancelled()
-                if not source_path.exists():
+                if source_path is None or not source_path.exists():
                     continue
                 descriptor, temporary_name = tempfile.mkstemp(
                     dir=backup_dir,
@@ -6059,7 +6042,11 @@ Thank you for using tldw-chatbook! 🎉
                 temporary_path = Path(temporary_name)
                 staged_paths.append(temporary_path)
                 os.close(descriptor)
-                shutil.copy2(source_path, temporary_path)
+                copy_private_sqlite(
+                    "settings.bulk_backup",
+                    source_path,
+                    temporary_path,
+                )
                 self._raise_if_textual_worker_cancelled()
                 staged_backups.append((name, temporary_path, backup_path))
 
@@ -6116,12 +6103,14 @@ Thank you for using tldw-chatbook! 🎉
                 ],
             }
             ToolsSettingsWindow._raise_if_textual_worker_cancelled()
-            info_file = publication.stage_path.open("x", encoding="utf-8")
+            serialized = io.StringIO()
+            json.dump(backup_info, serialized, indent=2)
+            create_private_text(
+                publication.stage_path,
+                serialized.getvalue(),
+                application_owned_directory=publication.stage_path.parent,
+            )
             stage_created = True
-            with info_file:
-                json.dump(backup_info, info_file, indent=2)
-                info_file.flush()
-                os.fsync(info_file.fileno())
             ToolsSettingsWindow._raise_if_textual_worker_cancelled()
             completed = True
             return publication
@@ -6157,38 +6146,21 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             results = []
 
-            # Check ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
+            for db_name, display_name, _backup_stem in SETTINGS_DATABASES:
+                db_path = self._get_database_path(db_name, db_config)
+                if not db_path or not db_path.exists():
+                    continue
+                conn = connect_private_sqlite(
+                    "settings.integrity",
+                    db_path,
+                    read_only=True,
                 )
-            ).expanduser()
-            if chachanotes_path.exists():
-                db = CharactersRAGDB(str(chachanotes_path), "integrity_check")
-                result = db.check_integrity()
-                db.close_connection()
-                results.append(f"ChaChaNotes: {'OK' if result else 'FAILED'}")
-
-            # Check Prompts database
-            prompts_path = get_prompts_db_path()
-            if prompts_path.exists():
-                db = PromptsDatabase(str(prompts_path), "integrity_check")
-                result = db.check_integrity()
-                db.close_connection()
-                results.append(f"Prompts: {'OK' if result else 'FAILED'}")
-
-            # Check Media database
-            media_path = Path(
-                db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-                )
-            ).expanduser()
-            if media_path.exists():
-                db = MediaDatabase(str(media_path), "integrity_check")
-                result = db.check_integrity()
-                db.close_connection()
-                results.append(f"Media: {'OK' if result else 'FAILED'}")
+                try:
+                    row = conn.execute("PRAGMA integrity_check").fetchone()
+                finally:
+                    conn.close()
+                result = bool(row and row[0] == "ok")
+                results.append(f"{display_name}: {'OK' if result else 'FAILED'}")
 
             # Report results
             all_ok = all("OK" in r for r in results)
@@ -6232,23 +6204,25 @@ Thank you for using tldw-chatbook! 🎉
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
             # Create export directory
-            export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
-            export_dir.mkdir(parents=True, exist_ok=True)
+            export_dir = get_user_data_dir() / "exports"
+            secure_private_directory(
+                export_dir,
+                create=True,
+                application_owned=True,
+            )
 
             # Export from ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
-            if chachanotes_path.exists():
+            chachanotes_path = self._get_database_path("chachanotes", db_config)
+            if chachanotes_path and chachanotes_path.exists():
                 db = CharactersRAGDB(str(chachanotes_path), "export_operation")
                 conversations = db.list_all_active_conversations(limit=10000)
 
                 export_path = export_dir / f"conversations_{timestamp}.json"
-                with open(export_path, "w", encoding="utf-8") as f:
-                    json.dump(conversations, f, indent=2, ensure_ascii=False)
+                create_private_text(
+                    export_path,
+                    json.dumps(conversations, indent=2, ensure_ascii=False),
+                    application_owned_directory=export_dir,
+                )
 
                 db.close_connection()
 
@@ -6291,24 +6265,22 @@ Thank you for using tldw-chatbook! 🎉
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
             # Create export directory
-            export_dir = (
-                Path.home()
-                / ".local"
-                / "share"
-                / "tldw_cli"
-                / "exports"
-                / f"notes_{timestamp}"
+            export_root = get_user_data_dir() / "exports"
+            secure_private_directory(
+                export_root,
+                create=True,
+                application_owned=True,
             )
-            export_dir.mkdir(parents=True, exist_ok=True)
+            export_dir = export_root / f"notes_{timestamp}"
+            secure_private_directory(
+                export_dir,
+                create=True,
+                application_owned=True,
+            )
 
             # Export from ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
-            if chachanotes_path.exists():
+            chachanotes_path = self._get_database_path("chachanotes", db_config)
+            if chachanotes_path and chachanotes_path.exists():
                 db = CharactersRAGDB(str(chachanotes_path), "export_operation")
                 notes = db.list_notes(limit=10000)
 
@@ -6320,11 +6292,17 @@ Thank you for using tldw-chatbook! 🎉
                     filename = f"{safe_title}_{note['id']}.md"
 
                     note_path = export_dir / filename
-                    with open(note_path, "w", encoding="utf-8") as f:
-                        f.write(f"# {note['title']}\n\n")
-                        f.write(f"Created: {note['created_at']}\n")
-                        f.write(f"Modified: {note['updated_at']}\n\n")
-                        f.write(note["content"])
+                    note_text = (
+                        f"# {note['title']}\n\n"
+                        f"Created: {note['created_at']}\n"
+                        f"Modified: {note['updated_at']}\n\n"
+                        f"{note['content']}"
+                    )
+                    create_private_text(
+                        note_path,
+                        note_text,
+                        application_owned_directory=export_dir,
+                    )
 
                 db.close_connection()
 
@@ -6369,23 +6347,25 @@ Thank you for using tldw-chatbook! 🎉
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
             # Create export directory
-            export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
-            export_dir.mkdir(parents=True, exist_ok=True)
+            export_dir = get_user_data_dir() / "exports"
+            secure_private_directory(
+                export_dir,
+                create=True,
+                application_owned=True,
+            )
 
             # Export from ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
-            if chachanotes_path.exists():
+            chachanotes_path = self._get_database_path("chachanotes", db_config)
+            if chachanotes_path and chachanotes_path.exists():
                 db = CharactersRAGDB(str(chachanotes_path), "export_operation")
                 characters = db.list_character_cards(limit=10000)
 
                 export_path = export_dir / f"characters_{timestamp}.json"
-                with open(export_path, "w", encoding="utf-8") as f:
-                    json.dump(characters, f, indent=2, ensure_ascii=False)
+                create_private_text(
+                    export_path,
+                    json.dumps(characters, indent=2, ensure_ascii=False),
+                    application_owned_directory=export_dir,
+                )
 
                 db.close_connection()
 
@@ -6502,7 +6482,7 @@ Thank you for using tldw-chatbook! 🎉
                 )
                 return
 
-            conn = sqlite3.connect(str(db_path))
+            conn = connect_private_sqlite("settings.vacuum", db_path)
             try:
                 original_size = db_path.stat().st_size
                 conn.execute("VACUUM")
@@ -6571,10 +6551,12 @@ Thank you for using tldw-chatbook! 🎉
                 return
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_dir = (
-                Path.home() / ".local" / "share" / "tldw_cli" / "backups" / db_name
+            backup_dir = get_user_data_dir() / "backups" / db_name
+            secure_private_directory(
+                backup_dir,
+                create=True,
+                application_owned=True,
             )
-            backup_dir.mkdir(parents=True, exist_ok=True)
 
             backup_path = backup_dir / f"{db_name}_backup_{timestamp}.db"
             backup_path = self._validate_maintenance_path(
@@ -6583,7 +6565,11 @@ Thank you for using tldw-chatbook! 🎉
             if backup_path is None:
                 return
 
-            shutil.copy2(db_path, backup_path)
+            copy_private_sqlite(
+                "settings.single_backup",
+                db_path,
+                backup_path,
+            )
 
             # Create metadata file
             metadata_path = backup_path.with_suffix(".json")
@@ -6595,8 +6581,11 @@ Thank you for using tldw-chatbook! 🎉
                 "schema_version": self._get_schema_version(db_path),
             }
 
-            with open(metadata_path, "w") as f:
-                json.dump(metadata, f, indent=2)
+            create_private_text(
+                metadata_path,
+                json.dumps(metadata, indent=2),
+                application_owned_directory=backup_dir,
+            )
 
             self.app.call_from_thread(
                 self.app_instance.notify,
@@ -6621,10 +6610,12 @@ Thank you for using tldw-chatbook! 🎉
 
         try:
             # Show file picker to select backup
-            backup_dir = (
-                Path.home() / ".local" / "share" / "tldw_cli" / "backups" / db_name
+            backup_dir = get_user_data_dir() / "backups" / db_name
+            secure_private_directory(
+                backup_dir,
+                create=True,
+                application_owned=True,
             )
-            backup_dir.mkdir(parents=True, exist_ok=True)
 
             file_path = await self.app_instance.push_screen(
                 FilePickerDialog(
@@ -6704,39 +6695,17 @@ Thank you for using tldw-chatbook! 🎉
             if backup_path is None:
                 return
 
-            # A configured custom database path is legitimate even when its
-            # directory has never been created yet -- DB/base_db.py does the
-            # exact same mkdir(parents=True, exist_ok=True) when it opens a
-            # database, so restore must behave consistently rather than
-            # refusing outright (TASK-899 finding 4). Only a genuine failure
-            # to create the directory (permissions, invalid path) should
-            # block the restore; a merely-missing directory must not.
-            try:
-                db_path.parent.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                logger.error(
-                    "Could not create restore target directory {} for {}: {}",
-                    db_path.parent,
-                    db_name,
-                    e,
-                )
-                self.app.call_from_thread(
-                    self.app_instance.notify,
-                    f"Cannot restore {db_name} database: could not create target directory {db_path.parent}: {e}",
-                    severity="error",
-                )
-                return
-
-            # Create a backup of current database before restoring
-            if db_path.exists():
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                pre_restore_backup = (
-                    db_path.parent / f"{db_path.stem}_pre_restore_{timestamp}.db"
-                )
-                shutil.copy2(db_path, pre_restore_backup)
-
-            # Restore the backup
-            shutil.copy2(backup_path, db_path)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            pre_restore_backup = (
+                db_path.parent / f"{db_path.stem}_pre_restore_{timestamp}.db"
+            )
+            restore_private_sqlite(
+                "settings.restore",
+                "settings.pre_restore_backup",
+                backup_path,
+                db_path,
+                pre_restore_backup,
+            )
 
             self.app.call_from_thread(
                 self.app_instance.notify,
@@ -6745,6 +6714,12 @@ Thank you for using tldw-chatbook! 🎉
             )
 
             self.app.call_from_thread(self._update_database_sizes)
+        except SQLiteRestoreIndeterminateError as e:
+            self.app.call_from_thread(
+                self.app_instance.notify,
+                str(e),
+                severity="error",
+            )
         except Exception as e:
             self.app.call_from_thread(
                 self.app_instance.notify,
@@ -6789,7 +6764,11 @@ Thank you for using tldw-chatbook! 🎉
                 )
                 return
 
-            conn = sqlite3.connect(str(db_path))
+            conn = connect_private_sqlite(
+                "settings.integrity",
+                db_path,
+                read_only=True,
+            )
             try:
                 cursor = conn.execute("PRAGMA integrity_check")
                 result = cursor.fetchone()
@@ -6853,9 +6832,14 @@ Thank you for using tldw-chatbook! 🎉
             logger.error("Could not resolve path for {} database: {}", db_name, e)
             return None
 
+    def _get_chatbook_import_database_paths(self, db_config: dict) -> dict[str, str]:
+        """Return canonical paths using the Chatbook importer's key contract."""
+
+        return get_chatbook_database_paths()
+
     def _validate_maintenance_path(self, path: Path, *, label: str) -> Optional[Path]:
         """Validate a path immediately before a backup/restore worker passes
-        it to ``shutil.copy2``/``open``/``mkdir`` (TASK-899 finding 1).
+        it to the private SQLite backup/restore seams (TASK-899 finding 1).
 
         Both the config-derived database path and the user-selected backup
         path reach filesystem writes without going through the project's
@@ -6888,7 +6872,11 @@ Thank you for using tldw-chatbook! 🎉
     def _get_schema_version(self, db_path: Path) -> Optional[int]:
         """Get the schema version from a database."""
         try:
-            conn = sqlite3.connect(str(db_path))
+            conn = connect_private_sqlite(
+                "settings.schema",
+                db_path,
+                read_only=True,
+            )
             try:
                 cursor = conn.execute("PRAGMA user_version")
                 return cursor.fetchone()[0]
@@ -6991,8 +6979,7 @@ Thank you for using tldw-chatbook! 🎉
 
         try:
             # Show file picker to select chatbook
-            chatbooks_dir = Path.home() / ".local" / "share" / "tldw_cli" / "chatbooks"
-            chatbooks_dir.mkdir(parents=True, exist_ok=True)
+            chatbooks_dir = get_private_chatbooks_dir()
 
             file_path = await self.app_instance.push_screen(
                 FilePickerDialog(
@@ -7005,20 +6992,8 @@ Thank you for using tldw-chatbook! 🎉
             )
 
             if file_path:
-                # Get database paths from the single source of truth
-                # (_DB_PATH_RESOLVERS -> config.py) instead of a second,
-                # disagreeing copy of hardcoded defaults (TASK-899).
                 db_config = self.config_data.get("database", {})
-                db_paths: Dict[str, str] = {}
-                for name in self._DB_PATH_RESOLVERS:
-                    resolved = self._get_database_path(name, db_config)
-                    if resolved is not None:
-                        db_paths[name] = str(resolved)
-                    else:
-                        logger.warning(
-                            f"Could not resolve path for {name} database; "
-                            "omitting from chatbook import"
-                        )
+                db_paths = self._get_chatbook_import_database_paths(db_config)
 
                 # Initialize importer
                 importer = ChatbookImporter(db_paths)
@@ -7059,18 +7034,20 @@ Thank you for using tldw-chatbook! 🎉
     def _import_chatbook_worker(self, file_path: str, db_paths: dict) -> None:
         """Worker to import chatbook in background."""
         try:
-            from ..Chatbooks.chatbook_importer import ChatbookImporter
+            from ..Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
             from ..Chatbooks.conflict_resolver import ConflictResolution
 
             importer = ChatbookImporter(db_paths)
+            status = ImportStatus()
 
             # Import with default settings
-            success, status = importer.import_chatbook(
+            success, _message = importer.import_chatbook(
                 chatbook_path=Path(file_path),
                 conflict_resolution=ConflictResolution.RENAME,
                 prefix_imported=True,
                 import_media=True,
                 import_embeddings=False,
+                import_status=status,
             )
 
             if success:

@@ -14,6 +14,18 @@ STUDY_SOURCE_ITEMS_LIMIT = 25
 STUDY_MATERIAL_TITLE_LENGTH_LIMIT = 160
 STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT = 1000
 STUDY_SOURCE_ID_LENGTH_LIMIT = 128
+STUDY_INITIAL_SECTIONS = frozenset(
+    {
+        "dashboard",
+        "paths",
+        "flashcards",
+        "quizzes",
+        "mindmaps",
+        "course",
+        "guides",
+        "learning_map",
+    }
+)
 
 
 class StudyScopeType(str, Enum):

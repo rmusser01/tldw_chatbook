@@ -181,18 +181,50 @@ class ConfigEncryption:
         Returns:
             Dictionary with decrypted values
         """
-        decrypted_config = {}
+        return self._decrypt_config(config, password, strict=False)
+
+    def decrypt_config_strict(
+        self, config: Dict[str, Any], password: str
+    ) -> Dict[str, Any]:
+        """Decrypt a configuration dictionary, failing on any invalid value.
+
+        Args:
+            config: Dictionary with potentially encrypted values.
+            password: Password to use for decryption.
+
+        Returns:
+            Dictionary with decrypted values.
+
+        Raises:
+            ValueError: If any encrypted value cannot be decrypted.
+        """
+        return self._decrypt_config(config, password, strict=True)
+
+    def _decrypt_config(
+        self,
+        config: Dict[str, Any],
+        password: str,
+        *,
+        strict: bool,
+    ) -> Dict[str, Any]:
+        decrypted_config: Dict[str, Any] = {}
 
         for key, value in config.items():
             if self.is_encrypted(value):
                 try:
                     decrypted_config[key] = self.decrypt_value(value, password)
                 except ValueError:
+                    if strict:
+                        raise
                     logger.warning(f"Failed to decrypt value for key: {key}")
                     decrypted_config[key] = value  # Keep encrypted on failure
             elif isinstance(value, dict):
                 # Recursively decrypt nested dictionaries
-                decrypted_config[key] = self.decrypt_config(value, password)
+                decrypted_config[key] = self._decrypt_config(
+                    value,
+                    password,
+                    strict=strict,
+                )
             else:
                 # Keep non-encrypted values as-is
                 decrypted_config[key] = value

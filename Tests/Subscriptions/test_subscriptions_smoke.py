@@ -78,7 +78,7 @@ def test_subscriptions_db_schema_initialization_reuses_and_closes_connection(
 def test_subscriptions_db_basic_add_and_list():
     # Use a temporary sqlite file to avoid thread issues with ':memory:'
     with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "subscriptions.db"
+        db_path = Path(tmpdir).resolve() / "subscriptions.db"
         db = SubscriptionsDB(str(db_path))
         try:
             # Add a subscription

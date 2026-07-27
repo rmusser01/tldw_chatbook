@@ -1,5 +1,14 @@
 # Refactored App Fixes Summary
 
+> [!WARNING]
+> **Historical document — do not implement.** Its root reactive state,
+> mirrored-write, persistence, and screen-caching claims are superseded by
+> [ADR-033](../../backlog/decisions/033-application-session-state-ownership.md)
+> and the
+> [application session state ownership design](../superpowers/specs/2026-07-26-application-session-state-ownership-design.md).
+> The alternate refactored app entry point described here was retired under
+> TASK-105.
+
 ## Status: All Critical Issues Resolved ✅
 
 This document summarizes the fixes applied to `app_refactored_v2.py` after the initial refactoring.

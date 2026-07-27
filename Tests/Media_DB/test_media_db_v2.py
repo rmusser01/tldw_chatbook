@@ -3,6 +3,7 @@
 # This version is self-contained and does not require a conftest.py file.
 #
 # Standard Library Imports:
+import json
 import os
 import pytest
 import sys
@@ -24,7 +25,10 @@ except (NameError, IndexError):
     pass
 #
 # Local imports (from the main project)
-from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
+from tldw_chatbook.DB.Client_Media_DB_v2 import (
+    DatabaseError,
+    MediaDatabase as Database,
+)
 #
 #######################################################################################################################
 #
@@ -442,6 +446,26 @@ class TestDatabaseCRUDAndSync:
         media_log = get_latest_log(db_instance, media_uuid)
         assert media_log["operation"] == "delete"
 
+    def test_undelete_sync_payload_carries_fts_source_fields(self, db_instance):
+        title = "Restored sync title"
+        content = "Restored sync content"
+        media_id, media_uuid, _ = db_instance.add_media_with_keywords(
+            title=title,
+            content=content,
+            keywords=[],
+            media_type="article",
+        )
+        assert db_instance.soft_delete_media(media_id, cascade=False) is True
+
+        assert db_instance.undelete_media(media_id, cascade=False) is True
+
+        media_log = get_latest_log(db_instance, media_uuid)
+        payload = json.loads(media_log["payload"])
+        assert media_log["operation"] == "update"
+        assert payload["deleted"] == 0
+        assert payload["title"] == title
+        assert payload["content"] == content
+
     def test_optimistic_locking_prevents_update_with_stale_version(self, db_instance):
         kw_id, kw_uuid = db_instance.add_keyword("conflict_test")
         original_version = 1
@@ -568,7 +592,7 @@ class TestDatabaseCRUDAndSync:
 
         conn = sqlite3.connect(temp_db_path)
         try:
-            conn.execute("DROP TABLE IF EXISTS MediaReadingProgress")
+            conn.execute("DROP TABLE IF EXISTS ReadingProgress")
             conn.execute("UPDATE schema_version SET version = 2")
             conn.commit()
         finally:
@@ -605,6 +629,161 @@ class TestDatabaseCRUDAndSync:
             assert fetched_saved_state["is_read_it_later"] is True
         finally:
             reopened_db.close_connection()
+
+    def test_failed_migration_rolls_back_schema_version_and_is_retryable(
+        self, db_instance
+    ):
+        conn = db_instance.get_connection()
+        original_sql = db_instance._READING_PROGRESS_TABLE_SQL
+        conn.execute("DROP TABLE IF EXISTS ReadingProgress")
+        conn.execute("DROP TABLE IF EXISTS migration_atomicity_probe")
+        conn.execute("UPDATE schema_version SET version = 2")
+        conn.commit()
+
+        db_instance._READING_PROGRESS_TABLE_SQL = f"""
+            {original_sql}
+            CREATE TABLE migration_atomicity_probe(id INTEGER);
+            INSERT INTO table_that_does_not_exist VALUES (1);
+        """
+        try:
+            with pytest.raises(DatabaseError, match="Migration v2->v3 failed"):
+                db_instance._apply_migration_v2_to_v3(conn)
+        finally:
+            db_instance._READING_PROGRESS_TABLE_SQL = original_sql
+
+        assert get_schema_version(db_instance) == 2
+        for table_name in ("ReadingProgress", "migration_atomicity_probe"):
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (table_name,),
+            ).fetchone()
+            assert row is None, f"{table_name} survived the failed migration"
+
+        db_instance._apply_migration_v2_to_v3(conn)
+        assert get_schema_version(db_instance) == 3
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'ReadingProgress'"
+            ).fetchone()
+            is not None
+        )
+
+    def test_v1_to_v2_seed_failure_rolls_back_ddl_and_version(
+        self, tmp_path, monkeypatch
+    ):
+        path = tmp_path / "v1-seed-failure.sqlite"
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN")
+        Database._execute_transactional_script(
+            conn,
+            f"""
+            {Database._TABLES_SQL_V1}
+            {Database._INDICES_SQL_V1}
+            {Database._TRIGGERS_SQL_V1}
+            {Database._SCHEMA_UPDATE_VERSION_SQL_V1}
+            """,
+        )
+        conn.commit()
+        conn.close()
+
+        template = {
+            "name": "duplicate-seed",
+            "description": "forces unique failure",
+            "template_json": {"name": "duplicate-seed"},
+            "is_system": 1,
+        }
+        monkeypatch.setattr(
+            Database,
+            "_DEFAULT_CHUNKING_TEMPLATES",
+            [template, template],
+        )
+
+        with pytest.raises(DatabaseError, match="Migration v1->v2 failed"):
+            Database(db_path=path, client_id="migration-failure")
+
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        try:
+            assert conn.execute(
+                "SELECT version FROM schema_version"
+            ).fetchone()[0] == 1
+            assert (
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'ChunkingTemplates'"
+                ).fetchone()
+                is None
+            )
+            media_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(Media)")
+            }
+            assert "chunking_config" not in media_columns
+        finally:
+            conn.close()
+
+        monkeypatch.setattr(Database, "_DEFAULT_CHUNKING_TEMPLATES", [template])
+        migrated = Database(db_path=path, client_id="migration-retry")
+        conn = migrated.get_connection()
+        try:
+            assert (
+                conn.execute("SELECT version FROM schema_version").fetchone()[0]
+                == Database._CURRENT_SCHEMA_VERSION
+            )
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM ChunkingTemplates "
+                    "WHERE name = 'duplicate-seed'"
+                ).fetchone()[0]
+                == 1
+            )
+        finally:
+            migrated.close_connection()
+
+    def test_hard_delete_failure_rolls_back_the_entire_batch(
+        self, db_instance, monkeypatch
+    ):
+        items = []
+        for suffix in ("first", "second"):
+            media_id, media_uuid, _ = db_instance.add_media_with_keywords(
+                title=f"Atomic hard delete {suffix}",
+                content=f"{suffix} source must survive a failed hard-delete batch.",
+                keywords=["atomic-delete"],
+                media_type="document",
+            )
+            assert db_instance.soft_delete_media(media_id)
+            items.append((media_id, media_uuid))
+
+        original_log_sync_event = db_instance._log_sync_event
+        hard_delete_events = 0
+
+        def fail_final_audit_event(
+            conn, entity, entity_uuid, operation, version, payload
+        ):
+            nonlocal hard_delete_events
+            if operation == "delete":
+                hard_delete_events += 1
+                if hard_delete_events == 2:
+                    raise sqlite3.OperationalError(
+                        "injected hard-delete audit failure"
+                    )
+            return original_log_sync_event(
+                conn, entity, entity_uuid, operation, version, payload
+            )
+
+        monkeypatch.setattr(
+            db_instance, "_log_sync_event", fail_final_audit_event
+        )
+
+        with pytest.raises(DatabaseError, match="Failed to perform hard deletion"):
+            db_instance.hard_delete_old_media(days_old=-1)
+
+        for media_id, media_uuid in items:
+            row = db_instance.execute_query(
+                "SELECT uuid, deleted FROM Media WHERE id = ?", (media_id,)
+            ).fetchone()
+            assert dict(row) == {"uuid": media_uuid, "deleted": 1}
 
     def test_read_it_later_state_round_trips_for_local_media(self, db_instance):
         media_id, _, _ = db_instance.add_media_with_keywords(

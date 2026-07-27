@@ -36,6 +36,7 @@ from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
 from tldw_chatbook.RAG_Search import ingestion_indexing
 from tldw_chatbook.RAG_Search.ingestion_indexing import (
     IndexEntry,
+    IndexRemoval,
     IngestionIndexer,
     backfill_semantic_index,
     conversation_document,
@@ -86,6 +87,7 @@ def _clean_hook_registry():
     yield
     uninstall_media_ingest_hook()
     media_db_module._MEDIA_POST_INGEST_CALLBACKS.clear()
+    media_db_module._MEDIA_POST_DELETE_CALLBACKS.clear()
 
 
 def _add_media(
@@ -115,11 +117,20 @@ class FakeVectorStore:
         self.deleted.append(doc_id)
 
 
+class FakeSearchCache:
+    def __init__(self):
+        self.clear_count = 0
+
+    def clear(self):
+        self.clear_count += 1
+
+
 class FakeRAGService:
     """Minimal stand-in exposing the real batch indexing API."""
 
     def __init__(self):
         self.vector_store = FakeVectorStore()
+        self.cache = FakeSearchCache()
         self.indexed_docs = []
         self.fail = False
         self.close_calls = 0
@@ -272,6 +283,58 @@ class TestMediaPostIngestHook:
         assert updated_id == media_id
         assert calls == [media_id]
 
+    def test_delete_callback_observes_committed_source_state(self, media_db):
+        seen = []
+        media_id, media_uuid, _ = _add_media(
+            media_db, content="delete callback ordering"
+        )
+
+        def callback(db, deleted_id, deleted_uuid):
+            row = db.get_media_by_id(deleted_id, include_deleted=True)
+            seen.append((deleted_id, deleted_uuid, row["deleted"]))
+
+        media_db_module.register_media_post_delete_callback(callback)
+        try:
+            assert media_db.soft_delete_media(media_id)
+        finally:
+            media_db_module.unregister_media_post_delete_callback(callback)
+
+        assert seen == [(media_id, media_uuid, 1)]
+
+    def test_delete_callback_failure_does_not_roll_back_source(self, media_db):
+        media_id, _, _ = _add_media(media_db, content="delete survives observer")
+
+        def bad_callback(db, deleted_id, deleted_uuid):
+            raise RuntimeError("delete observer exploded")
+
+        media_db_module.register_media_post_delete_callback(bad_callback)
+        try:
+            assert media_db.soft_delete_media(media_id)
+        finally:
+            media_db_module.unregister_media_post_delete_callback(bad_callback)
+
+        row = media_db.get_media_by_id(media_id, include_deleted=True)
+        assert row["deleted"] == 1
+
+    def test_hard_delete_callback_fires_after_source_is_gone(self, media_db):
+        seen = []
+        media_id, media_uuid, _ = _add_media(
+            media_db, content="hard delete callback ordering"
+        )
+        assert media_db.soft_delete_media(media_id)
+
+        def callback(db, deleted_id, deleted_uuid):
+            row = db.get_media_by_id(deleted_id, include_deleted=True)
+            seen.append((deleted_id, deleted_uuid, row))
+
+        media_db_module.register_media_post_delete_callback(callback)
+        try:
+            assert media_db.hard_delete_old_media(days_old=-1) == 1
+        finally:
+            media_db_module.unregister_media_post_delete_callback(callback)
+
+        assert seen == [(media_id, media_uuid, None)]
+
 
 # === Availability gate (AC #5) ===
 
@@ -295,6 +358,8 @@ class TestAvailabilityGate:
 
         assert media_id is not None
         assert media_db.get_media_by_id(media_id) is not None
+
+        assert media_db.soft_delete_media(media_id)
 
     def test_semantic_indexing_available_false_when_deps_missing(self, monkeypatch):
         monkeypatch.setattr(
@@ -510,6 +575,51 @@ class TestIngestionIndexer:
             release.set()
             idx.stop()
 
+    def test_removal_deletes_vector_document_then_tracking_state(
+        self, indexer, fake_service, indexing_db
+    ):
+        entry = _entry("57")
+        assert indexer.submit(entry)
+        assert indexer.wait_until_idle(timeout=10)
+        assert indexing_db.get_indexed_item_info("57", "media") is not None
+
+        assert indexer.submit_removal(
+            IndexRemoval(
+                item_id="57",
+                item_type="media",
+                document_id="media_57",
+            )
+        )
+        assert indexer.wait_until_idle(timeout=10)
+
+        assert fake_service.vector_store.deleted[-1] == "media_57"
+        assert fake_service.cache.clear_count == 2
+        assert indexing_db.get_indexed_item_info("57", "media") is None
+        assert indexer.stats()["removed"] == 1
+
+    def test_failed_vector_removal_retains_tracking_for_reconciliation(
+        self, indexing_db
+    ):
+        class FailingVectorStore:
+            def delete_document(self, doc_id):
+                raise RuntimeError("vector store unavailable")
+
+        service = FakeRAGService()
+        service.vector_store = FailingVectorStore()
+        indexing_db.mark_item_indexed(
+            "58", "media", datetime.now(timezone.utc), chunk_count=2
+        )
+        idx = IngestionIndexer(rag_service=service, indexing_db=indexing_db)
+        try:
+            assert idx.submit_removal(
+                IndexRemoval("58", "media", "media_58")
+            )
+            assert idx.wait_until_idle(timeout=10)
+            assert indexing_db.get_indexed_item_info("58", "media") is not None
+            assert idx.stats()["failed"] == 1
+        finally:
+            idx.stop()
+
 
 # === End-to-end: ingest -> worker -> semantic search (AC #1, #2) ===
 
@@ -583,6 +693,101 @@ class TestEndToEndSemanticSearch:
         assert top.metadata.get("chunk_id"), (
             "chunk_id must be present for _semantic_row"
         )
+
+    def test_rag_services_keep_query_caches_isolated(self):
+        first = _make_real_service("memory")
+        second = _make_real_service("memory")
+
+        assert first.cache is not second.cache
+        assert first.cache.enabled is False
+        assert second.cache.enabled is False
+
+    def test_soft_delete_removes_semantic_result_and_undelete_restores_it(
+        self, media_db, tmp_path, monkeypatch
+    ):
+        service = _make_real_service("memory")
+        indexing_db = RAGIndexingDB(tmp_path / "rag-lifecycle.db")
+        indexer = IngestionIndexer(
+            rag_service=service,
+            indexing_db=indexing_db,
+        )
+        monkeypatch.setattr(
+            ingestion_indexing, "get_ingestion_indexer", lambda: indexer
+        )
+        install_media_ingest_hook()
+        try:
+            media_id, _, _ = _add_media(
+                media_db,
+                title="Quokka Manifesto",
+                content=DISTINCTIVE_CONTENT,
+            )
+            assert indexer.wait_until_idle(timeout=60)
+
+            assert media_db.soft_delete_media(media_id)
+            assert indexer.wait_until_idle(timeout=60)
+            deleted_results = asyncio.run(
+                service.search(
+                    "zanzibar quokka snorkeling manifesto",
+                    top_k=3,
+                    search_type="semantic",
+                    include_citations=False,
+                )
+            )
+            assert all(
+                result.metadata.get("source_id") != str(media_id)
+                for result in deleted_results
+            )
+            assert indexing_db.get_indexed_item_info(
+                str(media_id), "media"
+            ) is None
+
+            assert media_db.undelete_media(media_id)
+            assert indexer.wait_until_idle(timeout=60)
+            restored_results = asyncio.run(
+                service.search(
+                    "zanzibar quokka snorkeling manifesto",
+                    top_k=3,
+                    search_type="semantic",
+                    include_citations=False,
+                )
+            )
+            assert any(
+                result.metadata.get("source_id") == str(media_id)
+                for result in restored_results
+            )
+
+            assert media_db.mark_as_trash(media_id)
+            assert indexer.wait_until_idle(timeout=60)
+            trashed_results = asyncio.run(
+                service.search(
+                    "zanzibar quokka snorkeling manifesto",
+                    top_k=3,
+                    search_type="semantic",
+                    include_citations=False,
+                )
+            )
+            assert all(
+                result.metadata.get("source_id") != str(media_id)
+                for result in trashed_results
+            )
+
+            assert media_db.restore_from_trash(media_id)
+            assert indexer.wait_until_idle(timeout=60)
+            untrashed_results = asyncio.run(
+                service.search(
+                    "zanzibar quokka snorkeling manifesto",
+                    top_k=3,
+                    search_type="semantic",
+                    include_citations=False,
+                )
+            )
+            assert any(
+                result.metadata.get("source_id") == str(media_id)
+                for result in untrashed_results
+            )
+        finally:
+            uninstall_media_ingest_hook()
+            indexer.stop()
 
     def test_v2_service_with_parallel_profile_indexes_and_searches(
         self, media_db, tmp_path, monkeypatch
@@ -744,6 +949,41 @@ class TestBackfill:
         summary = asyncio.run(backfill_semantic_index(media_db=media_db))
         assert summary["status"] == "unavailable"
         assert summary["indexed"] == 0
+
+    def test_backfill_reconciles_tracked_media_deleted_while_hook_was_absent(
+        self, media_db, tmp_path
+    ):
+        media_id, _, _ = _add_media(
+            media_db,
+            title="Orphaned projection",
+            content=DISTINCTIVE_CONTENT,
+        )
+        service = FakeRAGService()
+        indexing_db = RAGIndexingDB(tmp_path / "rag-reconcile.db")
+        first = asyncio.run(
+            ingestion_indexing.index_entries(
+                service,
+                indexing_db,
+                [_entry(str(media_id))],
+            )
+        )
+        assert first["indexed"] == 1
+        assert media_db.soft_delete_media(media_id)
+
+        summary = asyncio.run(
+            backfill_semantic_index(
+                media_db=media_db,
+                rag_service=service,
+                indexing_db=indexing_db,
+                item_types=("media",),
+            )
+        )
+
+        assert summary["removed"] == 1
+        assert service.vector_store.deleted[-1] == f"media_{media_id}"
+        assert indexing_db.get_indexed_item_info(
+            str(media_id), "media"
+        ) is None
 
 
 # === Shared service wiring ===

@@ -39,6 +39,7 @@ from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
 from ..Utils.input_validation import sanitize_string
 from ..Utils.path_validation import validate_filename
+from ..Utils.private_paths import secure_private_directory
 from ..Utils.text import sanitize_filename
 from ..Utils.paths import get_user_data_dir
 
@@ -93,22 +94,29 @@ class ChatbookCreator:
         """
         logger.info(f"ChatbookCreator.__init__: Initializing with db_paths={db_paths}")
         self.db_paths = db_paths
-        # Use cross-platform user data directory
-        user_data_dir = get_user_data_dir()
-        self.temp_dir = user_data_dir / "temp" / "chatbooks"
-        logger.info(
-            f"ChatbookCreator.__init__: Creating temp directory at {self.temp_dir}"
-        )
+        configured_temp_dir: Optional[Path] = None
         try:
-            self.temp_dir.mkdir(parents=True, exist_ok=True)
+            configured_temp_dir = get_user_data_dir() / "temp" / "chatbooks"
+            logger.info(
+                "ChatbookCreator.__init__: Creating temp directory at "
+                f"{configured_temp_dir}"
+            )
+            self.temp_dir = secure_private_directory(
+                configured_temp_dir,
+                create=True,
+                application_owned=True,
+            ).lexical_path
         except OSError as exc:
-            fallback_root = Path(tempfile.gettempdir()) / "tldw_chatbook" / "chatbooks"
+            fallback_root = Path(tempfile.mkdtemp(prefix="tldw_chatbook-chatbooks-"))
             logger.warning(
                 f"ChatbookCreator.__init__: Failed to create configured temp directory "
-                f"{self.temp_dir}: {exc}. Falling back to {fallback_root}"
+                f"{configured_temp_dir}: {exc}. Falling back to {fallback_root}"
             )
-            self.temp_dir = fallback_root
-            self.temp_dir.mkdir(parents=True, exist_ok=True)
+            self.temp_dir = secure_private_directory(
+                fallback_root,
+                create=False,
+                application_owned=True,
+            ).lexical_path
         self.missing_dependencies: Set[int] = set()
         self.auto_included_characters: Set[int] = set()
         self._selected_characters: Set[str] = (
@@ -137,16 +145,12 @@ class ChatbookCreator:
         if cancel_check is not None and cancel_check():
             raise ChatbookExportCancelled()
 
-    def _cleanup_run(
-        self, work_dir: Optional[Path], partial_path: Optional[Path]
-    ) -> None:
+    def _cleanup_run(self, work_dir: Optional[Path]) -> None:
         """Remove this run's temp artifacts on any exit path.
 
         ``work_dir`` is a temp directory we created (safe to rmtree).
-        ``partial_path`` is a sibling of the user-chosen destination and is only
-        ever a *file* we wrote, so it is unlinked as a file and NEVER rmtree'd —
-        a directory unexpectedly sitting at ``<dest>.partial`` must not be
-        recursively deleted.
+        Partial archive cleanup is owned by ``_create_zip_archive``, which can
+        distinguish a file it created from a pre-existing sibling.
         """
         if work_dir is not None:
             try:
@@ -155,14 +159,6 @@ class ChatbookCreator:
             except OSError:
                 logger.opt(exception=True).debug(
                     f"ChatbookCreator: could not remove work_dir {work_dir}"
-                )
-        if partial_path is not None:
-            try:
-                if partial_path.is_file():
-                    partial_path.unlink()
-            except OSError:
-                logger.opt(exception=True).debug(
-                    f"ChatbookCreator: could not remove partial {partial_path}"
                 )
 
     def create_chatbook(
@@ -405,7 +401,7 @@ class ChatbookCreator:
             # Single cleanup point for every exit path (success/cancel/error):
             # remove the temp work_dir and any leftover .partial archive, and
             # clear this thread's hooks so a reused instance never leaks them.
-            self._cleanup_run(work_dir, partial_path)
+            self._cleanup_run(work_dir)
             self._thread_local.progress_callback = None
             self._thread_local.cancel_check = None
 
@@ -1491,10 +1487,39 @@ class ChatbookCreator:
         """Zip work_dir into a sibling .partial, then atomically replace output_path."""
         files = [p for p in work_dir.rglob("*") if p.is_file()]
         total = len(files)
-        with zipfile.ZipFile(partial_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for idx, file_path in enumerate(files):
-                self._check_cancel()
-                arcname = file_path.relative_to(work_dir)
-                zf.write(file_path, arcname)
-                self._emit_progress("packaging", idx + 1, total)
-        os.replace(partial_path, output_path)
+        file_fd = -1
+        partial_created = False
+        try:
+            flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            file_fd = os.open(partial_path, flags, 0o600)
+            partial_created = True
+            if hasattr(os, "fchmod"):
+                os.fchmod(file_fd, 0o600)
+            with os.fdopen(file_fd, "w+b") as archive_stream:
+                file_fd = -1
+                with zipfile.ZipFile(
+                    archive_stream,
+                    "w",
+                    zipfile.ZIP_DEFLATED,
+                ) as archive:
+                    for idx, file_path in enumerate(files):
+                        self._check_cancel()
+                        arcname = file_path.relative_to(work_dir)
+                        archive.write(file_path, arcname)
+                        self._emit_progress("packaging", idx + 1, total)
+                archive_stream.flush()
+                os.fsync(archive_stream.fileno())
+            os.replace(partial_path, output_path)
+            partial_created = False
+        finally:
+            if file_fd >= 0:
+                os.close(file_fd)
+            if partial_created:
+                try:
+                    if partial_path.is_file():
+                        partial_path.unlink()
+                except OSError:
+                    logger.opt(exception=True).debug(
+                        f"ChatbookCreator: could not remove partial {partial_path}"
+                    )

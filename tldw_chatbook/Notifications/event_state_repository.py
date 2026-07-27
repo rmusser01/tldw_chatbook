@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from tldw_chatbook.DB.base_db import BaseDB
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.runtime_policy.server_parity_models import (
     EventCursor,
     EventDedupeKey,
@@ -84,7 +85,10 @@ class EventStateRepository(BaseDB):
     def _get_connection(self) -> sqlite3.Connection:
         if getattr(self, "is_memory_db", False):
             if self._memory_conn is None:
-                self._memory_conn = sqlite3.connect(":memory:")
+                self._memory_conn = connect_private_sqlite(
+                    "notifications.event_state",
+                    ":memory:",
+                )
                 self._memory_conn.row_factory = sqlite3.Row
             return self._memory_conn
         return super()._get_connection()

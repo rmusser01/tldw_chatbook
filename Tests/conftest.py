@@ -10,24 +10,43 @@ from pathlib import Path
 
 _TEST_CONFIG_ROOT_ENV = "TLDW_TEST_CONFIG_ROOT"
 _TEST_CONFIG_OWNER_ENV = "TLDW_TEST_CONFIG_ROOT_OWNER"
+_SANDBOXED_ENV_NAMES = (
+    "HOME",
+    "USERPROFILE",
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "TLDW_CONFIG_PATH",
+    _TEST_CONFIG_ROOT_ENV,
+    _TEST_CONFIG_OWNER_ENV,
+)
+_PREVIOUS_TEST_ENV = {name: os.environ.get(name) for name in _SANDBOXED_ENV_NAMES}
 _existing_test_config_root = os.environ.get(_TEST_CONFIG_ROOT_ENV)
 if _existing_test_config_root:
     _BOOTSTRAP_CONFIG_ROOT = Path(_existing_test_config_root)
     _OWNS_BOOTSTRAP_CONFIG_ROOT = False
 else:
     _BOOTSTRAP_CONFIG_ROOT = Path(tempfile.mkdtemp(prefix="tldw_test_config_"))
-    os.environ[_TEST_CONFIG_ROOT_ENV] = str(_BOOTSTRAP_CONFIG_ROOT)
-    os.environ[_TEST_CONFIG_OWNER_ENV] = str(Path(__file__).resolve())
     _OWNS_BOOTSTRAP_CONFIG_ROOT = True
+_BOOTSTRAP_CONFIG_ROOT = _BOOTSTRAP_CONFIG_ROOT.resolve(strict=True)
+os.environ[_TEST_CONFIG_ROOT_ENV] = str(_BOOTSTRAP_CONFIG_ROOT)
+if _OWNS_BOOTSTRAP_CONFIG_ROOT:
+    os.environ[_TEST_CONFIG_OWNER_ENV] = str(Path(__file__).resolve())
+_BOOTSTRAP_DATA_HOME = _BOOTSTRAP_CONFIG_ROOT / "data"
 _BOOTSTRAP_CONFIG_PATH = _BOOTSTRAP_CONFIG_ROOT / "config" / "config.toml"
-_BOOTSTRAP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+_BOOTSTRAP_HOME = _BOOTSTRAP_CONFIG_ROOT / "home"
+_BOOTSTRAP_DATA_HOME.mkdir(parents=True, mode=0o700, exist_ok=True)
+_BOOTSTRAP_CONFIG_PATH.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+_BOOTSTRAP_HOME.mkdir(parents=True, mode=0o700, exist_ok=True)
+os.environ["HOME"] = str(_BOOTSTRAP_HOME)
+os.environ["USERPROFILE"] = str(_BOOTSTRAP_HOME)
+os.environ["XDG_DATA_HOME"] = str(_BOOTSTRAP_DATA_HOME)
+os.environ["XDG_CONFIG_HOME"] = str(_BOOTSTRAP_CONFIG_PATH.parent)
 os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 from loguru import logger  # noqa: E402
 import asyncio  # noqa: E402
-from unittest.mock import MagicMock, AsyncMock  # noqa: E402
 import sqlite3  # noqa: E402
 import sys  # noqa: E402
 import gc  # noqa: E402
@@ -101,32 +120,6 @@ def in_memory_db():
 def temp_db_path(isolated_temp_dir):
     """Provide a path for a temporary database file."""
     return isolated_temp_dir / "test_database.db"
-
-
-# ========== Mock Fixtures ==========
-
-
-@pytest.fixture
-def mock_app_minimal():
-    """Minimal mock app for unit tests that don't need full functionality."""
-    app = MagicMock()
-    app.notify = MagicMock()
-    app.copy_to_clipboard = MagicMock()
-    app.query_one = MagicMock()
-    app.query = MagicMock()
-    return app
-
-
-@pytest.fixture
-def mock_async_app():
-    """Mock app with async methods properly configured."""
-    app = AsyncMock()
-    app.notify = MagicMock()  # notify is sync in Textual
-    app.copy_to_clipboard = MagicMock()
-    app.mount = AsyncMock()
-    app.query_one = MagicMock()
-    app.query = MagicMock()
-    return app
 
 
 # ========== Cleanup and Isolation Fixtures ==========
@@ -318,16 +311,16 @@ def pytest_configure(config):
     )
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
-    """Remove the module-load config sandbox created by this conftest."""
-    if not _OWNS_BOOTSTRAP_CONFIG_ROOT:
-        return
-    if os.environ.get("TLDW_CONFIG_PATH") == str(_BOOTSTRAP_CONFIG_PATH):
-        os.environ.pop("TLDW_CONFIG_PATH", None)
-    if os.environ.get(_TEST_CONFIG_ROOT_ENV) == str(_BOOTSTRAP_CONFIG_ROOT):
-        os.environ.pop(_TEST_CONFIG_ROOT_ENV, None)
-        os.environ.pop(_TEST_CONFIG_OWNER_ENV, None)
-    shutil.rmtree(_BOOTSTRAP_CONFIG_ROOT, ignore_errors=True)
+    """Restore caller config variables and remove only an owned sandbox."""
+    for name, previous in _PREVIOUS_TEST_ENV.items():
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
+    if _OWNS_BOOTSTRAP_CONFIG_ROOT:
+        shutil.rmtree(_BOOTSTRAP_CONFIG_ROOT, ignore_errors=True)
 
 
 # ========== Async Support ==========
@@ -385,11 +378,15 @@ def isolate_test_environment(monkeypatch, tmp_path):
 
     # Common paths that need isolation
     monkeypatch.setenv("XDG_DATA_HOME", str(test_data_dir))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(test_data_dir / "config"))
-    monkeypatch.setenv("HOME", str(test_data_dir / "home"))
+    test_config_dir = test_data_dir / "config"
+    test_config_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(test_config_dir))
+    test_home_dir = test_data_dir / "home"
+    test_home_dir.mkdir(mode=0o700)
+    monkeypatch.setenv("HOME", str(test_home_dir))
     monkeypatch.setenv(
         "TLDW_CONFIG_PATH",
-        str(test_data_dir / "config" / "config.toml"),
+        str(test_config_dir / "config.toml"),
     )
 
     # Clear lazy database and prompt singletons before each test so no

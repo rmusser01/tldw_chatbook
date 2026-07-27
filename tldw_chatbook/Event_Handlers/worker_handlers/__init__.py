@@ -6,14 +6,12 @@ state changes in the application.
 """
 
 from .base_handler import BaseWorkerHandler, WorkerHandlerRegistry
-from .server_worker_handler import ServerWorkerHandler
 from .ai_generation_handler import AIGenerationHandler
 from .misc_worker_handler import MiscWorkerHandler
 
 __all__ = [
     "BaseWorkerHandler",
     "WorkerHandlerRegistry",
-    "ServerWorkerHandler",
     "AIGenerationHandler",
     "MiscWorkerHandler",
 ]

@@ -49,7 +49,9 @@ from loguru import logger as logging
 # Local Imports
 from .sql_validation import validate_table_name, validate_column_name
 from .sql_logging import preview_params
+from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 #
 ########################################################################################################################
 #
@@ -244,14 +246,14 @@ class PromptsDatabase:
             ValueError: If client_id is empty or None.
             DatabaseError: If database initialization or schema setup fails.
         """
-        # Determine if it's an in-memory DB and resolve the path
+        # Determine if it's an in-memory DB and normalize the path lexically.
         if isinstance(db_path, Path):
             self.is_memory_db = False
-            self.db_path = db_path.resolve()
+            self.db_path = lexical_path(db_path)
         else:  # Treat as string
             self.is_memory_db = db_path == ":memory:"
             if not self.is_memory_db:
-                self.db_path = Path(db_path).resolve()
+                self.db_path = lexical_path(db_path)
             else:
                 # For in-memory DB, we don't need a Path object
                 self.db_path = None
@@ -263,16 +265,6 @@ class PromptsDatabase:
         if not client_id:
             raise ValueError("Client ID cannot be empty or None.")
         self.client_id = client_id
-
-        # Ensure parent directory exists if it's a file-based DB
-        if not self.is_memory_db and self.db_path:
-            try:
-                self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                # Catch potential errors creating the directory (e.g., permissions)
-                raise DatabaseError(
-                    f"Failed to create database directory {self.db_path.parent}: {e}"
-                ) from e
 
         logging.info(
             f"Initializing PromptsDatabase object for path: {self.db_path_str} [Client ID: {self.client_id}]"
@@ -377,7 +369,8 @@ class PromptsDatabase:
 
         if is_closed:
             try:
-                conn = sqlite3.connect(
+                conn = connect_private_sqlite(
+                    "db.prompts.primary",
                     self.db_path_str,
                     detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
                     check_same_thread=False,  # Required for threading.local
@@ -391,7 +384,7 @@ class PromptsDatabase:
                 logging.debug(
                     f"Opened/Reopened SQLite connection to {self.db_path_str} [Client: {self.client_id}, Thread: {threading.current_thread().name}]"
                 )
-            except sqlite3.Error as e:
+            except (sqlite3.Error, PrivatePathError) as e:
                 logging.opt(exception=True).error(
                     f"Failed to connect to database at {self.db_path_str}: {e}"
                 )
@@ -433,36 +426,17 @@ class PromptsDatabase:
         logger.info(
             f"Starting database backup from '{self.db_path_str}' to '{backup_file_path}'"
         )
-        backup_conn: Optional[sqlite3.Connection] = None
         try:
-            # Ensure the backup file path is not the same as the source for file-based DBs
-            if (
-                not self.is_memory_db
-                and self.db_path.resolve() == Path(backup_file_path).resolve()
-            ):
-                logger.error(
-                    "Backup path cannot be the same as the source database path."
-                )
-                raise ValueError(
-                    "Backup path cannot be the same as the source database path."
-                )
-
             src_conn = self.get_connection()
-
-            backup_db_path_obj = Path(backup_file_path)
-            backup_db_path_obj.parent.mkdir(parents=True, exist_ok=True)
-
-            backup_conn = sqlite3.connect(str(backup_db_path_obj))
-
-            logger.debug(f"Source DB connection: {src_conn}")
-            logger.debug(
-                f"Backup DB connection: {backup_conn} to file {str(backup_db_path_obj)}"
+            backup_connection_to_private(
+                "db.prompts.backup",
+                src_conn,
+                self.db_path_str,
+                backup_file_path,
             )
 
-            src_conn.backup(backup_conn, pages=0, progress=None)
-
             logger.info(
-                f"Database backup successful from '{self.db_path_str}' to '{str(backup_db_path_obj)}'"
+                f"Database backup successful from '{self.db_path_str}' to '{backup_file_path}'"
             )
             return True
         except ValueError as ve:
@@ -478,14 +452,6 @@ class PromptsDatabase:
                 f"Unexpected error during database backup: {e}"
             )
             return False
-        finally:
-            if backup_conn:
-                try:
-                    backup_conn.close()
-                    logger.debug("Closed backup database connection.")
-                except sqlite3.Error as e:
-                    logger.warning(f"Error closing backup database connection: {e}")
-            # Source connection (src_conn) is managed by the thread-local mechanism.
 
     def check_integrity(self) -> bool:
         """

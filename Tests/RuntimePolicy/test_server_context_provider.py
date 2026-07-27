@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import pytest
 
+import tldw_chatbook.runtime_policy.server_context as server_context_module
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
 from tldw_chatbook.runtime_policy.bootstrap import RuntimePolicyContext
@@ -87,6 +88,7 @@ def _runtime_context(
     active_source: str = "server",
     active_server_id: str | None = "https://server.example.com/api",
     server_configured: bool = True,
+    runtime_store: SavingRuntimeStore | None = None,
 ) -> RuntimePolicyContext:
     return RuntimePolicyContext(
         state=RuntimeSourceState(
@@ -95,8 +97,16 @@ def _runtime_context(
             server_configured=server_configured,
             last_known_server_label="Server",
         ),
-        store=SavingRuntimeStore(),
+        store=runtime_store if runtime_store is not None else SavingRuntimeStore(),
     )
+
+
+def _commit_runtime_state(
+    runtime_context: RuntimePolicyContext,
+    state: RuntimeSourceState,
+) -> None:
+    _, revision = runtime_context.snapshot()
+    assert runtime_context.commit_state(state, expected_revision=revision)
 
 
 def _target_store(
@@ -667,11 +677,14 @@ def test_context_computes_api_key_headers_from_effective_auth_token(tmp_path):
 
 def test_context_capabilities_reflect_runtime_state_and_target_status(tmp_path):
     runtime_context = _runtime_context()
-    runtime_context.state = replace(
-        runtime_context.state,
-        server_reachability="reachable",
-        server_auth_state="authenticated",
-        last_known_server_label="Runtime Label",
+    _commit_runtime_state(
+        runtime_context,
+        replace(
+            runtime_context.state,
+            server_reachability="reachable",
+            server_auth_state="authenticated",
+            last_known_server_label="Runtime Label",
+        ),
     )
     provider = _provider(
         tmp_path,
@@ -737,13 +750,16 @@ def test_context_capabilities_update_when_active_server_runtime_state_changes(tm
     )
 
     first_context = provider.get_active_context()
-    runtime_context.state = RuntimeSourceState(
-        active_source="server",
-        active_server_id="https://backup.example.com/api",
-        server_configured=True,
-        server_reachability="unreachable",
-        server_auth_state="session_invalid",
-        last_known_server_label="Backup Runtime",
+    _commit_runtime_state(
+        runtime_context,
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="https://backup.example.com/api",
+            server_configured=True,
+            server_reachability="unreachable",
+            server_auth_state="session_invalid",
+            last_known_server_label="Backup Runtime",
+        ),
     )
     second_context = provider.get_active_context()
 
@@ -822,8 +838,9 @@ def test_build_client_raises_server_unavailable_when_runtime_state_is_unreachabl
         "https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key"
     )
     runtime_context = _runtime_context()
-    runtime_context.state = replace(
-        runtime_context.state, server_reachability="unreachable"
+    _commit_runtime_state(
+        runtime_context,
+        replace(runtime_context.state, server_reachability="unreachable"),
     )
     provider = _provider(
         tmp_path,
@@ -853,8 +870,9 @@ def test_build_client_raises_auth_required_when_runtime_state_requires_auth(tmp_
         "https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key"
     )
     runtime_context = _runtime_context()
-    runtime_context.state = replace(
-        runtime_context.state, server_auth_state="auth_required"
+    _commit_runtime_state(
+        runtime_context,
+        replace(runtime_context.state, server_auth_state="auth_required"),
     )
     provider = _provider(
         tmp_path,
@@ -884,8 +902,9 @@ def test_build_client_raises_stale_authorization_when_runtime_session_invalid(tm
         "https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key"
     )
     runtime_context = _runtime_context()
-    runtime_context.state = replace(
-        runtime_context.state, server_auth_state="session_invalid"
+    _commit_runtime_state(
+        runtime_context,
+        replace(runtime_context.state, server_auth_state="session_invalid"),
     )
     provider = _provider(
         tmp_path,
@@ -1182,9 +1201,12 @@ def test_clear_all_credentials_blocks_other_legacy_backed_profile_after_server_s
     )
 
     provider.clear_all_credentials()
-    runtime_context.state = replace(
-        runtime_context.state,
-        active_server_id="https://server.example.com/api",
+    _commit_runtime_state(
+        runtime_context,
+        replace(
+            runtime_context.state,
+            active_server_id="https://server.example.com/api",
+        ),
     )
 
     with pytest.raises(ServerCredentialsUnavailable):
@@ -1419,9 +1441,12 @@ def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activatio
         },
     )
 
-    runtime_context.state = replace(
-        runtime_context.state,
-        active_server_id="https://server.example.com/api",
+    _commit_runtime_state(
+        runtime_context,
+        replace(
+            runtime_context.state,
+            active_server_id="https://server.example.com/api",
+        ),
     )
     context = provider.get_active_context()
 
@@ -1435,9 +1460,12 @@ def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activatio
         == "legacy-bearer"
     )
 
-    runtime_context.state = replace(
-        runtime_context.state,
-        active_server_id="https://server-a.example.com/api",
+    _commit_runtime_state(
+        runtime_context,
+        replace(
+            runtime_context.state,
+            active_server_id="https://server-a.example.com/api",
+        ),
     )
     provider.clear_server_credentials("https://server.example.com/api")
 
@@ -1449,9 +1477,12 @@ def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activatio
         is None
     )
 
-    runtime_context.state = replace(
-        runtime_context.state,
-        active_server_id="https://server.example.com/api",
+    _commit_runtime_state(
+        runtime_context,
+        replace(
+            runtime_context.state,
+            active_server_id="https://server.example.com/api",
+        ),
     )
 
     with pytest.raises(ServerCredentialsUnavailable):
@@ -1463,6 +1494,243 @@ def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activatio
         )
         is None
     )
+
+
+def test_rebind_app_config_installs_config_invalidates_cache_and_preserves_signout(
+    tmp_path,
+    monkeypatch,
+):
+    provider = _provider(
+        tmp_path,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://old.example.com/api",
+                label="Old",
+                base_url="https://old.example.com/api",
+                auth_mode="bearer",
+                is_default=True,
+            )
+        ],
+    )
+    provider._legacy_cleared_server_ids.add("https://old.example.com/api")
+    hook_calls: list[tuple[str, str | None, str | None]] = []
+    monkeypatch.setattr(
+        provider,
+        "_invalidate_event_handles_for_server_switch",
+        lambda previous, next_id: hook_calls.append(("event", previous, next_id)),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_invalidate_sync_handles_for_server_switch",
+        lambda previous, next_id: hook_calls.append(("sync", previous, next_id)),
+    )
+
+    class ClosingClient:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def close(self) -> None:
+            self.close_calls += 1
+
+    cached_client = ClosingClient()
+    provider._cached_client = cached_client
+    provider._cached_client_key = object()
+    refreshed_config = {
+        "tldw_api": {
+            "base_url": "https://new.example.com/api/",
+            "bearer_token": "refreshed-token",
+            "auth_mode": "bearer",
+        }
+    }
+
+    provider.rebind_app_config(
+        refreshed_config,
+        previous_server_id=" https://old.example.com/api ",
+        next_server_id="https://old.example.com/api",
+    )
+
+    assert provider.app_config is refreshed_config
+    assert provider._cached_client is None
+    assert provider._cached_client_key is None
+    assert cached_client.close_calls == 1
+    assert hook_calls == []
+    assert provider._legacy_cleared_server_ids == {"https://old.example.com/api"}
+    targets = provider.target_store.list_targets()
+    assert [target.server_id for target in targets] == [
+        "https://old.example.com/api",
+        "https://new.example.com/api",
+    ]
+    assert [target.is_default for target in targets] == [False, True]
+
+
+def test_rebind_app_config_invalidates_switch_hooks_once_with_normalized_ids(
+    tmp_path,
+    monkeypatch,
+):
+    provider = _provider(tmp_path)
+    hook_calls: list[tuple[str, str | None, str | None]] = []
+    monkeypatch.setattr(
+        provider,
+        "_invalidate_event_handles_for_server_switch",
+        lambda previous, next_id: hook_calls.append(("event", previous, next_id)),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_invalidate_sync_handles_for_server_switch",
+        lambda previous, next_id: hook_calls.append(("sync", previous, next_id)),
+    )
+
+    provider.rebind_app_config(
+        {},
+        previous_server_id=" server-a ",
+        next_server_id=" server-b ",
+    )
+
+    assert hook_calls == [
+        ("event", "server-a", "server-b"),
+        ("sync", "server-a", "server-b"),
+    ]
+
+
+def test_rebind_app_config_contains_target_write_failure_and_uses_refreshed_fallback(
+    tmp_path,
+    monkeypatch,
+):
+    endpoint_sentinel = "https://endpoint-sentinel.example.com/api"
+    token_sentinel = "token-sentinel-value"
+    path_sentinel = tmp_path / "path-sentinel-targets.json"
+    exception_sentinel = "exception-message-sentinel"
+    runtime_context = _runtime_context(active_server_id=endpoint_sentinel)
+    target_store = ConfiguredServerTargetStore(path_sentinel)
+    provider = RuntimeServerContextProvider(
+        runtime_context=runtime_context,
+        target_store=target_store,
+        credential_store=InMemoryServerCredentialStore(),
+        app_config={},
+    )
+
+    class ClosingClient:
+        async def close(self) -> None:
+            return None
+
+    provider._cached_client = ClosingClient()
+    provider._cached_client_key = object()
+    refreshed_config = {
+        "tldw_api": {
+            "base_url": f"{endpoint_sentinel}/",
+            "bearer_token": token_sentinel,
+            "auth_mode": "bearer",
+        }
+    }
+
+    def fail_after_install(app_config):
+        assert app_config is refreshed_config
+        assert provider.app_config is refreshed_config
+        assert provider._cached_client is None
+        assert provider._cached_client_key is None
+        raise RuntimeError(exception_sentinel)
+
+    monkeypatch.setattr(
+        target_store,
+        "upsert_legacy_config_target",
+        fail_after_install,
+    )
+    warnings: list[str] = []
+    sink = server_context_module.logger.add(
+        warnings.append,
+        level="WARNING",
+        format="{message}",
+    )
+    try:
+        provider.rebind_app_config(
+            refreshed_config,
+            previous_server_id=None,
+            next_server_id=endpoint_sentinel,
+        )
+    finally:
+        server_context_module.logger.remove(sink)
+
+    context = provider.get_active_context()
+    assert context.active_server_id == endpoint_sentinel
+    assert context.base_url == endpoint_sentinel
+    assert context.auth_token == token_sentinel
+    assert len(warnings) == 1
+    warning = warnings[0]
+    assert "exception_category=RuntimeError" in warning
+    assert endpoint_sentinel not in warning
+    assert token_sentinel not in warning
+    assert str(path_sentinel) not in warning
+    assert exception_sentinel not in warning
+
+
+def test_rebind_app_config_contains_synchronous_close_failure(tmp_path):
+    close_sentinel = "synchronous-close-secret"
+    provider = _provider(tmp_path)
+
+    class FailingCloseClient:
+        async def close(self) -> None:
+            raise RuntimeError(close_sentinel)
+
+    provider._cached_client = FailingCloseClient()
+    provider._cached_client_key = object()
+    warnings: list[str] = []
+    sink = server_context_module.logger.add(
+        warnings.append,
+        level="WARNING",
+        format="{message}",
+    )
+    try:
+        provider.rebind_app_config(
+            {},
+            previous_server_id=None,
+            next_server_id=None,
+        )
+    finally:
+        server_context_module.logger.remove(sink)
+
+    assert provider._cached_client is None
+    assert provider._cached_client_key is None
+    assert len(warnings) == 1
+    assert "exception_category=RuntimeError" in warnings[0]
+    assert close_sentinel not in warnings[0]
+
+
+@pytest.mark.asyncio
+async def test_rebind_app_config_contains_scheduled_close_failure(tmp_path):
+    close_sentinel = "scheduled-close-secret"
+    provider = _provider(tmp_path)
+
+    class FailingCloseClient:
+        async def close(self) -> None:
+            raise RuntimeError(close_sentinel)
+
+    provider._cached_client = FailingCloseClient()
+    provider._cached_client_key = object()
+    warnings: list[str] = []
+    sink = server_context_module.logger.add(
+        warnings.append,
+        level="WARNING",
+        format="{message}",
+    )
+    try:
+        provider.rebind_app_config(
+            {},
+            previous_server_id=None,
+            next_server_id=None,
+        )
+        pending_tasks = tuple(provider._pending_client_close_tasks)
+        assert len(pending_tasks) == 1
+        await asyncio.gather(*pending_tasks)
+        await asyncio.sleep(0)
+    finally:
+        server_context_module.logger.remove(sink)
+
+    assert provider._cached_client is None
+    assert provider._cached_client_key is None
+    assert provider._pending_client_close_tasks == set()
+    assert len(warnings) == 1
+    assert "exception_category=RuntimeError" in warnings[0]
+    assert close_sentinel not in warnings[0]
 
 
 @pytest.mark.asyncio
@@ -1588,9 +1856,12 @@ async def test_switching_active_server_rebuilds_client_with_new_profile_and_clos
     first_client = provider.build_client()
     opened_http_client = await first_client._get_client()
 
-    runtime_context.state = replace(
-        runtime_context.state,
-        active_server_id="https://backup.example.com/api",
+    _commit_runtime_state(
+        runtime_context,
+        replace(
+            runtime_context.state,
+            active_server_id="https://backup.example.com/api",
+        ),
     )
     second_client = provider.build_client()
     await provider.close_cached_client()
@@ -1748,7 +2019,8 @@ def test_mismatched_runtime_active_server_and_only_legacy_config_raises(tmp_path
 def test_runtime_state_remains_authoritative_and_unmutated_during_context_resolution(
     tmp_path,
 ):
-    runtime_context = _runtime_context()
+    runtime_store = SavingRuntimeStore()
+    runtime_context = _runtime_context(runtime_store=runtime_store)
     original_state = runtime_context.state
     provider = _provider(
         tmp_path,
@@ -1775,4 +2047,4 @@ def test_runtime_state_remains_authoritative_and_unmutated_during_context_resolu
     assert context.active_server_id == original_state.active_server_id
     assert context.base_url == "https://server.example.com/api"
     assert runtime_context.state == original_state
-    assert runtime_context.store.saved_states == []
+    assert runtime_store.saved_states == []

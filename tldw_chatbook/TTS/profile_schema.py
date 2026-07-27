@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Literal, TypeAlias, cast
 from uuid import UUID
 
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.DB.sql_validation import escape_identifier, validate_identifier
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.migrations.v0_to_v1 import (
@@ -764,7 +765,6 @@ def open_profile_store(
             raise _repository_error("operation_failed")
         if check_deadline is not None:
             check_deadline()
-        database_uri: str | None = None
         if must_exist:
             resolution_missing = False
             resolution_failed = False
@@ -781,17 +781,14 @@ def open_profile_store(
                 raise _repository_error("operation_failed")
             if not resolved_path.is_file():
                 raise _repository_error("missing")
-            database_uri = f"{resolved_path.as_uri()}?mode=rw"
         connect_error: BaseException | None = None
         try:
-            if database_uri is None:
-                connection = sqlite3.connect(path, isolation_level=None)
-            else:
-                connection = sqlite3.connect(
-                    database_uri,
-                    uri=True,
-                    isolation_level=None,
-                )
+            connection = connect_private_sqlite(
+                "tts.profile_store",
+                path,
+                must_exist=must_exist,
+                isolation_level=None,
+            )
         except BaseException as error:
             connect_error = error
         if connect_error is not None:
@@ -915,6 +912,14 @@ def _candidate_source_open_flags(flag_source: object = os) -> int:
     )
 
 
+def _open_candidate_source(path: Path, flags: int) -> int:
+    return os.open(path, flags)
+
+
+def _close_candidate_fd(descriptor: int) -> None:
+    os.close(descriptor)
+
+
 def _candidate_sidecars(resolved_path: Path) -> tuple[Path, ...]:
     return tuple(
         resolved_path.with_name(f"{resolved_path.name}{suffix}")
@@ -1033,6 +1038,7 @@ def validate_profile_candidate(
     source_fd: int | None = None
     snapshot_fd: int | None = None
     snapshot_path: str | None = None
+    snapshot_directory: Path | None = None
     connection: sqlite3.Connection | None = None
     body_error: BaseException | None = None
     try:
@@ -1042,7 +1048,10 @@ def validate_profile_candidate(
         if not stat.S_ISREG(path_state[2]):
             raise ValueError
 
-        source_fd = os.open(resolved_path, _candidate_source_open_flags())
+        source_fd = _open_candidate_source(
+            resolved_path,
+            _candidate_source_open_flags(),
+        )
         if check_deadline is not None:
             check_deadline()
         source_state = _source_identity(os.fstat(source_fd))
@@ -1053,9 +1062,17 @@ def validate_profile_candidate(
         ):
             raise ValueError
 
+        snapshot_directory = Path(
+            tempfile.mkdtemp(
+                prefix="tldw-tts-profile-candidate-",
+                dir=Path(tempfile.gettempdir()).resolve(strict=True),
+            )
+        )
+        os.chmod(snapshot_directory, 0o700)
         snapshot_fd, snapshot_path = tempfile.mkstemp(
-            prefix="tldw-tts-profile-candidate-",
+            prefix="snapshot-",
             suffix=".sqlite3",
+            dir=snapshot_directory,
         )
         posix_mode_enforced = _apply_posix_snapshot_mode(snapshot_fd)
         _copy_source_to_snapshot(
@@ -1081,10 +1098,15 @@ def validate_profile_candidate(
         ):
             raise ValueError
 
-        snapshot_uri = f"{Path(snapshot_path).resolve().as_uri()}?mode=ro&immutable=1"
         if check_deadline is not None:
             check_deadline()
-        connection = sqlite3.connect(snapshot_uri, uri=True, isolation_level=None)
+        connection = connect_private_sqlite(
+            "tts.profile_candidate",
+            snapshot_path,
+            read_only=True,
+            immutable=True,
+            isolation_level=None,
+        )
         if not _snapshot_is_unchanged(
             snapshot_fd,
             snapshot_path,
@@ -1122,11 +1144,13 @@ def validate_profile_candidate(
     if connection is not None:
         cleanup.attempt(connection.close)
     if snapshot_fd is not None:
-        cleanup.attempt(lambda: os.close(snapshot_fd))
+        cleanup.attempt(lambda: _close_candidate_fd(snapshot_fd))
     if source_fd is not None:
-        cleanup.attempt(lambda: os.close(source_fd))
+        cleanup.attempt(lambda: _close_candidate_fd(source_fd))
     if snapshot_path is not None:
         cleanup.attempt(lambda: _unlink_if_present(snapshot_path))
+    if snapshot_directory is not None:
+        cleanup.attempt(snapshot_directory.rmdir)
     cleanup.raise_control_flow()
 
     if body_error is not None:

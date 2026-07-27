@@ -10,7 +10,6 @@ import asyncio
 import ast
 import json
 import os
-import shutil
 import sqlite3
 import threading
 from collections.abc import Awaitable, Callable
@@ -164,7 +163,8 @@ def _prepare_real_backup_app(
     prompts_path = tmp_path / "legacy-prompts.db"
     media_path = tmp_path / "legacy-media.db"
     for source in (chachanotes_path, prompts_path, media_path):
-        source.write_bytes(b"database")
+        with sqlite3.connect(source) as connection:
+            connection.execute("CREATE TABLE backup_probe (id INTEGER PRIMARY KEY)")
 
     monkeypatch.setattr(
         tools_settings_module.Path,
@@ -206,7 +206,8 @@ def _prepare_backup_window(
     media_path = tmp_path / "legacy-media.db"
     profile_path = tmp_path / "private-profile-store.db"
     for source in (chachanotes_path, prompts_path, media_path, profile_path):
-        source.write_bytes(b"database")
+        with sqlite3.connect(source) as connection:
+            connection.execute("CREATE TABLE backup_probe (id INTEGER PRIMARY KEY)")
 
     monkeypatch.setattr(
         tools_settings_module.Path,
@@ -220,13 +221,13 @@ def _prepare_backup_window(
     )
 
     copy_sources: list[Path] = []
-    real_copy2 = shutil.copy2
+    real_copy = tools_settings_module.copy_private_sqlite
 
-    def recording_copy2(source: Path, destination: Path, *args: Any, **kwargs: Any):
+    def recording_copy(owner_id: str, source: Path, destination: Path) -> None:
         copy_sources.append(Path(source))
-        return real_copy2(source, destination, *args, **kwargs)
+        real_copy(owner_id, source, destination)
 
-    monkeypatch.setattr(tools_settings_module.shutil, "copy2", recording_copy2)
+    monkeypatch.setattr(tools_settings_module, "copy_private_sqlite", recording_copy)
 
     window = object.__new__(ToolsSettingsWindow)
     window._app_instance = app
@@ -416,21 +417,19 @@ async def test_real_worker_cancellation_before_legacy_publication_leaves_no_arti
     copy_started = threading.Event()
     release_copy = threading.Event()
     copy_finished = threading.Event()
-    real_copy2 = shutil.copy2
+    real_copy = tools_settings_module.copy_private_sqlite
 
-    def blocking_copy2(
+    def blocking_copy(
+        owner_id: str,
         source: Path,
         destination: Path,
-        *args: Any,
-        **kwargs: Any,
-    ) -> str:
-        result = real_copy2(source, destination, *args, **kwargs)
+    ) -> None:
+        real_copy(owner_id, source, destination)
         copy_started.set()
         release_copy.wait(timeout=2)
         copy_finished.set()
-        return result
 
-    monkeypatch.setattr(tools_settings_module.shutil, "copy2", blocking_copy2)
+    monkeypatch.setattr(tools_settings_module, "copy_private_sqlite", blocking_copy)
 
     async with app.run_test() as pilot:
         backup_task = asyncio.create_task(app.settings_window._backup_databases())
@@ -1194,8 +1193,8 @@ async def test_backup_all_worker_failure_is_private_and_never_reports_success(
 
     if failure_phase == "legacy":
         monkeypatch.setattr(
-            tools_settings_module.shutil,
-            "copy2",
+            tools_settings_module,
+            "copy_private_sqlite",
             fail_worker_io,
         )
     else:

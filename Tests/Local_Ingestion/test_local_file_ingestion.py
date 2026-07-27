@@ -43,6 +43,46 @@ def _make_ebook_result(**kwargs) -> Dict[str, Any]:
     }
 
 
+def test_quick_ingest_uses_canonical_media_database_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tldw_chatbook import config
+    from tldw_chatbook.Local_Ingestion import local_file_ingestion
+
+    expected_path = tmp_path / "runtime" / "media.db"
+    captured: dict[str, object] = {}
+
+    class FakeMediaDatabase:
+        def __init__(self, db_path, client_id):
+            captured["db_path"] = db_path
+            captured["client_id"] = client_id
+
+        def close_connection(self):
+            captured["closed"] = True
+
+    monkeypatch.setattr(config, "get_media_db_path", lambda: expected_path)
+    monkeypatch.setattr(
+        local_file_ingestion,
+        "MediaDatabase",
+        FakeMediaDatabase,
+    )
+    monkeypatch.setattr(
+        local_file_ingestion,
+        "ingest_local_file",
+        lambda file_path, media_db: {"status": "ok"},
+    )
+
+    result = local_file_ingestion.quick_ingest(tmp_path / "document.txt")
+
+    assert result == {"status": "ok"}
+    assert captured == {
+        "db_path": str(expected_path),
+        "client_id": "quick_ingest",
+        "closed": True,
+    }
+
+
 def test_pdf_options_are_routed_to_process_pdf(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "doc.pdf"
     source.write_bytes(b"%PDF-1.4 stub")

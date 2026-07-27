@@ -5,9 +5,7 @@
 #
 # Standard Library
 import pytest
-import tempfile
 import time
-from pathlib import Path
 from io import BytesIO
 
 # 3rd-party Libraries
@@ -23,15 +21,15 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 @pytest.fixture
-def temp_db():
+def temp_db(tmp_path):
     """Create a temporary database for testing."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = Path(f.name)
+    db_path = tmp_path / "chat-images.db"
 
     db = CharactersRAGDB(str(db_path), client_id="test_client")
     yield db
 
     # Cleanup - CharactersRAGDB doesn't have a close method, connections are thread-local
+    db.close_connection()
     if db_path.exists():
         db_path.unlink()
 
@@ -438,10 +436,9 @@ class TestDatabaseImageIntegrity:
 class TestDatabaseMigrationCompatibility:
     """Test compatibility with existing databases."""
 
-    def test_existing_database_migration(self):
+    def test_existing_database_migration(self, tmp_path):
         """Test that new databases are created with image support."""
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            db_path = Path(f.name)
+        db_path = tmp_path / "chat-images-migration.db"
 
         try:
             # Create a fresh database with CharactersRAGDB

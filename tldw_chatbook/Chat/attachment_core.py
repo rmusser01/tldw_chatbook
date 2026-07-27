@@ -1,8 +1,7 @@
-"""Shared, UI-agnostic attachment processing for legacy chat and native Console.
+"""UI-agnostic attachment processing for native Console.
 
-Extracted from ChatAttachmentHandler so both the legacy chat window and the
-native Console consume one validation/processing/vision-gating pipeline.
-No Textual imports allowed in this module.
+The validation, processing, and vision-gating pipeline has no Textual
+dependencies so native Console and other non-UI callers can share it.
 """
 
 from __future__ import annotations
@@ -22,7 +21,7 @@ from tldw_chatbook.model_capabilities import (
     is_vision_capable,
 )
 
-MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024  # matches the legacy handler's 100MB cap
+MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # matches ChatImageHandler.MAX_IMAGE_SIZE
 DEFAULT_MAX_HISTORY_IMAGES = 10  # used when model capabilities omit max_images
 
@@ -240,7 +239,7 @@ async def load_processed_file(
     *,
     allowed_root: str | None = None,
 ) -> ProcessedFile:
-    """Validate and process a file attachment (moved intact from ChatAttachmentHandler).
+    """Validate and process a file attachment.
 
     Args:
         file_path: Path to the file to validate and process.

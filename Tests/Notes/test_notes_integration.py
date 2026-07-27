@@ -24,12 +24,13 @@ def test_db():
     """Create a real CharactersRAGDB instance for testing"""
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()
+    db_path = Path(tmp.name).resolve(strict=True)
 
-    db = CharactersRAGDB(tmp.name, "test_client")
+    db = CharactersRAGDB(db_path, "test_client")
     yield db
 
     # Databases don't have close() method anymore
-    os.unlink(tmp.name)
+    os.unlink(db_path)
 
 
 @pytest.fixture

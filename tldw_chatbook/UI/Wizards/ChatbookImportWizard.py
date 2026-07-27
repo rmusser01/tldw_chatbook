@@ -34,6 +34,7 @@ from textual.reactive import reactive
 from loguru import logger
 
 from .BaseWizard import WizardContainer, WizardStep, WizardStepConfig, WizardScreen
+from ...Chatbooks.database_paths import get_chatbook_database_paths
 from ...Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
 from ...Chatbooks.chatbook_models import ChatbookManifest, ContentType
 from ...Chatbooks.conflict_resolver import ConflictResolution
@@ -207,31 +208,7 @@ class PreviewValidationStep(WizardStep):
 
         try:
             # Create importer
-            db_config = self.wizard.app_instance.config_data.get("database", {})
-            db_paths = {
-                "ChaChaNotes": str(
-                    Path(
-                        db_config.get(
-                            "chachanotes_db_path",
-                            "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                        )
-                    ).expanduser()
-                ),
-                "Prompts": str(
-                    Path(
-                        db_config.get(
-                            "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts.db"
-                        )
-                    ).expanduser()
-                ),
-                "Media": str(
-                    Path(
-                        db_config.get(
-                            "media_db_path", "~/.local/share/tldw_cli/media_db_v2.db"
-                        )
-                    ).expanduser()
-                ),
-            }
+            db_paths = get_chatbook_database_paths()
 
             importer = ChatbookImporter(db_paths)
 
@@ -885,31 +862,7 @@ class ImportProgressStep(WizardStep):
                     await close_server_chatbook_service_lease(lease)
 
             # Create importer
-            db_config = self.wizard.app_instance.config_data.get("database", {})
-            db_paths = {
-                "ChaChaNotes": str(
-                    Path(
-                        db_config.get(
-                            "chachanotes_db_path",
-                            "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                        )
-                    ).expanduser()
-                ),
-                "Prompts": str(
-                    Path(
-                        db_config.get(
-                            "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts.db"
-                        )
-                    ).expanduser()
-                ),
-                "Media": str(
-                    Path(
-                        db_config.get(
-                            "media_db_path", "~/.local/share/tldw_cli/media_db_v2.db"
-                        )
-                    ).expanduser()
-                ),
-            }
+            db_paths = get_chatbook_database_paths()
 
             importer = ChatbookImporter(db_paths)
 

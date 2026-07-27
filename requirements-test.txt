@@ -5,6 +5,8 @@ pytest-mock
 pytest-timeout
 hypothesis
 aiohttp
+build
+setuptools>=77
 
 # Optional dependencies needed for tests
 numpy

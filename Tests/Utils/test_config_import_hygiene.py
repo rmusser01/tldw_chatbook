@@ -297,6 +297,8 @@ def _run_isolated_python(
     home = tmp_path / "home"
     for path in (data_home, config_home, home):
         path.mkdir(parents=True, exist_ok=True)
+    isolated_config_path = config_home / "tldw_cli" / "config.toml"
+    isolated_config_path.parent.mkdir(mode=0o700)
 
     env = {
         **os.environ,
@@ -308,7 +310,7 @@ def _run_isolated_python(
         # PR #679 review: pin the config path explicitly too — HOME/XDG
         # isolation alone leaks if Path.home() ignores HOME on some
         # platforms or an inherited TLDW_CONFIG_PATH slips through.
-        "TLDW_CONFIG_PATH": str(config_home / "tldw_cli" / "config.toml"),
+        "TLDW_CONFIG_PATH": str(isolated_config_path),
     }
     env.pop("PYTEST_CURRENT_TEST", None)
 

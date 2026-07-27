@@ -34,7 +34,7 @@ class TestRealDatabaseIntegration:
     def temp_db(self):
         """Create a temporary database for testing."""
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            db_path = f.name
+            db_path = str(Path(f.name).resolve())
 
         yield db_path
 
@@ -383,7 +383,7 @@ class TestEndToEndWorkflow:
     def temp_workspace(self):
         """Create temporary workspace for testing."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            workspace = Path(tmpdir)
+            workspace = Path(tmpdir).resolve()
 
             # Create dataset file
             dataset_file = workspace / "test_dataset.json"

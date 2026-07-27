@@ -8,6 +8,10 @@ from pathlib import Path
 from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
 from tldw_chatbook.Notifications.event_state_repository import EventStateRepository
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.Utils.private_paths import (
+    lexical_path,
+    verify_trusted_directory,
+)
 
 
 EVENT_STATE_DB_FILENAME = "tldw_chatbook_event_state.db"
@@ -53,16 +57,19 @@ def build_server_parity_state_repositories(
     client_id: str,
     local_notifications_db: ClientNotificationsDB,
 ) -> ServerParityStateRepositories:
-    resolved_data_dir = Path(data_dir).expanduser().resolve()
-    resolved_data_dir.mkdir(parents=True, exist_ok=True)
+    selected_data_dir = lexical_path(data_dir)
+    verify_trusted_directory(
+        selected_data_dir,
+        allow_shared_sticky=False,
+    )
     return ServerParityStateRepositories(
         local_notifications_db=local_notifications_db,
         event_state_repository=EventStateRepository(
-            resolved_data_dir / EVENT_STATE_DB_FILENAME,
+            selected_data_dir / EVENT_STATE_DB_FILENAME,
             client_id,
         ),
         sync_state_repository=SyncStateRepository(
-            resolved_data_dir / SYNC_STATE_DB_FILENAME,
+            selected_data_dir / SYNC_STATE_DB_FILENAME,
             client_id,
         ),
     )

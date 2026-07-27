@@ -367,23 +367,12 @@ CREATE TABLE results (
 );
 ```
 
-### Event System
+### Progress and Run Lifecycle
 
-The module emits events for monitoring:
-
-```python
-from tldw_chatbook.Evals.eval_events import EvalEvent, EvalEventType
-
-# Listen for events
-@on(EvalEvent)
-def handle_eval_event(event: EvalEvent):
-    if event.type == EvalEventType.RUN_STARTED:
-        print(f"Evaluation started: {event.run_id}")
-    elif event.type == EvalEventType.SAMPLE_COMPLETED:
-        print(f"Sample {event.sample_id} completed")
-    elif event.type == EvalEventType.RUN_COMPLETED:
-        print(f"Evaluation completed: {event.metrics}")
-```
+The retired gen-2 eval event/UI cluster is not a public integration surface.
+Use `run_started_callback(run_id)` to receive the durable run identity and
+`progress_callback(completed, total, result)` for stored sample progress.
+Callbacks may be synchronous or asynchronous.
 
 ## API Reference
 
@@ -403,12 +392,15 @@ Create an evaluation task from a dataset file.
 - `name`: Display name for the task
 - Returns: Task ID
 
-##### `async run_evaluation(task_id: str, model_configs: List[Dict], **kwargs) -> str`
+##### `async run_evaluation(task_id: str, model_id: str, **kwargs) -> str`
 Run an evaluation.
 - `task_id`: Task to evaluate
-- `model_configs`: List of model configurations
+- `model_id`: Stored model configuration to evaluate
 - `max_samples`: Maximum samples to evaluate (optional)
-- `run_config`: Additional run configuration (optional)
+- `progress_callback`: Sync or async
+  `(completed, total, result)` callback, invoked after result storage
+- `run_started_callback`: Sync or async `(run_id)` callback, invoked after the
+  durable run is `running` and cancellable but before sample work
 - Returns: Run ID
 
 ##### `get_run_status(run_id: str) -> Dict`
@@ -416,10 +408,18 @@ Get the status of an evaluation run.
 - `run_id`: Run identifier
 - Returns: Status dictionary with progress, metrics, etc.
 
-##### `cancel_evaluation(run_id: str) -> bool`
-Cancel a running evaluation.
+##### `async cancel_evaluation(run_id: str) -> bool`
+Cancel and drain a running evaluation.
 - `run_id`: Run to cancel
-- Returns: True if cancelled successfully
+- Returns: `True` after owned work and terminal cleanup settle, or `False` when
+  the run is not active
+
+##### `async aclose() -> None`
+Cancel and drain every active evaluation, then close the database.
+
+##### `close() -> None`
+Close the database synchronously. Raises `RuntimeError` while any evaluation is
+active; asynchronous callers should await `aclose()` in that case.
 
 ##### `list_available_tasks() -> List[Dict]`
 List all available evaluation tasks.

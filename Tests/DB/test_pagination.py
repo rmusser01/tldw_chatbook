@@ -3,8 +3,6 @@ Integration tests for pagination functionality in database functions.
 """
 
 from loguru import logger
-import tempfile
-from pathlib import Path
 import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
@@ -19,12 +17,9 @@ class TestMediaDatabasePagination:
     """Test pagination in Media database functions."""
 
     @pytest.fixture
-    def temp_db_path(self):
+    def temp_db_path(self, tmp_path):
         """Create a temporary database file."""
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            yield tmp.name
-        # Cleanup
-        Path(tmp.name).unlink(missing_ok=True)
+        yield str(tmp_path / "pagination.db")
 
     @pytest.fixture
     def test_media_db(self, temp_db_path):
@@ -147,149 +142,122 @@ class TestMediaDatabasePagination:
 class TestPaginationEdgeCases:
     """Test edge cases in pagination."""
 
-    def test_pagination_with_empty_database(self):
+    def test_pagination_with_empty_database(self, tmp_path):
         """Test pagination when database is empty."""
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            db = MediaDatabase(tmp.name, client_id="test_client")
-            # Database schema is automatically created by MediaDatabase constructor
-            # No need to manually create tables
+        db_path = tmp_path / "empty-pagination.db"
+        db = MediaDatabase(db_path, client_id="test_client")
+        # Database schema is automatically created by MediaDatabase constructor
+        # No need to manually create tables
 
-            # Test with empty database
-            assert db.get_all_active_media_for_embedding(limit=10) == []
-            assert db.fetch_all_keywords() == []  # No pagination params
-            assert get_unprocessed_media(db) == []  # No pagination params
-            assert get_all_content_from_database(db) == []  # No pagination params
+        # Test with empty database
+        assert db.get_all_active_media_for_embedding(limit=10) == []
+        assert db.fetch_all_keywords() == []  # No pagination params
+        assert get_unprocessed_media(db) == []  # No pagination params
+        assert get_all_content_from_database(db) == []  # No pagination params
+        db.close_connection()
 
-            # Cleanup
-            Path(tmp.name).unlink(missing_ok=True)
-
-    def test_pagination_with_negative_values(self):
+    def test_pagination_with_negative_values(self, tmp_path):
         """Test pagination with negative limit/offset values."""
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            db = MediaDatabase(tmp.name, client_id="test_client")
+        db = MediaDatabase(tmp_path / "negative-pagination.db", client_id="test_client")
 
-            # Add one item using the proper database method
-            db.execute_query(
-                """
-                INSERT INTO Media (uuid, title, content, type, content_hash, last_modified, version, client_id)
-                VALUES ('test_uuid', 'Test Title', 'Test Content', 'document', 'test_hash', datetime('now'), 1, 'test_client')
-            """,
-                commit=True,
-            )
+        # Add one item using the proper database method
+        db.execute_query(
+            """
+            INSERT INTO Media (uuid, title, content, type, content_hash, last_modified, version, client_id)
+            VALUES ('test_uuid', 'Test Title', 'Test Content', 'document', 'test_hash', datetime('now'), 1, 'test_client')
+        """,
+            commit=True,
+        )
 
-            # SQLite treats negative LIMIT as no limit
-            # SQLite treats negative OFFSET as 0
-            results = db.get_all_active_media_for_embedding(limit=-1, offset=-1)
-            assert len(results) == 1
-
-            # Cleanup
-            Path(tmp.name).unlink(missing_ok=True)
+        # SQLite treats negative LIMIT as no limit
+        # SQLite treats negative OFFSET as 0
+        results = db.get_all_active_media_for_embedding(limit=-1, offset=-1)
+        assert len(results) == 1
+        db.close_connection()
 
 
 @pytest.mark.integration
 class TestBatchQueryOptimization:
     """Test query patterns in search results."""
 
-    def test_search_prompts_keyword_fetch_pattern(self):
+    def test_search_prompts_keyword_fetch_pattern(self, tmp_path):
         """Test how search_prompts fetches keywords for results."""
         from tldw_chatbook.DB.Prompts_DB import PromptsDatabase as PromptsDB
 
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            db = PromptsDB(tmp.name, client_id="test_client")
+        db = PromptsDB(tmp_path / "prompt-pagination.db", client_id="test_client")
+        original_execute = db.execute_query
+        query_log = []
 
-            # Mock the database to track queries
-            original_execute = db.execute_query
-            query_log = []
+        def mock_execute(query, params=None):
+            query_log.append(query)
+            return original_execute(query, params)
 
-            def mock_execute(query, params=None):
-                query_log.append(query)
-                return original_execute(query, params)
+        db.execute_query = mock_execute
 
-            db.execute_query = mock_execute
+        for i in range(10):
+            db.add_prompt(
+                name=f"Prompt {i}",
+                author="Test Author",
+                details="Test Details",
+                system_prompt="System",
+                user_prompt="User",
+                keywords=[f"keyword_{j}" for j in range(2)] if i < 5 else [],
+            )
 
-            # PromptsDatabase automatically initializes schema in __init__
-            # Add test data using PromptsDB methods
-            # Add prompts
-            for i in range(10):
-                db.add_prompt(
-                    name=f"Prompt {i}",
-                    author="Test Author",
-                    details="Test Details",
-                    system_prompt="System",
-                    user_prompt="User",
-                    keywords=[f"keyword_{j}" for j in range(2)] if i < 5 else [],
-                )
+        query_log.clear()
+        results, total = db.search_prompts(search_query="Prompt")
+        keyword_queries = [
+            q
+            for q in query_log
+            if "PromptKeywordsTable" in q and "JOIN PromptKeywordLinks" in q
+        ]
 
-            # Clear query log
-            query_log.clear()
+        assert len(keyword_queries) == len(results)
+        for result in results:
+            if result["id"] <= 5:
+                assert len(result["keywords"]) == 2
+            else:
+                assert len(result["keywords"]) == 0
 
-            # Perform search
-            results, total = db.search_prompts(search_query="Prompt")
-
-            # Check keyword fetch pattern - currently uses individual queries per prompt
-            keyword_queries = [
-                q
-                for q in query_log
-                if "PromptKeywordsTable" in q and "JOIN PromptKeywordLinks" in q
-            ]
-
-            # Current implementation fetches keywords individually for each prompt
-            # This documents the current behavior (N+1 query pattern)
-            assert len(keyword_queries) == len(results)  # One query per result
-
-            # Verify results have keywords attached
-            for result in results:
-                if result["id"] <= 5:  # First 5 prompts have keywords
-                    assert len(result["keywords"]) == 2
-                else:
-                    assert len(result["keywords"]) == 0
-
-            # Cleanup
-            Path(tmp.name).unlink(missing_ok=True)
+        db.close_connection()
 
 
 @pytest.mark.integration
 class TestPaginationConsistency:
     """Test that pagination maintains consistency across queries."""
 
-    def test_pagination_result_consistency(self):
+    def test_pagination_result_consistency(self, tmp_path):
         """Test that paginated results are consistent."""
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            db = MediaDatabase(tmp.name, client_id="test_client")
+        db = MediaDatabase(
+            tmp_path / "consistent-pagination.db",
+            client_id="test_client",
+        )
+        for i in range(100):
+            db.execute_query(
+                """
+                INSERT INTO Media (uuid, title, content, type, content_hash, last_modified, version, client_id)
+                VALUES (?, ?, ?, ?, ?, datetime('now'), 1, ?)
+            """,
+                (
+                    f"uuid_{i:03d}",
+                    f"Title {i:03d}",
+                    f"Content {i}",
+                    "document",
+                    f"hash_{i}",
+                    "test_client",
+                ),
+                commit=True,
+            )
 
-            # MediaDatabase creates schema automatically
-            # Insert ordered data using execute_query
-            for i in range(100):
-                db.execute_query(
-                    """
-                    INSERT INTO Media (uuid, title, content, type, content_hash, last_modified, version, client_id)
-                    VALUES (?, ?, ?, ?, ?, datetime('now'), 1, ?)
-                """,
-                    (
-                        f"uuid_{i:03d}",
-                        f"Title {i:03d}",
-                        f"Content {i}",
-                        "document",
-                        f"hash_{i}",
-                        "test_client",
-                    ),
-                    commit=True,
-                )
+        page_size = 10
+        all_ids = []
+        for offset in range(0, 100, page_size):
+            results = db.get_all_active_media_for_embedding(
+                limit=page_size, offset=offset
+            )
+            all_ids.extend([r["id"] for r in results])
 
-            # Get results in pages
-            page_size = 10
-            all_ids = []
-
-            for offset in range(0, 100, page_size):
-                results = db.get_all_active_media_for_embedding(
-                    limit=page_size, offset=offset
-                )
-                all_ids.extend([r["id"] for r in results])
-
-            # Verify we got all items without duplicates
-            assert len(all_ids) == 100
-            assert len(set(all_ids)) == 100  # No duplicates
-            assert sorted(all_ids) == list(range(1, 101))  # All IDs present
-
-            # Cleanup
-            Path(tmp.name).unlink(missing_ok=True)
+        assert len(all_ids) == 100
+        assert len(set(all_ids)) == 100
+        assert sorted(all_ids) == list(range(1, 101))
+        db.close_connection()

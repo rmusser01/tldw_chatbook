@@ -45,28 +45,27 @@ Example:
     ]
 """
 
-# Imports
-from Cryptodome.Cipher import AES
-from Cryptodome.Protocol.KDF import PBKDF2
 import base64
+from contextlib import contextmanager
 import datetime
 import json
 import os
+from pathlib import Path
 import shutil
-import sqlite3
 import struct
 import sys
 import tempfile
 import time
+from typing import Iterator
 
-#
-# Third-Party Imports
+from Cryptodome.Cipher import AES
+from Cryptodome.Protocol.KDF import PBKDF2
 from loguru import logger
 
-#
-# Local Imports
+from ...DB.private_sqlite import connect_private_sqlite
 from ...Metrics.metrics_logger import log_counter, log_histogram
-#
+from ...Utils.private_paths import secure_private_directory
+
 ########################################################################################################################
 #
 # Helper functions for SQL safety
@@ -91,6 +90,44 @@ def escape_sql_like_pattern(pattern: str) -> str:
     escaped = escaped.replace("_", "\\_")
 
     return escaped
+
+
+@contextmanager
+def _private_cookie_clone(
+    source_path: str | os.PathLike[str],
+    *,
+    prefix: str,
+) -> Iterator[Path]:
+    """Copy a browser database into a private, short-lived directory."""
+
+    temp_root = Path(tempfile.gettempdir()).resolve(strict=True)
+    with tempfile.TemporaryDirectory(
+        prefix=prefix,
+        dir=temp_root,
+    ) as temp_directory_name:
+        temp_directory = Path(temp_directory_name)
+        secure_private_directory(
+            temp_directory,
+            create=False,
+            application_owned=True,
+        )
+        clone_path = temp_directory / "cookies.db"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        clone_fd = os.open(clone_path, flags, 0o600)
+        try:
+            if hasattr(os, "fchmod"):
+                os.fchmod(clone_fd, 0o600)
+            with open(source_path, "rb") as source:
+                with os.fdopen(clone_fd, "wb", closefd=True) as destination:
+                    clone_fd = -1
+                    shutil.copyfileobj(source, destination)
+                    destination.flush()
+                    os.fsync(destination.fileno())
+        finally:
+            if clone_fd >= 0:
+                os.close(clone_fd)
+
+        yield clone_path
 
 
 ########################################################################################################################
@@ -173,66 +210,67 @@ def get_chrome_cookies(domain_name):
         salt = b"saltysalt"
         key = PBKDF2(password.encode("utf-8"), salt, dkLen=16, count=iterations)
 
-    # Copy the Cookies file to a secure temporary location to avoid locking the database
-    temp_fd, temp_cookie_path = tempfile.mkstemp(prefix="chrome_cookies_", suffix=".db")
-    os.close(temp_fd)  # Close the file descriptor as we'll use the path
-
+    copy_complete = False
     try:
-        shutil.copyfile(cookie_path, temp_cookie_path)
-    except Exception:
-        duration = time.time() - start_time
-        log_histogram(
-            "cookie_cloner_chrome_duration", duration, labels={"status": "error"}
-        )
-        log_counter(
-            "cookie_cloner_chrome_error",
-            labels={"error_type": "file_copy_failed", "platform": sys.platform},
-        )
-        raise
-
-    conn = sqlite3.connect(temp_cookie_path)
-    cursor = conn.cursor()
-
-    cookies = {}
-    total_cookies = 0
-    expired_cookies = 0
-    decryption_errors = 0
-
-    try:
-        # Escape the domain name to prevent SQL injection in LIKE pattern
-        safe_pattern = f"%{escape_sql_like_pattern(domain_name)}%"
-        cursor.execute(
-            "SELECT host_key, name, path, encrypted_value, expires_utc FROM cookies WHERE host_key LIKE ? ESCAPE '\\'",
-            (safe_pattern,),
-        )
-
-        rows = cursor.fetchall()
-        total_cookies = len(rows)
-
-        for host_key, name, path, encrypted_value, expires_utc in rows:
+        with _private_cookie_clone(
+            cookie_path,
+            prefix="chrome_cookies_",
+        ) as temp_cookie_path:
+            copy_complete = True
+            conn = connect_private_sqlite(
+                "cookies.chrome",
+                temp_cookie_path,
+                read_only=True,
+            )
             try:
-                if sys.platform == "win32":
-                    try:
-                        decrypted_value = win32crypt.CryptUnprotectData(
-                            encrypted_value, None, None, None, 0
-                        )[1]
-                    except Exception:
-                        decrypted_value = decrypt_edge_cookie(encrypted_value, key)
-                else:
-                    decrypted_value = decrypt_edge_cookie(encrypted_value, key)
+                cursor = conn.cursor()
+                try:
+                    cookies = {}
+                    total_cookies = 0
+                    expired_cookies = 0
+                    decryption_errors = 0
 
-                expires = datetime.datetime(1601, 1, 1) + datetime.timedelta(
-                    microseconds=expires_utc
-                )
-                if expires < datetime.datetime.now():
-                    expired_cookies += 1
-                    continue  # Skip expired cookies
+                    # Escape the domain name to prevent SQL injection in LIKE pattern
+                    safe_pattern = f"%{escape_sql_like_pattern(domain_name)}%"
+                    cursor.execute(
+                        "SELECT host_key, name, path, encrypted_value, expires_utc FROM cookies WHERE host_key LIKE ? ESCAPE '\\'",
+                        (safe_pattern,),
+                    )
 
-                cookies[name] = decrypted_value.decode("utf-8", "ignore")
-            except Exception as e:
-                decryption_errors += 1
-                logger.debug(f"Failed to decrypt cookie {name}: {e}")
+                    rows = cursor.fetchall()
+                    total_cookies = len(rows)
 
+                    for host_key, name, path, encrypted_value, expires_utc in rows:
+                        try:
+                            if sys.platform == "win32":
+                                try:
+                                    decrypted_value = win32crypt.CryptUnprotectData(
+                                        encrypted_value, None, None, None, 0
+                                    )[1]
+                                except Exception:
+                                    decrypted_value = decrypt_edge_cookie(
+                                        encrypted_value, key
+                                    )
+                            else:
+                                decrypted_value = decrypt_edge_cookie(
+                                    encrypted_value, key
+                                )
+
+                            expires = datetime.datetime(
+                                1601, 1, 1
+                            ) + datetime.timedelta(microseconds=expires_utc)
+                            if expires < datetime.datetime.now():
+                                expired_cookies += 1
+                                continue  # Skip expired cookies
+
+                            cookies[name] = decrypted_value.decode("utf-8", "ignore")
+                        except Exception as e:
+                            decryption_errors += 1
+                            logger.debug(f"Failed to decrypt cookie {name}: {e}")
+                finally:
+                    cursor.close()
+            finally:
+                conn.close()
     except Exception:
         duration = time.time() - start_time
         log_histogram(
@@ -240,13 +278,14 @@ def get_chrome_cookies(domain_name):
         )
         log_counter(
             "cookie_cloner_chrome_error",
-            labels={"error_type": "database_error", "platform": sys.platform},
+            labels={
+                "error_type": (
+                    "database_error" if copy_complete else "file_copy_failed"
+                ),
+                "platform": sys.platform,
+            },
         )
         raise
-    finally:
-        cursor.close()
-        conn.close()
-        os.remove(temp_cookie_path)
 
     # Log success metrics
     duration = time.time() - start_time
@@ -332,32 +371,37 @@ def get_firefox_cookies(domain_name):
         if not os.path.exists(cookie_db):
             continue
 
-        # Copy to a secure temporary location
-        temp_fd, temp_cookie_db = tempfile.mkstemp(
-            prefix="firefox_cookies_", suffix=".db"
-        )
-        os.close(temp_fd)  # Close the file descriptor as we'll use the path
-        shutil.copyfile(cookie_db, temp_cookie_db)
-
-        conn = sqlite3.connect(temp_cookie_db)
-        cursor = conn.cursor()
-        try:
-            # Escape the domain name to prevent SQL injection in LIKE pattern
-            safe_pattern = f"%{escape_sql_like_pattern(domain_name)}%"
-            cursor.execute(
-                "SELECT host, name, value, expiry FROM moz_cookies WHERE host LIKE ? ESCAPE '\\'",
-                (safe_pattern,),
+        with _private_cookie_clone(
+            cookie_db,
+            prefix="firefox_cookies_",
+        ) as temp_cookie_db:
+            conn = connect_private_sqlite(
+                "cookies.firefox",
+                temp_cookie_db,
+                read_only=True,
             )
-            for host, name, value, expiry in cursor.fetchall():
-                expires = datetime.datetime.fromtimestamp(expiry)
-                if expires < datetime.datetime.now():
-                    continue  # Skip expired cookies
-                cookies[name] = value
-        finally:
-            cursor.close()
-            conn.close()
-            os.remove(temp_cookie_db)
-            break  # Use the first profile found
+            try:
+                cursor = conn.cursor()
+                try:
+                    # Escape the domain name to prevent SQL injection in LIKE pattern
+                    safe_pattern = f"%{escape_sql_like_pattern(domain_name)}%"
+                    cursor.execute(
+                        "SELECT host, name, value, expiry FROM moz_cookies WHERE host LIKE ? ESCAPE '\\'",
+                        (safe_pattern,),
+                    )
+                    for host, name, value, expiry in cursor.fetchall():
+                        expires = datetime.datetime.fromtimestamp(expiry)
+                        if expires < datetime.datetime.now():
+                            continue  # Skip expired cookies
+                        cookies[name] = value
+                except Exception:
+                    # Preserve the historical first-profile result contract.
+                    pass
+                finally:
+                    cursor.close()
+            finally:
+                conn.close()
+        break  # Use the first profile found
 
     return cookies
 
@@ -447,53 +491,62 @@ def get_edge_cookies(domain_name):
             salt = b"saltysalt"
             key = PBKDF2(password.encode("utf-8"), salt, dkLen=16, count=iterations)
 
-        # Copy the Cookies file to a secure temporary location to avoid database lock
-        temp_fd, temp_cookie_path = tempfile.mkstemp(
-            prefix="edge_cookies_", suffix=".db"
-        )
-        os.close(temp_fd)  # Close the file descriptor as we'll use the path
-        shutil.copyfile(cookie_path, temp_cookie_path)
-
-        conn = sqlite3.connect(temp_cookie_path)
-        cursor = conn.cursor()
-
         cookies = {}
-        try:
-            # Escape the domain name to prevent SQL injection in LIKE pattern
-            safe_pattern = f"%{escape_sql_like_pattern(domain_name)}%"
-            cursor.execute(
-                """
-                SELECT host_key, name, path, encrypted_value, expires_utc
-                FROM cookies WHERE host_key LIKE ? ESCAPE '\\'
-            """,
-                (safe_pattern,),
+        with _private_cookie_clone(
+            cookie_path,
+            prefix="edge_cookies_",
+        ) as temp_cookie_path:
+            conn = connect_private_sqlite(
+                "cookies.edge",
+                temp_cookie_path,
+                read_only=True,
             )
+            try:
+                cursor = conn.cursor()
+                try:
+                    # Escape the domain name to prevent SQL injection in LIKE pattern
+                    safe_pattern = f"%{escape_sql_like_pattern(domain_name)}%"
+                    cursor.execute(
+                        """
+                        SELECT host_key, name, path, encrypted_value, expires_utc
+                        FROM cookies WHERE host_key LIKE ? ESCAPE '\\'
+                    """,
+                        (safe_pattern,),
+                    )
 
-            for host_key, name, path, encrypted_value, expires_utc in cursor.fetchall():
-                if sys.platform == "win32":
-                    try:
-                        # Try to decrypt using CryptUnprotectData
-                        decrypted_value = win32crypt.CryptUnprotectData(
-                            encrypted_value, None, None, None, 0
-                        )[1]
-                    except Exception:
-                        # If failed, use custom decryption
-                        decrypted_value = decrypt_edge_cookie(encrypted_value, key)
-                else:
-                    decrypted_value = decrypt_edge_cookie(encrypted_value, key)
+                    for (
+                        host_key,
+                        name,
+                        path,
+                        encrypted_value,
+                        expires_utc,
+                    ) in cursor.fetchall():
+                        if sys.platform == "win32":
+                            try:
+                                # Try to decrypt using CryptUnprotectData
+                                decrypted_value = win32crypt.CryptUnprotectData(
+                                    encrypted_value, None, None, None, 0
+                                )[1]
+                            except Exception:
+                                # If failed, use custom decryption
+                                decrypted_value = decrypt_edge_cookie(
+                                    encrypted_value, key
+                                )
+                        else:
+                            decrypted_value = decrypt_edge_cookie(encrypted_value, key)
 
-                # Convert timestamp to datetime
-                expires = datetime.datetime(1601, 1, 1) + datetime.timedelta(
-                    microseconds=expires_utc
-                )
-                if expires < datetime.datetime.now():
-                    continue  # Skip expired cookies
+                        # Convert timestamp to datetime
+                        expires = datetime.datetime(1601, 1, 1) + datetime.timedelta(
+                            microseconds=expires_utc
+                        )
+                        if expires < datetime.datetime.now():
+                            continue  # Skip expired cookies
 
-                cookies[name] = decrypted_value.decode("utf-8", "ignore")
-        finally:
-            cursor.close()
-            conn.close()
-            os.remove(temp_cookie_path)
+                        cookies[name] = decrypted_value.decode("utf-8", "ignore")
+                finally:
+                    cursor.close()
+            finally:
+                conn.close()
 
         return cookies
 

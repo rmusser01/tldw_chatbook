@@ -20,6 +20,12 @@ from unicodedata import category as _unicode_category
 from unicodedata import normalize as _unicode_normalize
 from uuid import UUID, uuid4
 
+from tldw_chatbook.DB.private_sqlite import (
+    backup_connection_to_private,
+    backup_open_connections_to_private,
+    connect_private_sqlite,
+    copy_private_sqlite,
+)
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_schema import (
     ASSIGNED_PROFILE_JOIN_SELECT,
@@ -1522,8 +1528,10 @@ class TTSProfileRepository:
             )
             temporary_path = Path(temporary_name)
             os.close(descriptor)
-            destination_connection = sqlite3.connect(
+            destination_connection = connect_private_sqlite(
+                "tts.profile_backup",
                 temporary_path,
+                must_exist=True,
                 isolation_level=None,
             )
             self._worker_online_backup(connection, destination_connection)
@@ -1591,26 +1599,19 @@ class TTSProfileRepository:
     ) -> None:
         """Copy one complete SQLite snapshot through the online-backup API."""
 
-        if deadline is None:
-            source.backup(destination)
-            return
-
-        _require_restore_time(deadline)
-
-        def check_deadline(
-            _status: int,
-            _remaining: int,
-            _total: int,
-        ) -> None:
-            _require_restore_time(deadline)
-
-        source.backup(
-            destination,
-            pages=_RESTORE_BACKUP_PAGE_BATCH,
-            progress=check_deadline,
-            sleep=0.0,
+        progress_guard = (
+            None if deadline is None else lambda: _require_restore_time(deadline)
         )
-        _require_restore_time(deadline)
+        if progress_guard is not None:
+            progress_guard()
+        backup_open_connections_to_private(
+            "tts.profile_backup",
+            source,
+            destination,
+            progress_guard=progress_guard,
+        )
+        if progress_guard is not None:
+            progress_guard()
 
     def _worker_require_full_integrity(
         self,
@@ -1694,9 +1695,11 @@ class TTSProfileRepository:
         try:
             if check_deadline is not None:
                 check_deadline()
-            connection = sqlite3.connect(
-                f"{path.resolve(strict=True).as_uri()}?mode=ro&immutable=1",
-                uri=True,
+            connection = connect_private_sqlite(
+                "tts.profile_snapshot",
+                path,
+                read_only=True,
+                immutable=True,
                 isolation_level=None,
             )
             if check_deadline is not None:
@@ -2028,8 +2031,6 @@ class TTSProfileRepository:
         deadline: float,
     ) -> Path:
         active_path = self._worker_active_path()
-        source: sqlite3.Connection | None = None
-        destination: sqlite3.Connection | None = None
         stage_path: Path | None = None
         body_error: BaseException | None = None
         cleanup_errors: list[BaseException] = []
@@ -2042,21 +2043,12 @@ class TTSProfileRepository:
             )
             stage_path = Path(stage_name)
             os.close(descriptor)
-            source = sqlite3.connect(
-                f"{candidate.path.as_uri()}?mode=ro",
-                uri=True,
-                isolation_level=None,
+            copy_private_sqlite(
+                "tts.profile_restore_stage",
+                candidate.path,
+                stage_path,
+                progress_guard=lambda: _require_restore_time(deadline),
             )
-            destination = sqlite3.connect(stage_path, isolation_level=None)
-            self._worker_online_backup(
-                source,
-                destination,
-                deadline=deadline,
-            )
-            destination.close()
-            destination = None
-            source.close()
-            source = None
             if not _candidate_is_unchanged(candidate):
                 raise _repository_error("restore_failed")
             _require_restore_time(deadline)
@@ -2067,13 +2059,6 @@ class TTSProfileRepository:
         except BaseException as error:
             body_error = error
 
-        for connection in (destination, source):
-            if connection is None:
-                continue
-            try:
-                connection.close()
-            except BaseException as error:
-                cleanup_errors.append(error)
         if isinstance(body_error, sqlite3.DatabaseError):
             body_error = _repository_error("schema_corrupt")
         if body_error is not None or cleanup_errors:
@@ -2090,7 +2075,6 @@ class TTSProfileRepository:
     ) -> Path:
         active_path = self._worker_active_path()
         source: sqlite3.Connection | None = None
-        destination: sqlite3.Connection | None = None
         recovery_path: Path | None = None
         body_error: BaseException | None = None
         cleanup_errors: list[BaseException] = []
@@ -2109,14 +2093,13 @@ class TTSProfileRepository:
                 must_exist=True,
                 check_deadline=lambda: _require_restore_time(deadline),
             )
-            destination = sqlite3.connect(recovery_path, isolation_level=None)
-            self._worker_online_backup(
+            backup_connection_to_private(
+                "tts.profile_recovery",
                 source,
-                destination,
-                deadline=deadline,
+                active_path,
+                recovery_path,
+                progress_guard=lambda: _require_restore_time(deadline),
             )
-            destination.close()
-            destination = None
             try:
                 source.close()
             except BaseException:
@@ -2137,7 +2120,7 @@ class TTSProfileRepository:
         except BaseException as error:
             body_error = error
 
-        for connection in (destination, source):
+        for connection in (source,):
             if connection is None:
                 continue
             try:

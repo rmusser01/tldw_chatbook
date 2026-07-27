@@ -37,6 +37,7 @@ from textual.reactive import reactive
 from textual import on
 from loguru import logger
 
+from ...Utils.private_paths import secure_private_directory
 from .BaseWizard import WizardContainer, WizardStep, WizardStepConfig, WizardScreen
 from ..Widgets.SmartContentTree import (
     SmartContentTree,
@@ -44,6 +45,7 @@ from ..Widgets.SmartContentTree import (
     ContentSelectionChanged,
 )
 from ...Chatbooks.chatbook_creator import ChatbookCreator
+from ...Chatbooks.database_paths import get_chatbook_database_paths
 from ...Chatbooks.chatbook_models import ContentType
 from ...Chatbooks.server_chatbook_service import (
     build_server_job_record,
@@ -843,31 +845,7 @@ class ProgressStep(WizardStep):
                 finally:
                     await close_server_chatbook_service_lease(lease)
 
-            db_config = config.get("database", {})
-            db_paths = {
-                "ChaChaNotes": str(
-                    Path(
-                        db_config.get(
-                            "chachanotes_db_path",
-                            "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                        )
-                    ).expanduser()
-                ),
-                "Prompts": str(
-                    Path(
-                        db_config.get(
-                            "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts.db"
-                        )
-                    ).expanduser()
-                ),
-                "Media": str(
-                    Path(
-                        db_config.get(
-                            "media_db_path", "~/.local/share/tldw_cli/media_db_v2.db"
-                        )
-                    ).expanduser()
-                ),
-            }
+            db_paths = get_chatbook_database_paths()
 
             creator = ChatbookCreator(db_paths)
 
@@ -876,7 +854,11 @@ class ProgressStep(WizardStep):
                 raise ValueError(
                     "Export path is not configured for local chatbook creation."
                 )
-            export_path.parent.mkdir(parents=True, exist_ok=True)
+            secure_private_directory(
+                export_path.parent,
+                create=True,
+                application_owned=True,
+            )
 
             # Update status before starting
             self._update_status("status-validate", "completed", "✓ Validated content")

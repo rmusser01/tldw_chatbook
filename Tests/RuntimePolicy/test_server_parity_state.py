@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import os
+import stat
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 
 from tldw_chatbook.Notifications import ClientNotificationsDB, EventStateRepository
 from tldw_chatbook.Sync_Interop import SyncStateRepository
+from tldw_chatbook.Utils.private_paths import PrivatePathError
 from tldw_chatbook.runtime_policy.server_parity_state import (
     ServerParityStateRepositories,
     build_server_parity_state_repositories,
@@ -36,6 +42,60 @@ def test_server_parity_state_builder_requires_existing_local_notifications_db(tm
     with pytest.raises(TypeError):
         build_server_parity_state_repositories(
             data_dir=tmp_path, client_id="test-client"
+        )
+
+
+def test_server_parity_state_builder_requires_existing_data_directory(tmp_path: Path):
+    local_notifications = ClientNotificationsDB(":memory:")
+    missing = tmp_path / "missing"
+
+    with pytest.raises(PrivatePathError):
+        build_server_parity_state_repositories(
+            data_dir=missing,
+            client_id="test-client",
+            local_notifications_db=local_notifications,
+        )
+
+    assert not missing.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode contract")
+def test_server_parity_state_builder_does_not_mutate_caller_directory(
+    tmp_path: Path,
+):
+    local_notifications = ClientNotificationsDB(":memory:")
+    data_dir = tmp_path / "custom"
+    data_dir.mkdir()
+    data_dir.chmod(0o751)
+
+    with (
+        patch("tldw_chatbook.runtime_policy.server_parity_state.EventStateRepository"),
+        patch("tldw_chatbook.runtime_policy.server_parity_state.SyncStateRepository"),
+    ):
+        build_server_parity_state_repositories(
+            data_dir=data_dir,
+            client_id="test-client",
+            local_notifications_db=local_notifications,
+        )
+
+    assert stat.S_IMODE(data_dir.stat().st_mode) == 0o751
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX symlink contract")
+def test_server_parity_state_builder_rejects_symlinked_data_directory(
+    tmp_path: Path,
+):
+    local_notifications = ClientNotificationsDB(":memory:")
+    target = tmp_path / "target"
+    target.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(PrivatePathError):
+        build_server_parity_state_repositories(
+            data_dir=alias,
+            client_id="test-client",
+            local_notifications_db=local_notifications,
         )
 
 

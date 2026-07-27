@@ -2240,27 +2240,36 @@ def test_restore_online_backup_checks_deadline_between_page_batches(
     module = _repository_module()
     repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
     monotonic_values = iter((0.0, 2.0))
-    backup_options: dict[str, object] = {}
+    observed_owner: str | None = None
 
-    class Source:
-        def backup(self, _destination: object, **options: object) -> None:
-            backup_options.update(options)
-            progress = cast(Callable[[int, int, int], None], options["progress"])
-            progress(0, 1, 2)
+    def checked_backup(
+        owner_id: str,
+        _source: sqlite3.Connection,
+        _destination: sqlite3.Connection,
+        *,
+        progress_guard: Callable[[], None] | None = None,
+    ) -> None:
+        nonlocal observed_owner
+        observed_owner = owner_id
+        assert progress_guard is not None
+        progress_guard()
 
     monkeypatch.setattr(module, "_monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(
+        module,
+        "backup_open_connections_to_private",
+        checked_backup,
+    )
 
     with pytest.raises(ProfileRepositoryError) as caught:
         repository._worker_online_backup(
-            cast(sqlite3.Connection, Source()),
+            cast(sqlite3.Connection, object()),
             cast(sqlite3.Connection, object()),
             deadline=1.0,
         )
 
     _assert_safe_error(caught.value, "restore_failed")
-    assert type(backup_options["pages"]) is int
-    assert 1 <= cast(int, backup_options["pages"]) <= 256
-    assert callable(backup_options["progress"])
+    assert observed_owner == "tts.profile_backup"
 
 
 def test_restore_integrity_check_interrupts_and_clears_progress_handler(

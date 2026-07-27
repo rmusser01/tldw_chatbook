@@ -15,6 +15,7 @@ from tldw_chatbook.Local_Inference.mlx_lm_inference_local import (
     start_mlx_lm_server,
     stop_mlx_lm_server,
 )
+from tldw_chatbook.config import RuntimeConfigSnapshot
 
 # Define exception classes if they don't exist in Chat_Deps
 try:
@@ -52,14 +53,14 @@ def_mlx_settings = {
 
 @pytest.fixture(autouse=True)
 def mock_mlx_settings():
-    # This fixture will automatically apply to all tests in this module
-    # Since settings is a regular dict, we'll patch the entire settings dict
+    # Patch the public runtime snapshot seam used by local provider calls.
     mock_settings = {"api_settings": {"mlx_lm": def_mlx_settings.copy()}}
-
-    # Patch the entire settings object in the module where it's imported
-    with patch("tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.settings", mock_settings):
-        with patch("tldw_chatbook.config.settings", mock_settings):
-            yield mock_settings
+    snapshot = RuntimeConfigSnapshot(generation=0, values=mock_settings)
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.get_runtime_config_snapshot",
+        return_value=snapshot,
+    ):
+        yield mock_settings
 
 
 # --- Tests for start_mlx_lm_server ---
@@ -372,7 +373,10 @@ def test_chat_with_mlx_lm_missing_model_config():
         }
     }
 
-    with patch("tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.settings", mock_settings):
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.get_runtime_config_snapshot",
+        return_value=RuntimeConfigSnapshot(generation=0, values=mock_settings),
+    ):
         with pytest.raises(
             ChatConfigurationError, match="MLX-LM model path .* is required"
         ):
@@ -480,7 +484,10 @@ def test_chat_with_mlx_lm_missing_host_port_config():
     # Since host defaults to 127.0.0.1 and port to 8080 in chat_with_mlx_lm if not in config,
     # this test won't raise ChatConfigurationError unless those defaults are also removed from the function.
     # Instead, it should use the defaults. Let's verify that.
-    with patch("tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.settings", mock_settings):
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.get_runtime_config_snapshot",
+        return_value=RuntimeConfigSnapshot(generation=0, values=mock_settings),
+    ):
         with patch(
             "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local._chat_with_openai_compatible_local_server"
         ) as mock_openai_call:
@@ -508,7 +515,10 @@ def test_chat_with_mlx_lm_model_arg_overrides_missing_config(mock_openai_call):
         }
     }
 
-    with patch("tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.settings", mock_settings):
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.get_runtime_config_snapshot",
+        return_value=RuntimeConfigSnapshot(generation=0, values=mock_settings),
+    ):
         chat_with_mlx_lm(input_data=input_data, model=model_arg)
 
         args, kwargs = mock_openai_call.call_args

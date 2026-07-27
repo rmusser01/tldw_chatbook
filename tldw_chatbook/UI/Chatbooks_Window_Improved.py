@@ -20,6 +20,7 @@ from textual.widgets import Static, Button, Input, ListView, ListItem
 from textual.reactive import reactive
 from loguru import logger
 
+from ..Chatbooks.database_paths import secure_chatbook_directory
 from ..Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 if TYPE_CHECKING:
@@ -381,7 +382,9 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        self._export_path = Path.home() / "Documents" / "Chatbooks"
+        self._export_path = secure_chatbook_directory(
+            Path.home() / "Documents" / "Chatbooks"
+        )
 
     def compose(self) -> ComposeResult:
         # Header
@@ -560,8 +563,7 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
     async def _refresh_chatbooks(self) -> None:
         """Load chatbooks from export directory."""
         try:
-            if not self._export_path.exists():
-                self._export_path.mkdir(parents=True, exist_ok=True)
+            self._export_path = secure_chatbook_directory(self._export_path)
 
             chatbooks = []
 

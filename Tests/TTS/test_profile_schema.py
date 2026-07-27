@@ -1445,7 +1445,7 @@ def test_candidate_source_open_is_nonblocking_across_fifo_swap(
     connection = open_profile_store(path)
     connection.close()
     original_path = tmp_path / "original-candidate.sqlite3"
-    real_os_open = profile_schema.os.open
+    real_candidate_open = profile_schema._open_candidate_source
     observed_flags: list[int] = []
 
     def racing_os_open(
@@ -1456,9 +1456,9 @@ def test_candidate_source_open_is_nonblocking_across_fifo_swap(
             path.replace(original_path)
             profile_schema.os.mkfifo(path)
             flags |= profile_schema.os.O_NONBLOCK
-        return real_os_open(target, flags, *args, **kwargs)  # type: ignore[arg-type]
+        return real_candidate_open(Path(target), flags)
 
-    monkeypatch.setattr(profile_schema.os, "open", racing_os_open)
+    monkeypatch.setattr(profile_schema, "_open_candidate_source", racing_os_open)
     try:
         with _safe_error("schema_corrupt"):
             validate_profile_candidate(path)
@@ -1623,7 +1623,7 @@ def test_candidate_control_flow_exception_closes_and_removes_private_snapshot(
     private_directory.mkdir()
     signal = exception_type("control flow")
     real_mkstemp = profile_schema.tempfile.mkstemp
-    real_os_open = profile_schema.os.open
+    real_candidate_open = profile_schema._open_candidate_source
     real_connect = sqlite3.connect
     snapshot_paths: list[Path] = []
     source_fds: list[int] = []
@@ -1636,7 +1636,7 @@ def test_candidate_control_flow_exception_closes_and_removes_private_snapshot(
         return fd, name
 
     def tracked_os_open(*args: object, **kwargs: object) -> int:
-        fd = real_os_open(*args, **kwargs)  # type: ignore[arg-type]
+        fd = real_candidate_open(*args, **kwargs)  # type: ignore[arg-type]
         if Path(str(args[0])) == path:
             source_fds.append(fd)
         return fd
@@ -1650,7 +1650,7 @@ def test_candidate_control_flow_exception_closes_and_removes_private_snapshot(
         raise signal
 
     monkeypatch.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
-    monkeypatch.setattr(profile_schema.os, "open", tracked_os_open)
+    monkeypatch.setattr(profile_schema, "_open_candidate_source", tracked_os_open)
     monkeypatch.setattr(sqlite3, "connect", tracked_connect)
     monkeypatch.setattr(profile_schema, "decode_profile", interrupt_decode)
 
@@ -1683,8 +1683,8 @@ def test_candidate_fd_cleanup_control_flow_signal_is_preserved_after_all_cleanup
     private_directory = tmp_path / "private-snapshots"
     private_directory.mkdir()
     real_mkstemp = profile_schema.tempfile.mkstemp
-    real_os_open = profile_schema.os.open
-    real_os_close = profile_schema.os.close
+    real_candidate_open = profile_schema._open_candidate_source
+    real_candidate_close = profile_schema._close_candidate_fd
     snapshot_paths: list[Path] = []
     snapshot_fds: list[int] = []
     source_fds: list[int] = []
@@ -1698,21 +1698,21 @@ def test_candidate_fd_cleanup_control_flow_signal_is_preserved_after_all_cleanup
         return fd, name
 
     def tracked_os_open(*args: object, **kwargs: object) -> int:
-        fd = real_os_open(*args, **kwargs)  # type: ignore[arg-type]
+        fd = real_candidate_open(*args, **kwargs)  # type: ignore[arg-type]
         if Path(str(args[0])) == path:
             source_fds.append(fd)
         return fd
 
     def interrupting_close(fd: int) -> None:
         close_attempts.append(fd)
-        real_os_close(fd)
+        real_candidate_close(fd)
         target_fds = snapshot_fds if fd_kind == "snapshot" else source_fds
         if fd in target_fds:
             raise signal
 
     monkeypatch.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
-    monkeypatch.setattr(profile_schema.os, "open", tracked_os_open)
-    monkeypatch.setattr(profile_schema.os, "close", interrupting_close)
+    monkeypatch.setattr(profile_schema, "_open_candidate_source", tracked_os_open)
+    monkeypatch.setattr(profile_schema, "_close_candidate_fd", interrupting_close)
 
     with pytest.raises(exception_type) as caught:
         validate_profile_candidate(path)
@@ -1722,7 +1722,7 @@ def test_candidate_fd_cleanup_control_flow_signal_is_preserved_after_all_cleanup
     assert close_attempts == [snapshot_fds[0], source_fds[0]]
     for fd in (*snapshot_fds, *source_fds):
         with pytest.raises(OSError):
-            real_os_close(fd)
+            real_candidate_close(fd)
     assert not snapshot_paths[0].exists()
     assert list(private_directory.iterdir()) == []
 

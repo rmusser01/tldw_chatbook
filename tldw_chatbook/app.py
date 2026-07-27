@@ -120,16 +120,12 @@ from tldw_chatbook.Constants import (
     TAB_ACP,
     TAB_SKILLS,
     TAB_SETTINGS,
-    LLAMA_CPP_SERVER_ARGS_HELP_TEXT,
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT,
     TAB_STTS,
     TAB_STUDY,
     TAB_WRITING,
     TAB_RESEARCH,
-    TAB_SUBSCRIPTIONS,
     TAB_CHATBOOKS,
     LIBRARY_NAV_CONTEXT_MODE,
-    LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
     LIBRARY_NAV_CONTEXT_INGEST,
     WATCHLISTS_NAV_CONTEXT_BACKEND,
@@ -219,7 +215,6 @@ from tldw_chatbook.Utils.Emoji_Handling import (
     FALLBACK_TITLE_BRAIN,
     supports_emoji,
 )
-from tldw_chatbook.Utils.log_widget_manager import LogWidgetManager
 from tldw_chatbook.Utils.ui_helpers import UIHelpers
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
@@ -234,24 +229,22 @@ from tldw_chatbook.TTS.TTS_Generation import (
 )
 from tldw_chatbook.Event_Handlers.worker_handlers import (
     WorkerHandlerRegistry,
-    ServerWorkerHandler,
     AIGenerationHandler,
     MiscWorkerHandler,
 )
 from .config import (
-    CONFIG_TOML_CONTENT,
-    DEFAULT_CONFIG_PATH,
+    get_cli_config_path,
     load_settings,
     get_cli_providers_and_models,
     API_MODELS_BY_PROVIDER,
     LOCAL_PROVIDERS,
     load_cli_config_and_ensure_existence,
+    persist_cli_config_for_shutdown,
     set_encryption_password,
 )
 from .Event_Handlers import (
     conv_char_events as ccp_handlers,
     worker_events,
-    ingest_events,
     media_events,
 )
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
@@ -343,6 +336,13 @@ from tldw_chatbook.config import (
     get_chachanotes_db_lazy,
 )
 from .UI.Navigation.main_navigation import NavigateToScreen
+from .UI.Navigation.pending_handoff_store import (
+    ConsoleProviderIntent,
+    HandoffChannel,
+    HandoffValueError,
+    PendingHandoffStore,
+)
+from .UI.Navigation.screen_state_store import RuntimeIdentity, ScreenStateStore
 from .UI.Navigation.screen_registry import resolve_screen_target
 from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
@@ -503,10 +503,8 @@ from tldw_chatbook.Evaluations_Interop import (  # noqa: E402
     ServerEvaluationsService,
 )
 from tldw_chatbook.runtime_policy.bootstrap import (  # noqa: E402
-    add_runtime_policy_snapshot,
     build_runtime_api_client,
     load_runtime_policy_for_app,
-    reconcile_saved_screen_state,
     set_authoritative_runtime_source,
 )
 from tldw_chatbook.runtime_policy.server_capabilities import (  # noqa: E402
@@ -529,7 +527,6 @@ from tldw_chatbook.runtime_policy.engine import PolicyEngine  # noqa: E402
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer  # noqa: E402
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY  # noqa: E402
 from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState  # noqa: E402
-from tldw_chatbook.state import AppState  # noqa: E402
 from tldw_chatbook.Auth_Account_Interop import (  # noqa: E402
     AuthAccountScopeService,
     ServerAuthAccountService,
@@ -542,6 +539,9 @@ from tldw_chatbook.Audio_Services_Interop import (  # noqa: E402
 from .Evals.eval_orchestrator import EvaluationOrchestrator  # noqa: E402
 
 if TYPE_CHECKING:
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
+        ModelCatalogDiskStore,
+    )
     from tldw_chatbook.tldw_api import MCPUnifiedClient
 
 API_IMPORTS_SUCCESSFUL = True
@@ -744,7 +744,6 @@ class TabNavigationProvider(Provider):
         TAB_STUDY: "Switch to flashcards and quizzes",
         TAB_WRITING: "Switch to writing tools",
         TAB_RESEARCH: "Switch to research workflows",
-        TAB_WATCHLISTS_COLLECTIONS: "Switch to watchlists",
         TAB_CHATBOOKS: "Switch to portable Chatbook context packs",
         TAB_TOOLS_SETTINGS: "Open MCP for legacy tools and settings",
         TAB_LOGS: "Switch to application logs",
@@ -976,26 +975,58 @@ class LLMProviderProvider(Provider):
                 help=f"Switch to {provider} provider",
             )
 
-    def handle_llm_command(self, provider_id: str, command: str) -> None:
+    def handle_llm_command(self, provider_id: str | None, command: str) -> None:
         """Handle LLM provider commands."""
         try:
             if provider_id is None or "show_current" in command:
-                # Show current provider (the app-level chat provider reactive)
-                current = (
-                    getattr(self.app, "chat_api_provider_value", None) or "Unknown"
-                )
+                current = self._current_provider()
                 self.app.notify(
                     f"Current LLM provider: {current}", severity="information"
                 )
             else:
-                # Switch provider for real: same reactive the Settings screen and
-                # Console model popover drive, whose watcher refreshes model selects.
-                self.app.chat_api_provider_value = provider_id
-                self.app.notify(
-                    f"Switched LLM provider to {provider_id}", severity="information"
+                self.app.pending_handoffs.stage(
+                    HandoffChannel.CONSOLE_PROVIDER,
+                    ConsoleProviderIntent(provider=provider_id),
                 )
+                chat_screen = self._mounted_chat_screen()
+                if chat_screen is not None:
+                    chat_screen.consume_pending_console_provider_intent()
+                else:
+                    self.app.notify(
+                        "Provider selection queued for the next Console entry.",
+                        severity="information",
+                    )
         except Exception as e:
-            self.app.notify(f"Failed to execute LLM command: {e}", severity="error")
+            self.app.notify(
+                f"Failed to execute LLM command ({type(e).__name__}).",
+                severity="error",
+            )
+
+    def _mounted_chat_screen(self):
+        """Return the active production Console screen beneath any modal."""
+        if getattr(self.app, "current_tab", None) != TAB_CHAT:
+            return None
+        from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+        for screen in reversed(tuple(getattr(self.app, "screen_stack", ()))):
+            if isinstance(screen, ChatScreen):
+                return screen
+        return None
+
+    def _current_provider(self) -> str:
+        """Resolve current provider from its lifetime owner."""
+        chat_screen = self._mounted_chat_screen()
+        if chat_screen is not None:
+            provider = chat_screen.current_console_provider_for_command()
+            if provider:
+                return provider
+        config = getattr(self.app, "app_config", {})
+        defaults = config.get("chat_defaults", {}) if isinstance(config, dict) else {}
+        if isinstance(defaults, dict):
+            provider = str(defaults.get("provider") or "").strip()
+            if provider:
+                return provider
+        return "Unknown"
 
 
 class QuickActionsProvider(Provider):
@@ -1171,10 +1202,8 @@ class SettingsProvider(Provider):
             if setting_id == "open_settings":
                 _navigate_via_screen(self.app, TAB_SETTINGS, "Opened Settings")
             elif setting_id == "open_config":
-                from .config import DEFAULT_CONFIG_PATH
-
                 self.app.notify(
-                    f"Config file location: {DEFAULT_CONFIG_PATH}",
+                    f"Config file location: {get_cli_config_path()}",
                     severity="information",
                 )
             elif setting_id == "db_stats":
@@ -3328,6 +3357,29 @@ class TldwCli(
 ):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
 
+    _runtime_policy_projection_snapshot: tuple[str, str | None] = ("local", None)
+
+    @property
+    def current_runtime_backend(self) -> str:
+        return self._runtime_policy_projection_snapshot[0]
+
+    @property
+    def runtime_backend(self) -> str:
+        return self._runtime_policy_projection_snapshot[0]
+
+    @property
+    def active_server_id(self) -> str | None:
+        return self._runtime_policy_projection_snapshot[1]
+
+    def _publish_runtime_policy_projection(
+        self,
+        state: RuntimeSourceState,
+    ) -> None:
+        self._runtime_policy_projection_snapshot = (
+            state.active_source,
+            state.active_server_id,
+        )
+
     # Product name shown in the terminal title (legacy "tldw CLI" retired).
     TITLE = "tldw chatbook"
     # CSS file path
@@ -3408,14 +3460,13 @@ class TldwCli(
     # Initialize with a dummy value or fetch default from config here
     # Ensure the initial value matches what's set in compose/settings_sidebar
     # Fetching default provider from config:
-    _default_chat_provider = APP_CONFIG.get("chat_defaults", {}).get(
+    _default_rag_expansion_provider = APP_CONFIG.get("chat_defaults", {}).get(
         "provider", "OpenAI"
     )
     _default_ccp_provider = APP_CONFIG.get("character_defaults", {}).get(
         "provider", "Anthropic"
     )  # Changed from character_defaults
 
-    chat_api_provider_value: reactive[Optional[str]] = reactive(_default_chat_provider)
     # Renamed character_api_provider_value to ccp_api_provider_value for clarity with TAB_CCP
     ccp_api_provider_value: reactive[Optional[str]] = reactive(_default_ccp_provider)
 
@@ -3432,7 +3483,7 @@ class TldwCli(
 
     # RAG expansion provider reactive
     rag_expansion_provider_value: reactive[Optional[str]] = reactive(
-        _default_chat_provider
+        _default_rag_expansion_provider
     )
 
     # --- Reactives for CCP Character EDITOR (Center Pane) ---
@@ -3596,10 +3647,6 @@ class TldwCli(
 
     _prompt_search_timer: Optional[Timer] = None
 
-    # LLM Inference Tab
-    llm_active_view: reactive[Optional[str]] = reactive(None)
-    _initial_llm_view: Optional[str] = "llm-view-llama-cpp"
-
     llamacpp_server_process: Optional[subprocess.Popen] = None
     llamafile_server_process: Optional[subprocess.Popen] = None
     vllm_server_process: Optional[subprocess.Popen] = None
@@ -3675,20 +3722,13 @@ class TldwCli(
         self.acp_runtime_session_state = (
             self.acp_runtime_process_manager.session_state()
         )
-        self.app_state = AppState()
-        self.runtime_policy = load_runtime_policy_for_app(self)
+        load_runtime_policy_for_app(self)
+        self.screen_state_store = ScreenStateStore()
+        self.pending_handoffs = PendingHandoffStore()
         self.service_policy_enforcer = (
             ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
         )
         self.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
-        self.pending_chat_handoff: Optional[ChatHandoffPayload] = None
-        self.pending_console_launch: Optional[
-            ConsoleLiveWorkLaunch | Dict[str, Any]
-        ] = None
-        self.pending_console_prompt_insert: Optional[str] = None
-        self.pending_study_scope_context: Optional[StudyScopeContext] = None
-        self.pending_study_initial_section: Optional[str] = None
-        self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
         self.home_active_work_adapter = UnavailableHomeActiveWorkAdapter(
             runtime_policy=self.runtime_policy,
         )
@@ -3744,6 +3784,8 @@ class TldwCli(
         self.ollama_server_process = None
         self.mlx_server_process = None
         self.onnx_server_process = None
+        self._llm_server_launch_claims = {}
+        self._llm_server_lifecycle_lock = threading.RLock()
         self.media_current_page = 1
         self.media_search_current_page = 1
         self.media_search_total_pages = 1
@@ -4071,8 +4113,23 @@ class TldwCli(
         *,
         initial_section: Optional[str] = None,
     ) -> None:
-        self.pending_study_scope_context = scope_context
-        self.pending_study_initial_section = initial_section
+        if scope_context is None:
+            self.pending_handoffs.clear_pending(HandoffChannel.STUDY_SCOPE)
+        elif not self._stage_handoff(
+            HandoffChannel.STUDY_SCOPE,
+            scope_context,
+            recovery="Study scope could not be opened. Try again.",
+        ):
+            return
+
+        if initial_section is None:
+            self.pending_handoffs.clear_pending(HandoffChannel.STUDY_INITIAL_SECTION)
+        elif not self._stage_handoff(
+            HandoffChannel.STUDY_INITIAL_SECTION,
+            initial_section,
+            recovery="Study section could not be opened. Try again.",
+        ):
+            return
         self.post_message(NavigateToScreen(TAB_STUDY))
 
     def open_notes_workspace(
@@ -4116,7 +4173,12 @@ class TldwCli(
                 the gate so handoffs proceed unconditionally); kept for
                 caller-signature compatibility.
         """
-        self.pending_chat_handoff = payload
+        if not self._stage_handoff(
+            HandoffChannel.CHAT,
+            payload,
+            recovery="Chat context could not be staged. Try again.",
+        ):
+            return
         self.post_message(NavigateToScreen(TAB_CHAT))
 
     def stage_console_prompt_insert(self, text: str) -> None:
@@ -4130,13 +4192,18 @@ class TldwCli(
         machinery. Mirrors that method's stage-then-navigate shape, but the
         payload is a bare string and there is no tabs-enabled gate: whether
         the insert actually lands is decided by ``ChatScreen`` once it
-        consumes this field (it alone owns Console's provider/model
+        settles this claim (it alone owns Console's provider/model
         readiness state).
 
         Args:
             text: The prompt's ``user_prompt`` body to insert.
         """
-        self.pending_console_prompt_insert = text
+        if not self._stage_handoff(
+            HandoffChannel.CONSOLE_PROMPT_INSERT,
+            text,
+            recovery="Console prompt could not be staged. Review it and try again.",
+        ):
+            return
         self.post_message(NavigateToScreen(TAB_CHAT))
 
     def open_console_for_live_work(
@@ -4150,15 +4217,35 @@ class TldwCli(
         action_label: str | None = None,
     ) -> None:
         """Open Console for live work launched from another destination."""
-        self.pending_console_launch = ConsoleLiveWorkLaunch.from_values(
-            source=source,
-            title=title,
-            payload=payload,
-            status=status,
-            recovery=recovery,
-            action_label=action_label,
-        )
+        if not self._stage_handoff(
+            HandoffChannel.CONSOLE_LIVE_WORK,
+            {
+                "source": source,
+                "title": title,
+                "payload": payload,
+                "status": status,
+                "recovery": recovery,
+                "action_label": action_label,
+            },
+            recovery="Console live work could not be staged. Try again.",
+        ):
+            return
         self.post_message(NavigateToScreen(TAB_CHAT))
+
+    def _stage_handoff(
+        self,
+        channel: HandoffChannel,
+        value: Any,
+        *,
+        recovery: str,
+    ) -> bool:
+        """Stage one typed handoff without exposing its value in recovery."""
+        try:
+            self.pending_handoffs.stage(channel, value)
+        except HandoffValueError:
+            self.notify(recovery, severity="warning")
+            return False
+        return True
 
     def get_acp_runtime_session_state(self) -> ACPRuntimeSessionState:
         """Return current ACP runtime/session state for ACP and Console surfaces."""
@@ -4200,12 +4287,22 @@ class TldwCli(
             return True
 
         if action.target_route == TAB_ARTIFACTS:
-            self.pending_artifacts_chatbook_target_id = action.target_id
+            if not self._stage_handoff(
+                HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
+                action.target_id,
+                recovery="Console action target could not be opened. Try again.",
+            ):
+                return False
             self.post_message(NavigateToScreen(TAB_ARTIFACTS))
             return True
 
         if action.target_route == TAB_ACP:
-            self.pending_acp_session_target_id = action.target_id
+            if not self._stage_handoff(
+                HandoffChannel.ACP_SESSION_TARGET,
+                action.target_id,
+                recovery="Console action target could not be opened. Try again.",
+            ):
+                return False
             self.post_message(NavigateToScreen(TAB_ACP))
             return True
 
@@ -5579,7 +5676,8 @@ class TldwCli(
         return "local"
 
     def get_authoritative_runtime_source(self) -> str:
-        runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
+        runtime_policy = getattr(self, "runtime_policy", None)
+        runtime_state = runtime_policy.state if runtime_policy is not None else None
         if isinstance(runtime_state, RuntimeSourceState):
             normalized = str(runtime_state.active_source or "").strip().lower()
             if normalized in {"local", "server"}:
@@ -5587,7 +5685,8 @@ class TldwCli(
         return self._resolve_initial_media_runtime_backend()
 
     def _server_notification_event_scope(self) -> dict[str, str | None]:
-        runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
+        runtime_policy = getattr(self, "runtime_policy", None)
+        runtime_state = runtime_policy.state if runtime_policy is not None else None
         active_server_id = getattr(runtime_state, "active_server_id", None)
         authenticated_principal_id = None
         server_context_provider = getattr(self, "server_context_provider", None)
@@ -5627,8 +5726,9 @@ class TldwCli(
             ):
                 state = policy_enforcer.current_state()
         if not isinstance(state, RuntimeSourceState):
-            runtime_state = getattr(
-                getattr(self, "runtime_policy", None), "state", None
+            runtime_policy = getattr(self, "runtime_policy", None)
+            runtime_state = (
+                runtime_policy.state if runtime_policy is not None else None
             )
             if isinstance(runtime_state, RuntimeSourceState):
                 state = runtime_state
@@ -5661,46 +5761,69 @@ class TldwCli(
                 notifier(decision.user_message, severity="warning")
         return decision
 
-    async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
+    async def handle_runtime_backend_changed(
+        self,
+        runtime_backend: str,
+        *,
+        app_config_override: Mapping[str, Any] | None = None,
+    ) -> bool:
         normalized_backend = str(runtime_backend or "").strip().lower()
-        if normalized_backend in {"local", "server"}:
-            if getattr(self, "runtime_policy", None) is not None:
-                previous_server_id = getattr(
-                    self.runtime_policy.state, "active_server_id", None
-                )
-                updated_state = set_authoritative_runtime_source(
-                    self, normalized_backend
-                )
-                server_context_provider = getattr(self, "server_context_provider", None)
-                invalidate_for_server_switch = getattr(
-                    server_context_provider,
-                    "invalidate_for_server_switch",
-                    None,
-                )
-                if callable(invalidate_for_server_switch):
-                    invalidate_for_server_switch(
-                        previous_server_id, updated_state.active_server_id
-                    )
-            else:
-                self.current_runtime_backend = normalized_backend
-                self.runtime_backend = normalized_backend
+        if normalized_backend not in {"local", "server"}:
+            return False
 
-        resolved_backend = normalized_backend
-        runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
-        if runtime_state is not None:
-            resolved_backend = (
-                str(runtime_state.active_source or normalized_backend).strip().lower()
+        previous_server_id = self.runtime_policy.state.active_server_id
+        candidate_config = (
+            app_config_override
+            if app_config_override is not None
+            else self.app_config
+        )
+        try:
+            updated_state = set_authoritative_runtime_source(
+                self.runtime_policy,
+                normalized_backend,
+                app_config=candidate_config,
             )
-        elif resolved_backend not in {"local", "server"}:
-            resolved_backend = (
-                str(getattr(self, "current_runtime_backend", "local") or "local")
-                .strip()
-                .lower()
+        except Exception as exc:
+            logger.warning(
+                "Runtime source change was not committed "
+                "(exception_category={}).",
+                type(exc).__name__,
             )
-        active_screen = getattr(self, "screen", None)
+            self.notify(
+                "Runtime source could not be changed; "
+                "the previous source remains active.",
+                severity="warning",
+            )
+            return False
+
+        if app_config_override is not None:
+            self.app_config = app_config_override
+            self.server_context_provider.rebind_app_config(
+                app_config_override,
+                previous_server_id=previous_server_id,
+                next_server_id=updated_state.active_server_id,
+            )
+        else:
+            self.server_context_provider.invalidate_for_server_switch(
+                previous_server_id,
+                updated_state.active_server_id,
+            )
+
+        resolved_backend = str(
+            self.runtime_policy.state.active_source or normalized_backend
+        ).strip().lower()
+        active_screen = self.screen
         callback = getattr(active_screen, "handle_runtime_backend_changed", None)
         if callable(callback):
-            await callback(resolved_backend)
+            try:
+                await callback(resolved_backend)
+            except Exception as exc:
+                logger.warning(
+                    "Runtime screen callback failed after runtime commit "
+                    "(exception_category={}).",
+                    type(exc).__name__,
+                )
+        return True
 
     def _init_notes_service(self, user_name_for_notes: str) -> None:
         """Initialize notes service - for parallel execution."""
@@ -5745,7 +5868,6 @@ class TldwCli(
         self.prompts_service_initialized = False
         try:
             prompts_db_path = get_prompts_db_path()
-            prompts_db_path.parent.mkdir(parents=True, exist_ok=True)
             prompts_interop.initialize_interop(
                 db_path=prompts_db_path, client_id=self.prompts_client_id
             )
@@ -5844,7 +5966,6 @@ class TldwCli(
         # this task); "API_Call_ccp*" had zero producers anywhere in the
         # repo (conv_char_events.py's ai_generate_* workers use different
         # names, handled by AIGenerationHandler below).
-        self.worker_handler_registry.register(ServerWorkerHandler(self))
         self.worker_handler_registry.register(AIGenerationHandler(self))
         self.worker_handler_registry.register(MiscWorkerHandler(self))
 
@@ -6159,8 +6280,8 @@ class TldwCli(
         presenting a stale frame, and every subsequent click is hit-tested
         into the dead tree and silently swallowed: a total, exception-free
         UI freeze (root-caused 2026-07-11). UX continuity across visits is
-        the job of ``_screen_states`` (``save_state``/``restore_state``),
-        not instance reuse.
+        owned by ``ScreenStateStore`` through each screen's
+        ``save_state``/``restore_state`` boundary, not instance reuse.
         """
         return screen_class(self)
 
@@ -6201,6 +6322,10 @@ class TldwCli(
             return TAB_HOME
         return getattr(self, "_initial_tab_value", TAB_CHAT)
 
+    def _current_runtime_identity(self) -> RuntimeIdentity:
+        """Return the screen-snapshot scope from authoritative runtime state."""
+        return RuntimeIdentity.from_state(self.runtime_policy.state)
+
     @on(NavigateToScreen)
     async def handle_screen_navigation(self, message: NavigateToScreen) -> None:
         """Handle navigation to a different screen using switch_screen for better performance."""
@@ -6230,13 +6355,13 @@ class TldwCli(
                         "screen's pending-work flush"
                     )
                     return
-            except Exception as e:
+            except Exception as exc:
                 # The outgoing instance may be the only place pending edits
                 # still exist, so a failed flush must abort the transition.
-                logger.opt(exception=True).error(
-                    "Error flushing outgoing screen "
-                    f"{getattr(current_screen, 'screen_name', type(current_screen).__name__)!r} "
-                    f"before navigating to {screen_name!r}: {e}"
+                logger.warning(
+                    "Screen flush failed (route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
                 )
                 try:
                     self.notify(
@@ -6247,46 +6372,68 @@ class TldwCli(
                     pass
                 return
 
-        # Save state of current screen before switching
-        if current_screen and hasattr(current_screen, "save_state"):
+        runtime_identity = self._current_runtime_identity()
+        outgoing_key = str(self.current_tab or "").strip()
+        if not outgoing_key:
+            outgoing_screen_name = getattr(current_screen, "screen_name", None)
+            if isinstance(outgoing_screen_name, str) and outgoing_screen_name.strip():
+                (
+                    _outgoing_screen_name,
+                    resolved_outgoing_key,
+                    outgoing_screen_class,
+                ) = self._resolve_screen_navigation_target(outgoing_screen_name.strip())
+                if outgoing_screen_class is not None:
+                    outgoing_key = resolved_outgoing_key
+
+        save_state = getattr(current_screen, "save_state", None)
+        if outgoing_key and callable(save_state):
             try:
-                state = current_screen.save_state()
-                if isinstance(state, dict):
-                    state = add_runtime_policy_snapshot(
-                        state, self.runtime_policy.state
+                state = save_state()
+                if isinstance(state, Mapping):
+                    self.screen_state_store.save(
+                        outgoing_key,
+                        state,
+                        runtime_identity,
                     )
-                # Store state in a dictionary keyed by screen name
-                if not hasattr(self, "_screen_states"):
-                    self._screen_states = {}
-                if hasattr(current_screen, "screen_name"):
-                    self._screen_states[current_screen.screen_name] = state
                     logger.debug(
-                        f"Saved state for screen: {current_screen.screen_name}"
+                        "Saved screen snapshot for canonical route: {}",
+                        outgoing_key,
                     )
-            except Exception as e:
-                logger.error(f"Error saving screen state: {e}")
+                else:
+                    logger.warning(
+                        "Screen snapshot save skipped (route={}, reason=non_mapping).",
+                        outgoing_key,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Screen snapshot save failed (route={}, exception_category={}).",
+                    outgoing_key,
+                    type(exc).__name__,
+                )
 
         if screen_class:
             new_screen = self._create_navigation_screen(screen_name, screen_class)
 
-            # Restore state if available
-            if hasattr(self, "_screen_states") and screen_name in self._screen_states:
-                if hasattr(new_screen, "restore_state"):
-                    try:
-                        restored_state = reconcile_saved_screen_state(
-                            self._screen_states[screen_name],
-                            self.runtime_policy.state,
-                        )
-                        if restored_state is None:
-                            self._screen_states.pop(screen_name, None)
-                            logger.info(
-                                f"Dropped saved state for screen due to runtime policy mismatch: {screen_name}"
-                            )
-                        else:
-                            new_screen.restore_state(restored_state)
-                            logger.debug(f"Restored state for screen: {screen_name}")
-                    except Exception as e:
-                        logger.error(f"Error restoring screen state: {e}")
+            restored_state = self.screen_state_store.restore(
+                current_tab_value,
+                runtime_identity,
+            )
+            restore_state = getattr(new_screen, "restore_state", None)
+            if restored_state is not None and callable(restore_state):
+                try:
+                    restore_state(restored_state)
+                    logger.debug(
+                        "Restored screen snapshot for canonical route: {}",
+                        current_tab_value,
+                    )
+                except Exception as exc:
+                    self.screen_state_store.discard(current_tab_value)
+                    logger.warning(
+                        "Screen snapshot restore failed "
+                        "(route={}, exception_category={}).",
+                        current_tab_value,
+                        type(exc).__name__,
+                    )
 
             navigation_context = getattr(message, "screen_context", {}) or {}
             if not navigation_context:
@@ -6298,9 +6445,12 @@ class TldwCli(
                     result = new_screen.apply_navigation_context(navigation_context)
                     if inspect.isawaitable(result):
                         await result
-                except Exception as e:
-                    logger.error(
-                        f"Error applying navigation context for {screen_name}: {e}"
+                except Exception as exc:
+                    logger.warning(
+                        "Navigation context application failed "
+                        "(route={}, exception_category={}).",
+                        current_tab_value,
+                        type(exc).__name__,
                     )
 
             # Use switch_screen to replace the current screen
@@ -6884,29 +7034,6 @@ class TldwCli(
                 f"Error toggling CCP right pane: {e}"
             )
 
-    # ###################################################################
-    # --- Helper methods for Local LLM Inference logging ---
-    # ###################################################################
-    def _update_llamacpp_log(self, message: str) -> None:
-        """Helper to write messages to the Llama.cpp log widget."""
-        LogWidgetManager.update_llamacpp_log(self, message)
-
-    def _update_transformers_log(self, message: str) -> None:
-        """Helper to write messages to the Transformers log widget."""
-        LogWidgetManager.update_transformers_log(self, message)
-
-    def _update_llamafile_log(self, message: str) -> None:
-        """Helper to write messages to the Llamafile log widget."""
-        LogWidgetManager.update_llamafile_log(self, message)
-
-    def _update_vllm_log(self, message: str) -> None:
-        """Helper to write messages to the vLLM log widget."""
-        LogWidgetManager.update_vllm_log(self, message)
-
-    # ###################################################################
-    # --- End of Helper methods for Local LLM Inference logging ---
-    # ###################################################################
-
     # --- Modify _clear_prompt_fields and _load_prompt_for_editing ---
     def _clear_prompt_fields(self) -> None:
         """Clears prompt input fields in the CENTER PANE editor."""
@@ -6930,7 +7057,7 @@ class TldwCli(
             return self.current_chat_worker
 
     def set_current_chat_is_streaming(self, is_streaming: bool) -> None:
-        """Thread-safely set the streaming state and update UI."""
+        """Thread-safely set the legacy streaming state."""
         with self._chat_state_lock:
             self.current_chat_is_streaming = is_streaming
 
@@ -7264,100 +7391,7 @@ class TldwCli(
                 f"Unexpected error in watch_tools_settings_active_view: {e_watch}"
             )
 
-    # --- LLM Tab Watcher ---
-    def watch_llm_active_view(
-        self, old_view: Optional[str], new_view: Optional[str]
-    ) -> None:
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-        self.loguru_logger.debug(
-            f"LLM Management active view changing from '{old_view}' to: '{new_view}'"
-        )
-
-        try:
-            content_pane = self.query_one("#llm-content-pane")
-        except QueryError:
-            self.loguru_logger.error(
-                "#llm-content-pane not found. Cannot switch LLM views."
-            )
-            return
-
-        for child in content_pane.query(".llm-view-area"):  # Query by common class
-            child.styles.display = "none"
-
-        if new_view:
-            try:
-                target_view_id_selector = f"#{new_view}"
-                view_to_show = content_pane.query_one(
-                    target_view_id_selector, Container
-                )
-                view_to_show.styles.display = "block"
-                self.loguru_logger.info(f"Switched LLM Management view to: {new_view}")
-                # Populate help text when view becomes active
-                if new_view == "llm-view-llama-cpp":
-                    try:
-                        help_widget = view_to_show.query_one(
-                            "#llamacpp-args-help-display", RichLog
-                        )
-                        # Check if help_widget has any lines. RichLog.lines is a list of segments.
-                        # A simple check is if it has any children (lines are added as children internally).
-                        # Or, more robustly, we can set a flag or check if the first line matches our help text.
-                        # For simplicity, let's assume if it has children, it's been populated.
-                        # A more direct way: RichLog stores its lines in a deque called 'lines'.
-                        if (
-                            not help_widget.lines
-                        ):  # Check if the internal lines deque is empty
-                            self.loguru_logger.debug(
-                                f"Populating Llama.cpp help text in {new_view} as it's empty."
-                            )
-                            help_widget.clear()  # Ensure it's clear before writing
-                            help_widget.write(LLAMA_CPP_SERVER_ARGS_HELP_TEXT)
-                        else:
-                            self.loguru_logger.debug(
-                                f"Llama.cpp help text in {new_view} already populated or not empty."
-                            )
-                    except QueryError:
-                        self.loguru_logger.debug(
-                            f"Help display widget #llamacpp-args-help-display not found in {new_view} during view switch - may not be mounted yet."
-                        )
-                    except Exception as e_help_populate:
-                        self.loguru_logger.opt(exception=True).error(
-                            f"Error ensuring Llama.cpp help text in {new_view}: {e_help_populate}"
-                        )
-                elif new_view == "llm-view-llamafile":
-                    try:
-                        help_widget = view_to_show.query_one(
-                            "#llamafile-args-help-display", RichLog
-                        )
-                        help_widget.clear()  # Clear and rewrite when tab becomes active
-                        help_widget.write(LLAMAFILE_SERVER_ARGS_HELP_TEXT)
-                        self.loguru_logger.debug(
-                            f"Ensured Llamafile help text in {new_view}."
-                        )
-                    except QueryError:
-                        self.loguru_logger.debug(
-                            f"Help display widget for Llamafile not found in {new_view} during view switch - may not be mounted yet."
-                        )
-                # Add similar for other views like llamafile, vllm if they have help sections
-                # elif new_view == "llm-view-llamafile":
-                #     try:
-                #         help_widget = view_to_show.query_one("#llamafile-args-help-display", RichLog)
-                #         if not help_widget.document.strip():
-                #             help_widget.write(LLAMAFILE_ARGS_HELP_TEXT)
-                #     except QueryError: pass
-            except QueryError as e:
-                self.loguru_logger.opt(exception=True).error(
-                    f"UI component '{new_view}' not found in #llm-content-pane: {e}"
-                )
-
     # --- Add explicit methods to update reactives from Select changes ---
-    def update_chat_provider_reactive(self, new_value: Optional[str]) -> None:
-        self.chat_api_provider_value = (
-            new_value  # Watcher will call _update_model_select
-        )
-
     def update_ccp_provider_reactive(self, new_value: Optional[str]) -> None:  # Renamed
         self.ccp_api_provider_value = (
             new_value  # Watcher will call _update_model_select
@@ -7824,10 +7858,9 @@ class TldwCli(
     def _show_first_run_notification(self) -> None:
         """Show a notification to the user on first run."""
         try:
-            from .config import DEFAULT_CONFIG_PATH
-
             self.notify(
-                f"Welcome to tldw chatbook! Configuration file created at:\n{DEFAULT_CONFIG_PATH}",
+                "Welcome to tldw chatbook! Configuration file created at:\n"
+                f"{get_cli_config_path()}",
                 title="First Run",
                 severity="information",
                 timeout=10,
@@ -7850,11 +7883,6 @@ class TldwCli(
                 continue
             is_active = window.id == f"{initial_tab}-window"
             window.display = is_active
-
-    async def _set_initial_tab(self) -> None:  # New method for deferred tab setting
-        self.loguru_logger.info("Setting initial tab via call_later.")
-        self.current_tab = self._resolve_initial_shell_route()
-        self.loguru_logger.info(f"Initial tab set to: {self.current_tab}")
 
     async def _push_initial_screen(self) -> None:
         """Push the configured initial screen for screen-based navigation startup."""
@@ -7919,23 +7947,6 @@ class TldwCli(
 
         # Widget binding
         phase_start = time.perf_counter()
-        try:
-            chat_select = self.query_one(f"#{TAB_CHAT}-api-provider", Select)
-            self.watch(
-                chat_select, "value", self.update_chat_provider_reactive, init=False
-            )
-            self.loguru_logger.debug(f"Bound chat provider Select ({chat_select.id})")
-        except QueryError:
-            # Legacy selector is absent in the master-shell UI; this lookup is expected to
-            # fail on every modern boot, so log at DEBUG rather than ERROR.
-            self.loguru_logger.debug(
-                f"_post_mount_setup: Failed to find chat provider select: #{TAB_CHAT}-api-provider"
-            )
-        except Exception as e:
-            self.loguru_logger.opt(exception=True).error(
-                f"_post_mount_setup: Error binding chat provider select: {e}"
-            )
-
         # try:
         #     ccp_select = self.query_one(f"#{TAB_CCP}-api-provider", Select)
         #     #self.watch(ccp_select, "value", self.update_ccp_provider_reactive, init=False)
@@ -7982,10 +7993,6 @@ class TldwCli(
             documentation="Duration of post-mount phase in seconds",
         )
 
-        # Crucially, set the initial tab *after* bindings and other setup that might depend on queries.
-        # The _set_initial_tab will trigger watchers.
-        self.call_later(self._set_initial_tab)
-
         post_mount_duration = time.perf_counter() - post_mount_start
         log_histogram(
             "app_post_mount_duration_seconds",
@@ -8007,15 +8014,6 @@ class TldwCli(
                 self.loguru_logger.warning(
                     f"Failed to update splash screen progress: {e}"
                 )
-
-        # If initial tab is CCP, trigger its initial search.
-        # This should happen *after* current_tab is set.
-        # We can put this logic at the end of _set_initial_tab or make watch_current_tab handle it robustly.
-        # For now, let's assume watch_current_tab will handle it.
-        # if self._initial_tab_value == TAB_CCP: # Check against the initial value
-        #    self.call_later(ccp_handlers.perform_ccp_conversation_search, self)
-        self.current_tab = self._resolve_initial_shell_route()
-        self.loguru_logger.info(f"Initial tab set to: {self.current_tab}")
 
         # Footer status population is scheduled after readiness so DB-size
         # polling cannot hold the first interactive frame.
@@ -9369,14 +9367,6 @@ class TldwCli(
         )
         return
 
-    def _update_model_download_log(self, message: str) -> None:
-        """Helper to write messages to the model download log widget."""
-        LogWidgetManager.update_model_download_log(self, message)
-
-    def _update_mlx_log(self, message: str) -> None:
-        """Helper to write messages to the MLX-LM log widget."""
-        LogWidgetManager.update_mlx_log(self, message)
-
     async def on_input_changed(self, event: Input.Changed) -> None:
         input_id = event.input.id
         current_active_tab = self.current_tab
@@ -9939,20 +9929,6 @@ class TldwCli(
         """Clears the prompt display TextAreas in the chat sidebar."""
         UIHelpers.clear_chat_sidebar_prompt_display(self)
 
-    def watch_chat_api_provider_value(self, new_value: Optional[str]) -> None:
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-        self.loguru_logger.debug(
-            f"Watcher: chat_api_provider_value changed to {new_value}"
-        )
-        if new_value is None or new_value == Select.BLANK:
-            self._update_model_select(TAB_CHAT, [])
-            return
-        models = self.providers_models.get(new_value, [])
-        self._update_model_select(TAB_CHAT, models)
-
     def watch_ccp_api_provider_value(
         self, new_value: Optional[str]
     ) -> None:  # Renamed from watch_character_...
@@ -10244,46 +10220,8 @@ class TldwCli(
         except Exception as e:
             loguru_logger.error(f"Error in quit handler: {e}")
 
-        # Save encrypted config if encryption is enabled
-        try:
-            from tldw_chatbook.config import (
-                load_cli_config_and_ensure_existence,
-                get_encryption_password,
-                encrypt_api_keys_in_config,
-                DEFAULT_CONFIG_PATH,
-            )
-            from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
-            import toml
-
-            config_data = load_cli_config_and_ensure_existence()
-            encryption_config = config_data.get("encryption", {})
-
-            if encryption_config.get("enabled", False):
-                password = get_encryption_password()
-                if password:
-                    loguru_logger.info("Encrypting configuration before exit...")
-                    try:
-                        # Encrypt the config
-                        encrypted_config = encrypt_api_keys_in_config(
-                            config_data, password
-                        )
-
-                        # Save the encrypted config
-                        config_text = toml.dumps(encrypted_config)
-                        atomic_write_text(DEFAULT_CONFIG_PATH, config_text)
-
-                        loguru_logger.info(
-                            "Configuration encrypted and saved successfully"
-                        )
-                    except Exception as e:
-                        loguru_logger.error(f"Failed to encrypt config on exit: {e}")
-                        # Continue with exit even if encryption fails
-                else:
-                    loguru_logger.warning(
-                        "Encryption enabled but no password available - config not encrypted"
-                    )
-        except Exception as e:
-            loguru_logger.error(f"Error during config encryption on exit: {e}")
+        if not persist_cli_config_for_shutdown():
+            loguru_logger.warning("Configuration shutdown persistence failed")
 
         # Always call the parent quit method
         self.exit()
@@ -10317,23 +10255,22 @@ def initialize_early_logging():
     return early_app
 
 
+def _is_source_tree(package_root: Path) -> bool:
+    """Return whether package files are inside a build-capable source tree."""
+
+    return (package_root.parent / "pyproject.toml").is_file()
+
+
 # --- Main execution block ---
 if __name__ == "__main__":
     # Initialize logging first
     early_logging_app = initialize_early_logging()
 
-    # Ensure config file exists (create default if missing)
     try:
-        if not DEFAULT_CONFIG_PATH.exists():
-            logging.info(
-                f"Config file not found at {DEFAULT_CONFIG_PATH}, creating default."
-            )
-            DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
-                f.write(CONFIG_TOML_CONTENT)
+        load_cli_config_and_ensure_existence()
     except Exception as e_cfg_main:
         logging.error(
-            f"Could not ensure creation of default config file: {e_cfg_main}",
+            f"Could not ensure creation of effective config file: {e_cfg_main}",
             exc_info=True,
         )
 
@@ -10367,53 +10304,61 @@ if __name__ == "__main__":
     loguru_logger.info("-" * 30)
 
     # --- CSS File Handling ---
-    try:
-        css_dir = Path(__file__).parent / "css"
-        css_dir.mkdir(exist_ok=True)
+    package_root = Path(__file__).parent
+    if _is_source_tree(package_root):
+        try:
+            css_dir = package_root / "css"
+            css_dir.mkdir(exist_ok=True)
 
-        # Check if modular CSS needs to be built
-        modular_css_path = css_dir / "tldw_cli_modular.tcss"
-        build_script_path = css_dir / "build_css.py"
+            # Check if modular CSS needs to be built
+            modular_css_path = css_dir / "tldw_cli_modular.tcss"
+            build_script_path = css_dir / "build_css.py"
 
-        # Check if any module is newer than the built file
-        should_rebuild = False
-        if not modular_css_path.exists():
-            should_rebuild = True
-            logging.info("Modular CSS file not found, will build it")
-        elif build_script_path.exists():
-            # Check if any module file is newer than the built file
-            modular_mtime = modular_css_path.stat().st_mtime
-            for subdir in ["core", "layout", "components", "features", "utilities"]:
-                subdir_path = css_dir / subdir
-                if subdir_path.exists():
-                    for css_file in subdir_path.glob("*.tcss"):
-                        if css_file.stat().st_mtime > modular_mtime:
-                            should_rebuild = True
-                            logging.info(
-                                f"Module {css_file.name} is newer than built CSS, rebuilding"
-                            )
-                            break
-                if should_rebuild:
-                    break
+            # Check if any module is newer than the built file
+            should_rebuild = False
+            if not modular_css_path.exists():
+                should_rebuild = True
+                logging.info("Modular CSS file not found, will build it")
+            elif build_script_path.exists():
+                # Check if any module file is newer than the built file
+                modular_mtime = modular_css_path.stat().st_mtime
+                for subdir in [
+                    "core",
+                    "layout",
+                    "components",
+                    "features",
+                    "utilities",
+                ]:
+                    subdir_path = css_dir / subdir
+                    if subdir_path.exists():
+                        for css_file in subdir_path.glob("*.tcss"):
+                            if css_file.stat().st_mtime > modular_mtime:
+                                should_rebuild = True
+                                logging.info(
+                                    f"Module {css_file.name} is newer than built CSS, rebuilding"
+                                )
+                                break
+                    if should_rebuild:
+                        break
 
-        if should_rebuild and build_script_path.exists():
-            logging.info("Building modular CSS...")
-            import subprocess
+            if should_rebuild and build_script_path.exists():
+                logging.info("Building modular CSS...")
+                import subprocess
 
-            # Build CSS synchronously before starting the app
-            result = subprocess.run(
-                [sys.executable, str(build_script_path)],
-                cwd=str(css_dir),
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                logging.info("Successfully built modular CSS")
-            else:
-                logging.error(f"Failed to build modular CSS: {result.stderr}")
+                # Build CSS synchronously before starting the app
+                result = subprocess.run(
+                    [sys.executable, str(build_script_path)],
+                    cwd=str(css_dir),
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    logging.info("Successfully built modular CSS")
+                else:
+                    logging.error(f"Failed to build modular CSS: {result.stderr}")
 
-    except Exception as e_css_main:
-        logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
+        except Exception as e_css_main:
+            logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
 
     # --- Check for encrypted config (config will be created if it doesn't exist) ---
     try:
@@ -10549,18 +10494,17 @@ def get_app():
     from pathlib import Path
     import sys
 
-    # Check if we need to build CSS
-    # Get the directory where app.py is located
-    app_dir = Path(__file__).parent
-    css_dir = app_dir / "css"
-    modular_css_path = css_dir / "tldw_cli_modular.tcss"
-    build_script_path = css_dir / "build_css.py"
+    package_root = Path(__file__).parent
+    if _is_source_tree(package_root):
+        css_dir = package_root / "css"
+        modular_css_path = css_dir / "tldw_cli_modular.tcss"
+        build_script_path = css_dir / "build_css.py"
 
-    if not modular_css_path.exists() and build_script_path.exists():
-        print("Building modular CSS...")
-        import subprocess
+        if not modular_css_path.exists() and build_script_path.exists():
+            print("Building modular CSS...")
+            import subprocess
 
-        subprocess.run([sys.executable, str(build_script_path)], check=True)
+            subprocess.run([sys.executable, str(build_script_path)], check=True)
 
     return TldwCli()
 
@@ -10657,18 +10601,11 @@ def main_cli_runner():
     # Initialize logging first
     initialize_early_logging()
 
-    # Ensure config file exists (create default if missing)
     try:
-        if not DEFAULT_CONFIG_PATH.exists():
-            logging.info(
-                f"Config file not found at {DEFAULT_CONFIG_PATH}, creating default."
-            )
-            DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
-                f.write(CONFIG_TOML_CONTENT)
+        load_cli_config_and_ensure_existence()
     except Exception as e_cfg_main:
         logging.error(
-            f"Could not ensure creation of default config file: {e_cfg_main}",
+            f"Could not ensure creation of effective config file: {e_cfg_main}",
             exc_info=True,
         )
 
@@ -10681,53 +10618,61 @@ def main_cli_runner():
     loguru_logger.info("-" * 30)
 
     # --- CSS File Handling ---
-    try:
-        css_dir = Path(__file__).parent / "css"
-        css_dir.mkdir(exist_ok=True)
+    package_root = Path(__file__).parent
+    if _is_source_tree(package_root):
+        try:
+            css_dir = package_root / "css"
+            css_dir.mkdir(exist_ok=True)
 
-        # Check if modular CSS needs to be built
-        modular_css_path = css_dir / "tldw_cli_modular.tcss"
-        build_script_path = css_dir / "build_css.py"
+            # Check if modular CSS needs to be built
+            modular_css_path = css_dir / "tldw_cli_modular.tcss"
+            build_script_path = css_dir / "build_css.py"
 
-        # Check if any module is newer than the built file
-        should_rebuild = False
-        if not modular_css_path.exists():
-            should_rebuild = True
-            logging.info("Modular CSS file not found, will build it")
-        elif build_script_path.exists():
-            # Check if any module file is newer than the built file
-            modular_mtime = modular_css_path.stat().st_mtime
-            for subdir in ["core", "layout", "components", "features", "utilities"]:
-                subdir_path = css_dir / subdir
-                if subdir_path.exists():
-                    for css_file in subdir_path.glob("*.tcss"):
-                        if css_file.stat().st_mtime > modular_mtime:
-                            should_rebuild = True
-                            logging.info(
-                                f"Module {css_file.name} is newer than built CSS, rebuilding"
-                            )
-                            break
-                if should_rebuild:
-                    break
+            # Check if any module is newer than the built file
+            should_rebuild = False
+            if not modular_css_path.exists():
+                should_rebuild = True
+                logging.info("Modular CSS file not found, will build it")
+            elif build_script_path.exists():
+                # Check if any module file is newer than the built file
+                modular_mtime = modular_css_path.stat().st_mtime
+                for subdir in [
+                    "core",
+                    "layout",
+                    "components",
+                    "features",
+                    "utilities",
+                ]:
+                    subdir_path = css_dir / subdir
+                    if subdir_path.exists():
+                        for css_file in subdir_path.glob("*.tcss"):
+                            if css_file.stat().st_mtime > modular_mtime:
+                                should_rebuild = True
+                                logging.info(
+                                    f"Module {css_file.name} is newer than built CSS, rebuilding"
+                                )
+                                break
+                    if should_rebuild:
+                        break
 
-        if should_rebuild and build_script_path.exists():
-            logging.info("Building modular CSS...")
-            import subprocess
+            if should_rebuild and build_script_path.exists():
+                logging.info("Building modular CSS...")
+                import subprocess
 
-            # Build CSS synchronously before starting the app
-            result = subprocess.run(
-                [sys.executable, str(build_script_path)],
-                cwd=str(css_dir),
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                logging.info("Successfully built modular CSS")
-            else:
-                logging.error(f"Failed to build modular CSS: {result.stderr}")
+                # Build CSS synchronously before starting the app
+                result = subprocess.run(
+                    [sys.executable, str(build_script_path)],
+                    cwd=str(css_dir),
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    logging.info("Successfully built modular CSS")
+                else:
+                    logging.error(f"Failed to build modular CSS: {result.stderr}")
 
-    except Exception as e_css_main:
-        logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
+        except Exception as e_css_main:
+            logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
 
     # Parse command line arguments
     import argparse

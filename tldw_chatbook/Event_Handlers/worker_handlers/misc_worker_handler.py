@@ -6,7 +6,6 @@ categories, including:
 - TLDW API calls
 - Ollama API operations
 - Model downloads
-- Transformers downloads
 """
 
 from typing import TYPE_CHECKING, Optional
@@ -26,7 +25,6 @@ class MiscWorkerHandler(BaseWorkerHandler):
         "api_calls",
         "ollama_api",
         "model_download",
-        "transformers_download",
     }
 
     def can_handle(self, worker_name: str, worker_group: Optional[str] = None) -> bool:
@@ -66,9 +64,6 @@ class MiscWorkerHandler(BaseWorkerHandler):
 
         elif worker_info["group"] == "model_download":
             await self._handle_model_download(event, worker_info)
-
-        elif worker_info["group"] == "transformers_download":
-            await self._handle_transformers_download(event, worker_info)
 
     async def _handle_api_calls(
         self, event: Worker.StateChanged, worker_info: dict, ingest_events
@@ -120,33 +115,3 @@ class MiscWorkerHandler(BaseWorkerHandler):
 
             # Re-enable download button if exists
             await self.update_button_state("download-model-button", disabled=False)
-
-    async def _handle_transformers_download(
-        self, event: Worker.StateChanged, worker_info: dict
-    ) -> None:
-        """Handle transformers download workers."""
-        self.logger.info(
-            f"Transformers download worker (name='{worker_info['name']}') "
-            f"state changed to {worker_info['state']}"
-        )
-
-        if worker_info["state"] == WorkerState.PENDING:
-            self.logger.debug("Download worker is pending.")
-            await self.update_button_state("start-download-button", disabled=True)
-
-        elif worker_info["state"] == WorkerState.RUNNING:
-            self.logger.info("Download worker is running.")
-
-        elif worker_info["state"] == WorkerState.SUCCESS:
-            self.logger.info("Download worker succeeded.")
-            self.app.notify("Model download completed!", severity="information")
-            await self.update_button_state("start-download-button", disabled=False)
-
-        elif worker_info["state"] == WorkerState.ERROR:
-            error_msg = (
-                str(event.worker.error) if event.worker.error else "Unknown error"
-            )
-            self.logger.error(f"Download worker failed: {error_msg}")
-
-            self.app.notify(f"Download failed: {error_msg[:100]}", severity="error")
-            await self.update_button_state("start-download-button", disabled=False)

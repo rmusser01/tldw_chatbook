@@ -19,6 +19,10 @@ from textual.widgets import Static, Button, Input, TextArea, Label, Checkbox, Tr
 from loguru import logger
 
 from ..Chatbooks.chatbook_creator import ChatbookCreator
+from ..Chatbooks.database_paths import (
+    get_chatbook_database_paths,
+    get_private_chatbooks_dir,
+)
 from ..Chatbooks.chatbook_models import ContentType
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Prompts_DB import PromptsDatabase
@@ -115,30 +119,14 @@ class ChatbookCreationWindow(ModalScreen):
             ContentType.MEDIA: set(),
         }
 
-        # Get database paths from config
-        db_config = self.app.config_data.get("database", {})
+        chatbook_db_paths = get_chatbook_database_paths()
         self.db_paths = {
-            "chachanotes": Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser(),
-            "prompts": Path(
-                db_config.get(
-                    "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts_db.db"
-                )
-            ).expanduser(),
-            "media": Path(
-                db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_media_db.db"
-                )
-            ).expanduser(),
+            "chachanotes": Path(chatbook_db_paths["ChaChaNotes"]),
+            "prompts": Path(chatbook_db_paths["Prompts"]),
+            "media": Path(chatbook_db_paths["Media"]),
         }
 
-        self.creator = ChatbookCreator(
-            {name: str(path) for name, path in self.db_paths.items()}
-        )
+        self.creator = ChatbookCreator(chatbook_db_paths)
 
     def compose(self) -> ComposeResult:
         """Compose the UI."""
@@ -339,8 +327,7 @@ class ChatbookCreationWindow(ModalScreen):
         # Generate output path
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_name = "".join(c for c in name if c.isalnum() or c in " -_").strip()
-        output_dir = Path.home() / ".local" / "share" / "tldw_cli" / "chatbooks"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = get_private_chatbooks_dir()
         output_path = output_dir / f"{safe_name}_{timestamp}.zip"
 
         # Convert selected content to list format

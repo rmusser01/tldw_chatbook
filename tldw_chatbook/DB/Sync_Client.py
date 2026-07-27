@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3  # For specific error types
 from datetime import datetime
+from pathlib import Path
 from typing import List, Dict, Optional
 
 from loguru import logger
@@ -18,8 +19,11 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import (
     DatabaseError,
     InputError,
     DateTimeEncoder,
+    dispatch_media_post_delete,
+    dispatch_media_post_ingest,
 )
 from tldw_chatbook.DB.sql_logging import preview_params
+from tldw_chatbook.Utils.private_paths import secure_private_directory
 #
 #######################################################################################################################
 #
@@ -285,6 +289,13 @@ class ClientSyncEngine:
         Returns True if the entire batch was applied successfully (or skipped idempotently), False otherwise.
         """
         all_applied_or_skipped = True
+        touched_media_uuids = list(
+            dict.fromkeys(
+                change["entity_uuid"]
+                for change in changes
+                if change.get("entity") == "Media" and change.get("entity_uuid")
+            )
+        )
         # Ensure changes are sorted by server's change_id just in case
         changes.sort(key=lambda x: x["change_id"])
 
@@ -341,7 +352,41 @@ class ClientSyncEngine:
             )
             all_applied_or_skipped = False
 
+        if all_applied_or_skipped:
+            self._dispatch_media_lifecycle_states(touched_media_uuids)
         return all_applied_or_skipped
+
+    def _dispatch_media_lifecycle_states(self, media_uuids: List[str]) -> None:
+        """Notify derived projections after a remote batch has committed.
+
+        The resulting local row is authoritative even when a remote change was
+        skipped or conflict resolution retained local state. Notification
+        failures are post-commit observer failures and cannot alter sync data.
+        """
+        for media_uuid in media_uuids:
+            try:
+                row = self.db.execute_query(
+                    "SELECT id, uuid, deleted, is_trash FROM Media WHERE uuid = ?",
+                    (media_uuid,),
+                ).fetchone()
+                if row is None:
+                    logger.warning(
+                        f"Cannot notify media lifecycle for missing UUID {media_uuid}"
+                    )
+                    continue
+                if row["deleted"] or row["is_trash"]:
+                    dispatch_media_post_delete(
+                        self.db, row["id"], row["uuid"]
+                    )
+                else:
+                    dispatch_media_post_ingest(
+                        self.db, row["id"], row["uuid"]
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Post-commit media lifecycle notification failed for "
+                    f"UUID {media_uuid}: {e}"
+                )
 
     def _apply_single_change(self, cursor: sqlite3.Cursor, change: Dict):
         """
@@ -706,23 +751,7 @@ class ClientSyncEngine:
         fts_insert_sql = None
         fts_insert_params = tuple()
 
-        if entity == "Media":
-            if operation == "create" and ("title" in payload or "content" in payload):
-                fts_title = payload.get("title", "")
-                fts_content = payload.get("content", "")
-                fts_insert_sql = "INSERT INTO media_fts (rowid, title, content) SELECT id, ?, ? FROM Media WHERE uuid = ?"
-                fts_insert_params = (fts_title, fts_content, uuid)
-            elif operation == "update" and ("title" in payload or "content" in payload):
-                # Prepare FTS update; actual values fetched later if needed
-                fts_update_sql = "UPDATE media_fts SET title = ?, content = ? WHERE rowid = (SELECT id FROM Media WHERE uuid = ?)"
-                # Params will be set after fetching current state if needed
-            elif operation == "delete":
-                # Optional: Delete from FTS on soft delete
-                # fts_delete_sql = "DELETE FROM media_fts WHERE rowid = (SELECT id FROM Media WHERE uuid = ?)"
-                # fts_delete_params = (uuid,)
-                pass  # Currently not deleting FTS on soft delete
-
-        elif entity == "Keywords":
+        if entity == "Keywords":
             if operation == "create" and "keyword" in payload:
                 fts_keyword = payload.get("keyword", "")
                 fts_insert_sql = "INSERT INTO keyword_fts (rowid, keyword) SELECT id, ? FROM Keywords WHERE uuid = ?"
@@ -747,22 +776,6 @@ class ClientSyncEngine:
                         f"Executing FTS Update SQL FIRST: {fts_update_sql} | Params: {fts_update_params}"
                     )
                     fts_cursor.execute(fts_update_sql, fts_update_params)
-                    logger.debug(f"{entity} FTS UPDATE rowcount: {fts_cursor.rowcount}")
-                elif (
-                    fts_update_sql and entity == "Media"
-                ):  # Media FTS needs values potentially from DB
-                    current_media_values = self._get_current_media_for_fts(cursor, uuid)
-                    final_title = payload.get(
-                        "title", current_media_values.get("title", "")
-                    )
-                    final_content = payload.get(
-                        "content", current_media_values.get("content", "")
-                    )
-                    fts_media_update_params = (final_title, final_content, uuid)
-                    logger.debug(
-                        f"Executing FTS Update SQL FIRST: {fts_update_sql} | Params: {fts_media_update_params}"
-                    )
-                    fts_cursor.execute(fts_update_sql, fts_media_update_params)
                     logger.debug(f"{entity} FTS UPDATE rowcount: {fts_cursor.rowcount}")
 
                 if fts_delete_sql:
@@ -798,6 +811,29 @@ class ClientSyncEngine:
                     logger.warning(
                         f"'Create' operation for {entity} UUID {uuid} affected 0 rows (INSERT OR IGNORE). Likely benign duplicate."
                     )
+
+                # Media FTS is a derived projection of the committed row state.
+                # Rebuild or remove it after the authoritative mutation instead
+                # of attempting field-specific FTS edits before the row changes.
+                if entity == "Media" and rows_affected > 0:
+                    cursor.execute(
+                        "SELECT id, title, content, deleted FROM Media WHERE uuid = ?",
+                        (uuid,),
+                    )
+                    media_row = cursor.fetchone()
+                    if media_row:
+                        media_id, title, content, deleted = media_row
+                        if deleted:
+                            self.db._delete_fts_media(
+                                cursor.connection, media_id
+                            )
+                        else:
+                            self.db._update_fts_media(
+                                cursor.connection,
+                                media_id,
+                                title or "",
+                                content,
+                            )
 
                 # --- Execute FTS INSERT (AFTER main operation succeeds) ---
                 if operation == "create" and rows_affected > 0 and fts_insert_sql:
@@ -926,8 +962,11 @@ class ClientSyncEngine:
 if __name__ == "__main__":
     logger.info("Setting up Client Sync Engine example...")
 
-    # Ensure client directory exists
-    os.makedirs(os.path.dirname(DATABASE_PATH) or ".", exist_ok=True)
+    secure_private_directory(
+        Path(DATABASE_PATH).parent,
+        create=True,
+        application_owned=True,
+    )
 
     # Initialize db to None outside the try block
     db: Optional[Database] = None

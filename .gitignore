@@ -204,3 +204,7 @@ List.txt
 *.cpkt
 *.ckpt
 /higgs-audio/
+
+# Local credential scratch files (repository root only)
+/openai-api-key.txt
+/moonshot-api-key.txt
