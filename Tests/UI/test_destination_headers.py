@@ -30,11 +30,17 @@ from Tests.UI.test_screen_navigation import _build_test_app
 # test_evals_screen_composes_destination_header_in_the_workbench_shell
 # below for the equivalent header-identity coverage through a real
 # running app.
+#
+# "llm" is absent for the same reason as of the Lab-frame PR2 adoption
+# (Task 6): LLMScreen now extends LabScreen, whose compose_content() enters
+# `with Horizontal(id="lab-status-row"): ...` whenever lab_status_chips() is
+# non-empty -- and Models' running-server chip always is -- which also needs
+# an active Textual app. See
+# test_llm_screen_composes_destination_header_in_the_lab_frame below.
 _SIMPLE_SCREEN_ROUTES = (
     ("search", "Search"),
     ("media", "Media"),
     ("writing", "Writing"),
-    ("llm", "Models"),
     ("stts", "Speech"),
     ("logs", "Logs"),
     ("stats", "Stats"),
@@ -54,10 +60,6 @@ def _screen_for_route(route: str, app):
         from tldw_chatbook.UI.Screens.writing_screen import WritingScreen
 
         return WritingScreen(app)
-    if route == "llm":
-        from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
-
-        return LLMScreen(app)
     if route == "stts":
         from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 
@@ -142,6 +144,52 @@ async def test_evals_screen_composes_destination_header_in_the_workbench_shell()
         # States are text-labeled, never color-only.
         status = screen.query_one(
             "#evals-destination-header #workbench-header-status", Static
+        )
+        assert str(status.renderable) == "Ready"
+
+
+@pytest.mark.asyncio
+async def test_llm_screen_composes_destination_header_in_the_lab_frame():
+    """Equivalent of test_folded_screen_composes_destination_header_first
+    for Models (llm), which no longer fits that test's flat-compose_content()
+    assumption (see the comment on _SIMPLE_SCREEN_ROUTES above) -- driven
+    through a real running app instead. Unlike Evals, the header id is the
+    Lab frame's shared "lab-destination-header", not a route-specific one."""
+    from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+
+    class _LLMHarness(App):
+        def __init__(self, app_instance):
+            super().__init__()
+            self._app_instance = app_instance
+
+        async def on_mount(self) -> None:
+            await self.push_screen(LLMScreen(self._app_instance))
+
+    app = _LLMHarness(_build_test_app())
+
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_stack[-1]
+
+        header = screen.query_one("#lab-destination-header", DestinationHeader)
+        assert header.has_class("workbench-header")
+        assert header.has_class("ds-destination-header")
+        title = screen.query_one(
+            "#lab-destination-header #workbench-header-title", Static
+        )
+        assert str(title.renderable) == "Models"
+        subtitle = screen.query_one(
+            "#lab-destination-header #workbench-header-subtitle", Static
+        )
+        subtitle_text = str(subtitle.renderable)
+        # Plain purpose copy, kept short, with no em dashes.
+        assert subtitle_text
+        assert len(subtitle_text) <= 60
+        assert "—" not in subtitle_text
+        assert "--" not in subtitle_text
+        # States are text-labeled, never color-only.
+        status = screen.query_one(
+            "#lab-destination-header #workbench-header-status", Static
         )
         assert str(status.renderable) == "Ready"
 

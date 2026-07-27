@@ -48,3 +48,98 @@
     text-style: bold;
     outline: none;
 }
+
+/* --- Lab workbench (PR2) ------------------------------------------------
+ *
+ * Region widths are declared here rather than inline so the 100-column
+ * contract is inspectable in one place: rail 26 + body + collapsed
+ * inspector handle 11 fits 100. Both rails open at 100 is not guaranteed,
+ * matching Console.
+ */
+
+.lab-workbench {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
+
+#lab-rail {
+    width: 26;
+    min-width: 26;
+    max-width: 26;
+    height: 100%;
+    min-height: 0;
+}
+
+#lab-body {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+}
+
+#lab-inspector {
+    width: 30;
+    min-width: 30;
+    max-width: 30;
+    height: 100%;
+    min-height: 0;
+}
+
+/* Rail rows.
+ *
+ * The `border: none` is REQUIRED, not cosmetic. The bundle declares an
+ * unscoped `.is-active { border: round $ds-action-focus; }` earlier in this
+ * sheet, and app-tier CSS beats widget DEFAULT_CSS regardless of
+ * specificity. A height-1 row that picks up that border renders two rows
+ * tall -- a half-bordered artifact that displaces every row below it.
+ * `#mcp-hub-rail Button.mcp-rail-row.is-active` carries the same override
+ * for the same reason.
+ */
+.lab-rail Button.lab-rail-row {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    text-align: left;
+}
+
+.lab-rail .lab-rail-row.is-active {
+    border: none;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+.lab-rail .lab-rail-row.is-active:focus,
+.lab-rail .lab-rail-row.is-active:hover:focus {
+    outline: none;
+    border: none;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+.lab-rail-section {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    color: $ds-text-muted;
+    text-style: bold;
+}
+
+/* Status row: hidden entirely when a mode supplies no chips, so a mode
+ * without status never reserves a row of dead chrome. */
+#lab-status-row {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+}
+
+.lab-status-chip {
+    width: auto;
+    height: 1;
+    padding: 0 1;
+    color: $ds-text-muted;
+}

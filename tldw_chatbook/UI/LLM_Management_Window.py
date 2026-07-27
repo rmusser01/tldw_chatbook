@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 #
 # 3rd-Party Imports
-from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.css.query import QueryError
@@ -31,59 +30,19 @@ class LLMManagementWindow(Container):
     """
 
     DEFAULT_CSS = """
-    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
-    $ds-surface-raised: $surface;
-    $ds-text-primary: $text;
-
     LLMManagementWindow {
         layout: horizontal;
         height: 100%;
         width: 100%;
     }
-    
-    #llm-sidebar {
-        width: 20;
-        min-width: 20;
-        max-width: 30;
-        height: 100%;
-        border-right: solid $primary;
-        background: $panel;
-        padding: 1 1;
-    }
-    
+
     #llm-main-content {
         width: 1fr;
         height: 100%;
         background: $background;
         padding: 1 2;
     }
-    
-    .llm-nav-button {
-        width: 100%;
-        margin: 0 0 1 0;
-        text-align: left;
-        padding: 0 1;
-    }
-    
-    .llm-nav-button:hover {
-        background: $ds-surface-raised;
-        color: $ds-text-primary;
-    }
-    
-    .llm-nav-button.-active {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
-        text-style: bold underline;
-    }
-    
-    .sidebar-title {
-        text-style: bold;
-        margin: 0 0 1 0;
-        color: $text;
-    }
-    
+
     .llm-view {
         display: none;
         height: 100%;
@@ -235,8 +194,15 @@ class LLMManagementWindow(Container):
     }
     """
 
-    # Reactive property to track active view
-    active_view = reactive("llama-cpp", recompose=False)
+    # Reactive property to track active view. Starts at "" with init=False
+    # rather than "llama-cpp": Textual's reactive default-value watcher
+    # otherwise fires once at mount, before the Lab frame's deferred body
+    # mount means this window's own child views exist -- ten QueryErrors,
+    # every arrival. Starting at "" (never a real view key, and init=False
+    # skips even that empty-value fire) means the FIRST real assignment,
+    # in _initialize_view, is the one and only trigger, made after the
+    # children exist.
+    active_view = reactive("", recompose=False, init=False)
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(**kwargs)
@@ -258,37 +224,25 @@ class LLMManagementWindow(Container):
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
         logger.debug("LLMManagementWindow.on_mount called")
-        # Trigger the watcher to set up the initial view state
-        # This ensures buttons and views are properly initialized
+        # The child views don't exist until after this refresh (the window
+        # itself may be mounted lazily by its parent screen), so defer the
+        # initial activation until they do.
         self.call_after_refresh(self._initialize_view)
 
     def _initialize_view(self) -> None:
-        """Initialize the active view after mounting."""
-        # Force the watcher to run by setting the value
-        # Even though it's the same as the default, this ensures proper initialization
+        """Activate the initial view now that the child views exist.
+
+        Assigns ``"llama-cpp"`` rather than hand-invoking ``watch_active_view``:
+        with the reactive's default now ``""`` (see ``active_view`` above),
+        this is a genuine value change, so it fires the normal reactive
+        path -- ``watch_active_view`` plus any external watchers registered
+        via ``self.watch(...)`` (e.g. the Lab rail highlighter) -- with the
+        child views already mounted.
+        """
         self.active_view = "llama-cpp"
 
     def compose(self) -> ComposeResult:
         """Compose the LLM Management UI with sidebar navigation and content area."""
-        # Sidebar with navigation
-        with VerticalScroll(id="llm-sidebar"):
-            yield Static("LLM Options", classes="sidebar-title")
-            yield Button("Llama.cpp", id="nav-llama-cpp", classes="llm-nav-button")
-            yield Button("Llamafile", id="nav-llamafile", classes="llm-nav-button")
-            yield Button("Ollama", id="nav-ollama", classes="llm-nav-button")
-            yield Button("vLLM", id="nav-vllm", classes="llm-nav-button")
-            yield Button("ONNX", id="nav-onnx", classes="llm-nav-button")
-            yield Button(
-                "Transformers", id="nav-transformers", classes="llm-nav-button"
-            )
-            yield Button("MLX-LM", id="nav-mlx-lm", classes="llm-nav-button")
-            yield Button(
-                "Local Models", id="nav-local-models", classes="llm-nav-button"
-            )
-            yield Button(
-                "Download Models", id="nav-download-models", classes="llm-nav-button"
-            )
-
         # Main content area
         with Container(id="llm-main-content"):
             # Llama.cpp View
@@ -960,40 +914,9 @@ class LLMManagementWindow(Container):
                     self.app_instance, id="huggingface-model-browser"
                 )
 
-    @on(Button.Pressed, ".llm-nav-button")
-    def handle_nav_button(self, event: Button.Pressed) -> None:
-        """Handle navigation button clicks."""
-        button = event.button
-        if not button.id:
-            return
-
-        # Extract view name from button ID (nav-llama-cpp -> llama-cpp)
-        view_name = button.id.replace("nav-", "")
-
-        # Don't switch if already active
-        if view_name == self.active_view:
-            return
-
-        logger.debug(f"Switching LLM view to: {view_name}")
-
-        # Update active view (will trigger watcher)
-        self.active_view = view_name
-
     def watch_active_view(self, old_view: str, new_view: str) -> None:
         """React to active view changes."""
         logger.debug(f"LLM view changing from '{old_view}' to '{new_view}'")
-
-        # Update navigation buttons
-        for button in self.query(".llm-nav-button"):
-            button.remove_class("-active")
-
-        # Set active button
-        active_button_id = f"nav-{new_view}"
-        try:
-            active_button = self.query_one(f"#{active_button_id}", Button)
-            active_button.add_class("-active")
-        except QueryError:
-            logger.warning(f"Navigation button #{active_button_id} not found")
 
         # Update view visibility
         for view_id in self.view_mapping.values():

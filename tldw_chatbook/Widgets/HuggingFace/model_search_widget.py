@@ -4,8 +4,10 @@ Search widget for HuggingFace GGUF models.
 """
 
 from typing import Optional, List, Dict, Any
+
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
+from textual.css.query import QueryError
 from textual.widgets import Input, Button, Select, ListView, ListItem, Static
 from textual.message import Message
 from textual.reactive import reactive
@@ -228,13 +230,32 @@ class ModelSearchWidget(Container):
 
         # Use run_worker with an async coroutine
         async def _perform_search():
-            search_input = self.query_one("#model-search-input", Input)
+            # The widget can be torn down (screen navigated away, view
+            # unmounted) between run_worker() scheduling this coroutine and
+            # it actually starting to run. A plain `is_mounted` check is not
+            # enough on its own: children are removed before the parent's
+            # own mounted flag flips, so `self.is_mounted` can still read
+            # True while a child query below already raises NoMatches --
+            # guard each query individually too.
+            if not self.is_mounted:
+                return
+            try:
+                search_input = self.query_one("#model-search-input", Input)
+            except QueryError:
+                logger.debug(
+                    "model-search-input not found; widget torn down mid-search"
+                )
+                return
             query = search_input.value.strip()
 
             if not query and not self.browsing_mode:
                 return
 
-            sort_select = self.query_one("#sort-select", Select)
+            try:
+                sort_select = self.query_one("#sort-select", Select)
+            except QueryError:
+                logger.debug("sort-select not found; widget torn down mid-search")
+                return
             sort_display = sort_select.value or "Most Downloads"
 
             # Map display value to API value
@@ -302,7 +323,17 @@ class ModelSearchWidget(Container):
 
     async def _update_results_list(self, results: List[Dict[str, Any]]) -> None:
         """Update the ListView with search results."""
-        results_list = self.query_one("#results-list", ListView)
+        # Scheduled via call_later from watch_results, which can fire after
+        # the widget has been torn down (screen navigated away). is_mounted
+        # alone is not sufficient -- see _perform_search's comment -- so the
+        # query itself is guarded too.
+        if not self.is_mounted:
+            return
+        try:
+            results_list = self.query_one("#results-list", ListView)
+        except QueryError:
+            logger.debug("results-list not found; widget torn down mid-update")
+            return
         await results_list.clear()
 
         if not results and not self.is_loading:
@@ -319,7 +350,15 @@ class ModelSearchWidget(Container):
 
     async def _show_loading_message(self) -> None:
         """Show loading message in the ListView."""
-        results_list = self.query_one("#results-list", ListView)
+        # Scheduled via call_later from watch_is_loading; see
+        # _update_results_list for why both guards are needed.
+        if not self.is_mounted:
+            return
+        try:
+            results_list = self.query_one("#results-list", ListView)
+        except QueryError:
+            logger.debug("results-list not found; widget torn down mid-update")
+            return
         await results_list.clear()
         await results_list.append(
             ListItem(Static("Loading models...", classes="loading-message"))
@@ -327,7 +366,15 @@ class ModelSearchWidget(Container):
 
     async def _show_error_message(self, error: str) -> None:
         """Show error message in the ListView."""
-        results_list = self.query_one("#results-list", ListView)
+        # Scheduled via call_later from watch_error_message; see
+        # _update_results_list for why both guards are needed.
+        if not self.is_mounted:
+            return
+        try:
+            results_list = self.query_one("#results-list", ListView)
+        except QueryError:
+            logger.debug("results-list not found; widget torn down mid-update")
+            return
         await results_list.clear()
         await results_list.append(
             ListItem(Static(f"Error: {error}", classes="error-message"))
