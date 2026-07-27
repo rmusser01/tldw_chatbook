@@ -3166,3 +3166,101 @@ async def test_watchlists_sources_toolbar_does_not_starve_its_table(size):
             f"table={table.region}"
         )
 
+
+
+@pytest.mark.asyncio
+async def test_watchlists_tree_action_labels_fit_the_rail_intact():
+    """TASK-895: the tree's five write verbs must be readable in the real
+    28-column rail, not clipped to an ellipsis.
+
+    A bare `App` cannot see this at all. Textual's own Button CSS pins
+    `min-width: 16` and `compact=True` only drops the border, so three
+    action buttons in a `Horizontal` claim 48 columns inside a 26-column
+    interior unless `features/_watchlists.tcss` overrides it -- measured
+    pre-rule as `New Rena… Dele…`. The compositor is the instrument
+    (`render_strips()` via `_composited_rows`): `render_line()` returns each
+    button's own self-computed strip and would report the full label even
+    while the button overflowed its rail.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-tree-new")
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+
+        rail = screen.query_one("#wl-region-left_rail")
+        for label in ("New", "Rename", "Delete", "Add source", "Remove"):
+            _assert_label_intact_on_screen(
+                rail, label, context=f"tree action {label!r}"
+            )
+
+        # And every action button sits inside the rail's own box rather than
+        # spilling past its right edge, which is what the `min-width: 16`
+        # default does when it wins.
+        for action_id in (
+            "#wl-tree-new",
+            "#wl-tree-rename",
+            "#wl-tree-delete",
+            "#wl-tree-add-source",
+            "#wl-tree-remove-source",
+        ):
+            button = screen.query_one(action_id, Button)
+            assert rail.region.contains_region(button.region), (
+                f"{action_id} escapes the left rail: rail={rail.region} "
+                f"button={button.region}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_tree_blocked_verbs_render_as_disabled_under_the_bundle():
+    """TASK-895 / AC #5's rendering half: a disabled action must not paint
+    like a live one.
+
+    "A disabled button that looks enabled" is a defect this program has
+    already fixed once, and `disabled=True` alone is a Python attribute --
+    whether it reaches the screen depends on the theme and the bundle
+    winning over `.watchlist-tree-action`'s own `border: none`. Compared
+    against a sibling in the same strip that IS live, so the assertion
+    cannot pass by both being styled identically.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-tree-new")
+
+        live = screen.query_one("#wl-tree-new", Button)
+        blocked = screen.query_one("#wl-tree-rename", Button)
+        assert not live.disabled and blocked.disabled
+
+        strips = screen._compositor.render_strips()
+
+        def _cells(button):
+            row = button.region.y
+            column = 0
+            out = []
+            for segment in strips[row]:
+                for char in segment.text:
+                    if button.region.x <= column < button.region.x + button.region.width:
+                        out.append((char, segment.style))
+                    column += 1
+            return out
+
+        live_cells = [cell for cell in _cells(live) if cell[0].strip()]
+        blocked_cells = [cell for cell in _cells(blocked) if cell[0].strip()]
+        assert live_cells and blocked_cells, (
+            "both buttons must actually be painted for this comparison to mean "
+            f"anything: live={live_cells!r} blocked={blocked_cells!r}"
+        )
+        assert {str(style) for _, style in live_cells} != {
+            str(style) for _, style in blocked_cells
+        }, (
+            "the disabled action paints identically to the live one under the "
+            "production stylesheet"
+        )

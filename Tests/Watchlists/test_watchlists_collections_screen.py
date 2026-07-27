@@ -5,11 +5,13 @@ from contextlib import asynccontextmanager
 import pytest
 from unittest.mock import AsyncMock, Mock
 
-from textual.widgets import Button, Static, TextArea
+from rich.text import Text
+from textual.widgets import Button, Input, Static, TextArea
 
 from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     BreadcrumbScopeSelected,
     CheckNowRequested,
@@ -17,7 +19,12 @@ from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     PreviewRequested,
 )
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
-from tldw_chatbook.UI.Watchlists_Modules.opml_dialogs import OpmlExportDialog, OpmlImportDialog
+from tldw_chatbook.UI.Watchlists_Modules.opml_dialogs import (
+    OpmlExportDialog,
+    OpmlImportDialog,
+    WatchlistNameDialog,
+    WatchlistSourcePickerDialog,
+)
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import (
     ExportOpmlRequested,
     ImportOpmlRequested,
@@ -553,3 +560,531 @@ async def test_load_tree_data_failure_notifies_the_user():
         screen = host.screen_stack[-1]
         assert screen.query_one("#wl-tree-node-all", Button)
         assert screen.query_one("#wl-tree-node-unassigned", Button)
+
+
+# --- TASK-895: the tree's write verbs, end to end -------------------------
+#
+# Five `WatchlistBundleService` methods had no production caller: Phase C
+# shipped the tree's read half, so a user could browse watchlists but never
+# make one. These drive the real buttons, the real dialogs and the real
+# service against `_build_test_app()`'s isolated temp-dir SQLite file (see
+# that fixture's `get_subscriptions_db_path` patch -- never the user's own
+# database), so they measure the wiring rather than a mock of it.
+
+
+async def _wait_for_dialog(host, dialog_type, pilot, *, ticks: int = 60):
+    """Return the modal `dialog_type` once the flow's worker has pushed it.
+
+    The write flows `await push_screen_wait(...)`, so the dialog appears a
+    few ticks after the button press rather than synchronously.
+    """
+    for _ in range(ticks):
+        await pilot.pause()
+        if isinstance(host.screen, dialog_type):
+            return host.screen
+    raise AssertionError(f"{dialog_type.__name__} never opened")
+
+
+async def _wait_until(pilot, predicate, *, ticks: int = 80) -> bool:
+    for _ in range(ticks):
+        await pilot.pause()
+        if predicate():
+            return True
+    return False
+
+
+def _label_plain(widget) -> str:
+    """The text a markup-rendering label actually paints.
+
+    `Static`/`Label` parse markup, so a name carrying Rich syntax is only
+    safe if it was escaped on the way in. Re-parsing the stored content
+    here is what proves that: an unescaped `[bold]` disappears into a
+    style, an escaped one survives as literal text.
+    """
+    renderable = widget.renderable
+    raw = getattr(renderable, "plain", None)
+    if raw is None:
+        raw = str(renderable)
+        return Text.from_markup(raw).plain
+    return raw
+
+
+@pytest.mark.asyncio
+async def test_creating_a_watchlist_from_the_tree_shows_it_without_a_refresh():
+    """AC #1. The rail must show the new watchlist on its own -- the whole
+    point of wiring `create` is that the only watchlists that can exist stop
+    being ones seeded outside the app.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        service = app.watchlist_bundle_service
+        assert service.list_watchlists() == []
+
+        screen.query_one("#wl-tree-new", Button).press()
+        dialog = await _wait_for_dialog(host, WatchlistNameDialog, pilot)
+        dialog.query_one("#watchlist-name-input", Input).value = "Morning AI Brief"
+        dialog.query_one("#watchlist-name-submit", Button).press()
+
+        assert await _wait_until(pilot, lambda: bool(service.list_watchlists()))
+        rows = service.list_watchlists()
+        assert [row["name"] for row in rows] == ["Morning AI Brief"]
+
+        watchlist_id = rows[0]["id"]
+        assert await _wait_until(
+            pilot, lambda: bool(screen.query(f"#wl-tree-node-watchlist-{watchlist_id}"))
+        ), "the new watchlist must appear in the rail with no manual refresh"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_name_is_rejected_with_a_visible_reason():
+    """AC #7. Not a silent no-op: the dialog stays open and says why."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen.query_one("#wl-tree-new", Button).press()
+        dialog = await _wait_for_dialog(host, WatchlistNameDialog, pilot)
+        dialog.query_one("#watchlist-name-input", Input).value = "   "
+        dialog.query_one("#watchlist-name-submit", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert isinstance(host.screen, WatchlistNameDialog), (
+            "an invalid name must not dismiss the prompt"
+        )
+        error = _label_plain(dialog.query_one("#watchlist-name-error", Static))
+        assert "cannot be empty" in error
+        assert app.watchlist_bundle_service.list_watchlists() == []
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_name_is_rejected_and_the_reason_escapes_the_name():
+    """AC #7, both halves at once.
+
+    The duplicate is reported rather than silently suffixed to "X (2)" by
+    `_unique_name` -- and because the reported name is user-authored free
+    text, the reason must render it as literal characters. Unescaped remote
+    and user titles have shipped as bugs on this screen before.
+    """
+    app = _build_test_app()
+    app.watchlist_bundle_service.create("[bold red]Alpha[/bold red]")
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert await _wait_until(pilot, lambda: bool(screen._tree_watchlists))
+
+        screen.query_one("#wl-tree-new", Button).press()
+        dialog = await _wait_for_dialog(host, WatchlistNameDialog, pilot)
+        dialog.query_one("#watchlist-name-input", Input).value = (
+            "[bold red]alpha[/bold red]"
+        )
+        dialog.query_one("#watchlist-name-submit", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert isinstance(host.screen, WatchlistNameDialog)
+        error = _label_plain(dialog.query_one("#watchlist-name-error", Static))
+        assert "already exists" in error
+        assert "[bold red]alpha[/bold red]" in error, (
+            "the rejected name must render as literal text, not as markup"
+        )
+        assert len(app.watchlist_bundle_service.list_watchlists()) == 1
+
+
+@pytest.mark.asyncio
+async def test_renaming_a_watchlist_updates_the_rail():
+    """AC #2, rename half."""
+    app = _build_test_app()
+    watchlist = app.watchlist_bundle_service.create("Mroning AI Brief")
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert await _wait_until(pilot, lambda: bool(screen._tree_watchlists))
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        rename_button = screen.query_one("#wl-tree-rename", Button)
+        assert not rename_button.disabled
+        rename_button.press()
+
+        dialog = await _wait_for_dialog(host, WatchlistNameDialog, pilot)
+        assert dialog.query_one("#watchlist-name-input", Input).value == (
+            "Mroning AI Brief"
+        ), "the prompt should start from the current name"
+        dialog.query_one("#watchlist-name-input", Input).value = "Morning AI Brief"
+        dialog.query_one("#watchlist-name-submit", Button).press()
+
+        service = app.watchlist_bundle_service
+        assert await _wait_until(
+            pilot,
+            lambda: [row["name"] for row in service.list_watchlists()]
+            == ["Morning AI Brief"],
+        )
+        assert await _wait_until(
+            pilot,
+            lambda: any(
+                "Morning AI Brief" in str(button.label)
+                for button in screen.query(Button)
+                if (button.id or "").startswith("wl-tree-node-watchlist-")
+            ),
+        )
+        # The rename must also reach the scope-derived copy, not just the
+        # rail: `_tree_scope_label` and `_resolve_breadcrumb_labels` both
+        # read `_tree_watchlists`, which a rename leaves stale until the
+        # reload re-resolves it.
+        assert (
+            _static_text(screen.query_one("#wl-feeds-scope-heading", Static))
+            == "Feeds in Morning AI Brief (0)"
+        )
+        assert screen._breadcrumb_labels == ["Morning AI Brief"]
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_watchlist_says_what_happens_to_its_sources_first():
+    """AC #2, delete half: the count and the destination are stated before
+    the user commits, and the name is escaped on the way into the message.
+    """
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    watchlist = service.create("[bold]Danger[/bold]")
+    db = service._db
+    for index in range(2):
+        service.add_source(
+            watchlist["id"],
+            db.add_subscription(
+                name=f"Feed {index}", type="rss", source=f"https://{index}.example/f"
+            ),
+        )
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert await _wait_until(pilot, lambda: bool(screen._tree_watchlists))
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
+        )
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one("#wl-tree-delete", Button).press()
+
+        dialog = await _wait_for_dialog(host, ConfirmationDialog, pilot)
+        message = Text.from_markup(dialog.message).plain
+        assert "[bold]Danger[/bold]" in message, (
+            "the watchlist name must reach the prompt as literal text"
+        )
+        assert "2 sources are not deleted" in message
+        assert "Unassigned" in message
+
+        dialog.query_one("#cancel-button", Button).press()
+        assert await _wait_until(
+            pilot, lambda: not isinstance(host.screen, ConfirmationDialog)
+        )
+        assert len(service.list_watchlists()) == 1, "Cancel must not delete anything"
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_watchlist_never_orphans_its_sources_into_invisibility():
+    """AC #3. Deleting cascades only the membership rows, so the sources
+    survive -- but survival is worthless if nothing in the tree can reach
+    them. They must land under the permanent Unassigned root, which is what
+    that root exists for.
+    """
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+    db = service._db
+    source_ids = [
+        db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f"),
+        db.add_subscription(name="Krebs", type="rss", source="https://b.example/f"),
+    ]
+    for source_id in source_ids:
+        service.add_source(watchlist["id"], source_id)
+    assert service.list_unassigned_source_rows() == []
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert await _wait_until(pilot, lambda: bool(screen._tree_watchlists))
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
+        )
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one("#wl-tree-delete", Button).press()
+
+        dialog = await _wait_for_dialog(host, ConfirmationDialog, pilot)
+        dialog.query_one("#confirm-button", Button).press()
+
+        assert await _wait_until(pilot, lambda: service.list_watchlists() == [])
+        assert {row["id"] for row in service.list_unassigned_source_rows()} == set(
+            source_ids
+        )
+        # And the screen actually shows them: the scope moves to Unassigned,
+        # whose rows are exactly the sources the deleted watchlist held.
+        assert await _wait_until(
+            pilot, lambda: screen.tree_scope == TreeScope(kind="unassigned")
+        )
+        assert {row["id"] for row in screen.scoped_source_rows()} == set(source_ids)
+        assert screen.query("#wl-tree-node-unassigned")
+        assert not screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
+
+
+@pytest.mark.asyncio
+async def test_adding_a_source_to_a_watchlist_from_the_tree():
+    """AC #4, add half. The picker offers only sources that are not already
+    members, so adding one twice is not something the UI can even ask for.
+    """
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+    db = service._db
+    member = db.add_subscription(
+        name="Already In", type="rss", source="https://in.example/f"
+    )
+    candidate = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    service.add_source(watchlist["id"], member)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert await _wait_until(pilot, lambda: bool(screen._tree_watchlists))
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
+        )
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one("#wl-tree-add-source", Button).press()
+
+        dialog = await _wait_for_dialog(host, WatchlistSourcePickerDialog, pilot)
+        assert dialog.query(f"#wl-add-source-option-{candidate}")
+        assert not dialog.query(f"#wl-add-source-option-{member}"), (
+            "an existing member must not be offered again"
+        )
+        dialog.query_one(f"#wl-add-source-option-{candidate}", Button).press()
+
+        assert await _wait_until(
+            pilot, lambda: set(service.list_sources(watchlist["id"])) == {member, candidate}
+        )
+        assert service.list_unassigned_source_rows() == []
+
+
+@pytest.mark.asyncio
+async def test_removing_a_source_from_a_watchlist_keeps_the_source():
+    """AC #4, remove half -- and the other side of AC #3: a removed source
+    is still reachable, it just moves to Unassigned.
+    """
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+    db = service._db
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    service.add_source(watchlist["id"], source_id)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert await _wait_until(pilot, lambda: bool(screen._tree_watchlists))
+
+        screen.post_message(
+            TreeScopeChanged(
+                TreeScope(
+                    kind="source", watchlist_id=watchlist["id"], source_id=source_id
+                )
+            )
+        )
+        await pilot.pause()
+        await pilot.pause()
+        remove_button = screen.query_one("#wl-tree-remove-source", Button)
+        assert not remove_button.disabled
+        remove_button.press()
+
+        assert await _wait_until(
+            pilot, lambda: service.list_sources(watchlist["id"]) == []
+        )
+        assert [row["id"] for row in service.list_unassigned_source_rows()] == [
+            source_id
+        ]
+        # The scope fell back to the parent watchlist rather than sitting on
+        # a source node that no longer exists.
+        assert await _wait_until(
+            pilot,
+            lambda: screen.tree_scope
+            == TreeScope(kind="watchlist", watchlist_id=watchlist["id"]),
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_server_backend_disables_all_five_verbs_with_a_stated_reason():
+    """AC #5. Not cosmetic hiding: `SourceUpdateRequest` carries no
+    `group_ids`, neither group request carries members, and all of them are
+    `extra="forbid"` -- so there is no wire path at all, and the screen says
+    so rather than offering an action that cannot be sent.
+    """
+    app = _build_test_app()
+    app.watchlist_bundle_service.create("Morning AI Brief")
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert await _wait_until(pilot, lambda: bool(screen._tree_watchlists))
+        watchlist_id = screen._tree_watchlists[0]["id"]
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist_id))
+        )
+        await pilot.pause()
+        await pilot.pause()
+        # Locally, four of the five are live on a watchlist scope.
+        assert not screen.query_one("#wl-tree-rename", Button).disabled
+
+        screen.runtime_backend = "server"
+        await pilot.pause()
+        await pilot.pause()
+
+        for action_id in (
+            "#wl-tree-new",
+            "#wl-tree-rename",
+            "#wl-tree-delete",
+            "#wl-tree-add-source",
+            "#wl-tree-remove-source",
+        ):
+            button = screen.query_one(action_id, Button)
+            assert button.disabled, f"{action_id} must be disabled on the server backend"
+            assert "no wire path" in str(button.tooltip)
+
+        note = screen.query_one("#wl-tree-actions-unavailable", Static)
+        assert "Switch the backend to Local" in _label_plain(note)
+
+
+@pytest.mark.asyncio
+async def test_the_verbs_are_disabled_when_the_bundle_service_is_missing():
+    """The same degrade-don't-crash contract every other caller of
+    `_watchlist_bundle_service()` follows -- and the same disabled-with-a-
+    reason treatment, rather than buttons that look live over a runtime that
+    cannot service them.
+    """
+    app = _build_test_app()
+    app.watchlist_bundle_service = None
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        for action_id in ("#wl-tree-new", "#wl-tree-rename", "#wl-tree-remove-source"):
+            button = screen.query_one(action_id, Button)
+            assert button.disabled
+            assert "unavailable" in str(button.tooltip)
+
+
+def test_every_watchlist_bundle_service_method_has_a_production_caller():
+    """AC #6, enforced rather than asserted once by hand.
+
+    Five of these methods were complete, tested, and reachable from nothing
+    at all before this task. A future slice that quietly drops the last
+    caller of one should fail here rather than be rediscovered as dead code
+    with a green suite.
+
+    Resolved through the AST rather than by grepping for `.create(`: a plain
+    text scan matches `completions.create(` in `OCR_Backends` and
+    `os.rename(` in `Chat_Functions`, so it would report a caller for
+    `create` and `rename` even with every real call deleted -- verified by
+    mutation. This instead follows the two ways the service is actually
+    reached (`self._watchlist_bundle_service()` and the
+    `watchlist_bundle_service` attribute on the app) plus any local bound to
+    one of them, so `self._controller.list_sources(...)` -- a different
+    object with a colliding method name, in the same file -- is not counted.
+    """
+    import ast
+    import inspect
+    import warnings
+    from pathlib import Path
+
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+        WatchlistBundleService,
+    )
+
+    class _BundleServiceCalls(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.aliases: set[str] = set()
+            self.called: set[str] = set()
+
+        def _is_service(self, node: ast.AST) -> bool:
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "_watchlist_bundle_service"
+            ):
+                return True
+            if isinstance(node, ast.Attribute) and node.attr == "watchlist_bundle_service":
+                return True
+            return isinstance(node, ast.Name) and node.id in self.aliases
+
+        def visit_Assign(self, node: ast.Assign) -> None:
+            if self._is_service(node.value):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        self.aliases.add(target.id)
+            self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call) -> None:
+            if isinstance(node.func, ast.Attribute) and self._is_service(node.func.value):
+                self.called.add(node.func.attr)
+            self.generic_visit(node)
+
+    service_file = Path(inspect.getfile(WatchlistBundleService)).resolve()
+    package_root = service_file.parents[1]
+
+    called: set[str] = set()
+    # `ast.parse` re-emits each file's own SyntaxWarnings (stray escape
+    # sequences in unrelated modules); they are pre-existing and not this
+    # test's subject, so they are silenced rather than left to bury the
+    # assertion message below in noise.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        for path in package_root.rglob("*.py"):
+            if path.resolve() == service_file:
+                continue
+            visitor = _BundleServiceCalls()
+            visitor.visit(ast.parse(path.read_text(encoding="utf-8")))
+            called |= visitor.called
+
+    public_methods = {
+        name
+        for name, member in vars(WatchlistBundleService).items()
+        if not name.startswith("_")
+        and callable(getattr(member, "__func__", member))
+    }
+    # Guard the guard: if the reflection above ever stops seeing the class's
+    # own methods, the emptiness check below would pass vacuously.
+    assert {"create", "rename", "delete", "add_source", "remove_source"} <= (
+        public_methods
+    )
+
+    uncalled = sorted(public_methods - called)
+    assert uncalled == [], (
+        f"WatchlistBundleService methods with no production caller: {uncalled}"
+    )

@@ -15229,6 +15229,97 @@ CodingWindow {
     outline: none;
 }
 
+/* The tree's write verbs (TASK-895): two one-row strips above the roots.
+ *
+ * `min-width: 0` is the load-bearing declaration. Textual's own Button CSS
+ * pins `min-width: 16` (textual/widgets/_button.py) and `compact=True` only
+ * removes the border, not that floor -- so three action buttons in a
+ * `Horizontal` would claim 48 columns inside a rail whose interior is 26,
+ * and the labels would render clipped with an ellipsis. That is not merely
+ * ugly: `Tests/UI/test_destination_visual_parity_correction.py::
+ * test_watchlists_left_rail_is_labelled_when_expanded` fails on any `…` in
+ * the composited rail, which is how this was caught.
+ *
+ * At `width: auto` + `padding: 0 1` the two rows measure 21 and 20 columns
+ * against 26 available, so both fit whole with the rail at its current
+ * width of 28.
+ *
+ * `height: 1` on the strip matches every other one-row control group on
+ * this screen (`.destination-filter-strip`, the tab strip): the rail is a
+ * plain `Vertical`, so a strip left at `auto` would size to the tallest
+ * child rather than to a row.
+ */
+.watchlist-tree-actions {
+    width: 100%;
+    height: 1;
+}
+
+.watchlist-tree-actions Button.watchlist-tree-action {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0 1;
+    border: none;
+}
+
+/* Why the verbs above are off, when they are. Muted like
+ * `.watchlists-region-placeholder`, and `height: auto` so the reason wraps
+ * to as many rows as the 26-column rail needs rather than being clipped to
+ * one -- a stated reason that does not fit is not a stated reason.
+ */
+.watchlist-tree-actions-note {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+}
+
+/* The two prompts the write verbs need (TASK-895).
+ *
+ * Centred and sized, unlike the older OPML dialogs in the same module,
+ * which are unstyled `ModalScreen`s and therefore fill the terminal from
+ * the top-left corner. Type selectors so this reaches the modal screen
+ * itself (`align` has to be set on the parent of the box being centred),
+ * and the id rules below size the box.
+ */
+WatchlistNameDialog,
+WatchlistSourcePickerDialog {
+    align: center middle;
+}
+
+#watchlist-name-dialog,
+#watchlist-add-source-dialog {
+    width: 60;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    background: $surface;
+    border: round $ds-grid-line;
+}
+
+/* The rejection reason for an empty or duplicate name. `height: auto` so a
+ * long name's message wraps instead of being clipped -- the whole point of
+ * this line is that the user can read why nothing happened.
+ */
+#watchlist-name-error {
+    width: 100%;
+    height: auto;
+    color: $error;
+}
+
+#watchlist-add-source-options {
+    width: 100%;
+    height: auto;
+    max-height: 16;
+}
+
+#watchlist-add-source-options Button {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    border: none;
+    text-align: left;
+}
+
 /* One scoped source per row in FEEDS (Task 7, fix round 1, Finding 1).
  *
  * `height: 1` is the load-bearing part: `.watchlists-region-feeds` is capped
