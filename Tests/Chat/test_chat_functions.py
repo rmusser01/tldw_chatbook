@@ -526,6 +526,40 @@ class TestChatFunction:
 
 @pytest.mark.unit
 class TestProviderRequestPayloads:
+    def test_deepseek_uses_refreshed_handler_fallback_model(self, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(
+            llm_api_calls_module,
+            "settings",
+            {
+                "api_settings": {
+                    "deepseek": {
+                        "api_key": DUMMY_OPENAI_API_KEY,
+                        "api_base_url": "https://api.deepseek.test",
+                    }
+                }
+            },
+        )
+        monkeypatch.setattr(
+            llm_api_calls_module.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ),
+        )
+
+        llm_api_calls_module.chat_with_deepseek(
+            input_data=[{"role": "user", "content": "test"}],
+            model=None,
+            streaming=False,
+            max_tokens=128,
+        )
+
+        assert captured["url"] == "https://api.deepseek.test/chat/completions"
+        assert captured["json"]["model"] == "deepseek-v4-flash"
+        assert captured["json"]["messages"] == [{"role": "user", "content": "test"}]
+        assert captured["json"]["max_tokens"] == 128
+
     def test_gpt_5_6_defaults_to_chat_completions_with_function_tools(self, monkeypatch):
         from tldw_chatbook.LLM_Calls import LLM_API_Calls
 

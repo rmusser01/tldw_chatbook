@@ -2477,7 +2477,7 @@ def chat_with_deepseek(
 
     logger.debug("DeepSeek: API key provided.")
     current_model = model or deepseek_config.get(
-        "model", "deepseek-chat"
+        "model", "deepseek-v4-flash"
     )  # Or deepseek-coder
     current_temp = (
         temp if temp is not None else float(deepseek_config.get("temperature", 0.1))
