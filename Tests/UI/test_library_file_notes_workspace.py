@@ -169,8 +169,6 @@ async def test_root_transition_retains_and_freezes_old_document_until_scan_finis
     original_scan = FileNotesService.scan
     scan_started = threading.Event()
     release_scan = threading.Event()
-    open_started = threading.Event()
-    release_open = threading.Event()
 
     def delayed_scan(service):
         if service.root == new_root.resolve():
@@ -189,19 +187,6 @@ async def test_root_transition_retains_and_freezes_old_document_until_scan_finis
             lambda: workspace.save_state == "dirty",
             "root-change draft did not become dirty",
         )
-        service = workspace._service
-        assert service is not None
-        original_open = service.open_file
-
-        def delayed_open(relative_path):
-            open_started.set()
-            release_open.wait(5)
-            return original_open(relative_path)
-
-        monkeypatch.setattr(service, "open_file", delayed_open)
-        opening = asyncio.create_task(workspace.open_path("old.md"))
-        await _wait_until(pilot, open_started.is_set, "old-root open did not start")
-
         transition = asyncio.create_task(
             workspace.set_root(new_root, persist=False)
         )
@@ -226,10 +211,7 @@ async def test_root_transition_retains_and_freezes_old_document_until_scan_finis
         assert workspace.current_path == ""
         assert editor.text == ""
         assert "new.md" in workspace.entries
-        release_open.set()
-        assert not await opening
     release_scan.set()
-    release_open.set()
     replica.close()
 
 
@@ -679,6 +661,8 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
     host = LibraryHarness(app, screen=screen)
     save_started = threading.Event()
     release_save = threading.Event()
+    open_started = threading.Event()
+    release_open = threading.Event()
     detail_started = threading.Event()
     release_detail = threading.Event()
 
@@ -747,6 +731,31 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         screen._library_notes_view = "list"
         screen._selected_note_id = None
 
+        assert await retained.open_path("library.md")
+        service = retained._service
+        assert service is not None
+        original_open = service.open_file
+
+        def delayed_open(relative_path):
+            if relative_path == "other.md":
+                open_started.set()
+                release_open.wait(5)
+            return original_open(relative_path)
+
+        monkeypatch.setattr(service, "open_file", delayed_open)
+        opening = asyncio.create_task(retained.open_path("other.md"))
+        await _wait_until(pilot, open_started.is_set, "slow open did not start")
+        before_open = editor.text
+        editor.focus()
+        await pilot.press("x")
+        competing_open = await retained.open_path("library.md")
+        frozen_during_open = editor.read_only
+        text_during_open = editor.text
+        release_open.set()
+        assert await opening
+        monkeypatch.setattr(service, "open_file", original_open)
+        assert await retained.open_path("library.md")
+
         screen._apply_local_source_snapshot(
             {
                 "notes": ({"title": "Updated DB note", "id": "db-note-2"},),
@@ -760,7 +769,6 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         assert screen.query_one("#library-file-notes-workspace") is retained
         assert retained.query_one("#file-notes-editor", TextArea) is editor
 
-        await retained.open_path("library.md")
         _replace_editor_text(editor, "draft")
         await pilot.pause()
         (root / "library.md").write_text("external", encoding="utf-8")
@@ -834,16 +842,14 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
             "#file-notes-session-changes",
         )
 
-        service = retained._service
-        assert service is not None
-        original_save = service.save_file
+        original_finish = service._finish_published_file
 
-        def delayed_save(*args, **kwargs):
+        def delayed_finish(*args, **kwargs):
             save_started.set()
             release_save.wait(5)
-            return original_save(*args, **kwargs)
+            return original_finish(*args, **kwargs)
 
-        monkeypatch.setattr(service, "save_file", delayed_save)
+        monkeypatch.setattr(service, "_finish_published_file", delayed_finish)
         _replace_editor_text(editor, "draft across forced remount")
         await _wait_until(
             pilot,
@@ -856,23 +862,33 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
             lambda: save_started.is_set() and retained.save_state == "saving",
             "forced-remount save did not start",
         )
+        session_key = retained._session_key
 
         screen.refresh(recompose=True)
         await _wait_until(
             pilot,
             lambda: retained.save_state == "dirty"
-            and retained._autosave_timer is not None
+            and retained._active
             and bool(screen.query("#library-file-notes-workspace")),
             "Files workspace did not remount during save",
         )
-        assert retained.save_state == "dirty"
-        assert retained._autosave_timer is not None
-        assert retained.query_one("#file-notes-editor", TextArea).text == (
+        timer_before_release = retained._autosave_timer
+        release_save.set()
+        await _wait_until(
+            pilot,
+            lambda: retained.save_state == "saved",
+            "published remount draft was not adopted",
+        )
+        assert timer_before_release is None
+        assert (root / "library.md").read_text(encoding="utf-8") == (
             "draft across forced remount"
         )
-        release_save.set()
-        await pilot.pause()
+        assert editor.text == "draft across forced remount"
+        assert retained._session_key == session_key
         assert retained.query_one("#file-notes-editor", TextArea) is editor
+        assert not competing_open
+        assert frozen_during_open
+        assert text_during_open == before_open
     assert workspace._shutdown
     await workspace.shutdown()
     with pytest.raises(sqlite3.ProgrammingError):

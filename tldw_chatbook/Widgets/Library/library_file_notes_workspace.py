@@ -190,6 +190,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._service_lock = RLock()
         self._root_generation = 0
         self._root_transitioning = False
+        self._open_transitioning = False
         self._shutdown = False
 
         self._entries: dict[str, FileNoteEntry] = {}
@@ -381,8 +382,6 @@ class LibraryFileNotesWorkspace(Vertical):
             self._start_poll,
             pause=False,
         )
-        if self._save_state == "dirty":
-            self._arm_autosave()
 
     def on_unmount(self) -> None:
         """Pause timers; Textual cancels node workers during removal."""
@@ -460,7 +459,14 @@ class LibraryFileNotesWorkspace(Vertical):
             ):
                 return
             self._apply_reconcile(result, deleted)
-            await self._handle_open_external_change(result)
+            await self._handle_open_external_change(result, resuming=True)
+            if (
+                self._active
+                and generation == self._root_generation
+                and service is self._service
+                and self._save_state == "dirty"
+            ):
+                self._arm_autosave()
             return
         result = await asyncio.to_thread(service.scan)
         deleted = await self._load_deleted_paths(replica=replica, service=service)
@@ -582,7 +588,7 @@ class LibraryFileNotesWorkspace(Vertical):
         status = self.query_one("#file-notes-root-status", Static)
         body = self.query_one("#file-notes-body")
         choose = self.query_one("#file-notes-choose-root", Button)
-        choose.disabled = self._root_transitioning
+        choose.disabled = self._root_transitioning or self._open_transitioning
         if self._root is None:
             status.update("Choose a notes folder.")
             body.display = False
@@ -726,7 +732,7 @@ class LibraryFileNotesWorkspace(Vertical):
     def _update_controls(self) -> None:
         if not self._active or not self.is_mounted:
             return
-        transitioning = self._root_transitioning
+        transitioning = self._root_transitioning or self._open_transitioning
         has_service = self._service is not None and not transitioning
         has_document = self._opened is not None and not transitioning
         has_deleted = bool(self._selected_deleted_path) and not transitioning
@@ -759,7 +765,7 @@ class LibraryFileNotesWorkspace(Vertical):
 
     async def set_root(self, path: str | Path, *, persist: bool = True) -> bool:
         """Adopt one canonical root after the common draft leave guard."""
-        if not self._active or self._shutdown:
+        if not self._active or self._open_transitioning or self._shutdown:
             return False
         if not await self.flush_pending_work():
             return False
@@ -823,6 +829,7 @@ class LibraryFileNotesWorkspace(Vertical):
         if (
             not self._active
             or self._root_transitioning
+            or self._open_transitioning
             or self._shutdown
             or service is None
         ):
@@ -832,26 +839,35 @@ class LibraryFileNotesWorkspace(Vertical):
         if (
             not self._active
             or self._root_transitioning
+            or self._open_transitioning
             or generation != self._root_generation
             or service is not self._service
         ):
             return False
+        self._open_transitioning = True
+        self._update_root_surface()
+        self._update_controls()
         try:
-            opened = await asyncio.to_thread(
-                service.open_file,
-                relative_path,
-            )
-        except Exception as error:
-            self._set_action_status(f"Open failed: {error}")
-            return False
-        if (
-            not self._active
-            or generation != self._root_generation
-            or service is not self._service
-        ):
-            return False
-        self._apply_opened_document(opened)
-        return True
+            try:
+                opened = await asyncio.to_thread(
+                    service.open_file,
+                    relative_path,
+                )
+            except Exception as error:
+                self._set_action_status(f"Open failed: {error}")
+                return False
+            if (
+                not self._active
+                or generation != self._root_generation
+                or service is not self._service
+            ):
+                return False
+            self._apply_opened_document(opened)
+            return True
+        finally:
+            self._open_transitioning = False
+            self._update_root_surface()
+            self._update_controls()
 
     def _apply_opened_document(self, opened: OpenedFileNote) -> None:
         if not self._active:
@@ -952,6 +968,8 @@ class LibraryFileNotesWorkspace(Vertical):
     async def _handle_open_external_change(
         self,
         result: ReconcileResult,
+        *,
+        resuming: bool = False,
     ) -> None:
         opened = self._opened
         if opened is None:
@@ -960,18 +978,40 @@ class LibraryFileNotesWorkspace(Vertical):
         if path in result.deleted:
             self._set_save_state("conflict", "file deleted on disk")
             return
-        if path not in result.modified:
+        changed = path in result.modified
+        if resuming and not changed:
+            entry = self._entries.get(path)
+            changed = entry is not None and entry.content_hash != opened.content_hash
+        if not changed:
             return
-        if self._save_state in {"dirty", "saving", "conflict", "error"}:
+        state = self._save_state
+        if state in {"conflict", "error"} or (
+            state in {"dirty", "saving"} and not resuming
+        ):
             self._set_save_state("conflict", "file changed on disk")
             return
-        assert self._service is not None
+        service = self._service
+        generation = self._root_generation
+        assert service is not None
         try:
-            reloaded = await asyncio.to_thread(self._service.open_file, path)
+            reloaded = await asyncio.to_thread(service.open_file, path)
         except Exception as error:
             self._set_save_state("error", f"reload failed: {error}")
             return
-        if not self._active:
+        if (
+            not self._active
+            or generation != self._root_generation
+            or service is not self._service
+        ):
+            return
+        if resuming and state in {"dirty", "saving"}:
+            editor = self.query_one("#file-notes-editor", TextArea)
+            if reloaded.body != editor.text:
+                self._set_save_state("conflict", "file changed on disk")
+                return
+            self._opened = reloaded
+            self._set_save_state("saved")
+            self._set_action_status(reloaded.replica_warning or "")
             return
         self._apply_opened_document(reloaded)
 
@@ -979,6 +1019,7 @@ class LibraryFileNotesWorkspace(Vertical):
         if (
             not self._active
             or self._root_transitioning
+            or self._open_transitioning
             or self._service is None
             or (self._poll_worker is not None and not self._poll_worker.is_finished)
         ):
@@ -1106,11 +1147,36 @@ class LibraryFileNotesWorkspace(Vertical):
         elif self._save_state in {"dirty", "saving"}:
             self._set_save_state("error", detail)
 
+    async def _complete_path_action(
+        self,
+        action: str,
+        result: OperationResult,
+        relative_path: str,
+    ) -> None:
+        if not self._active:
+            return
+        if not result.succeeded:
+            self._operation_error(action, result)
+            return
+        if not await self._rescan_after_action():
+            return
+        service = self._service
+        if service is None:
+            return
+        try:
+            opened = await asyncio.to_thread(service.open_file, relative_path)
+        except Exception as error:
+            self._set_action_status(f"Open failed: {error}")
+            return
+        if self._active:
+            self._apply_opened_document(opened)
+
     @on(TextArea.Changed, "#file-notes-editor")
     def _editor_changed(self, event: TextArea.Changed) -> None:
         event.stop()
         if (
             self._root_transitioning
+            or self._open_transitioning
             or self._opened is None
             or not self._opened.editable
         ):
@@ -1218,24 +1284,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._service.create_file,
             destination,
         )
-        if not self._active:
-            return
-        if not result.succeeded:
-            self._operation_error("Create", result)
-            return
-        if not await self._rescan_after_action():
-            return
-        try:
-            opened = await asyncio.to_thread(
-                self._service.open_file,
-                destination,
-            )
-        except Exception as error:
-            self._set_action_status(f"Open failed: {error}")
-            return
-        if not self._active:
-            return
-        self._apply_opened_document(opened)
+        await self._complete_path_action("Create", result, destination)
 
     @on(Button.Pressed, "#file-notes-move")
     async def _move_file(self, event: Button.Pressed) -> None:
@@ -1253,24 +1302,7 @@ class LibraryFileNotesWorkspace(Vertical):
             opened.relative_path,
             destination,
         )
-        if not self._active:
-            return
-        if not result.succeeded:
-            self._operation_error("Move", result)
-            return
-        if not await self._rescan_after_action():
-            return
-        try:
-            moved = await asyncio.to_thread(
-                self._service.open_file,
-                destination,
-            )
-        except Exception as error:
-            self._set_action_status(f"Open failed: {error}")
-            return
-        if not self._active:
-            return
-        self._apply_opened_document(moved)
+        await self._complete_path_action("Move", result, destination)
 
     @on(Button.Pressed, "#file-notes-delete")
     async def _delete_file(self, event: Button.Pressed) -> None:
@@ -1323,24 +1355,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._service.restore_file,
             relative_path,
         )
-        if not self._active:
-            return
-        if not result.succeeded:
-            self._operation_error("Restore", result)
-            return
-        if not await self._rescan_after_action():
-            return
-        try:
-            restored = await asyncio.to_thread(
-                self._service.open_file,
-                relative_path,
-            )
-        except Exception as error:
-            self._set_action_status(f"Open failed: {error}")
-            return
-        if not self._active:
-            return
-        self._apply_opened_document(restored)
+        await self._complete_path_action("Restore", result, relative_path)
 
     @on(Button.Pressed, "#file-notes-protect")
     async def _toggle_protect(self, event: Button.Pressed) -> None:
@@ -1399,24 +1414,7 @@ class LibraryFileNotesWorkspace(Vertical):
             body,
             destination,
         )
-        if not self._active:
-            return
-        if not result.succeeded:
-            self._operation_error("Save Copy", result)
-            return
-        if not await self._rescan_after_action():
-            return
-        try:
-            copied = await asyncio.to_thread(
-                self._service.open_file,
-                destination,
-            )
-        except Exception as error:
-            self._set_action_status(f"Open failed: {error}")
-            return
-        if not self._active:
-            return
-        self._apply_opened_document(copied)
+        await self._complete_path_action("Save Copy", result, destination)
 
     @on(Button.Pressed, "#file-notes-refresh")
     async def _refresh_pressed(self, event: Button.Pressed) -> None:
