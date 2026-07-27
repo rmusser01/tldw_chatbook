@@ -8,6 +8,7 @@ created_date: '2026-07-27 14:00'
 labels:
   - scheduling
   - adr
+  - watchlists
 dependencies: []
 priority: high
 ---
@@ -56,3 +57,9 @@ So this is not an ADR that was authored against code that never worked; it is a 
 - [ ] If dropped: ADR-019 is amended, and the dead scheduler/worker/controller are removed together
 - [ ] The default value of `scheduling.watchlist_checks_enabled` is a deliberate, documented choice
 <!-- AC:END -->
+
+## Ownership
+
+Handed to the **watchlists workstream** (2026-07-27). This was found incidentally while deleting dead worker components under TASK-1010, and the investigation deliberately stopped at establishing the facts: the decision — restore the rollback path, or amend ADR-019 and retire the old scheduler chain — belongs with whoever owns the watchlist migration, not with a cleanup task.
+
+Everything needed to make that call is in the description above: the missing `else` branch, the absent construction path, the default-false flag, what still works (manual "Check now"), and the twelve-hour window in which the rollback path was severed. No code was changed.
