@@ -307,6 +307,7 @@ class FileNotesReplica:
         raw_bytes: bytes,
         *,
         content_hash: str,
+        decoded_text: str | None,
         deleted_at: str | None = None,
         created_at: str | None = None,
     ) -> None:
@@ -343,6 +344,7 @@ class FileNotesReplica:
                 UPDATE files
                 SET raw_bytes = ?,
                     content_hash = ?,
+                    decoded_text = ?,
                     size = ?,
                     deleted_at = ?
                 WHERE root = ? AND relative_path = ?
@@ -350,6 +352,7 @@ class FileNotesReplica:
                 (
                     raw_bytes,
                     content_hash,
+                    decoded_text,
                     len(raw_bytes),
                     deletion_time,
                     root,

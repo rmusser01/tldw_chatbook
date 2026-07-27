@@ -253,6 +253,7 @@ def test_prepare_deletion_rolls_back_snapshot_when_tombstone_write_fails(
             relative_path,
             b"deletion snapshot",
             content_hash=_digest(b"deletion snapshot"),
+            decoded_text="deletion snapshot",
             deleted_at="2026-07-27T10:00:00Z",
         )
 
@@ -265,6 +266,38 @@ def test_prepare_deletion_rolls_back_snapshot_when_tombstone_write_fails(
         == 0
     )
     assert replica.search(root, "present") == [relative_path]
+
+
+def test_clear_tombstone_reindexes_the_prepared_snapshot_text(
+    replica: FileNotesReplica,
+) -> None:
+    root = "/notes"
+    _upsert(replica, root, "changed.md", b"old searchable text")
+    _upsert(replica, root, "undecodable.txt", b"old indexed text")
+
+    replica.prepare_deletion(
+        root,
+        "changed.md",
+        b"replacement searchable text",
+        content_hash=_digest(b"replacement searchable text"),
+        decoded_text="replacement searchable text",
+    )
+    replica.prepare_deletion(
+        root,
+        "undecodable.txt",
+        b"\xff\xfe",
+        content_hash=_digest(b"\xff\xfe"),
+        decoded_text=None,
+    )
+
+    assert replica.clear_tombstone(root, "changed.md")
+    assert replica.get_bytes(root, "changed.md") == b"replacement searchable text"
+    assert replica.search(root, "replacement") == ["changed.md"]
+    assert replica.search(root, "old") == []
+
+    assert replica.clear_tombstone(root, "undecodable.txt")
+    assert replica.get_bytes(root, "undecodable.txt") == b"\xff\xfe"
+    assert replica.search(root, "indexed") == []
 
 
 def test_prepared_deletion_persists_and_returns_exact_restore_bytes(
@@ -283,6 +316,7 @@ def test_prepared_deletion_persists_and_returns_exact_restore_bytes(
         relative_path,
         restore_bytes,
         content_hash=_digest(restore_bytes),
+        decoded_text=restore_bytes.decode("utf-8"),
         deleted_at="2026-07-27T10:00:00Z",
         created_at="2026-07-27T10:00:00Z",
     )
