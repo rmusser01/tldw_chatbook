@@ -1184,6 +1184,66 @@ async def test_profile_editor_preserves_opaque_values_and_builds_exact_draft() -
     ]
 
 
+@pytest.mark.parametrize("mode", ["edit", "duplicate"])
+@pytest.mark.asyncio
+async def test_profile_editor_modal_controls_fit_at_80x24(mode: str) -> None:
+    loaded = LoadedTTSProfile(repository_generation=11, profile=_profile(0))
+    modal = profile_library_module.TTSProfileEditorModal(
+        loaded,
+        assignment_count=3,
+        mode=mode,  # type: ignore[arg-type]
+    )
+
+    class _ModalHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    app = _ModalHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+
+        dialog = modal.query_one("#stts-profile-editor-dialog")
+        name = modal.query_one("#stts-profile-editor-name", Input)
+        model = modal.query_one("#stts-profile-editor-model", Input)
+        voice = modal.query_one("#stts-profile-editor-voice", Input)
+        error = modal.query_one("#stts-profile-editor-error", Static)
+        cancel = modal.query_one("#stts-profile-editor-cancel", Button)
+        save = modal.query_one("#stts-profile-editor-save", Button)
+
+        name.value = ""
+        save.press()
+        await pilot.pause()
+
+        for widget in (dialog, name, model, voice, error, cancel, save):
+            region = widget.region
+            assert region.width > 0
+            assert region.height > 0
+            assert region.x >= 0
+            assert region.y >= 0
+            assert region.right <= app.size.width
+            assert region.bottom <= app.size.height
+
+        assert name.can_focus
+        assert model.can_focus
+        assert voice.can_focus
+        assert "Review the profile name" in str(error.render())
+
+        painted = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in modal._compositor.render_strips()
+        )
+        for visible_copy in (
+            "Name",
+            "Exact model",
+            "Exact voice",
+            "Review the profile name",
+            "Cancel",
+            "Save",
+        ):
+            assert visible_copy in painted
+
+
 @pytest.mark.parametrize(
     ("modal_kind", "expected_result"),
     [("editor", None), ("delete", False)],

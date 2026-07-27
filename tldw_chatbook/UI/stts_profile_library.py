@@ -211,12 +211,11 @@ class TTSProfileEditorModal(ModalScreen[TTSProfileDraft | None]):
         max-height: 34;
         background: $panel;
         border: round $accent;
-        padding: 1 2;
+        padding: 0 1;
     }
 
     #stts-profile-editor-title {
         text-style: bold;
-        margin-bottom: 1;
     }
 
     #stts-profile-editor-scope,
@@ -224,7 +223,6 @@ class TTSProfileEditorModal(ModalScreen[TTSProfileDraft | None]):
     #stts-profile-editor-error {
         height: auto;
         color: $text-muted;
-        margin-bottom: 1;
     }
 
     #stts-profile-editor-error {
@@ -233,7 +231,6 @@ class TTSProfileEditorModal(ModalScreen[TTSProfileDraft | None]):
 
     .stts-profile-editor-field {
         height: 3;
-        margin-bottom: 1;
     }
 
     .stts-profile-editor-field Label {
