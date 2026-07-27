@@ -8,11 +8,11 @@ import inspect
 import re
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
 from rich.markup import escape as escape_markup
@@ -232,6 +232,9 @@ from ...Widgets.Library import (
     skill_trust_state_line,
     skill_trust_unlock_enabled,
     skill_user_invocable_label,
+)
+from ...Widgets.Library.library_file_notes_workspace import (
+    LibraryFileNotesWorkspace,
 )
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -1017,10 +1020,38 @@ class LibraryScreen(BaseAppScreen):
         background: transparent;
         content-align: left middle;
     }
+
+    #library-notes-source-strip {
+        height: 1;
+        min-height: 1;
+    }
+
+    #library-notes-source-strip Button {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+        background: transparent;
+    }
     """
 
-    def __init__(self, app_instance: Any, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        app_instance: Any,
+        *,
+        file_notes_workspace_factory: (
+            Callable[[], LibraryFileNotesWorkspace] | None
+        ) = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(app_instance, "library", **kwargs)
+        self._library_notes_source: Literal["database", "files"] = "database"
+        self._library_file_notes_workspace: LibraryFileNotesWorkspace | None = None
+        self._library_file_notes_workspace_factory = (
+            file_notes_workspace_factory or LibraryFileNotesWorkspace
+        )
         self._local_source_records: dict[str, tuple[Mapping[str, Any], ...]] = {
             "notes": (),
             "media": (),
@@ -1491,7 +1522,7 @@ class LibraryScreen(BaseAppScreen):
                 group="library_nav_open_source",
             )
 
-    def on_unmount(self) -> None:
+    async def on_unmount(self) -> None:
         """Unregister the ingest registry listener registered in ``on_mount``.
 
         ``on_unmount`` (not ``on_screen_suspend``) is the correct pairing:
@@ -1511,6 +1542,9 @@ class LibraryScreen(BaseAppScreen):
         ``False`` after removal) -- so this call is what actually closes
         the window, not the guard.
         """
+        workspace = self._library_file_notes_workspace
+        if workspace is not None:
+            await workspace.shutdown()
         super().on_unmount()
         registry = self._library_ingest_registry()
         if registry is not None:
@@ -1687,6 +1721,22 @@ class LibraryScreen(BaseAppScreen):
             max_length=200,
         )
 
+    def _file_notes_active(self) -> bool:
+        """Return whether the retained File Notes workspace owns the canvas."""
+        return (
+            getattr(self, "_library_notes_source", "database") == "files"
+            and getattr(self, "_library_selected_row_id", "")
+            == LIBRARY_ROW_BROWSE_NOTES
+            and getattr(self, "_library_file_notes_workspace", None) is not None
+        )
+
+    async def _flush_active_file_notes(self) -> bool:
+        """Delegate the common leave guard only while Files owns Notes."""
+        if not self._file_notes_active():
+            return True
+        assert self._library_file_notes_workspace is not None
+        return await self._library_file_notes_workspace.flush_pending_work()
+
     async def flush_pending_work(self) -> bool:
         """Persist pending note edits before the app navigates away.
 
@@ -1703,6 +1753,7 @@ class LibraryScreen(BaseAppScreen):
             Both veto the navigation so the screen instance holding the
             edits is not discarded. True once nothing dirty remains.
         """
+        file_notes_flush_allowed = await self._flush_active_file_notes()
         await self._flush_library_note_save()
         prompt_flush_allowed = await self._flush_library_prompt_save()
         skill_flush_allowed = await self._flush_library_skill_save()
@@ -1714,7 +1765,8 @@ class LibraryScreen(BaseAppScreen):
             # so only the skill veto reports here.
             self._notify_skill_dirty_veto()
         return (
-            not self._library_note_dirty
+            file_notes_flush_allowed
+            and not self._library_note_dirty
             and prompt_flush_allowed
             and skill_flush_allowed
         )
@@ -1741,7 +1793,7 @@ class LibraryScreen(BaseAppScreen):
         """
         if not isinstance(context, Mapping):
             return
-        if self.is_mounted and self._library_note_dirty:
+        if self.is_mounted and (self._library_note_dirty or self._file_notes_active()):
             # Defense in depth for direct callers: navigation always
             # composes a fresh (unmounted) screen, but a future palette
             # shortcut could invoke this on a live, mounted editor mid-edit. Applying it synchronously would
@@ -1768,6 +1820,8 @@ class LibraryScreen(BaseAppScreen):
         leaves the editor in place -- the same guard
         ``_select_library_rail_row`` applies.
         """
+        if not await self._flush_active_file_notes():
+            return
         await self._flush_library_note_save()
         if self._library_note_dirty:
             return
@@ -2061,7 +2115,7 @@ class LibraryScreen(BaseAppScreen):
         )
         self._library_loaded = True
         self._invalidate_library_workspace_depth_state()
-        if self.is_mounted:
+        if self.is_mounted and not self._file_notes_active():
             self.refresh(recompose=True)
 
     def _apply_source_snapshot_timeout(self) -> None:
@@ -3662,6 +3716,34 @@ class LibraryScreen(BaseAppScreen):
             id="library-header-line",
             classes="destination-status-row",
         )
+        if shell.canvas_kind == "notes":
+            with Horizontal(id="library-notes-source-strip"):
+                database_source = Button(
+                    "Database",
+                    id="library-notes-source-database",
+                    compact=True,
+                )
+                database_source.disabled = self._library_notes_source == "database"
+                yield database_source
+                yield Static("|", markup=False)
+                files_source = Button(
+                    "Files",
+                    id="library-notes-source-files",
+                    compact=True,
+                )
+                files_source.disabled = self._library_notes_source == "files"
+                yield files_source
+            if self._library_notes_source == "files":
+                workspace = self._library_file_notes_workspace
+                if workspace is not None:
+                    yield workspace
+                else:
+                    yield Static(
+                        "Opening File Notes…",
+                        id="library-file-notes-loading",
+                        markup=False,
+                    )
+                return
         shell_grid = Horizontal(
             id="library-shell-grid", classes="ds-panel destination-workbench"
         )
@@ -4392,7 +4474,11 @@ class LibraryScreen(BaseAppScreen):
         # different note (or left the editor), a slower in-flight fetch for
         # the previous selection must not overwrite the current one -- the
         # same stale-race guard as ``_refresh_library_media_detail``.
-        if note_id != self._selected_note_id or self._library_notes_view != "editor":
+        if (
+            note_id != self._selected_note_id
+            or self._library_notes_view != "editor"
+            or self._library_notes_source != "database"
+        ):
             return
         if not isinstance(detail, Mapping):
             # The note no longer exists -- deleted elsewhere, or a stale
@@ -4417,7 +4503,11 @@ class LibraryScreen(BaseAppScreen):
         # same way ``_refresh_library_media_detail`` re-checks after its own
         # second (highlights) fetch, so a switch that happened during that
         # fetch cannot land keywords for the wrong note.
-        if note_id != self._selected_note_id or self._library_notes_view != "editor":
+        if (
+            note_id != self._selected_note_id
+            or self._library_notes_view != "editor"
+            or self._library_notes_source != "database"
+        ):
             return
         if keywords is not None and isinstance(self._library_note_detail, Mapping):
             enriched_detail = dict(self._library_note_detail)
@@ -6685,6 +6775,33 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         await self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
 
+    @on(Button.Pressed, "#library-notes-source-files")
+    async def _show_library_file_notes(self, event: Button.Pressed) -> None:
+        """Leave Database Notes safely and lazily mount File Notes."""
+        event.stop()
+        if self._library_notes_source == "files":
+            return
+        await self._flush_library_note_save()
+        if self._library_note_dirty:
+            return
+        if self._library_file_notes_workspace is None:
+            self._library_file_notes_workspace = (
+                self._library_file_notes_workspace_factory()
+            )
+        self._library_notes_source = "files"
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-source-database")
+    async def _show_library_database_notes(self, event: Button.Pressed) -> None:
+        """Return to Database Notes only after the File Notes leave guard."""
+        event.stop()
+        if self._library_notes_source == "database":
+            return
+        if not await self._flush_active_file_notes():
+            return
+        self._library_notes_source = "database"
+        self.refresh(recompose=True)
+
     @on(Button.Pressed, ".library-rail-row")
     async def handle_library_rail_row(self, event: Button.Pressed) -> None:
         """Dispatch a Library rail row press: navigate, browse, or open a canvas."""
@@ -6726,6 +6843,8 @@ class LibraryScreen(BaseAppScreen):
         originally omitted here, so a rail switch silently discarded dirty
         skill edits while Back/row-switch exits vetoed them.
         """
+        if not await self._flush_active_file_notes():
+            return
         await self._flush_library_note_save()
         if self._library_note_dirty:
             return
