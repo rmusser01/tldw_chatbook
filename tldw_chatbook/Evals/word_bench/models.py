@@ -16,6 +16,14 @@ PromptMode = Literal["raw", "chat"]
 CanaryVerdict = Literal["pass", "degenerate", "unchecked"]
 
 #: Preflight states mapped onto the design contract's readable status labels.
+#:
+#: ``"mode_unsupported"`` (the design spec's "raw mode unsupported by
+#: endpoint" case) is produced by
+#: ``capture_client._preflight_state_for_error`` specifically for a 404 on
+#: the capture request -- ``capture_client._build_request`` always posts to
+#: a fixed, mode-selected path, so a 404 reliably means that path does not
+#: exist on this server. Every other 4xx stays the more generic
+#: ``"no_logprobs"`` (both labels read "Blocked" below either way).
 _STATUS_LABELS: dict[str, str] = {
     "ok": "Ready",
     "unreachable": "Unavailable",
@@ -95,6 +103,20 @@ class BenchConfig:
             )
         if self.top_k < 1:
             raise ValueError(f"top_k must be >= 1, got {self.top_k}")
+        if self.concurrency < 1:
+            raise ValueError(f"concurrency must be >= 1, got {self.concurrency}")
+        if len(set(self.target_ids)) != len(self.target_ids):
+            # Every per-target map downstream (WordBenchRunner's `clients`,
+            # its preflight/canary dicts, storage.create_run_group's
+            # `run_ids`) is keyed by target id. A duplicate silently
+            # collapses two targets into one -- caught here rather than
+            # letting it surface as "the grid only has N-1 columns".
+            duplicates = sorted(
+                {tid for tid in self.target_ids if self.target_ids.count(tid) > 1}
+            )
+            raise ValueError(
+                f"target_ids must be unique, got duplicates: {duplicates!r}"
+            )
 
 
 @dataclass(frozen=True)

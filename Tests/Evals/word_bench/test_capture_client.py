@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest import mock
 
 import httpx
 import pytest
 
 from tldw_chatbook.Evals.word_bench.capture_client import (
-    CANARY_EXPECT,
     CANARY_PROMPT,
     NEUTRAL_SAMPLER,
     WordBenchCaptureClient,
@@ -296,6 +296,136 @@ async def test_malformed_top_logprobs_entry_becomes_a_cell_error_not_an_exceptio
     assert result.reason == "bad_response"
 
 
-def test_canary_expectation_is_a_widely_agreed_continuation():
-    assert "capital of France" in CANARY_PROMPT
-    assert any("Paris" in tok for tok in CANARY_EXPECT)
+@pytest.mark.asyncio
+async def test_raw_capture_pins_the_unchecked_canary_contract_for_all_call_shapes():
+    """TASK-709: two runner tests (test_canary_pass_verdict_is_also_stamped_
+    onto_every_cell, test_degenerate_canary_propagates_onto_every_cell) rely
+    on capture() NEVER computing a real canary verdict itself -- only
+    _stamp_canary does, using preflight's separately-resolved value. That
+    contract was previously only a code comment; a FakeClient already
+    drifted from it once (see storage/runner history). Exercised against a
+    payload that WOULD trip the degenerate canary check if capture() ever
+    computed one (RAW's top token is " a", not " Paris"), so a regression
+    that started computing a real verdict here would flip this to
+    "degenerate" or "pass", not just silently keep "unchecked" by luck."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=RAW)
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).capture(CANARY_PROMPT, target, "raw", 5)
+
+    assert isinstance(result, CellCapture)
+    assert result.canary == "unchecked"
+
+
+@pytest.mark.asyncio
+async def test_preflight_reports_a_4xx_as_blocked_not_unavailable():
+    """A 4xx means the server was reachable and rejected the request (e.g.
+    "logprobs not supported") -- that is Blocked, not Unavailable."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"error": "logprobs not supported"})
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).preflight(target, "raw", 5)
+
+    assert result.state == "no_logprobs"
+    assert result.status_label == "Blocked"
+
+
+@pytest.mark.asyncio
+async def test_preflight_reports_a_404_specifically_as_mode_unsupported():
+    """_build_request always posts to a fixed, mode-selected path, so a 404
+    reliably means that path does not exist on this server -- the design
+    spec's "raw mode unsupported by endpoint" row."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="not found")
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).preflight(target, "raw", 5)
+
+    assert result.state == "mode_unsupported"
+    assert result.status_label == "Blocked"
+
+
+@pytest.mark.asyncio
+async def test_preflight_reports_a_5xx_as_unavailable_not_blocked():
+    """A 5xx means the server itself failed -- still Unavailable, the same
+    as a transport-level failure, not Blocked."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="service unavailable")
+
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    result = await _client(handler).preflight(target, "raw", 5)
+
+    assert result.state == "unreachable"
+    assert result.status_label == "Unavailable"
+
+
+@pytest.mark.asyncio
+async def test_capture_client_reuses_one_pooled_async_client_across_calls():
+    """No keep-alive across a 100+ cell grid was the defect: a fresh
+    httpx.AsyncClient opened (and closed) per request. Pin that repeated
+    capture() calls through the SAME WordBenchCaptureClient instance reuse
+    ONE underlying httpx.AsyncClient rather than constructing a new one
+    every time."""
+    created: list[object] = []
+    real_init = httpx.AsyncClient.__init__
+
+    def counting_init(self, *args, **kwargs):
+        created.append(self)
+        return real_init(self, *args, **kwargs)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=RAW)
+
+    transport = httpx.MockTransport(handler)
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+
+    with mock.patch.object(httpx.AsyncClient, "__init__", counting_init):
+        client = WordBenchCaptureClient(
+            base_url="http://127.0.0.1:9099", transport=transport
+        )
+        await client.capture("a", target, "raw", 5)
+        await client.capture("b", target, "raw", 5)
+        await client.capture("c", target, "raw", 5)
+        await client.aclose()
+
+    assert len(created) == 1, (
+        "capture() must reuse one pooled AsyncClient across calls, not "
+        "open a new one per request"
+    )
+
+
+@pytest.mark.asyncio
+async def test_aclose_releases_the_pooled_client_and_is_safe_to_call_twice():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=RAW)
+
+    client = _client(handler)
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+    await client.capture("a", target, "raw", 5)
+    assert client._client is not None
+
+    await client.aclose()
+    assert client._client is None
+
+    # Nothing open -- must not raise.
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_used_as_an_async_context_manager_closes_on_exit():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=RAW)
+
+    transport = httpx.MockTransport(handler)
+    target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
+
+    async with WordBenchCaptureClient(
+        base_url="http://127.0.0.1:9099", transport=transport
+    ) as client:
+        result = await client.capture("a", target, "raw", 5)
+        assert isinstance(result, CellCapture)
+        assert client._client is not None
+
+    assert client._client is None

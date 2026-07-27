@@ -6,10 +6,19 @@ dead target is preflight's job, not the fill order's.
 
 Sequential within and across targets by default -- local servers are
 frequently single-slot, and concurrent requests either queue or 503.
+Parallelism is opt-in through ``BenchConfig.concurrency``: a value of 1 (the
+default) runs the original sequential loop, byte-for-byte. A value > 1 fans
+out ONE ROW (all of that row's targets) at a time, bounded by an
+``asyncio.Semaphore`` so a single target never receives two in-flight
+requests at once and the grid never shows a half-filled row -- results are
+always saved back in the row's target order regardless of which request
+actually completed first (``asyncio.gather`` preserves input order), so the
+"row-major, comparable rows" contract holds at any concurrency.
 """
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Callable, Optional, Protocol, Sequence
 
@@ -80,7 +89,36 @@ class WordBenchRunner:
         progress: Optional[ProgressFn] = None,
         cancel_token: Optional[CancelToken] = None,
     ) -> RunOutcome:
-        """Execute the grid and return its run group id and preflight verdicts."""
+        """Execute the grid and return its run group id and preflight verdicts.
+
+        Args:
+            config: The bench definition (prompt mode, top_k, concurrency,
+                ...).
+            targets: The columns to measure. Every target must be valid for
+                ``config.prompt_mode`` and carry a unique id --
+                ``storage.create_run_group`` rejects duplicates, since every
+                per-target structure built around ``targets`` (this method's
+                own ``clients`` map included) is keyed by target id.
+            snippets: The rows to measure, in row-major fill order.
+            task_id: The ``eval_tasks`` id this run group's runs are
+                recorded against.
+            progress: Optional ``(done, total)`` callback invoked after each
+                cell is saved. A callback that raises degrades to no further
+                progress reporting rather than aborting the run.
+            cancel_token: Optional cooperative cancellation, checked once per
+                row at ``concurrency > 1`` and once per cell at
+                ``concurrency == 1``.
+
+        Returns:
+            The run group id and the per-target ``PreflightResult`` map
+            resolved before any cell was measured.
+
+        Raises:
+            ValueError: If any target is not valid for
+                ``config.prompt_mode`` (mismatched ``prefix``/
+                ``system_prompt``), or -- via ``storage.create_run_group``
+                -- if ``targets`` contains duplicate ids.
+        """
         for target in targets:
             if not target.is_valid_for_mode(config.prompt_mode):
                 raise ValueError(
@@ -89,7 +127,58 @@ class WordBenchRunner:
                 )
 
         clients = {t.id: self._client_factory(t) for t in targets}
+        try:
+            return await self._run_with_clients(
+                config, targets, snippets, task_id, clients, progress, cancel_token
+            )
+        finally:
+            # Every client this run created is done being used -- by
+            # success, by a returned cancellation, or by a raised exception
+            # (including a hard asyncio.CancelledError, re-raised from
+            # _run_with_clients below) -- before this line ever runs, so
+            # closing here can never race a concurrent in-flight capture()
+            # call. Duck-typed: fakes used throughout this test suite carry
+            # no aclose() and are left alone; only WordBenchCaptureClient's
+            # pooled httpx.AsyncClient actually holds a resource to release.
+            await self._close_clients(clients)
 
+    async def _run_with_clients(
+        self,
+        config: BenchConfig,
+        targets: Sequence[Target],
+        snippets: Sequence[Snippet],
+        task_id: str,
+        clients: dict[str, CaptureClientLike],
+        progress: Optional[ProgressFn],
+        cancel_token: Optional[CancelToken],
+    ) -> RunOutcome:
+        """Preflight every target, then fill the grid row-major.
+
+        Split out of ``run()`` so that ``run()``'s
+        ``finally: await self._close_clients(clients)`` can wrap this whole
+        body -- including a raised exception or a hard
+        ``asyncio.CancelledError`` propagated from within it.
+
+        Args:
+            config: See ``run()``.
+            targets: See ``run()``. Mode validity was already checked by
+                ``run()`` and is not re-checked here.
+            snippets: See ``run()``.
+            task_id: See ``run()``.
+            clients: One ``CaptureClientLike`` per target id, built by
+                ``run()`` before this call so it can close every one of them
+                in its ``finally``, regardless of how this method returns or
+                raises.
+            progress: See ``run()``.
+            cancel_token: See ``run()``.
+
+        Returns:
+            See ``run()``.
+
+        Raises:
+            ValueError: Via ``storage.create_run_group``, if ``targets``
+                contains duplicate ids.
+        """
         # Preflight before any measurement, so a dead or degenerate target is
         # known up front rather than discovered N cells in.
         results: dict[str, PreflightResult] = {}
@@ -114,50 +203,138 @@ class WordBenchRunner:
             self._db.update_run_status(run_id, "running")
 
         total = len(snippets) * len(targets)
-        done = 0
+        # A plain mutable holder, not a local `done`/`progress` pair, because
+        # the parallel path's per-row helper needs to read and mutate both
+        # across `await` points without `nonlocal` scattered through two
+        # nested closures.
+        state = {"done": 0, "progress": progress}
 
-        for snippet in snippets:  # row-major
-            for target in targets:
-                if cancel_token is not None and cancel_token.is_cancelled:
-                    logger.info(
-                        "Word bench run group {} cancelled after {}/{} cells",
-                        group_id, done, total,
-                    )
-                    for run_id in run_ids.values():
-                        self._db.update_run_status(run_id, "cancelled")
-                    return RunOutcome(group_id=group_id, preflight=results)
-
-                result = await clients[target.id].capture(
-                    snippet.text, target, config.prompt_mode, config.top_k
+        def _report(cell_target: Target, result: CellCapture | CellError) -> None:
+            stamped = self._stamp_canary(result, canaries[cell_target.id])
+            save_cell(self._db, run_ids[cell_target.id], snippet, stamped)
+            state["done"] += 1
+            fn = state["progress"]
+            if fn is None:
+                return
+            try:
+                fn(state["done"], total)
+            except Exception:
+                # A broken UI-supplied callback must degrade to no progress
+                # reporting, not kill the run -- otherwise it escapes to
+                # run()'s caller and is indistinguishable from a real
+                # cancellation, leaving this run group's rows stranded at
+                # "running" forever (the same failure class the
+                # asyncio.CancelledError handling below exists to close,
+                # just for a different exception type). Stop calling it
+                # after the first failure rather than logging once per
+                # remaining cell.
+                logger.opt(exception=True).warning(
+                    "Word bench progress callback raised for run group "
+                    "{}; continuing without progress reporting.",
+                    group_id,
                 )
-                result = self._stamp_canary(result, canaries[target.id])
-                save_cell(self._db, run_ids[target.id], snippet, result)
+                state["progress"] = None
 
-                done += 1
-                if progress is not None:
-                    try:
-                        progress(done, total)
-                    except Exception:
-                        # A broken UI-supplied callback must degrade to no
-                        # progress reporting, not kill the run -- otherwise
-                        # it escapes to run()'s caller and is indistinguishable
-                        # from a real cancellation, leaving this run group's
-                        # rows stranded at "running" forever (the same failure
-                        # class the asyncio.CancelledError handler around
-                        # runner.run() exists to close, just for a different
-                        # exception type). Stop calling it after the first
-                        # failure rather than logging once per remaining cell.
-                        logger.opt(exception=True).warning(
-                            "Word bench progress callback raised for run group "
-                            "{}; continuing without progress reporting.",
-                            group_id,
+        def _mark_cancelled(reason: str) -> RunOutcome:
+            logger.info(
+                "Word bench run group {} cancelled ({}) after {}/{} cells",
+                group_id, reason, state["done"], total,
+            )
+            for run_id in run_ids.values():
+                self._db.update_run_status(run_id, "cancelled")
+            return RunOutcome(group_id=group_id, preflight=results)
+
+        semaphore = asyncio.Semaphore(config.concurrency) if config.concurrency > 1 else None
+
+        try:
+            for snippet in snippets:  # row-major
+                if cancel_token is not None and cancel_token.is_cancelled:
+                    return _mark_cancelled("cooperative")
+
+                if semaphore is None:
+                    # concurrency == 1: the original sequential loop,
+                    # unchanged -- per-cell cancel check, deterministic call
+                    # order, no asyncio.gather involved.
+                    for target in targets:
+                        if cancel_token is not None and cancel_token.is_cancelled:
+                            return _mark_cancelled("cooperative")
+                        result = await clients[target.id].capture(
+                            snippet.text, target, config.prompt_mode, config.top_k
                         )
-                        progress = None
+                        _report(target, result)
+                else:
+                    # concurrency > 1: fan out this row's targets, bounded by
+                    # `semaphore` so no target ever has two in-flight
+                    # requests and at most `config.concurrency` requests are
+                    # in flight across the whole row. Cancellation is
+                    # checked once per ROW rather than once per cell here --
+                    # a row already dispatched is allowed to finish so the
+                    # grid never persists a half-captured row (see the
+                    # module docstring).
+                    async def _capture_one(
+                        target: Target,
+                    ) -> tuple[Target, CellCapture | CellError]:
+                        async with semaphore:
+                            captured = await clients[target.id].capture(
+                                snippet.text, target, config.prompt_mode, config.top_k
+                            )
+                        return target, captured
+
+                    # asyncio.gather preserves input order in its returned
+                    # list regardless of completion order, so saving/
+                    # reporting below always happens in `targets` order --
+                    # the row-major guarantee holds even though the
+                    # underlying requests may complete out of order.
+                    row_results = await asyncio.gather(
+                        *(_capture_one(target) for target in targets)
+                    )
+                    for target, result in row_results:
+                        _report(target, result)
+        except asyncio.CancelledError:
+            # A HARD cancellation (e.g. the Task running this coroutine is
+            # cancelled directly) is a BaseException, not caught by the
+            # `except Exception` above -- it must still leave no run row
+            # stranded at "running". Mark them cancelled and let the
+            # cancellation propagate; it must never be swallowed here.
+            logger.info(
+                "Word bench run group {} hard-cancelled after {}/{} cells",
+                group_id, state["done"], total,
+            )
+            for run_id in run_ids.values():
+                self._db.update_run_status(run_id, "cancelled")
+            raise
 
         for run_id in run_ids.values():
             self._db.update_run_status(run_id, "completed")
 
         return RunOutcome(group_id=group_id, preflight=results)
+
+    @staticmethod
+    async def _close_clients(clients: dict[str, CaptureClientLike]) -> None:
+        """Best-effort cleanup for every client this run created.
+
+        ``CaptureClientLike`` does not require an ``aclose()`` -- most test
+        fakes have none -- so this is duck-typed rather than part of the
+        Protocol. A client that fails to close cleanly must not prevent the
+        run's own outcome (already computed by the caller) from being
+        returned, or turn a successful/cancelled run into a raised
+        exception.
+
+        Args:
+            clients: The ``run()``-built map of target id to client. Each
+                entry that has an ``aclose()`` attribute is awaited; entries
+                without one (most test fakes) are left alone.
+        """
+        for client in clients.values():
+            aclose = getattr(client, "aclose", None)
+            if aclose is None:
+                continue
+            try:
+                await aclose()
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Word bench capture client failed to close cleanly; continuing."
+                )
 
     @staticmethod
     def _stamp_canary(

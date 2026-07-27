@@ -73,6 +73,28 @@ def test_run_group_creates_one_run_per_target(db, config, targets, snippets):
         assert db.get_run(run_id)["run_group_id"] == group_id
 
 
+def test_create_run_group_rejects_duplicate_target_ids(db, config, snippets):
+    """create_run_group is called directly here, bypassing BenchConfig's own
+    constructor validation entirely -- exactly the path a caller who builds
+    `targets` independently (as this module's tests do) would take. Every
+    per-target map it and its caller build (`run_ids` here; WordBenchRunner's
+    `clients`/preflight/canary maps upstream) is keyed by target id, so a
+    duplicate would otherwise silently collapse two targets into one run
+    with no error and no `eval_runs` row created for the second."""
+    task_id = save_bench(db, config)
+    model_id = db.create_model(name="duplicated", provider="llama_cpp", model_id="m")
+    dup_targets = [
+        Target(id=model_id, name="duplicated", provider="llama_cpp", model_id="m"),
+        Target(id=model_id, name="duplicated-again", provider="llama_cpp", model_id="m"),
+    ]
+    runs_before = len(db.list_runs(limit=10_000))
+    with pytest.raises(ValueError, match="unique"):
+        create_run_group(db, task_id, config, dup_targets, snippets)
+    assert len(db.list_runs(limit=10_000)) == runs_before, (
+        "rejection must happen before any eval_runs row is created"
+    )
+
+
 def test_run_snapshot_carries_snippet_text_not_only_ids(db, config, targets, snippets):
     """A grid must still render after its dataset is edited or deleted."""
     task_id = save_bench(db, config)
@@ -125,8 +147,13 @@ def test_grid_renders_from_the_snapshot_after_the_bench_is_edited(
     save_cell(db, run_ids[targets[0].id], snippets[0], _capture())
 
     edited = BenchConfig(
+        # dataset_id is intentionally the fixture's own real id, not a
+        # literal placeholder: save_bench's edit path never actually passes
+        # dataset_id through to update_task (see its docstring), so this
+        # value's identity is inert either way -- but the project's fixture
+        # convention is "no literal ids", and a real id costs nothing here.
         name="loaded-nouns v2", prompt_mode="chat", top_k=5,
-        dataset_id="d1", target_ids=(targets[0].id,), probes=(),
+        dataset_id=config.dataset_id, target_ids=(targets[0].id,), probes=(),
     )
     save_bench(db, edited, task_id=task_id)
 

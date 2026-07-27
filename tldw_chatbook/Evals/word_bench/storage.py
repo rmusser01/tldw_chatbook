@@ -163,7 +163,23 @@ def create_run_group(
     snippets: Sequence[Snippet],
     preflight: Optional[Mapping[str, PreflightResult]] = None,
 ) -> tuple[str, dict[str, str]]:
-    """Create one eval_runs row per target, sharing a run_group_id."""
+    """Create one eval_runs row per target, sharing a run_group_id.
+
+    Raises:
+        ValueError: If ``targets`` contains duplicate ids. ``run_ids`` below
+            (and every per-target structure a caller builds around it, e.g.
+            ``WordBenchRunner``'s ``clients``/preflight/canary maps) is keyed
+            by ``target.id``, so a duplicate would silently collapse two
+            targets into one run/column with no error. ``BenchConfig``
+            rejects duplicate ``target_ids`` at construction time, but this
+            function is called directly in tests and does not go through
+            ``BenchConfig``, so the same guard is enforced here too.
+    """
+    target_ids = [t.id for t in targets]
+    if len(set(target_ids)) != len(target_ids):
+        duplicates = sorted({tid for tid in target_ids if target_ids.count(tid) > 1})
+        raise ValueError(f"targets must have unique ids, got duplicates: {duplicates!r}")
+
     group_id = uuid.uuid4().hex
     snapshot = _snapshot(config, targets, snippets, preflight)
     run_ids: dict[str, str] = {}
