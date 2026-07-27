@@ -246,10 +246,52 @@ def test_path_traversal_with_dotdot_is_rejected(root, monkeypatch):
     assert not (root / "agent-runs").exists()
 
 
+def test_non_numeric_segment_bytes_explicit_arg_uses_default():
+    """Test explicit segment_bytes="not-a-number" uses default."""
+    writer = RunLogWriter(segment_bytes="not-a-number")
+    assert writer._segment_bytes == 4_000_000  # default
+
+
+def test_zero_segment_bytes_explicit_arg_uses_default():
+    """Test explicit segment_bytes=0 uses default."""
+    writer = RunLogWriter(segment_bytes=0)
+    assert writer._segment_bytes == 4_000_000  # default
+
+
+def test_negative_segment_bytes_explicit_arg_uses_default():
+    """Test explicit segment_bytes=-999 uses default."""
+    writer = RunLogWriter(segment_bytes=-999)
+    assert writer._segment_bytes == 4_000_000  # default
+
+
+def test_non_numeric_max_record_bytes_explicit_arg_uses_default():
+    """Test explicit max_record_bytes="not-a-number" uses default."""
+    writer = RunLogWriter(max_record_bytes="not-a-number")
+    assert writer._max_record_bytes == 1_000_000  # default
+
+
+def test_zero_max_record_bytes_explicit_arg_uses_default():
+    """Test explicit max_record_bytes=0 uses default."""
+    writer = RunLogWriter(max_record_bytes=0)
+    assert writer._max_record_bytes == 1_000_000  # default
+
+
+def test_negative_max_record_bytes_explicit_arg_uses_default():
+    """Test explicit max_record_bytes=-5 uses default."""
+    writer = RunLogWriter(max_record_bytes=-5)
+    assert writer._max_record_bytes == 1_000_000  # default
+
+
+def test_legitimate_explicit_args_still_work():
+    """Test that valid explicit args (e.g., 400, 50) continue to work."""
+    writer = RunLogWriter(segment_bytes=400, max_record_bytes=50)
+    assert writer._segment_bytes == 400
+    assert writer._max_record_bytes == 50
+
+
 def test_real_resolve_log_root_prefers_workspace_over_sandbox(monkeypatch):
-    """Test real resolve_log_root() prefers workspace folder over sandbox root."""
+    """Test real resolve_log_root() calls and prefers workspace folder over sandbox root."""
     from pathlib import Path
-    from unittest.mock import MagicMock
 
     tmp_sandbox = Path("/tmp/sandbox")
     tmp_workspace = Path("/tmp/workspace")
@@ -261,25 +303,62 @@ def test_real_resolve_log_root_prefers_workspace_over_sandbox(monkeypatch):
         # Return (sandbox, workspace) tuple; resolve_log_root should prefer workspace
         return [tmp_sandbox, tmp_workspace]
 
-    # Stub the imports at the point resolve_log_root uses them
+    # Stub the underlying imports that resolve_log_root uses
     import tldw_chatbook.Tools.file_operation_tools as file_tools
-
-    monkeypatch.setattr(file_tools, "_tool_sandbox_root", mock_tool_sandbox_root)
-
     import tldw_chatbook.Tools.workspace_file_roots as ws_roots
 
+    monkeypatch.setattr(file_tools, "_tool_sandbox_root", mock_tool_sandbox_root)
     monkeypatch.setattr(ws_roots, "allowed_file_roots", mock_allowed_file_roots)
 
+    # Call the REAL resolve_log_root() with stubbed seams
     result = run_log_module.resolve_log_root()
     assert result == tmp_workspace  # Prefers workspace over sandbox
 
 
-def test_resolve_log_root_returns_none_on_exception(monkeypatch):
-    """Test that resolve_log_root returns None (logging off) when resolution raises."""
-    monkeypatch.setattr(
-        run_log_module, "resolve_log_root", lambda: None
-    )
-    writer = RunLogWriter()
-    writer.bind("run-abc")
-    assert writer.is_active is False
-    assert writer.log_dir is None
+def test_real_resolve_log_root_falls_back_to_sandbox_when_no_workspace(monkeypatch):
+    """Test real resolve_log_root() falls back to sandbox root when no workspace folder bound."""
+    from pathlib import Path
+
+    tmp_sandbox = Path("/tmp/sandbox")
+
+    def mock_tool_sandbox_root():
+        return tmp_sandbox
+
+    def mock_allowed_file_roots(write=False, sandbox_root=None):
+        # Return only sandbox; no workspace folders bound
+        return [tmp_sandbox]
+
+    # Stub the underlying imports
+    import tldw_chatbook.Tools.file_operation_tools as file_tools
+    import tldw_chatbook.Tools.workspace_file_roots as ws_roots
+
+    monkeypatch.setattr(file_tools, "_tool_sandbox_root", mock_tool_sandbox_root)
+    monkeypatch.setattr(ws_roots, "allowed_file_roots", mock_allowed_file_roots)
+
+    # Call the REAL resolve_log_root()
+    result = run_log_module.resolve_log_root()
+    assert result == tmp_sandbox  # Falls back to sandbox
+
+
+def test_real_resolve_log_root_returns_none_on_exception(monkeypatch):
+    """Test real resolve_log_root() returns None when underlying call raises."""
+    from pathlib import Path
+
+    tmp_sandbox = Path("/tmp/sandbox")
+
+    def mock_tool_sandbox_root():
+        return tmp_sandbox
+
+    def mock_allowed_file_roots_raises(write=False, sandbox_root=None):
+        raise RuntimeError("cannot access workspace roots")
+
+    # Stub the underlying imports
+    import tldw_chatbook.Tools.file_operation_tools as file_tools
+    import tldw_chatbook.Tools.workspace_file_roots as ws_roots
+
+    monkeypatch.setattr(file_tools, "_tool_sandbox_root", mock_tool_sandbox_root)
+    monkeypatch.setattr(ws_roots, "allowed_file_roots", mock_allowed_file_roots_raises)
+
+    # Call the REAL resolve_log_root(); it catches and logs, returns None
+    result = run_log_module.resolve_log_root()
+    assert result is None  # Returns None (logging off) on exception

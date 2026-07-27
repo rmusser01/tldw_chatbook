@@ -43,6 +43,49 @@ def _setting(key: str, default):
     return default if value is None else value
 
 
+def _coerce_dir_name(value, default: str) -> str:
+    """Coerce dir_name defensively: non-string or empty falls back to default.
+
+    Args:
+        value: Value to coerce (from explicit arg or config).
+        default: Default value if coercion fails.
+
+    Returns:
+        A valid string directory name, or ``default``.
+    """
+    try:
+        s = str(value)
+        if not s:
+            raise ValueError("empty dir_name")
+        return s
+    except Exception:
+        logger.opt(exception=True).warning("run log: invalid dir_name, using default")
+        return default
+
+
+def _coerce_positive_int(value, default: int, name: str) -> int:
+    """Coerce to positive int defensively: non-numeric, zero, or negative falls back to default.
+
+    Args:
+        value: Value to coerce (from explicit arg or config).
+        default: Default value if coercion fails.
+        name: Parameter name for logging (e.g., "segment_bytes").
+
+    Returns:
+        A positive integer, or ``default``.
+    """
+    try:
+        val = int(value)
+        if val <= 0:
+            raise ValueError(f"non-positive {name}")
+        return val
+    except Exception:
+        logger.opt(exception=True).warning(
+            f"run log: invalid {name}, using default"
+        )
+        return default
+
+
 def resolve_log_root() -> Path | None:
     """Return the directory the log tree is created under, or ``None``.
 
@@ -97,52 +140,34 @@ class RunLogWriter:
             max_record_bytes: Per-record ceiling; defaults to
                 ``[agents] run_log_max_record_bytes``.
         """
-        # Coerce dir_name defensively; non-string or empty falls back to default.
-        if dir_name:
-            self._dir_name = str(dir_name)
+        # Coerce dir_name defensively using shared helper.
+        if dir_name is not None:
+            self._dir_name = _coerce_dir_name(dir_name, DEFAULT_DIR_NAME)
         else:
             configured = _setting("run_log_dir_name", DEFAULT_DIR_NAME)
-            try:
-                self._dir_name = str(configured)
-                if not self._dir_name:
-                    raise ValueError("empty dir_name")
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "run log: invalid dir_name config, using default"
-                )
-                self._dir_name = DEFAULT_DIR_NAME
+            self._dir_name = _coerce_dir_name(configured, DEFAULT_DIR_NAME)
 
-        # Coerce segment_bytes defensively; non-numeric or invalid falls back to default.
+        # Coerce segment_bytes defensively using shared helper.
         if segment_bytes is not None:
-            self._segment_bytes = int(segment_bytes)
+            self._segment_bytes = _coerce_positive_int(
+                segment_bytes, DEFAULT_SEGMENT_BYTES, "segment_bytes"
+            )
         else:
             configured = _setting("run_log_segment_bytes", DEFAULT_SEGMENT_BYTES)
-            try:
-                val = int(configured)
-                if val <= 0:
-                    raise ValueError("non-positive segment_bytes")
-                self._segment_bytes = val
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "run log: invalid segment_bytes config, using default"
-                )
-                self._segment_bytes = DEFAULT_SEGMENT_BYTES
+            self._segment_bytes = _coerce_positive_int(
+                configured, DEFAULT_SEGMENT_BYTES, "segment_bytes"
+            )
 
-        # Coerce max_record_bytes defensively; non-numeric or invalid falls back to default.
+        # Coerce max_record_bytes defensively using shared helper.
         if max_record_bytes is not None:
-            self._max_record_bytes = int(max_record_bytes)
+            self._max_record_bytes = _coerce_positive_int(
+                max_record_bytes, DEFAULT_MAX_RECORD_BYTES, "max_record_bytes"
+            )
         else:
             configured = _setting("run_log_max_record_bytes", DEFAULT_MAX_RECORD_BYTES)
-            try:
-                val = int(configured)
-                if val <= 0:
-                    raise ValueError("non-positive max_record_bytes")
-                self._max_record_bytes = val
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "run log: invalid max_record_bytes config, using default"
-                )
-                self._max_record_bytes = DEFAULT_MAX_RECORD_BYTES
+            self._max_record_bytes = _coerce_positive_int(
+                configured, DEFAULT_MAX_RECORD_BYTES, "max_record_bytes"
+            )
 
         self._lock = threading.Lock()
         self._counter = 0
