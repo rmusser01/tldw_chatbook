@@ -81,22 +81,117 @@ class EvaluationOrchestrator:
     def _initialize_database(self, db_path: str, client_id: str) -> EvalsDB:
         """Initialize database connection with proper path."""
         if db_path is None:
-            # Use default path in user data directory
-            from tldw_chatbook.config import load_settings
+            # Resolve the default path through the same shared, profile-aware
+            # mechanism every other DB in the app uses. Do NOT re-derive the
+            # profile / data-root from settings.get(...) with guessed keys --
+            # load_settings() publishes the profile name as "USERS_NAME"
+            # (not "user_id"/"username"), and it does not publish
+            # "user_data_dir" at all, so both lookups used to silently miss.
+            from tldw_chatbook.config import get_user_data_dir
 
-            settings = load_settings()
-            user_data_dir = Path(
-                settings.get("user_data_dir", "~/.local/share/tldw_cli")
-            ).expanduser()
+            user_dir = get_user_data_dir()
+            resolved_path = user_dir / "evals.db"
 
-            # Use user ID from config
-            user_id = settings.get("user_id", settings.get("username", "default_user"))
-            db_path = user_data_dir / user_id / "evals.db"
+            self._warn_if_legacy_data_exists(resolved_path)
+
+            db_path = resolved_path
 
         # Ensure directory exists
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
         return EvalsDB(db_path=str(db_path), client_id=client_id)
+
+    @staticmethod
+    def _safe_validate_existence_check_path(
+        path: Path, purpose: str
+    ) -> Optional[Path]:
+        """Validate a path through validate_path_simple before an existence check.
+
+        This exists solely to decide whether to emit an informational warning
+        about legacy Evals data -- it must never turn into a startup failure.
+        validate_path_simple can raise on paths it has no business rejecting
+        here (see TASK-838: its raw-string scan for parent-directory patterns
+        runs before normalization and over-rejects some legitimate Windows
+        paths, e.g. drive-relative paths containing "..\\" style segments).
+        If validation raises for any reason, log why at debug level and
+        return None so the caller degrades to "skip the warning" instead of
+        propagating the error into _initialize_database.
+        """
+        try:
+            return validate_path_simple(path)
+        except Exception as e:
+            logger.debug(
+                "Skipping legacy-Evals-data check for {} path {}: {}",
+                purpose,
+                path,
+                e,
+            )
+            return None
+
+    @staticmethod
+    def _warn_if_legacy_data_exists(resolved_path: Path) -> None:
+        """Warn once if the profile-resolved evals.db is missing but legacy data exists.
+
+        Before this fix, EVERY profile shared a single Evals database at the
+        literal, hardcoded path "~/.local/share/tldw_cli/default_user/evals.db"
+        -- not "<configured_data_root>/default_user/evals.db". The buggy code
+        read `settings.get("user_data_dir", "~/.local/share/tldw_cli")`, and
+        `load_settings()` never publishes a "user_data_dir" key, so that
+        fallback literal always won even for users with a custom
+        `[paths] data_dir`. The legacy location this function checks must
+        therefore stay hardcoded too, or it would miss exactly the users most
+        likely to be surprised (those who already customized their data root).
+
+        If the newly-resolved, profile-specific path has no data yet but that
+        legacy file does, the user's existing benches/datasets/runs are not
+        lost -- they are simply still sitting at the old, hardcoded path.
+        Surface that clearly instead of silently starting a brand-new, empty
+        database.
+
+        This function never copies, moves, or deletes anything.
+        """
+        legacy_path = (
+            Path("~/.local/share/tldw_cli").expanduser() / "default_user" / "evals.db"
+        )
+
+        validated_resolved_path = EvaluationOrchestrator._safe_validate_existence_check_path(
+            resolved_path, "resolved Evals database"
+        )
+        if validated_resolved_path is None:
+            # Validation failed (e.g. TASK-838 over-rejection). This function
+            # only ever emits an informational warning, so degrade to
+            # "nothing to warn about" rather than risk breaking Evals
+            # startup over a path we can't safely check.
+            return
+        resolved_path = validated_resolved_path
+
+        validated_legacy_path = EvaluationOrchestrator._safe_validate_existence_check_path(
+            legacy_path, "legacy Evals database"
+        )
+        if validated_legacy_path is None:
+            return
+        legacy_path = validated_legacy_path
+
+        if resolved_path == legacy_path:
+            # The configured profile IS "default_user" (with no custom data
+            # root) -- this IS the legacy location, nothing to warn about.
+            return
+
+        if resolved_path.exists():
+            # This profile already has its own data; nothing to warn about.
+            return
+
+        if legacy_path.exists():
+            logger.warning(
+                "No Evals database found for the current profile at {}. "
+                "Older versions of this app ignored the configured profile and "
+                "always wrote Evals data under the 'default_user' profile -- "
+                "your existing benches, datasets and runs are still there: {}. "
+                "Nothing has been moved or copied automatically; if you want "
+                "that data under this profile, copy the file there yourself.",
+                resolved_path,
+                legacy_path,
+            )
 
     @contextmanager
     def _db_operation(self, operation_name: str):
