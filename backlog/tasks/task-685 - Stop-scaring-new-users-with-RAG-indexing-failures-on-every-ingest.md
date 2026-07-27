@@ -1,11 +1,11 @@
 ---
 id: TASK-685
 title: Stop scaring new users with RAG indexing failures on every ingest
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-26 04:05'
-updated_date: '2026-07-26 23:57'
+updated_date: '2026-07-27 00:16'
 labels:
   - ingest
   - ux
