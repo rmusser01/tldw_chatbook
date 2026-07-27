@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -18,18 +18,23 @@ from tldw_chatbook.TTS.adapter_registry import (
     TTSReconfigurationTicket,
 )
 from tldw_chatbook.TTS.adapter_types import (
+    CapabilitySnapshotState,
     CleanupCallback,
     ProgressSink,
     TTSAudioResponse,
+    TTSNativeCapabilitySnapshot,
     TTSOperationError,
     TTSProgress,
     TTSProviderCatalog,
     TTSProviderDescriptor,
-    TTSRequest,
     TTSRegistryClosedError,
+    TTSRequest,
+    TTSStructuredVoiceAdapter,
+    TTSVoiceDiscoveryResult,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
+from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.request_admission import TTSRequestAdmissionCoordinator
 
@@ -37,6 +42,8 @@ logger = logging.getLogger(__name__)
 
 _CLEANUP_FAILURE_NOTE = "TTS cleanup also failed while preserving the original error"
 _TTS_SETTINGS_FOREGROUND_TIMEOUT_SECONDS = 2.0
+_NATIVE_CAPABILITY_TIMEOUT_SECONDS = 10.0
+_NATIVE_CAPABILITY_VOICE_CONCURRENCY = 4
 
 TTSSettingsProviderStatus = Literal[
     "applied",
@@ -540,6 +547,217 @@ class TTSService:
         """
         operation = await self.admit(request)
         return await operation.synthesize(progress_sink)
+
+    async def synthesize_exact(
+        self,
+        request: TTSRequest,
+        progress_sink: ProgressSink | None = None,
+    ) -> tuple[TTSAudioResponse, TTSRequestedSelectionSnapshot]:
+        """Synthesize one exact native request with admitted provenance."""
+        self._require_native_provider(request.provider_id)
+        return await self._request_admission.synthesize_exact(
+            request,
+            progress_sink,
+        )
+
+    async def require_current_configuration_revision(
+        self,
+        provider_id: str,
+        expected_revision: int,
+    ) -> None:
+        """Make one writer-ordered decision about exact provider provenance."""
+        if type(provider_id) is not str or provider_id not in (
+            self._canonical_provider_ids()
+        ):
+            raise ValueError("TTS provider must be an exact canonical provider")
+        if type(expected_revision) is not int:
+            raise TypeError("Expected configuration revision must be an integer")
+        if expected_revision < 0:
+            raise ValueError("Expected configuration revision must be nonnegative")
+        await self._request_admission.require_current_configuration_revision(
+            provider_id,
+            expected_revision,
+        )
+
+    async def get_native_capability_snapshot(
+        self,
+        provider_id: str,
+        exact_voice_model_ids: Iterable[str],
+    ) -> TTSNativeCapabilitySnapshot:
+        """Observe one bounded native capability snapshot without exposing a lease."""
+        self._require_native_provider(provider_id)
+        model_ids = self._distinct_capability_model_ids(exact_voice_model_ids)
+        revision = 0
+        lease: TTSAdapterLease | None = None
+        result = TTSNativeCapabilitySnapshot(
+            provider_id=provider_id,
+            configuration_revision=revision,
+            state="unverified",
+            catalog=None,
+            voice_results={},
+        )
+        primary_error: BaseException | None = None
+        deadline = (
+            asyncio.get_running_loop().time() + _NATIVE_CAPABILITY_TIMEOUT_SECONDS
+        )
+        try:
+            async with asyncio.timeout_at(deadline):
+                (
+                    revision,
+                    lease,
+                ) = await self._request_admission.acquire_native_capability_lease(
+                    provider_id
+                )
+                result = await self._observe_native_capabilities(
+                    provider_id,
+                    revision,
+                    lease.adapter,
+                    model_ids,
+                )
+        except asyncio.CancelledError as error:
+            primary_error = error
+            raise
+        except Exception as error:  # noqa: BLE001 - capability failures are unverified
+            primary_error = error
+            result = TTSNativeCapabilitySnapshot(
+                provider_id=provider_id,
+                configuration_revision=revision,
+                state="unverified",
+                catalog=None,
+                voice_results={},
+            )
+        finally:
+            if lease is not None:
+                if primary_error is None:
+                    await lease.release()
+                else:
+                    await _cleanup_preserving_primary(
+                        lease.release,
+                        primary_error,
+                    )
+        return result
+
+    async def _observe_native_capabilities(
+        self,
+        provider_id: str,
+        configuration_revision: int,
+        adapter: object,
+        model_ids: tuple[str, ...],
+    ) -> TTSNativeCapabilitySnapshot:
+        """Observe at most two complete catalog generations on one adapter."""
+        last_snapshot = TTSNativeCapabilitySnapshot(
+            provider_id=provider_id,
+            configuration_revision=configuration_revision,
+            state="unverified",
+            catalog=None,
+            voice_results={},
+        )
+        for attempt in range(2):
+            catalog = await adapter.get_catalog(refresh=True)  # type: ignore[attr-defined]
+            if (
+                type(catalog) is not TTSProviderCatalog
+                or catalog.provider_id != provider_id
+            ):
+                return last_snapshot
+            if model_ids and not isinstance(adapter, TTSStructuredVoiceAdapter):
+                return TTSNativeCapabilitySnapshot(
+                    provider_id=provider_id,
+                    configuration_revision=configuration_revision,
+                    state="unverified",
+                    catalog=catalog,
+                    voice_results={},
+                )
+
+            semaphore = asyncio.Semaphore(_NATIVE_CAPABILITY_VOICE_CONCURRENCY)
+            assert isinstance(adapter, TTSStructuredVoiceAdapter)
+            observed = await asyncio.gather(
+                *(
+                    self._observe_native_voices(
+                        adapter,
+                        semaphore,
+                        model_id,
+                    )
+                    for model_id in model_ids
+                )
+            )
+            voice_results = dict(zip(model_ids, observed, strict=True))
+            final_catalog = await adapter.get_catalog(refresh=True)  # type: ignore[attr-defined]
+            if (
+                type(final_catalog) is not TTSProviderCatalog
+                or final_catalog.provider_id != provider_id
+            ):
+                return TTSNativeCapabilitySnapshot(
+                    provider_id=provider_id,
+                    configuration_revision=configuration_revision,
+                    state="unverified",
+                    catalog=catalog,
+                    voice_results=voice_results,
+                )
+
+            catalog_moved = final_catalog.revision != catalog.revision
+            authoritative = all(
+                result.provider_id == provider_id
+                and result.model_id == model_id
+                and result.catalog_revision == catalog.revision
+                and result.state != "unverified"
+                for model_id, result in voice_results.items()
+            )
+            state: CapabilitySnapshotState = (
+                "complete" if not catalog_moved and authoritative else "unverified"
+            )
+            last_snapshot = TTSNativeCapabilitySnapshot(
+                provider_id=provider_id,
+                configuration_revision=configuration_revision,
+                state=state,
+                catalog=final_catalog,
+                voice_results=voice_results,
+            )
+            if not catalog_moved or attempt == 1:
+                return last_snapshot
+
+        return last_snapshot
+
+    @staticmethod
+    async def _observe_native_voices(
+        adapter: TTSStructuredVoiceAdapter,
+        semaphore: asyncio.Semaphore,
+        model_id: str,
+    ) -> TTSVoiceDiscoveryResult:
+        async with semaphore:
+            return await adapter.observe_voices(model_id, refresh=True)
+
+    def _require_native_provider(self, provider_id: str) -> None:
+        if type(provider_id) is not str:
+            raise TypeError("TTS provider ID must be a string")
+        native_ids = {
+            descriptor.provider_id
+            for descriptor in self.provider_descriptors()
+            if descriptor.native
+        }
+        if provider_id not in native_ids:
+            raise ValueError("TTS provider must be an exact native provider")
+
+    @staticmethod
+    def _distinct_capability_model_ids(
+        model_ids: Iterable[str],
+    ) -> tuple[str, ...]:
+        distinct: dict[str, None] = {}
+        for model_id in model_ids:
+            if type(model_id) is not str or not model_id:
+                raise ValueError("Capability model ID is invalid")
+            try:
+                model_id.encode("utf-8", errors="strict")
+            except UnicodeError:
+                raise ValueError("Capability model ID is invalid") from None
+            distinct.setdefault(model_id, None)
+        return tuple(distinct)
+
+    async def _release_lease_preserving_primary(
+        self,
+        lease: TTSAdapterLease,
+        primary_error: BaseException,
+    ) -> None:
+        await _cleanup_preserving_primary(lease.release, primary_error)
 
     def preferences_snapshot(self) -> TTSPreferencesSnapshot | None:
         """Return canonical default preferences, or None while unconfigured."""

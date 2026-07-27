@@ -1,8 +1,10 @@
 from tldw_chatbook.TTS.adapter_types import (
+    CapabilitySnapshotState,
     ProgressSink,
     ProviderHealth,
     TTSAudioResponse,
     TTSModelInfo,
+    TTSNativeCapabilitySnapshot,
     TTSOperationCode,
     TTSOperationError,
     TTSProgress,
@@ -13,10 +15,11 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSVoiceDiscoveryResult,
     VoiceDiscoveryState,
 )
-from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest, NormalizationOptions
+from tldw_chatbook.TTS.audio_schemas import NormalizationOptions, OpenAISpeechRequest
 from tldw_chatbook.TTS.playground_types import (
     STTSGeneratedAudio,
     STTSPlaygroundRequest,
+    TTSRequestedSelectionSnapshot,
 )
 from tldw_chatbook.TTS.preferences import TTSConfigMutation, TTSPreferencesSnapshot
 from tldw_chatbook.TTS.profile_errors import (
@@ -46,11 +49,12 @@ from tldw_chatbook.TTS.TTS_Generation import (
 )
 
 __all__ = [
-    "NormalizationOptions",
-    "OpenAISpeechRequest",
     "AssignedTTSProfileSnapshot",
+    "CapabilitySnapshotState",
     "CharacterRef",
     "CharacterTTSAssignment",
+    "NormalizationOptions",
+    "OpenAISpeechRequest",
     "ProfileBackupReceipt",
     "ProfileRepositoryError",
     "ProfileRepositoryState",
@@ -62,26 +66,28 @@ __all__ = [
     "STTSGeneratedAudio",
     "STTSPlaygroundRequest",
     "TTSAudioResponse",
-    "TTSModelInfo",
-    "TTSOperationCode",
-    "TTSOperationError",
     "TTSConfigMutation",
     "TTSGenerationProfile",
-    "TTSProfileRepository",
+    "TTSModelInfo",
+    "TTSNativeCapabilitySnapshot",
+    "TTSOperationCode",
+    "TTSOperationError",
+    "TTSPreferencesSnapshot",
     "TTSProfileDraft",
     "TTSProfilePage",
-    "TTSPreferencesSnapshot",
+    "TTSProfileRepository",
     "TTSProgress",
     "TTSProviderCatalog",
     "TTSProviderDescriptor",
     "TTSRequest",
+    "TTSRequestedSelectionSnapshot",
+    "TTSService",
     "TTSStructuredVoiceAdapter",
     "TTSVoiceDiscoveryResult",
-    "TTSService",
     "VoiceDiscoveryState",
     "bind_tts_service",
-    "close_tts_resources",
     "canonical_json_options",
+    "close_tts_resources",
     "get_tts_service",
     "reset_tts_service_binding",
 ]

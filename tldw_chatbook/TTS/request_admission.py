@@ -11,14 +11,17 @@ from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.adapter_types import (
     ProgressSink,
     TTSAudioResponse,
+    TTSConfigurationRevisionError,
     TTSProviderUnavailableError,
     TTSRequest,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
+from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 
 if TYPE_CHECKING:
+    from tldw_chatbook.TTS.adapter_registry import TTSAdapterLease
     from tldw_chatbook.TTS.TTS_Generation import (
         TTSService,
         _AdmittedTTSOperation,
@@ -203,6 +206,94 @@ class TTSRequestAdmissionCoordinator:
 
         assert operation is not None
         return await operation.synthesize(progress_sink)
+
+    async def acquire_native_capability_lease(
+        self,
+        provider_id: str,
+    ) -> tuple[int, TTSAdapterLease]:
+        """Acquire one revision-matched lease without retaining the read gate."""
+        lease: TTSAdapterLease | None = None
+        try:
+            async with self._gate.read():
+                revision = self._service.configuration_revision(provider_id)
+                lease = await self._service.registry.acquire(
+                    provider_id,
+                    expected_revision=revision,
+                )
+        except BaseException as error:
+            if lease is not None:
+                await self._service._release_lease_preserving_primary(
+                    lease,
+                    error,
+                )
+            raise
+
+        assert lease is not None
+        return revision, lease
+
+    async def synthesize_exact(
+        self,
+        request: TTSRequest,
+        progress_sink: ProgressSink | None = None,
+    ) -> tuple[TTSAudioResponse, TTSRequestedSelectionSnapshot]:
+        """Freeze and admit one exact request under the shared read side."""
+        reservation: _OperationCapacityReservation | None = None
+        operation: _AdmittedTTSOperation | None = None
+        try:
+            reservation = await self._service._reserve_operation_capacity()
+            async with self._gate.read():
+                revision = self._service.configuration_revision(request.provider_id)
+                selection = TTSRequestedSelectionSnapshot(
+                    provider_id=request.provider_id,
+                    model_id=request.model_id,
+                    voice_id=request.voice,
+                    response_format=request.response_format,
+                    speed=request.speed,
+                    options=request.options,
+                    configuration_revision=revision,
+                )
+                admitted_request = TTSRequest(
+                    provider_id=selection.provider_id,
+                    model_id=selection.model_id,
+                    text=request.text,
+                    voice=selection.voice_id,
+                    response_format=selection.response_format,
+                    speed=selection.speed,
+                    options=selection.options,
+                )
+                operation = await self._service._admit_reserved(
+                    admitted_request,
+                    reservation,
+                    expected_configuration_revision=revision,
+                )
+                operation.claim()
+        except BaseException as error:
+            if operation is None:
+                if reservation is not None:
+                    reservation.release_if_untransferred()
+            else:
+                await self._service._close_admitted_operation_preserving_primary(
+                    operation,
+                    error,
+                )
+            raise
+
+        assert operation is not None
+        response = await operation.synthesize(progress_sink)
+        return response, selection
+
+    async def require_current_configuration_revision(
+        self,
+        provider_id: str,
+        expected_revision: int,
+    ) -> None:
+        """Make one writer-ordered provider revision decision."""
+        async with self._gate.read():
+            current_revision = self._service.configuration_revision(provider_id)
+            if current_revision != expected_revision:
+                raise TTSConfigurationRevisionError(
+                    f"TTS provider configuration changed: {provider_id}"
+                )
 
     async def _resolve_model(
         self,

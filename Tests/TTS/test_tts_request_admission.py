@@ -8,23 +8,26 @@ from typing import Any
 import pytest
 
 from Tests.TTS.adapter_fakes import FakeAdapter
+from tldw_chatbook.TTS import TTS_Generation as generation_module
+from tldw_chatbook.TTS import TTSRequestedSelectionSnapshot
 from tldw_chatbook.TTS.adapter_registry import (
     ReconfigureResult,
     TTSAdapterLease,
     TTSAdapterRegistry,
 )
 from tldw_chatbook.TTS.adapter_types import (
-    ProviderHealth,
     ProgressSink,
+    ProviderHealth,
     TTSAudioResponse,
+    TTSConfigurationRevisionError,
     TTSModelInfo,
     TTSProviderCatalog,
     TTSProviderDescriptor,
     TTSProviderReconfiguringError,
     TTSProviderSpec,
     TTSProviderUnavailableError,
-    TTSRequest,
     TTSRegistryClosedError,
+    TTSRequest,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.legacy_bridge import (
@@ -33,7 +36,6 @@ from tldw_chatbook.TTS.legacy_bridge import (
     legacy_provider_specs,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
-from tldw_chatbook.TTS import TTS_Generation as generation_module
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 
 _WAIT_SECONDS = 1.0
@@ -620,6 +622,33 @@ class _CountingRecordingRegistry(_RecordingRegistry):
         await super()._release(slot, record)
 
 
+class _BlockingExactAdapter(_CapturingAdapter):
+    def __init__(self) -> None:
+        super().__init__("audio_cpp")
+        self.synthesis_started = asyncio.Event()
+        self.allow_synthesis = asyncio.Event()
+
+    async def synthesize(
+        self,
+        request: TTSRequest,
+        progress_sink: ProgressSink | None = None,
+    ) -> TTSAudioResponse:
+        self.requests.append(request)
+        self.synthesis_started.set()
+        await self.allow_synthesis.wait()
+        return await FakeAdapter.synthesize(self, request, progress_sink)
+
+
+class _RevisionCountingRegistry(_RecordingRegistry):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.revision_reads = 0
+
+    def configuration_revision(self, provider_id: str) -> int:
+        self.revision_reads += 1
+        return super().configuration_revision(provider_id)
+
+
 def _counting_native_registry(
     adapter: _CapturingAdapter,
     *,
@@ -641,6 +670,144 @@ def _counting_native_registry(
         aliases={},
         shutdown_timeout_seconds=shutdown_timeout_seconds,
     )
+
+
+@pytest.mark.asyncio
+async def test_exact_native_admission_freezes_text_free_selection_and_releases_gate() -> (
+    None
+):
+    adapter = _BlockingExactAdapter()
+    registry = _counting_native_registry(adapter)
+    service = TTSService(registry)
+    mutable_options = {"nested": {"value": 1}}
+    request = TTSRequest(
+        provider_id="audio_cpp",
+        model_id="Model/Exact",
+        text="private submitted text",
+        voice="Voice/Exact",
+        response_format="wav",
+        speed=1.0,
+        options=mutable_options,
+    )
+    synthesis = asyncio.create_task(service.synthesize_exact(request))
+    await _wait_bounded(adapter.synthesis_started.wait())
+    writer_entered = asyncio.Event()
+
+    async def enter_writer() -> None:
+        async with service._request_admission._gate.write():
+            writer_entered.set()
+
+    writer = asyncio.create_task(enter_writer())
+    response: TTSAudioResponse | None = None
+    try:
+        await _wait_bounded(writer_entered.wait())
+        mutable_options["nested"]["value"] = 2
+        adapter.allow_synthesis.set()
+        response, selection = await _wait_bounded(synthesis)
+
+        assert isinstance(selection, TTSRequestedSelectionSnapshot)
+        assert selection.provider_id == "audio_cpp"
+        assert selection.model_id == "Model/Exact"
+        assert selection.voice_id == "Voice/Exact"
+        assert selection.response_format == "wav"
+        assert selection.speed == 1.0
+        assert selection.options == {"nested": {"value": 1}}
+        assert selection.configuration_revision == 1
+        assert not hasattr(selection, "text")
+        assert "private submitted text" not in repr(selection)
+        assert adapter.requests[0].options == {"nested": {"value": 1}}
+        assert registry.expected_revisions == [("audio_cpp", 1)]
+        assert registry._total_leases() == 1
+        response.model_id = "server-reported-model"
+        assert selection.model_id == "Model/Exact"
+    finally:
+        adapter.allow_synthesis.set()
+        await asyncio.gather(synthesis, writer, return_exceptions=True)
+        if response is not None:
+            await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_revision_decision_waits_for_queued_writer_and_reads_once() -> None:
+    adapter = _CapturingAdapter("audio_cpp")
+    registry = _RevisionCountingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=lambda _config: adapter,
+                initial_config={"generation": "one"},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry)
+    first_reader_entered = asyncio.Event()
+    release_first_reader = asyncio.Event()
+    first_reader = asyncio.create_task(
+        _hold_gate(
+            service._request_admission._gate.read(),
+            first_reader_entered,
+            release_first_reader,
+        )
+    )
+    await _wait_bounded(first_reader_entered.wait())
+    writer_entered = asyncio.Event()
+
+    async def publish_new_revision() -> None:
+        async with service._request_admission._gate.write():
+            writer_entered.set()
+            await registry.reconfigure_provider(
+                "audio_cpp",
+                {"generation": "two"},
+            )
+
+    writer = asyncio.create_task(publish_new_revision())
+    while service._request_admission._gate._waiting_writer_count == 0:
+        await asyncio.sleep(0)
+    registry.revision_reads = 0
+    decision = asyncio.create_task(
+        service.require_current_configuration_revision("audio_cpp", 1)
+    )
+    await asyncio.sleep(0)
+    assert not decision.done()
+
+    release_first_reader.set()
+    await _wait_bounded(writer_entered.wait())
+    await _wait_bounded(writer)
+    with pytest.raises(
+        TTSConfigurationRevisionError,
+        match="TTS provider configuration changed: audio_cpp",
+    ):
+        await _wait_bounded(decision)
+
+    assert registry.revision_reads == 1
+    assert registry.configuration_revision("audio_cpp") == 2
+    await first_reader
+    await service.close()
+    await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_current_revision_decision_returns_without_gate_or_lease() -> None:
+    adapter = _CapturingAdapter("audio_cpp")
+    service, registry = _native_service(adapter, _snapshot())
+
+    await service.require_current_configuration_revision("audio_cpp", 1)
+    writer_entered = asyncio.Event()
+    async with service._request_admission._gate.write():
+        writer_entered.set()
+
+    assert writer_entered.is_set()
+    assert registry._total_leases() == 0
+    await service.close()
+    await service.wait_closed()
 
 
 class _GateExitPauseService(TTSService):
