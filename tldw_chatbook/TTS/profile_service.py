@@ -634,12 +634,15 @@ class TTSProfileService:
         if type(value) is not TTSProfilePage:
             raise ProfileServiceError("operation_failed")
         page = cast(TTSProfilePage, value)
+        # Preserve exact-forged Sequence ingress without iterating here; the
+        # snapshot's bounded normalizer remains the runtime authority.
+        page_profiles = cast(tuple[TTSGenerationProfile, ...], page.profiles)
         validation_failed = False
         snapshot = None
         try:
             snapshot = TTSProfilePageSnapshot(
                 repository_generation=generation,
-                profiles=page.profiles,
+                profiles=page_profiles,
                 total=page.total,
             )
         except Exception:  # noqa: BLE001 - hostile results fail closed
