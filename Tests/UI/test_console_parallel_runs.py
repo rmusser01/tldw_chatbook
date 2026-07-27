@@ -15,6 +15,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
+    ConsoleRunMarker,
     ConsoleRunState,
     ConsoleRunStatus,
 )
@@ -414,3 +415,97 @@ async def test_transcript_sync_timer_keeps_ticking_for_background_run_while_view
         )
         await pilot.pause(1.0)
         assert console._console_transcript_sync_timer is None
+
+
+@pytest.mark.asyncio
+async def test_background_approval_parks_with_badge_and_single_toast() -> None:
+    """Task 9 (parked background approvals, parallel-agents spec): a run in
+    a NON-viewed session that needs approval must not steal the mounted
+    approval card out from under whatever the user is currently looking
+    at -- it parks (fleet badge via `set_run_pending_approval` + one
+    toast), and only mounts once the user actually visits it.
+
+    Real interface names (the brief's own names were illustrative):
+    - The approval card is `ChatApprovalCard(id="chat-approval-card")`
+      (`Widgets/Chat_Widgets/chat_task_cards.py`), NOT
+      `#console-approval-card` -- and it is a SINGLETON always present in
+      the DOM (`ConsoleSessionSurface.compose` yields it once, not
+      per-session), toggled via its own `.display` flag rather than
+      mount/unmount. "Not mounted" is therefore verified as `display is
+      False`, matching `ChatApprovalCard.set_batch`/`set_approval`'s own
+      visibility convention.
+    - `ChatScreen._park_console_approval(session_id)` is the seam this
+      task adds -- the UI-thread half of the park path (flag + toast),
+      wired as `ConsoleChatController.park_pending_approval` and invoked
+      via `call_from_thread` from `request_mcp_approvals`'s park branch.
+      The controller's own `_parked_approval_payloads` map (populated by
+      `request_mcp_approvals` before parking) is what `switch_session`
+      later reads to mount the SAME payload through the existing
+      `set_pending_approval` path -- seeded directly here to drive the
+      seam without a live worker thread/round (mirrors how the sibling
+      `test_tab_and_sidebar_show_run_markers_and_fleet_line` drives
+      `_set_run_state` directly instead of a real streamed run).
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)  # keep viewing the first session
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        # Seed the retained round payload `request_mcp_approvals` would
+        # have stored before parking, then drive the UI-thread park seam
+        # directly.
+        controller._parked_approval_payloads[background] = {
+            "calls": [
+                {
+                    "llm_name": "mcp__srv__tool",
+                    "server_key": "local:srv",
+                    "tool_name": "tool",
+                    "server_label": "Srv",
+                    "arguments": {},
+                    "reason": "ask",
+                    "options": ["approve_once", "deny"],
+                }
+            ],
+            "timeout_seconds": 30.0,
+        }
+        console._park_console_approval(background)
+        await pilot.pause(0.3)
+
+        approval_card = console.query_one("#chat-approval-card")
+        assert not approval_card.display  # parked: never mounted over the viewed tab
+        approval_toasts = [n for n in notifications if "needs approval" in n]
+        assert len(approval_toasts) == 1
+        assert (
+            controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+        )
+
+        # Visiting mounts the card through the existing mount path.
+        controller.switch_session(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.3)
+        assert console.query_one("#chat-approval-card").display
+
+        # A second visit-away-and-back (no new decision) re-mounts the SAME
+        # card without a second toast -- card state derives from the run's
+        # pending-approval state, not mounted-widget lifetime.
+        controller.switch_session(viewed)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.1)
+        assert not console.query_one("#chat-approval-card").display
+        controller.switch_session(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.1)
+        assert console.query_one("#chat-approval-card").display
+        assert len(
+            [n for n in notifications if "needs approval" in n]
+        ) == 1

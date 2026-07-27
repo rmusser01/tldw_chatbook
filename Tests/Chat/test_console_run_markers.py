@@ -117,3 +117,38 @@ def test_terminal_transition_clears_leaked_pending_approval_flag(
         ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"), session_id=session_a
     )
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.FINISHED_OK
+
+
+def test_terminal_transition_clears_pending_approval_flag_on_active_session(
+    controller_with_two_sessions,
+):
+    """PA-T9 finding #2 (deferred from the Task 7 review): the terminal-
+    transition discard exercised above lived ONLY inside `_set_run_state`'s
+    non-active branch (alongside the unvisited-outcome stamp), so a
+    pending-approval flag on the session you were actually LOOKING AT
+    survived its own run's termination -- a misleading NEEDS_APPROVAL badge
+    with no round left behind it. The discard must apply regardless of
+    whether the terminating session is the active one.
+    """
+    controller, session_a, session_b = controller_with_two_sessions
+    controller.store.switch_session(session_a)
+    assert controller.store.active_session_id == session_a
+
+    controller.set_run_pending_approval(session_a, True)
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"), session_id=session_a
+    )
+    # The active session's own terminal transition is never stamped as an
+    # "unvisited" outcome (it is seen live), but the leaked pending-
+    # approval flag must not survive it either.
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
+
+    # Same for a STOPPED transition (user hit Stop mid-approval-wait).
+    controller.set_run_pending_approval(session_b, True)
+    controller.store.switch_session(session_b)
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STOPPED, "stopped"), session_id=session_b
+    )
+    assert controller.run_marker_for(session_b) is ConsoleRunMarker.NONE

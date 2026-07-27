@@ -3483,6 +3483,12 @@ class ChatScreen(BaseAppScreen):
         self._console_chat_controller.set_pending_approval = (
             self._set_console_pending_approval
         )
+        # Task 9 (parked background approvals): UI-thread bridge target for
+        # a NON-active session's approval round -- badge + one toast,
+        # never the mounted-card path above.
+        self._console_chat_controller.park_pending_approval = (
+            self._park_console_approval
+        )
         self._console_chat_controller.set_pending_skill_install = (
             self._set_console_pending_skill_install
         )
@@ -15271,6 +15277,67 @@ class ChatScreen(BaseAppScreen):
         """
         current = self.chat_state.task_resume_state
         self.set_task_resume_state(replace(current, pending_approval=approval))
+
+    def _park_console_approval(self, session_id: str) -> None:
+        """PA-T9 (parked background approvals): badge a NON-viewed session's
+        pending approval round without mounting the (singleton) approval
+        card, and fire the one-per-round toast.
+
+        UI-thread bridge target for ``ConsoleChatController.
+        request_mcp_approvals``' park branch (invoked via ``app_instance.
+        call_from_thread`` exactly once per parked round -- the round's
+        session differs from the store's active session at round-start).
+        Deliberately does NOT touch ``task_resume_state``/``set_task_
+        resume_state`` -- that slot is reserved for whichever session is
+        actually being viewed (``_set_console_pending_approval`` above);
+        parking must never steal the mounted card out from under the
+        session the user is currently looking at. The controller's own
+        ``_parked_approval_payloads`` map (populated by ``request_mcp_
+        approvals`` before this fires) is what ``ConsoleChatController.
+        switch_session`` later reads to mount the SAME payload once the
+        user actually visits ``session_id``.
+
+        Also usable directly as a test seam to drive the park path without
+        a live worker thread/round -- setting the badge flag itself here
+        (in addition to ``request_mcp_approvals`` also setting it directly)
+        is what makes that safe: this method is fully self-contained.
+
+        Args:
+            session_id: The parked round's OWNING session.
+        """
+        controller = self._console_chat_controller
+        if controller is None:
+            return
+        controller.set_run_pending_approval(session_id, True)
+        session_title = session_id
+        workspace_id = CONSOLE_GLOBAL_WORKSPACE_ID
+        for session in controller.store.sessions():
+            if session.id == session_id:
+                session_title = session.title
+                workspace_id = session.workspace_id
+                break
+        workspace_name = self._console_workspace_display_name(workspace_id)
+        self.app_instance.notify(
+            f"Agent in {session_title} ({workspace_name}) needs approval."
+        )
+
+    def _console_workspace_display_name(self, workspace_id: str) -> str:
+        """Return ``workspace_id``'s display name via the registry, falling
+        back to the raw id when the service is unavailable or the
+        workspace can't be resolved (PA-T9 toast copy)."""
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        if registry_service is not None:
+            try:
+                workspace = registry_service.get_workspace(workspace_id)
+                if workspace is not None and workspace.name:
+                    return workspace.name
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Unable to resolve Console workspace name for approval toast"
+                )
+        return str(workspace_id)
 
     def _set_console_pending_skill_install(
         self, payload: Dict[str, Any] | None
