@@ -217,12 +217,12 @@ class SwarmUIWidget(Container):
             self.server_status = status
 
             # Update status indicator
-            self.call_from_thread(self.update_status_indicator, status)
+            self.app.call_from_thread(self.update_status_indicator, status)
 
         except Exception as e:
             logger.error(f"Error checking server status: {e}")
             self.server_status = "offline"
-            self.call_from_thread(self.update_status_indicator, "offline")
+            self.app.call_from_thread(self.update_status_indicator, "offline")
 
     def update_status_indicator(self, status: str) -> None:
         """Update the status indicator."""
@@ -261,7 +261,7 @@ class SwarmUIWidget(Container):
 
             if models:
                 self.current_models = [m.get("name", m) for m in models]
-                self.call_from_thread(self.update_model_selector, self.current_models)
+                self.app.call_from_thread(self.update_model_selector, self.current_models)
 
         except Exception as e:
             logger.error(f"Error loading models: {e}")
@@ -361,13 +361,13 @@ class SwarmUIWidget(Container):
             return
 
         self.is_generating = True
-        self.call_from_thread(self.show_generating_ui)
+        self.app.call_from_thread(self.show_generating_ui)
 
         try:
             # Get parameters from UI
             prompt = self.query_one("#prompt-input", TextArea).text.strip()
             if not prompt:
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self.show_status_message, "Please enter a prompt", "error"
                 )
                 return
@@ -411,8 +411,8 @@ class SwarmUIWidget(Container):
             if result.success and result.images:
                 self.last_result = result
                 self.current_image = result.images[0]
-                self.call_from_thread(self.show_image_preview, result.images[0])
-                self.call_from_thread(
+                self.app.call_from_thread(self.show_image_preview, result.images[0])
+                self.app.call_from_thread(
                     self.show_status_message,
                     f"Image generated in {result.generation_time:.1f}s",
                     "success",
@@ -422,19 +422,19 @@ class SwarmUIWidget(Container):
                 self.post_message(ImageGenerationMessage(True, result.images))
             else:
                 error_msg = result.error or "Unknown error"
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self.show_status_message, f"Generation failed: {error_msg}", "error"
                 )
                 self.post_message(ImageGenerationMessage(False, [], error_msg))
 
         except Exception as e:
             logger.error(f"Image generation error: {e}")
-            self.call_from_thread(self.show_status_message, f"Error: {str(e)}", "error")
+            self.app.call_from_thread(self.show_status_message, f"Error: {str(e)}", "error")
             self.post_message(ImageGenerationMessage(False, [], str(e)))
 
         finally:
             self.is_generating = False
-            self.call_from_thread(self.hide_generating_ui)
+            self.app.call_from_thread(self.hide_generating_ui)
 
     def show_generating_ui(self) -> None:
         """Show UI state for generating."""

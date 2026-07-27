@@ -1097,7 +1097,7 @@ class CodeRepoCopyPasteWindow(ModalScreen):
             file_size = zip_path.stat().st_size
             size_mb = file_size / (1024 * 1024)
 
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.notify,
                 f"ZIP exported successfully!\nSaved to: {zip_path}\nSize: {size_mb:.1f} MB",
                 severity="success",
@@ -1115,7 +1115,7 @@ class CodeRepoCopyPasteWindow(ModalScreen):
 
         except Exception as e:
             logger.error(f"Failed to export ZIP: {e}")
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.notify, f"Failed to export ZIP: {str(e)}", severity="error"
             )
         finally:
@@ -1148,11 +1148,11 @@ class CodeRepoCopyPasteWindow(ModalScreen):
                 )
 
             # Update tree view with new children
-            await self.call_from_thread(tree_view.expand_node, node_path, child_nodes)
+            await self.app.call_from_thread(tree_view.expand_node, node_path, child_nodes)
 
         except Exception as e:
             logger.error(f"Failed to load children for {node_path}: {e}")
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.notify,
                 f"Failed to load directory contents: {str(e)}",
                 severity="error",
