@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shutil
 import sqlite3
 import stat
+import tempfile
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -2664,3 +2666,28 @@ def test_restore_rejects_same_source_and_destination_before_open(
         )
 
     assert raw_calls == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory contract")
+def test_sqlite_opens_under_the_unresolved_platform_temporary_directory():
+    """TASK-950: `tempfile.gettempdir()` crosses `/var -> private/var` on macOS.
+
+    `tmp_path` hides this because pytest resolves its base directory, so this
+    test deliberately uses the platform temporary path exactly as the stdlib
+    hands it out.
+    """
+
+    scratch = Path(tempfile.mkdtemp(prefix="tldw-950-sqlite-"))
+    try:
+        target = scratch / "task950.sqlite"
+        connection = connect_private_sqlite("db.base", target)
+        try:
+            connection.execute("CREATE TABLE probe (value INTEGER)")
+            connection.execute("INSERT INTO probe VALUES (950)")
+            connection.commit()
+            assert connection.execute("SELECT value FROM probe").fetchone() == (950,)
+        finally:
+            connection.close()
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)

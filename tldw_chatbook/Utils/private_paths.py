@@ -27,6 +27,9 @@ _NONBLOCK = getattr(os, "O_NONBLOCK", 0)
 _NOCTTY = getattr(os, "O_NOCTTY", 0)
 _PRIVATE_FILE_OPEN_FLAGS = os.O_RDONLY | _NOFOLLOW | _NONBLOCK | _NOCTTY
 _WINDOWS_PLATFORM = os.name == "nt"
+# Matches the usual kernel ELOOP budget, so a symlink cycle terminates instead
+# of walking forever.
+_MAX_TRUSTED_SYMLINK_HOPS = 8
 
 
 class PrivatePathStatus(StrEnum):
@@ -136,6 +139,98 @@ def _open_directory_component(parent_fd: int, component: str) -> int:
     )
 
 
+def _trusted_symlink(link_stat: os.stat_result) -> bool:
+    """Report whether a symlink component may be traversed.
+
+    Only *root-owned* symlinks qualify, and only when no other user could have
+    written them. This is deliberately narrower than `_trusted_directory_owner`,
+    which also accepts the effective uid: a directory owned by the caller is the
+    caller's own storage, whereas following a caller-owned symlink would silently
+    relocate the application's private files behind a lexical alias. Platform
+    symlinks such as macOS `/var -> private/var` are root-owned, so this is the
+    smallest rule that lets the walk reach the system temporary directory.
+
+    Note that Linux reports every symlink as mode 0o777, so the write-bit gate
+    rejects all symlinks there. That is intentional: Linux has no root-owned
+    symlink on the paths this module walks, so no traversal is needed.
+    """
+
+    if link_stat.st_uid != 0:
+        return False
+    return not bool(stat.S_IMODE(link_stat.st_mode) & 0o022)
+
+
+def _read_trusted_symlink(
+    parent_fd: int,
+    component: str,
+    selected: Path,
+    exc: OSError,
+) -> str:
+    """Return a trusted symlink component's target, or re-raise the open error.
+
+    Both the `lstat` and the `readlink` go through `dir_fd`, so the component is
+    never re-derived from a path string that an attacker could repoint between
+    the two calls.
+    """
+
+    if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
+        raise _private_path_error_from_oserror(selected, exc) from None
+    try:
+        link_stat = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError:
+        raise _private_path_error_from_oserror(selected, exc) from None
+    if not stat.S_ISLNK(link_stat.st_mode) or not _trusted_symlink(link_stat):
+        raise _private_path_error_from_oserror(selected, exc) from None
+    try:
+        return os.readlink(component, dir_fd=parent_fd)
+    except OSError:
+        raise _private_path_error_from_oserror(selected, exc) from None
+
+
+def _symlink_walk_components(target: str) -> tuple[bool, list[str]]:
+    absolute = target.startswith(os.sep)
+    components = [part for part in target.split(os.sep) if part not in {"", os.curdir}]
+    # A target that names its own directory ("." or "/") must still produce one
+    # walk step so the per-component trust checks run on the resulting directory.
+    return absolute, components or [os.curdir]
+
+
+def _follow_trusted_symlink(
+    *,
+    current_fd: int,
+    component: str,
+    pending: list[str],
+    hops: int,
+    selected: Path,
+    exc: OSError,
+) -> tuple[int, int]:
+    """Splice a trusted symlink's target into the pending walk.
+
+    Returns the descriptor the walk should continue from and the new hop count.
+    `current_fd` is only replaced once its successor is open, so the caller
+    always has exactly one descriptor to close on failure.
+    """
+
+    # Classify first, so an unrelated open failure keeps reporting its own cause
+    # even once symlinks have been followed.
+    target = _read_trusted_symlink(current_fd, component, selected, exc)
+    if hops >= _MAX_TRUSTED_SYMLINK_HOPS:
+        raise PrivatePathError(
+            PrivatePathResult(
+                selected,
+                PrivatePathStatus.LINK_OR_NON_REGULAR,
+                reason="symlink_hop_limit_exceeded",
+            )
+        )
+    absolute, components = _symlink_walk_components(target)
+    pending[:0] = components
+    if not absolute:
+        return current_fd, hops + 1
+    root_fd = os.open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
+    os.close(current_fd)
+    return root_fd, hops + 1
+
+
 def _same_identity(left: os.stat_result, right: os.stat_result) -> bool:
     return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
 
@@ -214,7 +309,10 @@ def _open_verified_parent(
     current_fd = os.open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
     try:
         current_stat = os.fstat(current_fd)
-        for component in parts[1:-1]:
+        pending = list(parts[1:-1])
+        symlink_hops = 0
+        while pending:
+            component = pending.pop(0)
             if not _trusted_directory_owner(current_stat, euid):
                 raise PrivatePathError(
                     PrivatePathResult(
@@ -245,18 +343,16 @@ def _open_verified_parent(
                     )
                 ) from None
             except OSError as exc:
-                status = (
-                    PrivatePathStatus.LINK_OR_NON_REGULAR
-                    if exc.errno in {errno.ELOOP, errno.ENOTDIR}
-                    else PrivatePathStatus.OPERATION_FAILED
+                current_fd, symlink_hops = _follow_trusted_symlink(
+                    current_fd=current_fd,
+                    component=component,
+                    pending=pending,
+                    hops=symlink_hops,
+                    selected=selected,
+                    exc=exc,
                 )
-                raise PrivatePathError(
-                    PrivatePathResult(
-                        selected,
-                        status,
-                        reason=type(exc).__name__,
-                    )
-                ) from None
+                current_stat = os.fstat(current_fd)
+                continue
 
             transferred = False
             try:
@@ -895,8 +991,11 @@ def secure_private_directory(
     hardened_final = False
     try:
         current_stat = os.fstat(current_fd)
-        for index, component in enumerate(parts[1:], start=1):
-            is_final = index == len(parts) - 1
+        pending = list(parts[1:])
+        symlink_hops = 0
+        while pending:
+            component = pending.pop(0)
+            is_final = not pending
             if not _trusted_directory_owner(current_stat, euid):
                 raise PrivatePathError(
                     PrivatePathResult(
@@ -939,7 +1038,16 @@ def secure_private_directory(
                 next_fd = _open_directory_component(current_fd, component)
                 created_component = True
             except OSError as exc:
-                raise _private_path_error_from_oserror(selected, exc) from None
+                current_fd, symlink_hops = _follow_trusted_symlink(
+                    current_fd=current_fd,
+                    component=component,
+                    pending=pending,
+                    hops=symlink_hops,
+                    selected=selected,
+                    exc=exc,
+                )
+                current_stat = os.fstat(current_fd)
+                continue
 
             transferred = False
             try:
@@ -1031,7 +1139,30 @@ def verify_trusted_directory(
     *,
     allow_shared_sticky: bool,
 ) -> PrivatePathResult:
-    """Verify an existing lexical directory without creating or changing it."""
+    """Verify an existing lexical directory without creating or changing it.
+
+    Security intent — do not weaken this to make a test pass:
+
+    The walk starts at `/` and opens one component at a time through `dir_fd`,
+    with `O_NOFOLLOW`, checking every directory it crosses is owned by root or
+    the effective uid and is not group/world-writable without the sticky bit.
+    The point is that no other local user can ever redirect the final directory,
+    and that the answer cannot change between the check and the open, because
+    the path string is never re-derived after the first component.
+
+    A symlink component is crossed only when the symlink *itself* passes the
+    same trust test (see `_trusted_symlink`: root-owned, no group/world write
+    bits), and traversal then resumes from its target under the identical
+    per-component rules, capped at `_MAX_TRUSTED_SYMLINK_HOPS`. That is what
+    lets macOS reach `/var/folders/...` across `/var -> private/var`. Anything
+    else — a caller-owned alias, a link in a shared directory, a non-directory —
+    still fails with `LINK_OR_NON_REGULAR`.
+
+    Resolving the path up front (`Path.resolve()`, `os.path.realpath`) would be
+    a much simpler way to reach the same directories and is the wrong answer: it
+    follows every symlink before anything has been vetted and re-opens a name
+    that may have changed since. `lexical_path` deliberately does not resolve.
+    """
 
     selected = lexical_path(path)
     if not _posix_guards_available():
@@ -1071,8 +1202,11 @@ def verify_trusted_directory(
     current_fd = os.open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
     try:
         current_stat = os.fstat(current_fd)
-        for index, component in enumerate(parts[1:], start=1):
-            is_final = index == len(parts) - 1
+        pending = list(parts[1:])
+        symlink_hops = 0
+        while pending:
+            component = pending.pop(0)
+            is_final = not pending
             if not _trusted_directory_owner(current_stat, euid):
                 raise PrivatePathError(
                     PrivatePathResult(
@@ -1104,7 +1238,16 @@ def verify_trusted_directory(
                     )
                 ) from None
             except OSError as exc:
-                raise _private_path_error_from_oserror(selected, exc) from None
+                current_fd, symlink_hops = _follow_trusted_symlink(
+                    current_fd=current_fd,
+                    component=component,
+                    pending=pending,
+                    hops=symlink_hops,
+                    selected=selected,
+                    exc=exc,
+                )
+                current_stat = os.fstat(current_fd)
+                continue
 
             transferred = False
             try:
