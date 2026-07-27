@@ -29,6 +29,16 @@ def test_bundled_provider_defaults_use_current_models():
     assert parsed["chat_defaults"]["provider"] == "OpenAI"
     assert parsed["chat_defaults"]["model"] == "gpt-5.6-terra"
 
+    model_capabilities = parsed["model_capabilities"]
+    assert model_capabilities["models"]["gpt-5.6-terra"] == {
+        "vision": True,
+        "max_images": 10,
+    }
+    assert model_capabilities["models"]["claude-sonnet-5"] == {
+        "vision": True,
+        "max_images": 5,
+    }
+
     providers = parsed["providers"]
     assert providers["DeepSeek"] == ["deepseek-v4-flash", "deepseek-v4-pro"]
     assert providers["Anthropic"][:4] == [

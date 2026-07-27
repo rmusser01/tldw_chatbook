@@ -3185,6 +3185,7 @@ llm_context_document_limit = 10
 "gpt-4-turbo-2024-04-09" = { vision = true, max_images = 10 }
 "gpt-4o" = { vision = true, max_images = 10 }
 "gpt-4o-mini" = { vision = true, max_images = 10 }
+"gpt-5.6-terra" = { vision = true, max_images = 10 }
 
 # Anthropic models
 "claude-3-opus-20240229" = { vision = true, max_images = 5 }
@@ -3192,6 +3193,7 @@ llm_context_document_limit = 10
 "claude-3-haiku-20240307" = { vision = true, max_images = 5 }
 "claude-3-5-sonnet-20240620" = { vision = true, max_images = 5 }
 "claude-3-5-sonnet-20241022" = { vision = true, max_images = 5 }
+"claude-sonnet-5" = { vision = true, max_images = 5 }
 
 # Google models
 "gemini-pro-vision" = { vision = true, max_images = 1 }
