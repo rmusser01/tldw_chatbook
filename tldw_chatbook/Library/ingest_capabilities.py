@@ -344,8 +344,8 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 name="transcription_provider",
                 label="Transcription provider",
                 type="select",
-                default="parakeet-onnx",
-                options=("parakeet-onnx", "faster-whisper"),
+                default="default",
+                options=("default", "parakeet-onnx", "faster-whisper"),
                 depends_on="audio_processing",
             ),
             OptionField(

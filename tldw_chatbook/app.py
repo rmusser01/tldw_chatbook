@@ -188,6 +188,10 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     classify_ingest_source,
     persist_parsed_media,
 )
+from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
+    BatchSTTRoutingError,
+    resolve_batch_stt_route,
+)
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
@@ -2299,23 +2303,37 @@ class LibraryIngestQueueMixin:
             )
             options["extract_images"] = flat_opts.get("extract_images", False)
         elif group == "audio_video":
-            transcription_provider = (
-                flat_opts.get("transcription_provider") or "parakeet-onnx"
+            provider = flat_opts.get("transcription_provider")
+            if provider is None:
+                provider = "default"
+            target_language = flat_opts.get("translation_target_language")
+            if target_language is None:
+                target_language = flat_opts.get("target_language")
+            route = resolve_batch_stt_route(
+                provider=provider,
+                language=flat_opts.get("language"),
+                target_language=target_language,
             )
-            options["transcription_provider"] = transcription_provider
+            options["transcription_provider"] = route.provider
             selected_model_dir = (
                 str(flat_opts.get("transcription_model_dir") or "").strip()
-                if transcription_provider == "parakeet-onnx"
+                if route.provider == "parakeet-onnx"
                 else ""
             )
             options["transcription_model_dir"] = selected_model_dir or None
-            options["transcription_model"] = (
-                "nemo-parakeet-tdt-0.6b-v2"
-                if transcription_provider == "parakeet-onnx"
-                else flat_opts.get("model")
-                or flat_opts.get("transcription_model")
-            )
-            options["language"] = flat_opts.get("language", "en")
+            selected_model = route.model
+            if selected_model is None and route.requested_provider != "default":
+                selected_model = flat_opts.get("model") or flat_opts.get(
+                    "transcription_model"
+                )
+                if route.requested_provider == "faster-whisper" and not selected_model:
+                    selected_model = "base"
+            options["transcription_model"] = selected_model
+            options["language"] = route.requested_language
+            options["translation_target_language"] = route.target_language
+            options["transcription_precision"] = route.precision
+            options["transcription_local_files_only"] = route.local_files_only
+            options["transcription_batch_route_resolved"] = True
             options["timestamps"] = flat_opts.get("timestamps", True)
             options["diarization"] = flat_opts.get("diarization", False)
         elif group == "ebook":
@@ -2413,7 +2431,26 @@ class LibraryIngestQueueMixin:
             parsing_count += 1
             if job.detected_type in _INGEST_HEAVY_TYPES:
                 heavy_parsing_count += 1
-            options = self._ingest_job_options(claimed)
+            try:
+                options = self._ingest_job_options(claimed)
+            except BatchSTTRoutingError as exc:
+                error_text = _sanitize_library_ingest_error_text(str(exc))
+                failure_text = error_text or "Batch transcription routing failed."
+                logger.warning(
+                    "Library ingest batch STT routing failed "
+                    f"(job_id={claimed.job_id}, "
+                    f"detected_type={claimed.detected_type}, "
+                    f"error={failure_text})."
+                )
+                self.library_ingest_jobs.mark_failed(
+                    claimed.job_id,
+                    error=failure_text,
+                    permanent=False,
+                )
+                parsing_count -= 1
+                if claimed.detected_type in _INGEST_HEAVY_TYPES:
+                    heavy_parsing_count -= 1
+                continue
             job_id = claimed.job_id
             source_path = claimed.source_path
             try:

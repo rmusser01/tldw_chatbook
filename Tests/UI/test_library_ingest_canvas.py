@@ -797,7 +797,7 @@ async def test_mounting_option_panels_posts_no_option_changes():
 
 
 @pytest.mark.asyncio
-async def test_audio_video_defaults_to_parakeet_onnx_without_whisper_models():
+async def test_audio_video_defaults_to_semantic_provider_with_exact_controls_disabled():
     form = _default_form()
     form.expanded_type_groups.add("audio_video")
     state = build_library_ingest_state(
@@ -821,23 +821,114 @@ async def test_audio_video_defaults_to_parakeet_onnx_without_whisper_models():
             provider = pilot.app.query_one(
                 "#opt-audio_video-transcription_provider", Select
             )
-            model = pilot.app.query_one(
-                "#opt-audio_video-transcription_model", Select
-            )
+            model = pilot.app.query_one("#opt-audio_video-transcription_model", Select)
             model_dir = pilot.app.query_one(
                 "#opt-audio_video-transcription_model_dir", Input
             )
-            assert provider.value == "parakeet-onnx"
+            assert provider.value == "default"
             assert model.disabled is True
-            assert model_dir.disabled is False
+            assert model_dir.disabled is True
             assert model_dir.value == ""
             install = pilot.app.query_one(
                 "#opt-audio_video-install-parakeet-v2", Button
             )
             assert "Install verified Parakeet v2 INT8" in str(install.label)
+            assert install.disabled is True
+            install.press()
+            await pilot.pause()
+            assert app.parakeet_install_requests == 0
+
+
+@pytest.mark.asyncio
+async def test_explicit_parakeet_enables_model_dir_and_verified_installer():
+    form = _default_form()
+    form.expanded_type_groups.add("audio_video")
+    form.type_options = {"audio_video": {"transcription_provider": "parakeet-onnx"}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/a.mp3"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _MessageRecordingHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            provider = pilot.app.query_one(
+                "#opt-audio_video-transcription_provider", Select
+            )
+            model = pilot.app.query_one("#opt-audio_video-transcription_model", Select)
+            model_dir = pilot.app.query_one(
+                "#opt-audio_video-transcription_model_dir", Input
+            )
+            install = pilot.app.query_one(
+                "#opt-audio_video-install-parakeet-v2", Button
+            )
+
+            assert provider.value == "parakeet-onnx"
+            assert model.disabled is True
+            assert model_dir.disabled is False
+            assert install.disabled is False
             install.press()
             await pilot.pause()
             assert app.parakeet_install_requests == 1
+
+
+@pytest.mark.asyncio
+async def test_explicit_faster_whisper_enables_only_whisper_model_control():
+    form = _default_form()
+    form.expanded_type_groups.add("audio_video")
+    form.type_options = {"audio_video": {"transcription_provider": "faster-whisper"}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/a.mp3"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            assert (
+                pilot.app.query_one(
+                    "#opt-audio_video-transcription_provider", Select
+                ).value
+                == "faster-whisper"
+            )
+            assert (
+                pilot.app.query_one(
+                    "#opt-audio_video-transcription_model", Select
+                ).disabled
+                is False
+            )
+            assert (
+                pilot.app.query_one(
+                    "#opt-audio_video-transcription_model_dir", Input
+                ).disabled
+                is True
+            )
+            assert (
+                pilot.app.query_one(
+                    "#opt-audio_video-install-parakeet-v2", Button
+                ).disabled
+                is True
+            )
 
 
 @pytest.mark.asyncio
