@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import threading
-import unicodedata
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Generic, TypeVar, cast
+from unicodedata import category as _unicode_category
 from unicodedata import normalize as _unicode_normalize
 from uuid import UUID, uuid4
 
@@ -41,6 +41,7 @@ _MAX_SEARCH_CHARACTERS = 128
 _MAX_NORMALIZED_SEARCH_CHARACTERS = 512
 _MAX_NORMALIZED_SEARCH_BYTES = 2_048
 _UNSAFE_SEARCH_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+_unicode_ord = ord
 _PROFILE_SELECT = """
 SELECT
     profile_id,
@@ -100,9 +101,12 @@ def _validate_expected_revision(value: object) -> int:
 
 
 def _is_unsafe_search_character(character: str) -> bool:
-    code_point = ord(character)
+    category = _unicode_category(character)
+    code_point = _unicode_ord(character)
+    if type(category) is not str or type(code_point) is not int:
+        raise ValueError
     return (
-        unicodedata.category(character) in _UNSAFE_SEARCH_CATEGORIES
+        category in _UNSAFE_SEARCH_CATEGORIES
         or 0xFDD0 <= code_point <= 0xFDEF
         or code_point & 0xFFFF in (0xFFFE, 0xFFFF)
     )
@@ -113,30 +117,44 @@ def _normalize_search(value: object) -> str | None:
         return None
     if type(value) is not str or len(value) > _MAX_SEARCH_CHARACTERS:
         raise _repository_error("operation_failed")
-    trimmed = value.strip()
-    if not trimmed:
-        return None
-    if any(_is_unsafe_search_character(character) for character in trimmed):
-        raise _repository_error("operation_failed")
 
-    normalization_error: BaseException | None = None
+    processing_error: BaseException | None = None
+    raw_unsafe = False
+    normalized_unsafe = False
+    trimmed = ""
     normalized: str | None = None
     normalized_byte_count: int | None = None
     try:
-        normalized = _unicode_normalize("NFKC", trimmed).casefold()
-        normalized_byte_count = len(normalized.encode("utf-8"))
+        raw_unsafe = any(_is_unsafe_search_character(character) for character in value)
+        if not raw_unsafe:
+            trimmed = value.strip()
+            if trimmed:
+                normalized_value = _unicode_normalize("NFKC", trimmed)
+                if type(normalized_value) is not str:
+                    raise ValueError
+                normalized = normalized_value.casefold()
+                if type(normalized) is not str:
+                    raise ValueError
+                normalized_unsafe = any(
+                    _is_unsafe_search_character(character) for character in normalized
+                )
+                if not normalized_unsafe:
+                    normalized_byte_count = len(normalized.encode("utf-8"))
     except BaseException as error:
-        normalization_error = error
+        processing_error = error
 
-    if normalization_error is not None:
-        if not isinstance(normalization_error, Exception):
-            raise normalization_error
+    if processing_error is not None:
+        if not isinstance(processing_error, Exception):
+            raise processing_error
         raise _repository_error("operation_failed")
+    if raw_unsafe or normalized_unsafe:
+        raise _repository_error("operation_failed")
+    if not trimmed:
+        return None
     assert normalized is not None
     assert normalized_byte_count is not None
     if (
-        any(_is_unsafe_search_character(character) for character in normalized)
-        or len(normalized) > _MAX_NORMALIZED_SEARCH_CHARACTERS
+        len(normalized) > _MAX_NORMALIZED_SEARCH_CHARACTERS
         or normalized_byte_count > _MAX_NORMALIZED_SEARCH_BYTES
     ):
         raise _repository_error("operation_failed")

@@ -313,6 +313,168 @@ async def test_hostile_search_normalizer_fails_safely_before_submission(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw_search", "visible_secret"),
+    [
+        pytest.param(
+            "\tsecret-leading-tab",
+            "secret-leading-tab",
+            id="leading-tab",
+        ),
+        pytest.param(
+            "\nsecret-leading-newline",
+            "secret-leading-newline",
+            id="leading-newline",
+        ),
+        pytest.param(
+            "\x01secret-leading-control",
+            "secret-leading-control",
+            id="leading-control",
+        ),
+        pytest.param(
+            "secret-trailing-tab\t",
+            "secret-trailing-tab",
+            id="trailing-tab",
+        ),
+        pytest.param(
+            "secret-trailing-newline\n",
+            "secret-trailing-newline",
+            id="trailing-newline",
+        ),
+        pytest.param(
+            "secret-trailing-control\x1f",
+            "secret-trailing-control",
+            id="trailing-control",
+        ),
+        pytest.param("\t \n", "", id="control-only-mixed-space"),
+        pytest.param(
+            "\u200bsecret-format",
+            "secret-format",
+            id="format-control",
+        ),
+        pytest.param(
+            "\ud800secret-surrogate",
+            "secret-surrogate",
+            id="surrogate",
+        ),
+        pytest.param(
+            "\ufdd0secret-noncharacter-start",
+            "secret-noncharacter-start",
+            id="noncharacter-fdd0",
+        ),
+        pytest.param(
+            "\ufdefsecret-noncharacter-end",
+            "secret-noncharacter-end",
+            id="noncharacter-fdef",
+        ),
+        pytest.param(
+            "\ufffesecret-plane0-fffe",
+            "secret-plane0-fffe",
+            id="plane0-fffe",
+        ),
+        pytest.param(
+            "\uffffsecret-plane0-ffff",
+            "secret-plane0-ffff",
+            id="plane0-ffff",
+        ),
+        pytest.param(
+            "\U0001fffesecret-plane1-fffe",
+            "secret-plane1-fffe",
+            id="plane1-fffe",
+        ),
+        pytest.param(
+            "\U0010ffffsecret-plane16-ffff",
+            "secret-plane16-ffff",
+            id="plane16-ffff",
+        ),
+    ],
+)
+async def test_raw_unsafe_search_fails_safely_before_submission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    raw_search: str,
+    visible_secret: str,
+) -> None:
+    database_path = tmp_path / "secret-unsafe-search-store.sqlite3"
+    repository = profile_repository.TTSProfileRepository(database_path)
+    submitted = False
+
+    async def forbidden_submission(
+        _operation: Callable[[sqlite3.Connection], object],
+    ) -> ProfileStoreResult[object]:
+        nonlocal submitted
+        submitted = True
+        raise AssertionError("unsafe raw search reached worker submission")
+
+    monkeypatch.setattr(repository, "_submit_operation", forbidden_submission)
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await repository.list_profiles(search=raw_search)
+
+    _assert_safe_error(
+        caught.value,
+        "operation_failed",
+        visible_secret,
+        str(database_path),
+    )
+    assert repr(raw_search) not in "".join(traceback.format_exception(caught.value))
+    assert submitted is False
+    assert not database_path.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("helper_name", "secret"),
+    [
+        ("_unicode_category", "secret-hostile-unicode-category"),
+        ("_unicode_ord", "secret-hostile-unicode-ord"),
+    ],
+)
+async def test_hostile_search_character_inspection_fails_safely_before_submission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    helper_name: str,
+    secret: str,
+) -> None:
+    database_path = tmp_path / "secret-character-inspector-store.sqlite3"
+    repository = profile_repository.TTSProfileRepository(database_path)
+    submitted = False
+
+    async def forbidden_submission(
+        _operation: Callable[[sqlite3.Connection], object],
+    ) -> ProfileStoreResult[object]:
+        nonlocal submitted
+        submitted = True
+        raise AssertionError("failed character inspection reached submission")
+
+    def hostile_inspector(_character: str) -> object:
+        try:
+            raise RuntimeError(secret)
+        except RuntimeError:
+            raise ValueError(secret)
+
+    monkeypatch.setattr(repository, "_submit_operation", forbidden_submission)
+    monkeypatch.setattr(
+        profile_repository,
+        helper_name,
+        hostile_inspector,
+        raising=False,
+    )
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await repository.list_profiles(search="ordinary")
+
+    _assert_safe_error(
+        caught.value,
+        "operation_failed",
+        secret,
+        str(database_path),
+    )
+    assert submitted is False
+    assert not database_path.exists()
+
+
+@pytest.mark.asyncio
 async def test_create_generates_uuid4_or_retains_exact_caller_uuid_and_round_trips(
     tmp_path: Path,
 ) -> None:
@@ -538,7 +700,7 @@ async def test_list_search_normalizes_case_and_treats_like_metacharacters_litera
         unicode_case = (await repository.list_profiles(search="  CAFÉ 音声  ")).value
         casefold = (await repository.list_profiles(search="STRASSE")).value
         empty = (await repository.list_profiles(search="")).value
-        whitespace = (await repository.list_profiles(search=" \t ")).value
+        spaces_only = (await repository.list_profiles(search="   ")).value
 
         assert tuple(profile.display_name for profile in percent.profiles) == (
             "100% Real",
@@ -560,7 +722,7 @@ async def test_list_search_normalizes_case_and_treats_like_metacharacters_litera
             "Straße",
         )
         assert casefold.total == 1
-        assert empty == whitespace
+        assert empty == spaces_only
         assert empty.total == len(names)
 
 
