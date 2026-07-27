@@ -1,5 +1,5 @@
 ---
-id: TASK-848
+id: TASK-862
 title: >-
   calculate_semantic_similarity discards its result and returns None on the success path
 status: To Do
