@@ -2,7 +2,7 @@ import ast
 import shutil
 import sqlite3
 import tempfile
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock, call
@@ -1228,11 +1228,10 @@ async def test_backup_then_restore_round_trips_at_the_real_resolved_path(
         assert db_path is not None, f"{db_name} did not resolve to a path"
 
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("CREATE TABLE marker (value TEXT)")
-        conn.execute("INSERT INTO marker VALUES ('original')")
-        conn.commit()
-        conn.close()
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            conn.execute("CREATE TABLE marker (value TEXT)")
+            conn.execute("INSERT INTO marker VALUES ('original')")
+            conn.commit()
 
         # --- Backup ---
         backup_worker = window._backup_single_worker(db_name)
@@ -1250,11 +1249,10 @@ async def test_backup_then_restore_round_trips_at_the_real_resolved_path(
         backup_path = backup_files[-1]
 
         # --- Simulate data loss on the live database ---
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("DELETE FROM marker")
-        conn.execute("INSERT INTO marker VALUES ('corrupted')")
-        conn.commit()
-        conn.close()
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            conn.execute("DELETE FROM marker")
+            conn.execute("INSERT INTO marker VALUES ('corrupted')")
+            conn.commit()
 
         # --- Restore ---
         restore_worker = window._restore_single_worker(db_name, backup_path)
@@ -1267,9 +1265,8 @@ async def test_backup_then_restore_round_trips_at_the_real_resolved_path(
 
         # The content must be back at the SAME path the application actually
         # resolves for this database -- not some other, phantom location.
-        restored_conn = sqlite3.connect(str(db_path))
-        value = restored_conn.execute("SELECT value FROM marker").fetchone()[0]
-        restored_conn.close()
+        with closing(sqlite3.connect(str(db_path))) as restored_conn:
+            value = restored_conn.execute("SELECT value FROM marker").fetchone()[0]
         assert value == "original"
 
 
@@ -1329,3 +1326,108 @@ async def test_missing_database_file_fails_loudly_instead_of_silently_succeeding
             assert not _notify_calls_with_severity(window.app_instance.notify, "success"), (
                 f"{worker_name} falsely reported success for a missing database file: {calls}"
             )
+
+
+@pytest.mark.asyncio
+async def test_restore_creates_missing_target_directory_for_a_custom_db_path(
+    monkeypatch, temp_config_path, tmp_path
+):
+    """A configured custom database path is a legitimate restore target even
+    when its directory has never been created yet -- DB/base_db.py creates a
+    database's parent directory as a side effect of opening it, and restore
+    must behave consistently rather than refusing outright (TASK-899 finding
+    4 fix). Regression guard for the since-fixed bug where
+    _restore_single_worker treated a merely-missing directory the same as an
+    unresolvable/phantom path."""
+    custom_db_path = tmp_path / "not_created_yet" / "custom_chachanotes.db"
+    assert not custom_db_path.parent.exists()
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (window, pilot):
+        # Stand in for a user-configured custom database path by overriding
+        # the resolver map directly (an instance-level shadow of the class
+        # attribute, so it can't leak to other tests) rather than the config
+        # file: this test app's TLDW_CONFIG_PATH (set by the autouse
+        # isolate_test_environment fixture) always wins over the
+        # monkeypatched DEFAULT_CONFIG_PATH that mount_settings_window
+        # writes to, so a config-file-based override wouldn't actually be
+        # read here. This still exercises exactly the code
+        # _restore_single_worker calls.
+        window._DB_PATH_RESOLVERS = dict(window._DB_PATH_RESOLVERS)
+        window._DB_PATH_RESOLVERS["chachanotes"] = lambda: custom_db_path
+
+        resolved = window._get_database_path("chachanotes", {})
+        assert resolved == custom_db_path
+        assert not resolved.parent.exists()
+
+        # A standalone backup file the "user" is restoring from, independent
+        # of the app's own backup machinery.
+        backup_path = tmp_path / "external_backup.db"
+        with closing(sqlite3.connect(str(backup_path))) as conn:
+            conn.execute("CREATE TABLE marker (value TEXT)")
+            conn.execute("INSERT INTO marker VALUES ('restored')")
+            conn.commit()
+
+        worker = window._restore_single_worker("chachanotes", backup_path)
+        await worker.wait()
+
+        calls = window.app_instance.notify.call_args_list
+        assert _notify_calls_with_severity(window.app_instance.notify, "success"), (
+            f"restore to a not-yet-created custom directory must succeed: {calls}"
+        )
+        assert not _notify_calls_with_severity(window.app_instance.notify, "error"), (
+            f"restore to a not-yet-created custom directory must not error: {calls}"
+        )
+
+        assert resolved.parent.exists()
+        with closing(sqlite3.connect(str(resolved))) as restored_conn:
+            value = restored_conn.execute("SELECT value FROM marker").fetchone()[0]
+        assert value == "restored"
+
+
+@pytest.mark.asyncio
+async def test_restore_refuses_a_dangerous_backup_path_via_path_validation(
+    monkeypatch, temp_config_path
+):
+    """The user-selected backup_path must be routed through
+    Utils/path_validation.py before it reaches shutil.copy2 -- a path
+    containing a dangerous pattern must be refused with a clear,
+    actionable error naming the offending path, never silently ignored and
+    never an unhandled exception out of the worker thread (TASK-899 finding
+    1).
+
+    The dangerous-named file is created for real so that, without the
+    validation call, the restore would otherwise succeed (proving this test
+    exercises path validation itself, not an incidental FileNotFoundError
+    from shutil.copy2 -- a real file at the same path would only produce
+    that error if it were missing)."""
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (window, pilot):
+        db_path = window._get_database_path("chachanotes", {})
+        assert db_path is not None
+        assert not db_path.exists()
+
+        dangerous_backup_path = db_path.parent / "evil;rm -rf.db"
+        dangerous_backup_path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(str(dangerous_backup_path))) as conn:
+            conn.execute("CREATE TABLE marker (value TEXT)")
+            conn.execute("INSERT INTO marker VALUES ('should not be restored')")
+            conn.commit()
+
+        worker = window._restore_single_worker("chachanotes", dangerous_backup_path)
+        await worker.wait()
+
+        calls = window.app_instance.notify.call_args_list
+        assert calls, "no notification at all for a rejected backup path"
+        error_calls = _notify_calls_with_severity(window.app_instance.notify, "error")
+        assert error_calls, f"dangerous backup path was not refused: {calls}"
+        assert not _notify_calls_with_severity(window.app_instance.notify, "success"), (
+            f"dangerous backup path falsely reported success: {calls}"
+        )
+        # The error must specifically be path-validation's rejection (not a
+        # generic failure), and must name the offending path so the user can
+        # tell which file-picker selection was refused.
+        assert any("dangerous pattern" in str(c) for c in error_calls), error_calls
+        assert any(str(dangerous_backup_path) in str(c) for c in error_calls), error_calls
+
+        # No partial/failed write occurred against the live database -- the
+        # rejected source file's content must never have reached it.
+        assert not db_path.exists()

@@ -65,6 +65,7 @@ from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
+from ..Utils.path_validation import validate_path_simple
 from .Outputs_Panel import OutputsPanel
 from .Sharing_Panel import SharingPanel
 from .Widgets import ConfigSearchResult, UIElementSearchEngine
@@ -6555,6 +6556,12 @@ Thank you for using tldw-chatbook! 🎉
                 )
                 return
 
+            db_path = self._validate_maintenance_path(
+                db_path, label=f"{db_name} database source"
+            )
+            if db_path is None:
+                return
+
             if not db_path.exists():
                 self.app.call_from_thread(
                     self.app_instance.notify,
@@ -6570,6 +6577,11 @@ Thank you for using tldw-chatbook! 🎉
             backup_dir.mkdir(parents=True, exist_ok=True)
 
             backup_path = backup_dir / f"{db_name}_backup_{timestamp}.db"
+            backup_path = self._validate_maintenance_path(
+                backup_path, label=f"{db_name} backup destination"
+            )
+            if backup_path is None:
+                return
 
             shutil.copy2(db_path, backup_path)
 
@@ -6680,15 +6692,37 @@ Thank you for using tldw-chatbook! 🎉
                 )
                 return
 
-            # Guard against writing to a location that was never a real
-            # database directory (e.g. a stale/unresolved parent). Every
-            # resolver in config.py creates the real profile directory as a
-            # side effect, so a missing parent here means db_path is not
-            # somewhere the application would ever actually look.
-            if not db_path.parent.exists():
+            db_path = self._validate_maintenance_path(
+                db_path, label=f"{db_name} database target"
+            )
+            if db_path is None:
+                return
+
+            backup_path = self._validate_maintenance_path(
+                backup_path, label=f"{db_name} backup source"
+            )
+            if backup_path is None:
+                return
+
+            # A configured custom database path is legitimate even when its
+            # directory has never been created yet -- DB/base_db.py does the
+            # exact same mkdir(parents=True, exist_ok=True) when it opens a
+            # database, so restore must behave consistently rather than
+            # refusing outright (TASK-899 finding 4). Only a genuine failure
+            # to create the directory (permissions, invalid path) should
+            # block the restore; a merely-missing directory must not.
+            try:
+                db_path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                logger.error(
+                    "Could not create restore target directory {} for {}: {}",
+                    db_path.parent,
+                    db_name,
+                    e,
+                )
                 self.app.call_from_thread(
                     self.app_instance.notify,
-                    f"Cannot restore {db_name} database: target directory {db_path.parent} does not exist",
+                    f"Cannot restore {db_name} database: could not create target directory {db_path.parent}: {e}",
                     severity="error",
                 )
                 return
@@ -6817,6 +6851,38 @@ Thank you for using tldw-chatbook! 🎉
             return resolver()
         except Exception as e:
             logger.error("Could not resolve path for {} database: {}", db_name, e)
+            return None
+
+    def _validate_maintenance_path(self, path: Path, *, label: str) -> Optional[Path]:
+        """Validate a path immediately before a backup/restore worker passes
+        it to ``shutil.copy2``/``open``/``mkdir`` (TASK-899 finding 1).
+
+        Both the config-derived database path and the user-selected backup
+        path reach filesystem writes without going through the project's
+        central path-safety helper; this closes that gap for the
+        single-database backup/restore workers.
+
+        ``validate_path_simple`` rejects a literal ``~/`` outright, so the
+        path is always expanded first -- every resolved database path
+        already lives under a dotted directory (``~/.local/share/...``),
+        which is why ``validate_path_simple`` (no base-directory / no
+        hidden-component check) is used here rather than ``validate_path``.
+
+        Must run on a worker thread. On rejection this notifies
+        ``severity="error"`` naming the offending path and the reason, then
+        returns ``None`` -- it never raises out of the worker and never
+        fails silently. Callers must treat ``None`` as "stop, do not write"
+        and return.
+        """
+        try:
+            return validate_path_simple(Path(path).expanduser(), require_exists=False)
+        except ValueError as e:
+            logger.error("Refused unsafe {} path '{}': {}", label, path, e)
+            self.app.call_from_thread(
+                self.app_instance.notify,
+                f"Refused to use {label} path '{path}': {e}",
+                severity="error",
+            )
             return None
 
     def _get_schema_version(self, db_path: Path) -> Optional[int]:

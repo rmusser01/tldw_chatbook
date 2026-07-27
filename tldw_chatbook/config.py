@@ -4728,6 +4728,11 @@ def get_evals_db_path() -> Path:
     orchestrator and any tooling that inspects/backs up the Evals DB (e.g. the
     Settings database-maintenance panel) always agree on the path. See
     TASK-860 / TASK-899.
+
+    Returns:
+        The resolved, expanded, absolute path to the Evals database --
+        either a configured custom path or ``evals.db`` under the current
+        profile's user data directory.
     """
     # Check if a custom path is configured
     custom_path = get_cli_setting("database", "evals_db_path", None)
@@ -4751,6 +4756,11 @@ def get_rag_indexing_db_path() -> Path:
     ``tldw_chatbook.RAG_Search.ingestion_indexing._default_indexing_db``
     delegates to this function so the app and any tooling that inspects the
     RAG database always agree on the path. See TASK-899.
+
+    Returns:
+        The resolved, expanded, absolute path to the RAG indexing-state
+        database -- either a configured custom path or ``rag_indexing.db``
+        under the current profile's user data directory.
     """
     # Check if a custom path is configured
     custom_path = get_cli_setting("database", "rag_indexing_db_path", None)
