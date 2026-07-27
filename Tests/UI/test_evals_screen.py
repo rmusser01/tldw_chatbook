@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from loguru import logger as loguru_logger
 from textual.app import App
 from textual.widget import Widget
 
@@ -382,6 +383,70 @@ async def test_primary_action_is_disabled_with_a_reason_when_nothing_is_selected
         action = evals_app.screen.query_one("#evals-primary-action")
         assert action.disabled is True
         assert action.tooltip, "a disabled primary action must say why"
+
+
+@pytest.mark.asyncio
+async def test_inspector_reports_an_unexpected_load_bench_failure_instead_of_going_blank(
+    evals_app, seeded_bench, monkeypatch
+):
+    """Regression (TASK-861 item 5): ``EvalsInspector.compose`` caught
+    ``load_bench``'s failure with a bare ``except Exception: return`` --
+    since ``compose()`` is a generator, that yielded ZERO widgets, leaving a
+    blank inspector pane with no message and no log line: nothing to
+    diagnose from.
+
+    ``_compose_inspector_pane`` only mounts ``EvalsInspector`` once
+    ``EvalsViewModel.bench_by_id`` has already found the bench (see
+    ``evals_screen.py``), so reaching this branch for real means either a
+    race (deleted between that read and this one) or an unexpected failure
+    below it -- simulated here the same way
+    ``test_unexpected_load_grid_failure_renders_error_state_without_crashing_the_app``
+    (``test_evals_results_grid.py``) simulates the analogous failure for
+    ``ResultsGrid``: monkeypatching ``load_bench`` in the ``inspector``
+    module's own namespace to raise a DB-level fault for an otherwise valid
+    bench id.
+    """
+    import sqlite3
+
+    from tldw_chatbook.UI.Evals import inspector as inspector_module
+
+    def _raise_operational_error(db, task_id):
+        raise sqlite3.OperationalError("no such table: eval_tasks")
+
+    monkeypatch.setattr(inspector_module, "load_bench", _raise_operational_error)
+
+    records: list[dict] = []
+    sink_id = loguru_logger.add(lambda message: records.append(message.record), level="ERROR")
+    try:
+        async with evals_app.run_test(size=(160, 45)) as pilot:
+            await pilot.pause()
+            evals_app.screen.select(kind="bench", id=seeded_bench)
+            await pilot.pause()
+
+            error_state = evals_app.screen.query_one("#evals-inspector-error")
+            message = str(error_state.renderable)
+            assert "unexpected error" in message
+
+            # A failed load must not also render stale/partial readiness
+            # rows -- compose() returned before yielding any of them.
+            # Filtered in Python by id prefix (not the bare
+            # ".ds-status-badge" class, which the shell chrome's own
+            # workbench-header-status Static also carries for an unrelated
+            # purpose, and not a CSS attribute selector -- Textual's own
+            # selector grammar doesn't support "^=" prefix matching).
+            target_badges = [
+                w
+                for w in evals_app.screen.query(Widget)
+                if w.id and w.id.startswith("evals-inspector-target-")
+            ]
+            assert not target_badges, target_badges
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert records, "the failure must be logged, not just rendered"
+    assert any(seeded_bench in r["message"] for r in records), (
+        f"the log line must name which bench failed: {[r['message'] for r in records]}"
+    )
 
 
 @pytest.mark.asyncio

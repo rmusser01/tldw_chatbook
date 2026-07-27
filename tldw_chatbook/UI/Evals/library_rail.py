@@ -58,6 +58,7 @@ from ...Utils.path_validation import validate_path_simple
 from ..Navigation.main_navigation import NavigateToScreen
 from . import sample_bench
 from .evals_state import EvalsSelection, EvalsViewModel
+from .notify_mixin import NotifyMixin
 from .snippet_editor import (
     import_snippets_into_dataset,
     parse_csv_snippets,
@@ -117,7 +118,7 @@ def _run_group_row_label(row: dict[str, Any]) -> str:
     return f"{name} ({count} {target_word})"
 
 
-class LibraryRail(Vertical):
+class LibraryRail(NotifyMixin, Vertical):
     """Left rail: Benches, Datasets, Runs -- each collapsible, with counts."""
 
     class EvalsSelectionChanged(Message, namespace="library_rail"):
@@ -488,16 +489,6 @@ class LibraryRail(Vertical):
             return
         event.stop()
         self.post_message(self.EvalsSelectionChanged(selection))
-
-    def _notify(self, message: str, *, severity: str = "information") -> None:
-        """Mirrors ``snippet_editor.py``'s identical helper: routes through
-        the screen's ``app_instance`` (what a test harness's fake actually
-        observes), falling back to ``self.app.notify``."""
-        app_instance = getattr(self.screen, "app_instance", None)
-        if app_instance is not None and hasattr(app_instance, "notify"):
-            app_instance.notify(message, severity=severity)
-        else:
-            self.app.notify(message, severity=severity)
 
     def _create_new_dataset(self) -> None:
         db = self.view_model.db

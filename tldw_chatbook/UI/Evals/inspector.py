@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
 
+from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
@@ -147,6 +148,31 @@ class EvalsInspector(Vertical):
         try:
             config = load_bench(db, self._bench_id)
         except Exception:
+            # A bare `except Exception: return` here used to yield ZERO
+            # widgets (this is a generator), leaving a blank inspector pane
+            # with no message and no log line -- nothing to diagnose from
+            # (TASK-861). `evals_screen.py`'s `_compose_inspector_pane`
+            # only mounts this widget once `EvalsViewModel.bench_by_id`
+            # already found the bench, so reaching this branch means
+            # either a race (deleted between that read and this one) or an
+            # unexpected failure below it (a locked database, a disk
+            # error, or a corrupted `config_data` payload) -- see
+            # `results_grid.py`'s `ResultsGrid.compose`, which hit the same
+            # class of problem for `load_grid` and now logs + renders a
+            # visible error state instead of guessing which case this is.
+            # Deliberately `Exception`, not `BaseException`:
+            # `asyncio.CancelledError` is a `BaseException` subclass and
+            # must keep propagating, not be swallowed here.
+            logger.opt(exception=True).error(
+                f"Unexpected failure loading bench configuration for the "
+                f"inspector pane, bench {self._bench_id!r}."
+            )
+            yield Static(
+                "This bench's readiness could not be loaded because of an "
+                "unexpected error; see the log for details.",
+                id="evals-inspector-error",
+                markup=False,
+            )
             return
 
         preflight = (

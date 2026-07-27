@@ -67,6 +67,7 @@ from ...Evaluations_Interop.evaluation_normalizers import (
 from ...Third_Party.textual_fspicker import FileOpen, Filters
 from ...Utils.path_validation import validate_path_simple
 from .evals_state import EvalsViewModel
+from .notify_mixin import NotifyMixin
 
 #: The glyph anomalous whitespace is replaced with when rendering a
 #: snippet's text. Reverse video (not a design-token colour) is used
@@ -438,7 +439,7 @@ _IMPORT_PARSERS = {
 }
 
 
-class SnippetEditor(Vertical):
+class SnippetEditor(NotifyMixin, Vertical):
     """Detail-pane content for a selected dataset: a read-only snippet
     table (character count, whitespace flag, exact-duplicate flag) and an
     import control (``#evals-import-snippets``)."""
@@ -569,23 +570,9 @@ class SnippetEditor(Vertical):
             self._handle_import_file_selected,
         )
 
-    def _notify(self, message: str, *, severity: str = "information") -> None:
-        """Route notifications through the screen's own ``app_instance``
-        (``BaseAppScreen.__init__`` -- the domain ``TldwCli``/fake, not
-        Textual's own ``App.notify``), the same access path
-        ``self.screen.app_instance`` other nested widgets in this codebase
-        use (e.g. ``Persona_Modules/personas_preview_controller.py``). In
-        production ``TldwCli`` IS the running ``App``, so this reaches the
-        same toast system either way; in tests it is what the harness's
-        ``_FakeAppInstance.notifications`` list actually observes -- unlike
-        ``self.app``, which in a test harness is the minimal ``App`` host,
-        not the fake domain object tests assert against.
-        """
-        app_instance = getattr(self.screen, "app_instance", None)
-        if app_instance is not None and hasattr(app_instance, "notify"):
-            app_instance.notify(message, severity=severity)
-        else:
-            self.app.notify(message, severity=severity)
+    # _notify lives on NotifyMixin (see .notify_mixin) -- shared with
+    # LibraryRail and ResultsGrid, which carried byte-identical copies of
+    # this same method (TASK-861).
 
     def _handle_import_file_selected(self, path: Optional[Any]) -> None:
         """The ``FileOpen`` dialog's selection callback. Public-shaped

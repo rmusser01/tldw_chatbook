@@ -76,14 +76,43 @@ def test_entropy_normalizes_to_a_shared_k_like_divergence_does():
 def test_effective_k_is_the_minimum_k_returned_across_cells():
     """The grid-level K a mixed-K comparison (e.g. an OpenAI legacy target
     capped at K=5 alongside a llama.cpp target requested at K=20) must
-    render entropy at."""
-    a = _cap([("a", 0.5)], k_returned=20)
-    b = _cap([("b", 0.5)], k_returned=5)
+    render entropy at.
+
+    Each cell's ``top_k`` is padded out to its own claimed ``k_returned``
+    (mirroring a real capture, where the two always agree by construction
+    -- see ``capture_client.py``) so this test exercises the min-across-
+    cells rule on its own, not ``effective_k``'s separate defensive
+    ``len(top_k)`` clamp -- see
+    ``test_effective_k_clamps_a_k_returned_that_exceeds_the_actual_top_k_length``
+    for that."""
+    a = _cap([("a", 0.5)] + [(f"a_extra_{i}", 0.001) for i in range(19)], k_returned=20)
+    b = _cap([("b", 0.5)] + [(f"b_extra_{i}", 0.001) for i in range(4)], k_returned=5)
+    assert len(a.top_k) == 20 and len(b.top_k) == 5, "fixture must match its own k_returned"
     assert effective_k([a, b]) == 5
 
 
 def test_effective_k_of_no_cells_is_zero():
     assert effective_k([]) == 0
+
+
+def test_effective_k_clamps_a_k_returned_that_exceeds_the_actual_top_k_length():
+    """TASK-861 item 6 (defensive only, NOT a live-path fix): on every real
+    capture ``k_returned == len(top_k)`` holds by construction --
+    ``capture_client.py`` sets ``k_returned=len(tokens)`` from the very
+    list that becomes ``top_k``. This only guards a ``CellCapture``
+    rebuilt from STORED JSON where the two fields were read independently
+    (``storage.py``) and could disagree if the row were corrupted; there is
+    no ``__post_init__`` on ``CellCapture`` stopping a caller (or a
+    corrupted round-trip) from constructing exactly that shape, which is
+    what this test does directly.
+
+    Without the clamp, ``effective_k`` would report the corrupted cell's
+    inflated ``k_returned`` (99) as usable, when the cell only actually has
+    2 ranked tokens -- mirrors ``divergence()``'s own two-way clamp
+    (``min(a.k_returned, b.k_returned, len(a.top_k), len(b.top_k))``),
+    which ``effective_k`` did not have before this fix."""
+    corrupted = _cap([("a", 0.5), ("b", 0.5)], k_returned=99)
+    assert effective_k([corrupted]) == 2
 
 
 def test_divergence_of_identical_distributions_is_zero():

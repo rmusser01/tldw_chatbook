@@ -1,0 +1,39 @@
+"""Shared ``_notify`` helper for the Evals workbench's nested widgets.
+
+``ResultsGrid``, ``LibraryRail``, and ``SnippetEditor`` each carried a
+byte-identical copy of this method (found during the TASK-861 polish pass;
+``SnippetEditor``'s own copy already said as much in its docstring). Folded
+here rather than left duplicated a third time.
+
+There is no existing shared base class among the three -- each extends
+``textual.containers.Vertical`` directly -- so this is a plain mixin, not a
+widget of its own. It needs no special metaclass handling: it defines no
+``@on``-decorated handlers, which is the case that actually requires
+deriving Textual's message-pump metaclass explicitly (contrast
+``UI/Views/RAGSearch/search_event_handlers.py::SearchEventHandlersMixin``,
+whose ``@on`` registrations would silently never dispatch without it --
+found and fixed in task-251). A plain mixin ahead of ``Vertical`` in the
+MRO is sufficient here.
+"""
+
+from __future__ import annotations
+
+
+class NotifyMixin:
+    """Adds ``_notify`` to a Textual widget that has ``self.screen`` and
+    ``self.app`` (i.e. is mounted, or will be by the time this is called).
+
+    Routes a toast through the screen's ``app_instance`` -- the domain
+    ``TldwCli``/fake a test harness's ``_FakeAppInstance.notifications``
+    list actually observes -- falling back to ``self.app.notify`` for a
+    widget mounted without one (``self.app`` in a test harness is the
+    minimal ``App`` host, not the fake domain object tests assert
+    against).
+    """
+
+    def _notify(self, message: str, *, severity: str = "information") -> None:
+        app_instance = getattr(self.screen, "app_instance", None)
+        if app_instance is not None and hasattr(app_instance, "notify"):
+            app_instance.notify(message, severity=severity)
+        else:
+            self.app.notify(message, severity=severity)

@@ -125,6 +125,7 @@ from ...Evals.word_bench.storage import load_grid
 from ...Third_Party.textual_fspicker import FileSave, Filters
 from ...Utils.path_validation import validate_path_simple
 from .evals_state import EvalsViewModel
+from .notify_mixin import NotifyMixin
 
 LensKey = Literal["top1", "entropy", "probe", "coverage", "delta"]
 BaselineMode = Literal["column", "row"]
@@ -252,7 +253,36 @@ def render_probe_reading(reading: "analysis.ProbeReading") -> str:
     return f"{reading.logprob:.2f}"
 
 
-class ResultsGrid(Vertical):
+def _probe_observed_in_target(
+    snippets: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+    cells: dict[tuple[str, str], CellCapture | CellError],
+    target_id: str,
+    probe: str,
+) -> bool:
+    """Whether ``probe`` appears in ANY captured cell's top-K for
+    ``target_id``, scanning every snippet in ``snippets``.
+
+    ``ResultsGrid._ever_observed_active_probe`` and
+    ``ResultsGrid._ever_observed_all_probes`` used to each carry their own
+    copy of this exact nested scan (the second's own docstring already
+    admitted as much, before this fold). Both callers hold one axis of the
+    (target, probe) grid fixed and loop the other over this function --
+    ``_ever_observed_active_probe`` fixes the probe and varies target,
+    ``_ever_observed_all_probes`` fixes the target and varies probe -- so
+    this stays a single per-(target, probe) scan. A version that instead
+    precomputed the full {target: {probe: bool}} matrix up front would
+    make the single-active-probe render path pay for every configured
+    probe on every render, not just the one lens is showing; keeping this
+    as the atomic per-pair scan avoids that.
+    """
+    for snippet in snippets:
+        cap = cells.get((snippet["id"], target_id))
+        if isinstance(cap, CellCapture) and any(tok.token == probe for tok in cap.top_k):
+            return True
+    return False
+
+
+class ResultsGrid(NotifyMixin, Vertical):
     """Detail-pane content for a selected run group: the pivoted results
     grid, its lens/baseline controls, and the header stating the effective
     K, cell/failure counts, and which lens/baseline/sort is active."""
@@ -662,7 +692,20 @@ class ResultsGrid(Vertical):
 
         try:
             if validated_path.suffix.lower() == ".csv":
-                validated_path.write_text(self._export_csv_text(), encoding="utf-8")
+                # newline="": the buffer _export_csv_text() built already
+                # carries csv.writer's own "\r\n" line terminators (RFC
+                # 4180). write_text's own default (newline=None) opens the
+                # file in universal-newline TRANSLATING mode, which
+                # rewrites every embedded "\n" to os.linesep on write --
+                # a no-op on POSIX (os.linesep == "\n"), but on Windows
+                # (os.linesep == "\r\n") it would turn the buffer's own
+                # "\r\n" into "\r\r\n" (see the standard library csv
+                # module's own docs for this exact pitfall). newline=""
+                # disables that translation, so the bytes already decided
+                # by _export_csv_text() reach disk unchanged everywhere.
+                validated_path.write_text(
+                    self._export_csv_text(), encoding="utf-8", newline=""
+                )
             else:
                 payload = self._export_json_payload()
                 validated_path.write_text(
@@ -676,23 +719,29 @@ class ResultsGrid(Vertical):
             return
         self._notify(f"Exported to {validated_path}", severity="information")
 
-    def _notify(self, message: str, *, severity: str = "information") -> None:
-        """Mirrors ``snippet_editor.py``'s identical helper: routes through
-        the screen's ``app_instance`` (what a test harness's fake actually
-        observes), falling back to ``self.app.notify``."""
-        app_instance = getattr(self.screen, "app_instance", None)
-        if app_instance is not None and hasattr(app_instance, "notify"):
-            app_instance.notify(message, severity=severity)
-        else:
-            self.app.notify(message, severity=severity)
-
     def _export_csv_text(self) -> str:
         """CSV for the ACTIVE lens -- built from the exact same
         ``_compute_active_lens_rows`` the on-screen ``DataTable`` renders
         from, so this can never show a different lens/baseline/sort than
-        what is currently visible."""
+        what is currently visible.
+
+        ``newline=""`` on the buffer is the convention the ``csv`` module's
+        own docs recommend for whatever it writes into (normally a real
+        file opened with ``newline=""``) -- probed here to have no effect
+        on the buffer's own content (``io.StringIO``'s default ``newline``
+        is already ``"\\n"``, which -- per ``io.TextIOWrapper``'s write
+        semantics -- means "no translation", the same as ``""``; both
+        produced byte-identical ``getvalue()`` output in a direct check).
+        Kept anyway for the same reason ``_write_export_file`` now also
+        passes ``newline=""`` to ``write_text``: that second call is where
+        translation-on-write actually happens by default, and is what
+        would double an already-embedded ``\\r\\n`` into ``\\r\\r\\n`` on a
+        platform where ``os.linesep`` is ``"\\r\\n"`` (Windows) -- not
+        reproducible on this POSIX host, so fixed by removing the
+        ambiguity at both call sites rather than by executing the failure.
+        """
         column_labels, snippet_rows, group_mean_rows = self._compute_active_lens_rows()
-        buffer = io.StringIO()
+        buffer = io.StringIO(newline="")
         writer = csv.writer(buffer)
         writer.writerow(column_labels)
         for _row_key, cells in snippet_rows:
@@ -985,8 +1034,12 @@ class ResultsGrid(Vertical):
         # (``analysis.NEAR_TIE_LOGPROB_GAP_NATS``) so it lives in one place
         # alongside ``TRUNCATION_WARN_THRESHOLD`` and ``divergence``'s own
         # ``is_bounded``, rather than this module recomputing a raw logprob
-        # gap and re-deciding "too close to call" on its own.
-        if len(top) > 1 and analysis.near_tie(cap):
+        # gap and re-deciding "too close to call" on its own. No local
+        # `len(top) > 1` guard here: `near_tie` already returns `False` for
+        # fewer than two ranked tokens (see its own docstring and
+        # `test_near_tie_false_when_fewer_than_two_tokens`), so a second
+        # copy of that guard here would be a provable no-op.
+        if analysis.near_tie(cap):
             second = top[1]
             return (
                 f"{render_token(first.token)}≈{render_token(second.token)}  "
@@ -1149,46 +1202,42 @@ class ResultsGrid(Vertical):
         (``_active_probe``) was EVER observed in that target's top-K across
         the whole run -- computed once per table render (not once per cell)
         and threaded into every ``analysis.resolve_probe`` call for the
-        Probe lens, per its own ``ever_observed`` contract."""
+        Probe lens, per its own ``ever_observed`` contract.
+
+        One probe, every target: holds ``probe`` fixed and varies the
+        target axis over ``_probe_observed_in_target`` -- see that
+        function's own docstring for why this and
+        ``_ever_observed_all_probes`` below share it rather than each
+        carrying its own copy of the nested scan.
+        """
         if probe is None:
             return {}
-        result: dict[str, bool] = {}
-        for target in targets:
-            tid = target["id"]
-            observed = False
-            for snippet in snippets:
-                cap = cells.get((snippet["id"], tid))
-                if isinstance(cap, CellCapture) and any(
-                    tok.token == probe for tok in cap.top_k
-                ):
-                    observed = True
-                    break
-            result[tid] = observed
-        return result
+        return {
+            target["id"]: _probe_observed_in_target(snippets, cells, target["id"], probe)
+            for target in targets
+        }
 
     def _ever_observed_all_probes(self, target_id: str) -> dict[str, bool]:
-        """Same computation as ``_ever_observed_first_probe``, but for
-        EVERY configured probe and one target -- used only when a cell is
-        focused (``_on_cell_highlighted``), for the inspector's full probe
-        table. Kept separate from the render-time helper above so a table
-        render (which only needs the lens's single active probe) does not
-        pay for every probe on every render."""
+        """Same underlying scan as ``_ever_observed_active_probe`` above,
+        but for EVERY configured probe and one target -- used only when a
+        cell is focused (``_on_cell_highlighted``), for the inspector's
+        full probe table.
+
+        One target, every probe: the mirror image of
+        ``_ever_observed_active_probe`` -- holds ``target_id`` fixed and
+        varies the probe axis instead, so a table render (which only ever
+        needs the lens's single active probe) still costs one scan per
+        target rather than paying for every configured probe on every
+        render.
+        """
         snapshot = self._grid["snapshot"] if self._grid else {}
         probes = tuple(snapshot.get("probes") or ())
         snippets = snapshot.get("snippets") or []
         cells = self._grid["cells"] if self._grid else {}
-        result: dict[str, bool] = {}
-        for probe in probes:
-            observed = False
-            for snippet in snippets:
-                cap = cells.get((snippet["id"], target_id))
-                if isinstance(cap, CellCapture) and any(
-                    tok.token == probe for tok in cap.top_k
-                ):
-                    observed = True
-                    break
-            result[probe] = observed
-        return result
+        return {
+            probe: _probe_observed_in_target(snippets, cells, target_id, probe)
+            for probe in probes
+        }
 
     # -- focus -> inspector ----------------------------------------------
 

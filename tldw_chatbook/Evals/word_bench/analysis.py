@@ -150,8 +150,24 @@ def effective_k(caps: Sequence[CellCapture]) -> int:
     any larger K would be an artifact of one target's setting (an OpenAI
     legacy target caps at K=5) rather than of what every target in the
     comparison can actually show.
+
+    Each cell's ``k_returned`` is clamped to ``len(cap.top_k)`` before the
+    minimum is taken, mirroring ``divergence()``'s own two-way clamp
+    (``min(a.k_returned, b.k_returned, len(a.top_k), len(b.top_k))``).
+    Purely defensive: on every live capture path ``k_returned ==
+    len(top_k)`` holds by construction (``capture_client.py`` sets
+    ``k_returned=len(tokens)`` from the same list that becomes ``top_k``),
+    so this clamp is a no-op there. It only matters for a ``CellCapture``
+    rebuilt from stored JSON where the two fields were read independently
+    (``storage.py``) and could disagree if the row were corrupted --
+    without it, ``effective_k`` could report a K larger than that cell
+    actually has, and a downstream ``entropy()``/``truncated_mass()`` call
+    at that K would silently fall back to the cell's own unclamped slice.
     """
-    return min((cap.k_returned for cap in caps), default=0)
+    return min(
+        (min(cap.k_returned, len(cap.top_k)) for cap in caps),
+        default=0,
+    )
 
 
 def _aligned(a: CellCapture, b: CellCapture, k: int) -> tuple[list[float], list[float]]:
@@ -229,7 +245,7 @@ def near_tie(cap: CellCapture) -> bool:
     return abs(gap) < NEAR_TIE_LOGPROB_GAP_NATS
 
 
-def combined_truncation(a: CellCapture, b: CellCapture, k: Optional[int] = None) -> float:
+def combined_truncation(a: CellCapture, b: CellCapture) -> float:
     """The combined truncated mass ``divergence()`` uses internally to
     decide ``is_bounded`` -- exposed separately so a caller that already
     has ``(jsd, is_bounded)`` can also explain WHY a comparison was
@@ -249,19 +265,23 @@ def combined_truncation(a: CellCapture, b: CellCapture, k: Optional[int] = None)
     of UI-reconstructed-number risk this module's methodology exists to
     avoid.
 
-    Args:
-        k: Shared truncation point. ``None`` (the default) recomputes it
-            the same way ``divergence()`` does, from ``a``/``b`` alone; a
-            caller that already knows the ``k`` a run's ``divergence()``
-            call used may pass it explicitly to guarantee agreement.
+    Always recomputes the shared truncation point the same way
+    ``divergence()`` does, from ``a``/``b`` alone (there used to be an
+    optional ``k`` override here; TASK-861 dropped it -- every caller
+    passed ``None``, and the only caller (``results_grid.py``'s
+    ``_delta_reading``) never computes a shared ``k`` of its own to hand
+    in: it calls ``divergence()`` first, which returns ``(jsd,
+    is_bounded)`` with no ``k``, so wiring one through would mean
+    ``_delta_reading`` re-deriving ``min(a.k_returned, b.k_returned,
+    len(a.top_k), len(b.top_k))`` itself -- exactly the recomputation this
+    function already does, just duplicated one level up for no benefit).
 
     Returns:
         The combined "other" bucket mass at the shared ``k`` -- the same
         value ``divergence()`` compares against ``TRUNCATION_WARN_
         THRESHOLD`` to set ``is_bounded``.
     """
-    if k is None:
-        k = min(a.k_returned, b.k_returned, len(a.top_k), len(b.top_k))
+    k = min(a.k_returned, b.k_returned, len(a.top_k), len(b.top_k))
     pa, pb = _aligned(a, b, k)
     return pa[-1] + pb[-1]
 
