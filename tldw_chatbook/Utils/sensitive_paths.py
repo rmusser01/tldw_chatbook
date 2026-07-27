@@ -40,15 +40,43 @@ went stale (Finding 1) and how a ``TLDW_CONFIG_PATH`` override defeated the
 ``config.toml`` entry (Finding 3).
 
 Every file this app creates directly under ``get_user_data_dir()`` is also
-refused, as a RULE rather than an enumeration (see the
-``resolved.parent == ctx.user_data_dir`` check in ``is_sensitive_path``):
-new state files land there constantly (agent-run logs, eval/RAG-indexing/
-search-history/event/kanban/sync-state DBs, ...) without ever touching
-``config.py``, so an accessor-name enumeration permanently trails reality.
-Existing DIRECTORIES nested there -- most importantly the default file-tool
-sandbox root, ``get_user_data_dir() / "tool_sandbox"`` -- are excluded from
-that rule and stay fully reachable; see that check's own comment for why a
-directory/file distinction, not a name, is what exempts them.
+refused, as a RULE rather than an enumeration (see the direct-child-file
+loop in ``is_sensitive_path``): new state files land there constantly
+(agent-run logs, eval/RAG-indexing/search-history/event/kanban/sync-state
+DBs, ...) without ever touching ``config.py``, so an accessor-name
+enumeration permanently trails reality. The SAME rule is applied to three
+more directories, for the same reason: the effective config directory
+(``config._get_effective_config_path().parent``, which honors
+``TLDW_CONFIG_PATH`` the same way the config file itself does -- it holds
+``config.toml``'s own ``.bak``/``.tmp`` backup sidecars plus
+``runtime_policy.json``/``ui_state.toml``, none of which is enumerated by
+name here either); the ChromaDB vector-store persist directory
+(``RAG_Search.simplified.config.default_chroma_persist_directory()``,
+which holds ``chroma.sqlite3`` -- plaintext chunks of the same
+conversations and notes ``ChaChaNotes.db`` protects); and the RAG-profile
+store (``RAG_Search.config_profiles.default_rag_profiles_dir()``, plaintext
+per-profile RAG/embedding-provider config). Existing DIRECTORIES nested
+directly under any of these four are excluded from the rule and stay fully
+reachable -- most importantly the default file-tool sandbox root,
+``get_user_data_dir() / "tool_sandbox"``; see that check's own comment for
+why a directory/file distinction, not a name, is what exempts them.
+
+The skill trust/grant store gets a DIFFERENT treatment: the WHOLE
+``get_user_data_dir() / "skills" / "trust"`` subtree is refused, not just
+its direct children, because ``skills`` itself is one of the exempted
+container directories above and everything nested under it would otherwise
+inherit that exemption -- see ``_sensitive_skill_trust_dir`` for why that
+one subtree needs an explicit carve-out.
+
+A directory can also be CREATED to collide with a not-yet-existing state
+file at one of these locations (e.g. an agent asking ``write_file`` to
+create parent directories for ``search_history.db/note.txt`` before this
+app has ever created ``search_history.db`` as a file) -- the app's later
+attempt to open its own state file then fails outright, a denial of
+service. ``refuses_new_directory_chain`` is the guard against that: callers
+that create directories on the agent's behalf (``WriteFileTool``'s
+``create_directories=True`` path) must consult it before calling
+``Path.mkdir(parents=True, ...)``.
 
 This is a guardrail, not a security boundary: it stops accidents and naive
 injected payloads, not a determined ``python -c``. The sandbox/workspace-root
@@ -229,6 +257,126 @@ def _sensitive_single_file_paths() -> tuple[Path, ...]:
     return tuple(resolved)
 
 
+def _sensitive_skill_trust_dir() -> Path | None:
+    """Resolve this app's skill trust/grant store directory, lazily.
+
+    ``get_user_data_dir() / "skills"`` is one of the existing-directory
+    exemptions the direct-child-file rule (applied in ``is_sensitive_path``)
+    carves out -- every trusted skill bundle lives as a named subdirectory
+    under it, so a file inside it is deliberately NOT covered by that rule,
+    letting agent tools browse/read a user's own skill bundles.
+
+    The ``trust`` subdirectory nested one level inside it is the ONE
+    exception carved back OUT of that exemption: it holds
+    ``skill_trust_manifest.json`` (the authenticated trust manifest),
+    ``skill_script_grants.json`` (the plain, UNAUTHENTICATED JSON file
+    ``SkillTrustService.has_script_grant`` consults to authorize script
+    EXECUTION -- deliberately kept outside the manifest's own HMAC+keyring
+    integrity check; see ``Skills_Interop/skill_trust_service.py``),
+    ``generation_marker.json`` (the local rollback-protection marker), and
+    ``snapshots/`` (encrypted trusted-skill snapshots). A tool able to
+    rewrite the grants file can authorize its own future script execution
+    -- the same class of one-step gate bypass the MCP permission store's
+    entry exists to prevent (see this module's docstring) -- so this
+    caller refuses the WHOLE subtree by ancestry (the same way
+    ``_SENSITIVE_DIRS`` is matched), not just its direct children: a file
+    several levels inside ``snapshots/`` must be refused exactly like the
+    manifest itself.
+
+    Resolved via ``Skills_Interop.local_skills_service.default_local_skills_store_dir``
+    and ``Skills_Interop.skill_trust_store.default_trust_store_dir`` -- the
+    SAME functions ``app.py`` calls to build the live ``SkillTrustStore`` --
+    never a re-spelled ``"skills"``/``"trust"`` literal, which would drift
+    the moment either name changed (see this module's docstring for why
+    that class of drift is exactly how a past finding went stale).
+
+    Returns:
+        The trust store directory, or ``None`` if ``get_user_data_dir()``
+        could not be resolved.
+    """
+    from .. import config as _config
+    from ..Skills_Interop.local_skills_service import default_local_skills_store_dir
+    from ..Skills_Interop.skill_trust_store import default_trust_store_dir
+
+    try:
+        user_data_dir = _config.get_user_data_dir()
+    except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+        logger.debug(f"sensitive_paths: could not resolve user data dir: {exc}")
+        return None
+
+    local_skills_store_dir = default_local_skills_store_dir(user_data_dir)
+    return default_trust_store_dir(local_skills_store_dir)
+
+
+def _direct_child_rule_container_dirs() -> tuple[Path, ...]:
+    """Resolve every directory whose direct (non-recursive) child FILES are refused, lazily.
+
+    Each of these is a directory this app treats as a bounded container for
+    its own state, where new files land constantly without ever being
+    named here individually -- this is the set the "Finding 2" rule in
+    ``is_sensitive_path`` applies to. Existing DIRECTORIES nested directly
+    inside any one of them (``tool_sandbox``, ``chat_dicts``, ``chromadb``,
+    ``exports``, ``rag_profiles``, ``skills``, and any future sibling) are
+    exempt from the rule and stay fully reachable; only a same-level FILE
+    is refused. See that rule's own comment for why "is an existing
+    directory", not a name, is what exempts them.
+
+    Returns:
+        Every container directory whose accessor could be resolved:
+
+        * ``config.get_user_data_dir()``.
+        * The effective config directory
+          (``config._get_effective_config_path().parent``) -- honors
+          ``TLDW_CONFIG_PATH`` the same way the config file itself does.
+          This is what covers ``config.toml``'s own ``.bak``/``.tmp``
+          backup sidecars (``UI/Screens/settings_screen.py``'s Advanced
+          config save writes both, byte-identical to the live config,
+          API keys included) and any other loose file dropped beside it
+          (``runtime_policy.json``, ``ui_state.toml``, a hand-made backup
+          copy under any other name) -- none of which is enumerated here
+          by name either, for the same reason the user-data-dir rule
+          isn't: an enumeration permanently trails whatever gets written
+          there next.
+        * The ChromaDB vector-store persist directory
+          (``RAG_Search.simplified.config.default_chroma_persist_directory()``),
+          which holds ``chroma.sqlite3`` -- plaintext chunks of the same
+          conversations and notes ``ChaChaNotes.db`` protects.
+        * The RAG-profile store directory
+          (``RAG_Search.config_profiles.default_rag_profiles_dir()``),
+          plaintext per-profile RAG/embedding-provider config.
+
+        An accessor that raises is skipped rather than failing the whole
+        check, as elsewhere in this module.
+    """
+    from .. import config as _config
+    from ..RAG_Search.config_profiles import default_rag_profiles_dir
+    from ..RAG_Search.simplified.config import default_chroma_persist_directory
+
+    resolved: list[Path] = []
+
+    try:
+        resolved.append(_config.get_user_data_dir())
+    except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+        logger.debug(f"sensitive_paths: could not resolve user data dir: {exc}")
+
+    try:
+        resolved.append(_config._get_effective_config_path().parent)
+    except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+        logger.debug(f"sensitive_paths: could not resolve effective config dir: {exc}")
+
+    try:
+        resolved.append(default_chroma_persist_directory())
+    except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+        logger.debug(f"sensitive_paths: could not resolve chroma persist dir: {exc}")
+
+    try:
+        resolved.append(default_rag_profiles_dir())
+    except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+        logger.debug(f"sensitive_paths: could not resolve rag profiles dir: {exc}")
+
+    return tuple(resolved)
+
+
 def _db_sidecar_paths(db_path: Path) -> tuple[Path, ...]:
     """Build the WAL/SHM/rollback-journal sidecar paths for one DB path.
 
@@ -267,12 +415,18 @@ class SensitivePathContext(NamedTuple):
     dirs: tuple[Path, ...]
     db_paths: tuple[Path, ...]
     #: Resolved ``config.get_user_data_dir()``, or ``None`` if it could not
-    #: be resolved. Backs the Finding-2 rule in ``is_sensitive_path``: every
-    #: FILE sitting directly (non-recursively) inside this directory is
-    #: refused, regardless of whether it is one of the enumerated DBs above.
-    #: ``None`` simply means that rule does not fire for this context --
-    #: ``files``/``dirs``/``db_paths`` coverage is unaffected either way.
+    #: be resolved. Kept as its own field for callers/tests that care about
+    #: this one specific directory; the direct-child-file rule itself now
+    #: consults ``direct_child_denied_dirs`` below, which already includes
+    #: this value alongside the other container directories that get the
+    #: same treatment.
     user_data_dir: Path | None
+    #: Every directory whose direct (non-recursive) child FILES are
+    #: refused -- ``user_data_dir``, the effective config directory, the
+    #: ChromaDB persist directory, and the RAG-profile store directory (see
+    #: ``_direct_child_rule_container_dirs``). Entries that failed to
+    #: resolve are dropped, same as ``files``/``dirs``/``db_paths``.
+    direct_child_denied_dirs: tuple[Path, ...]
 
 
 def resolve_sensitive_context() -> SensitivePathContext:
@@ -301,6 +455,9 @@ def resolve_sensitive_context() -> SensitivePathContext:
         logger.debug(f"sensitive_paths: could not resolve user data dir: {exc}")
         user_data_dir = None
 
+    skill_trust_dir = _sensitive_skill_trust_dir()
+    dynamic_dirs = (skill_trust_dir,) if skill_trust_dir is not None else ()
+
     return SensitivePathContext(
         files=tuple(
             p
@@ -308,7 +465,9 @@ def resolve_sensitive_context() -> SensitivePathContext:
             if p is not None
         ),
         dirs=tuple(
-            p for p in (_resolved(entry) for entry in _SENSITIVE_DIRS) if p is not None
+            p
+            for p in (_resolved(str(entry)) for entry in _SENSITIVE_DIRS + dynamic_dirs)
+            if p is not None
         ),
         db_paths=tuple(
             p
@@ -316,6 +475,13 @@ def resolve_sensitive_context() -> SensitivePathContext:
             if p is not None
         ),
         user_data_dir=user_data_dir,
+        direct_child_denied_dirs=tuple(
+            p
+            for p in (
+                _resolved(str(raw)) for raw in _direct_child_rule_container_dirs()
+            )
+            if p is not None
+        ),
     )
 
 
@@ -373,27 +539,38 @@ def is_sensitive_path(
         if resolved == root or root in resolved.parents:
             return True
 
-    # Finding 2 (substrate review): refuse every FILE sitting directly
-    # (non-recursively) inside `get_user_data_dir()`, as a RULE rather than
-    # an enumeration. New state files land there constantly without ever
-    # touching config.py -- agent-run logs, eval/RAG-indexing/search-
-    # history/event/kanban/sync-state DBs, the MCP local-store/context JSON
-    # files, the rotating app log -- and an accessor-name enumeration
+    # Finding 2 (substrate review), generalized beyond `get_user_data_dir()`
+    # to every container directory `_direct_child_rule_container_dirs()`
+    # resolves (also the effective config directory, the ChromaDB persist
+    # directory, and the RAG-profile store -- TASK-848): refuse every FILE
+    # sitting directly (non-recursively) inside one of them, as a RULE
+    # rather than an enumeration. New state files land there constantly
+    # without ever touching config.py -- agent-run logs, eval/RAG-indexing/
+    # search-history/event/kanban/sync-state DBs, the MCP local-store/
+    # context JSON files, the rotating app log, config.toml's own
+    # `.bak`/`.tmp` backup sidecars -- and an accessor-name enumeration
     # (`_DB_PATH_ACCESSOR_NAMES` above) permanently trails whatever the app
     # actually creates there next.
     #
     # Checked by "is it a directory", never by name: every legitimate use
-    # of this directory as a CONTAINER creates a named subdirectory instead
-    # of a loose file directly inside it -- `tool_sandbox` (the default
-    # file-tool sandbox root itself), `chat_dicts`, `chromadb`, `exports`,
-    # `rag_profiles`, `skills`. Excluding "is an existing directory" rather
-    # than hardcoding any of those names keeps every one of them reachable,
-    # including ones added later, without needing this rule to be updated
-    # in lockstep -- while a candidate that does not exist yet (e.g. a
-    # `write_file` target for a brand-new file) is NOT a directory either,
-    # so it still fails closed and is refused.
-    if ctx.user_data_dir is not None and resolved.parent == ctx.user_data_dir:
-        if not resolved.is_dir():
+    # of one of these directories as a CONTAINER creates a named
+    # subdirectory instead of a loose file directly inside it -- e.g.
+    # `tool_sandbox` (the default file-tool sandbox root itself),
+    # `chat_dicts`, `chromadb`, `exports`, `rag_profiles`, `skills` nested
+    # under `get_user_data_dir()`. Excluding "is an existing directory"
+    # rather than hardcoding any of those names keeps every one of them
+    # reachable, including ones added later, without needing this rule to
+    # be updated in lockstep -- while a candidate that does not exist yet
+    # (e.g. a `write_file` target for a brand-new file) is NOT a directory
+    # either, so it still fails closed and is refused. TASK-849: that same
+    # gate means an agent COULD plant a directory at a name the app has
+    # never used yet (before this check ever sees it as "existing") --
+    # closing that hole is `refuses_new_directory_chain` below, consulted
+    # by callers BEFORE they create a directory on the agent's behalf,
+    # never by loosening this check's own "is a directory" gate (which
+    # would break every legitimate container above).
+    for denied_parent in ctx.direct_child_denied_dirs:
+        if resolved.parent == denied_parent and not resolved.is_dir():
             return True
 
     return False

@@ -280,3 +280,189 @@ def test_context_reuse_matches_fresh_resolution(tmp_path):
 
     db_path = app_config.get_chachanotes_db_path()
     assert is_sensitive_path(db_path, context=ctx) == is_sensitive_path(db_path)
+
+
+# ---------------------------------------------------------------------------
+# TASK-848: the skill trust/grant store (audit CRITICAL-3).
+# ---------------------------------------------------------------------------
+
+
+def test_skill_trust_store_paths_are_refused_via_the_actually_used_accessors():
+    """Audit CRITICAL-3 / TASK-848 AC#2 + AC#4.
+
+    ``get_user_data_dir() / "skills"`` is one of the existing-directory
+    exemptions the direct-child-file rule carves out, so everything nested
+    under it -- including ``skills/trust/`` -- used to inherit that
+    exemption with nothing refusing it specifically. Every path here is
+    derived from the SAME functions ``app.py`` calls to build the live
+    ``SkillTrustStore`` (``default_local_skills_store_dir`` +
+    ``default_trust_store_dir``) and from ``SkillTrustStore``'s own
+    ``manifest_path``/``snapshots_dir`` properties -- never a re-spelled
+    ``skills/trust`` literal, so this can't silently drift back to
+    matching nothing the way the MCP permission-store literal once did.
+    """
+    from tldw_chatbook import config as app_config
+    from tldw_chatbook.Skills_Interop.local_skills_service import (
+        default_local_skills_store_dir,
+    )
+    from tldw_chatbook.Skills_Interop.skill_trust_service import (
+        _SCRIPT_GRANTS_FILENAME,
+    )
+    from tldw_chatbook.Skills_Interop.skill_trust_store import (
+        MARKER_FILENAME,
+        FileSkillTrustGenerationMarkerStore,
+        SkillTrustStore,
+        default_trust_store_dir,
+    )
+
+    user_data_dir = app_config.get_user_data_dir()
+    local_skills_store_dir = default_local_skills_store_dir(user_data_dir)
+    trust_store_dir = default_trust_store_dir(local_skills_store_dir)
+
+    store = SkillTrustStore(
+        store_dir=trust_store_dir,
+        marker_store=FileSkillTrustGenerationMarkerStore(
+            trust_store_dir / MARKER_FILENAME
+        ),
+    )
+
+    assert is_sensitive_path(store.manifest_path), "skill_trust_manifest.json"
+    assert is_sensitive_path(
+        store.store_dir / _SCRIPT_GRANTS_FILENAME
+    ), "skill_script_grants.json (the plain, unauthenticated script-execution grant file)"
+    assert is_sensitive_path(
+        store.store_dir / MARKER_FILENAME
+    ), "generation_marker.json"
+    assert is_sensitive_path(
+        store.snapshots_dir / "some-snapshot-id.json"
+    ), "a file nested inside snapshots/"
+
+
+def test_skills_directory_itself_stays_reachable_outside_the_trust_carve_out():
+    """The ``skills/`` container exemption must still hold for everything
+    OTHER than the ``trust`` subtree -- this carve-out is deliberately
+    narrow, not a blanket refusal of the whole ``skills`` directory.
+    """
+    from tldw_chatbook import config as app_config
+    from tldw_chatbook.Skills_Interop.local_skills_service import (
+        default_local_skills_store_dir,
+    )
+
+    local_skills_store_dir = default_local_skills_store_dir(
+        app_config.get_user_data_dir()
+    )
+    sibling_skill_file = local_skills_store_dir / "skills" / "some-skill" / "SKILL.md"
+
+    assert not is_sensitive_path(sibling_skill_file)
+
+
+# ---------------------------------------------------------------------------
+# TASK-848: config.toml's .bak/.tmp sidecars, and the effective config
+# directory's direct-child-file rule more generally (audit CRITICAL-4).
+# ---------------------------------------------------------------------------
+
+
+def test_config_toml_bak_and_tmp_sidecars_are_refused():
+    """Audit CRITICAL-4 / TASK-848 AC#3 + AC#4.
+
+    ``UI/Screens/settings_screen.py``'s Advanced config save writes a
+    full plaintext ``.bak`` backup before overwriting, plus a ``.tmp``
+    during the atomic swap -- both byte-identical to the live config,
+    API keys included. Derived from ``config._get_effective_config_path()``
+    (the same accessor the app itself uses, honoring ``TLDW_CONFIG_PATH``),
+    never a hardcoded ``~/.config/tldw_cli/config.toml`` literal.
+    """
+    from tldw_chatbook import config as app_config
+
+    config_path = app_config._get_effective_config_path()
+    bak = config_path.with_name(config_path.name + ".bak")
+    tmp = config_path.with_name(config_path.name + ".tmp")
+
+    assert is_sensitive_path(bak)
+    assert is_sensitive_path(tmp)
+
+
+def test_any_other_file_directly_in_the_effective_config_dir_is_refused():
+    """TASK-848 AC#3: not just the two named sidecar suffixes -- ANY file
+    sitting directly in the effective config directory is refused, the
+    same generalization the user-data-dir rule already applies (a hand-made
+    backup under an arbitrary name, e.g. ``config.toml.pre-lab-cleanup``,
+    was found unprotected on the audit machine; an enumeration of specific
+    suffixes would have missed it too).
+    """
+    from tldw_chatbook import config as app_config
+
+    config_dir = app_config._get_effective_config_path().parent
+    arbitrary_file = config_dir / "config.toml.pre-lab-cleanup"
+
+    assert is_sensitive_path(arbitrary_file)
+
+
+def test_existing_directory_directly_in_the_effective_config_dir_stays_reachable():
+    """The direct-child-file rule must not blanket the whole effective
+    config directory: an existing DIRECTORY placed directly inside it
+    (mirroring the real ``feed_cache``/``themes``/``tokenizers``
+    directories this app already writes there) stays reachable, the same
+    directory/file distinction the user-data-dir rule already makes for
+    ``tool_sandbox``.
+    """
+    from tldw_chatbook import config as app_config
+
+    config_dir = app_config._get_effective_config_path().parent
+    existing_subdir = config_dir / "themes"
+    existing_subdir.mkdir(parents=True, exist_ok=True)
+    nested_file = existing_subdir / "custom.css"
+
+    assert not is_sensitive_path(nested_file)
+
+
+# ---------------------------------------------------------------------------
+# TASK-848 AC#1: vector-store and sibling-profile paths, under a widened
+# sandbox root.
+# ---------------------------------------------------------------------------
+
+
+def test_chroma_vector_store_file_is_refused():
+    """``chromadb`` is one of the existing-directory container exemptions
+    (it must stay reachable so the file tools can list/traverse it), but
+    ``chroma.sqlite3`` itself -- plaintext chunks of the same conversations
+    and notes ``ChaChaNotes.db`` protects -- was never covered by any rule.
+    Derived from the app's own
+    ``RAG_Search.simplified.config.default_chroma_persist_directory()``
+    accessor (which also honors ``RAG_PERSIST_DIR``/config overrides),
+    never a hardcoded ``<user data dir>/chromadb`` literal.
+    """
+    from tldw_chatbook.RAG_Search.simplified.config import (
+        default_chroma_persist_directory,
+    )
+
+    chroma_dir = default_chroma_persist_directory()
+    chroma_dir.mkdir(parents=True, exist_ok=True)
+    chroma_sqlite = chroma_dir / "chroma.sqlite3"
+
+    assert is_sensitive_path(chroma_sqlite)
+
+    # The container directory itself, and an existing per-collection
+    # subdirectory nested inside it, must both stay reachable -- only a
+    # same-level FILE is refused.
+    assert not is_sensitive_path(chroma_dir)
+    collection_dir = chroma_dir / "some-collection-uuid"
+    collection_dir.mkdir(exist_ok=True)
+    assert not is_sensitive_path(collection_dir)
+
+
+def test_rag_profile_file_is_refused():
+    """A RAG profile file dropped directly in ``rag_profiles/`` holds
+    plaintext RAG/embedding-provider config -- refused via
+    ``RAG_Search.config_profiles.default_rag_profiles_dir()``, the app's
+    own accessor (also what ``ConfigProfileManager`` itself now calls for
+    its default), never a re-spelled ``rag_profiles`` literal.
+    """
+    from tldw_chatbook.RAG_Search.config_profiles import default_rag_profiles_dir
+
+    profiles_dir = default_rag_profiles_dir()
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    profile_file = profiles_dir / "my_custom_profile.json"
+
+    assert is_sensitive_path(profile_file)
+    assert not is_sensitive_path(profiles_dir)

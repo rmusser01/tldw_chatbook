@@ -436,11 +436,14 @@ from tldw_chatbook.Skills_Interop import (  # noqa: E402
     ServerSkillsService,
     SkillTrustService,
     SkillsScopeService,
+    default_local_skills_store_dir,
 )
 from tldw_chatbook.Skills_Interop.skill_trust_store import (  # noqa: E402
+    MARKER_FILENAME as _SKILL_TRUST_MARKER_FILENAME,
     SkillTrustStore,
     build_default_skill_trust_key_cache,
     build_skill_trust_marker_store_with_fallback,
+    default_trust_store_dir,
     skill_trust_account_scope,
 )
 from tldw_chatbook.Sync_Interop import (  # noqa: E402
@@ -5178,12 +5181,12 @@ class TldwCli(
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
-        local_skills_store_dir = get_user_data_dir() / "skills"
-        trust_store_dir = local_skills_store_dir / "trust"
+        local_skills_store_dir = default_local_skills_store_dir(get_user_data_dir())
+        trust_store_dir = default_trust_store_dir(local_skills_store_dir)
         trust_account_scope = skill_trust_account_scope(trust_store_dir)
         skill_trust_marker_store, reduced_rollback_protection = (
             build_skill_trust_marker_store_with_fallback(
-                fallback_marker_path=trust_store_dir / "generation_marker.json",
+                fallback_marker_path=trust_store_dir / _SKILL_TRUST_MARKER_FILENAME,
                 account_scope=trust_account_scope,
             )
         )

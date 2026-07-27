@@ -282,6 +282,32 @@ def test_read_file_refuses_wal_sidecar_of_this_apps_own_sqlite_db(monkeypatch):
     assert "recent-uncommitted-row-marker" not in str(result)
 
 
+def test_read_file_refuses_chroma_vector_store_file_even_when_sandbox_root_contains_it(
+    monkeypatch,
+):
+    """TASK-848 AC#1: ``chromadb/chroma.sqlite3`` -- plaintext chunks of the
+    same conversations and notes ``ChaChaNotes.db`` protects -- must not
+    become readable just because a widened sandbox root happens to contain
+    it. ``chromadb`` itself stays reachable as a container (per the
+    existing-directory exemption); only the file directly inside it is
+    refused.
+    """
+    from tldw_chatbook.RAG_Search.simplified.config import (
+        default_chroma_persist_directory,
+    )
+
+    chroma_dir = default_chroma_persist_directory()
+    chroma_dir.mkdir(parents=True, exist_ok=True)
+    (chroma_dir / "chroma.sqlite3").write_text("plaintext vector chunk marker")
+
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: chroma_dir.resolve())
+
+    result = asyncio.run(fot.ReadFileTool().execute(file_path="chroma.sqlite3"))
+
+    assert "error" in result
+    assert "plaintext vector chunk marker" not in str(result)
+
+
 # ---------------------------------------------------------------------------
 # Finding 2's guardrail must not break the shipped DEFAULT configuration:
 # the default sandbox root is `get_user_data_dir() / "tool_sandbox"`, a
