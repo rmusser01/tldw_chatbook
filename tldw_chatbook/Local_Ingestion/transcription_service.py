@@ -666,6 +666,32 @@ class TranscriptionService:
         **kwargs,
     ) -> Dict[str, Any]:
         """Transcribe English audio with a local Parakeet v2 INT8 model."""
+        parakeet_model = self._load_parakeet_onnx_model(
+            model=model,
+            language=language,
+            model_dir=kwargs.get("model_dir"),
+        )
+
+        if progress_callback:
+            progress_callback(10, "Transcribing with Parakeet ONNX", None)
+
+        text = parakeet_model.recognize(audio_path).strip()
+        with wave.open(audio_path, "rb") as wav_file:
+            duration = wav_file.getnframes() / wav_file.getframerate()
+
+        if progress_callback:
+            progress_callback(100, "Transcription complete", None)
+
+        return self._parakeet_onnx_result(text, duration=duration, model=model)
+
+    def _load_parakeet_onnx_model(
+        self,
+        *,
+        model: str,
+        language: str,
+        model_dir: str | Path | None,
+    ) -> Any:
+        """Validate and load the configured local Parakeet v2 INT8 model."""
         if not ONNX_ASR_AVAILABLE:
             raise TranscriptionError(
                 "parakeet-onnx is not installed. Install with: "
@@ -677,7 +703,7 @@ class TranscriptionService:
                 "Retry with faster-whisper for automatic or non-English transcription."
             )
 
-        model_dir = kwargs.get("model_dir") or self.config["parakeet_onnx_model_dir"]
+        model_dir = model_dir or self.config["parakeet_onnx_model_dir"]
         if not model_dir or not Path(model_dir).is_dir():
             raise TranscriptionError(
                 "parakeet-onnx requires an explicit existing local model directory "
@@ -718,17 +744,13 @@ class TranscriptionService:
                     },
                 )
                 self._model_cache[cache_key] = parakeet_model
+        return parakeet_model
 
-        if progress_callback:
-            progress_callback(10, "Transcribing with Parakeet ONNX", None)
-
-        text = parakeet_model.recognize(audio_path).strip()
-        with wave.open(audio_path, "rb") as wav_file:
-            duration = wav_file.getnframes() / wav_file.getframerate()
-
-        if progress_callback:
-            progress_callback(100, "Transcription complete", None)
-
+    @staticmethod
+    def _parakeet_onnx_result(
+        text: str, *, duration: float, model: str
+    ) -> Dict[str, Any]:
+        """Build the common Parakeet ONNX transcription result."""
         return {
             "text": text,
             "segments": [
@@ -747,6 +769,47 @@ class TranscriptionService:
             "provider": "parakeet-onnx",
             "model": model,
         }
+
+    def _transcribe_buffer_with_parakeet_onnx(
+        self,
+        audio_data: bytes,
+        sample_rate: int,
+        channels: int,
+        sample_width: int,
+        model: str,
+        language: str,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Transcribe raw 16-bit PCM directly from memory with Parakeet ONNX."""
+        if not NUMPY_AVAILABLE or np is None:
+            raise TranscriptionError(
+                "Parakeet ONNX buffer transcription requires NumPy."
+            )
+        if sample_width != 2:
+            raise TranscriptionError(
+                "Parakeet ONNX microphone transcription requires 16-bit PCM audio."
+            )
+        if sample_rate <= 0 or channels <= 0:
+            raise TranscriptionError("Invalid microphone audio format.")
+        frame_bytes = sample_width * channels
+        if not audio_data or len(audio_data) % frame_bytes:
+            raise TranscriptionError("Invalid or incomplete microphone PCM buffer.")
+
+        waveform = np.frombuffer(audio_data, dtype=np.int16)
+        if channels > 1:
+            waveform = waveform.reshape(-1, channels).mean(axis=1)
+        waveform = waveform.astype(np.float32) / 32768.0
+        parakeet_model = self._load_parakeet_onnx_model(
+            model=model,
+            language=language,
+            model_dir=kwargs.get("model_dir"),
+        )
+        text = parakeet_model.recognize(
+            waveform,
+            sample_rate=sample_rate,
+        ).strip()
+        duration = (len(audio_data) // frame_bytes) / sample_rate
+        return self._parakeet_onnx_result(text, duration=duration, model=model)
 
     def transcribe_buffer(
         self,
@@ -787,6 +850,16 @@ class TranscriptionService:
                 sample_width,
                 model,
                 language,
+                **kwargs,
+            )
+        if provider == "parakeet-onnx":
+            return self._transcribe_buffer_with_parakeet_onnx(
+                audio_data,
+                sample_rate,
+                channels,
+                sample_width,
+                model or "nemo-parakeet-tdt-0.6b-v2",
+                language or "en",
                 **kwargs,
             )
         # Skip qwen2audio for now - it loads a large model

@@ -286,7 +286,7 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    height: 1fr;\n"
             "    min-height: 0;"
         ) in css
-        assert ("#console-composer-actions {\n    width: 37;") in css
+        assert ("#console-composer-actions {\n    width: 45;") in css
 
 
 @pytest.mark.asyncio
@@ -391,6 +391,7 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         send_button = composer.query_one("#console-send-message", Button)
         stop_button = composer.query_one("#console-stop-generation", Button)
+        mic_button = composer.query_one("#console-dictation", Button)
         attach_button = composer.query_one("#console-attach-context", Button)
         save_button = composer.query_one("#console-save-chatbook", Button)
         legacy_inputs = [
@@ -412,7 +413,13 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         assert composer.draft_text() == "visible composer text"
         assert "visible composer text" in visible_draft.renderable.plain
         assert "visible composer text" in _visible_text(composer)
-        for action_button in (send_button, stop_button, attach_button, save_button):
+        for action_button in (
+            send_button,
+            stop_button,
+            mic_button,
+            attach_button,
+            save_button,
+        ):
             assert action_button.compact is True
             # Stop button is hidden when not running, so it has no valid region
             if action_button is not stop_button:
@@ -423,6 +430,7 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
                 )
         assert str(send_button.label) == "Send"
         assert str(stop_button.label) == "Stop"
+        assert str(mic_button.label) == "Mic"
         assert str(attach_button.label) == "Attach"
         assert str(save_button.label) == "Save"
         assert save_button.region.width >= len("Save")
@@ -695,11 +703,13 @@ async def test_console_composer_ranks_actions_by_current_availability():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         send_button = composer.query_one("#console-send-message", Button)
         stop_button = composer.query_one("#console-stop-generation", Button)
+        mic_button = composer.query_one("#console-dictation", Button)
         attach_button = composer.query_one("#console-attach-context", Button)
         save_button = composer.query_one("#console-save-chatbook", Button)
 
         assert send_button.disabled is False
         assert stop_button.disabled is False
+        assert mic_button.disabled is False
         assert save_button.disabled is False
         assert attach_button.disabled is False
         assert attach_button.has_class("console-action-secondary")
@@ -823,13 +833,20 @@ async def test_console_composer_actions_remain_visible_inside_composer_bounds():
         actions = composer.query_one("#console-composer-actions")
         send_button = composer.query_one("#console-send-message", Button)
         stop_button = composer.query_one("#console-stop-generation", Button)
+        mic_button = composer.query_one("#console-dictation", Button)
         attach_button = composer.query_one("#console-attach-context", Button)
         save_button = composer.query_one("#console-save-chatbook", Button)
 
         composer_right = composer.region.x + composer.region.width
         assert actions.region.x > visible_draft.region.x
         assert actions.region.x + actions.region.width <= composer_right
-        for button in (send_button, stop_button, attach_button, save_button):
+        for button in (
+            send_button,
+            stop_button,
+            mic_button,
+            attach_button,
+            save_button,
+        ):
             # Stop button is hidden when not running, others remain visible
             if button is stop_button:
                 assert button.display is False

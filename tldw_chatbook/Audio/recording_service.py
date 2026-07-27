@@ -106,6 +106,8 @@ class AudioRecordingService:
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         use_vad: bool = True,
         vad_aggressiveness: int = 2,
+        max_buffer_bytes: Optional[int] = None,
+        on_buffer_limit: Optional[Callable[[], None]] = None,
     ):
         """
         Initialize audio recording service.
@@ -117,6 +119,9 @@ class AudioRecordingService:
             chunk_size: Number of samples per chunk
             use_vad: Whether to use Voice Activity Detection
             vad_aggressiveness: VAD aggressiveness (0-3, higher is more aggressive)
+            max_buffer_bytes: Optional hard limit for retained PCM bytes
+            on_buffer_limit: Optional callback invoked once on a daemon
+                notification thread when the limit is reached
         """
         # Check for numpy requirement first
         if not NUMPY_AVAILABLE:
@@ -136,6 +141,10 @@ class AudioRecordingService:
         self.chunk_size = chunk_size
         self.use_vad = use_vad and VAD_AVAILABLE
         self.vad_aggressiveness = max(0, min(3, vad_aggressiveness))
+        self.max_buffer_bytes = (
+            max(0, int(max_buffer_bytes)) if max_buffer_bytes is not None else None
+        )
+        self.on_buffer_limit = on_buffer_limit
 
         # Initialize backend
         self.backend = self._initialize_backend(backend)
@@ -148,6 +157,8 @@ class AudioRecordingService:
         self.is_recording = False
         self.audio_queue = queue.Queue()
         self.audio_buffer: List[bytes] = []
+        self._audio_buffer_bytes = 0
+        self._buffer_limit_reached = False
         self.recording_thread = None
         self.callback = None
         self.save_file = None
@@ -309,6 +320,8 @@ class AudioRecordingService:
             self.callback = callback if callback is not None else self.callback
             self.save_file = save_to_file
             self.audio_buffer = []
+            self._audio_buffer_bytes = 0
+            self._buffer_limit_reached = False
             self.is_recording = True
 
             # Start recording thread
@@ -447,18 +460,58 @@ class AudioRecordingService:
 
     def _handle_audio_chunk(self, chunk: bytes):
         """Handle processed audio chunk."""
+        retained = chunk
+        hit_limit = False
+        if self.max_buffer_bytes is not None:
+            frame_bytes = 2 * self.channels
+            remaining = max(0, self.max_buffer_bytes - self._audio_buffer_bytes)
+            retained_bytes = min(len(chunk), remaining)
+            retained_bytes -= retained_bytes % frame_bytes
+            retained = chunk[:retained_bytes]
+            hit_limit = retained_bytes < len(chunk) or (
+                self._audio_buffer_bytes + retained_bytes + frame_bytes
+                > self.max_buffer_bytes
+            )
+
         # Add to buffer
-        self.audio_buffer.append(chunk)
+        if retained:
+            self.audio_buffer.append(retained)
+            self._audio_buffer_bytes += len(retained)
 
         # Add to queue
-        self.audio_queue.put(chunk)
+        if retained:
+            self.audio_queue.put(retained)
 
         # Call callback if provided
-        if self.callback:
+        if retained and self.callback:
             try:
-                self.callback(chunk)
+                self.callback(retained)
             except Exception as e:
                 logger.error(f"Callback error: {e}")
+
+        if hit_limit:
+            self.is_recording = False
+            if not self._buffer_limit_reached:
+                self._buffer_limit_reached = True
+                self._notify_buffer_limit()
+
+    def _notify_buffer_limit(self) -> None:
+        """Invoke the buffer-limit callback away from the recording thread."""
+        callback = self.on_buffer_limit
+        if callback is None:
+            return
+
+        def invoke() -> None:
+            try:
+                callback()
+            except Exception as e:
+                logger.error(f"Buffer limit callback error: {e}")
+
+        threading.Thread(
+            target=invoke,
+            name="AudioBufferLimitCallback",
+            daemon=True,
+        ).start()
 
     def stop_recording(self) -> Optional[bytes]:
         """
@@ -487,6 +540,7 @@ class AudioRecordingService:
 
         # Cleanup
         self.audio_buffer = []
+        self._audio_buffer_bytes = 0
         self.callback = None
 
         # Close PyAudio if needed

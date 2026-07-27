@@ -5,6 +5,7 @@ Tests audio capture, device enumeration, and recording functionality.
 """
 
 import pytest
+import threading
 import time
 from unittest.mock import Mock, patch, MagicMock
 import numpy as np
@@ -252,6 +253,69 @@ class TestAudioRecordingService:
         assert len(service.audio_buffer) == 1
         assert service.audio_buffer[0] == chunk
         callback.assert_called_once_with(chunk)
+
+    def test_buffer_limit_keeps_complete_pcm_frames_and_stops_once(
+        self, mock_pyaudio
+    ):
+        """A configured memory limit must stop capture without splitting a frame."""
+        limit_called = threading.Event()
+        limit_calls = []
+
+        def on_limit():
+            limit_calls.append(True)
+            limit_called.set()
+
+        service = AudioRecordingService(
+            backend="pyaudio",
+            channels=2,
+            max_buffer_bytes=7,
+            on_buffer_limit=on_limit,
+        )
+        service.is_recording = True
+
+        service._handle_audio_chunk(b"\x01\x02\x03\x04\x05\x06\x07\x08")
+        service._handle_audio_chunk(b"\x09\x0a\x0b\x0c")
+
+        assert service.audio_buffer == [b"\x01\x02\x03\x04"]
+        assert service.is_recording is False
+        assert limit_called.wait(timeout=1)
+        assert limit_calls == [True]
+
+    def test_buffer_limit_callback_can_stop_without_joining_recording_thread(
+        self, mock_pyaudio
+    ):
+        """Limit callbacks may synchronously stop capture without self-joining."""
+        callback_done = threading.Event()
+        callback_errors = []
+        callback_result = []
+        service = None
+
+        def on_limit():
+            try:
+                callback_result.append(service.stop_recording())
+            except Exception as exc:
+                callback_errors.append(exc)
+            finally:
+                callback_done.set()
+
+        service = AudioRecordingService(
+            backend="pyaudio",
+            max_buffer_bytes=4,
+            on_buffer_limit=on_limit,
+        )
+        worker = threading.Thread(
+            target=service._handle_audio_chunk,
+            args=(b"\x01\x02\x03\x04",),
+        )
+        service.recording_thread = worker
+        service.is_recording = True
+
+        worker.start()
+        worker.join(timeout=1)
+
+        assert callback_done.wait(timeout=1)
+        assert callback_errors == []
+        assert callback_result == [b"\x01\x02\x03\x04"]
 
     def test_vad_processing(self, mock_pyaudio, mock_vad):
         """Test Voice Activity Detection processing."""
