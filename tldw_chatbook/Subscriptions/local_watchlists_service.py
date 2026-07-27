@@ -20,6 +20,7 @@ from .item_persist import persist_subscription_item
 from .watchlist_content_alert_service import WatchlistContentAlertService
 from .watchlist_filter_service import WatchlistFilterService
 from .watchlist_normalizers import (
+    build_watchlist_item_id,
     normalize_local_subscription_row,
     normalize_watchlist_alert_rule,
     normalize_watchlist_item,
@@ -162,6 +163,53 @@ class LocalWatchlistsService:
         if changes:
             db.update_subscription(int(source_id), **changes)
         return normalize_local_subscription_row(db.get_subscription(int(source_id)))
+
+    #: Statuses a watchlist item may be moved to from the UI. Mirrors
+    #: `ItemsPane._STATUS_OPTIONS` minus its "all" filter entry.
+    ITEM_STATUSES = ("new", "reviewed", "ingested", "ignored", "error")
+
+    async def update_item(self, *, item_id: Any, status: str) -> dict[str, Any]:
+        """Move one watchlist item to a new status.
+
+        TASK-1120 AC#3. `SubscriptionsDB.mark_item_status` has always existed
+        and nothing reached it: no service exposed an item-status method, so
+        `WatchlistsBackendController.update_item_status` fell through its
+        candidate-method loop and raised `NotImplementedError`. `Mark
+        reviewed`, `Ingest` and `Ignore` therefore could not have worked even
+        once the Inspector started offering them.
+
+        Args:
+            item_id: The item's local row id (bare, not namespaced).
+            status: One of `ITEM_STATUSES`.
+
+        Returns:
+            The normalized item id, backend and new status.
+
+        Raises:
+            ValueError: If `status` is not a known item status, or `item_id`
+                is not an integer id.
+            KeyError: If no item has that id.
+        """
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status not in self.ITEM_STATUSES:
+            raise ValueError(
+                f"Unknown watchlist item status: {status!r}. "
+                f"Expected one of {', '.join(self.ITEM_STATUSES)}."
+            )
+        try:
+            row_id = int(item_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
+        if not self._db().mark_item_status(row_id, normalized_status):
+            raise KeyError(f"Watchlist item not found: {item_id}")
+        return {
+            "success": True,
+            "id": build_watchlist_item_id("local", "watchlist_item", row_id),
+            "backend": "local",
+            "entity_kind": "watchlist_item",
+            "item_id": row_id,
+            "status": normalized_status,
+        }
 
     async def delete_source(self, source_id: Any) -> dict[str, Any]:
         success = self._db().delete_subscription(int(source_id))

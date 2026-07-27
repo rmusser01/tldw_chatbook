@@ -311,22 +311,56 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             )
         return levels
 
+    #: TASK-1120. Every entity the panes hand this Inspector comes out of
+    #: `watchlist_normalizers.py`, and every normalizer stamps an
+    #: `entity_kind`. That field is the backend's own answer to "what is
+    #: this", so it decides -- the shape heuristics below it are a fallback
+    #: for dicts assembled by hand (tree scopes, fixtures) that carry no kind.
+    _ENTITY_KINDS = {
+        "subscription": "source",
+        "watchlist_source": "source",
+        "watchlist_run": "run",
+        "watchlist_item": "item",
+        "watchlist_alert_rule": "rule",
+        "client_notification": "notification",
+    }
+
     @staticmethod
     def _entity_type(entity: dict[str, Any]) -> str:
-        # Alert rules are most specifically identified by their backend kind or
-        # rule id; check them first so they are never mistaken for items.
-        if entity.get("entity_kind") == "watchlist_alert_rule" or "rule_id" in entity:
-            return "rule"
-        if entity.get("entity_kind") == "client_notification":
-            return "notification"
-        if "source_type" in entity or "url" in entity:
-            return "source"
-        if "status" in entity and ("found_count" in entity or "processed_count" in entity):
-            return "run"
-        if "condition_type" in entity:
+        """Which kind of thing this entity is, and so which actions it gets.
+
+        Guessing from shape alone is what produced TASK-1120: the first test
+        used to be `"source_type" in entity or "url" in entity`, and a
+        normalized watchlist item carries BOTH -- `source_type` is the type of
+        the feed it came from and `url` is the article's own link. Every
+        fetched item was therefore typed `source`, and the Inspector offered
+        `Preview`/`Check now` over a blog post while `Mark reviewed`, `Ingest`
+        and `Ignore` were unreachable. A run had the mirror problem: its stats
+        live under `stats`, not as `found_count`/`processed_count` keys, so it
+        fell through every branch to `unknown`.
+
+        Args:
+            entity: A normalized watchlist entity, or a hand-built dict.
+
+        Returns:
+            One of source/run/item/rule/notification, or `unknown`.
+        """
+        kind = InspectorPane._ENTITY_KINDS.get(str(entity.get("entity_kind") or ""))
+        if kind is not None:
+            return kind
+        # Fallbacks, most specific first. `item_id` now outranks the source
+        # keys for the same reason the map exists at all.
+        if "rule_id" in entity or "condition_type" in entity:
             return "rule"
         if "item_id" in entity or "source_name" in entity:
             return "item"
+        if "run_id" in entity or (
+            "status" in entity
+            and ("found_count" in entity or "processed_count" in entity)
+        ):
+            return "run"
+        if "source_type" in entity or "url" in entity:
+            return "source"
         return "unknown"
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
