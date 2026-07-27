@@ -61,38 +61,63 @@ def test_config_toml_override_is_followed_when_retargeted(tmp_path, monkeypatch)
     assert is_sensitive_path(retargeted)
 
 
+def _real_control_plane_service():
+    """Build a real ``UnifiedMCPControlPlaneService`` wired to a real,
+    default-path ``LocalMCPStore`` -- the same store shape ``app.py``
+    constructs -- so ``.permission_store``/``.execution_log`` derive their
+    paths through the actual production property, not a re-typed literal.
+
+    Returns:
+        A ``UnifiedMCPControlPlaneService`` with no server/target/context
+        collaborators wired in (irrelevant to path derivation).
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.MCP.local_store import LocalMCPStore
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    # No explicit path: TASK-855 made this default derive from
+    # get_user_data_dir(), the same directory app.py passes explicitly.
+    store = LocalMCPStore()
+    return UnifiedMCPControlPlaneService(
+        local_service=SimpleNamespace(store=store),
+        server_service=None,
+        target_store=None,
+        context_store=None,
+    )
+
+
 def test_mcp_permission_store_is_refused_via_the_actually_used_path():
     """Finding 1 (CRITICAL, substrate review): the permission store's real
     path was never ``~/.config/tldw_cli/mcp_permissions.json`` on any real
-    install -- the app builds it under ``get_user_data_dir()`` (see
-    ``MCP.unified_control_plane_service``'s ``permission_store`` property:
-    ``Path(store.path).with_name("mcp_permissions.json")``, where
-    ``store.path`` is the ``LocalMCPStore`` path ``app.py`` constructs as
-    ``get_user_data_dir() / "local_mcp_store.json"``). Derives the path the
-    SAME way the app does rather than asserting a literal, so this can't
-    silently drift back to matching nothing the way the original bug did.
+    install -- the app builds it under ``get_user_data_dir()``. Reads the
+    path off the LIVE ``UnifiedMCPControlPlaneService.permission_store``
+    property (the actual object the app constructs and consults) rather
+    than re-typing its ``Path(store.path).with_name(...)`` derivation here:
+    if ``permission_store``'s own logic ever changes (e.g. app.py nests
+    ``local_mcp_store.json`` into a subdirectory), this test tracks it
+    automatically instead of drifting alongside it the way a re-spelled
+    literal would -- the original bug's exact failure mode.
     """
-    from tldw_chatbook import config as app_config
-    from tldw_chatbook.MCP.local_store import LocalMCPStore
+    service = _real_control_plane_service()
 
-    store = LocalMCPStore(app_config.get_user_data_dir() / "local_mcp_store.json")
-    permissions_path = Path(store.path).with_name("mcp_permissions.json")
+    permissions_path = service.permission_store.path
 
     assert is_sensitive_path(permissions_path)
 
 
 def test_mcp_permission_store_companions_are_refused():
-    """The execution-audit log and the server-definitions store are built
-    the identical ``Path(...).with_name(...)`` way from the same base path
-    as the permission store and carry the same class of gate-relevant
-    state (server definitions + env, and the decision audit trail).
+    """The execution-audit log and the local server-definitions store carry
+    the same class of gate-relevant state as the permission store (server
+    definitions + env, and the decision audit trail). Both paths are read
+    off the live service/store objects under test, not re-spelled.
     """
-    from tldw_chatbook import config as app_config
+    service = _real_control_plane_service()
 
-    user_data_dir = app_config.get_user_data_dir()
-
-    assert is_sensitive_path(user_data_dir / "local_mcp_store.json")
-    assert is_sensitive_path(user_data_dir / "mcp_execution_log.jsonl")
+    assert is_sensitive_path(service.local_service.store.path)
+    assert is_sensitive_path(service.execution_log.path)
 
 
 def test_matching_is_by_resolved_ancestry_not_substring(tmp_path):

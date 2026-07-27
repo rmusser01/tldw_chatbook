@@ -25,6 +25,7 @@ from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
 from tldw_chatbook.Skills_Interop.skill_trust_store import (
     FileSkillTrustGenerationMarkerStore,
     SkillTrustStore,
+    default_trust_store_dir,
 )
 from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
@@ -79,15 +80,27 @@ def _real_skills_scope_service(
     return local_service, service
 
 
+def _skills_dir_for(tmp_path):
+    """The real, derived skills subdirectory for a store rooted at ``tmp_path``.
+
+    Reads ``LocalSkillsService``'s own computed ``skills_dir`` attribute
+    (rather than re-spelling the "skills" literal) so this stays correct if
+    the class's internal directory-name constant ever changes (TASK-866).
+    """
+    return LocalSkillsService(store_dir=tmp_path).skills_dir
+
+
 def _real_trust_service(tmp_path) -> SkillTrustService:
     """A real, already-unlocked (but not yet bootstrapped) trust service."""
-    marker_path = tmp_path / "marker.json"
+    trust_dir = default_trust_store_dir(tmp_path)
+    trust_dir.mkdir(parents=True, exist_ok=True)
+    marker_path = trust_dir / "marker.json"
     trust_service = SkillTrustService(
-        skills_dir=tmp_path / "skills",
+        skills_dir=_skills_dir_for(tmp_path),
         trust_store=SkillTrustStore(
-            store_dir=tmp_path / "trust",
+            store_dir=trust_dir,
             marker_store=FileSkillTrustGenerationMarkerStore(
-                marker_path, store_dir=marker_path.parent
+                marker_path, store_dir=trust_dir
             ),
         ),
     )
@@ -101,13 +114,15 @@ def _real_uninitialized_trust_service(tmp_path) -> SkillTrustService:
     ``_real_trust_service`` above, which is already unlocked. This is the
     exact fresh-install shape the Phase-1 gate flagged as having no live-UI
     bootstrap path (FIX 2)."""
-    marker_path = tmp_path / "marker.json"
+    trust_dir = default_trust_store_dir(tmp_path)
+    trust_dir.mkdir(parents=True, exist_ok=True)
+    marker_path = trust_dir / "marker.json"
     return SkillTrustService(
-        skills_dir=tmp_path / "skills",
+        skills_dir=_skills_dir_for(tmp_path),
         trust_store=SkillTrustStore(
-            store_dir=tmp_path / "trust",
+            store_dir=trust_dir,
             marker_store=FileSkillTrustGenerationMarkerStore(
-                marker_path, store_dir=marker_path.parent
+                marker_path, store_dir=trust_dir
             ),
         ),
     )
