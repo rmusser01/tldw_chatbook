@@ -19,7 +19,10 @@ from tldw_chatbook.Agents.agent_models import (
     RunOutcome,
 )
 from tldw_chatbook.Chat.citation_source_locators import CanonicalSourceKind
-from tldw_chatbook.Chat.citation_repair import CitationRepairContract
+from tldw_chatbook.Chat.citation_repair import (
+    CitationRepairContract,
+    build_citation_repair_messages,
+)
 from tldw_chatbook.Chat.citation_trace_builder import (
     CitationTraceBuilder,
     LocalPromptEvidenceCapture,
@@ -38,7 +41,17 @@ from tldw_chatbook.Chat.citation_trace_models import (
     SealedCitationWrite,
 )
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleCitationNoticeCode,
+    ConsoleCitationPhase,
+    ConsoleMessageRole,
+    ConsoleRunStatus,
+)
+from tldw_chatbook.Chat.console_provider_gateway import (
+    NO_PROVIDER_CONTENT_COPY,
+    ConsoleProviderResolution,
+    ProviderToolCalls,
+)
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
@@ -58,6 +71,7 @@ _PRIVATE_TITLE = "PRIVATE_TITLE_SENTINEL_TASK_553_14"
 _PRIVATE_SNAPSHOT = "PRIVATE_SNAPSHOT_SENTINEL_TASK_553_14"
 _PRIVATE_EXCEPTION = "PRIVATE_EXCEPTION_SENTINEL_TASK_553_14"
 _MISSING = object()
+_OMITTED = object()
 
 
 def _citation_builder(
@@ -185,7 +199,7 @@ class _RecordingGateway:
             max_tokens=128,
         )
 
-    async def stream_chat(self, _resolution, messages):
+    async def stream_chat(self, _resolution, messages, signals=None):
         if self.builder_ref is not None:
             assert self.builder_ref() is not None
         self.messages_seen = messages
@@ -193,6 +207,92 @@ class _RecordingGateway:
             yield chunk
         if self.error is not None:
             raise self.error
+
+
+class _RecordingCitationStore(ConsoleChatStore):
+    def __init__(self, *, persistence=None):
+        super().__init__(persistence=persistence)
+        self.assistant_append_kwargs: list[dict[str, Any]] = []
+        self.completion_calls: list[str] = []
+
+    def append_message(self, session_id, *, role, content, **kwargs):
+        if role is ConsoleMessageRole.ASSISTANT:
+            self.assistant_append_kwargs.append(dict(kwargs))
+        return super().append_message(
+            session_id,
+            role=role,
+            content=content,
+            **kwargs,
+        )
+
+    def mark_message_complete(self, message_id):
+        self.completion_calls.append(message_id)
+        return super().mark_message_complete(message_id)
+
+
+class _ScriptedCitationGateway:
+    def __init__(
+        self,
+        scripts: tuple[tuple[object, ...], ...],
+        *,
+        mark_fallback_calls: frozenset[int] = frozenset(),
+    ) -> None:
+        self.resolution = ConsoleProviderResolution(
+            provider="openai",
+            base_url="https://provider.invalid/v1",
+            model="repair-model",
+            ready=True,
+            readiness_key="openai",
+            execution_key="openai",
+            api_key="secret",
+            temperature=0.23,
+            top_p=0.87,
+            min_p=0.04,
+            top_k=17,
+            max_tokens=321,
+            seed=42,
+            presence_penalty=0.15,
+            frequency_penalty=0.25,
+            reasoning_effort="medium",
+            reasoning_summary="auto",
+            verbosity="low",
+            thinking_effort="high",
+            thinking_budget_tokens=777,
+            streaming=True,
+        )
+        self.scripts = scripts
+        self.mark_fallback_calls = mark_fallback_calls
+        self.calls: list[dict[str, Any]] = []
+        self.on_call = None
+
+    async def resolve_for_send(self, _selection):
+        return self.resolution
+
+    async def stream_chat(
+        self,
+        resolution,
+        messages,
+        tools=_OMITTED,
+        signals=_OMITTED,
+    ):
+        call_index = len(self.calls)
+        self.calls.append(
+            {
+                "resolution": resolution,
+                "messages": messages,
+                "tools": tools,
+                "signals": signals,
+            }
+        )
+        if self.on_call is not None:
+            self.on_call(call_index)
+        if call_index in self.mark_fallback_calls:
+            assert signals is not _OMITTED
+            signals.mark_synthetic_fallback()
+        for item in self.scripts[call_index]:
+            if isinstance(item, BaseException):
+                raise item
+            yield item
 
 
 def _persisted_store(
@@ -204,6 +304,62 @@ def _persisted_store(
     )
     session.persisted_conversation_id = "conversation-1"
     return store
+
+
+def _repair_contract() -> CitationRepairContract:
+    return CitationRepairContract(
+        schema_version=1,
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        allowed_ordinals=(1,),
+        evidence_context="[S1] MEDIA — Repair source\nExact repair evidence.",
+    )
+
+
+def _repair_capture(contract: CitationRepairContract) -> SimpleNamespace:
+    return SimpleNamespace(
+        context=contract.evidence_context,
+        citation_builder=None,
+        prompt_evidence_set_id=None,
+        citation_repair_contract=contract,
+    )
+
+
+def _recording_citation_store(
+    persistence: _ReadyCitationPersistence | None = None,
+) -> _RecordingCitationStore:
+    store = _RecordingCitationStore(persistence=persistence)
+    session = store.ensure_session(
+        settings=ConsoleSessionSettings(provider="openai", model="repair-model")
+    )
+    if persistence is not None:
+        session.persisted_conversation_id = "conversation-1"
+    return store
+
+
+async def _run_direct_citation_repair(
+    scripts: tuple[tuple[object, ...], ...],
+    *,
+    persistence: _ReadyCitationPersistence | None = None,
+    mark_fallback_calls: frozenset[int] = frozenset(),
+):
+    contract = _repair_contract()
+    store = _recording_citation_store(persistence)
+    gateway = _ScriptedCitationGateway(
+        scripts,
+        mark_fallback_calls=mark_fallback_calls,
+    )
+
+    async def capture(_draft):
+        return _repair_capture(contract)
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        rag_capture_provider=capture,
+        agent_runtime_enabled=False,
+    )
+    result = await controller.submit_draft("question with history")
+    return result, controller, store, gateway, contract
 
 
 def _capture_result(
@@ -376,7 +532,7 @@ async def test_repair_contract_exact_context_order_follows_all_prompt_transforms
         )
 
     store = _persisted_store()
-    gateway = _RecordingGateway()
+    gateway = _RecordingGateway(chunks=("answer [S1]",))
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
@@ -885,6 +1041,296 @@ async def test_finalizer_exception_logs_only_fixed_content_safe_diagnostic(monke
     assert builder.is_sealed is False
     assert builder.answer_attempts == ()
     _assert_no_terminal_state(store)
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_direct_initial_session_defers_without_persistence_or_finalizer():
+    observed: list[tuple[object, object, object]] = []
+    result, controller, store, gateway, contract = await _run_direct_citation_repair(
+        (("Claim [S1]",),)
+    )
+
+    assert result.accepted is True
+    assert len(gateway.calls) == 1
+    assert gateway.calls[0]["signals"] is not _OMITTED
+    append_kwargs = store.assistant_append_kwargs[0]
+    assert append_kwargs["persist"] is False
+    assert append_kwargs["terminal_citation_finalizer"] is None
+    assert append_kwargs["defer_terminal_persistence"] is True
+    assert store.completion_calls == [_assistant(store).id]
+    assert controller._active_citation_repair_session is None
+
+    def observe_session(call_index):
+        if call_index == 0:
+            session = controller._active_citation_repair_session
+            observed.append((session.contract, session.resolution, session.phase))
+
+    second_store = _recording_citation_store()
+    second_gateway = _ScriptedCitationGateway((("Claim [S1]",),))
+    second_gateway.on_call = observe_session
+    controller.store = second_store
+    controller.provider_gateway = second_gateway
+    await controller.submit_draft("second question")
+
+    assert len(observed) == 1
+    assert observed[0][0] is contract
+    assert observed[0][1] is second_gateway.resolution
+    assert observed[0][2] == "initial_streaming"
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_direct_valid_initial_completes_once_without_repair():
+    persistence = _ReadyCitationPersistence()
+    result, controller, store, gateway, _contract = await _run_direct_citation_repair(
+        (("Supported claim [S1]",),),
+        persistence=persistence,
+    )
+
+    assistant = _assistant(store)
+    assistant_writes = [
+        call
+        for call in persistence.create_calls
+        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
+    ]
+    assert result.visible_copy == assistant.content == "Supported claim [S1]"
+    assert len(gateway.calls) == 1
+    assert store.completion_calls == [assistant.id]
+    assert len(assistant_writes) == 1
+    assert assistant_writes[0]["message_id"] == assistant.id
+    assert assistant_writes[0]["content"] == assistant.content
+    assert assistant.citation_presentation.phase is ConsoleCitationPhase.SELECTED
+    assert assistant.citation_presentation.notice_code is None
+    assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+    assert ConsoleRunStatus.CHECKING_CITATIONS not in controller.run_state_history
+
+
+@pytest.mark.parametrize(
+    "initial_body",
+    (
+        "Supported claim",
+        "Supported claim [S9]",
+    ),
+    ids=("missing", "invalid"),
+)
+@pytest.mark.asyncio
+async def test_citation_repair_direct_repairs_once_with_exact_request_and_resolution(
+    initial_body: str,
+):
+    persistence = _ReadyCitationPersistence()
+    result, controller, store, gateway, contract = await _run_direct_citation_repair(
+        ((initial_body,), ("Supported claim [S1]",)),
+        persistence=persistence,
+    )
+
+    assistant = _assistant(store)
+    assistant_writes = [
+        call
+        for call in persistence.create_calls
+        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
+    ]
+    assert len(gateway.calls) == 2
+    assert gateway.calls[0]["resolution"] is gateway.resolution
+    assert gateway.calls[1]["resolution"] is gateway.resolution
+    assert gateway.calls[1]["messages"] == build_citation_repair_messages(
+        contract,
+        initial_body,
+    )
+    assert gateway.calls[1]["tools"] is _OMITTED
+    assert gateway.calls[0]["signals"] is gateway.calls[1]["signals"]
+    assert gateway.calls[0]["signals"] is not _OMITTED
+    assert result.visible_copy == assistant.content == "Supported claim [S1]"
+    assert store.completion_calls == [assistant.id]
+    assert len(assistant_writes) == 1
+    assert assistant_writes[0]["message_id"] == assistant.id
+    assert assistant_writes[0]["content"] == "Supported claim [S1]"
+    assert assistant.citation_presentation.phase is ConsoleCitationPhase.SELECTED
+    assert (
+        assistant.citation_presentation.notice_code
+        is ConsoleCitationNoticeCode.REPAIRED
+    )
+    assert assistant.citation_presentation.original_attempt_available is False
+    assert ConsoleRunStatus.CHECKING_CITATIONS in controller.run_state_history
+    assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+
+
+@pytest.mark.parametrize(
+    "initial_body",
+    (
+        "x" * (1024 * 1024 + 1),
+        "[S1]" * 1_001,
+    ),
+    ids=("oversized", "marker-flood"),
+)
+@pytest.mark.asyncio
+async def test_citation_repair_direct_unavailable_initial_keeps_original_without_call(
+    initial_body: str,
+):
+    persistence = _ReadyCitationPersistence()
+    result, controller, store, gateway, _contract = await _run_direct_citation_repair(
+        ((initial_body,),),
+        persistence=persistence,
+    )
+
+    assistant = _assistant(store)
+    assistant_writes = [
+        call
+        for call in persistence.create_calls
+        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
+    ]
+    assert len(gateway.calls) == 1
+    assert result.visible_copy == assistant.content == initial_body
+    assert store.completion_calls == [assistant.id]
+    assert len(assistant_writes) == 1
+    assert assistant.citation_presentation.phase is ConsoleCitationPhase.SELECTED
+    assert (
+        assistant.citation_presentation.notice_code
+        is ConsoleCitationNoticeCode.UNAVAILABLE
+    )
+    assert assistant.citation_presentation.original_attempt_available is False
+    assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+
+
+@pytest.mark.parametrize(
+    "repair_script",
+    (
+        (RuntimeError("private provider failure"),),
+        (),
+        (ProviderToolCalls(tool_calls=()),),
+        ("Supported claim",),
+        ("Supported claim [S2]",),
+        ("Changed claim [S1]",),
+        ("[S1]" * 1_001,),
+        ("x" * (1024 * 1024 + 1),),
+    ),
+    ids=(
+        "provider-raise",
+        "empty",
+        "tool-call",
+        "second-missing",
+        "unknown-marker",
+        "changed-claim",
+        "marker-flood",
+        "oversized",
+    ),
+)
+@pytest.mark.asyncio
+async def test_citation_repair_direct_failure_keeps_original_and_completes_once(
+    repair_script: tuple[object, ...],
+):
+    persistence = _ReadyCitationPersistence()
+    initial_body = "Supported claim"
+    result, controller, store, gateway, _contract = await _run_direct_citation_repair(
+        ((initial_body,), repair_script),
+        persistence=persistence,
+    )
+
+    assistant = _assistant(store)
+    assistant_writes = [
+        call
+        for call in persistence.create_calls
+        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
+    ]
+    assert len(gateway.calls) == 2
+    assert result.visible_copy == assistant.content == initial_body
+    assert store.completion_calls == [assistant.id]
+    assert len(assistant_writes) == 1
+    assert assistant_writes[0]["content"] == initial_body
+    assert assistant.citation_presentation.phase is ConsoleCitationPhase.SELECTED
+    assert (
+        assistant.citation_presentation.notice_code
+        is ConsoleCitationNoticeCode.UNAVAILABLE
+    )
+    assert assistant.citation_presentation.original_attempt_available is False
+    assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_direct_failed_window_fit_keeps_original(monkeypatch):
+    from tldw_chatbook.Chat import console_chat_controller
+
+    monkeypatch.setattr(
+        console_chat_controller,
+        "repair_request_fits_model_window",
+        lambda *_args, **_kwargs: False,
+    )
+    persistence = _ReadyCitationPersistence()
+    result, _controller, store, gateway, _contract = await _run_direct_citation_repair(
+        (("Supported claim",),),
+        persistence=persistence,
+    )
+
+    assistant = _assistant(store)
+    assert len(gateway.calls) == 1
+    assert result.visible_copy == assistant.content == "Supported claim"
+    assert (
+        assistant.citation_presentation.notice_code
+        is ConsoleCitationNoticeCode.UNAVAILABLE
+    )
+
+
+@pytest.mark.parametrize(
+    ("mark_initial", "expected_calls", "expected_body"),
+    (
+        (True, 1, NO_PROVIDER_CONTENT_COPY),
+        (False, 2, f"{NO_PROVIDER_CONTENT_COPY} [S1]"),
+    ),
+    ids=("marked-bypass", "genuine-equal-text-repairs"),
+)
+@pytest.mark.asyncio
+async def test_citation_repair_direct_initial_signal_is_source_provenance(
+    mark_initial: bool,
+    expected_calls: int,
+    expected_body: str,
+):
+    result, _controller, store, gateway, _contract = await _run_direct_citation_repair(
+        (
+            (NO_PROVIDER_CONTENT_COPY,),
+            (f"{NO_PROVIDER_CONTENT_COPY} [S1]",),
+        ),
+        mark_fallback_calls=frozenset({0}) if mark_initial else frozenset(),
+    )
+
+    assert len(gateway.calls) == expected_calls
+    assert result.visible_copy == _assistant(store).content == expected_body
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_direct_marked_repair_output_cannot_be_selected():
+    result, _controller, store, gateway, _contract = await _run_direct_citation_repair(
+        (("Supported claim",), ("Supported claim [S1]",)),
+        mark_fallback_calls=frozenset({1}),
+    )
+
+    assistant = _assistant(store)
+    assert len(gateway.calls) == 2
+    assert gateway.calls[0]["signals"] is gateway.calls[1]["signals"]
+    assert result.visible_copy == assistant.content == "Supported claim"
+    assert (
+        assistant.citation_presentation.notice_code
+        is ConsoleCitationNoticeCode.UNAVAILABLE
+    )
+
+
+@pytest.mark.parametrize(
+    "initial_script",
+    (
+        (),
+        (RuntimeError("private initial failure"),),
+    ),
+    ids=("empty", "provider-failure"),
+)
+@pytest.mark.asyncio
+async def test_citation_repair_direct_initial_non_success_never_repairs(
+    initial_script: tuple[object, ...],
+):
+    _result, controller, store, gateway, _contract = await _run_direct_citation_repair(
+        (initial_script,)
+    )
+
+    assert len(gateway.calls) == 1
+    assert store.completion_calls == []
+    assert _assistant(store).status == "failed"
+    assert controller.run_state.status is ConsoleRunStatus.FAILED
 
 
 class _AgentBridge:

@@ -25,6 +25,7 @@ class ConsoleRunStatus(str, Enum):
     IDLE = "idle"
     VALIDATING = "validating"
     STREAMING = "streaming"
+    CHECKING_CITATIONS = "checking_citations"
     COMPLETED = "completed"
     BLOCKED = "blocked"
     STOPPED = "stopped"

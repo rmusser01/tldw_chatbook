@@ -3213,6 +3213,69 @@ async def test_stream_assistant_response_owner_lookup_survives_closed_session():
 
 
 @pytest.mark.asyncio
+async def test_agent_finalization_remains_inside_outer_active_stream_ownership():
+    class OwnershipController(ConsoleChatController):
+        active_during_finalization = None
+
+        def _finalize_agent_reply(
+            self,
+            assistant_message_id,
+            session_id,
+            outcome,
+            **kwargs,
+        ):
+            self.active_during_finalization = (
+                self._active_assistant_message_id,
+                self._active_stream_task,
+                self._stop_requested,
+            )
+            return super()._finalize_agent_reply(
+                assistant_message_id,
+                session_id,
+                outcome,
+                **kwargs,
+            )
+
+    class Bridge:
+        def run_reply(self, **_kwargs):
+            return "run-active-owner", RunOutcome(
+                status=RUN_DONE,
+                steps=[],
+                final_text="agent reply",
+            )
+
+        def record_run_assistant_message(self, _run_id, _message_id):
+            return None
+
+    store = ConsoleChatStore()
+    controller = OwnershipController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        agent_bridge=Bridge(),
+        agent_runtime_enabled=True,
+    )
+    _arm_session(store)
+    current_task = asyncio.current_task()
+
+    result = await controller.submit_draft("hello")
+
+    assistant = next(
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert result.accepted is True
+    assert controller.active_during_finalization == (
+        assistant.id,
+        current_task,
+        False,
+    )
+    assert controller._active_assistant_message_id is None
+    assert controller._active_stream_task is None
+    assert controller._stop_requested is False
+
+
+@pytest.mark.asyncio
 async def test_build_context_snapshot_includes_armed_one_shot_prefill():
     """task-401: an armed prefill must appear in the preview exactly as the
     send would apply it -- trailing assistant turn + explicit indicator --

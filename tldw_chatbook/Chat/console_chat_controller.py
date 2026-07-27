@@ -10,7 +10,7 @@ import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Protocol
 from uuid import uuid4
 
 from tldw_chatbook.Chat.attachment_core import (
@@ -20,6 +20,9 @@ from tldw_chatbook.Chat.attachment_core import (
 )
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
+    ConsoleCitationNoticeCode,
+    ConsoleCitationPhase,
+    ConsoleCitationPresentation,
     ConsoleContextSnapshot,
     ConsoleMessageRole,
     ConsoleProviderSelection,
@@ -30,7 +33,15 @@ from tldw_chatbook.Chat.console_chat_models import (
     derive_console_session_title,
     is_default_console_session_title,
 )
-from tldw_chatbook.Chat.citation_repair import CitationRepairContract
+from tldw_chatbook.Chat.citation_repair import (
+    REPAIR_ANSWER_BODY_UTF8_BYTES_MAX,
+    CitationRepairContract,
+    CitationRepairDecision,
+    build_citation_repair_messages,
+    decide_citation_repair,
+    repair_request_fits_model_window,
+    select_repaired_body,
+)
 from tldw_chatbook.Chat.citation_trace_builder import (
     CitationTraceBuilder,
     CitationTraceBuildUnavailable,
@@ -69,6 +80,10 @@ from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedErr
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
     describe_stream_failure,
+)
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderResolution,
+    ConsoleProviderStreamSignals,
 )
 from tldw_chatbook.model_capabilities import is_vision_capable
 
@@ -518,8 +533,29 @@ class ConsoleProviderGatewayProtocol(Protocol):
     async def resolve_for_send(self, selection: ConsoleProviderSelection) -> Any:
         """Resolve provider readiness for a send."""
 
-    async def stream_chat(self, resolution: Any, messages: list[dict[str, Any]]) -> Any:
+    async def stream_chat(
+        self,
+        resolution: Any,
+        messages: list[dict[str, Any]],
+        signals: ConsoleProviderStreamSignals | None = None,
+    ) -> Any:
         """Stream response chunks for provider messages."""
+
+
+@dataclass(slots=True)
+class ConsoleCitationRepairSession:
+    contract: CitationRepairContract
+    resolution: ConsoleProviderResolution
+    attempt_started: bool = False
+    selection_committed: bool = False
+    phase: str = "initial_streaming"
+    cancel_reason: Literal["user", "session_close", "shutdown"] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleCitationSelectionOutcome:
+    selected_body: str
+    state: Literal["bypassed", "valid", "repaired", "unavailable", "canceled"]
 
 
 @dataclass(frozen=True)
@@ -603,6 +639,7 @@ class ConsoleChatController:
         self._active_assistant_message_id: str | None = None
         self._active_stream_task: asyncio.Task | None = None
         self._stop_requested = False
+        self._active_citation_repair_session: ConsoleCitationRepairSession | None = None
         #: Per-run cancellation flag for the agent bridge's background
         #: thread (see ``_run_agent_reply``). ``threading.Event`` rather
         #: than a shared bool: ``asyncio.to_thread`` survives Task
@@ -862,6 +899,14 @@ class ConsoleChatController:
         # assistant row, so a reload shows the user's prompt ahead of its reply.
         self.store.persist_message_if_needed(echoed_user.id)
         assistant: ConsoleChatMessage | None = None
+        citation_repair_session = (
+            ConsoleCitationRepairSession(
+                contract=citation_repair_contract,
+                resolution=resolution,
+            )
+            if citation_repair_contract is not None
+            else None
+        )
         try:
             assistant = self.store.append_message(
                 session.id,
@@ -869,6 +914,7 @@ class ConsoleChatController:
                 content="",
                 persist=self.store.persistence is not None,
                 terminal_citation_finalizer=terminal_citation_finalizer,
+                defer_terminal_persistence=citation_repair_session is not None,
             )
             return await self._stream_assistant_response(
                 resolution=resolution,
@@ -878,6 +924,7 @@ class ConsoleChatController:
                 prefill_from_one_shot=prefill_from_one_shot,
                 skill_bindings=skill_bindings,
                 skill_bundle_block=skill_bundle_block,
+                citation_repair_session=citation_repair_session,
             )
         finally:
             if assistant is not None:
@@ -3605,14 +3652,13 @@ class ConsoleChatController:
         prefill_from_one_shot: bool = False,
         skill_bindings: tuple[str, ...] = (),
         skill_bundle_block: str = "",
+        citation_repair_session: ConsoleCitationRepairSession | None = None,
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
             return self._session_closed_result()
-        owner = next(
-            (s for s in self.store.sessions() if s.id == owner_id), None
-        )
+        owner = next((s for s in self.store.sessions() if s.id == owner_id), None)
         # task-427: a character session always takes the plain-provider
         # path, even with the global agent runtime enabled and a bridge
         # present. Keyed on the message's OWNING session (looked up here,
@@ -3660,21 +3706,67 @@ class ConsoleChatController:
             # Reuse the guarded owner_id resolved above; the note helper
             # swallows a store-close race that happens during the append.
             self._append_history_trimmed_note(owner_id, bound.dropped_count)
-        if (
-            self._agent_runtime_enabled
-            and self._agent_bridge is not None
-            and not prefill
-            and not force_plain
-        ):
-            return await self._run_agent_reply(
+        active_task = asyncio.current_task()
+        self._active_assistant_message_id = assistant_message_id
+        self._active_stream_task = active_task
+        self._stop_requested = False
+        self._active_citation_repair_session = citation_repair_session
+        stream_signals = (
+            ConsoleProviderStreamSignals()
+            if citation_repair_session is not None
+            else None
+        )
+        try:
+            if (
+                self._agent_runtime_enabled
+                and self._agent_bridge is not None
+                and not prefill
+                and not force_plain
+            ):
+                return await self._run_agent_reply(
+                    resolution=resolution,
+                    provider_messages=provider_messages,
+                    assistant_message_id=assistant_message_id,
+                    prepare_retry=prepare_retry,
+                    variant_mode=variant_mode,
+                    skill_bindings=skill_bindings,
+                    skill_bundle_block=skill_bundle_block,
+                )
+            return await self._run_direct_provider_reply(
                 resolution=resolution,
                 provider_messages=provider_messages,
                 assistant_message_id=assistant_message_id,
                 prepare_retry=prepare_retry,
                 variant_mode=variant_mode,
-                skill_bindings=skill_bindings,
-                skill_bundle_block=skill_bundle_block,
+                prefill=prefill,
+                prefill_from_one_shot=prefill_from_one_shot,
+                citation_repair_session=citation_repair_session,
+                stream_signals=stream_signals,
             )
+        finally:
+            if (
+                self._active_stream_task is active_task
+                and self._active_assistant_message_id == assistant_message_id
+                and self._active_citation_repair_session is citation_repair_session
+            ):
+                self._active_assistant_message_id = None
+                self._active_stream_task = None
+                self._stop_requested = False
+                self._active_citation_repair_session = None
+
+    async def _run_direct_provider_reply(
+        self,
+        *,
+        resolution: Any,
+        provider_messages: list[dict[str, Any]],
+        assistant_message_id: str,
+        prepare_retry: bool,
+        variant_mode: bool,
+        prefill: str | None,
+        prefill_from_one_shot: bool,
+        citation_repair_session: ConsoleCitationRepairSession | None,
+        stream_signals: ConsoleProviderStreamSignals | None,
+    ) -> ConsoleSubmitResult:
         one_shot_used = prefill if prefill_from_one_shot else None
         if prefill:
             provider_messages = [
@@ -3684,9 +3776,6 @@ class ConsoleChatController:
                     "content": prefill,
                 },
             ]
-        self._active_assistant_message_id = assistant_message_id
-        self._active_stream_task = asyncio.current_task()
-        self._stop_requested = False
         if variant_mode:
             self.store.begin_variant_stream(assistant_message_id)
         if prefill and not prepare_retry:
@@ -3700,9 +3789,18 @@ class ConsoleChatController:
         retry_prepared = False
         emitted_content = False
         try:
-            async for chunk in self.provider_gateway.stream_chat(
-                resolution, provider_messages
-            ):
+            if stream_signals is None:
+                provider_stream = self.provider_gateway.stream_chat(
+                    resolution,
+                    provider_messages,
+                )
+            else:
+                provider_stream = self.provider_gateway.stream_chat(
+                    resolution,
+                    provider_messages,
+                    signals=stream_signals,
+                )
+            async for chunk in provider_stream:
                 if not chunk:
                     continue
                 if self._stop_requested:
@@ -3715,9 +3813,7 @@ class ConsoleChatController:
                         )
                     except KeyError:
                         return self._session_closed_result()
-                    self._consume_one_shot_prefill(
-                        assistant_message_id, one_shot_used
-                    )
+                    self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
                     return ConsoleSubmitResult(True, True, stopped.content)
                 if prepare_retry and not retry_prepared:
                     self.store.prepare_message_retry(assistant_message_id)
@@ -3745,9 +3841,7 @@ class ConsoleChatController:
                     )
                 except KeyError:
                     return self._session_closed_result()
-                self._consume_one_shot_prefill(
-                    assistant_message_id, one_shot_used
-                )
+                self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
                 return ConsoleSubmitResult(True, True, stopped.content)
             if not emitted_content:
                 try:
@@ -3766,6 +3860,17 @@ class ConsoleChatController:
                     except KeyError:
                         return self._session_closed_result()
                 return ConsoleSubmitResult(True, True, failed.content)
+            if citation_repair_session is not None and stream_signals is not None:
+                try:
+                    selection = await self._select_post_generation_body(
+                        assistant_message_id=assistant_message_id,
+                        repair_session=citation_repair_session,
+                        stream_signals=stream_signals,
+                    )
+                except KeyError:
+                    return self._session_closed_result()
+                if selection.state == "canceled":
+                    return ConsoleSubmitResult(True, True, selection.selected_body)
             try:
                 if variant_mode:
                     completed = self.store.finalize_variant_stream(assistant_message_id)
@@ -3789,9 +3894,7 @@ class ConsoleChatController:
                     )
                 except KeyError:
                     return self._session_closed_result()
-                self._consume_one_shot_prefill(
-                    assistant_message_id, one_shot_used
-                )
+                self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
                 return ConsoleSubmitResult(True, True, stopped.content)
             raise
         except Exception as exc:
@@ -3814,11 +3917,175 @@ class ConsoleChatController:
                 self._append_failure_system_row(session_id, visible_copy)
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
             return ConsoleSubmitResult(True, True, visible_copy)
-        finally:
-            if self._active_stream_task is asyncio.current_task():
-                self._active_assistant_message_id = None
-                self._active_stream_task = None
-                self._stop_requested = False
+
+    async def _select_post_generation_body(
+        self,
+        *,
+        assistant_message_id: str,
+        repair_session: ConsoleCitationRepairSession,
+        stream_signals: ConsoleProviderStreamSignals,
+    ) -> ConsoleCitationSelectionOutcome:
+        """Select one bounded direct reply before terminal persistence."""
+
+        try:
+            initial_message = self.store.get_message(assistant_message_id)
+        except KeyError:
+            return ConsoleCitationSelectionOutcome("", "unavailable")
+        initial_body = initial_message.content
+
+        def commit(
+            state: Literal["valid", "repaired", "unavailable"],
+            *,
+            notice_code: ConsoleCitationNoticeCode | None = None,
+        ) -> ConsoleCitationSelectionOutcome:
+            repair_session.phase = "selected"
+            repair_session.selection_committed = True
+            self.store.set_citation_presentation(
+                assistant_message_id,
+                ConsoleCitationPresentation(
+                    phase=ConsoleCitationPhase.SELECTED,
+                    notice_code=notice_code,
+                    original_attempt_available=False,
+                ),
+            )
+            selected = self.store.get_message(assistant_message_id)
+            return ConsoleCitationSelectionOutcome(selected.content, state)
+
+        if (
+            not initial_body
+            or stream_signals.synthetic_fallback_emitted
+            or repair_session.selection_committed
+        ):
+            repair_session.phase = "selected"
+            repair_session.selection_committed = True
+            return ConsoleCitationSelectionOutcome(initial_body, "bypassed")
+
+        decision = decide_citation_repair(initial_body, repair_session.contract)
+        if decision is CitationRepairDecision.VALID:
+            return commit("valid")
+        if decision is CitationRepairDecision.UNAVAILABLE:
+            return commit(
+                "unavailable",
+                notice_code=ConsoleCitationNoticeCode.UNAVAILABLE,
+            )
+
+        repair_session.phase = "checking"
+        self.store.set_citation_presentation(
+            assistant_message_id,
+            ConsoleCitationPresentation(phase=ConsoleCitationPhase.CHECKING),
+        )
+        self._set_run_state(
+            ConsoleRunState(
+                ConsoleRunStatus.CHECKING_CITATIONS,
+                "Checking citations.",
+            )
+        )
+        await asyncio.sleep(0)
+
+        owns_request = (
+            self._active_assistant_message_id == assistant_message_id
+            and self._active_stream_task is asyncio.current_task()
+            and self._active_citation_repair_session is repair_session
+        )
+        try:
+            current_message = self.store.get_message(assistant_message_id)
+        except KeyError:
+            return ConsoleCitationSelectionOutcome(initial_body, "unavailable")
+        if (
+            not owns_request
+            or current_message.content != initial_body
+            or repair_session.attempt_started
+            or stream_signals.synthetic_fallback_emitted
+        ):
+            return commit(
+                "unavailable",
+                notice_code=ConsoleCitationNoticeCode.UNAVAILABLE,
+            )
+
+        repair_messages = build_citation_repair_messages(
+            repair_session.contract,
+            initial_body,
+        )
+        resolution = repair_session.resolution
+        if repair_messages is None or not repair_request_fits_model_window(
+            repair_messages,
+            initial_answer=initial_body,
+            model=resolution.model or "",
+            provider=resolution.provider,
+            max_tokens=resolution.max_tokens,
+        ):
+            return commit(
+                "unavailable",
+                notice_code=ConsoleCitationNoticeCode.UNAVAILABLE,
+            )
+
+        repair_session.attempt_started = True
+        repair_session.phase = "repair_streaming"
+        self.store.set_citation_presentation(
+            assistant_message_id,
+            ConsoleCitationPresentation(phase=ConsoleCitationPhase.REPAIRING),
+        )
+
+        repaired_chunks: list[str] = []
+        repaired_size = 0
+        repair_output_available = True
+        try:
+            async for chunk in self.provider_gateway.stream_chat(
+                resolution,
+                repair_messages,
+                signals=stream_signals,
+            ):
+                if type(chunk) is not str:
+                    repair_output_available = False
+                    break
+                if not chunk:
+                    continue
+                try:
+                    repaired_size += len(chunk.encode("utf-8"))
+                except UnicodeEncodeError:
+                    repair_output_available = False
+                    break
+                if repaired_size > REPAIR_ANSWER_BODY_UTF8_BYTES_MAX:
+                    repair_output_available = False
+                    break
+                repaired_chunks.append(chunk)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            repair_output_available = False
+
+        if not repair_output_available or stream_signals.synthetic_fallback_emitted:
+            return commit(
+                "unavailable",
+                notice_code=ConsoleCitationNoticeCode.UNAVAILABLE,
+            )
+
+        repaired_body = "".join(repaired_chunks)
+        selected = select_repaired_body(
+            initial_body,
+            repaired_body,
+            repair_session.contract,
+        )
+        if not selected.repaired:
+            return commit(
+                "unavailable",
+                notice_code=ConsoleCitationNoticeCode.UNAVAILABLE,
+            )
+
+        try:
+            self.store.replace_deferred_terminal_body(
+                assistant_message_id,
+                selected.selected_body,
+            )
+        except ValueError:
+            return commit(
+                "unavailable",
+                notice_code=ConsoleCitationNoticeCode.UNAVAILABLE,
+            )
+        return commit(
+            "repaired",
+            notice_code=ConsoleCitationNoticeCode.REPAIRED,
+        )
 
     async def _run_agent_reply(
         self,
@@ -3838,9 +4105,6 @@ class ConsoleChatController:
             variant_mode=variant_mode,
             prepare_retry=prepare_retry,
         )
-        self._active_assistant_message_id = assistant_message_id
-        self._active_stream_task = asyncio.current_task()
-        self._stop_requested = False
         self._mcp_provider = None
         # A fresh per-run Event, captured by `should_cancel` below by
         # closure (not read off `self` each time) -- see
@@ -4033,10 +4297,7 @@ class ConsoleChatController:
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
             return ConsoleSubmitResult(True, True, visible_copy)
         finally:
-            if self._active_stream_task is asyncio.current_task():
-                self._active_assistant_message_id = None
-                self._active_stream_task = None
-                self._stop_requested = False
+            if self._active_cancel_event is cancel_event:
                 # NOT cancel_event.clear(): the closure above captured
                 # this exact Event object by value, so any still-running
                 # bridge thread keeps observing whatever it was last set
