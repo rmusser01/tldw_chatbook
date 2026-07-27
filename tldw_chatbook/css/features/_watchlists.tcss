@@ -757,6 +757,72 @@ WatchlistSourcePickerDialog {
     min-width: 12;
 }
 
+/* TASK-1035. The create-source form had no rule anywhere, so it took
+ * Textual's defaults for its container and painted like an unfinished
+ * sketch: `Create` on row 40 and `Cancel` on row 43 with blank rows between
+ * them, and `#sources-table` squeezed to a single row underneath.
+ *
+ * The container is now a `Vertical` rather than a bare `Grid` (see
+ * `sources_pane.py`), which fixes the row spread; `height: auto` is what
+ * stops it then claiming `1fr` of the pane and starving the table a second
+ * way -- the same defect and the same one-line fix as `#sources-toolbar`
+ * immediately above (TASK-897).
+ */
+#sources-create-form {
+    height: auto;
+    width: 100%;
+}
+
+/* Type + Active share one row. Two things are pinned here.
+ *
+ * The `Active` label was `width: 1fr` at Textual's default and claimed the
+ * whole 168-column row, pushing the `Switch` to x=198 -- one column past
+ * the pane's right edge at 235x52, so the only control for "is this source
+ * active" was neither visible nor clickable.
+ *
+ * `margin: 0` on the Select undoes the bare global `Select { width: 100%;
+ * margin-bottom: 1; }` in features/_conversations.tcss, which added a blank
+ * row under the row and pushed the fields below it further down a pane that
+ * has no rows to spare. Same override, same reason, as the toolbar block
+ * above.
+ */
+#sources-create-form .sources-create-type-row {
+    width: 100%;
+    height: 3;
+}
+
+#sources-create-form #sources-create-type {
+    width: 1fr;
+    margin: 0;
+}
+
+#sources-create-form .sources-create-active-label {
+    width: auto;
+    height: 3;
+    content-align: left middle;
+    padding: 0 1;
+}
+
+/* `.dialog-buttons` (features/_media.tcss) supplies the side-by-side pair
+ * itself -- `layout: horizontal`, and `margin: 0 1; min-width: 12` on each
+ * Button -- so this form and `WatchlistNameDialog` pair their Create/Cancel
+ * the same way rather than stacking them.
+ *
+ * Two properties are deliberately not inherited. The dialog centres its
+ * pair inside a narrow modal; this form is inline and 168 columns wide,
+ * where a centred pair would float away from the fields it belongs to. And
+ * the dialog's `height: 3` would put the pair a row past the bottom of a
+ * 16-row Sources pane at 160x42; one row is also what every other button on
+ * this screen uses (`New Source`, `Preview`, `Import OPML`, the tree's
+ * `New`), so the pair reads as part of the screen rather than a modal
+ * dropped into it.
+ */
+#sources-create-form .sources-create-buttons {
+    align: left middle;
+    width: 100%;
+    height: 1;
+}
+
 #items-search-input {
     width: 1fr;
     min-width: 12;
