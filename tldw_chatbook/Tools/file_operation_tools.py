@@ -4,12 +4,18 @@ File Operation Tools for LLM function calling.
 These tools allow LLMs to perform safe file operations with proper validation.
 """
 
-from pathlib import Path
+import re
+from pathlib import Path, PureWindowsPath
 from typing import Dict, Any
 from loguru import logger
 
 from . import Tool
 from ..Utils.path_validation import validate_path_multi
+from ..Utils.sensitive_paths import (
+    SensitivePathContext,
+    is_sensitive_path,
+    resolve_sensitive_context,
+)
 from .workspace_file_roots import allowed_file_roots
 
 
@@ -21,20 +27,43 @@ def _resolve_sandbox_config() -> str:
     return get_cli_setting("tools", "file_sandbox_root", default_root) or default_root
 
 
-def _is_within(candidate: Path, root: Path) -> bool:
-    """Return whether ``candidate`` resolves inside ``root``.
+def is_within(
+    candidate: Path, root: Path, context: SensitivePathContext | None = None
+) -> bool:
+    """Return whether ``candidate`` resolves inside ``root`` and is not sensitive.
+
+    Callers include ``ListDirectoryTool``'s containment-root selection and
+    recursive-descent guard, and ``GlobFiles``/``GrepFiles`` below, which
+    consult it on every candidate path before returning or reading it. It
+    does not by itself cover a tool's own top-level target: ``ReadFileTool``,
+    ``WriteFileTool`` and ``ListDirectoryTool`` each call
+    ``Utils.sensitive_paths.is_sensitive_path`` directly on their target
+    before touching the filesystem, independently of this function.
 
     Args:
         candidate: Path to test.
-        root: The sandbox root it must stay under.
+        root: The root it must stay under (the sandbox root, or one of the
+            run's bound workspace folders).
+        context: Optional pre-resolved ``SensitivePathContext`` (see
+            ``Utils.sensitive_paths.resolve_sensitive_context``). Callers
+            that test many candidates in one tool invocation (``GlobFiles``,
+            ``GrepFiles``, the recursive-listing walk) should resolve this
+            ONCE per invocation and pass it through here, rather than let
+            every candidate re-resolve the sensitive-path set from scratch.
+            Leave ``None`` for a one-off check -- that still enforces the
+            denylist, just resolved fresh; it never means "nothing is
+            sensitive".
 
     Returns:
-        True only when the fully-resolved candidate is the root or below it.
+        True only when the fully-resolved candidate is the root or below it
+        AND is not a sensitive path.
     """
     try:
         resolved = candidate.resolve()
         root_resolved = root.resolve()
-    except OSError:
+    except (OSError, RuntimeError):
+        return False
+    if is_sensitive_path(resolved, context=context):
         return False
     return resolved == root_resolved or root_resolved in resolved.parents
 
@@ -110,6 +139,16 @@ class ReadFileTool(Tool):
                 allowed_file_roots(write=False, sandbox_root=_tool_sandbox_root()),
             )
             path = Path(validated_path)
+
+            # Refuse credential, gate-state, and app-database paths outright,
+            # regardless of the sandbox/workspace roots (see
+            # Utils.sensitive_paths). This must run before any filesystem
+            # access below.
+            if is_sensitive_path(path):
+                return {
+                    "file_path": file_path,
+                    "error": f"Refused: '{file_path}' is a protected path and cannot be read",
+                }
 
             # Check if file exists
             if not path.exists():
@@ -224,12 +263,29 @@ class ListDirectoryTool(Tool):
             validated_path = validate_path_multi(directory_path, read_roots)
             path = Path(validated_path)
 
+            # Resolve the sensitive-path set ONCE for this call and reuse it
+            # for the top-level check below, containment_root selection, and
+            # every per-entry check the recursive walk makes -- not a fresh
+            # resolution per entry (see
+            # Utils.sensitive_paths.resolve_sensitive_context).
+            sensitive_ctx = resolve_sensitive_context()
+
+            # Refuse credential, gate-state, and app-database paths outright,
+            # regardless of the sandbox/workspace roots (see
+            # Utils.sensitive_paths). This must run before any filesystem
+            # access below.
+            if is_sensitive_path(path, context=sensitive_ctx):
+                return {
+                    "directory_path": directory_path,
+                    "error": f"Refused: '{directory_path}' is a protected path and cannot be listed",
+                }
+
             # The recursive-descent symlink guard below must compare against
             # whichever allowed root actually contains ``path`` — not always
             # the sandbox — otherwise a legitimately bound workspace folder
             # would silently refuse to recurse past its top level.
             containment_root = next(
-                (root for root in read_roots if _is_within(path, root)),
+                (root for root in read_roots if is_within(path, root, context=sensitive_ctx)),
                 sandbox_root,
             )
 
@@ -260,6 +316,18 @@ class ListDirectoryTool(Tool):
                         if not include_hidden and item.name.startswith("."):
                             continue
 
+                        # Refuse individual sensitive entries the same way the
+                        # top-level target is refused above. The recursive
+                        # descent guard below already stops the walk from
+                        # entering a sensitive DIRECTORY (e.g. ~/.ssh), but a
+                        # sensitive FILE sitting inside an otherwise-ordinary
+                        # directory (this app's own config.toml,
+                        # mcp_permissions.json, or a ChaChaNotes DB and its
+                        # WAL/SHM sidecars) would still be listed by name and
+                        # size without this per-entry check.
+                        if is_sensitive_path(item, context=sensitive_ctx):
+                            continue
+
                         # Get item info
                         try:
                             stat = item.stat()
@@ -284,7 +352,7 @@ class ListDirectoryTool(Tool):
                                 and item.is_dir()
                                 and not item.is_symlink()
                                 and current_depth < max_depth
-                                and _is_within(item, containment_root)
+                                and is_within(item, containment_root, context=sensitive_ctx)
                             ):
                                 list_dir_contents(item, current_depth + 1)
 
@@ -415,6 +483,16 @@ class WriteFileTool(Tool):
                 allowed_file_roots(write=True, sandbox_root=_tool_sandbox_root()),
             )
             path = Path(validated_path)
+
+            # Refuse credential, gate-state, and app-database paths outright,
+            # regardless of the sandbox/workspace roots (see
+            # Utils.sensitive_paths). This must run before any filesystem
+            # access below.
+            if is_sensitive_path(path):
+                return {
+                    "file_path": file_path,
+                    "error": f"Refused: '{file_path}' is a protected path and cannot be written",
+                }
 
             # Check if we're overwriting an existing file
             file_exists = path.exists()
