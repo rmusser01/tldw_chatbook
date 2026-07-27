@@ -1193,3 +1193,51 @@ def test_run_grep_subprocess_still_accepts_a_well_formed_payload(monkeypatch):
         "matches": [{"path": "x.txt", "line_number": 3, "line": "hi"}],
         "lines_scanned": 3,
     }
+
+
+def test_grep_worker_script_path_is_absolute_and_exists():
+    """The worker script path must be absolute, because cwd is not the parent's.
+
+    `_run_grep_subprocess` launches the worker with `cwd=_GREP_WORKER_CWD`
+    (a temp dir) rather than inheriting the parent's working directory. A
+    relative `_GREP_WORKER_SCRIPT` would therefore be resolved against that
+    temp dir and fail to open, breaking `grep_files` outright.
+
+    Honest limitation: `__file__` is absolute under this loader, so this
+    test does NOT fail if `.resolve()` is removed today. It guards against a
+    future refactor reintroducing a relative path -- the cwd hardening is
+    what makes that class of change fatal rather than merely untidy.
+    """
+    from pathlib import Path
+
+    from tldw_chatbook.Tools.file_operation_tools import _GREP_WORKER_SCRIPT
+
+    script = Path(_GREP_WORKER_SCRIPT)
+    assert script.is_absolute(), f"worker script path is relative: {script}"
+    assert script.is_file(), f"worker script missing: {script}"
+
+
+def test_grep_files_works_when_process_cwd_is_unrelated(tmp_path, monkeypatch):
+    """grep_files must not depend on the parent process's working directory.
+
+    Exercises the real failure the absolute-path requirement prevents: with
+    the interpreter's cwd somewhere with no `_grep_worker.py` in it, a
+    search must still succeed.
+    """
+    import asyncio
+
+    import tldw_chatbook.Tools.file_operation_tools as fot
+
+    sandbox = tmp_path / "sbx"
+    sandbox.mkdir()
+    (sandbox / "hit.txt").write_text("alpha SENTINEL omega\n", encoding="utf-8")
+    monkeypatch.setattr(fot, "_resolve_sandbox_config", lambda: str(sandbox))
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    result = asyncio.run(fot.GrepFiles().execute(pattern="SENTINEL", glob="**/*"))
+
+    assert "error" not in result, result
+    assert len(result["matches"]) == 1

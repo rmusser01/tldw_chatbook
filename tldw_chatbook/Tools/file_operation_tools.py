@@ -1008,7 +1008,14 @@ class GlobFiles(Tool):
 #: so it works identically whether `tldw_chatbook` is installed editable
 #: or as a built wheel -- see `_grep_worker.py`'s own docstring for why it
 #: is a plain script with no import of this package at all.
-_GREP_WORKER_SCRIPT = str(Path(__file__).with_name("_grep_worker.py"))
+#:
+#: ``.resolve()`` is load-bearing, not cosmetic: ``__file__`` is not
+#: guaranteed absolute under every loader, and the worker is spawned with
+#: ``cwd=_GREP_WORKER_CWD`` (the temp dir) rather than inheriting the
+#: parent's. A relative script path would therefore be resolved against the
+#: temp dir and fail to open, breaking `grep_files` outright -- the cwd
+#: hardening below turned a latent portability wart into a hard failure.
+_GREP_WORKER_SCRIPT = str(Path(__file__).resolve().with_name("_grep_worker.py"))
 
 #: Working directory for the grep worker subprocess (Finding 3, follow-up
 #: hardening review). Every path the worker ever touches is one of the
