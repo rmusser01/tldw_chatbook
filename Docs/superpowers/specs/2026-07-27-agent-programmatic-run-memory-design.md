@@ -508,7 +508,7 @@ for not treating Phase 1 as the finished feature.
 
 ## 13. Review findings register
 
-Twenty-seven issues were found across three review passes — the first over the
+Twenty-eight issues were found across three review passes — the first over the
 architecture, the second over the record format, the third over this document
 after it was written. Each is addressed above; they are recorded here so
 reviewers can check the reasoning rather than rediscover it.
@@ -554,6 +554,7 @@ reviewers can check the reasoning rather than rediscover it.
 | 25 | A record could span a segment boundary, breaking `bytes=`-exact parsing | Roll decided *before* writing; a 1 MB record cap under a 4 MB threshold guarantees fit (§4.3) |
 | 26 | Readers would hit a partially written trailing record — the agent searches the log while the writer appends | Parse to the last complete record; ignore the remainder (§4.3) |
 | 27 | The document did not say which goals each phase delivers, and never stated that Phase 1 can *increase* context pressure | Goal/phase matrix and the thrash failure mode both documented (§10.1, §10.2) |
+| 28 | task-322 was described as an unshipped, competing proposal. It shipped 2026-07-22 as `console_history_budget.py`, already bounds the agent run's *starting* history, and is the primitive Phase 3 should reuse — but its `_group_turns` splits on `role == "user"`, which the fence protocol uses for tool results | §14.1 rewritten with the reuse requirement and the fence-protocol grouping trap |
 
 ## 14. Related work in this repository
 
@@ -561,9 +562,43 @@ reviewers can check the reasoning rather than rediscover it.
   full-content access. The Console currently shows 160–200 characters of a result
   the model received at up to 16,000. The log is what makes "read the full
   content" answerable.
-- **task-322** — *Bound Console conversation history by tokens before dispatch*
-  proposes lossy truncation for the adjacent problem. Phase 3 here is the
-  offload-rather-than-discard alternative; the two want reconciling before either
-  ships.
+- **task-895** — `glob_files`/`grep_files` ignore workspace folder roots that
+  `read_file` honours (§9.4). Filed rather than fixed here.
 - **task-326 / task-327** — token budget and durability hardening; already merged
   into the substrate this builds on.
+
+### 14.1 task-322 is Done, and Phase 3 must build on it
+
+**task-322 shipped on 2026-07-22**, adding `Chat/console_history_budget.py`
+(`count_console_messages_tokens`, `_group_turns`, `bound_messages_to_window`).
+An earlier draft of this document described it as an unshipped proposal for lossy
+truncation and an alternative to Phase 3. Both halves were wrong.
+
+What it means in practice:
+
+- **The entry point is already bounded.** `console_chat_controller.py:4395` does
+  `agent_messages = list(provider_messages)`, so the history an agent run *starts*
+  from is already trimmed to the model window. The remaining unbounded quantity
+  is growth *during* a run — which sharpens this design's problem statement
+  rather than competing with it.
+- **Phase 3 must reuse `bound_messages_to_window`, not reimplement it.** Window
+  lookup, safety margin, reply reservation, and system-prefix preservation are
+  all solved there and should not be written twice.
+
+**The trap, recorded now because it will not be obvious later.** `_group_turns`
+splits history on `role == "user"` boundaries, and its docstring notes that
+dropping a whole group never splits a tool_call/tool_result pair *"were tool rows
+ever present in the payload"* — they never are, on the Console send path it was
+built for. In an agent run they are, and the two tool-call protocols encode them
+differently (`agent_runtime._append_tool_result`):
+
+- **Native protocol** appends `{"role": "tool", "tool_call_id": …}`. `_group_turns`
+  keeps that inside the current group. Correct as-is.
+- **Fence protocol** appends `{"role": "user", "content": "Tool result for …"}`.
+  `_group_turns` reads that as **the start of a new turn**, splitting an
+  assistant turn from the tool result that answers it.
+
+So reuse is safe for native-protocol runs and **incorrect for fence-protocol
+runs** until grouping understands the fence convention. Phase 3 must either teach
+`_group_turns` about it or group on the run's own record structure, where `call=`
+already pairs them unambiguously (§4.1).
