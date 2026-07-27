@@ -160,13 +160,36 @@ class WatchlistsWorkbench(Horizontal):
 
         factory = self._content.get(region)
         supplied = factory() if factory is not None else None
+        # The region title is generic scaffolding for the still-placeholder
+        # regions (Phase D replaces the placeholders with real panes, and
+        # those panes carry their own accurate headings — see the panes
+        # wired in `watchlists_collections_screen.py`, e.g. the "Sources"
+        # `.watchlists-column-title` and the Inspector's own "Inspector"
+        # `.pane-title`). Once a region has real supplied content its title
+        # is both redundant (a second heading) and, for regions like FEEDS
+        # ("Feeds" hosting the Sources pane), outright wrong — so it is
+        # omitted rather than doubled, keyed off the same factory-presence
+        # signal that already decides placeholder-vs-real content below.
+        #
+        # FEEDS's pane needs a companion CSS fix for this (see the
+        # `#watchlists-list-pane` rule in `_watchlists.tcss`): FEEDS is the
+        # one region styled `height: auto`, so its supplied pane can no
+        # longer lean on the (now-removed) title `Static` as a `height: 1`
+        # sibling to anchor that auto-sizing.
+        children: list[Widget] = []
+        if supplied is None:
+            children.append(
+                Static(REGION_TITLES[region], classes="watchlists-region-title")
+            )
+            children.append(
+                Static(
+                    REGION_PLACEHOLDERS[region], classes="watchlists-region-placeholder"
+                )
+            )
+        else:
+            children.append(supplied)
         body = Vertical(
-            Static(REGION_TITLES[region], classes="watchlists-region-title"),
-            supplied
-            if supplied is not None
-            else Static(
-                REGION_PLACEHOLDERS[region], classes="watchlists-region-placeholder"
-            ),
+            *children,
             id=f"wl-region-{region.value}",
             classes=f"watchlists-region watchlists-region-{region.value}",
         )

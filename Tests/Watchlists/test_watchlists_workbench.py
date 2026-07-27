@@ -164,3 +164,24 @@ async def test_supplied_content_with_nested_children_survives_recompose():
         assert app.query(
             "#inner-content"
         ), "nested content must survive an unrelated region's recompose"
+
+
+@pytest.mark.asyncio
+async def test_a_region_with_supplied_content_does_not_double_title():
+    from textual.widgets import Static
+
+    def factory():
+        return Static("Sources", classes="pane-title")
+
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(), content={Region.FEEDS: factory}, id="wl-workbench"
+            )
+
+    app = _App()
+    async with app.run_test():
+        titles = [str(n.renderable) for n in app.query(".watchlists-region-title")]
+        assert "Feeds" not in titles, (
+            "a region whose content supplies its own heading should not add a second one"
+        )

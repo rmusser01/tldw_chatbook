@@ -14856,12 +14856,18 @@ CodingWindow {
  * label ("Stage Watchlists Context in Console") close to on one line; the
  * `Button` rule below wraps as a fallback for whatever still does not fit,
  * rather than clipping it.
+ *
+ * No `border` here (Task 6): the region's real content, the Inspector pane
+ * built by `_build_inspector_pane`, is a `.destination-workbench-pane` --
+ * the same shared box the Home/Personas/Schedules/etc. destinations use --
+ * which already draws its own `border: round`. Drawing a second one here
+ * nested a box-in-a-box. LEFT_RAIL below keeps its region border because
+ * its content (`WatchlistTree`) draws none of its own.
  */
 .watchlists-region-right_rail {
     width: 34;
     min-width: 0;
     height: 100%;
-    border: round $ds-grid-line;
 }
 
 .watchlists-region-right_rail Button {
@@ -14892,15 +14898,53 @@ CodingWindow {
  * FEEDS 11 rows for a handful of Static lines while ITEMS, doing all the
  * work, got the same 11 (Finding 5). `height: auto` lets FEEDS take only
  * what its content needs so ITEMS/CONTENT split what is left.
+ *
+ * No `border` here (Task 6): `_build_list_pane`'s content is a
+ * `.destination-workbench-pane` (the shared box every destination screen's
+ * list/detail/inspector panes use) and already draws one -- see the
+ * matching note on `.watchlists-region-right_rail` above.
  */
 .watchlists-region-feeds {
     width: 100%;
     height: auto;
     min-height: 0;
-    border: round $ds-grid-line;
 }
 
-.watchlists-region-items,
+/* Companion fix for the region title's removal above: `#watchlists-list-pane`
+ * (FEEDS's supplied pane) is one of a shared group of destination panes
+ * given `height: 100%` by ID in `components/_agentic_terminal.tcss` -- an ID
+ * selector, so `.destination-workbench-pane`'s own `height: 100%` was never
+ * actually the rule in effect here, and no class-based override here could
+ * outrank it (verified empirically: a descendant selector combining
+ * `.watchlists-region-feeds` with `.destination-workbench-pane`, strictly
+ * higher specificity than the plain class rule, still lost to the ID rule
+ * above). `100%` of a region sized `height: auto` (FEEDS is
+ * the only region styled that way) is circular -- the parent's size is
+ * supposed to come FROM this child -- and before this task that circularity
+ * was masked by the region title `Static` acting as a plain `height: 1`
+ * sibling. With the title gone (a real content pane no longer needs a
+ * second, wrong heading), the sole remaining child inherited the ambiguity
+ * outright and Textual collapsed it to unreadable. This ID selector, same
+ * specificity as the shared rule but declared later in the bundle (features/
+ * loads after components/ in build_css.py), wins on source order and lets
+ * the pane size to its own content instead.
+ */
+#watchlists-list-pane {
+    height: auto;
+}
+
+/* No `border` here either: `_build_detail_pane`'s content is the same
+ * `.destination-workbench-pane` box. CONTENT is split out below and keeps
+ * the region border -- it is still the Phase-D-placeholder stub with no
+ * pane of its own to draw one instead (see `_region_widget`'s
+ * factory-presence check).
+ */
+.watchlists-region-items {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
+
 .watchlists-region-content {
     width: 100%;
     height: 1fr;
