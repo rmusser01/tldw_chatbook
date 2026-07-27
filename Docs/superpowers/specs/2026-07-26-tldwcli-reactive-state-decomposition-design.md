@@ -1,7 +1,7 @@
 # TldwCli Reactive State Decomposition Design
 
 Date: 2026-07-26
-Status: User-approved for planning; implementation not started
+Status: Implementation slices 1–8 complete; installed-distribution closeout pending
 ADR:
 [ADR-033](../../../backlog/decisions/033-application-session-state-ownership.md),
 [ADR-006](../../../backlog/decisions/006-provider-aware-generation-settings.md),
@@ -37,8 +37,8 @@ The tranche also repairs four contracts exposed by the inventory:
    legacy app handler from both applying one mutation;
 3. command-palette provider changes become an explicit Console intent instead
    of a root reactive cache;
-4. TLDW API worker completion carries its own immutable request context
-   instead of reading the last request from a shared app field.
+4. the orphaned TLDW API worker completion pipeline and its shared request
+   context are deleted, leaving Library as the sole production ingest owner.
 
 The design follows ADR-033 unchanged. It does not amend that accepted ADR and
 does not create a duplicate decision record.

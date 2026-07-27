@@ -63,5 +63,5 @@ Verification: 73 focused Library/production-app/ownership tests passed in 251.19
 
 ADR required: yes. Existing ADR-029 (payload-safe private-data boundary) and ADR-033 (narrow application-session ownership) govern this deletion; no new ADR was needed.
 
-Plan deviations/review corrections: latest-dev audit added comment-only cleanup for two obsolete production references; spec review required two pre-existing Ruff line wraps and broader dynamic-access sentinels. The branch was repeatedly rebased as dev advanced; current upstream additions through `ca19c5142` are non-overlapping Watchlists QA documentation.
+Plan deviations/review corrections: latest-dev audit added comment-only cleanup for two obsolete production references; spec review required two pre-existing Ruff line wraps and broader dynamic-access sentinels. The branch was repeatedly rebased as dev advanced; final review rebased onto `09440a83d`, whose added Evals result-grid files do not overlap TASK-905.
 <!-- SECTION:NOTES:END -->
