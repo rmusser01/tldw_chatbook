@@ -2288,6 +2288,12 @@ class LibraryIngestQueueMixin:
                 flat_opts.get("transcription_provider") or "parakeet-onnx"
             )
             options["transcription_provider"] = transcription_provider
+            selected_model_dir = (
+                str(flat_opts.get("transcription_model_dir") or "").strip()
+                if transcription_provider == "parakeet-onnx"
+                else ""
+            )
+            options["transcription_model_dir"] = selected_model_dir or None
             options["transcription_model"] = (
                 "nemo-parakeet-tdt-0.6b-v2"
                 if transcription_provider == "parakeet-onnx"

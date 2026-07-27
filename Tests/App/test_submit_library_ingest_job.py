@@ -136,6 +136,7 @@ class TestIngestJobOptions:
             ingest_options={
                 "audio_video": {
                     "transcription_provider": "parakeet-onnx",
+                    "transcription_model_dir": "/models/parakeet-v2-int8",
                     "transcription_model": "base",
                     "language": "en",
                     "timestamps": False,
@@ -146,6 +147,9 @@ class TestIngestJobOptions:
         options = app._ingest_job_options(job)
 
         assert options["transcription_provider"] == "parakeet-onnx"
+        assert (
+            options["transcription_model_dir"] == "/models/parakeet-v2-int8"
+        )
         assert options["transcription_model"] == "nemo-parakeet-tdt-0.6b-v2"
         assert options["language"] == "en"
         assert options["timestamps"] is False
@@ -165,6 +169,24 @@ class TestIngestJobOptions:
         options = app._ingest_job_options(job)
 
         assert options["language"] == "en"
+        assert options["transcription_model_dir"] is None
+
+    def test_faster_whisper_ignores_stale_parakeet_model_directory(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "faster-whisper",
+                    "transcription_model_dir": "/models/parakeet-v2-int8",
+                    "transcription_model": "small",
+                },
+            },
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["transcription_model_dir"] is None
 
     def test_ebook_group_options(self) -> None:
         app = _minimal_app()
