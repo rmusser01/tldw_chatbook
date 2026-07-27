@@ -28,17 +28,15 @@ The semantic chunking method needs NLTK tokeniser data that is fetched at runtim
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Semantic chunking now degrades instead of raising when its corpus is missing.
+Semantic chunking now degrades usefully instead of raising when its tokeniser corpus is missing.
 
-_ensure_nltk handled nltk being ABSENT -- falling back to a built-in regex sentence splitter -- but not nltk being PRESENT WITHOUT ITS DATA. In that case it bound the real tokeniser, which then raised LookupError deep inside a chunking call. That is why the identical call succeeded in one environment and failed in another: the punkt corpus is a runtime download, not part of the package, so the outcome depended on what happened to be cached.
+ROOT CAUSE, deeper than first diagnosed. _ensure_nltk handled nltk being ABSENT but not nltk being PRESENT WITHOUT ITS DATA: it bound the real tokeniser, which then raised LookupError deep inside a chunking call. Underneath that sat a second fault -- ensure_nltk_data checked for and downloaded "punkt", but nltk >= 3.9 reads "punkt_tab". Reproduced with a corpus containing exactly what that download produces: readiness reported True and the very next call still raised Resource 'punkt_tab' not found. Naming a resource was the mistake; WHICH one nltk wants is version-dependent.
 
-The loader now probes the tokeniser once at bind time and keeps the existing regex fallback when the corpus is absent, logging the exact remedy: python -m nltk.downloader punkt punkt_tab. Simpler sentence splitting is a better outcome than a failed ingest, and this reuses the fallback that already existed for the nltk-absent case rather than inventing a second path.
+THE FIX. Readiness is now decided by whether the tokeniser TOKENISES: probe once at bind time, and on failure attempt both corpora and re-probe, letting the probe -- not the download's own verdict -- decide. An nltk too old to know punkt_tab reports failure for it while being perfectly usable, so the download return value cannot be trusted. The unusable verdict is latched, since nltk stays None on that path and every chunking call would otherwise re-probe, re-download and re-warn.
 
-Verified the way that settles it, by pointing NLTK_DATA at an empty directory so punkt is definitively unavailable: semantic chunking returned four usable chunks instead of raising. Regression test does the same via monkeypatch and a module reload.
+A SEPARATE DEFECT FOUND WHILE VERIFYING. The semantic path's fallback split on NEWLINES, so ordinary single-paragraph prose came back as one chunk holding the whole document -- technically not raising while silently not chunking. Its LookupError branch also retried with language="english" uncaught, which is the crash shape originally reported. Both now route to the built-in sentence split.
 
-Also corrected a slip in my own first draft: it used logging.warning while this module uses loguru, which would have sent the message somewhere the app's log filters do not look.
+VERIFICATION, AND A CORRECTION TO MY OWN. The earlier claim of verifying via NLTK_DATA pointed at an empty directory was a FALSE POSITIVE: NLTK_DATA appends to nltk.data.path rather than replacing it, so those runs kept finding the real corpus at ~/nltk_data and exercised the working tokeniser, never the fallback. With nltk.data.path[:] restricted for real, the first honest run failed at once -- and after the fix returns 4 chunks. All four guards are mutation-checked: removing the probe, the download, the latch, or the probe-based readiness each fails exactly one test and nothing else.
 
-Tests/RAG + Tests/Chunking + Tests/Local_Ingestion: 810 passed, 8 skipped. The semantic case that previously had to be skipped for missing data now passes outright.
-
-Files: Chunking/Chunk_Lib.py, Tests/RAG/test_chunking_service.py.
+Files: Chunking/Chunk_Lib.py, Tests/RAG/test_chunking_service.py, Tests/Utils/test_startup_polish_regressions.py, backlog/docs/lessons-live-verification.md.
 <!-- SECTION:NOTES:END -->

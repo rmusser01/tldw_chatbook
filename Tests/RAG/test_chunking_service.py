@@ -74,22 +74,67 @@ class TestEveryChunkingMethodReturnsUsableText:
 class TestSemanticChunkingWithoutNltkData:
     """Semantic chunking must degrade, not raise, when its corpus is absent.
 
-    nltk's sentence tokeniser needs the 'punkt' corpus, which is a runtime
-    download rather than part of the package. A machine could therefore have
-    nltk installed and still raise LookupError deep inside a chunking call --
-    the same call succeeding or failing purely on what happened to be cached
-    (task-842). A simpler sentence split is a better outcome than a failed
-    ingest, and the fallback already existed for the nltk-absent case.
+    nltk's sentence tokeniser needs a corpus that is a runtime download rather
+    than part of the package, so a machine can have nltk installed and still
+    raise LookupError deep inside a chunking call -- the same call succeeding
+    or failing purely on what happened to be cached (task-842).
+
+    These tests simulate the missing corpus at its real seam: they replace
+    ``nltk.tokenize.sent_tokenize`` (which ``_ensure_nltk`` re-imports on every
+    call) with one that raises LookupError exactly as nltk does. Deliberately
+    NOT done by pointing NLTK_DATA at an empty directory: ``nltk.data.path`` is
+    built when nltk is first imported, so once any earlier test has imported
+    nltk the env var has no effect and the test would silently pass against a
+    fully working tokeniser on any developer machine that has the corpus.
     """
 
-    def test_semantic_falls_back_instead_of_raising(self, tmp_path, monkeypatch):
-        import importlib
+    @staticmethod
+    def _simulate_missing_corpus(monkeypatch, *, downloadable=False):
+        """Put Chunk_Lib in the state of a machine whose corpus is missing.
 
-        # An empty NLTK_DATA dir makes punkt definitively unavailable.
-        monkeypatch.setenv("NLTK_DATA", str(tmp_path))
+        Args:
+            monkeypatch: pytest's monkeypatch fixture.
+            downloadable: When True, the stub download provisions the corpus,
+                so the re-probe succeeds; when False it is a no-op and no
+                network is touched either way.
+
+        Returns:
+            The Chunk_Lib module, with its lazy-import latches reset.
+        """
+        import nltk.tokenize
         import tldw_chatbook.Chunking.Chunk_Lib as chunk_lib
 
-        importlib.reload(chunk_lib)
+        state = {"corpus_present": False}
+
+        def fake_sent_tokenize(text, language="english"):
+            if not state["corpus_present"]:
+                raise LookupError("Resource 'punkt_tab' not found.")
+            return [s.strip() for s in text.split(".") if s.strip()]
+
+        def fake_download(_nltk):
+            state["corpus_present"] = downloadable
+
+        monkeypatch.setattr(nltk.tokenize, "sent_tokenize", fake_sent_tokenize)
+        monkeypatch.setattr(chunk_lib, "_download_nltk_tokenizer_corpora", fake_download)
+        # Reset every latch, and unbind whatever an earlier test left bound --
+        # otherwise the module-level `sent_tokenize` could still be a working
+        # tokeniser and the assertions would prove nothing.
+        monkeypatch.setattr(chunk_lib, "NLTK_AVAILABLE", True)
+        monkeypatch.setattr(chunk_lib, "nltk", None)
+        monkeypatch.setattr(chunk_lib, "_nltk_tokenizer_unusable", False)
+        monkeypatch.setattr(chunk_lib, "_nltk_data_ready", False)
+        monkeypatch.setattr(
+            chunk_lib, "sent_tokenize", chunk_lib._sent_tokenize_fallback
+        )
+        return chunk_lib
+
+    def test_semantic_falls_back_instead_of_raising(self, monkeypatch):
+        """A missing corpus yields simpler chunks, never a failed ingest.
+
+        Args:
+            monkeypatch: pytest's monkeypatch fixture.
+        """
+        self._simulate_missing_corpus(monkeypatch)
 
         from tldw_chatbook.RAG_Search.chunking_service import ChunkingService
 
@@ -103,3 +148,58 @@ class TestSemanticChunkingWithoutNltkData:
 
         assert chunks, "semantic chunking produced nothing without punkt data"
         assert all(isinstance(c.get("text"), str) and c["text"].strip() for c in chunks)
+        # It must still CHUNK. The old fallback split on newlines, so ordinary
+        # single-paragraph prose came back as one chunk holding the whole
+        # document -- technically "not raising" while silently doing nothing.
+        assert len(chunks) > 1, (
+            f"fallback returned {len(chunks)} chunk(s) for {len(prose.split())} "
+            "words at chunk_size=20; it stopped chunking rather than degrading"
+        )
+
+    def test_the_corpus_download_still_runs_and_rebinds_the_real_tokenizer(
+        self, monkeypatch
+    ):
+        """Downloading the corpus is the remediation; it must stay reachable.
+
+        Probing before binding must not cost the download that made sentence
+        chunking work in the first place. When the download provisions the
+        corpus, the re-probe succeeds and the real tokeniser binds.
+
+        Args:
+            monkeypatch: pytest's monkeypatch fixture.
+        """
+        chunk_lib = self._simulate_missing_corpus(monkeypatch, downloadable=True)
+
+        assert chunk_lib._ensure_nltk() is not None, "download path never ran"
+        assert chunk_lib.sent_tokenize is not chunk_lib._sent_tokenize_fallback
+
+    def test_an_unusable_tokenizer_is_latched_not_re_probed_every_call(
+        self, monkeypatch
+    ):
+        """The verdict is cached, so the warning and download happen once.
+
+        ``nltk`` stays None on this path, so without a latch every chunking
+        call would re-probe, re-attempt a network download and re-log.
+
+        Args:
+            monkeypatch: pytest's monkeypatch fixture.
+        """
+        chunk_lib = self._simulate_missing_corpus(monkeypatch)
+
+        attempts = []
+        real_probe = chunk_lib._probe_sent_tokenize
+        monkeypatch.setattr(
+            chunk_lib,
+            "_probe_sent_tokenize",
+            lambda tokenize: (attempts.append(1), real_probe(tokenize))[1],
+        )
+
+        for _ in range(3):
+            assert chunk_lib._ensure_nltk() is None
+        chunk_lib.ensure_nltk_data()
+
+        assert len(attempts) == 2, (
+            f"probed {len(attempts)} times; expected one probe plus one "
+            "re-probe after the download attempt, then a latched verdict"
+        )
+        assert chunk_lib._nltk_data_ready is False

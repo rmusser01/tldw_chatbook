@@ -92,6 +92,17 @@ server-mode verification entirely until fixed (task-701).
 isolation actually held**: back up the real file, and diff it afterwards. Never assume
 an env var isolates everything — check which paths derive from it.
 
+**A second incident, same rule (task-842).** `NLTK_DATA` *appends* to `nltk.data.path`;
+it does not replace it. A run that set `NLTK_DATA` to an empty directory therefore kept
+finding the machine's real corpus at `~/nltk_data`, exercised the working tokeniser, and
+was reported as proof that the *fallback* worked — a fallback that had never run. That
+false positive reached a PR description. Isolation held only after
+`nltk.data.path[:] = [scratch]`, and the very first honest run failed immediately.
+
+The general form: **an env var that adds a search path is not isolation.** Before
+trusting a negative-condition run, confirm the resource is genuinely unreachable — the
+setup should fail the way the real broken environment fails.
+
 ---
 
 ## Credentials in a live run
