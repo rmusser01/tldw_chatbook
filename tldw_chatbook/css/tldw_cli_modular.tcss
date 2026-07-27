@@ -15456,6 +15456,60 @@ WatchlistSourcePickerDialog {
     color: $ds-text-muted;
 }
 
+/* TASK-997. The expand chevron drew on its own indented line ABOVE the
+ * watchlist name:
+ *
+ *     │ Unassigned  0            │
+ *     │       ▸                  │
+ *     │ Morning AI Brief  0      │
+ *
+ * `_watchlist_node` now wraps the two buttons in this row so they share a
+ * line. `height: 1` is what makes the row a row: `Horizontal` defaults to
+ * `height: 1fr`, which inside the rail's `Vertical` would let one watchlist
+ * claim whatever vertical space the tree had left.
+ *
+ * `min-width: 0` on the chevron is the other half of the original defect and
+ * is load-bearing, exactly as it is for `.watchlist-tree-action` above:
+ * Textual's Button CSS pins `min-width: 16` and `compact=True` removes only
+ * the border, not that floor. A one-glyph chevron was therefore SIXTEEN
+ * columns wide with the glyph centred in them -- which is why it painted
+ * seven columns in from the left edge of a 26-column rail, reading as a
+ * stray mark rather than as this watchlist's control.
+ *
+ * The name button is left at its natural `width: auto` rather than given
+ * `1fr`: at `1fr` a name longer than the remaining rail would be ellipsized
+ * (`test_watchlists_left_rail_is_labelled_when_expanded` fails on any `…`),
+ * and the `is-active` highlight would stretch the full rail width instead of
+ * hugging the label the way the sibling root nodes do.
+ *
+ * `width: 3` and not `2`, which is the tighter look this was first written
+ * for: Textual's `Button` reserves a column each side via `line-pad: 1`, so
+ * a 2-column button has ZERO content columns and Rich raises
+ * `ValueError: range() arg 3 must not be zero` while wrapping the glyph. The
+ * obvious `line-pad: 0` is not available -- Textual's integer property parser
+ * rejects a literal 0 for it (`_process_integer` errors on `value == 0`), so
+ * the stylesheet fails to parse and every rule after it is lost. 3 is the
+ * narrowest width that renders.
+ *
+ * The source rows deliberately get NO rule: their two-space label indent
+ * plus Textual's `min-width: 16` centring already places them past the
+ * watchlist name (name at column 5, source at column 7 in a 26-column rail),
+ * so the nesting reads without adding a margin that would only move with the
+ * chevron's width.
+ */
+.watchlist-tree .watchlist-tree-row {
+    width: 100%;
+    height: 1;
+}
+
+.watchlist-tree Button.watchlist-tree-expander {
+    width: 3;
+    min-width: 0;
+    height: 1;
+    padding: 0;
+    border: none;
+}
+
 /* TASK-897. `#sources-toolbar` is a bare `Vertical` wrapping several
  * `.destination-filter-strip` rows, and had no height rule anywhere -- so it
  * inherited Textual's `height: 1fr` default and its size came from whatever

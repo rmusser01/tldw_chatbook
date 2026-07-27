@@ -3466,3 +3466,112 @@ async def test_watchlists_tab_strip_hit_regions_match_its_painted_labels(size):
                 f"{label!r} is painted, activated "
                 f"{screen.active_section!r} instead of {section_id!r}"
             )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_tree_chevron_shares_a_row_with_its_watchlist(size):
+    """TASK-997: the expand chevron drew on its own line above the name.
+
+    Captured live in the rail on a clean profile:
+
+        │ Unassigned  0            │
+        │       ▸                  │
+        │ Morning AI Brief  0      │
+
+    `_watchlist_node` yielded the chevron `Button` and the name `Button` as
+    two separate children of the tree's `Vertical`, so they stacked; and the
+    chevron inherited Textual's `min-width: 16`, which is why it painted
+    seven columns in from the left of a 26-column rail rather than beside
+    anything. Every watchlist cost two rows of the screen's primary
+    navigation instead of one.
+
+    Asserted from the compositor under the production stylesheet: which row a
+    glyph lands on is exactly the kind of thing a bare `App` gets wrong.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+    arxiv = service._db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    service.add_source(watchlist["id"], arxiv)
+
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(
+            screen, pilot, f"#wl-tree-node-watchlist-{watchlist['id']}"
+        )
+
+        def painted_rows():
+            strips = screen._compositor.render_strips()
+            return ["".join(seg.text for seg in row) for row in strips]
+
+        chevron = screen.query_one(f"#wl-tree-expand-{watchlist['id']}", Button)
+        node = screen.query_one(
+            f"#wl-tree-node-watchlist-{watchlist['id']}", Button
+        )
+
+        # AC#1: same row, and the chevron to the LEFT of the name.
+        assert chevron.region.y == node.region.y, (
+            f"the chevron is on row {chevron.region.y} and its watchlist name "
+            f"on row {node.region.y}; they must share one row"
+        )
+        assert chevron.region.right <= node.region.x, (
+            f"the chevron {chevron.region} must sit left of the name "
+            f"{node.region}, not overlap or follow it"
+        )
+
+        rows = painted_rows()
+        row_text = rows[node.region.y]
+        assert "▸" in row_text and "Morning AI Brief" in row_text, (
+            f"row {node.region.y} should paint the collapsed chevron beside "
+            f"the name; it paints {row_text.strip()!r}"
+        )
+        assert row_text.index("▸") < row_text.index("Morning AI Brief"), (
+            f"the chevron must precede the name on the row: {row_text.strip()!r}"
+        )
+
+        # AC#2: one collapsed watchlist occupies exactly one rail row. The
+        # chevron used to own a row of its own directly above the name.
+        assert "▸" not in rows[node.region.y - 1], (
+            f"the row above the watchlist still paints a stray chevron: "
+            f"{rows[node.region.y - 1].strip()!r}"
+        )
+
+        # AC#4: expanding still nests the sources under the watchlist.
+        await pilot.click(f"#wl-tree-expand-{watchlist['id']}")
+        await pilot.pause(0.2)
+
+        source = screen.query_one(f"#wl-tree-node-source-1-{arxiv}", Button)
+        node = screen.query_one(
+            f"#wl-tree-node-watchlist-{watchlist['id']}", Button
+        )
+        chevron = screen.query_one(f"#wl-tree-expand-{watchlist['id']}", Button)
+        assert chevron.region.y == node.region.y, (
+            "the open chevron must still share the watchlist's row"
+        )
+        assert source.region.y > node.region.y, (
+            f"the source row {source.region} must sit below its watchlist "
+            f"{node.region}"
+        )
+        rows = painted_rows()
+        # The source's indent is textual (its label is prefixed with two
+        # spaces), not a region offset, so assert on what is painted.
+        assert rows[source.region.y].index("ArXiv") > rows[node.region.y].index(
+            "Morning AI Brief"
+        ), (
+            f"the source name must be indented past its watchlist's: "
+            f"{rows[source.region.y].strip()!r} under "
+            f"{rows[node.region.y].strip()!r}"
+        )
+        assert "▾" in rows[node.region.y], (
+            f"an expanded watchlist must paint the open chevron on its own "
+            f"row: {rows[node.region.y].strip()!r}"
+        )
+        assert "ArXiv" in rows[source.region.y], (
+            f"row {source.region.y} should paint the source name; it paints "
+            f"{rows[source.region.y].strip()!r}"
+        )
