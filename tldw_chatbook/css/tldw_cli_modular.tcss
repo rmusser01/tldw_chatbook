@@ -14923,17 +14923,43 @@ CodingWindow {
  * Styles for the WatchlistsCollectionsScreen dashboard and panes.
  * ======================================== */
 
-/* Overview dashboard grid and cards */
+/* Overview dashboard grid and cards.
+ *
+ * TASK-998, second finding. The UAT called these "seven empty bordered
+ * cards" and read it as a first-run problem. It is not: they were empty in
+ * EVERY state, populated or not, and had been since the dashboard shipped.
+ * Measured at 160x42 with a source present:
+ *
+ *     #overview-total-sources  region=Region(height=1)  content=Size(height=0)
+ *
+ * Two compounding causes, one per rule below.
+ *
+ * The grid had no `height`, so it took `Grid`'s `1fr` default and was handed
+ * six rows for three rows of cards plus two gutters -- about one row each.
+ * `height: auto` sizes it to the cards instead, which is the only way a fixed
+ * card height means anything.
+ *
+ * And `padding: 1` inside `height: 4` with a `round` border left ZERO content
+ * rows: 4 - 2 (border) - 2 (padding) = 0. Even given its four rows the card
+ * could not have painted the label or the number. The padding is now
+ * horizontal only, so the two lines the card actually renders
+ * ("Total sources" / the value) have exactly the two rows they need.
+ *
+ * This is the same family as TASK-995 and task-875 elsewhere on this screen:
+ * a container too short for its children, where the border is the only thing
+ * that survives.
+ */
 #watchlists-overview-grid {
     layout: grid;
     grid-size: 3;
     grid-gutter: 1;
+    height: auto;
     margin: 1 0;
 }
 
 .overview-card {
     height: 4;
-    padding: 1;
+    padding: 0 1;
     background: $surface;
     border: round $surface-lighten-1;
     text-align: center;
@@ -15453,6 +15479,53 @@ WatchlistSourcePickerDialog {
 .watchlist-feed-source-row {
     height: 1;
     width: 100%;
+    color: $ds-text-muted;
+}
+
+/* TASK-998. The first-run panel that replaces the seven empty Overview cards.
+ *
+ * `height: auto` on both the wrapper and the body is the load-bearing pair.
+ * `Vertical` defaults to `height: 1fr`, so the wrapper would claim the whole
+ * region and re-create the "large box containing nothing" this task exists to
+ * remove; and a `Static` left at its default single row would clip multi-
+ * paragraph copy to its first line, which is the same class of defect as
+ * TASK-995 one region over. `text-wrap: wrap` because this copy has to
+ * survive the centre pane at 160 columns as well as at 235.
+ *
+ * No border. The region wrapper (`.watchlists-region-items`) already draws
+ * one box, and Task 6's rule for this screen is one border and one heading
+ * per region -- an inner box here would be the doubled-chrome defect that
+ * task removed.
+ */
+#overview-first-run {
+    width: 100%;
+    height: auto;
+    padding: 1 0;
+}
+
+.watchlists-first-run-title {
+    width: 100%;
+    height: auto;
+    text-style: bold;
+    color: $ds-text-primary;
+}
+
+.watchlists-first-run-body {
+    width: 100%;
+    height: auto;
+    padding: 1 0 0 0;
+    text-wrap: wrap;
+    color: $ds-text-muted;
+}
+
+/* The Inspector's own first-run line, muted the same way, so the rail reads
+ * as one voice with `.watchlists-region-placeholder` rather than as an
+ * alert.
+ */
+#inspector-first-run-hint {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
     color: $ds-text-muted;
 }
 

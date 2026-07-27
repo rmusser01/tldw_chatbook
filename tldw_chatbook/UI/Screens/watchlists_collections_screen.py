@@ -1078,6 +1078,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if self.active_section == "overview":
             overview = OverviewPane(id="watchlists-overview-pane")
             overview.data = self.overview_data
+            # TASK-998: lets the first-run panel distinguish "no watchlists at
+            # all" from "a watchlist with no sources in it" -- `overview_data`
+            # counts sources, items and runs, never watchlists.
+            overview.watchlist_count = len(self._tree_watchlists)
             children.append(overview)
         elif self.active_section == "sources":
             sources_pane = SourcesPane(id="watchlists-sources-pane")
@@ -1132,6 +1136,27 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             *children,
             id="watchlists-detail-pane",
             classes="destination-workbench-pane",
+        )
+
+    def _watchlists_are_empty(self) -> bool:
+        """Whether this profile has nothing in Watchlists yet (TASK-998).
+
+        Deliberately the same predicate `OverviewPane._is_first_run` uses, and
+        guarded the same way: `overview_data` is `{}` until its worker lands,
+        and an absent `total_sources` means "not loaded" rather than "empty" —
+        without that guard the Inspector would show first-run copy for a tick
+        on every visit, including for users who have hundreds of sources.
+        """
+        data = self.overview_data
+        if "total_sources" not in data:
+            return False
+        return not any(
+            (
+                data.get("total_sources"),
+                data.get("total_items"),
+                data.get("active_alert_rules"),
+                data.get("failed_runs"),
+            )
         )
 
     def _build_inspector_pane(
@@ -1232,6 +1257,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         inspector.selected_entity = self.selected_entity
         inspector.scope = self.selected_scope
         inspector.breadcrumb_labels = self._breadcrumb_labels
+        # TASK-998: same seeding rationale as the three lines above -- and the
+        # Inspector cannot work this out for itself, since it is handed a
+        # selection rather than the data behind it.
+        inspector.first_run = self._watchlists_are_empty()
         children.append(inspector)
         return Vertical(
             *children,

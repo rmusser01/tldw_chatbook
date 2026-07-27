@@ -50,6 +50,7 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
 )
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
+from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
 from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
@@ -3574,4 +3575,167 @@ async def test_watchlists_tree_chevron_shares_a_row_with_its_watchlist(size):
         assert "ArXiv" in rows[source.region.y], (
             f"row {source.region.y} should paint the source name; it paints "
             f"{rows[source.region.y].strip()!r}"
+        )
+
+
+def _pane_painted_text(screen, widget) -> str:
+    """Everything the compositor actually paints inside `widget`'s region."""
+    strips = screen._compositor.render_strips()
+    region = widget.region
+    lines = []
+    for y in range(region.y, min(region.y + region.height, len(strips))):
+        row = "".join(segment.text for segment in strips[y])
+        lines.append(row[region.x : region.x + region.width])
+    return "\n".join(lines)
+
+
+@pytest.mark.asyncio
+async def test_watchlists_first_run_replaces_empty_cards_with_guidance():
+    """TASK-998: on a profile with nothing in it, the biggest region on the
+    screen was seven empty bordered cards and the right rail told the user to
+    "Select a source, run, item, rule, or notification" when none can exist.
+
+    Both are answers to one question -- what should this screen say when there
+    is nothing in it yet -- so both are asserted together here.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#overview-first-run")
+        assert screen.active_section == "overview"
+
+        overview = screen.query_one("#watchlists-overview-pane", OverviewPane)
+
+        # AC#1: no empty bordered cards, and no empty failed-runs table
+        # either -- both are chrome around data that does not exist.
+        assert not overview.query(".overview-card"), (
+            "a profile with no sources still renders the summary cards"
+        )
+        assert not overview.query("#overview-failed-runs"), (
+            "a profile with no runs still renders the failed-runs table"
+        )
+
+        # ...replaced by copy that actually reaches the screen.
+        painted = _pane_painted_text(screen, overview)
+        assert "watchlist" in painted.lower(), (
+            f"the first-run panel says nothing useful; it paints {painted!r}"
+        )
+
+        # AC#2: the guidance must name controls that exist and can be used
+        # right now, not five things that cannot exist yet.
+        inspector_text = "\n".join(
+            getattr(node.renderable, "plain", str(node.renderable))
+            for node in screen.query("#watchlists-entity-inspector Static")
+        )
+        assert "Select a source, run, item, rule, or notification" not in (
+            inspector_text
+        ), "the dead-end guidance is still shown on a profile with nothing in it"
+
+        for label, selector in (("New", "#wl-tree-new"), ("Sources", "#wl-tab-sources")):
+            control = screen.query_one(selector, Button)
+            assert not control.disabled, (
+                f"{selector} is named in the first-run guidance but is disabled"
+            )
+            assert label in painted or label in inspector_text, (
+                f"the first-run guidance names no reachable control; it should "
+                f"name {label!r} ({selector})"
+            )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_populated_overview_and_inspector_are_unchanged():
+    """TASK-998 AC#4: the first-run treatment must not leak into a populated
+    profile. With a source present the seven cards, the failed-runs table and
+    the Inspector's ordinary "select something" guidance all come back.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService(
+        [
+            {
+                "id": 1,
+                "name": "ArXiv",
+                "source_type": "rss",
+                "url": "https://a.example/f",
+                "status": "ok",
+                "active": True,
+            }
+        ]
+    )
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#watchlists-overview-grid")
+
+        overview = screen.query_one("#watchlists-overview-pane", OverviewPane)
+        assert len(overview.query(".overview-card")) == 7
+        assert overview.query_one("#overview-failed-runs")
+        assert not overview.query("#overview-first-run")
+        assert "Total sources\n1" in str(
+            overview.query_one("#overview-total-sources").renderable
+        )
+
+        inspector_text = "\n".join(
+            getattr(node.renderable, "plain", str(node.renderable))
+            for node in screen.query("#watchlists-entity-inspector Static")
+        )
+        assert "Select a source, run, item, rule, or notification" in inspector_text, (
+            "with sources present and nothing selected, the ordinary Inspector "
+            "guidance is the correct copy and must be preserved"
+        )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_overview_cards_paint_their_labels_and_numbers(size):
+    """TASK-998, second finding: the Overview cards were empty in EVERY state.
+
+    The UAT read "seven empty bordered cards" as a first-run problem. It was
+    not. Measured at 160x42 with a source present, before the fix:
+
+        #overview-total-sources  region=Region(height=1)  content=Size(height=0)
+
+    The grid had no `height` and so took `Grid`'s `1fr` default -- six rows for
+    three rows of cards plus two gutters -- and `padding: 1` inside `height: 4`
+    with a `round` border left zero content rows even when the height was
+    granted. Neither the label nor the number could ever paint.
+
+    `Tests/Watchlists/test_watchlists_overview_pane.py` did not catch it
+    because it asserts on `Static.renderable`, which is correct whether or not
+    a single cell of it reaches the screen. This asserts the compositor.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService(
+        [
+            {
+                "id": 1,
+                "name": "ArXiv",
+                "source_type": "rss",
+                "url": "https://a.example/f",
+                "status": "ok",
+                "active": True,
+            }
+        ]
+    )
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#watchlists-overview-grid")
+
+        card = screen.query_one("#overview-total-sources")
+        assert card.content_size.height >= 2, (
+            f"the card has no room for its two lines: {card.region} "
+            f"content={card.content_size}"
+        )
+
+        painted = _pane_painted_text(screen, card)
+        assert "Total sources" in painted, (
+            f"the card's label never reaches the screen; it paints {painted!r}"
+        )
+        assert "1" in painted, (
+            f"the card's value never reaches the screen; it paints {painted!r}"
         )
