@@ -291,6 +291,14 @@ def k_depth_matched_run_group(evals_db: EvalsDB) -> dict:
     copy of ``clean_run_group``'s own s1 -- already K-depth-matched by the
     original author, per its own comment -- so nothing about the asserted
     entropy/truncation numbers below changes.
+
+    Args:
+        evals_db: The EvalsDB database instance for creating models,
+            datasets, and run groups.
+
+    Returns:
+        A dict with keys "group_id" (str), "base_id" (int), and "poor_id"
+        (int) identifying the test run group and its two target models.
     """
     base_id = evals_db.create_model(name="llama-3-8b", provider="llama_cpp", model_id="m")
     poor_id = evals_db.create_model(name="capped-target", provider="openai", model_id="m2")
