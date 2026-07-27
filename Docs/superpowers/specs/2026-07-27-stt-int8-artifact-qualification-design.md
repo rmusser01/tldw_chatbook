@@ -24,15 +24,36 @@ This task adds an isolated evaluation harness, immutable corpus and model
 manifests, deterministic metrics, fail-closed gate evaluation, and versioned
 macOS evidence.
 
-The evaluated populations cover:
+The complete proposed v3 routing-candidate set is:
+
+`bg`, `hr`, `cs`, `da`, `nl`, `et`, `fi`, `fr`, `de`, `el`, `hu`, `it`,
+`lv`, `lt`, `mt`, `pl`, `pt`, `ro`, `sk`, `sl`, `es`, `sv`, `ru`, and `uk`.
+
+The set is closed and versioned in the experiment manifest. Adding or removing
+a language creates a new experiment identity and requires a new complete
+comparison. The evaluated populations cover:
 
 - clean and deterministically noisy English;
 - silence and non-speech controls;
 - short, beyond-direct-input-limit, ten-minute, and long-form stress media;
-- Spanish, French, German, Polish, Greek, Russian, and Ukrainian Parakeet v3
-  slices;
+- every language in the complete v3 routing-candidate set, with deep slices for
+  Spanish, French, German, Polish, Greek, Russian, and Ukrainian;
 - stock Parakeet v2/v3 INT8 and F32 artifacts; and
 - the local faster-whisper base/int8 comparison baseline.
+
+The experiment manifest contains a closed model × population × metric/gate
+matrix:
+
+- Parakeet v2 INT8 and F32 plus faster-whisper base/int8 cover every required
+  English population;
+- Parakeet v3 INT8 and F32 plus faster-whisper base/int8 cover every required
+  population for all 24 proposed non-English routing candidates; and
+- required silence, timestamp, long-form, throughput, memory, and batch-reuse
+  cells are enumerated for every applicable variant.
+
+Every matrix cell has predeclared minimum sample, reference-unit, and audio
+duration requirements. The task cannot complete with a missing or incomplete
+cell.
 
 ## Non-goals
 
@@ -81,7 +102,9 @@ The corpus manifest records, for every external source:
 - expected transcript and its source field;
 - prepared audio size and SHA-256;
 - sample rate, channels, duration, and encoding; and
-- evaluation tags such as clean, accent, noise, silence, long-form, or stress.
+- evaluation tags such as clean, accent, noise, silence, long-form, or stress;
+  and
+- a resampling cluster ID that groups statistically dependent observations.
 
 FLEURS is pinned to an immutable repository commit rather than a moving branch.
 Only the required language shards and fixed sample IDs are prepared. The
@@ -115,6 +138,11 @@ before inference. A run is incomplete when any declared minimum is unmet.
 Samples cannot be dropped after observing a hypothesis, error, or runtime
 failure.
 
+Every derivative of one source utterance shares a resampling cluster. Repeated
+utterances from one known speaker use the speaker as the higher-level cluster.
+When speaker identity is unavailable, the immutable source utterance is the
+cluster. Cluster assignments are fixed in the corpus manifest before inference.
+
 ## Model and runtime manifest
 
 Each model variant records:
@@ -134,24 +162,33 @@ The harness accepts only verified local files. It does not call a model hub or
 allow an inference runtime to download a missing artifact.
 
 The `onnx-asr==0.12.0` long-form path is invoked with VAD ASR
-`batch_size=1`. Missing VAD provenance, a VAD hash mismatch, or an inability to
-enforce the declared batch size makes long-form qualification incomplete.
+`batch_size=1`. The raw result records both requested and effective VAD batch
+size. Missing VAD provenance, a VAD hash mismatch, an omitted effective value,
+or a value other than one makes long-form qualification incomplete.
 
 ## Run identity
 
-A run fingerprint is the SHA-256 of canonical JSON containing:
+An experiment fingerprint is the SHA-256 of canonical JSON containing:
 
 - corpus manifest and derived-fixture recipe revisions;
 - normalizer and metric revisions;
-- model and VAD artifact identities;
+- the closed comparison matrix and complete set of model and VAD artifact
+  identities;
 - runtime and operating-system metadata;
 - CPU, memory, execution provider, and thread settings;
 - gate configuration;
 - bootstrap seed and iteration count; and
 - harness source revision.
 
-Raw results from different fingerprints cannot be combined. A report embeds
-its fingerprint and refuses mismatched inputs.
+Every variant run also has a run fingerprint computed from the experiment
+fingerprint plus the selected model variant and its effective execution
+settings. INT8, F32, and faster-whisper runs therefore share one experiment
+fingerprint but retain different run fingerprints.
+
+A report compares runs only when their experiment fingerprints match, their
+variant identities fill the closed comparison matrix, and every non-variant
+dimension is identical. Runs with different experiment fingerprints cannot be
+combined.
 
 ## Execution flow
 
@@ -171,12 +208,13 @@ Preparation failure leaves no usable partial corpus.
 
 ### Run
 
-1. Validate the prepared corpus, selected model files, and complete run
-   fingerprint.
+1. Validate the prepared corpus, selected model files, experiment fingerprint,
+   and variant run fingerprint.
 2. Spawn one isolated child process for one model variant.
 3. Load that variant once and process the fixed ordered sample population.
 4. Emit one result record per sample with the exact reference, hypothesis,
-   timings, timestamps, warnings, and model/runtime identity.
+   timings, timestamps, warnings, model/runtime identity, resampling cluster,
+   and requested/effective VAD settings.
 5. Record child OS high-water RSS and parent-sampled process-tree RSS.
 6. Finish with one terminal run record containing counts and completeness.
 7. Publish raw JSONL atomically; a partial temporary file is not reportable.
@@ -187,7 +225,7 @@ engine or precision.
 
 ### Report
 
-1. Verify every input fingerprint and terminal run record.
+1. Verify every experiment/run fingerprint and terminal run record.
 2. Apply the predeclared versioned normalizer for each language.
 3. Compute per-sample edit/reference counts.
 4. Aggregate WER and CER populations separately.
@@ -205,11 +243,25 @@ It is not the arithmetic mean of per-sample percentages. WER and CER are
 reported separately and never averaged together. Each language declares its
 primary gate metric before a run; the other metric remains diagnostic.
 
-Paired comparisons resample sample identities with replacement and recompute
-both corpus rates and their delta for each bootstrap replicate. The first
-version uses 10,000 replicates, a fixed manifest seed, and the percentile 95%
-confidence interval. Both the point estimate and the adverse confidence bound
-must meet the applicable ADR-025 threshold.
+Paired comparisons resample cluster identities with replacement and include all
+member samples for each selected cluster. The same resampled clusters and
+member samples are used for both model arms. A missing member in either arm
+makes the comparison incomplete.
+
+The reported delta is always `candidate error rate - baseline error rate`, so a
+positive value means the candidate is worse. INT8 is the candidate against F32;
+Parakeet INT8 is the candidate against faster-whisper.
+
+The first version uses 10,000 replicates, a fixed manifest seed, and a two-sided
+percentile 95% confidence interval. The adverse bound is the upper 97.5th
+percentile of candidate-minus-baseline deltas. Both the point estimate and that
+upper bound must be less than or equal to the applicable ADR-025 threshold.
+
+For a v3 macro-family replicate, the harness cluster-resamples within each
+language, computes each language's corpus-rate delta, then takes the unweighted
+mean across languages sharing the same primary metric. The observed point
+estimate and upper 97.5th percentile of those replicate macro deltas are gated.
+WER-primary and CER-primary languages never enter the same macro family.
 
 The report applies the existing thresholds without reinterpretation:
 
@@ -231,32 +283,80 @@ The report applies the existing thresholds without reinterpretation:
 An unsupported timestamp capability is recorded explicitly. It is not
 fabricated or treated as observed timestamp evidence.
 
+### Performance protocol
+
+Every INT8, F32, and faster-whisper variant reports throughput and memory using
+the same fixed performance populations. The task-specific throughput and 3 GiB
+gates apply to Parakeet INT8; F32 and faster-whisper measurements remain
+required comparison evidence.
+
+One untimed warm-up sample runs after model load. Timed recognition begins when
+the already-decoded, normalized 16 kHz mono waveform is submitted and ends when
+the complete recognition result has been materialized. Model load, corpus
+preparation, download, and audio decoding are excluded. Runtime preprocessing,
+VAD segmentation, and ASR inference are included. Long-form timing therefore
+includes the pinned VAD path.
+
+Warm inverse real-time factor is:
+
+`sum(audio_duration_seconds) / sum(recognition_wall_seconds)`
+
+over the fixed performance population. The Parakeet INT8 gate requires an
+aggregate value greater than one.
+
 ## Memory measurement
 
 The child records the operating system's process high-water RSS using an
 OS-specific normalized probe. The parent samples RSS for the child process tree
 through `psutil` during model load and inference.
 
-Both values are preserved. Polling alone is not accepted as the peak, and
-divergent values are reported rather than silently reconciled. On the initial
-macOS reference run, Darwin units and conversion are captured in the report.
-Future Windows/Linux probes require native validation before their results can
-be compared or used as platform evidence.
+The parent samples the complete process tree at a fixed 10 ms monotonic
+interval, rediscovering descendants at every sample. Both peak values are
+preserved. The gate uses the larger of child high-water RSS and maximum sampled
+process-tree RSS. If either required measurement is unavailable, the memory
+gate is incomplete rather than passing on the remaining value.
+
+For the 100-file reuse gate, one warm-up file is followed by a one-second idle
+window sampled at the same interval. The median total process-tree RSS in that
+window is the baseline. After the fixed 100-file run, another one-second idle
+window supplies the post-run median. The same worker PID and a model-load count
+of exactly one are required, and:
+
+`(post_run_median - baseline_median) / baseline_median <= 0.15`
+
+The peak gate still uses the maximum observed value across load, warm-up, the
+100 files, and both idle windows.
+
+On the initial macOS reference run, Darwin high-water units and conversion are
+captured in the report. Future Windows/Linux probes require native validation
+before their results can be compared or used as platform evidence.
 
 ## Decision model
 
-Every artifact and language receives one of:
+Every artifact, matrix cell, and language receives one of:
 
 - `pass`: all task-specific evidence and thresholds passed;
 - `fail`: complete valid evidence exceeded at least one threshold; or
 - `incomplete`: required evidence, provenance, pairing, or capability was
   absent or invalid.
 
-The top-level report uses `artifact_candidate`, never `default_promoted`.
-It also records `semantic_default_eligible=false` and lists the outstanding
-artifact-core, executor, provenance, platform, dictation, migration, and release
-gates. A task-specific pass cannot be misread as approval to change production
-routing.
+Each non-English language also receives
+`routing_candidate: pass|fail|incomplete`. The derived candidate-language set
+contains only languages whose complete v3 INT8 matrix and comparisons pass.
+Failed and incomplete languages are excluded explicitly and continue to route
+to faster-whisper if the semantic gate is later considered.
+
+An INT8 artifact receives `artifact_candidate=pass` only when every required
+matrix cell passes. `fail` or `incomplete` blocks INT8 promotion and never
+selects F32 as a substitute. F32 remains comparison evidence only.
+
+The top-level report never uses `default_promoted`. It records
+`semantic_default_eligible=false` and lists the outstanding artifact-core,
+executor, provenance, platform, dictation, migration, and release gates. A
+task-specific pass cannot be misread as approval to change production routing.
+This task may complete with fully valid `fail` evidence because qualification
+has then produced a conclusive result; any `incomplete` required cell keeps the
+task open.
 
 ## Error handling and safety
 
@@ -278,14 +378,19 @@ do not download datasets or load production models.
 
 Tests cover:
 
-- strict manifest validation and canonical fingerprints;
+- strict manifest validation, experiment fingerprints, and variant run
+  fingerprints;
 - size, digest, path-containment, symlink, staging, and atomic-publish failures;
 - deterministic fixture generation;
 - language normalization and edit counts;
 - corpus WER/CER aggregation;
-- paired-bootstrap determinism, pairing, and adverse-bound gates;
-- insufficient populations and mismatched run fingerprints;
+- paired clustered-bootstrap determinism, derivative/speaker clustering, model
+  pairing, delta direction, macro-family intervals, and adverse-bound gates;
+- the complete 24-language comparison matrix, insufficient populations,
+  missing cells, and mismatched experiment/run fingerprints;
 - silence and timestamp validation;
+- requested/effective VAD `batch_size=1`, including missing, ignored, and
+  mismatched effective settings;
 - one model load across a batch;
 - child crash, timeout, malformed output, and incomplete runs;
 - high-water and process-tree RSS normalization;
@@ -294,9 +399,9 @@ Tests cover:
 - explicit macOS-only evidence labeling.
 
 The real qualification command is separate and explicit. TASK-593 is complete
-only when the pinned macOS run produces full valid evidence for every declared
-population and the versioned report is reviewed. Any incomplete population
-keeps the task open and all promotion gates closed.
+only when the pinned macOS run produces full valid pass-or-fail evidence for
+every cell in the closed matrix and the versioned report is reviewed. Any
+incomplete cell keeps the task open and all promotion gates closed.
 
 ## ADR check
 
