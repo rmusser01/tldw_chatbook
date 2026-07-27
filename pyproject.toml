@@ -145,20 +145,30 @@ audio = [
     "yt-dlp",
     "numpy",
     "pydub",
-    "faster-whisper",  # Default transcription provider
-    # Note: For Apple Silicon optimized transcription, also install:
-    # pip install -e ".[audio,transcription_lightning_whisper]" or
-    # pip install -e ".[audio,transcription_parakeet]"
+    # macOS prefers parakeet-mlx at runtime (see config.py's darwin branch), so
+    # ship it there rather than leaving the preferred engine uninstalled: the
+    # preference could never engage on a normal macOS install, and audio ingest
+    # failed with "faster-whisper is not installed" instead (task-839).
+    "parakeet-mlx; sys_platform == 'darwin'",
+    # Fallback everywhere, and the default off darwin.
+    "faster-whisper",
+    # For the other Apple Silicon engine:
+    # pip install -e ".[audio,transcription_lightning_whisper]"
 ]
 video = [
     "soundfile",
     "scipy",
     "yt-dlp",
     "numpy",
-    "faster-whisper",  # Default transcription provider
-    # Note: For Apple Silicon optimized transcription, also install:
-    # pip install -e ".[video,transcription_lightning_whisper]" or
-    # pip install -e ".[video,transcription_parakeet]"
+    # macOS prefers parakeet-mlx at runtime (see config.py's darwin branch), so
+    # ship it there rather than leaving the preferred engine uninstalled: the
+    # preference could never engage on a normal macOS install, and audio ingest
+    # failed with "faster-whisper is not installed" instead (task-839).
+    "parakeet-mlx; sys_platform == 'darwin'",
+    # Fallback everywhere, and the default off darwin.
+    "faster-whisper",
+    # For the other Apple Silicon engine:
+    # pip install -e ".[video,transcription_lightning_whisper]"
 ]
 media_processing = [
     "soundfile",
