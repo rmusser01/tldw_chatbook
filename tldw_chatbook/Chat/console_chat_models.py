@@ -25,7 +25,6 @@ class ConsoleRunStatus(str, Enum):
     IDLE = "idle"
     VALIDATING = "validating"
     STREAMING = "streaming"
-    CHECKING_CITATIONS = "checking_citations"
     COMPLETED = "completed"
     BLOCKED = "blocked"
     STOPPED = "stopped"
@@ -221,10 +220,7 @@ class ConsoleRunState:
     @property
     def is_stop_allowed(self) -> bool:
         """Return whether Console can stop an active stream from this state."""
-        return self.status in {
-            ConsoleRunStatus.STREAMING,
-            ConsoleRunStatus.CHECKING_CITATIONS,
-        }
+        return self.status is ConsoleRunStatus.STREAMING
 
 
 @dataclass(frozen=True)

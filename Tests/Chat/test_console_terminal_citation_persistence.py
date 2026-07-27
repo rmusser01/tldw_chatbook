@@ -48,8 +48,6 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleCitationPhase,
     ConsoleCitationPresentation,
     ConsoleMessageRole,
-    ConsoleRunState,
-    ConsoleRunStatus,
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
@@ -1665,16 +1663,6 @@ def test_citation_presentation_contract_is_frozen_and_bounded() -> None:
         "notice_code",
         "original_attempt_available",
     }
-
-
-def test_citation_presentation_checking_run_state_is_active() -> None:
-    state = ConsoleRunState(
-        status=ConsoleRunStatus.CHECKING_CITATIONS,
-        visible_copy="Checking citations…",
-    )
-
-    assert state.is_send_allowed is False
-    assert state.is_stop_allowed is True
 
 
 def test_citation_presentation_store_snapshots_set_and_clear_without_writes() -> None:
