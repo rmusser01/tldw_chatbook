@@ -2233,7 +2233,8 @@ def test_approve_for_session_is_not_re_prompted_next_turn():
 # -----------------------------------------------------------------------------
 
 
-def test_finalize_agent_reply_empty_final_text_uses_fallback():
+@pytest.mark.asyncio
+async def test_finalize_agent_reply_empty_final_text_uses_fallback():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
@@ -2243,7 +2244,7 @@ def test_finalize_agent_reply_empty_final_text_uses_fallback():
     )
 
     outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="")
-    result = controller._finalize_agent_reply(
+    result = await controller._finalize_agent_reply(
         placeholder.id, session.id, outcome, variant_mode=False
     )
 
@@ -2255,7 +2256,8 @@ def test_finalize_agent_reply_empty_final_text_uses_fallback():
     assert controller.run_state.status is ConsoleRunStatus.COMPLETED
 
 
-def test_finalize_agent_reply_missing_placeholder_appends_message():
+@pytest.mark.asyncio
+async def test_finalize_agent_reply_missing_placeholder_appends_message():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
@@ -2263,7 +2265,7 @@ def test_finalize_agent_reply_missing_placeholder_appends_message():
     fake_id = "nonexistent-msg-id"
 
     outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="hello back")
-    result = controller._finalize_agent_reply(
+    result = await controller._finalize_agent_reply(
         fake_id, session.id, outcome, variant_mode=False
     )
 
@@ -2276,7 +2278,8 @@ def test_finalize_agent_reply_missing_placeholder_appends_message():
     assert controller.run_state.status is ConsoleRunStatus.COMPLETED
 
 
-def test_finalize_agent_reply_error_marks_failed():
+@pytest.mark.asyncio
+async def test_finalize_agent_reply_error_marks_failed():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
@@ -2287,7 +2290,7 @@ def test_finalize_agent_reply_error_marks_failed():
     store.append_stream_chunk(placeholder.id, "partial")
 
     outcome = RunOutcome(status=RUN_ERROR, steps=[], final_text="")
-    result = controller._finalize_agent_reply(
+    result = await controller._finalize_agent_reply(
         placeholder.id, session.id, outcome, variant_mode=False
     )
 
@@ -2299,7 +2302,8 @@ def test_finalize_agent_reply_error_marks_failed():
     assert result.accepted is True
 
 
-def test_finalize_agent_reply_cancelled_marks_failed():
+@pytest.mark.asyncio
+async def test_finalize_agent_reply_cancelled_marks_failed():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
@@ -2309,7 +2313,7 @@ def test_finalize_agent_reply_cancelled_marks_failed():
     )
 
     outcome = RunOutcome(status=RUN_CANCELLED, steps=[], final_text="")
-    result = controller._finalize_agent_reply(
+    result = await controller._finalize_agent_reply(
         placeholder.id, session.id, outcome, variant_mode=False
     )
 
@@ -2320,7 +2324,8 @@ def test_finalize_agent_reply_cancelled_marks_failed():
     assert result.accepted is True
 
 
-def test_finalize_agent_reply_unknown_status_marks_failed():
+@pytest.mark.asyncio
+async def test_finalize_agent_reply_unknown_status_marks_failed():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
@@ -2330,7 +2335,7 @@ def test_finalize_agent_reply_unknown_status_marks_failed():
     )
 
     outcome = RunOutcome(status="weird", steps=[], final_text="")
-    result = controller._finalize_agent_reply(
+    result = await controller._finalize_agent_reply(
         placeholder.id, session.id, outcome, variant_mode=False
     )
 
@@ -3217,7 +3222,7 @@ async def test_agent_finalization_remains_inside_outer_active_stream_ownership()
     class OwnershipController(ConsoleChatController):
         active_during_finalization = None
 
-        def _finalize_agent_reply(
+        async def _finalize_agent_reply(
             self,
             assistant_message_id,
             session_id,
@@ -3229,7 +3234,7 @@ async def test_agent_finalization_remains_inside_outer_active_stream_ownership()
                 self._active_stream_task,
                 self._stop_requested,
             )
-            return super()._finalize_agent_reply(
+            return await super()._finalize_agent_reply(
                 assistant_message_id,
                 session_id,
                 outcome,

@@ -12,6 +12,12 @@ from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.citation_repair import CitationRepairContract
+from tldw_chatbook.Chat.citation_trace_models import MarkerNamespace
+from tldw_chatbook.Chat.console_provider_gateway import (
+    NO_PROVIDER_CONTENT_COPY,
+    ConsoleProviderResolution,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents.agent_models import (
@@ -58,6 +64,103 @@ class _Gateway:
             yield chunk
 
 
+class _SignalGateway:
+    def __init__(self, scripts, *, mark_fallback_calls=frozenset()):
+        self._scripts = list(scripts)
+        self._mark_fallback_calls = mark_fallback_calls
+        self.calls = []
+        self.resolution = ConsoleProviderResolution(
+            provider="openai",
+            base_url="https://provider.invalid/v1",
+            model="repair-model",
+            ready=True,
+            readiness_key="openai",
+            execution_key="openai",
+            api_key="secret",
+            temperature=None,
+            top_p=None,
+            min_p=None,
+            top_k=None,
+            max_tokens=128,
+            seed=None,
+            presence_penalty=None,
+            frequency_penalty=None,
+            reasoning_effort=None,
+            reasoning_summary=None,
+            verbosity=None,
+            thinking_effort=None,
+            thinking_budget_tokens=None,
+            streaming=True,
+        )
+
+    async def resolve_for_send(self, _selection):
+        return self.resolution
+
+    async def stream_chat(self, resolution, messages, tools=None, signals=None):
+        call_index = len(self.calls)
+        self.calls.append(
+            {
+                "resolution": resolution,
+                "messages": messages,
+                "tools": tools,
+                "signals": signals,
+            }
+        )
+        if call_index in self._mark_fallback_calls:
+            signals.mark_synthetic_fallback()
+        for chunk in self._scripts[call_index]:
+            yield chunk
+
+
+def _citation_contract():
+    return CitationRepairContract(
+        schema_version=1,
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        allowed_ordinals=(1,),
+        evidence_context="[S1] MEDIA — Source\nExact evidence.",
+    )
+
+
+async def _real_agent_citation_controller(
+    tmp_path,
+    scripts,
+    *,
+    mark_fallback_calls=frozenset(),
+):
+    gateway = _SignalGateway(
+        scripts,
+        mark_fallback_calls=mark_fallback_calls,
+    )
+    store = ConsoleChatStore()
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=gateway,
+    )
+    contract = _citation_contract()
+
+    async def capture(_draft):
+        return SimpleNamespace(
+            context=contract.evidence_context,
+            citation_builder=None,
+            prompt_evidence_set_id=None,
+            citation_repair_contract=contract,
+        )
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="openai",
+        model="repair-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+        rag_capture_provider=capture,
+    )
+    result = await controller.submit_draft("question")
+    return result, controller, store, gateway
+
+
 def _controller(tmp_path, scripts, *, enabled=True):
     gateway = _Gateway(scripts)
     store = ConsoleChatStore()
@@ -72,6 +175,90 @@ def _controller(tmp_path, scripts, *, enabled=True):
         agent_runtime_enabled=enabled,
     )
     return controller, store, db
+
+
+@pytest.mark.parametrize(
+    ("scripts", "fallback_call"),
+    (
+        (
+            [
+                [
+                    f"{NO_PROVIDER_CONTENT_COPY}\n"
+                    f"{_fence('calculator', {'expression': '1+1'})}"
+                ],
+                ["Primary final answer"],
+                ["Primary final answer [S1]"],
+            ],
+            0,
+        ),
+        (
+            [
+                [_fence("calculator", {"expression": "1+1"})],
+                [
+                    f"{NO_PROVIDER_CONTENT_COPY}\n"
+                    f"{_fence('calculator', {'expression': '2+2'})}"
+                ],
+                ["Primary final answer"],
+                ["Primary final answer [S1]"],
+            ],
+            1,
+        ),
+        (
+            [
+                [_fence(SPAWN_TOOL_NAME, {"task": "answer briefly"})],
+                [NO_PROVIDER_CONTENT_COPY],
+                ["Primary final answer"],
+                ["Primary final answer [S1]"],
+            ],
+            1,
+        ),
+    ),
+    ids=("first-tool-turn", "intermediate-tool-turn", "subagent-turn"),
+)
+@pytest.mark.asyncio
+async def test_citation_repair_agent_shared_fallback_signal_bypasses_after_any_earlier_turn(
+    tmp_path,
+    scripts,
+    fallback_call,
+):
+    result, _controller, store, gateway = await _real_agent_citation_controller(
+        tmp_path,
+        scripts,
+        mark_fallback_calls=frozenset({fallback_call}),
+    )
+
+    assistant = next(
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert result.visible_copy == assistant.content == "Primary final answer"
+    assert len(gateway.calls) == len(scripts) - 1
+    signals = [call["signals"] for call in gateway.calls]
+    assert signals[0] is not None
+    assert all(signal is signals[0] for signal in signals)
+    assert signals[0].synthetic_fallback_emitted is True
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_agent_real_genuine_fallback_copy_does_not_bypass(
+    tmp_path,
+):
+    repaired = f"{NO_PROVIDER_CONTENT_COPY} [S1]"
+    result, _controller, store, gateway = await _real_agent_citation_controller(
+        tmp_path,
+        [[NO_PROVIDER_CONTENT_COPY], [repaired]],
+    )
+
+    assistant = next(
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert result.visible_copy == assistant.content == repaired
+    assert len(gateway.calls) == 2
+    assert gateway.calls[0]["signals"] is gateway.calls[1]["signals"]
+    assert gateway.calls[0]["signals"].synthetic_fallback_emitted is False
 
 
 def _all_runs(db):

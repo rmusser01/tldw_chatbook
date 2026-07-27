@@ -221,7 +221,10 @@ class ConsoleRunState:
     @property
     def is_stop_allowed(self) -> bool:
         """Return whether Console can stop an active stream from this state."""
-        return self.status is ConsoleRunStatus.STREAMING
+        return self.status in {
+            ConsoleRunStatus.STREAMING,
+            ConsoleRunStatus.CHECKING_CITATIONS,
+        }
 
 
 @dataclass(frozen=True)

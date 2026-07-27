@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from loguru import logger as loguru_logger
 
+from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Agents.agent_models import (
     RUN_CANCELLED,
     RUN_DONE,
@@ -44,7 +45,9 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleCitationNoticeCode,
     ConsoleCitationPhase,
+    ConsoleCitationPresentation,
     ConsoleMessageRole,
+    ConsoleRunState,
     ConsoleRunStatus,
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -213,9 +216,20 @@ class _RecordingCitationStore(ConsoleChatStore):
     def __init__(self, *, persistence=None):
         super().__init__(persistence=persistence)
         self.assistant_append_kwargs: list[dict[str, Any]] = []
+        self.message_append_calls: list[dict[str, Any]] = []
         self.completion_calls: list[str] = []
+        self.stopped_calls: list[str] = []
+        self.events: list[str] | None = None
 
     def append_message(self, session_id, *, role, content, **kwargs):
+        self.message_append_calls.append(
+            {
+                "session_id": session_id,
+                "role": role,
+                "content": content,
+                "kwargs": dict(kwargs),
+            }
+        )
         if role is ConsoleMessageRole.ASSISTANT:
             self.assistant_append_kwargs.append(dict(kwargs))
         return super().append_message(
@@ -226,8 +240,14 @@ class _RecordingCitationStore(ConsoleChatStore):
         )
 
     def mark_message_complete(self, message_id):
+        if self.events is not None:
+            self.events.append("complete")
         self.completion_calls.append(message_id)
         return super().mark_message_complete(message_id)
+
+    def mark_message_stopped(self, message_id):
+        self.stopped_calls.append(message_id)
+        return super().mark_message_stopped(message_id)
 
 
 class _ScriptedCitationGateway:
@@ -293,6 +313,80 @@ class _ScriptedCitationGateway:
             if isinstance(item, BaseException):
                 raise item
             yield item
+
+
+class _ControlledCitationGateway(_ScriptedCitationGateway):
+    def __init__(
+        self,
+        scripts: tuple[tuple[object, ...], ...],
+        *,
+        repair_call_index: int,
+        pause_before_first_chunk: bool = False,
+        pause_after_first_chunk: bool = False,
+        yield_late_chunk_on_cancel: bool = False,
+        pause_initial_after_first_chunk: bool = False,
+    ) -> None:
+        super().__init__(scripts)
+        self.repair_call_index = repair_call_index
+        self.pause_before_first_chunk = pause_before_first_chunk
+        self.pause_after_first_chunk = pause_after_first_chunk
+        self.yield_late_chunk_on_cancel = yield_late_chunk_on_cancel
+        self.pause_initial_after_first_chunk = pause_initial_after_first_chunk
+        self.repair_started = asyncio.Event()
+        self.first_repair_chunk_collected = asyncio.Event()
+        self.first_initial_chunk_collected = asyncio.Event()
+        self.release_repair = asyncio.Event()
+
+    async def stream_chat(
+        self,
+        resolution,
+        messages,
+        tools=_OMITTED,
+        signals=_OMITTED,
+    ):
+        call_index = len(self.calls)
+        self.calls.append(
+            {
+                "resolution": resolution,
+                "messages": messages,
+                "tools": tools,
+                "signals": signals,
+            }
+        )
+        script = self.scripts[call_index]
+        if call_index != self.repair_call_index:
+            for index, item in enumerate(script):
+                if isinstance(item, BaseException):
+                    raise item
+                yield item
+                if index == 0 and self.pause_initial_after_first_chunk:
+                    self.first_initial_chunk_collected.set()
+                    await self.release_repair.wait()
+            return
+
+        self.repair_started.set()
+        if self.pause_before_first_chunk:
+            try:
+                await self.release_repair.wait()
+            except asyncio.CancelledError:
+                if self.yield_late_chunk_on_cancel:
+                    yield "LATE REPAIR MUST NOT WIN [S1]"
+                    return
+                raise
+        for index, item in enumerate(script):
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+            if index == 0:
+                self.first_repair_chunk_collected.set()
+                if self.pause_after_first_chunk:
+                    try:
+                        await self.release_repair.wait()
+                    except asyncio.CancelledError:
+                        if self.yield_late_chunk_on_cancel:
+                            yield "LATE REPAIR MUST NOT WIN [S1]"
+                            return
+                        raise
 
 
 def _persisted_store(
@@ -1466,15 +1560,24 @@ class _AgentBridge:
         status: str = RUN_DONE,
         text: str = "agent answer",
         append_text: bool = True,
+        outcome_text: str | None = None,
+        mark_synthetic_fallback: bool = False,
+        events: list[str] | None = None,
     ) -> None:
         self.store = store
         self.status = status
         self.text = text
         self.append_text = append_text
+        self.outcome_text = text if outcome_text is None else outcome_text
+        self.mark_synthetic_fallback = mark_synthetic_fallback
+        self.events = events
         self.calls: list[dict[str, Any]] = []
+        self.anchors: list[tuple[str, str]] = []
 
     def run_reply(self, **kwargs):
         self.calls.append(kwargs)
+        if self.mark_synthetic_fallback:
+            kwargs["provider_stream_signals"].mark_synthetic_fallback()
         if self.append_text and self.text:
             self.store.append_stream_chunk(
                 kwargs["assistant_message_id"],
@@ -1483,11 +1586,630 @@ class _AgentBridge:
         return "run-console-terminal", RunOutcome(
             status=self.status,
             steps=[],
-            final_text=self.text,
+            final_text=self.outcome_text,
         )
 
-    def record_run_assistant_message(self, _run_id, _message_id):
-        return None
+    def record_run_assistant_message(self, run_id, message_id):
+        if self.events is not None:
+            self.events.append("anchor")
+        self.anchors.append((run_id, message_id))
+
+
+async def _run_agent_citation_repair(
+    *,
+    initial_body: str,
+    repair_scripts: tuple[tuple[object, ...], ...] = (),
+    persistence: _ReadyCitationPersistence | None = None,
+    status: str = RUN_DONE,
+    append_text: bool = True,
+    outcome_text: str | None = None,
+    mark_synthetic_fallback: bool = False,
+    events: list[str] | None = None,
+):
+    contract = _repair_contract()
+    store = _recording_citation_store(persistence)
+    store.events = events
+    gateway = _ScriptedCitationGateway(repair_scripts)
+    if events is not None:
+        gateway.on_call = lambda _call_index: events.append("repair")
+    bridge = _AgentBridge(
+        store,
+        status=status,
+        text=initial_body,
+        append_text=append_text,
+        outcome_text=outcome_text,
+        mark_synthetic_fallback=mark_synthetic_fallback,
+        events=events,
+    )
+
+    async def capture(_draft):
+        return _repair_capture(contract)
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        rag_capture_provider=capture,
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+    result = await controller.submit_draft("question")
+    return result, controller, store, gateway, bridge, contract
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_agent_run_done_selects_exact_store_body_before_completion_and_anchor():
+    initial_body = "Store-owned claim without a marker"
+    repaired_body = f"{initial_body} [S1]"
+    outcome_body = "Divergent outcome body [S1]"
+    events: list[str] = []
+    persistence = _ReadyCitationPersistence()
+
+    (
+        result,
+        _controller,
+        store,
+        gateway,
+        bridge,
+        contract,
+    ) = await _run_agent_citation_repair(
+        initial_body=initial_body,
+        repair_scripts=((repaired_body,),),
+        persistence=persistence,
+        outcome_text=outcome_body,
+        events=events,
+    )
+    assert store.completion_calls == [_assistant(store).id]
+    assert bridge.anchors
+
+    assistant = _assistant(store)
+    assert result.visible_copy == assistant.content == repaired_body
+    assert len(bridge.calls) == 1
+    assert len(gateway.calls) == 1
+    assert gateway.calls[0]["resolution"] is gateway.resolution
+    assert gateway.calls[0]["messages"] == build_citation_repair_messages(
+        contract,
+        initial_body,
+    )
+    assert gateway.calls[0]["tools"] is _OMITTED
+    assert bridge.calls[0]["provider_stream_signals"] is gateway.calls[0]["signals"]
+    assert events == ["repair", "complete", "anchor"]
+    assert bridge.anchors == [("run-console-terminal", assistant.persisted_message_id)]
+    assert assistant.persisted_message_id == assistant.id
+    assert outcome_body not in assistant.content
+
+
+@pytest.mark.parametrize(
+    (
+        "status",
+        "initial_body",
+        "append_text",
+        "mark_fallback",
+        "expected_status",
+        "expected_body",
+    ),
+    (
+        (RUN_ERROR, "partial failure", True, False, "failed", "partial failure"),
+        (
+            RUN_CANCELLED,
+            "partial cancellation",
+            True,
+            False,
+            "failed",
+            "partial cancellation",
+        ),
+        (RUN_DONE, "", False, False, "complete", "No response was generated."),
+        (
+            RUN_DONE,
+            NO_PROVIDER_CONTENT_COPY,
+            True,
+            True,
+            "complete",
+            NO_PROVIDER_CONTENT_COPY,
+        ),
+    ),
+    ids=("failure", "runtime-cancel", "empty", "synthesized-fallback"),
+)
+@pytest.mark.asyncio
+async def test_citation_repair_agent_ineligible_outcomes_never_dispatch(
+    status: str,
+    initial_body: str,
+    append_text: bool,
+    mark_fallback: bool,
+    expected_status: str,
+    expected_body: str,
+):
+    (
+        result,
+        _controller,
+        store,
+        gateway,
+        _bridge,
+        _contract,
+    ) = await _run_agent_citation_repair(
+        initial_body=initial_body,
+        status=status,
+        append_text=append_text,
+        mark_synthetic_fallback=mark_fallback,
+    )
+
+    assistant = _assistant(store)
+    assert gateway.calls == []
+    assert assistant.status == expected_status
+    assert assistant.content == expected_body
+    assert result.accepted is True
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_agent_missing_placeholder_keeps_runtime_row_without_repair():
+    store = _recording_citation_store()
+    gateway = _ScriptedCitationGateway(())
+    contract = _repair_contract()
+
+    class _ReplacingBridge(_AgentBridge):
+        def run_reply(self, **kwargs):
+            self.calls.append(kwargs)
+            original_id = kwargs["assistant_message_id"]
+            session_id = self.store.session_id_for_message(original_id)
+            session = next(
+                item for item in self.store.sessions() if item.id == session_id
+            )
+            retained = [
+                message
+                for message in self.store.messages_for_session(session_id)
+                if message.id != original_id
+            ]
+            self.store.restore_state(
+                sessions=[session],
+                messages_by_session={session_id: retained},
+                active_session_id=session_id,
+            )
+            replacement = self.store.append_message(
+                session_id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="",
+                persist=False,
+            )
+            self.store.append_stream_chunk(replacement.id, "runtime replacement")
+            return "run-console-terminal", RunOutcome(
+                status=RUN_DONE,
+                steps=[],
+                final_text="runtime replacement",
+            )
+
+    async def capture(_draft):
+        return _repair_capture(contract)
+
+    bridge = _ReplacingBridge(store)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        rag_capture_provider=capture,
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+
+    result = await controller.submit_draft("question")
+
+    assistant = _assistant(store)
+    assert gateway.calls == []
+    assert assistant.content == "runtime replacement"
+    assert assistant.status == "complete"
+    assert result.visible_copy == assistant.content
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_agent_genuine_fallback_copy_still_repairs():
+    repaired = f"{NO_PROVIDER_CONTENT_COPY} [S1]"
+    (
+        result,
+        _controller,
+        store,
+        gateway,
+        bridge,
+        _contract,
+    ) = await _run_agent_citation_repair(
+        initial_body=NO_PROVIDER_CONTENT_COPY,
+        repair_scripts=((repaired,),),
+    )
+
+    assert len(gateway.calls) == 1
+    assert (
+        bridge.calls[0]["provider_stream_signals"].synthetic_fallback_emitted is False
+    )
+    assert result.visible_copy == _assistant(store).content == repaired
+
+
+def _controlled_citation_repair(
+    *,
+    agent: bool,
+    persistence: _ReadyCitationPersistence | None = None,
+    pause_before_first_chunk: bool = False,
+    pause_after_first_chunk: bool = False,
+    yield_late_chunk_on_cancel: bool = False,
+    pause_initial_after_first_chunk: bool = False,
+):
+    initial_body = "Original claim without marker"
+    repaired_body = f"{initial_body} [S1]"
+    repair_call_index = 0 if agent else 1
+    scripts = ((repaired_body,),) if agent else ((initial_body,), (repaired_body,))
+    gateway = _ControlledCitationGateway(
+        scripts,
+        repair_call_index=repair_call_index,
+        pause_before_first_chunk=pause_before_first_chunk,
+        pause_after_first_chunk=pause_after_first_chunk,
+        yield_late_chunk_on_cancel=yield_late_chunk_on_cancel,
+        pause_initial_after_first_chunk=pause_initial_after_first_chunk,
+    )
+    store = _recording_citation_store(persistence)
+    contract = _repair_contract()
+
+    async def capture(_draft):
+        return _repair_capture(contract)
+
+    bridge = _AgentBridge(store, text=initial_body) if agent else None
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        rag_capture_provider=capture,
+        agent_bridge=bridge,
+        agent_runtime_enabled=agent,
+    )
+    return controller, store, gateway, bridge, initial_body, repaired_body
+
+
+async def _wait_for_citation_checking(controller: ConsoleChatController) -> None:
+    for _ in range(1_000):
+        if controller.run_state.status is ConsoleRunStatus.CHECKING_CITATIONS:
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("citation checking was not observable")
+
+
+def _assert_user_citation_repair_cancel(
+    *,
+    controller: ConsoleChatController,
+    store: _RecordingCitationStore,
+    persistence: _ReadyCitationPersistence | None,
+    initial_body: str,
+) -> None:
+    assistant = _assistant(store)
+    assert assistant.content == initial_body
+    assert assistant.status == "complete"
+    assert assistant.citation_presentation == ConsoleCitationPresentation(
+        phase=ConsoleCitationPhase.SELECTED,
+        notice_code=ConsoleCitationNoticeCode.CANCELED,
+        original_attempt_available=False,
+    )
+    assert store.completion_calls == [assistant.id]
+    assert store.stopped_calls == []
+    assert controller.run_state.status is ConsoleRunStatus.STOPPED
+    system_messages = [
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.SYSTEM
+    ]
+    assert [message.content for message in system_messages] == [
+        "Citation repair canceled by user."
+    ]
+    append_call = next(
+        call
+        for call in store.message_append_calls
+        if call["role"] is ConsoleMessageRole.SYSTEM
+        and call["content"] == "Citation repair canceled by user."
+    )
+    assert append_call["kwargs"]["persist"] is (persistence is not None)
+
+    if persistence is not None:
+        assistant_write = next(
+            call
+            for call in persistence.create_calls
+            if call["sender"] == ConsoleMessageRole.ASSISTANT.value
+        )
+        system_write = next(
+            call
+            for call in persistence.create_calls
+            if call["sender"] == ConsoleMessageRole.SYSTEM.value
+            and call["content"] == "Citation repair canceled by user."
+        )
+        assert persistence.create_calls.index(
+            assistant_write
+        ) < persistence.create_calls.index(system_write)
+        assert system_write["parent_message_id"] == assistant.persisted_message_id
+
+
+def test_citation_repair_checking_run_state_is_stoppable_but_send_blocked():
+    checking = ConsoleRunState(
+        ConsoleRunStatus.CHECKING_CITATIONS,
+        "Checking citations.",
+    )
+    streaming = ConsoleRunState(
+        ConsoleRunStatus.STREAMING,
+        "Streaming response.",
+    )
+
+    assert checking.is_send_allowed is False
+    assert checking.is_stop_allowed is True
+    assert streaming.is_stop_allowed is True
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_stop_during_initial_generation_keeps_ordinary_stop_behavior():
+    controller, store, gateway, _bridge, initial_body, _repaired_body = (
+        _controlled_citation_repair(
+            agent=False,
+            pause_initial_after_first_chunk=True,
+        )
+    )
+    task = asyncio.create_task(controller.submit_draft("question"))
+    await gateway.first_initial_chunk_collected.wait()
+
+    assert controller.stop_active_run() is True
+    await task
+
+    assistant = _assistant(store)
+    assert assistant.content == initial_body
+    assert assistant.status == "stopped"
+    assert store.stopped_calls
+    assert store.completion_calls == []
+    system_messages = [
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.SYSTEM
+    ]
+    assert [message.content for message in system_messages] == [
+        "Response stopped by user."
+    ]
+
+
+@pytest.mark.parametrize("agent", (False, True), ids=("direct", "agent"))
+@pytest.mark.asyncio
+async def test_citation_repair_stop_while_checking_cancels_before_dispatch(agent: bool):
+    persistence = _ReadyCitationPersistence() if not agent else None
+    controller, store, gateway, _bridge, initial_body, _repaired_body = (
+        _controlled_citation_repair(
+            agent=agent,
+            persistence=persistence,
+        )
+    )
+    task = asyncio.create_task(controller.submit_draft("question"))
+    await _wait_for_citation_checking(controller)
+
+    blocked = await controller.submit_draft("must stay blocked")
+    assert blocked.accepted is False
+    assert controller.run_state.is_stop_allowed is True
+    assert controller.stop_active_run() is True
+    result = await task
+
+    assert result.accepted is True
+    assert len(gateway.calls) == (0 if agent else 1)
+    _assert_user_citation_repair_cancel(
+        controller=controller,
+        store=store,
+        persistence=persistence,
+        initial_body=initial_body,
+    )
+
+
+@pytest.mark.parametrize("agent", (False, True), ids=("direct", "agent"))
+@pytest.mark.asyncio
+async def test_citation_repair_stop_during_collection_cancels_without_stopping_message(
+    agent: bool,
+):
+    controller, store, gateway, _bridge, initial_body, _repaired_body = (
+        _controlled_citation_repair(
+            agent=agent,
+            pause_before_first_chunk=True,
+        )
+    )
+    task = asyncio.create_task(controller.submit_draft("question"))
+    await gateway.repair_started.wait()
+
+    assert controller.stop_active_run() is True
+    result = await task
+
+    assert result.accepted is True
+    assert len(gateway.calls) == (1 if agent else 2)
+    _assert_user_citation_repair_cancel(
+        controller=controller,
+        store=store,
+        persistence=None,
+        initial_body=initial_body,
+    )
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_close_unrelated_session_preserves_cancel_ownership():
+    controller, store, gateway, _bridge, initial_body, _repaired_body = (
+        _controlled_citation_repair(
+            agent=False,
+            pause_before_first_chunk=True,
+        )
+    )
+    owner_session_id = store.active_session_id
+    unrelated = controller.new_session(title="Unrelated")
+    controller.switch_session(owner_session_id)
+    task = asyncio.create_task(controller.submit_draft("question"))
+    await gateway.repair_started.wait()
+    repair_session = controller._active_citation_repair_session
+
+    controller.close_session(unrelated.id)
+
+    assert controller._active_citation_repair_session is repair_session
+    assert controller.stop_active_run() is True
+    await task
+    _assert_user_citation_repair_cancel(
+        controller=controller,
+        store=store,
+        persistence=None,
+        initial_body=initial_body,
+    )
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_cancel_consumes_used_one_shot_prefill():
+    controller, store, gateway, _bridge, initial_body, _repaired_body = (
+        _controlled_citation_repair(
+            agent=False,
+            pause_before_first_chunk=True,
+        )
+    )
+    session_id = store.active_session_id
+    prefill = "ONE-SHOT PREFIX: "
+    store.set_session_one_shot_prefill(session_id, prefill)
+    task = asyncio.create_task(controller.submit_draft("question"))
+    await gateway.repair_started.wait()
+
+    assert controller.stop_active_run() is True
+    await task
+
+    _assert_user_citation_repair_cancel(
+        controller=controller,
+        store=store,
+        persistence=None,
+        initial_body=f"{prefill}{initial_body}",
+    )
+    assert store.session_one_shot_prefill(session_id) is None
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_cancel_after_chunk_discards_late_output():
+    persistence = _ReadyCitationPersistence()
+    controller, store, gateway, _bridge, initial_body, _repaired_body = (
+        _controlled_citation_repair(
+            agent=False,
+            persistence=persistence,
+            pause_after_first_chunk=True,
+            yield_late_chunk_on_cancel=True,
+        )
+    )
+    task = asyncio.create_task(controller.submit_draft("question"))
+    await gateway.first_repair_chunk_collected.wait()
+
+    assert controller.stop_active_run() is True
+    await task
+
+    _assert_user_citation_repair_cancel(
+        controller=controller,
+        store=store,
+        persistence=persistence,
+        initial_body=initial_body,
+    )
+    assert "LATE REPAIR MUST NOT WIN" not in _assistant(store).content
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_stop_immediately_before_selection_commit_wins(
+    monkeypatch,
+):
+    controller, store, _gateway, _bridge, initial_body, _repaired_body = (
+        _controlled_citation_repair(agent=False)
+    )
+    stop_results: list[bool] = []
+    real_select = controller_module.select_repaired_body
+
+    def stop_before_commit(*args, **kwargs):
+        selected = real_select(*args, **kwargs)
+        stop_results.append(controller.stop_active_run())
+        return selected
+
+    monkeypatch.setattr(
+        controller_module,
+        "select_repaired_body",
+        stop_before_commit,
+    )
+
+    await controller.submit_draft("question")
+
+    assert stop_results == [True]
+    _assert_user_citation_repair_cancel(
+        controller=controller,
+        store=store,
+        persistence=None,
+        initial_body=initial_body,
+    )
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_stop_after_selection_commit_is_noop():
+    controller, store, _gateway, _bridge, _initial_body, repaired_body = (
+        _controlled_citation_repair(agent=False)
+    )
+    stop_results: list[bool] = []
+    real_set_presentation = store.set_citation_presentation
+
+    def stop_after_commit(message_id, presentation):
+        updated = real_set_presentation(message_id, presentation)
+        if (
+            presentation is not None
+            and presentation.phase is ConsoleCitationPhase.SELECTED
+            and presentation.notice_code is ConsoleCitationNoticeCode.REPAIRED
+        ):
+            stop_results.append(controller.stop_active_run())
+        return updated
+
+    store.set_citation_presentation = stop_after_commit
+    result = await controller.submit_draft("question")
+
+    assistant = _assistant(store)
+    assert stop_results == [False]
+    assert result.visible_copy == assistant.content == repaired_body
+    assert assistant.status == "complete"
+    assert store.stopped_calls == []
+    assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_shutdown_during_collection_has_no_user_stop_row():
+    controller, store, gateway, _bridge, initial_body, _repaired_body = (
+        _controlled_citation_repair(
+            agent=False,
+            pause_before_first_chunk=True,
+        )
+    )
+    task = asyncio.create_task(controller.submit_draft("question"))
+    await gateway.repair_started.wait()
+
+    await controller.shutdown()
+    await task
+
+    assistant = _assistant(store)
+    assert assistant.content == initial_body
+    assert assistant.status == "complete"
+    assert store.stopped_calls == []
+    assert all(
+        message.role is not ConsoleMessageRole.SYSTEM
+        for message in store.messages_for_session(store.active_session_id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_close_during_collection_never_resurrects_session_or_message():
+    persistence = _ReadyCitationPersistence()
+    controller, store, gateway, _bridge, _initial_body, _repaired_body = (
+        _controlled_citation_repair(
+            agent=False,
+            persistence=persistence,
+            pause_before_first_chunk=True,
+            yield_late_chunk_on_cancel=True,
+        )
+    )
+    task = asyncio.create_task(controller.submit_draft("question"))
+    await gateway.repair_started.wait()
+    session_id = store.active_session_id
+
+    controller.close_session(session_id)
+    result = await task
+
+    assert result.visible_copy == "Session closed."
+    assert store.sessions() == []
+    assert store.active_session_id is None
+    assert controller._active_citation_repair_session is None
+    assert controller._active_assistant_message_id is None
+    assert controller._active_stream_task is None
+    assert not any(
+        call["sender"] == ConsoleMessageRole.SYSTEM.value
+        for call in persistence.create_calls
+    )
 
 
 @pytest.mark.asyncio
