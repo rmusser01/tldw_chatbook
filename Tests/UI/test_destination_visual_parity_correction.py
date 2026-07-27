@@ -54,6 +54,7 @@ from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayo
 from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+from tldw_chatbook.UI.Watchlists_Modules.watchlists_tab_strip import SECTIONS
 from tldw_chatbook.Widgets.destination_workbench import (
     DestinationWorkbench,
     WorkbenchPane,
@@ -3405,3 +3406,63 @@ async def test_watchlists_other_filter_strip_controls_are_visible(size):
             "the backend Select's current value never reaches the screen; "
             f"row {backend.region.y} paints: {header_painted.strip()!r}"
         )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_tab_strip_hit_regions_match_its_painted_labels(size):
+    """TASK-996: a real click at each tab's PAINTED label column has to
+    activate that tab's own section.
+
+    The UAT reported that clicking the column where `Items` is drawn
+    activated `Runs`, and suspected the task-875 shape: `WatchlistsTabStrip`
+    pins `height: 1` while a bordered `Button` wants three rows, so layout
+    boxes and painted labels come apart. That did not reproduce -- see the
+    task file -- but nothing was asserting it either way, which is why a
+    harness coordinate error could be mistaken for an app defect for a whole
+    UAT round. This closes that gap.
+
+    Deliberately derived from the compositor, not from the widget's own
+    region: reading `button.region.x` and clicking there would pass even if
+    the label were painted somewhere else entirely, which is precisely the
+    failure that was alleged. Every column the label occupies is probed, not
+    just its centre, so a hit region that merely OVERLAPS the label still
+    fails.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await pilot.pause(0.2)
+
+        strip = screen.query_one("#wl-tabs")
+        row = strip.region.y
+        painted = "".join(
+            segment.text for segment in screen._compositor.render_strips()[row]
+        )
+
+        for section_id, label in SECTIONS:
+            start = painted.find(label)
+            assert start != -1, (
+                f"the {label!r} tab label is not painted at all on row {row}: "
+                f"{painted.strip()!r}"
+            )
+            for column in range(start, start + len(label)):
+                hit = screen.get_widget_at(column, row)[0]
+                assert getattr(hit, "id", None) == f"wl-tab-{section_id}", (
+                    f"column {column} of row {row} paints {label!r} but belongs "
+                    f"to {getattr(hit, 'id', None)!r} -- clicking the label "
+                    f"would activate the wrong section"
+                )
+
+            # And the click has to land, not merely be routed: `Items` was
+            # the tab the UAT could never reach.
+            await pilot.click(offset=(start + len(label) // 2, row))
+            await pilot.pause(0.2)
+            assert screen.active_section == section_id, (
+                f"clicking column {start + len(label) // 2} of row {row}, where "
+                f"{label!r} is painted, activated "
+                f"{screen.active_section!r} instead of {section_id!r}"
+            )
