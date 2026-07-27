@@ -36,7 +36,7 @@ A _chunk_to_text normaliser now handles both shapes. A structured record with no
 
 Nearly misdiagnosed as two separate issues. JSON first failed with 'Chunkable key data not found', which reads as a deliberate constraint. Retesting with a data key produced the same .split() error as XML, showing one bug rather than two -- the first message was the JSON chunker's own input validation firing before the real defect could.
 
-Third instance in one session of a caller assuming a shape its callee does not produce, after the remote-ingest pagination defect and the audio chunking call in task-840. All three are the same lesson, now recorded in backlog/docs/lessons-testing-evidence.md.
+Third instance in one session of a caller assuming a shape its callee does not produce, after the remote-ingest pagination defect and the audio chunking call in task-868. All three are the same lesson, now recorded in backlog/docs/lessons-testing-evidence.md.
 
 Verified by exercising all seven methods through the real service; regression test parametrises over every one. Tests/RAG + Tests/Local_Ingestion: 792 passed, 9 skipped.
 
