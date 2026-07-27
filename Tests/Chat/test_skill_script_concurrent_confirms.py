@@ -153,7 +153,23 @@ def test_two_rounds_for_the_same_session_keep_badge_and_payload_until_both_resol
     `request_skill_script_confirm`'s teardown guard is byte-for-byte the
     same shape (`if not still_armed_same_session: pop`, no per-round
     identity check), so it is symmetric by construction -- not
-    duplicated a third time here."""
+    duplicated a third time here.
+
+    Fix round 2 (review, Qodo PR #1041) note on symmetry: the same
+    applies to the mounted-card CLEAR itself -- `request_skill_script_
+    confirm`'s teardown now calls `_clear_pending_skill_script_if_round_
+    is_current` (byte-for-byte the same shape as `request_mcp_approvals`'
+    `_clear_pending_approval_if_round_is_current` and `request_skill_
+    install_confirm`'s `_clear_pending_skill_install_if_round_is_
+    current`), so the deterministic race proof (a newer same-session
+    round arming while an older round's clear is still enqueued must not
+    get wiped) is exercised directly for the MCP bridge
+    (`test_console_mcp_approval.py::
+    test_teardown_clear_is_round_identity_guarded_against_a_newer_same_session_round_arming_mid_teardown`)
+    and the skill-install bridge
+    (`test_skill_install_concurrent_confirms.py::
+    test_teardown_clear_is_round_identity_guarded_against_a_newer_same_session_round_arming_mid_teardown`)
+    rather than a third time here."""
     session_id = controller.store.create_session(title="S").id
     controller.store.switch_session(session_id)
 

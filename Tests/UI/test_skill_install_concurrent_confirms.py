@@ -254,6 +254,105 @@ def test_two_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_th
     assert controller.session_a not in controller._parked_skill_install_payloads
 
 
+class _DeferredClearApp:
+    """`call_from_thread` stand-in that BLOCKS the round-identity-guarded
+    clear closures until a test explicitly releases them, while every
+    OTHER `call_from_thread` use (mount, park) still runs immediately.
+
+    Mirrors `test_console_mcp_approval.py`'s identical fake -- see
+    `_clear_pending_skill_install_if_round_is_current`'s docstring for
+    why the clear closures are always invoked with zero args/kwargs,
+    which is what identifies them here without any bridge-specific hook.
+    """
+
+    def __init__(self) -> None:
+        self.clear_enqueued = threading.Event()
+        self.release_clear = threading.Event()
+
+    def call_from_thread(self, fn, *args, **kwargs):
+        if not args and not kwargs:
+            self.clear_enqueued.set()
+            self.release_clear.wait(timeout=5)
+            return fn()
+        return fn(*args, **kwargs)
+
+
+def test_teardown_clear_is_round_identity_guarded_against_a_newer_same_session_round_arming_mid_teardown():
+    """TASK-1050 fix round 2 (review, Qodo PR #1041): mirrors `test_
+    console_mcp_approval.py`'s identical MCP-bridge test -- `request_
+    skill_install_confirm`'s teardown has the exact same shape (a
+    snapshot-guarded clear enqueued via `call_from_thread`), so it needs
+    the exact same round-identity-guarded fix and the exact same
+    deterministic (event/gate-controlled, never sleep-timed) proof: round
+    1 resolves and its teardown's clear call BLOCKS mid-flight; round 2
+    arms and mounts for the SAME session while round 1's clear is still
+    blocked; only then is round 1's clear released to actually run and
+    must no-op rather than wipe round 2's freshly-mounted card."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=object())
+    session_a = store.create_session(title="A").id
+    store.switch_session(session_a)
+    app = _DeferredClearApp()
+    controller.app = app
+    mounted: list[dict | None] = []
+    controller.set_pending_skill_install = mounted.append
+    controller.skill_install_confirm_timeout_seconds = lambda: 30.0
+
+    result_1: dict[str, bool] = {}
+
+    def _run_round_1() -> None:
+        result_1["allowed"] = controller.request_skill_install_confirm(
+            "https://x/one", session_id=session_a
+        )
+
+    worker_1 = threading.Thread(target=_run_round_1)
+    worker_1.start()
+    assert _wait_until(lambda: len(mounted) == 1), "round 1 never mounted"
+    assert mounted[-1] is not None
+    request_id_1 = mounted[-1]["request_id"]
+
+    controller.resolve_pending_skill_install(False, request_id=request_id_1)
+    assert app.clear_enqueued.wait(timeout=5), (
+        "round 1's teardown never reached its clear call"
+    )
+    assert session_a not in controller._pending_approvals
+    assert session_a not in controller._parked_skill_install_payloads
+
+    result_2: dict[str, bool] = {}
+
+    def _run_round_2() -> None:
+        result_2["allowed"] = controller.request_skill_install_confirm(
+            "https://x/two", session_id=session_a
+        )
+
+    worker_2 = threading.Thread(target=_run_round_2)
+    worker_2.start()
+    assert _wait_until(lambda: len(mounted) == 2), "round 2 never mounted"
+    assert mounted[-1] is not None
+    request_id_2 = mounted[-1]["request_id"]
+    assert request_id_2 != request_id_1
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+
+    # Release round 1's blocked clear -- the round-identity guard must see
+    # round 2 has since claimed the slot and no-op.
+    app.release_clear.set()
+    worker_1.join(timeout=2.0)
+    assert result_1["allowed"] is False
+
+    assert mounted[-1] is not None
+    assert mounted[-1]["request_id"] == request_id_2
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+    assert controller._pending_approvals[session_a] == {request_id_2}
+
+    controller.resolve_pending_skill_install(True, request_id=request_id_2)
+    worker_2.join(timeout=2.0)
+    assert result_2["allowed"] is True
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
+    assert session_a not in controller._pending_approvals
+    assert session_a not in controller._parked_skill_install_payloads
+    assert mounted[-1] is None
+
+
 def test_stale_request_id_with_both_rounds_live_resolves_neither(controller):
     """Security-critical, mirrors `resolve_pending_skill_script`'s stale-id
     hazard: a resolve carrying a PRIOR/unrelated round's id must not

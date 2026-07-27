@@ -2327,27 +2327,103 @@ class ConsoleChatController:
                 # the badge clears only once every bridge round for this
                 # session (this one included) has resolved.
                 self.discard_pending_round(session_id, round_id)
-            # Only clear the MOUNTED card if this round's session is still
-            # the one being viewed right now, AND no OTHER MCP round for
-            # the SAME session remains armed (TASK-1050: mirrors the
-            # skill-install/skill-script bridges' identical
-            # `still_armed_same_session` mounted-card guard -- a sibling
-            # MCP round for this session must keep its own card visible,
-            # not have it blanked out from under it by this round's
-            # teardown). A parked round resolving (timeout/cancel) in the
-            # background, or one that was visited-then-abandoned-again
-            # before deciding, must never blank whatever the CURRENTLY
-            # active session's own card is showing.
-            still_active = session_id is None or session_id == (
-                self.store.active_session_id or ""
-            )
-            if still_active and not still_armed_same_session:
-                try:
-                    self._marshal_pending_approval(None)
-                except Exception:  # noqa: BLE001 -- suppress teardown-time errors
-                    logger.opt(exception=True).debug(
-                        "Failed to marshal approval clear during teardown"
-                    )
+            # TASK-1050 fix round 2 (review): clearing the mounted card
+            # here used to be guarded by `still_active`/`still_armed_same_
+            # session` booleans computed BEFORE enqueueing the clear via
+            # `call_from_thread` -- a race window between that snapshot and
+            # the UI thread actually running the clear let a NEWER
+            # same-session round arm, mount its own card, and then get
+            # wiped by this round's now-stale clear. `_clear_pending_
+            # approval_if_round_is_current` closes this by deferring the
+            # ENTIRE decision (round-identity check included) to the UI
+            # thread's own execution of the enqueued callable -- see its
+            # docstring for the full race analysis.
+            try:
+                self._clear_pending_approval_if_round_is_current(
+                    round_id, session_id
+                )
+            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
+                logger.opt(exception=True).debug(
+                    "Failed to marshal approval clear during teardown"
+                )
+
+    def _clear_pending_approval_if_round_is_current(
+        self, round_id: str | None, session_id: str | None
+    ) -> None:
+        """WORKER THREAD: enqueue a round-identity-guarded clear of the mounted MCP approval card.
+
+        TASK-1050 fix round 2 (review): `request_mcp_approvals`'s
+        `finally` used to decide whether to clear the mounted card via a
+        plain boolean snapshot (``still_active and not still_armed_same_
+        session``) computed BEFORE enqueueing ``self._marshal_pending_
+        approval(None)`` through ``call_from_thread``. A NEWER same-
+        session round could arm -- and, if this session is the one being
+        viewed, fully mount ITS OWN card via its own ``call_from_thread``
+        call -- in the window between that snapshot and the UI thread
+        actually running THIS round's clear, which would then wipe the
+        newer round's just-mounted card, stranding it until a manual
+        remount (switch away/back) or its own timeout. Recomputing the
+        same boolean any earlier -- e.g. right before enqueueing --
+        narrows that window but cannot close it: checking and enqueueing
+        are still two separate steps a concurrent round's own check-and-
+        enqueue can interleave with. The only race-proof fix is to defer
+        the ENTIRE decision to the single-threaded UI event loop's own
+        execution of the enqueued callable, which re-reads the CURRENT
+        authoritative state (never a snapshot) at the last possible
+        moment: once that callable starts running, Textual's
+        ``call_from_thread`` callables run to completion, one at a time,
+        on the UI thread, so no further worker-thread interleaving can
+        change the outcome mid-decision.
+
+        The check itself is round-IDENTITY based, not boolean:
+        ``_parked_approval_payloads[session_id]`` always holds whichever
+        round's payload was LAST WRITTEN (arming overwrites it -- mirrors
+        the payload-pop guard's own "last-armed-wins" contract in the
+        ``finally`` block above). If it no longer names THIS round's own
+        ``round_id``, a newer round has already claimed the slot (and, if
+        ``session_id`` is the currently active session, already marshaled
+        its own mount), so this round's clear must no-op. Otherwise falls
+        through to the ``still_active`` check -- also re-read live here,
+        not from a snapshot -- before actually clearing.
+
+        Args:
+            round_id: This round's own id. Only consulted when
+                ``session_id`` is not ``None`` (every session-attributed
+                round is 1:1 with a real round id).
+            session_id: This round's owning session. ``None`` preserves
+                the pre-existing unconditional-clear behavior for legacy
+                no-session callers -- there is no "newer round for this
+                session" concept without a session to key by.
+        """
+        if self.app is None or self.set_pending_approval is None:
+            return
+
+        def _clear_if_still_current() -> None:
+            if session_id is not None:
+                # F2b-style guard: this runs on the UI thread, but a
+                # worker thread can concurrently write `_parked_approval_
+                # payloads` under this same lock.
+                with self._approval_state_lock:
+                    current = self._parked_approval_payloads.get(session_id)
+                if current is not None and current.get("round_id") != round_id:
+                    # A newer round already claimed this session's
+                    # retained-payload slot -- whatever the mounted card
+                    # is currently showing (if this session is even the
+                    # one being viewed) belongs to THAT round, not this
+                    # one. Leave it alone.
+                    return
+                if session_id != (self.store.active_session_id or ""):
+                    # Not (or no longer) the session being viewed --
+                    # nothing of THIS round's own was ever mounted here
+                    # (a parked round never marshals), or the user has
+                    # since switched away (`switch_session`'s own
+                    # explicit clear already handled the departing
+                    # card). Clearing here would blank whatever the
+                    # CURRENTLY active session's own card is showing.
+                    return
+            self.set_pending_approval(None)
+
+        self.app.call_from_thread(_clear_if_still_current)
 
     def _record_cancelled_approval_decisions(
         self,
@@ -2758,22 +2834,59 @@ class ConsoleChatController:
                 # the badge clears only once every bridge round for this
                 # session (this one included) has resolved.
                 self.discard_pending_round(session_id, request_id)
-            # Only clear the MOUNTED card if this round's session is still
-            # the one being viewed right now, AND no OTHER round for the
-            # SAME session remains armed (mirrors `request_mcp_approvals`'
-            # `still_active` guard, plus the task-581 same-session
-            # multi-round guard `request_skill_script_confirm` already
-            # relies on).
-            still_active = session_id is None or session_id == (
-                self.store.active_session_id or ""
-            )
-            if still_active and not still_armed_same_session:
-                try:
-                    self._marshal_pending_skill_install(None)
-                except Exception:  # noqa: BLE001
-                    logger.opt(exception=True).debug(
-                        "Failed to clear skill-install confirm during teardown"
-                    )
+            # TASK-1050 fix round 2 (review): mirrors `request_mcp_
+            # approvals`' identical fix -- a plain boolean snapshot
+            # (`still_active`/`still_armed_same_session`) computed before
+            # enqueueing the clear via `call_from_thread` leaves a race
+            # window where a NEWER same-session round can arm, mount its
+            # own card, and then get wiped by this round's now-stale
+            # clear. `_clear_pending_skill_install_if_round_is_current`
+            # defers the whole decision (round-identity check included)
+            # to the UI thread's own execution of the enqueued callable --
+            # see `_clear_pending_approval_if_round_is_current`'s
+            # docstring for the full race analysis.
+            try:
+                self._clear_pending_skill_install_if_round_is_current(
+                    request_id, session_id
+                )
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).debug(
+                    "Failed to clear skill-install confirm during teardown"
+                )
+
+    def _clear_pending_skill_install_if_round_is_current(
+        self, request_id: str | None, session_id: str | None
+    ) -> None:
+        """WORKER THREAD: enqueue a round-identity-guarded clear of the mounted skill-install card.
+
+        TASK-1050 fix round 2 (review): mirrors ``_clear_pending_
+        approval_if_round_is_current``'s identical race-proofing -- see
+        that method's docstring for the full analysis of why a boolean
+        snapshot computed before enqueueing (however late) cannot close
+        this race, only deferring the whole identity check to the UI
+        thread's own execution of the enqueued callable can.
+
+        Args:
+            request_id: This round's own id. Only consulted when
+                ``session_id`` is not ``None``.
+            session_id: This round's owning session. ``None`` preserves
+                the pre-existing unconditional-clear behavior for legacy
+                no-session callers.
+        """
+        if self.app is None or self.set_pending_skill_install is None:
+            return
+
+        def _clear_if_still_current() -> None:
+            if session_id is not None:
+                with self._approval_state_lock:
+                    current = self._parked_skill_install_payloads.get(session_id)
+                if current is not None and current.get("request_id") != request_id:
+                    return
+                if session_id != (self.store.active_session_id or ""):
+                    return
+            self.set_pending_skill_install(None)
+
+        self.app.call_from_thread(_clear_if_still_current)
 
     def _remount_parked_skill_install(self, session_id: str) -> None:
         """Re-derive the mounted skill-install confirm card for ``session_id``.
@@ -2973,24 +3086,50 @@ class ConsoleChatController:
                 # the badge clears only once every bridge round for this
                 # session (this one included) has resolved.
                 self.discard_pending_round(session_id, request_id)
-            # Only clear the MOUNTED card if this round's session is still
-            # the one being viewed right now, AND no OTHER round for the
-            # SAME session remains armed -- a sibling round for a
-            # DIFFERENT (background/parked) session must never suppress
-            # clearing THIS session's card (pre-TASK-910 `still_armed` was
-            # global across every session, which would have done exactly
-            # that), while a sibling round for the SAME session still must
-            # (task-581's original guarantee).
-            still_active = session_id is None or session_id == (
-                self.store.active_session_id or ""
-            )
-            if still_active and not still_armed_same_session:
-                try:
-                    self._marshal_pending_skill_script(None)
-                except Exception:  # noqa: BLE001
-                    logger.opt(exception=True).debug(
-                        "Failed to clear skill-script confirm during teardown"
-                    )
+            # TASK-1050 fix round 2 (review): mirrors `request_mcp_
+            # approvals`'/`request_skill_install_confirm`'s identical
+            # fix -- see `_clear_pending_approval_if_round_is_current`'s
+            # docstring for the full race analysis a plain boolean
+            # snapshot (however late it is recomputed) cannot close.
+            try:
+                self._clear_pending_skill_script_if_round_is_current(
+                    request_id, session_id
+                )
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).debug(
+                    "Failed to clear skill-script confirm during teardown"
+                )
+
+    def _clear_pending_skill_script_if_round_is_current(
+        self, request_id: str | None, session_id: str | None
+    ) -> None:
+        """WORKER THREAD: enqueue a round-identity-guarded clear of the mounted skill-script card.
+
+        TASK-1050 fix round 2 (review): mirrors ``_clear_pending_
+        approval_if_round_is_current``'s identical race-proofing -- see
+        that method's docstring for the full analysis.
+
+        Args:
+            request_id: This round's own id. Only consulted when
+                ``session_id`` is not ``None``.
+            session_id: This round's owning session. ``None`` preserves
+                the pre-existing unconditional-clear behavior for legacy
+                no-session callers.
+        """
+        if self.app is None or self.set_pending_skill_script is None:
+            return
+
+        def _clear_if_still_current() -> None:
+            if session_id is not None:
+                with self._approval_state_lock:
+                    current = self._parked_skill_script_payloads.get(session_id)
+                if current is not None and current.get("request_id") != request_id:
+                    return
+                if session_id != (self.store.active_session_id or ""):
+                    return
+            self.set_pending_skill_script(None)
+
+        self.app.call_from_thread(_clear_if_still_current)
 
     def _remount_parked_skill_script(self, session_id: str) -> None:
         """Re-derive the mounted skill-script confirm card for ``session_id``.

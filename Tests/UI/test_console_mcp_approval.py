@@ -1445,6 +1445,142 @@ def test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leave
     assert session_a not in controller._parked_approval_payloads
 
 
+def _wait_until(predicate, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+class _DeferredClearApp:
+    """`call_from_thread` stand-in that BLOCKS the round-identity-guarded
+    clear closures until a test explicitly releases them, while every
+    OTHER `call_from_thread` use (mount, park) still runs immediately.
+
+    The clear closures built by `_clear_pending_approval_if_round_is_
+    current` (and its skill-install/skill-script mirrors) are always
+    invoked with zero positional/keyword args -- every other
+    `call_from_thread` call in these bridges carries a positional
+    payload/session_id -- so that shape is what identifies "this is a
+    teardown clear" without needing any bridge-specific hook.
+    """
+
+    def __init__(self) -> None:
+        self.clear_enqueued = threading.Event()
+        self.release_clear = threading.Event()
+
+    def call_from_thread(self, fn, *args, **kwargs):
+        if not args and not kwargs:
+            self.clear_enqueued.set()
+            self.release_clear.wait(timeout=5)
+            return fn()
+        return fn(*args, **kwargs)
+
+
+def test_teardown_clear_is_round_identity_guarded_against_a_newer_same_session_round_arming_mid_teardown():
+    """TASK-1050 fix round 2 (review, Qodo PR #1041, CRITICAL): `request_
+    mcp_approvals`'s teardown used to decide whether to clear the mounted
+    card via a boolean snapshot (`still_active`/`still_armed_same_
+    session`) computed BEFORE the clear was enqueued to the UI thread via
+    `call_from_thread`. A race window existed between that snapshot and
+    the UI thread actually running the clear: a NEWER same-session round
+    could arm -- and mount its own card -- in that window, and then get
+    wiped by round 1's now-stale clear, stranding it until a manual
+    remount or its own timeout. This test drives that EXACT interleaving
+    deterministically via an event/gate-controlled fake app (never a
+    sleep-timed guess): round 1 resolves and its teardown's clear call
+    BLOCKS mid-flight (right where the race window used to be); round 2
+    arms and mounts for the SAME session while round 1's clear is still
+    blocked; only then is round 1's clear released to actually run.
+    `_clear_pending_approval_if_round_is_current`'s round-identity check
+    (re-read live at that exact moment, never from a stale snapshot) must
+    make it a no-op, leaving round 2's freshly-mounted card intact."""
+    controller, store = _build_controller()
+    session_a = store.create_session(title="A").id
+    store.switch_session(session_a)
+    app = _DeferredClearApp()
+    controller.app = app
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    result_1: dict[str, dict[str, str]] = {}
+
+    def _run_round_1() -> None:
+        result_1["decisions"] = controller.request_mcp_approvals(
+            [_pending(llm_name="mcp__one__tool")], session_id=session_a
+        )
+
+    worker_1 = threading.Thread(target=_run_round_1)
+    worker_1.start()
+    assert _wait_until(lambda: len(mounted) == 1), "round 1 never mounted"
+    assert mounted[-1] is not None
+    round_id_1 = mounted[-1]["round_id"]
+
+    # Resolve round 1 -- its teardown runs its accounting cleanup (badge
+    # discard, own payload-map pop) synchronously, then reaches its clear
+    # call and BLOCKS there, before the clear itself ever runs.
+    controller.resolve_pending_approval(
+        {"mcp__one__tool": "deny"}, round_id=round_id_1
+    )
+    assert app.clear_enqueued.wait(timeout=5), (
+        "round 1's teardown never reached its clear call"
+    )
+    # Round 1's own accounting is already fully torn down at this point --
+    # entirely independent of whether its still-blocked UI-thread clear
+    # has run yet.
+    assert session_a not in controller._pending_approvals
+    assert session_a not in controller._parked_approval_payloads
+
+    # Round 2 arms for the SAME session WHILE round 1's clear is still
+    # blocked -- it mounts its own card immediately (session_a is active).
+    result_2: dict[str, dict[str, str]] = {}
+
+    def _run_round_2() -> None:
+        result_2["decisions"] = controller.request_mcp_approvals(
+            [_pending(llm_name="mcp__two__tool")], session_id=session_a
+        )
+
+    worker_2 = threading.Thread(target=_run_round_2)
+    worker_2.start()
+    assert _wait_until(lambda: len(mounted) == 2), "round 2 never mounted"
+    assert mounted[-1] is not None
+    round_id_2 = mounted[-1]["round_id"]
+    assert round_id_2 != round_id_1
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+
+    # NOW release round 1's blocked clear. A snapshot-guarded clear would
+    # unconditionally wipe round 2's just-mounted card here; the
+    # round-identity guard must instead see round 2 has since claimed the
+    # slot and no-op.
+    app.release_clear.set()
+    worker_1.join(timeout=2.0)
+    assert result_1["decisions"] == {"mcp__one__tool": "deny"}
+
+    # Round 2's card survived round 1's (now-run) clear, and round 1's
+    # teardown otherwise completed normally (accounting stays clean --
+    # the badge is up only because of round 2, not a leaked round 1
+    # entry).
+    assert mounted[-1] is not None
+    assert mounted[-1]["round_id"] == round_id_2
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+    assert controller._pending_approvals[session_a] == {round_id_2}
+
+    # Resolving round 2 normally still clears everything -- proves round
+    # 1's no-op clear didn't leave the bridge in some broken state.
+    controller.resolve_pending_approval(
+        {"mcp__two__tool": "approve_once"}, round_id=round_id_2
+    )
+    worker_2.join(timeout=2.0)
+    assert result_2["decisions"] == {"mcp__two__tool": "approve_once"}
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
+    assert session_a not in controller._pending_approvals
+    assert session_a not in controller._parked_approval_payloads
+    assert mounted[-1] is None
+
+
 def test_resolve_pending_approval_ignores_a_stale_or_unknown_round_id():
     """A `round_id` that doesn't match any currently-armed round (a
     fabricated/unknown id, or one whose round already resolved and was
@@ -1655,12 +1791,26 @@ def test_request_mcp_approvals_survives_marshal_failure_during_teardown():
     calls: list[dict | None] = []
 
     class _TeardownApp:
+        def __init__(self) -> None:
+            self._call_count = 0
+
         def call_from_thread(self, fn, *args, **kwargs):
-            # Surface the card normally, then fail on the clearing call.
-            if args and args[0] is None:
-                raise RuntimeError("App is not running")
-            calls.append(args[0] if args else None)
-            return fn(*args, **kwargs)
+            self._call_count += 1
+            if self._call_count == 1:
+                # The initial mount call -- succeeds normally, capturing
+                # the payload for the resolver thread to read the
+                # round_id off of.
+                calls.append(args[0] if args else None)
+                return fn(*args, **kwargs)
+            # TASK-1050 fix round 2: the teardown-time clear is now a
+            # zero-arg, round-identity-guarded wrapper closure
+            # (`_clear_pending_approval_if_round_is_current`) rather than
+            # a direct `call_from_thread(setter, None)` call, so it can no
+            # longer be identified by inspecting `args[0] is None`.
+            # Simulate the app having stopped by the time this (second)
+            # `call_from_thread` invocation happens, regardless of what
+            # it was called with.
+            raise RuntimeError("App is not running")
 
     controller.app = _TeardownApp()
     controller.set_pending_approval = lambda payload: None
