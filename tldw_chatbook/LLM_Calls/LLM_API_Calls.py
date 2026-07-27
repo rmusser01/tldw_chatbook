@@ -181,6 +181,7 @@ _ANTHROPIC_ADAPTIVE_THINKING_MODEL_MARKERS = (
     "sonnet-4-6",
     "sonnet-4.6",
 )
+_ANTHROPIC_SONNET_5_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 
 def _is_present_setting(value: object) -> bool:
@@ -348,30 +349,54 @@ def _anthropic_uses_adaptive_thinking(model: object) -> bool:
     )
 
 
+def _anthropic_is_sonnet_5(model: object) -> bool:
+    """Return whether model is the documented unprefixed Claude Sonnet 5 family."""
+    model_name = str(model or "").lower()
+    return model_name == "claude-sonnet-5" or model_name.startswith("claude-sonnet-5-")
+
+
 def _anthropic_thinking_config(
     *,
     model: object,
     thinking_effort: object,
     thinking_budget_tokens: object,
     max_tokens: int,
-) -> tuple[dict[str, object] | None, int]:
+) -> tuple[dict[str, object] | None, dict[str, object] | None, int]:
+    """Map Anthropic thinking settings to thinking and output configuration."""
     effort = str(thinking_effort or "").strip().lower()
+    is_sonnet_5 = _anthropic_is_sonnet_5(model)
     if effort == "off":
-        return None, max_tokens
+        if is_sonnet_5:
+            if thinking_budget_tokens is not None:
+                logger.warning(
+                    "Anthropic: ignoring fixed thinking budget for Claude Sonnet 5 model %s",
+                    model,
+                )
+            return {"type": "disabled"}, None, max_tokens
+        return None, None, max_tokens
     budget = _safe_cast(thinking_budget_tokens, int)
+    if is_sonnet_5:
+        if thinking_budget_tokens is not None:
+            logger.warning(
+                "Anthropic: ignoring fixed thinking budget for Claude Sonnet 5 model %s",
+                model,
+            )
+        if effort in _ANTHROPIC_SONNET_5_EFFORTS:
+            return None, {"effort": effort}, max_tokens
+        return None, None, max_tokens
     if _anthropic_uses_adaptive_thinking(model):
         if effort:
-            return {"type": "adaptive", "effort": effort}, max_tokens
+            return {"type": "adaptive"}, {"effort": effort}, max_tokens
         if budget is not None:
             logger.warning(
                 "Anthropic: ignoring fixed thinking budget for adaptive-thinking model %s",
                 model,
             )
-        return None, max_tokens
+        return None, None, max_tokens
     if budget is None and effort:
         budget = _ANTHROPIC_THINKING_BUDGETS_BY_EFFORT.get(effort)
     if budget is None:
-        return None, max_tokens
+        return None, None, max_tokens
     final_budget = max(1024, int(budget))
     final_max_tokens = max_tokens
     if final_budget >= final_max_tokens:
@@ -381,7 +406,7 @@ def _anthropic_thinking_config(
             final_max_tokens,
             final_budget,
         )
-    return {"type": "enabled", "budget_tokens": final_budget}, final_max_tokens
+    return {"type": "enabled", "budget_tokens": final_budget}, None, final_max_tokens
 
 
 def get_openai_embeddings(input_data: str, model: str) -> List[float]:
@@ -1000,7 +1025,7 @@ def chat_with_anthropic(
 
     logger.debug("Anthropic: API key provided.")
 
-    current_model = model or anthropic_config.get("model", "claude-3-haiku-20240307")
+    current_model = model or anthropic_config.get("model", "claude-sonnet-5")
     default_temperature = float(anthropic_config.get("temperature", 0.7))
     current_temp = temp if temp is not None else default_temperature
     current_top_p = topp
@@ -1023,7 +1048,7 @@ def chat_with_anthropic(
         )
     )
     current_max_tokens = max_tokens if max_tokens is not None else default_max_tokens
-    thinking_config, current_max_tokens = _anthropic_thinking_config(
+    thinking_config, output_config, current_max_tokens = _anthropic_thinking_config(
         model=current_model,
         thinking_effort=thinking_effort,
         thinking_budget_tokens=thinking_budget_tokens,
@@ -1182,7 +1207,7 @@ def chat_with_anthropic(
             ]
         else:
             data["system"] = system_prompt  # unchanged for non-caching models
-    if thinking_config is None:
+    if thinking_config is None and not _anthropic_is_sonnet_5(current_model):
         if temp is not None:
             data["temperature"] = current_temp
             if current_top_p is not None:
@@ -1213,6 +1238,8 @@ def chat_with_anthropic(
         data["tools"] = tools_payload
     if thinking_config is not None:
         data["thinking"] = thinking_config
+    if output_config is not None:
+        data["output_config"] = output_config
 
     api_url = (
         anthropic_config.get("api_base_url", "https://api.anthropic.com/v1").rstrip("/")
