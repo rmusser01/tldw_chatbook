@@ -696,6 +696,7 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
     ].owns_config_sections == (
         "console.collapse_large_pastes",
         "console.paste_collapse_threshold",
+        "console.max_parallel_runs",
         "console.background_effects.*",
         "chat_defaults.streaming",
         "chat_defaults.temperature",
@@ -3317,6 +3318,56 @@ async def test_settings_console_behavior_saves_paste_threshold(monkeypatch):
 
     assert saved == [{"console": {"paste_collapse_threshold": 120}}]
     assert app.app_config["console"]["paste_collapse_threshold"] == 120
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_saves_max_parallel_runs(monkeypatch):
+    app = _build_test_app()
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        field = screen.query_one("#settings-console-max-parallel-runs", Input)
+
+        assert field.restrict == r"^[0-9]*$"
+        assert field.value == "3"
+
+        field.value = "0"
+        screen.handle_console_max_parallel_runs_changed(
+            Input.Changed(field, field.value)
+        )
+        await pilot.click("#settings-save-category")
+        # A pump between clicks on the same Button is required here: without
+        # it, the Button's own "-active" press-state class (and internal
+        # timer that clears it) never settles before the second click lands,
+        # and the second Button.Pressed is silently dropped.
+        await pilot.pause(0.5)
+        assert (
+            "Max parallel agent runs must be an integer of at least 1."
+            in _visible_text(screen)
+        )
+        assert saved == []
+
+        field.value = "12"
+        screen.handle_console_max_parallel_runs_changed(
+            Input.Changed(field, field.value)
+        )
+        assert "Unsaved" in _visible_text(screen)
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
+
+    assert saved == [{"console": {"max_parallel_runs": 12}}]
+    assert app.app_config["console"]["max_parallel_runs"] == 12
 
 
 @pytest.mark.asyncio
