@@ -1089,7 +1089,26 @@ def test_import_chatbook_paths_reuse_the_single_source_of_truth():
     """AC: 'The duplicated, disagreeing per-key defaults inside the file are
     gone.' _import_chatbook() used to hardcode its own second copy of the
     per-database default paths, disagreeing with _get_database_path()'s copy
-    on the very same keys (TASK-899)."""
+    on the very same keys (TASK-899).
+
+    Dev-reconciliation note: dev factored the Chatbook importer's key
+    contract (``ChaChaNotes``/``Prompts``/``Media``, distinct from this
+    window's own ``chachanotes``/``prompts``/``media`` names) into a
+    dedicated ``Chatbooks.database_paths.get_chatbook_database_paths()``
+    helper that itself calls the very same canonical ``config.py``
+    resolvers ``_DB_PATH_RESOLVERS`` wraps -- see
+    ``Tests/Chatbooks/test_chatbook_database_paths.py::
+    test_chatbook_database_paths_use_canonical_runtime_getters``. Every
+    other chatbook-facing surface in the app (the creation/import wizards,
+    the export management window) already routes through this same helper
+    (``test_chatbook_surfaces_do_not_embed_database_defaults``), so
+    ``_get_chatbook_import_database_paths`` participating in that
+    established, single-source-of-truth convention -- rather than
+    reaching into ``_DB_PATH_RESOLVERS`` directly and re-mapping key names
+    itself -- is the codebase-wide pattern, not a second, disagreeing
+    source of truth. Only the no-hardcoded-literal-defaults assertion
+    below is still load-bearing; which specific canonical entry point is
+    used to reach config.py is not."""
     import inspect
 
     source = inspect.getsource(ToolsSettingsWindow._import_chatbook)
@@ -1107,7 +1126,24 @@ def test_import_chatbook_paths_reuse_the_single_source_of_truth():
             f"stale duplicate default {literal!r} still hardcoded in _import_chatbook"
         )
 
-    assert "_get_database_path" in source or "_DB_PATH_RESOLVERS" in source
+    assert (
+        "_get_database_path" in source
+        or "_DB_PATH_RESOLVERS" in source
+        or "_get_chatbook_import_database_paths" in source
+        or "get_chatbook_database_paths" in source
+    )
+
+    # And that helper must itself resolve to the same canonical resolvers,
+    # not a fresh, independent copy of the per-database defaults.
+    helper_source = inspect.getsource(
+        ToolsSettingsWindow._get_chatbook_import_database_paths
+    )
+    for literal in disagreeing_literals:
+        assert literal not in helper_source, (
+            f"stale duplicate default {literal!r} hardcoded in "
+            "_get_chatbook_import_database_paths"
+        )
+    assert "get_chatbook_database_paths" in helper_source
 
 
 def test_no_bare_call_from_thread_calls_in_tools_settings_window():
@@ -1243,7 +1279,11 @@ async def test_backup_then_restore_round_trips_at_the_real_resolved_path(
         )
         window.app_instance.notify.reset_mock()
 
-        backup_dir = Path.home() / ".local" / "share" / "tldw_cli" / "backups" / db_name
+        # Profile-scoped -- matches get_user_data_dir(), the same real
+        # (profile-aware) location _backup_single_worker actually writes to
+        # (TASK-927 follow-up: this used to assert the flat, non-profile
+        # literal, which no longer matches where the worker writes).
+        backup_dir = tldw_chatbook.config.get_user_data_dir() / "backups" / db_name
         backup_files = sorted(backup_dir.glob(f"{db_name}_backup_*.db"))
         assert backup_files, f"no backup file was written for {db_name} at {backup_dir}"
         backup_path = backup_files[-1]
@@ -1604,7 +1644,7 @@ async def test_backup_all_fails_loudly_for_an_unresolvable_database(
             f"backup falsely reported success despite an unresolvable database: {calls}"
         )
 
-        backup_root = Path.home() / ".local" / "share" / "tldw_cli" / "backups"
+        backup_root = tldw_chatbook.config.get_user_data_dir() / "backups"
         # No partial backup should have been started at all.
         if backup_root.exists():
             assert not list(backup_root.iterdir()), (
@@ -1641,7 +1681,7 @@ async def test_backup_all_produces_a_file_for_the_database_at_its_resolved_path(
             f"legacy backup phase reported an error: {calls}"
         )
 
-        backup_root = Path.home() / ".local" / "share" / "tldw_cli" / "backups"
+        backup_root = tldw_chatbook.config.get_user_data_dir() / "backups"
         backup_files = list(backup_root.glob("*/tldw_chatbook_ChaChaNotes_*.db"))
         assert backup_files, (
             f"no ChaChaNotes backup file was produced under {backup_root}"

@@ -573,7 +573,7 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         f"C{number:02d}" for number in range(1, 36)
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 16)
+        f"B{number:02d}" for number in range(1, 17)
     ]
 
 
@@ -968,7 +968,7 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
         {
             "backup_connection_to_private": 4,
             "backup_open_connections_to_private": 1,
-            "copy_private_sqlite": 8,
+            "copy_private_sqlite": 9,
             "restore_private_sqlite": 2,
         }
     )
@@ -1046,6 +1046,11 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
                 "tldw_chatbook/UI/Tools_Settings_Window",
                 "ToolsSettingsWindow._restore_single_worker",
                 "restore_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/UI/Tools_Settings_Window",
+                "ToolsSettingsWindow._restore_single_worker",
+                "copy_private_sqlite",
             ): 1,
         }
     )

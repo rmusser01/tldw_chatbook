@@ -5815,10 +5815,19 @@ Thank you for using tldw-chatbook! 🎉
         try:
             db_config = self.config_data.get("database", {})
             vacuumed = []
+            unresolved = []
 
             for db_name, display_name, _backup_stem in SETTINGS_DATABASES:
                 db_path = self._get_database_path(db_name, db_config)
-                if not db_path or not db_path.exists():
+                if db_path is None:
+                    unresolved.append(display_name)
+                    self.app.call_from_thread(
+                        self.app_instance.notify,
+                        f"Cannot vacuum {display_name} database: no resolvable path is configured for it",
+                        severity="error",
+                    )
+                    continue
+                if not db_path.exists():
                     continue
                 conn = connect_private_sqlite("settings.vacuum", db_path)
                 try:
@@ -5829,11 +5838,18 @@ Thank you for using tldw-chatbook! 🎉
                 vacuumed.append(display_name)
 
             # Update UI from worker thread
-            self.app.call_from_thread(
-                self.app_instance.notify,
-                f"Successfully vacuumed databases: {', '.join(vacuumed)}",
-                severity="success",
-            )
+            if vacuumed:
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"Successfully vacuumed databases: {', '.join(vacuumed)}",
+                    severity="success",
+                )
+            elif not unresolved:
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    "No databases found to vacuum",
+                    severity="warning",
+                )
 
             # Update database sizes
             self.app.call_from_thread(self._update_database_sizes)
@@ -6050,7 +6066,11 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            backup_root = Path.home() / ".local" / "share" / "tldw_cli" / "backups"
+            # Profile-scoped, matching _backup_single_worker/_restore_single_database
+            # and every export directory in this file (TASK-927 follow-up: the
+            # legacy bulk backup was the one remaining backup root that still
+            # used the flat, non-profile-aware literal).
+            backup_root = get_user_data_dir() / "backups"
             secure_private_directory(
                 backup_root,
                 create=True,
@@ -6225,7 +6245,12 @@ Thank you for using tldw-chatbook! 🎉
 
             for db_name, display_name, _backup_stem in SETTINGS_DATABASES:
                 db_path = self._get_database_path(db_name, db_config)
-                if not db_path or not db_path.exists():
+                if db_path is None:
+                    results.append(
+                        f"{display_name}: UNRESOLVED (no resolvable path configured)"
+                    )
+                    continue
+                if not db_path.exists():
                     continue
                 conn = connect_private_sqlite(
                     "settings.integrity",
@@ -6240,9 +6265,11 @@ Thank you for using tldw-chatbook! 🎉
                 results.append(f"{display_name}: {'OK' if result else 'FAILED'}")
 
             # Report results
-            all_ok = all("OK" in r for r in results)
+            all_ok = bool(results) and all(r.endswith("OK") for r in results)
             severity = "success" if all_ok else "error"
-            message = "Integrity check results:\n" + "\n".join(results)
+            message = "Integrity check results:\n" + "\n".join(results) if results else (
+                "No databases found to check"
+            )
 
             self.app.call_from_thread(
                 self.app_instance.notify, message, severity=severity
@@ -6290,7 +6317,16 @@ Thank you for using tldw-chatbook! 🎉
 
             # Export from ChaChaNotes database
             chachanotes_path = self._get_database_path("chachanotes", db_config)
-            if chachanotes_path and chachanotes_path.exists():
+            if chachanotes_path is None:
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    "Cannot export conversations: no resolvable path is configured "
+                    "for the ChaChaNotes database",
+                    severity="error",
+                )
+                return
+
+            if chachanotes_path.exists():
                 db = CharactersRAGDB(str(chachanotes_path), "export_operation")
                 conversations = db.list_all_active_conversations(limit=10000)
 
@@ -6773,16 +6809,48 @@ Thank you for using tldw-chatbook! 🎉
                 return
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            pre_restore_backup = (
-                db_path.parent / f"{db_path.stem}_pre_restore_{timestamp}.db"
-            )
-            restore_private_sqlite(
-                "settings.restore",
-                "settings.pre_restore_backup",
-                backup_path,
-                db_path,
-                pre_restore_backup,
-            )
+
+            if not db_path.exists():
+                # A configured custom database path is a legitimate restore
+                # target even when it has never been opened before --
+                # DB/base_db.py creates a database's parent directory as a
+                # side effect of opening it, so restore must behave
+                # consistently rather than refusing outright (TASK-899
+                # finding 4). There is no live database here to quiesce or
+                # snapshot, so this is a plain copy into a fresh private
+                # target rather than a guarded live restore.
+                try:
+                    db_path.parent.mkdir(parents=True, exist_ok=True)
+                except OSError as e:
+                    logger.error(
+                        "Could not create restore target directory {} for {}: {}",
+                        db_path.parent,
+                        db_name,
+                        e,
+                    )
+                    self.app.call_from_thread(
+                        self.app_instance.notify,
+                        f"Cannot restore {db_name} database: could not create "
+                        f"target directory {db_path.parent}: {e}",
+                        severity="error",
+                    )
+                    return
+                copy_private_sqlite(
+                    "settings.restore",
+                    backup_path,
+                    db_path,
+                )
+            else:
+                pre_restore_backup = (
+                    db_path.parent / f"{db_path.stem}_pre_restore_{timestamp}.db"
+                )
+                restore_private_sqlite(
+                    "settings.restore",
+                    "settings.pre_restore_backup",
+                    backup_path,
+                    db_path,
+                    pre_restore_backup,
+                )
 
             self.app.call_from_thread(
                 self.app_instance.notify,
