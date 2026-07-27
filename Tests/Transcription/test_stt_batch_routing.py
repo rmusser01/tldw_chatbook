@@ -97,6 +97,7 @@ def test_exact_faster_whisper_retains_requested_language_and_task() -> None:
         "parakeet",
         "faster",
         "faster-whisper-large",
+        "",
         " PARAKEET-ONNX ",
         "Faster-Whisper",
     ],
