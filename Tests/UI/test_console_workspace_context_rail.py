@@ -174,6 +174,7 @@ def _browser_row(
     source_kind: str = "persisted",
     starred_sort: str = "",
     updated_sort: str = "",
+    run_marker: str = "",
 ) -> ConsoleConversationBrowserInputRow:
     return ConsoleConversationBrowserInputRow(
         row_key=row_key,
@@ -191,6 +192,7 @@ def _browser_row(
         source_kind=source_kind,
         starred_sort=starred_sort,
         updated_sort=updated_sort,
+        run_marker=run_marker,
     )
 
 
@@ -432,6 +434,95 @@ async def test_console_workspace_context_renders_grouped_conversation_browser() 
         assert star_button.row_key == "conv-starred"
         assert star_button.conversation_id == "conv-starred"
         assert star_button.starred is True
+
+
+@pytest.mark.asyncio
+async def test_collapsed_workspace_group_header_shows_most_urgent_row_marker() -> None:
+    """PA-T8 review fix round 1 (IMPORTANT 2): a collapsed group hides its
+    rows entirely, so a row-level fleet run-marker glyph is otherwise
+    invisible for exactly the user who collapsed the group. The header
+    borrows the single most-urgent glyph from the hidden rows so "which
+    workspace's agents are busy" stays visible at a glance.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    # ws-a is the active workspace (see `_grouped_browser_
+                    # state`'s `active_workspace_id="ws-a"`) -- ws-b
+                    # defaults to collapsed, hiding this row and its glyph.
+                    _browser_row(
+                        "conv-a",
+                        "Alpha",
+                        workspace_id="ws-b",
+                        workspace_label="Workspace B",
+                        run_marker="●",
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+
+        group = console.query_one(
+            "#console-conversation-browser-group-toggle-0", Button
+        )
+        assert group.group_id == "workspace:ws-b"
+        assert (
+            _static_plain(console, "#console-conversation-browser-group-title-0")
+            == "Workspace B ●"
+        )
+        # The row itself stays unmounted -- the group really is collapsed,
+        # not just visually decorated.
+        assert len(console.query(".console-workspace-conversation-row")) == 0
+
+
+@pytest.mark.asyncio
+async def test_expanded_workspace_group_header_has_no_marker_suffix() -> None:
+    """Expanded groups already show every row's own marker -- the header
+    must stay unchanged (no glyph suffix) so the marker is not duplicated.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    # ws-a is the active workspace -> expanded by default.
+                    _browser_row(
+                        "conv-a",
+                        "Alpha",
+                        workspace_id="ws-a",
+                        workspace_label="Workspace A",
+                        run_marker="●",
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+
+        group = console.query_one(
+            "#console-conversation-browser-group-toggle-0", Button
+        )
+        assert group.group_id == "workspace:ws-a"
+        assert (
+            _static_plain(console, "#console-conversation-browser-group-title-0")
+            == "Workspace A"
+        )
+        assert len(console.query(".console-workspace-conversation-row")) == 1
 
 
 @pytest.mark.asyncio

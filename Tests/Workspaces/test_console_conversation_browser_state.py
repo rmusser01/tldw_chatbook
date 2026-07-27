@@ -24,6 +24,7 @@ def _row(
     source_kind="persisted",
     starred_sort="",
     updated_sort="",
+    run_marker="",
 ):
     return ConsoleConversationBrowserInputRow(
         row_key=key,
@@ -43,6 +44,7 @@ def _row(
         source_kind=source_kind,
         starred_sort=starred_sort,
         updated_sort=updated_sort,
+        run_marker=run_marker,
     )
 
 
@@ -760,3 +762,102 @@ def test_cap_disclosure_excludes_user_collapsed_sections():
         group_collapse_preferences={"section:chats": True},
     )
     assert state.status_copy == ""
+
+
+# PA-T8 review fix round 1 (IMPORTANT 2): a collapsed workspace group's
+# `rows` tuple is empty (`_visible_rows` returns `()` for a collapsed
+# group), so any row-level `run_marker` glyph is otherwise invisible for
+# exactly the user who collapsed the group. `group.run_marker` is computed
+# from the FULL row set (before collapsing empties it) and is the single
+# most-urgent glyph among them.
+
+
+def test_collapsed_group_exposes_most_urgent_row_marker_on_the_group():
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row("conv-a", "Alpha", workspace_id="ws-b", workspace_label="Workspace B"),
+            _row(
+                "conv-b",
+                "Beta",
+                workspace_id="ws-b",
+                workspace_label="Workspace B",
+                run_marker="●",
+            ),
+        ),
+        # ws-a is active, so ws-b defaults to collapsed (see
+        # `test_inactive_workspace_groups_are_collapsed_by_default`).
+        active_workspace_id="ws-a",
+    )
+
+    group = _workspace_group(state, "workspace:ws-b")
+    assert group.collapsed is True
+    assert group.rows == ()  # the row carrying the marker is indeed hidden
+    assert group.run_marker == "●"
+
+
+def test_collapsed_group_marker_picks_the_most_urgent_of_several():
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row(
+                "conv-a",
+                "Alpha",
+                workspace_id="ws-b",
+                workspace_label="Workspace B",
+                run_marker="✓",
+            ),
+            _row(
+                "conv-b",
+                "Beta",
+                workspace_id="ws-b",
+                workspace_label="Workspace B",
+                run_marker="◆",
+            ),
+            _row(
+                "conv-c",
+                "Gamma",
+                workspace_id="ws-b",
+                workspace_label="Workspace B",
+                run_marker="●",
+            ),
+        ),
+        active_workspace_id="ws-a",
+    )
+
+    # Urgency: NEEDS_APPROVAL ("◆") outranks RUNNING ("●") outranks
+    # FINISHED_OK ("✓").
+    assert _workspace_group(state, "workspace:ws-b").run_marker == "◆"
+
+
+def test_expanded_group_still_exposes_run_marker_field_but_rows_show_their_own():
+    """`group.run_marker` is computed unconditionally (cheap); it is the
+    RENDERING layer's job (not this pure-state layer's) to only borrow it
+    onto the header when collapsed. Expanded groups keep their per-row
+    markers visible in `group.rows`, which this asserts stays populated."""
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row(
+                "conv-a",
+                "Alpha",
+                workspace_id="ws-a",
+                workspace_label="Workspace A",
+                run_marker="●",
+            ),
+        ),
+        active_workspace_id="ws-a",  # ws-a is active -> expanded by default
+    )
+
+    group = _workspace_group(state, "workspace:ws-a")
+    assert group.collapsed is False
+    assert group.run_marker == "●"
+    assert group.rows[0].run_marker == "●"
+
+
+def test_collapsed_group_with_no_marked_rows_exposes_empty_marker():
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row("conv-a", "Alpha", workspace_id="ws-b", workspace_label="Workspace B"),
+        ),
+        active_workspace_id="ws-a",
+    )
+
+    assert _workspace_group(state, "workspace:ws-b").run_marker == ""

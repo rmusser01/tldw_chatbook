@@ -1140,11 +1140,28 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         group: ConsoleConversationBrowserGroup,
         index: int,
     ) -> ComposeResult:
-        """Render one workspace group header."""
+        """Render one workspace group header.
+
+        PA-T8 review fix round 1 (IMPORTANT 2): a collapsed group hides its
+        rows entirely, so any fleet run-marker glyph on those rows is
+        otherwise invisible -- defeating "which workspace's agents are busy
+        is visible at a glance" for exactly the user who collapsed the
+        group. When collapsed AND at least one hidden row carries a marker,
+        the single most-urgent glyph (``group.run_marker``, precomputed in
+        ``conversation_browser_state._build_workspace_groups``) is appended
+        to the header label, same plain-string threading the row label
+        prefix already uses (this Static renders with ``markup=False``, so
+        no separate escaping step applies here either). An expanded group
+        already shows every row's own marker, so its header stays
+        unchanged.
+        """
 
         with Horizontal(classes="console-conversation-browser-group-header"):
+            label = group.label
+            if group.collapsed and group.run_marker:
+                label = f"{label} {group.run_marker}"
             title = self._static(
-                group.label,
+                label,
                 id=f"console-conversation-browser-group-title-{index}",
                 classes="console-conversation-browser-group-title",
             )

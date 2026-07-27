@@ -354,3 +354,63 @@ async def test_tab_and_sidebar_show_run_markers_and_fleet_line() -> None:
         text = _visible_text(console)
         assert "●" in text  # running glyph on tab/row
         assert "1 other agents running, 0 waiting for approval." in text
+
+
+@pytest.mark.asyncio
+async def test_transcript_sync_timer_keeps_ticking_for_background_run_while_viewed_idle() -> None:
+    """Fix round 1 / Critical 1 regression (PA-T8 review): `_poll_transcript`
+    used to self-stop off `controller.run_state` alone -- a read-only facade
+    for the VIEWED session ONLY (parallel-agents spec §2). That froze the
+    0.2s poll (and therefore tab glyphs / the Agent-rail fleet line, both
+    driven only by that poll's `_sync_native_console_chat_ui()` call) the
+    instant the viewed tab went idle, even with a DIFFERENT session still
+    streaming. The prior test in this file calls `_sync_native_console_
+    chat_ui()` manually and structurally cannot catch this -- everything
+    below relies on the timer ticking on its own; there is no manual sync
+    call anywhere in this test after the timer starts.
+
+    Reproduces the real ordering: the background session is active at the
+    moment its (fake) send starts the timer -- exactly what
+    `_submit_console_native_draft` does for whichever session is active at
+    dispatch -- and only THEN does the user switch away to the idle
+    `viewed` session, matching the reviewer's live repro.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id  # background is active here
+
+        # Same start call `_submit_console_native_draft` makes as its first
+        # action, for whichever session is active at dispatch (background).
+        console._start_console_transcript_sync_timer()
+        assert console._console_transcript_sync_timer is not None
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg"),
+            session_id=background,
+        )
+
+        store.switch_session(viewed)  # user switches away; viewed is idle
+
+        # Advance several 0.2s poll ticks. No manual `_sync_native_console_
+        # chat_ui()` call anywhere below -- only the timer can produce this.
+        await pilot.pause(1.0)
+
+        assert console._console_transcript_sync_timer is not None
+        text = _visible_text(console)
+        assert "●" in text
+        assert "1 other agents running, 0 waiting for approval." in text
+
+        # The background run finishes -- the fixed stop condition (viewed
+        # idle AND nothing anywhere in flight) now correctly fires.
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"),
+            session_id=background,
+        )
+        await pilot.pause(1.0)
+        assert console._console_transcript_sync_timer is None

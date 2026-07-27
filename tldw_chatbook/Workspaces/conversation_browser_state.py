@@ -245,6 +245,14 @@ class ConsoleConversationBrowserGroup:
     hidden_count: int = 0
     preference_collapsed: bool = False
     empty_copy: str = ""
+    #: PA-T8 review fix round 1 (IMPORTANT 2): the single most-urgent
+    #: `run_marker` glyph among ALL of this group's rows (not just the
+    #: post-collapse-cap `rows` above, which are empty while collapsed) --
+    #: computed from the full row set before collapsing hides it. Empty
+    #: when no row in the group carries a marker. The tray widget only
+    #: renders this on the group HEADER when `collapsed` is True; an
+    #: expanded group already shows every row's own marker.
+    run_marker: str = ""
 
 
 @dataclass(frozen=True)
@@ -537,6 +545,34 @@ def _build_row_section(
     )
 
 
+# PA-T8 review fix round 1 (IMPORTANT 2): urgency order for the single
+# glyph a collapsed workspace group's header borrows from its hidden rows.
+# A kept-as-glyph-strings table (not `ConsoleRunMarker`) so this module
+# stays free of a Chat-layer model import -- `run_marker` is threaded as an
+# already-resolved string end to end (see `ConsoleConversationBrowserRow.
+# run_marker`'s docstring), so the glyph strings are the only vocabulary
+# this layer needs.
+_RUN_MARKER_URGENCY = {"◆": 0, "●": 1, "✗": 2, "✓": 3}
+
+
+def _most_urgent_run_marker(
+    rows: Iterable[ConsoleConversationBrowserInputRow],
+) -> str:
+    """Return the single most-urgent non-empty ``run_marker`` glyph among ``rows``.
+
+    Urgency (most to least): NEEDS_APPROVAL ("◆") > RUNNING ("●") >
+    FINISHED_FAILED ("✗") > FINISHED_OK ("✓") -- a human decision blocked on
+    approval outranks "still working", which outranks a finished outcome,
+    and a failure outranks a plain success. Returns ``""`` when no row in
+    ``rows`` carries a marker.
+    """
+    markers = {str(row.run_marker or "").strip() for row in rows}
+    markers.discard("")
+    if not markers:
+        return ""
+    return min(markers, key=lambda glyph: _RUN_MARKER_URGENCY.get(glyph, 99))
+
+
 def _build_workspace_groups(
     *,
     rows_by_group: Mapping[str, list[ConsoleConversationBrowserInputRow]],
@@ -582,6 +618,11 @@ def _build_workspace_groups(
                 hidden_count=hidden_count,
                 preference_collapsed=preference_collapsed,
                 empty_copy="No workspace conversations.",
+                # IMPORTANT 2: computed from `group_rows` -- the FULL row
+                # set, before `_visible_rows` empties it out for a
+                # collapsed group -- so a marker on a hidden row is never
+                # lost.
+                run_marker=_most_urgent_run_marker(group_rows),
             )
         )
     return tuple(browser_groups)

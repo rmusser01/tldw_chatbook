@@ -11128,9 +11128,36 @@ class ChatScreen(BaseAppScreen):
         async def _poll_transcript() -> None:
             await self._sync_native_console_chat_ui()
             controller = self._console_chat_controller
+            if controller is None:
+                self._invalidate_console_persisted_rows_cache()
+                self._stop_console_transcript_sync_timer()
+                return
+            # Fix round 1 / Critical 1 (parallel-agents spec PA-T8 review):
+            # `controller.run_state` is a read-only facade for the VIEWED
+            # session ONLY (parallel-agents spec §2 -- see its docstring).
+            # The old check looked at nothing else, so it self-stopped the
+            # instant the viewed tab went idle even while a DIFFERENT
+            # session was still streaming (or parked mid-`submit_draft`
+            # awaiting an approval decision -- that session's own
+            # end-of-run resync never separately fires, since it is still
+            # inside the same await). Once stopped, `_sync_native_console_
+            # chat_ui()` above never fires again, so tab glyphs and the
+            # Agent-rail fleet line (both driven by that call) froze stale
+            # until some unrelated event forced a manual resync.
+            # `in_flight_run_count()` is the exact same live-busy
+            # definition `run_marker_for`/`fleet_summary_counts` already
+            # use for those glyphs/line, so gating the stop on it too is
+            # not a new notion of "in-flight" -- it is the one this timer
+            # exists to keep current. The persisted-rows-cache invalidate
+            # stays coupled to the SAME combined condition as the stop
+            # (not a bare "viewed session idle") so a long-running
+            # background session cannot reintroduce the per-tick DB query
+            # TASK-251's TTL cache exists to prevent; the resulting bound
+            # on staleness is `CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS`
+            # (2s), the documented backstop for exactly this gap.
             if (
-                controller is None
-                or controller.run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES
+                controller.run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES
+                and controller.in_flight_run_count() == 0
             ):
                 # TASK-251: the run just left an active status -- invalidate
                 # so the finalized conversation's title/timestamps appear in
