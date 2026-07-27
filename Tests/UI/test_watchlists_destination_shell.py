@@ -1177,6 +1177,22 @@ async def test_feeds_region_follows_the_tree_scope():
     from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
 
     app = _build_test_app()
+    # Seeded (fix round 1): against this harness's empty subscriptions DB
+    # the assertion below passes through its own `or all_rows == []` escape
+    # hatch, so it also passed against a `scoped_source_rows` stubbed to
+    # `return []`. `_build_test_app()` wires the bundle service to an
+    # isolated temp-dir SQLite file, never the developer's database.
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+    assert watchlist["id"] == 1, "a fresh temp DB numbers the first watchlist 1"
+    arxiv = service._db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    loose = service._db.add_subscription(
+        name="Loose", type="rss", source="https://c.example/f"
+    )
+    service.add_source(watchlist["id"], arxiv)
+
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
@@ -1195,6 +1211,11 @@ async def test_feeds_region_follows_the_tree_scope():
         assert scoped_rows != all_rows or all_rows == [], (
             "narrowing the scope to one watchlist must change what Feeds covers"
         )
+        assert {row["id"] for row in all_rows} == {arxiv, loose}
+        assert [row["id"] for row in scoped_rows] == [arxiv]
+        assert all_rows != [], (
+            "the escape hatch above must not be what is carrying this test"
+        )
 
 
 @pytest.mark.asyncio
@@ -1202,6 +1223,20 @@ async def test_source_scope_narrows_to_exactly_one():
     from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
 
     app = _build_test_app()
+    # Seeded (fix round 1): `len(rows) <= 1` is trivially true against an
+    # empty DB. Ten sources make the id-10 narrowing real, with nine
+    # siblings in the same watchlist that must NOT come back.
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+    assert watchlist["id"] == 1
+    for index in range(10):
+        source_id = service._db.add_subscription(
+            name=f"source-{index:02d}",
+            type="rss",
+            source=f"https://feed-{index:02d}.example/rss",
+        )
+        service.add_source(watchlist["id"], source_id)
+
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
@@ -1213,3 +1248,10 @@ async def test_source_scope_narrows_to_exactly_one():
         rows = screen.scoped_source_rows()
         assert len(rows) <= 1
         assert all(int(r["id"]) == 10 for r in rows)
+        assert len(rows) == 1, (
+            "the source exists, so `<= 1` must be carried by a real row"
+        )
+        assert rows[0]["name"] == "source-09"
+        assert len(screen._watchlist_bundle_service().list_source_rows(1)) == 10, (
+            "...and its nine siblings are present to be narrowed away"
+        )

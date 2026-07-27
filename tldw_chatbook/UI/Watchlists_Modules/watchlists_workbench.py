@@ -275,6 +275,15 @@ class WatchlistsWorkbench(Horizontal):
         was not given a content factory (the placeholder stub has nothing
         to refresh either).
 
+        Replaces only the *supplied content*, never the generic
+        `REGION_TITLES` heading `_region_widget` prepends for regions
+        outside `SELF_HEADED_REGIONS` (fix round 1, Finding 3). The first
+        version removed every child, so refreshing LEFT_RAIL -- which
+        supplies content but is not self-headed -- stripped its
+        "Watchlists" heading and left an unlabelled bordered rail until the
+        next region toggle rebuilt it. That is the same defect
+        `SELF_HEADED_REGIONS`' own comment records having shipped once.
+
         Args:
             region: The region whose supplied content should be rebuilt.
         """
@@ -287,12 +296,25 @@ class WatchlistsWorkbench(Horizontal):
             container = self.query_one(f"#wl-region-{region.value}")
         except NoMatches:
             return
-        # Remove the old content before mounting the new -- both carry the
-        # same id (e.g. `watchlists-list-pane`), so mounting first would
-        # collide with the not-yet-detached old sibling.
-        for child in list(container.children):
+        # Build the replacement BEFORE detaching anything: a factory that
+        # raises (or a worker cancelled while it runs) then leaves the
+        # mounted pane standing rather than a bordered empty box. The
+        # remove-then-mount pair below still has one await boundary --
+        # Textual's `NodeList._ensure_unique_id` rejects mounting the new
+        # pane while the old one (same id, e.g. `watchlists-list-pane`) is
+        # still attached, so there is no single-await atomic swap available
+        # without changing that guarded id.
+        replacement = factory()
+        # The heading, when present, is `_region_widget`'s first child and
+        # is not ours to replace.
+        stale = [
+            child
+            for child in container.children
+            if not child.has_class("watchlists-region-title")
+        ]
+        for child in stale:
             await child.remove()
-        await container.mount(factory())
+        await container.mount(replacement)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Turn a collapsed-region header click into a `RegionToggled` message.

@@ -15174,6 +15174,26 @@ CodingWindow {
     border: none;
 }
 
+/* One scoped source per row in FEEDS (Task 7, fix round 1, Finding 1).
+ *
+ * `height: 1` is the load-bearing part: `.watchlists-region-feeds` is capped
+ * at `max-height: 12` and scrolls, and that cap was derived (see its own
+ * comment above) against one-row children. A `Static` sizes to `auto` by
+ * default, so a long feed name -- these come from remote titles and OPML
+ * imports, not from us -- would wrap to two or three rows and silently eat
+ * the region's budget. Pinning the row height keeps the list scanning as a
+ * list and keeps the cap arithmetic true.
+ *
+ * `color` separates the rows from the scope heading above them
+ * (`.watchlists-column-title`, bold primary) without a second border or an
+ * indent, matching how `.watchlists-region-placeholder` sits under a title.
+ */
+.watchlist-feed-source-row {
+    height: 1;
+    width: 100%;
+    color: $ds-text-muted;
+}
+
 /* ===== MODULE: features/_lab.tcss ===== */
 /* Lab destination (Models | Speech | Evals).
  *

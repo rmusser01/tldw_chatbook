@@ -3,6 +3,7 @@ from textual.app import App, ComposeResult
 
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
+    REGION_TITLES,
     RegionToggled,
     WatchlistsWorkbench,
 )
@@ -471,3 +472,93 @@ async def test_refresh_region_content_is_a_noop_when_the_region_is_collapsed():
         await workbench.refresh_region_content(Region.FEEDS)
 
         assert calls["feeds"] == 0, "refreshing a collapsed region must be a no-op"
+
+
+@pytest.mark.asyncio
+async def test_refresh_region_content_keeps_a_non_self_headed_regions_title():
+    """Fix round 1, Finding 3: `refresh_region_content` removed *all* of the
+    region body's children and remounted only `factory()`.
+
+    LEFT_RAIL supplies content (the tree) but is NOT in
+    `SELF_HEADED_REGIONS`, so `_region_widget` prepends the generic
+    "Watchlists" heading for it -- which the blanket remove then threw away,
+    leaving an unlabelled bordered rail until the next region toggle happened
+    to rebuild it. That is the exact defect `SELF_HEADED_REGIONS`' own
+    comment records having shipped once already; both of Task 7's original
+    tests used self-headed regions, so neither could see it.
+    """
+    from textual.widgets import Label
+
+    def rail_factory():
+        return Label("tree", id="rail-content")
+
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(),
+                content={Region.LEFT_RAIL: rail_factory},
+                id="wl-workbench",
+            )
+
+    app = _App()
+    async with app.run_test() as pilot:
+        workbench = app.query_one(WatchlistsWorkbench)
+        rail = app.query_one("#wl-region-left_rail")
+        titles = [
+            child for child in rail.children if child.has_class("watchlists-region-title")
+        ]
+        assert len(titles) == 1, "precondition: the rail starts with its heading"
+
+        await workbench.refresh_region_content(Region.LEFT_RAIL)
+        await pilot.pause()
+
+        rail = app.query_one("#wl-region-left_rail")
+        titles = [
+            child for child in rail.children if child.has_class("watchlists-region-title")
+        ]
+        assert len(titles) == 1, (
+            "refreshing a non-self-headed region must not strip its heading; "
+            f"children are {[type(c).__name__ for c in rail.children]}"
+        )
+        assert str(titles[0].renderable) == REGION_TITLES[Region.LEFT_RAIL]
+        assert app.query_one("#rail-content", Label), "the content was rebuilt"
+        assert rail.children[0] is titles[0], (
+            "the heading must stay above the content, not be remounted below it"
+        )
+
+
+@pytest.mark.asyncio
+async def test_refresh_region_content_never_leaves_the_region_empty_on_a_build_failure():
+    """Fix round 1, Finding 3 (companion): build the replacement *before*
+    detaching the old content, so a factory that raises leaves the mounted
+    pane standing instead of a bordered empty box.
+    """
+    from textual.widgets import Label
+
+    calls = {"n": 0}
+
+    def feeds_factory():
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("scope resolution blew up")
+        return Label("feeds", id="feeds-content")
+
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(),
+                content={Region.FEEDS: feeds_factory},
+                id="wl-workbench",
+            )
+
+    app = _App()
+    async with app.run_test() as pilot:
+        workbench = app.query_one(WatchlistsWorkbench)
+
+        with pytest.raises(RuntimeError):
+            await workbench.refresh_region_content(Region.FEEDS)
+        await pilot.pause()
+
+        assert app.query_one("#feeds-content", Label), (
+            "a failed rebuild must leave the previous content mounted"
+        )

@@ -131,13 +131,38 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # actually persisted (see `region_layout_store`) on top of this default.
     region_layout = reactive(RegionLayout(collapsed=frozenset({Region.CONTENT})))
     focused_region = reactive(Region.FEEDS)
-    # Lives on the screen, not on the tree widget, precisely because
+    # Two scopes, deliberately: they answer different questions and they
+    # diverge (fix round 1, Finding 2).
+    #
+    # `tree_scope` is where the user has NAVIGATED -- the tree node in view.
+    # It drives the Feeds region (`scoped_source_rows`), and only a tree
+    # click or a breadcrumb promotion moves it.
+    #
+    # `selected_scope` is the ancestry the Inspector is entitled to CLAIM
+    # for whatever is currently selected. It follows `tree_scope` on a tree
+    # move, but resets to "all" when a pane row is selected, because a
+    # Sources/Runs/Items/Rules row carries no watchlist/source ancestry --
+    # asserting one would put a breadcrumb over an entity that may not
+    # belong to it (Task 5 fix round 2, Finding 1).
+    #
+    # Task 7 made `selected_scope` drive Feeds as well, which silently
+    # merged the two: clicking a pane row to inspect it then reset the Feeds
+    # region back to "All sources", discarding tree navigation the user had
+    # done in another region. Splitting them keeps both properties -- the
+    # Feeds region follows the tree, and the Inspector still claims no
+    # ancestry it does not know. Clearing `_breadcrumb_labels` alone would
+    # NOT have been enough: `InspectorPane._scope_levels` derives an
+    # ancestor level from `scope` alone and falls back to a `Watchlist {id}`
+    # label, so the crumb would still render, just anonymously.
+    #
+    # Both live on the screen, not on the tree widget, precisely because
     # `region_layout` is `recompose=True`: any collapse/solo/rail toggle
     # rebuilds the whole workbench, constructing a brand new `WatchlistTree`
     # instance. Pane-local state does not survive that (see `selected_run`
     # and the create-form draft above for the same reasoning already applied
     # elsewhere on this screen).
     selected_scope = reactive(TreeScope(kind="all"))
+    tree_scope = reactive(TreeScope(kind="all"))
 
     _SECTION_DETAIL_TITLE = {
         "overview": "Overview",
@@ -415,6 +440,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> None:
         self._local_watchlist_records = watchlists
         self._local_watchlist_count = watchlist_count
+        # Recorded but no longer rendered (fix round 1, Finding 1): the
+        # "(showing up to N)" qualifier belonged to the per-record listing
+        # the staging block used to draw. Kept on the screen -- and in this
+        # signature, which the parity guards call positionally -- because it
+        # is still the honest answer to "was that count a total or a page?"
+        # for anything that needs it next.
         self._watchlist_total_known = watchlist_total_known
         self._wc_lookup_error = lookup_error
         self._wc_lookup_recovery_state = recovery_state
@@ -521,31 +552,99 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
 
     def _has_local_wc_context(self) -> bool:
-        return self._local_watchlist_count > 0
+        """Whether there is anything for Console staging to send.
 
-    def _count_label(self, label: str, count: int, total_known: bool) -> str:
-        if total_known:
-            return f"{label}: {count}"
-        return f"{label} (showing up to {WC_LOCAL_PAGE_SIZE}): {count}"
+        Asks the tree scope as well as the async snapshot (fix round 1,
+        Finding 1). Staging now sends `scoped_source_rows()`, so a gate that
+        only consulted the snapshot could disable the Stage button -- and
+        render "No sources yet." -- directly underneath a Feeds list that
+        was showing rows. That split is not hypothetical: the two paths
+        resolve their `SubscriptionsDB` independently, and in the UI
+        harnesses they land on different temp files entirely.
+
+        The snapshot stays the *health* probe (`_wc_loaded` /
+        `_wc_lookup_error` in `_wc_attach_state` and `_build_list_pane` are
+        untouched): it is the only caller that can distinguish "the service
+        is unavailable" or "policy denied" from "there are no rows", which a
+        synchronous local query cannot report.
+        """
+        if self._local_watchlist_count > 0:
+            return True
+        return bool(self.scoped_source_rows())
+
+    def _staging_summary_line(self, rows: Sequence[Mapping[str, Any]]) -> Text:
+        """The one line the Console-staging block collapses to.
+
+        Fix round 1, Finding 1: the block used to enumerate
+        `_local_watchlist_records`, which reaches `get_all_subscriptions`
+        through `WatchlistScopeService.list_watch_items` -- the *same* table
+        `scoped_source_rows()` reads. FEEDS therefore printed every source
+        twice in one box (once scoped, once not), in identical typography.
+        Staging now follows the tree scope instead, so the block only has to
+        say what pressing the button would send.
+
+        Args:
+            rows: The current scope's rows, as returned by
+                `scoped_source_rows()`.
+
+        Returns:
+            A single-line ``Text``, escaped -- the scope label can be a
+            remote feed's own title.
+        """
+        label = escape_markup(self._tree_scope_label(rows))
+        noun = "source" if len(rows) == 1 else "sources"
+        return Text.from_markup(
+            f"Local Watchlists snapshot: {label} ({len(rows)} {noun})"
+        )
 
     def _snapshot_body(self) -> str:
-        lines = ["Local Watchlists snapshot staged for Console:", ""]
-        lines.append(
-            self._count_label(
-                "Watchlists", self._local_watchlist_count, self._watchlist_total_known
-            )
-        )
-        for index, record in enumerate(self._local_watchlist_records, start=1):
-            lines.append(f"  {index}. {self._record_title(record)}")
+        """The Console handoff body: the sources the tree scope covers.
+
+        Reads the same `scoped_source_rows()` the Feeds region renders (fix
+        round 1, Finding 1), so selecting "Morning AI Brief" and then
+        staging stages Morning AI Brief -- not, as before, every local
+        source regardless of where the user had navigated.
+
+        Names still go through `_record_title` (and therefore `_safe_text`'s
+        sanitise + validate pass), unchanged: a source name can come
+        straight from a remote feed, and this string is handed to a chat
+        prompt.
+        """
+        rows = self.scoped_source_rows()
+        label = self._safe_text(self._tree_scope_label(rows), "the current scope")
+        lines = [f"Local Watchlists snapshot staged for Console: {label}", ""]
+        lines.append(f"Sources: {len(rows)}")
+        for index, row in enumerate(rows[:WC_LOCAL_PAGE_SIZE], start=1):
+            lines.append(f"  {index}. {self._record_title(row)}")
+        remainder = len(rows) - WC_LOCAL_PAGE_SIZE
+        if remainder > 0:
+            lines.append(f"  ... and {remainder} more")
         return "\n".join(lines).strip()
 
     def _snapshot_metadata(self) -> dict[str, Any]:
+        """Structured companion to `_snapshot_body`.
+
+        `watchlist_count`/`watchlist_sample_count`/`watchlist_titles` keep
+        describing the local snapshot exactly as before -- they are the
+        service-reported inventory, and Console consumers already read them.
+        The `scope_*`/`source_*` keys are what the press actually staged.
+        """
+        rows = self.scoped_source_rows()
+        scope = self.tree_scope
         return {
             "watchlist_count": self._local_watchlist_count,
             "watchlist_sample_count": len(self._local_watchlist_records),
             "watchlist_titles": [
                 self._record_title(record) for record in self._local_watchlist_records
             ],
+            "scope_kind": scope.kind,
+            "scope_label": self._safe_text(
+                self._tree_scope_label(rows), "the current scope"
+            ),
+            "scope_watchlist_id": scope.watchlist_id,
+            "scope_source_id": scope.source_id,
+            "source_count": len(rows),
+            "source_titles": [self._record_title(row) for row in rows],
             "backend": "local",
         }
 
@@ -604,7 +703,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         actually narrows what the centre shows rather than only recording a
         selection (Task 7). Kept on the screen (not the pane) because the
         workbench recomposes and pane-local state does not survive it -- the
-        same reasoning already applied to `selected_scope` itself.
+        same reasoning already applied to `tree_scope` itself.
+
+        Reads `tree_scope`, not `selected_scope`: only tree navigation
+        changes what Feeds covers. See the note on those two reactives for
+        why they are not the same value.
 
         Each branch costs exactly one query (`list_source_rows`,
         `list_all_source_rows`, or `list_unassigned_source_rows`); the
@@ -619,7 +722,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         service = self._watchlist_bundle_service()
         if service is None:
             return []
-        scope = self.selected_scope
+        scope = self.tree_scope
         try:
             if scope.kind == "watchlist" and scope.watchlist_id is not None:
                 return service.list_source_rows(scope.watchlist_id)
@@ -637,6 +740,45 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             logger.opt(exception=True).debug("Failed to resolve scoped source rows.")
             return []
 
+    def _tree_scope_label(self, rows: Sequence[Mapping[str, Any]]) -> str:
+        """A human name for `tree_scope` -- "All sources", "Unassigned", a
+        watchlist's name, or a single source's name.
+
+        Resolved from data already in memory (`_tree_watchlists`, and `rows`
+        itself for a source's own name) rather than by issuing another query
+        -- `rows` is the same list `scoped_source_rows()` just resolved, so
+        this is display formatting, not a second lookup.
+
+        The returned string is RAW (a watchlist name is user-authored and a
+        source name can come straight from a remote feed's own title), so
+        every caller must escape it before it reaches a rendered label.
+
+        Args:
+            rows: The current scope's rows, as returned by
+                `scoped_source_rows()`.
+
+        Returns:
+            The scope's display name, unescaped.
+        """
+        scope = self.tree_scope
+        if scope.kind == "unassigned":
+            return "Unassigned"
+        if scope.kind == "watchlist" and scope.watchlist_id is not None:
+            return next(
+                (
+                    str(watchlist.get("name"))
+                    for watchlist in self._tree_watchlists
+                    if int(watchlist.get("id", -1)) == int(scope.watchlist_id)
+                ),
+                f"Watchlist {scope.watchlist_id}",
+            )
+        if scope.kind == "source":
+            if rows:
+                return str(rows[0].get("name"))
+            if scope.source_id is not None:
+                return f"Source {scope.source_id}"
+        return "All sources"
+
     def _scoped_feeds_heading(self, rows: Sequence[Mapping[str, Any]]) -> Text:
         """The scope-named Feeds heading, e.g. ``Feeds in Morning AI Brief (3)``.
 
@@ -645,12 +787,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `_SECTION_DETAIL_TITLE["sources"]` heading in the adjacent box. This
         also makes the heading say what Feeds is actually showing, since a
         tree click now changes that.
-
-        Resolves the watchlist/source label from data already in memory
-        (`_tree_watchlists`, and `rows` itself for a source's own name)
-        rather than issuing another query -- `rows` is the same list
-        `scoped_source_rows()` just resolved, so this is display formatting,
-        not a second lookup.
 
         Args:
             rows: The current scope's rows, as returned by
@@ -663,53 +799,41 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             an escaped label -- the same "escape untrusted content, then
             build a `Text` rather than hand a raw f-string to `Static`"
             convention `_build_inspector_pane`'s follow-in-Console line
-            already uses, since `label` may come straight from a remote
+            already uses, since the label may come straight from a remote
             feed's own title.
         """
-        scope = self.selected_scope
-        if scope.kind == "all":
-            label = "All sources"
-        elif scope.kind == "unassigned":
-            label = "Unassigned"
-        elif scope.kind == "watchlist" and scope.watchlist_id is not None:
-            label = next(
-                (
-                    str(watchlist.get("name"))
-                    for watchlist in self._tree_watchlists
-                    if int(watchlist.get("id", -1)) == int(scope.watchlist_id)
-                ),
-                f"Watchlist {scope.watchlist_id}",
-            )
-        elif scope.kind == "source":
-            label = (
-                str(rows[0].get("name"))
-                if rows
-                else (
-                    f"Source {scope.source_id}"
-                    if scope.source_id is not None
-                    else "All sources"
-                )
-            )
-        else:
-            label = "All sources"
-        return Text.from_markup(f"Feeds in {escape_markup(label)} ({len(rows)})")
+        label = escape_markup(self._tree_scope_label(rows))
+        return Text.from_markup(f"Feeds in {label} ({len(rows)})")
 
     def _build_list_pane(self) -> Vertical:
         """Build the FEEDS-region content: the section tab strip, a heading
-        naming the current tree scope, that scope's source rows, plus the
-        local Watchlists snapshot used for Console staging (recovery-state
-        rendering).
+        naming the current tree scope, that scope's source rows, the
+        snapshot's own loading/error/empty markers, and a one-line summary
+        of what Console staging would send.
 
-        The scope heading and source rows are additive (Task 7): the tab
-        strip and the loading/error/empty/populated snapshot block below
-        stay exactly as they were -- `Tests/UI/test_destination_shells.py`
+        The source list appears ONCE (fix round 1, Finding 1). Task 7 added
+        the scoped rows above a block that already enumerated
+        `_local_watchlist_records` -- which resolve, via
+        `WatchlistScopeService.list_watch_items` ->
+        `local_watchlists_service.list_sources` -> `get_all_subscriptions`,
+        to the same `subscriptions` table the scope resolvers read. Every
+        source therefore printed twice in one box, in identical typography.
+        Staging now follows the tree scope (see `_snapshot_body`), so that
+        block collapses to a single line.
+
+        The loading/error/empty markers stay keyed on the async snapshot,
+        NOT on `scoped_source_rows()`: the snapshot is the only
+        service-health probe on this screen -- it is what distinguishes
+        "the Watchlists service is unavailable" and "policy denied" (whose
+        recovery state supplies `#wc-service-error`'s copy) from "there are
+        no rows". `scoped_source_rows()` is a synchronous local query that
+        returns `[]` for every one of those cases, and `#wc-loading-state`
+        has no meaning for it at all. In production the two agree anyway:
+        both read `subscriptions`.
+
+        The tab strip is unchanged -- `Tests/UI/test_destination_shells.py`
         and `Tests/UI/test_destination_visual_parity_correction.py` both
-        drive those stable selectors and neither is aware of the tree scope.
-        Only the old hardcoded ``Static("Sources", ...)`` heading is
-        replaced, by `_scoped_feeds_heading` above, since nothing in
-        `Tests/` asserts on that literal and leaving it in place would have
-        FEEDS and ITEMS render the same word in adjacent boxes whenever
-        Sources is the active tab.
+        drive its stable selectors.
 
         Byte-identical logic to the pre-rehost inline composition for the
         snapshot itself; only the `yield` calls became list appends and a
@@ -792,30 +916,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 )
             )
         else:
+            # One line, not a second source list (fix round 1, Finding 1).
+            # `#wc-watchlists-summary` keeps its id -- it is the "snapshot
+            # finished loading" terminal selector the guard suites wait on
+            # -- and now says what pressing Stage would send, which is the
+            # scope above it. `#wc-snapshot-title` is folded into this same
+            # line rather than kept as a separate heading; no test
+            # referenced it, and a one-line block does not need a title row.
             children.append(
                 Static(
-                    "Local Watchlists snapshot",
-                    id="wc-snapshot-title",
+                    self._staging_summary_line(scoped_rows),
+                    id="wc-watchlists-summary",
                     classes="destination-section",
                 )
             )
-            children.append(
-                Static(
-                    self._count_label(
-                        "Watchlists",
-                        self._local_watchlist_count,
-                        self._watchlist_total_known,
-                    ),
-                    id="wc-watchlists-summary",
-                )
-            )
-            for index, record in enumerate(self._local_watchlist_records):
-                children.append(
-                    Static(
-                        Text.from_markup(escape_markup(self._record_title(record))),
-                        id=f"wc-watchlist-item-{index}",
-                    )
-                )
         return Vertical(
             *children,
             id="watchlists-list-pane",
@@ -1176,6 +1290,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         away from. Clearing all three here, alongside the entity itself,
         keeps "navigating the tree means navigating away from the
         selection" true for its persisted form as well as its live one.
+
+        Sets BOTH scopes (fix round 1, Finding 2): a tree click is the one
+        event where "where the user is" and "what ancestry the Inspector may
+        claim" genuinely agree. They part company again in `_select_entity`.
         """
         self._breadcrumb_labels = self._resolve_breadcrumb_labels(scope)
         self.selected_entity = None
@@ -1183,6 +1301,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.selected_run = None
         self.selected_notification = None
         self.selected_scope = scope
+        self.tree_scope = scope
 
     @on(TreeScopeChanged)
     def _on_tree_scope_changed(self, event: TreeScopeChanged) -> None:
@@ -1210,27 +1329,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._apply_tree_scope(event.scope)
 
     def watch_selected_scope(self) -> None:
-        """Push scope + resolved labels into the live Inspector, then rebuild
-        FEEDS in place so it actually follows the new scope (Task 7).
+        """Push scope + resolved labels into the live Inspector.
 
-        The Inspector push mirrors `watch_selected_entity` immediately below
-        it: this only covers the "selection changed without a workbench
-        rebuild" case -- `_build_inspector_pane` covers the rebuild case by
-        seeding a freshly-constructed `InspectorPane` from this same screen
-        state.
+        Mirrors `watch_selected_entity` immediately below it: this only
+        covers the "selection changed without a workbench rebuild" case --
+        `_build_inspector_pane` covers the rebuild case by seeding a
+        freshly-constructed `InspectorPane` from this same screen state.
 
-        Deliberately does NOT do what `watch_active_section` does
-        (`self.refresh(recompose=True)`): that rebuilds every region,
-        including the Inspector, and a fresh `InspectorPane` instance is
-        exactly what the push above exists to avoid --
-        `test_changing_scope_clears_a_stale_entity_selection` (Task 5) holds
-        a reference to the Inspector from *before* a scope change and
-        asserts against it *after*, which a full recompose would silently
-        break by handing that reference a defunct, unmounted widget.
-        `WatchlistsWorkbench.refresh_region_content` instead rebuilds only
-        FEEDS's own supplied content -- the one region whose display this
-        task makes scope-dependent -- leaving the Tree and Inspector
-        instances untouched.
+        Does NOT refresh FEEDS; `watch_tree_scope` owns that (fix round 1,
+        Finding 2). `selected_scope` also moves when a pane row is selected,
+        which is not navigation and must leave the Feeds region alone.
         """
         if not self.is_mounted:
             return
@@ -1240,6 +1348,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             inspector.breadcrumb_labels = self._breadcrumb_labels
         except Exception:
             pass
+
+    def watch_tree_scope(self) -> None:
+        """Rebuild FEEDS in place so it follows the tree selection (Task 7).
+
+        Deliberately does NOT do what `watch_active_section` does
+        (`self.refresh(recompose=True)`): that rebuilds every region,
+        including the Inspector, and a fresh `InspectorPane` instance is
+        exactly what `watch_selected_scope`'s in-place push exists to avoid
+        -- `test_changing_scope_clears_a_stale_entity_selection` (Task 5)
+        holds a reference to the Inspector from *before* a scope change and
+        asserts against it *after*, which a full recompose would silently
+        break by handing that reference a defunct, unmounted widget.
+        `WatchlistsWorkbench.refresh_region_content` instead rebuilds only
+        FEEDS's own supplied content -- the one region whose display this
+        task makes scope-dependent -- leaving the Tree and Inspector
+        instances untouched.
+        """
+        if not self.is_mounted:
+            return
         self._refresh_feeds_region_for_scope()
 
     @work(exclusive=True, group="wc_feeds_scope_refresh")
@@ -1377,6 +1504,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         even belong to would be the identical lie in the other direction --
         exactly what let a Watchlist-2 breadcrumb sit above Watchlist-1's
         item actions before this fix.
+
+        Deliberately leaves `tree_scope` ALONE (fix round 1, Finding 2).
+        Inspecting a row is not navigation: the tree has not moved, so the
+        Feeds region must keep showing the watchlist the user opened. Before
+        the two scopes were split, this reset silently rebuilt Feeds back to
+        "All sources" -- an interaction in one region discarding the user's
+        navigation in another, with no tree selection highlight to fall back
+        on. Clearing `_breadcrumb_labels` alone would not have been a
+        substitute: `InspectorPane._scope_levels` derives an ancestor level
+        from `scope` alone and falls back to a `Watchlist {id}` label, so an
+        anonymous crumb would still have rendered above the entity.
 
         Only reconciles when selecting a real entity; clearing back to
         `None` (deletion completing, section switching to Overview, etc.)

@@ -49,7 +49,7 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
 )
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
-from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
+from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
 from tldw_chatbook.Widgets.destination_workbench import (
     DestinationWorkbench,
     WorkbenchPane,
@@ -1246,6 +1246,29 @@ _WL_OVERFLOW_RECORDS = tuple(
     for index in range(40)
 )
 
+
+def _seed_overflow_sources(app, count: int = 40) -> None:
+    """Put `count` real sources in FEEDS's own list.
+
+    Task 7 fix round 1, Finding 1 moved the long list in FEEDS: the
+    Console-staging block used to render one row per
+    `_local_watchlist_records` entry and now collapses to a single line, so
+    `_apply_local_wc_snapshot(_WL_OVERFLOW_RECORDS, ...)` alone no longer
+    produces enough rows to reach the cap. The rows that remain are
+    `scoped_source_rows()`, which reads the bundle service's own
+    `subscriptions` table -- an isolated temp file per `_build_test_app()`,
+    never the developer's database.
+
+    Setup only: every assertion in the tests below is unchanged.
+    """
+    db = app.watchlist_bundle_service._db
+    for index in range(count):
+        db.add_subscription(
+            name=f"source-{index:02d}",
+            type="rss",
+            source=f"https://feed-{index:02d}.example/rss",
+        )
+
 _ROUND_CORNERS = "╭╮╰╯"
 _SQUARE_CORNERS = "┌┐└┘"
 
@@ -1471,6 +1494,9 @@ async def test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds(
     which is the point of pinning it.
     """
     app = _build_test_app()
+    # Setup change only (Task 7 fix round 1, Finding 1) -- see
+    # `_seed_overflow_sources`. Every assertion below is unchanged.
+    _seed_overflow_sources(app)
     host = _visual_destination_harness(app, "watchlists_collections")
 
     async with host.run_test(size=(160, height)) as pilot:
@@ -2779,4 +2805,53 @@ async def test_tab_order_reaches_visible_primary_action(route, targets):
                 return
         pytest.fail(
             f"{route} did not focus a visible primary action from {sorted(enabled_targets)}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_feed_source_row_stays_one_row_however_long_the_name():
+    """Task 7 fix round 1, Finding 1 (CSS half): `watchlist-feed-source-row`
+    shipped as a class name with no rule behind it.
+
+    It now has one, and `height: 1` is the load-bearing declaration. FEEDS is
+    capped at `max-height: 12` and that cap was derived against one-row
+    children; a bare `Static` sizes to `auto`, so a long feed title -- these
+    arrive from remote feeds and OPML imports, not from us -- would wrap and
+    silently eat the region's budget. Measured through the production
+    stylesheet, since a bare `App` with no CSS cannot see this at all.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+    long_name = " ".join(["A remote feed title that runs on well past the feeds column"] * 6)
+    source_id = service._db.add_subscription(
+        name=long_name, type="rss", source="https://long.example/f"
+    )
+    service.add_source(watchlist["id"], source_id)
+
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+        screen._tree_watchlists = [{"id": watchlist["id"], "name": "Morning AI Brief"}]
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
+        )
+        for _ in range(20):
+            await pilot.pause()
+            if list(screen.query(f"#wl-feeds-source-{source_id}")):
+                break
+
+        row = screen.query_one(f"#wl-feeds-source-{source_id}", Static)
+        assert row.region.height == 1, (
+            f"a long feed name must not wrap the row to {row.region.height} rows; "
+            "FEEDS's max-height was derived against one-row children"
+        )
+        feeds = screen.query_one("#wl-region-feeds")
+        assert feeds.region.contains_region(row.region), (
+            f"the row should sit inside FEEDS: feeds={feeds.region} row={row.region}"
         )
