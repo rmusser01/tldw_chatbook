@@ -650,20 +650,39 @@ class ConsoleChatController:
         #: persisted, run about to start) so the composer can clear immediately
         #: instead of holding the sent text for the whole run.
         self.on_submission_accepted: Callable[[], None] | None = None
-        self._active_assistant_message_id: str | None = None
-        self._active_stream_task: asyncio.Task | None = None
+        # Task 3b: PER-SESSION maps, mirroring `_run_states`' own keying --
+        # two sessions can each have their own in-flight stream/cancel state
+        # without clobbering each other. Written/cleared at the SAME
+        # lifecycle points the old singulars were (`_stream_assistant_
+        # response`/`_run_agent_reply`'s start and `finally`), keyed by the
+        # run's OWNING session id (the same `owner_id`/`session_id` locals
+        # Task 1 threaded), never by whatever session the user currently has
+        # open. `stop_active_run` is the one place that DELIBERATELY reads
+        # by the ACTIVE (viewed) session -- see its own docstring.
+        self._active_assistant_message_ids: dict[str, str] = {}
+        self._active_stream_tasks: dict[str, asyncio.Task] = {}
         self._stop_requested = False
-        self._active_citation_repair_session: ConsoleCitationRepairSession | None = None
+        # Rebase note (dev citation-repair vs. Task 3b): dev added this as a
+        # singular slot (no per-session awareness); rescoped here the same
+        # way as the two maps above -- keyed by the run's OWNING session id,
+        # so a background session's in-flight repair can never be read/
+        # cleared by another session's close/stop/teardown path.
+        self._active_citation_repair_sessions: dict[str, ConsoleCitationRepairSession] = {}
         self._original_attempts: OrderedDict[str, str] = OrderedDict()
         #: Per-run cancellation flag for the agent bridge's background
-        #: thread (see ``_run_agent_reply``). ``threading.Event`` rather
-        #: than a shared bool: ``asyncio.to_thread`` survives Task
-        #: cancellation (the coroutine detaches from the still-running OS
-        #: thread), so the closure handed to that thread must observe a
-        #: signal that, once set, is never reset for THIS run -- unlike
+        #: thread (see ``_run_agent_reply``), keyed by owning session id
+        #: like the two maps above. ``threading.Event`` rather than a
+        #: shared bool: ``asyncio.to_thread`` survives Task cancellation
+        #: (the coroutine detaches from the still-running OS thread), so
+        #: the closure handed to that thread must observe a signal that,
+        #: once set, is never reset for THIS run -- unlike
         #: ``_stop_requested``, which the run's own ``finally`` block
         #: resets as soon as the coroutine side is done (task-227).
-        self._active_cancel_event: threading.Event | None = None
+        #: ``_stop_requested`` itself stays a single shared flag (Task 3b
+        #: did not rescope it) -- see ``_is_active_session_cancelled``'s
+        #: docstring for the resulting, deliberately-scoped-down, limit on
+        #: the three worker-thread approval/confirm bridges below.
+        self._active_cancel_events: dict[str, threading.Event] = {}
         #: The composed MCP provider for the current agent run, captured
         #: on the main loop in ``_run_agent_reply`` so ``build_context_snapshot``
         #: can read tool metadata later without recomposing.
@@ -1223,18 +1242,16 @@ class ConsoleChatController:
         Returns:
             The session activated after closing, or ``None`` when no sessions remain.
         """
-        repair_session = self._active_citation_repair_session
+        repair_session = self._active_citation_repair_sessions.get(session_id)
         self.clear_original_attempts_for_session(session_id)
         owns_active_stream = self._active_stream_belongs_to_session(session_id)
         if repair_session is not None and owns_active_stream:
             repair_session.cancel_reason = "session_close"
         if owns_active_stream:
-            self._signal_stop()
-            if (
-                self._active_stream_task is not None
-                and self._active_stream_task is not asyncio.current_task()
-            ):
-                self._active_stream_task.cancel()
+            self._signal_stop(session_id=session_id)
+            task = self._active_stream_tasks.get(session_id)
+            if task is not None and task is not asyncio.current_task():
+                task.cancel()
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.STOPPED, "Session closed."),
                 # `session_id` here is the session being CLOSED, which the
@@ -1249,9 +1266,9 @@ class ConsoleChatController:
         if (
             owns_active_stream
             and repair_session is not None
-            and self._active_citation_repair_session is repair_session
+            and self._active_citation_repair_sessions.get(session_id) is repair_session
         ):
-            self._active_citation_repair_session = None
+            self._active_citation_repair_sessions.pop(session_id, None)
         return closed
 
     def original_attempt_for_message(self, message_id: str) -> str | None:
@@ -1325,23 +1342,55 @@ class ConsoleChatController:
             ),
         )
 
-    def _signal_stop(self) -> None:
-        """Set the shared UI-facing stop flag AND the active run's own
+    def _signal_stop(self, *, session_id: str) -> None:
+        """Set the shared UI-facing stop flag AND ``session_id``'s own
         permanent per-run cancel signal.
 
-        ``_stop_requested`` is reset by the run's own ``finally`` block as
-        soon as the coroutine side of ``_run_agent_reply`` is done handling
-        a cancellation -- but ``asyncio.to_thread`` survives Task
-        cancellation, so the agent bridge's background OS thread can still
-        be running at that point and poll ``should_cancel()`` afterward
-        (task-227). ``_active_cancel_event``, once set here, is never reset
-        for that run, so a still-running bridge thread always observes the
-        Stop correctly regardless of what the coroutine side has already
-        reset.
+        ``_stop_requested`` stays a single shared flag (Task 3b did not
+        rescope it -- see ``_is_active_session_cancelled``) reset by the
+        run's own ``finally`` block as soon as the coroutine side of
+        ``_run_agent_reply`` is done handling a cancellation -- but
+        ``asyncio.to_thread`` survives Task cancellation, so the agent
+        bridge's background OS thread can still be running at that point
+        and poll ``should_cancel()`` afterward (task-227).
+        ``_active_cancel_events[session_id]``, once set here, is never
+        reset for that run, so a still-running bridge thread always
+        observes the Stop correctly regardless of what the coroutine side
+        has already reset. Every caller (``close_session``,
+        ``stop_active_run``, ``shutdown``) already knows the exact session
+        it is signalling -- there is deliberately no active-session
+        fallback here, unlike ``_set_run_state``.
         """
         self._stop_requested = True
-        if self._active_cancel_event is not None:
-            self._active_cancel_event.set()
+        cancel_event = self._active_cancel_events.get(session_id)
+        if cancel_event is not None:
+            cancel_event.set()
+
+    def _is_active_session_cancelled(self) -> bool:
+        """Best-effort cancel-signal check for the three worker-thread
+        approval/confirm bridges below (``request_mcp_approvals``,
+        ``request_skill_install_confirm``, ``request_skill_script_confirm``).
+
+        KNOWN LIMITATION (Task 3b): these bridges are plain bound-method
+        callbacks handed straight to ``ConsoleAgentBridge.run_reply``
+        (fixed arity -- ``approval_callback(pending)``,
+        ``confirm(url)``/``confirm(payload)`` -- no session id threaded
+        through), unlike ``should_cancel`` inside ``_run_agent_reply``,
+        which safely closes over ITS OWN run's ``cancel_event`` by value.
+        Falling back to the VIEWED session's cancel event here (mirroring
+        ``stop_active_run``'s own "the active session" convention) is
+        correct for the overwhelmingly common single-run case, but does
+        NOT correctly scope to a BACKGROUND session's own pending
+        approval -- and neither does ``_stop_requested`` above, which
+        stayed a single shared flag. Properly scoping concurrent
+        approvals/confirms to their own run is PA-T9 ("parked background
+        approvals"); until then, stopping the VIEWED session's run can
+        spuriously deny an unrelated background approval, and a Stop
+        aimed at a background run's own approval isn't observed by this
+        check at all.
+        """
+        cancel_event = self._active_cancel_events.get(self.store.active_session_id or "")
+        return cancel_event is not None and cancel_event.is_set()
 
     # -- MCP batch-approval bridge (task-5) ----------------------------------
 
@@ -1362,9 +1411,11 @@ class ConsoleChatController:
         happens: the user submits a decision (``resolve_pending_approval``,
         called from the UI thread, sets the Event), the run is
         cancelled/stopped/torn down (``_stop_requested``/
-        ``_active_cancel_event`` -- already wired by ``stop_active_run``,
-        ``close_session``, and ``shutdown`` via ``_signal_stop``), or the
-        configured approval timeout elapses. Whichever unique ``llm_name``
+        ``_is_active_session_cancelled()`` -- already wired by
+        ``stop_active_run``, ``close_session``, and ``shutdown`` via
+        ``_signal_stop``; see that helper's docstring for its VIEWED-
+        session limitation), or the configured approval timeout elapses.
+        Whichever unique ``llm_name``
         never received an explicit decision by then fails closed to
         ``"deny"`` (cancellation) or ``"timeout"`` (deadline) -- see
         ``MCPToolProvider._apply_verdict`` for how each decision string is
@@ -1418,10 +1469,7 @@ class ConsoleChatController:
         try:
             self._marshal_pending_approval(payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._stop_requested or (
-                    self._active_cancel_event is not None
-                    and self._active_cancel_event.is_set()
-                ):
+                if self._stop_requested or self._is_active_session_cancelled():
                     # Finding I3: a stop/unmount that resolves THIS round
                     # denies every still-undecided call, but
                     # `run_agent_loop`'s own `should_cancel()` check fires
@@ -1721,10 +1769,7 @@ class ConsoleChatController:
         try:
             self._marshal_pending_skill_install(payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._stop_requested or (
-                    self._active_cancel_event is not None
-                    and self._active_cancel_event.is_set()
-                ):
+                if self._stop_requested or self._is_active_session_cancelled():
                     break
                 if time.monotonic() >= deadline:
                     break
@@ -1820,10 +1865,7 @@ class ConsoleChatController:
         try:
             self._marshal_pending_skill_script(card_payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._stop_requested or (
-                    self._active_cancel_event is not None
-                    and self._active_cancel_event.is_set()
-                ):
+                if self._stop_requested or self._is_active_session_cancelled():
                     break
                 if time.monotonic() >= deadline:
                     break
@@ -1916,7 +1958,16 @@ class ConsoleChatController:
             return list(self._pending_skill_script_rounds)
 
     def stop_active_run(self, *, record_user_stop: bool = True) -> bool:
-        """Request the active stream to stop at the next safe boundary.
+        """Request the ACTIVE (viewed) session's stream to stop at the next
+        safe boundary.
+
+        Task 3b requirement 2: name and public semantics are unchanged --
+        this is the Stop button's contract, and it only ever targets
+        whatever session ``self.store.active_session_id`` currently is,
+        never a background run in another tab. A background run is
+        completely unaffected by this call (its own entries in the
+        per-session maps below are untouched); see ``shutdown`` for the
+        teardown path that stops every session at once.
 
         Args:
             record_user_stop: Append the explicit "stopped by user"
@@ -1924,24 +1975,24 @@ class ConsoleChatController:
                 ``False`` — a teardown stop is not a user action.
 
         Returns:
-            True when an active run was found and stopped.
+            True when the viewed session had an active run and it was
+            stopped; False (a no-op) when it did not.
         """
-        repair_session = self._active_citation_repair_session
+        session_id = self.store.active_session_id or ""
+        repair_session = self._active_citation_repair_sessions.get(session_id)
         if repair_session is not None and repair_session.selection_committed:
             return False
         if repair_session is not None and repair_session.phase in {
             "checking",
             "repair_streaming",
         }:
-            if self._active_assistant_message_id is None:
+            if self._active_assistant_message_ids.get(session_id) is None:
                 return False
             repair_session.cancel_reason = "user" if record_user_stop else "shutdown"
-            self._signal_stop()
-            if (
-                self._active_stream_task is not None
-                and self._active_stream_task is not asyncio.current_task()
-            ):
-                self._active_stream_task.cancel()
+            self._signal_stop(session_id=session_id)
+            task = self._active_stream_tasks.get(session_id)
+            if task is not None and task is not asyncio.current_task():
+                task.cancel()
             return True
 
         if self.run_state.status is not ConsoleRunStatus.STREAMING:
@@ -1950,12 +2001,12 @@ class ConsoleChatController:
                 return False
         else:
             assistant_message_id = (
-                self._active_assistant_message_id
+                self._active_assistant_message_ids.get(session_id)
                 or self._active_streaming_assistant_message_id()
             )
         if assistant_message_id is None:
             return False
-        self._signal_stop()
+        self._signal_stop(session_id=session_id)
         self._mark_stream_stopped(
             assistant_message_id,
             visible_copy="Response stopped.",
@@ -1965,47 +2016,82 @@ class ConsoleChatController:
             # copy is transient and the review found nothing else marked
             # the interruption.
             try:
-                session_id = self.store.session_id_for_message(assistant_message_id)
+                owner_id = self.store.session_id_for_message(assistant_message_id)
                 self.store.append_message(
-                    session_id,
+                    owner_id,
                     role=ConsoleMessageRole.SYSTEM,
                     content="Response stopped by user.",
                 )
             except KeyError:
                 pass
-        if (
-            self._active_stream_task is not None
-            and self._active_stream_task is not asyncio.current_task()
-        ):
-            self._active_stream_task.cancel()
+        task = self._active_stream_tasks.get(session_id)
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
         return True
 
     async def shutdown(self) -> None:
-        """Stop and await the active stream task before owner teardown."""
+        """Stop and await EVERY session's active stream task before owner
+        teardown.
+
+        Task 3b requirement 3: unlike ``stop_active_run`` (deliberately
+        scoped to the VIEWED session only), teardown is global -- a
+        background run must never survive owner shutdown just because the
+        user was looking at a different tab when the app closed. Mirrors
+        ``stop_active_run``'s manual signal-then-cancel fallback for every
+        session with a live entry, rather than reusing ``stop_active_run``
+        itself, which by contract only ever resolves the active session.
+        """
         for message_id in tuple(self._original_attempts):
             self.clear_original_attempt(message_id)
-        task = self._active_stream_task
-        if task is None:
+        tasks = dict(self._active_stream_tasks)
+        if not tasks:
             return
-        if not self.stop_active_run(record_user_stop=False):
-            self._signal_stop()
-            if task is not asyncio.current_task():
+        current = asyncio.current_task()
+        for session_id in tasks:
+            # Dev's citation-repair feature threads a `cancel_reason`
+            # ("user" vs "shutdown") through `ConsoleCitationRepairSession`
+            # so `commit_canceled()` knows whether to append a "canceled by
+            # user" system row (`stop_active_run` sets this for the VIEWED
+            # session it targets) -- global teardown must set the same
+            # field for EVERY session's own in-flight repair, or a
+            # still-checking/repair-streaming session falls back to
+            # whatever `cancel_reason` (if any) was already there.
+            repair_session = self._active_citation_repair_sessions.get(session_id)
+            if (
+                repair_session is not None
+                and not repair_session.selection_committed
+                and repair_session.phase in {"checking", "repair_streaming"}
+            ):
+                repair_session.cancel_reason = "shutdown"
+            self._signal_stop(session_id=session_id)
+        for session_id, task in tasks.items():
+            if task is not current:
                 task.cancel()
-        if task is asyncio.current_task():
-            return
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            # Shutdown is a teardown path; stale task failures should not crash owner cleanup.
-            pass
-        finally:
-            if self._active_stream_task is task:
-                self._active_assistant_message_id = None
-                self._active_stream_task = None
-                self._stop_requested = False
-                self._active_cancel_event = None
+        for session_id, task in tasks.items():
+            if task is current:
+                # Shutdown was invoked from within its own run's task --
+                # cannot cancel/await itself; that run's own finally will
+                # still fire once this coroutine naturally unwinds.
+                continue
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                # Shutdown is a teardown path; stale task failures should not crash owner cleanup.
+                pass
+        self._stop_requested = False
+        # Safety net: each task's own `finally` (in `_stream_assistant_
+        # response`/`_run_agent_reply`) already pops ITS OWN session's
+        # entries on the happy path -- this only catches a task that
+        # somehow never reached that finally (e.g. a test double, or a
+        # task that failed before it), so teardown never leaves a stale
+        # entry behind for any session.
+        for session_id, task in tasks.items():
+            if self._active_stream_tasks.get(session_id) is task:
+                self._active_stream_tasks.pop(session_id, None)
+                self._active_assistant_message_ids.pop(session_id, None)
+                self._active_cancel_events.pop(session_id, None)
 
     def _active_streaming_assistant_message_id(self) -> str | None:
         """Return the visible streaming assistant message for the active session."""
@@ -4050,10 +4136,10 @@ class ConsoleChatController:
             # swallows a store-close race that happens during the append.
             self._append_history_trimmed_note(owner_id, bound.dropped_count)
         active_task = asyncio.current_task()
-        self._active_assistant_message_id = assistant_message_id
-        self._active_stream_task = active_task
+        self._active_assistant_message_ids[owner_id] = assistant_message_id
+        self._active_stream_tasks[owner_id] = active_task
         self._stop_requested = False
-        self._active_citation_repair_session = citation_repair_session
+        self._active_citation_repair_sessions[owner_id] = citation_repair_session
         stream_signals = (
             ConsoleProviderStreamSignals()
             if citation_repair_session is not None
@@ -4090,14 +4176,25 @@ class ConsoleChatController:
             )
         finally:
             if (
-                self._active_stream_task is active_task
-                and self._active_assistant_message_id == assistant_message_id
+                self._active_stream_tasks.get(owner_id) is active_task
+                and self._active_assistant_message_ids.get(owner_id)
+                == assistant_message_id
             ):
-                self._active_assistant_message_id = None
-                self._active_stream_task = None
+                self._active_stream_tasks.pop(owner_id, None)
+                self._active_assistant_message_ids.pop(owner_id, None)
                 self._stop_requested = False
-                if self._active_citation_repair_session is citation_repair_session:
-                    self._active_citation_repair_session = None
+                if self._active_citation_repair_sessions.get(owner_id) is citation_repair_session:
+                    self._active_citation_repair_sessions.pop(owner_id, None)
+                # Task 3b (agent path): `_run_agent_reply`'s own finally
+                # deliberately leaves its cancel_event live past its own
+                # return (see that finally's docstring) so the citation-
+                # repair post-generation check -- which runs afterward, on
+                # this same task, via `_finalize_agent_reply` -- still
+                # observes it. This is the one place left to retire it, now
+                # that the whole run (agent OR direct) has fully finished.
+                # A no-op for the direct path, whose own finally already
+                # popped its own cancel_event before returning.
+                self._active_cancel_events.pop(owner_id, None)
 
     async def _run_direct_provider_reply(
         self,
@@ -4112,6 +4209,18 @@ class ConsoleChatController:
         citation_repair_session: ConsoleCitationRepairSession | None,
         stream_signals: ConsoleProviderStreamSignals | None,
     ) -> ConsoleSubmitResult:
+        # Dev's citation-repair refactor extracted this streaming body out of
+        # the wrapper (`_stream_assistant_response_inner`) into its own
+        # method, which left it without the `owner_id` the wrapper already
+        # resolved for ITSELF -- re-resolve independently here, same as
+        # `_run_agent_reply` does for its own `session_id`, rather than
+        # threading it through as a parameter (`None` on KeyError mirrors
+        # every other guarded call site below: no owning session to
+        # attribute a closed-session result to).
+        try:
+            owner_id = self.store.session_id_for_message(assistant_message_id)
+        except KeyError:
+            return self._session_closed_result()
         one_shot_used = prefill if prefill_from_one_shot else None
         if prefill:
             provider_messages = [
@@ -4288,10 +4397,16 @@ class ConsoleChatController:
         initial_body = initial_message.content
 
         def owns_request() -> bool:
+            # Task 3b: check the OWNING session's own map entries, not a
+            # global singular slot -- a concurrent session's own in-flight
+            # stream/repair must never be mistaken for this one.
             if (
-                self._active_assistant_message_id != assistant_message_id
-                or self._active_stream_task is not asyncio.current_task()
-                or self._active_citation_repair_session is not repair_session
+                self._active_assistant_message_ids.get(owner_session_id)
+                != assistant_message_id
+                or self._active_stream_tasks.get(owner_session_id)
+                is not asyncio.current_task()
+                or self._active_citation_repair_sessions.get(owner_session_id)
+                is not repair_session
             ):
                 return False
             try:
@@ -4349,7 +4464,8 @@ class ConsoleChatController:
                 ConsoleRunState(
                     ConsoleRunStatus.STOPPED,
                     "Citation repair canceled.",
-                )
+                ),
+                session_id=owner_session_id,
             )
             if repair_session.cancel_reason == "user":
                 try:
@@ -4442,7 +4558,8 @@ class ConsoleChatController:
             ConsoleRunState(
                 ConsoleRunStatus.CHECKING_CITATIONS,
                 "Checking citations…",
-            )
+            ),
+            session_id=owner_session_id,
         )
         repaired_chunks: list[str] = []
         repair_output_available = False
@@ -4570,22 +4687,27 @@ class ConsoleChatController:
             variant_mode=variant_mode,
             prepare_retry=prepare_retry,
         )
-        self._mcp_provider = None
-        # A fresh per-run Event, captured by `should_cancel` below by
-        # closure (not read off `self` each time) -- see
-        # `_active_cancel_event`'s docstring for why this, rather than
-        # `_stop_requested` alone, is what makes a still-running bridge
-        # thread observe a Stop correctly (task-227).
-        cancel_event = threading.Event()
-        self._active_cancel_event = cancel_event
-        # Resolve the run's OWNING session BEFORE stamping run state, so the
-        # very first _set_run_state below (and every other one in this
-        # method) targets it explicitly rather than falling back to
-        # whatever the user currently has open (parallel-agents spec §2).
+        # Resolve the run's OWNING session FIRST (Task 3b): every write
+        # below -- the per-session stream/cancel maps AND run state -- must
+        # target it explicitly rather than whatever the user currently has
+        # open (parallel-agents spec §2). Moved ahead of those writes
+        # (previously ran after them, back when they were single shared
+        # slots with no session to key by).
         try:
             session_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
             return self._session_closed_result()
+        self._active_assistant_message_ids[session_id] = assistant_message_id
+        self._active_stream_tasks[session_id] = asyncio.current_task()
+        self._stop_requested = False
+        self._mcp_provider = None
+        # A fresh per-run Event, captured by `should_cancel` below by
+        # closure (not read off `self` each time) -- see
+        # `_active_cancel_events`'s docstring for why this, rather than
+        # `_stop_requested` alone, is what makes a still-running bridge
+        # thread observe a Stop correctly (task-227).
+        cancel_event = threading.Event()
+        self._active_cancel_events[session_id] = cancel_event
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."),
             session_id=session_id,
@@ -4610,7 +4732,7 @@ class ConsoleChatController:
         # noqa: E731 — tiny closure. Reads BOTH signals: `_stop_requested`
         # for same-tick responsiveness (and test doubles that flip it
         # directly), and `cancel_event` -- captured by value, not via
-        # `self._active_cancel_event` -- for correctness once this run's
+        # `self._active_cancel_events[session_id]` -- for correctness once this run's
         # `finally` below has already reset `_stop_requested` while the
         # bridge's background thread is still running (task-227: an
         # `asyncio.to_thread` call survives Task cancellation, so the
@@ -4771,15 +4893,19 @@ class ConsoleChatController:
             )
             return ConsoleSubmitResult(True, True, visible_copy)
         finally:
-            if self._active_cancel_event is cancel_event:
-                # NOT cancel_event.clear(): the closure above captured
-                # this exact Event object by value, so any still-running
-                # bridge thread keeps observing whatever it was last set
-                # to, forever, regardless of this attribute now pointing
-                # elsewhere (or nowhere) for the NEXT run (task-227).
-                self._active_cancel_event = None
-            # `session_id` (not the facade): this run's OWN outcome, not
-            # whatever the user currently has open (parallel-agents spec §2).
+            # Task 3b: this finally intentionally pops NONE of the three
+            # per-session entries (stream task, assistant message id,
+            # cancel event) -- `_finalize_agent_reply` below (and, through
+            # it, `_finalize_agent_success`'s citation-repair post-
+            # generation check) still runs AFTER this try/finally, on this
+            # SAME task, and both `owns_request()` (stream task/assistant
+            # message id) and `cancellation_requested()` (cancel_event,
+            # NOT clear()'d for the same reason noted where it was created
+            # above -- task-227) need to see this run as still live and
+            # still cancellable. The wrapper (`_stream_assistant_response_
+            # inner`), which awaits this entire call including
+            # `_finalize_agent_reply`, is what clears every per-session
+            # entry once everything has actually finished.
             run_state = self.run_state_for(session_id)
             logger.info(
                 "console agent reply end",
@@ -5518,24 +5644,32 @@ class ConsoleChatController:
             self._set_run_state(ConsoleRunState(), session_id=target)
 
     def _active_stream_belongs_to_session(self, session_id: str) -> bool:
-        if self._active_assistant_message_id is None:
-            return False
-        try:
-            return (
-                self.store.session_id_for_message(self._active_assistant_message_id)
-                == session_id
-            )
-        except KeyError:
-            return False
+        """Whether ``session_id`` has its own registered in-flight stream.
+
+        Task 3b: a direct membership check now that the underlying map is
+        keyed by session id -- no lookup (or ``KeyError`` guard) needed.
+        """
+        return session_id in self._active_assistant_message_ids
 
     def streaming_session_id(self) -> str | None:
-        """Return the session with an in-flight stream, for tab status glyphs."""
-        if self._active_assistant_message_id is None:
-            return None
-        try:
-            return self.store.session_id_for_message(self._active_assistant_message_id)
-        except KeyError:
-            return None
+        """Return A session with an in-flight stream, for tab status glyphs.
+
+        Task 3b: this single-value contract predates true concurrency
+        (Task 3) -- under concurrent runs there can be MULTIPLE streaming
+        sessions at once, and this still returns only one. Prefers the
+        ACTIVE (viewed) session when it has a live entry (keeps today's
+        "the tab you're looking at shows the spinner" behavior), else an
+        arbitrary (insertion-order) live entry. Full multi-session tab/
+        fleet markers are PA-T8's job; this just keeps the existing
+        single-glyph caller (``console_session_surface``'s tab strip) from
+        going stale now that the underlying map is per-session.
+        """
+        active = self.store.active_session_id
+        if active is not None and active in self._active_assistant_message_ids:
+            return active
+        for session_id in self._active_assistant_message_ids:
+            return session_id
+        return None
 
     def _session_closed_result(
         self, *, session_id: str | None = None

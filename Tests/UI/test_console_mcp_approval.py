@@ -759,13 +759,19 @@ def test_request_mcp_approvals_cancellation_denies_undecided():
 
 
 def test_request_mcp_approvals_active_cancel_event_denies_undecided():
-    """The per-run `_active_cancel_event` (stop/close_session/shutdown's
+    """The per-run cancel event (stop/close_session/shutdown's
     `_signal_stop`) is observed even when `_stop_requested` has already
-    been reset by the coroutine side (task-227's own documented race)."""
+    been reset by the coroutine side (task-227's own documented race).
+    Task 3b: registered under the ACTIVE session's key -- `request_mcp_
+    approvals` has no session id of its own to key by (see
+    `_is_active_session_cancelled`'s docstring), so it falls back to
+    whatever session is currently active, same as `stop_active_run`."""
     controller, _ = _build_controller()
     controller.mcp_approval_timeout_seconds = lambda: 30.0
     cancel_event = threading.Event()
-    controller._active_cancel_event = cancel_event
+    controller._active_cancel_events[controller.store.active_session_id or ""] = (
+        cancel_event
+    )
 
     def _cancel_soon() -> None:
         time.sleep(0.05)

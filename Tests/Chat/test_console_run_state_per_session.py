@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
+
 import pytest
 
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleRunState,
+    ConsoleRunStatus,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
 
@@ -219,3 +226,178 @@ def test_orphaned_closed_session_does_not_consume_cap_slot(
     assert session_a in controller.run_states()
     # It must not occupy the cap's single slot for the surviving session.
     assert controller.send_refusal_copy(session_b) is None
+
+
+# -- Task 3b: per-session stream/cancel state + scoped Stop/shutdown --------
+
+
+def _seed_streaming_assistant(store: ConsoleChatStore, session_id: str) -> str:
+    """Append a real user+assistant pair so `_mark_stream_stopped` (which
+    calls `store.mark_message_stopped`) has a real row to act on -- a bare
+    string id would raise KeyError deep inside `stop_active_run`."""
+    store.append_message(session_id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session_id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    store.append_stream_chunk(assistant.id, "partial")
+    return assistant.id
+
+
+@pytest.mark.asyncio
+async def test_stop_active_run_cancels_only_viewed_sessions_task(
+    controller_with_two_sessions,
+):
+    """Requirement 5a: two fake tasks registered for two sessions --
+    `stop_active_run()` with A viewed cancels only A's task; B's task
+    survives untouched and completes on its own."""
+    controller, session_a, session_b = controller_with_two_sessions
+    store = controller.store
+    assistant_a = _seed_streaming_assistant(store, session_a)
+    assistant_b = _seed_streaming_assistant(store, session_b)
+
+    started_a = asyncio.Event()
+    started_b = asyncio.Event()
+    cancelled_a = asyncio.Event()
+    completed_b = asyncio.Event()
+    release_b = asyncio.Event()
+    never_release_a = asyncio.Event()  # never set -- A is only ever cancelled
+
+    async def never_ending():
+        started_a.set()
+        try:
+            await never_release_a.wait()
+        except asyncio.CancelledError:
+            cancelled_a.set()
+            raise
+
+    async def finishes_on_release():
+        started_b.set()
+        await release_b.wait()
+        completed_b.set()
+
+    task_a = asyncio.create_task(never_ending())
+    task_b = asyncio.create_task(finishes_on_release())
+    # A task cancelled before its first scheduled step never runs its body
+    # at all (asyncio discards it outright) -- wait for both to actually
+    # reach their own `await` so cancellation exercises the SAME suspended-
+    # mid-run state a real streaming task would be in.
+    await started_a.wait()
+    await started_b.wait()
+
+    controller._active_stream_tasks[session_a] = task_a
+    controller._active_assistant_message_ids[session_a] = assistant_a
+    controller._active_stream_tasks[session_b] = task_b
+    controller._active_assistant_message_ids[session_b] = assistant_b
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING, "run A"), session_id=session_a
+    )
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING, "run B"), session_id=session_b
+    )
+
+    store.switch_session(session_a)  # A is VIEWED
+    assert controller.stop_active_run() is True
+
+    with pytest.raises(asyncio.CancelledError):
+        await task_a
+    assert cancelled_a.is_set()
+
+    # B is completely untouched: still registered, still running.
+    assert controller._active_stream_tasks.get(session_b) is task_b
+    assert not task_b.done()
+    assert controller.run_state_for(session_b).status is ConsoleRunStatus.STREAMING
+
+    release_b.set()
+    await task_b
+    assert completed_b.is_set()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_and_awaits_every_sessions_task(
+    controller_with_two_sessions,
+):
+    """Requirement 5b/3: shutdown's teardown path is GLOBAL -- it cancels
+    and awaits every session's task, not just the viewed one, and leaves
+    no stale entries behind for either session."""
+    controller, session_a, session_b = controller_with_two_sessions
+    store = controller.store
+    assistant_a = _seed_streaming_assistant(store, session_a)
+    assistant_b = _seed_streaming_assistant(store, session_b)
+
+    cancelled = {"a": False, "b": False}
+    started = {"a": asyncio.Event(), "b": asyncio.Event()}
+    never_release = asyncio.Event()  # never set -- both are only ever cancelled
+
+    async def never_ending(key: str):
+        started[key].set()
+        try:
+            await never_release.wait()
+        except asyncio.CancelledError:
+            cancelled[key] = True
+            raise
+
+    task_a = asyncio.create_task(never_ending("a"))
+    task_b = asyncio.create_task(never_ending("b"))
+    # See test_stop_active_run_cancels_only_viewed_sessions_task: a task
+    # cancelled before its first scheduled step never runs its body at all.
+    await started["a"].wait()
+    await started["b"].wait()
+
+    controller._active_stream_tasks[session_a] = task_a
+    controller._active_assistant_message_ids[session_a] = assistant_a
+    controller._active_stream_tasks[session_b] = task_b
+    controller._active_assistant_message_ids[session_b] = assistant_b
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING, "run A"), session_id=session_a
+    )
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING, "run B"), session_id=session_b
+    )
+    # Viewed session is irrelevant to shutdown's scope -- only A is viewed,
+    # yet B must be cancelled too.
+    store.switch_session(session_a)
+
+    await controller.shutdown()
+
+    assert cancelled == {"a": True, "b": True}
+    assert controller._active_stream_tasks == {}
+    assert controller._active_assistant_message_ids == {}
+    assert controller._active_cancel_events == {}
+
+
+@pytest.mark.asyncio
+async def test_completing_run_pops_only_its_own_session_entries(
+    controller_with_two_sessions,
+):
+    """Requirement 4: a session's own terminal path pops ONLY its own
+    entries from the per-session stream/cancel maps -- a different
+    session's still-registered (fake) entries are left untouched."""
+    controller, session_a, session_b = controller_with_two_sessions
+    store = controller.store
+    store.switch_session(session_a)
+
+    # Session B has its own, still in-flight (fake, never-completing) run.
+    task_b = asyncio.create_task(asyncio.Event().wait())
+    controller._active_stream_tasks[session_b] = task_b
+    controller._active_assistant_message_ids[session_b] = "assistant-b"
+    controller._active_cancel_events[session_b] = threading.Event()
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING, "run B"), session_id=session_b
+    )
+
+    result = await controller.submit_draft("hello")
+    assert result.accepted is True
+
+    # Session A's own run completed and cleaned up entirely after itself.
+    assert session_a not in controller._active_stream_tasks
+    assert session_a not in controller._active_assistant_message_ids
+    assert session_a not in controller._active_cancel_events
+
+    # Session B's unrelated registered entries are untouched.
+    assert controller._active_stream_tasks.get(session_b) is task_b
+    assert controller._active_assistant_message_ids.get(session_b) == "assistant-b"
+    assert not task_b.done()
+
+    task_b.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task_b

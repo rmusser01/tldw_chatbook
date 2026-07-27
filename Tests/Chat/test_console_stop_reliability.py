@@ -96,7 +96,7 @@ async def test_stop_freezes_message_content_at_stop_point(tmp_path):
     gateway.release.set()
     for _ in range(200):
         await asyncio.sleep(0.02)
-        if controller._active_stream_task is None:
+        if controller._active_stream_tasks.get(session_id) is None:
             break
     await asyncio.sleep(0.3)
 

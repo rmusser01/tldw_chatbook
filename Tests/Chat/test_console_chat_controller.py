@@ -756,7 +756,10 @@ def test_stop_active_run_falls_back_to_visible_streaming_assistant_message():
             "Streaming response.",
         )
     )
-    controller._active_assistant_message_id = None
+    # No entry registered in `_active_assistant_message_ids` for this
+    # session -- `stop_active_run` must fall back to the visible streaming
+    # assistant message in the store.
+    assert session.id not in controller._active_assistant_message_ids
 
     assert controller.stop_active_run() is True
 
@@ -901,7 +904,7 @@ async def test_shutdown_stops_and_awaits_active_stream_task():
     assert messages[-1].content == "partial"
     assert messages[-1].status == "stopped"
     assert controller.run_state.status is ConsoleRunStatus.STOPPED
-    assert controller._active_stream_task is None
+    assert controller._active_stream_tasks.get(store.active_session_id) is None
 
 
 @pytest.mark.asyncio
@@ -910,17 +913,18 @@ async def test_shutdown_ignores_failed_active_stream_task():
         raise RuntimeError("stream task failed before shutdown")
 
     store = ConsoleChatStore()
+    session = store.ensure_session()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     task = asyncio.create_task(fail_before_shutdown())
     await asyncio.sleep(0)
     assert task.done()
 
-    controller._active_stream_task = task
+    controller._active_stream_tasks[session.id] = task
     controller._stop_requested = True
 
     await controller.shutdown()
 
-    assert controller._active_stream_task is None
+    assert controller._active_stream_tasks == {}
     assert controller._stop_requested is False
 
 
@@ -3322,8 +3326,8 @@ async def test_agent_finalization_remains_inside_outer_active_stream_ownership()
             **kwargs,
         ):
             self.active_during_finalization = (
-                self._active_assistant_message_id,
-                self._active_stream_task,
+                self._active_assistant_message_ids.get(session_id),
+                self._active_stream_tasks.get(session_id),
                 self._stop_requested,
             )
             return await super()._finalize_agent_reply(
@@ -3367,8 +3371,8 @@ async def test_agent_finalization_remains_inside_outer_active_stream_ownership()
         current_task,
         False,
     )
-    assert controller._active_assistant_message_id is None
-    assert controller._active_stream_task is None
+    assert controller._active_assistant_message_ids.get(store.active_session_id) is None
+    assert controller._active_stream_tasks.get(store.active_session_id) is None
     assert controller._stop_requested is False
 
 

@@ -544,6 +544,30 @@ def _assistant(store: ConsoleChatStore):
     )
 
 
+# Task 3b rebase note: the controller's in-flight bookkeeping is now a
+# PER-SESSION map (keyed by owning session id), not a single shared slot --
+# these tests predate that and read the ACTIVE session's own entry, which is
+# equivalent for every single-session scenario in this file (including
+# post-close/post-second-submit re-checks, where `active_session_id` still
+# resolves to whichever session -- or `""` -- the assertion cares about).
+def _active_citation_repair_session(controller: ConsoleChatController):
+    return controller._active_citation_repair_sessions.get(
+        controller.store.active_session_id or ""
+    )
+
+
+def _active_assistant_message_id(controller: ConsoleChatController):
+    return controller._active_assistant_message_ids.get(
+        controller.store.active_session_id or ""
+    )
+
+
+def _active_stream_task(controller: ConsoleChatController):
+    return controller._active_stream_tasks.get(
+        controller.store.active_session_id or ""
+    )
+
+
 def _citation_calls(
     persistence: _ReadyCitationPersistence,
 ) -> list[dict[str, Any]]:
@@ -1219,11 +1243,11 @@ async def test_citation_repair_direct_initial_session_defers_without_persistence
     assert append_kwargs["terminal_citation_finalizer"] is None
     assert append_kwargs["defer_terminal_persistence"] is True
     assert store.completion_calls == [_assistant(store).id]
-    assert controller._active_citation_repair_session is None
+    assert _active_citation_repair_session(controller) is None
 
     def observe_session(call_index):
         if call_index == 0:
-            session = controller._active_citation_repair_session
+            session = _active_citation_repair_session(controller)
             observed.append((session.contract, session.resolution, session.phase))
 
     second_store = _recording_citation_store()
@@ -1283,7 +1307,7 @@ async def test_citation_repair_cleaned_session_contains_no_governed_text(
 
     def retain_session(call_index: int) -> None:
         if call_index == 0:
-            retained_sessions.append(controller._active_citation_repair_session)
+            retained_sessions.append(_active_citation_repair_session(controller))
 
     gateway.on_call = retain_session
 
@@ -1332,7 +1356,7 @@ async def test_citation_repair_cleaned_session_contains_no_governed_text(
         store._provisional_terminal_selection_ids,
         store._terminal_persistence_deferred_ids,
     )
-    assert controller._active_citation_repair_session is None
+    assert _active_citation_repair_session(controller) is None
 
 
 @pytest.mark.asyncio
@@ -1467,7 +1491,7 @@ async def test_citation_repair_failure_privacy_sentinels_are_confined_to_selecte
 
     def retain_session(call_index: int) -> None:
         if call_index == 0:
-            retained_sessions.append(controller._active_citation_repair_session)
+            retained_sessions.append(_active_citation_repair_session(controller))
 
     gateway.on_call = retain_session
 
@@ -1518,9 +1542,9 @@ async def test_citation_repair_failure_privacy_sentinels_are_confined_to_selecte
     cleaned_session = retained_sessions[0]
     assert cleaned_session.contract is None
     assert cleaned_session.resolution is None
-    assert controller._active_citation_repair_session is None
-    assert controller._active_assistant_message_id is None
-    assert controller._active_stream_task is None
+    assert _active_citation_repair_session(controller) is None
+    assert _active_assistant_message_id(controller) is None
+    assert _active_stream_task(controller) is None
     assert controller.original_attempt_for_message(assistant.id) is None
     _assert_content_free_repair_state(
         caplog.text,
@@ -1908,7 +1932,7 @@ def _observe_clean_lifecycle_request(controller, store, observed):
             return
         observed.append(
             {
-                "repair_session": controller._active_citation_repair_session,
+                "repair_session": _active_citation_repair_session(controller),
                 "finalizers": dict(store._terminal_citation_finalizers),
                 "provisional_ids": set(store._provisional_terminal_selection_ids),
                 "deferred_ids": set(store._terminal_persistence_deferred_ids),
@@ -1930,7 +1954,7 @@ def _assert_clean_lifecycle_call(controller, store, gateway, observed):
     assert len(gateway.calls) == 2
     assert gateway.calls[0]["signals"] is not _OMITTED
     assert gateway.calls[1]["signals"] is _OMITTED
-    assert controller._active_citation_repair_session is None
+    assert _active_citation_repair_session(controller) is None
     assert store._terminal_citation_finalizers == {}
     assert store._provisional_terminal_selection_ids == set()
     assert store._terminal_persistence_deferred_ids == set()
@@ -2457,7 +2481,7 @@ async def test_citation_repair_user_cancellation_privacy_sentinels(
     try:
         task = asyncio.create_task(controller.submit_draft("question"))
         await gateway.repair_started.wait()
-        retained_session = controller._active_citation_repair_session
+        retained_session = _active_citation_repair_session(controller)
         assert retained_session is not None
         assert controller.stop_active_run() is True
         await task
@@ -2483,9 +2507,9 @@ async def test_citation_repair_user_cancellation_privacy_sentinels(
         _sanitize_selected_persistence(persistence, initial_body),
         controller.run_state,
         controller.run_state_history,
-        controller._active_citation_repair_session,
-        controller._active_assistant_message_id,
-        controller._active_stream_task,
+        _active_citation_repair_session(controller),
+        _active_assistant_message_id(controller),
+        _active_stream_task(controller),
     )
 
 
@@ -2516,7 +2540,7 @@ async def test_citation_repair_late_chunk_privacy_sentinels(
     try:
         task = asyncio.create_task(controller.submit_draft("question"))
         await gateway.first_repair_chunk_collected.wait()
-        retained_session = controller._active_citation_repair_session
+        retained_session = _active_citation_repair_session(controller)
         assert retained_session is not None
         assert controller.stop_active_run() is True
         await task
@@ -2536,9 +2560,9 @@ async def test_citation_repair_late_chunk_privacy_sentinels(
         _sanitize_selected_persistence(persistence, initial_body),
         controller.run_state,
         controller.run_state_history,
-        controller._active_citation_repair_session,
-        controller._active_assistant_message_id,
-        controller._active_stream_task,
+        _active_citation_repair_session(controller),
+        _active_assistant_message_id(controller),
+        _active_stream_task(controller),
     )
 
 
@@ -2569,7 +2593,7 @@ async def test_citation_repair_session_close_privacy_sentinels(
     try:
         task = asyncio.create_task(controller.submit_draft("question"))
         await gateway.repair_started.wait()
-        retained_session = controller._active_citation_repair_session
+        retained_session = _active_citation_repair_session(controller)
         assert retained_session is not None
         session_id = store.active_session_id
         assert session_id is not None
@@ -2589,9 +2613,9 @@ async def test_citation_repair_session_close_privacy_sentinels(
         persistence.create_calls,
         controller.run_state,
         controller.run_state_history,
-        controller._active_citation_repair_session,
-        controller._active_assistant_message_id,
-        controller._active_stream_task,
+        _active_citation_repair_session(controller),
+        _active_assistant_message_id(controller),
+        _active_stream_task(controller),
         store.sessions(),
     )
 
@@ -2790,11 +2814,11 @@ async def test_citation_repair_close_unrelated_session_preserves_cancel_ownershi
     controller.switch_session(owner_session_id)
     task = asyncio.create_task(controller.submit_draft("question"))
     await gateway.repair_started.wait()
-    repair_session = controller._active_citation_repair_session
+    repair_session = _active_citation_repair_session(controller)
 
     controller.close_session(unrelated.id)
 
-    assert controller._active_citation_repair_session is repair_session
+    assert _active_citation_repair_session(controller) is repair_session
     assert controller.stop_active_run() is True
     await task
     _assert_user_citation_repair_cancel(
@@ -2929,7 +2953,7 @@ async def test_citation_repair_shutdown_during_collection_privacy_has_no_user_st
     )
     task = asyncio.create_task(controller.submit_draft("question"))
     await gateway.repair_started.wait()
-    retained_session = controller._active_citation_repair_session
+    retained_session = _active_citation_repair_session(controller)
     assert retained_session is not None
 
     await controller.shutdown()
@@ -2968,9 +2992,9 @@ async def test_citation_repair_close_during_collection_never_resurrects_session_
     assert result.visible_copy == "Session closed."
     assert store.sessions() == []
     assert store.active_session_id is None
-    assert controller._active_citation_repair_session is None
-    assert controller._active_assistant_message_id is None
-    assert controller._active_stream_task is None
+    assert _active_citation_repair_session(controller) is None
+    assert _active_assistant_message_id(controller) is None
+    assert _active_stream_task(controller) is None
     assert not any(
         call["sender"] == ConsoleMessageRole.SYSTEM.value
         for call in persistence.create_calls

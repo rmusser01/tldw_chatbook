@@ -593,7 +593,7 @@ async def test_stop_during_parked_bridge_thread_persists_cancelled_not_done(tmp_
     # _run_agent_reply's finally -- exactly the moment the pre-fix bug
     # discarded the signal the still-running bridge thread depends on.
     assert controller._stop_requested is False
-    assert controller._active_stream_task is None
+    assert controller._active_stream_tasks.get(session_id) is None
 
     # Release the parked thread now -- it is STILL RUNNING on its own OS
     # thread, oblivious to the coroutine having already returned.
@@ -689,7 +689,7 @@ async def test_finalize_after_already_stopped_regenerate_no_phantom_variant(tmp_
         # AND status) -- simulating a real Stop landing in the window
         # after the bridge has already produced RUN_DONE but before
         # _finalize_agent_reply runs.
-        controller._active_cancel_event.set()
+        controller._active_cancel_events[session_id].set()
         store.mark_message_stopped(assistant_message_id)
         return "run-test", RunOutcome(
             status=RUN_DONE, steps=[], final_text="late regenerate text"
@@ -735,7 +735,7 @@ async def test_finalize_after_already_stopped_regenerate_error_no_wedge(tmp_path
     assert assistant.status == "complete"
 
     def parked_regenerate_error_reply(*, assistant_message_id, **_kwargs):
-        controller._active_cancel_event.set()
+        controller._active_cancel_events[session_id].set()
         store.mark_message_stopped(assistant_message_id)
         return "run-test", RunOutcome(
             status=RUN_ERROR,
