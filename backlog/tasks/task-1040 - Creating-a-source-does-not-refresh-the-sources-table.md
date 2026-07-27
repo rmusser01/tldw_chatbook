@@ -54,3 +54,13 @@ The tree-write flows added in TASK-895 already did exactly this — every user-i
 
 Test asserts both reloads happen after a create, and was proven red first: it failed on the sources reload before the fix.
 <!-- SECTION:NOTES:END -->
+
+## Correction — the tree-count half of this task was wrong
+
+The description above claimed the rail and the centre were "describing the same thing, disagreeing", citing `All sources  0` beside `Feeds in All sources (1)`.
+
+**That is not a contradiction.** `get_watchlist_item_counts` returns *item* totals and unread counts, not source counts — its own docstring says so. The number beside a tree node is how many **items** have been scraped; the number in the Feeds heading is how many **sources** the scope covers. With three sources and nothing yet scraped, `All sources  0` and `Feeds in All sources (3)` are both correct, which is exactly what the third UAT observed on `e82ac1b18`.
+
+The fix that shipped is still right — `_create_source` genuinely did leave `#sources-table` stale, and reloading the tree alongside it is correct and harmless — but AC #6 and #7 assert an equivalence that does not exist and should not be treated as a contract.
+
+What is *actually* worth addressing is milder and different: a bare `0` next to `All sources` gives no clue it counts items, so a user who has just added three sources reads it as "nothing was added". That is a labelling question, filed separately if it is worth doing at all.
