@@ -4888,7 +4888,22 @@ def _get_custom_database_path(
     return lexical_path(validated)
 
 
-def get_chachanotes_db_path() -> Path:
+def get_chachanotes_db_path(*, ignore_override: bool = False) -> Path:
+    """Get the resolved path for the ChaChaNotes database.
+
+    Args:
+        ignore_override: When True, skip any explicitly-configured custom
+            path and always return the profile-aware default. Used by the
+            Settings "Reset" action, which must discard a user's
+            customization rather than reflect it back (TASK-927 follow-up).
+
+    Returns:
+        The resolved database path -- either a configured custom path
+        (unless ``ignore_override``) or the default filename under the
+        current profile's user data directory.
+    """
+    if ignore_override:
+        return get_user_data_dir() / "tldw_chatbook_ChaChaNotes.db"
     return _get_custom_database_path(
         "chachanotes_db_path"
     ) or get_user_data_dir() / "tldw_chatbook_ChaChaNotes.db"
@@ -4909,13 +4924,43 @@ def get_tts_profiles_db_path() -> Path:
     return get_user_data_dir() / "tldw_chatbook_tts_profiles.db"
 
 
-def get_prompts_db_path() -> Path:
+def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
+    """Get the resolved path for the Prompts database.
+
+    Args:
+        ignore_override: When True, skip any explicitly-configured custom
+            path and always return the profile-aware default. Used by the
+            Settings "Reset" action, which must discard a user's
+            customization rather than reflect it back (TASK-927 follow-up).
+
+    Returns:
+        The resolved database path -- either a configured custom path
+        (unless ``ignore_override``) or the default filename under the
+        current profile's user data directory.
+    """
+    if ignore_override:
+        return get_user_data_dir() / "tldw_chatbook_prompts.db"
     return _get_custom_database_path(
         "prompts_db_path"
     ) or get_user_data_dir() / "tldw_chatbook_prompts.db"
 
 
-def get_media_db_path() -> Path:
+def get_media_db_path(*, ignore_override: bool = False) -> Path:
+    """Get the resolved path for the Media database.
+
+    Args:
+        ignore_override: When True, skip any explicitly-configured custom
+            path and always return the profile-aware default. Used by the
+            Settings "Reset" action, which must discard a user's
+            customization rather than reflect it back (TASK-927 follow-up).
+
+    Returns:
+        The resolved database path -- either a configured custom path
+        (unless ``ignore_override``) or the default filename under the
+        current profile's user data directory.
+    """
+    if ignore_override:
+        return get_user_data_dir() / "tldw_chatbook_media_v2.db"
     return _get_custom_database_path(
         "media_db_path"
     ) or get_user_data_dir() / "tldw_chatbook_media_v2.db"

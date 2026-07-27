@@ -1089,7 +1089,26 @@ def test_import_chatbook_paths_reuse_the_single_source_of_truth():
     """AC: 'The duplicated, disagreeing per-key defaults inside the file are
     gone.' _import_chatbook() used to hardcode its own second copy of the
     per-database default paths, disagreeing with _get_database_path()'s copy
-    on the very same keys (TASK-899)."""
+    on the very same keys (TASK-899).
+
+    Dev-reconciliation note: dev factored the Chatbook importer's key
+    contract (``ChaChaNotes``/``Prompts``/``Media``, distinct from this
+    window's own ``chachanotes``/``prompts``/``media`` names) into a
+    dedicated ``Chatbooks.database_paths.get_chatbook_database_paths()``
+    helper that itself calls the very same canonical ``config.py``
+    resolvers ``_DB_PATH_RESOLVERS`` wraps -- see
+    ``Tests/Chatbooks/test_chatbook_database_paths.py::
+    test_chatbook_database_paths_use_canonical_runtime_getters``. Every
+    other chatbook-facing surface in the app (the creation/import wizards,
+    the export management window) already routes through this same helper
+    (``test_chatbook_surfaces_do_not_embed_database_defaults``), so
+    ``_get_chatbook_import_database_paths`` participating in that
+    established, single-source-of-truth convention -- rather than
+    reaching into ``_DB_PATH_RESOLVERS`` directly and re-mapping key names
+    itself -- is the codebase-wide pattern, not a second, disagreeing
+    source of truth. Only the no-hardcoded-literal-defaults assertion
+    below is still load-bearing; which specific canonical entry point is
+    used to reach config.py is not."""
     import inspect
 
     source = inspect.getsource(ToolsSettingsWindow._import_chatbook)
@@ -1107,7 +1126,24 @@ def test_import_chatbook_paths_reuse_the_single_source_of_truth():
             f"stale duplicate default {literal!r} still hardcoded in _import_chatbook"
         )
 
-    assert "_get_database_path" in source or "_DB_PATH_RESOLVERS" in source
+    assert (
+        "_get_database_path" in source
+        or "_DB_PATH_RESOLVERS" in source
+        or "_get_chatbook_import_database_paths" in source
+        or "get_chatbook_database_paths" in source
+    )
+
+    # And that helper must itself resolve to the same canonical resolvers,
+    # not a fresh, independent copy of the per-database defaults.
+    helper_source = inspect.getsource(
+        ToolsSettingsWindow._get_chatbook_import_database_paths
+    )
+    for literal in disagreeing_literals:
+        assert literal not in helper_source, (
+            f"stale duplicate default {literal!r} hardcoded in "
+            "_get_chatbook_import_database_paths"
+        )
+    assert "get_chatbook_database_paths" in helper_source
 
 
 def test_no_bare_call_from_thread_calls_in_tools_settings_window():
@@ -1243,7 +1279,11 @@ async def test_backup_then_restore_round_trips_at_the_real_resolved_path(
         )
         window.app_instance.notify.reset_mock()
 
-        backup_dir = Path.home() / ".local" / "share" / "tldw_cli" / "backups" / db_name
+        # Profile-scoped -- matches get_user_data_dir(), the same real
+        # (profile-aware) location _backup_single_worker actually writes to
+        # (TASK-927 follow-up: this used to assert the flat, non-profile
+        # literal, which no longer matches where the worker writes).
+        backup_dir = tldw_chatbook.config.get_user_data_dir() / "backups" / db_name
         backup_files = sorted(backup_dir.glob(f"{db_name}_backup_*.db"))
         assert backup_files, f"no backup file was written for {db_name} at {backup_dir}"
         backup_path = backup_files[-1]
@@ -1431,3 +1471,682 @@ async def test_restore_refuses_a_dangerous_backup_path_via_path_validation(
         # No partial/failed write occurred against the live database -- the
         # rejected source file's content must never have reached it.
         assert not db_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# TASK-927: the bulk ("all databases") maintenance workers -- vacuum, backup,
+# integrity check -- and the conversation/notes/characters export workers
+# carried their own separate copies of the same hardcoded, profile-unaware
+# literals TASK-899 removed from the single-database workers and the
+# Database Config settings form. These tests prove the bulk workers and the
+# form both now go through the same _DB_PATH_RESOLVERS resolvers.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_vacuum_worker_operates_on_resolved_paths_not_literals(
+    monkeypatch, temp_config_path
+):
+    """'Vacuum All Databases' (_vacuum_worker) must vacuum the ChaChaNotes
+    database at the same profile-aware path _get_database_path resolves,
+    not a hardcoded ~/.local/share/tldw_cli/<literal>.db path with no
+    profile segment (TASK-927). Proven by creating a real, padded (then
+    trimmed) database ONLY at the resolved path and asserting the worker
+    actually shrinks that specific file -- if the worker instead targeted
+    the old hardcoded literal path, this file would never be touched and
+    would not shrink."""
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        resolved_path = window._get_database_path("chachanotes", {})
+        assert resolved_path is not None
+        old_literal_path = (
+            Path.home()
+            / ".local"
+            / "share"
+            / "tldw_cli"
+            / "tldw_chatbook_ChaChaNotes.db"
+        )
+        # Sanity: the resolved path is genuinely profile-scoped, not the
+        # bare literal the pre-fix bulk worker hardcoded.
+        assert resolved_path != old_literal_path
+
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
+        db = CharactersRAGDB(str(resolved_path), "test_setup")
+        db.close_connection()
+        with closing(sqlite3.connect(str(resolved_path))) as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS pad (value TEXT)")
+            conn.executemany(
+                "INSERT INTO pad (value) VALUES (?)",
+                [("x" * 5000,) for _ in range(200)],
+            )
+            conn.commit()
+            conn.execute("DELETE FROM pad")
+            conn.commit()
+        size_before = resolved_path.stat().st_size
+        assert not old_literal_path.exists()
+
+        worker = window._vacuum_worker()
+        await worker.wait()
+
+        calls = window.app_instance.notify.call_args_list
+        assert _notify_calls_with_severity(window.app_instance.notify, "success"), (
+            f"vacuum did not report success: {calls}"
+        )
+        size_after = resolved_path.stat().st_size
+        assert size_after < size_before, (
+            f"vacuum did not shrink the database at the real resolved path "
+            f"({size_before} -> {size_after}); the worker may be targeting "
+            f"a different (e.g. hardcoded-literal) path"
+        )
+        # The old, non-profile-scoped literal location must never have been
+        # created/touched by this operation.
+        assert not old_literal_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_vacuum_all_fails_loudly_for_an_unresolvable_database(
+    monkeypatch, temp_config_path
+):
+    """The bulk 'Vacuum All Databases' worker must report an unresolvable
+    database loudly -- never silently drop it from the run while reporting
+    overall success (TASK-927, extending TASK-899's fail-loudly guarantee
+    from the single-database workers to the bulk one)."""
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        window._DB_PATH_RESOLVERS = dict(window._DB_PATH_RESOLVERS)
+
+        def _boom():
+            raise RuntimeError("simulated resolver failure")
+
+        window._DB_PATH_RESOLVERS["media"] = _boom
+
+        worker = window._vacuum_worker()
+        await worker.wait()
+
+        calls = window.app_instance.notify.call_args_list
+        error_calls = _notify_calls_with_severity(window.app_instance.notify, "error")
+        assert error_calls, f"unresolvable Media database was not reported: {calls}"
+        assert any("Media" in str(c) for c in error_calls), error_calls
+
+
+@pytest.mark.asyncio
+async def test_integrity_all_fails_loudly_for_an_unresolvable_database(
+    monkeypatch, temp_config_path
+):
+    """The bulk integrity-check worker must include an unresolvable database
+    in its results as a failure, never omit it while reporting an overall
+    'OK' (TASK-927)."""
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        window._DB_PATH_RESOLVERS = dict(window._DB_PATH_RESOLVERS)
+
+        def _boom():
+            raise RuntimeError("simulated resolver failure")
+
+        window._DB_PATH_RESOLVERS["prompts"] = _boom
+
+        worker = window._integrity_worker()
+        await worker.wait()
+
+        calls = window.app_instance.notify.call_args_list
+        error_calls = _notify_calls_with_severity(window.app_instance.notify, "error")
+        assert error_calls, f"unresolvable Prompts database was not reported: {calls}"
+        assert any("Prompts" in str(c) for c in error_calls), error_calls
+        assert any("UNRESOLVED" in str(c) for c in error_calls), error_calls
+
+
+@pytest.mark.asyncio
+async def test_backup_all_fails_loudly_for_an_unresolvable_database(
+    monkeypatch, temp_config_path
+):
+    """'Backup All Databases' must refuse and report loudly -- never start
+    copying a partial set and claim success -- when one of the triad can't
+    be resolved (TASK-927).
+
+    Dev-reconciliation note: originally patched "prompts", but dev's
+    ``_backup_worker`` resolves Prompts via a direct ``get_prompts_db_path()``
+    call (never a hardcoded literal there, so TASK-927 never touched it),
+    not through ``_DB_PATH_RESOLVERS`` -- patching "prompts" would no
+    longer exercise anything. ChaChaNotes/Media are the two the
+    reconciliation actually routed through ``_get_database_path``, so this
+    now patches "media". Also: dev's ``_backup_databases()`` orchestrator
+    reports a generic "Database backup failed." on any legacy-phase
+    exception rather than naming the specific database (a deliberate
+    simplification from dev's independent rework), so this no longer
+    asserts the database name appears in the notification -- only that an
+    error is reported and success/partial-backup never happen.
+    """
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        window._DB_PATH_RESOLVERS = dict(window._DB_PATH_RESOLVERS)
+
+        def _boom():
+            raise RuntimeError("simulated resolver failure")
+
+        window._DB_PATH_RESOLVERS["media"] = _boom
+
+        await window._backup_databases()
+
+        calls = window.app_instance.notify.call_args_list
+        error_calls = _notify_calls_with_severity(window.app_instance.notify, "error")
+        assert error_calls, f"unresolvable Media database was not reported: {calls}"
+        assert not _notify_calls_with_severity(window.app_instance.notify, "success"), (
+            f"backup falsely reported success despite an unresolvable database: {calls}"
+        )
+
+        backup_root = tldw_chatbook.config.get_user_data_dir() / "backups"
+        # No partial backup should have been started at all.
+        if backup_root.exists():
+            assert not list(backup_root.iterdir()), (
+                "a partial backup directory was created despite the "
+                "unresolvable database"
+            )
+
+
+@pytest.mark.asyncio
+async def test_backup_all_produces_a_file_for_the_database_at_its_resolved_path(
+    monkeypatch, temp_config_path
+):
+    """AC (TASK-927): 'A bulk backup produces files for the databases that
+    actually exist.' Also proves the bulk backup worker targets the real
+    resolved (profile-aware) path, not a hardcoded literal: the database is
+    created only at the resolved path, and the backed-up content is
+    verified against it."""
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        resolved_path = window._get_database_path("chachanotes", {})
+        assert resolved_path is not None
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(str(resolved_path))) as conn:
+            conn.execute("CREATE TABLE marker (value TEXT)")
+            conn.execute("INSERT INTO marker VALUES ('bulk-backup-original')")
+            conn.commit()
+
+        await window._backup_databases()
+
+        calls = window.app_instance.notify.call_args_list
+        assert not _notify_calls_with_severity(window.app_instance.notify, "error"), (
+            f"legacy backup phase reported an error: {calls}"
+        )
+
+        backup_root = tldw_chatbook.config.get_user_data_dir() / "backups"
+        backup_files = list(backup_root.glob("*/tldw_chatbook_ChaChaNotes_*.db"))
+        assert backup_files, (
+            f"no ChaChaNotes backup file was produced under {backup_root}"
+        )
+
+        with closing(sqlite3.connect(str(backup_files[0]))) as conn:
+            value = conn.execute("SELECT value FROM marker").fetchone()[0]
+        assert value == "bulk-backup-original"
+
+
+@pytest.mark.asyncio
+async def test_export_conversations_fails_loudly_for_unresolvable_chachanotes(
+    monkeypatch, temp_config_path
+):
+    """The conversation-export worker was found (TASK-927 audit) to build
+    its own ChaChaNotes path independently. It must now fail loudly when
+    that path can't be resolved, matching the single-database workers,
+    instead of raising an unhandled exception or silently doing nothing."""
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        window._DB_PATH_RESOLVERS = dict(window._DB_PATH_RESOLVERS)
+
+        def _boom():
+            raise RuntimeError("simulated resolver failure")
+
+        window._DB_PATH_RESOLVERS["chachanotes"] = _boom
+
+        worker = window.run_worker(window._export_conversations_worker, thread=True)
+        await worker.wait()
+
+        calls = window.app_instance.notify.call_args_list
+        assert calls, "no notification at all for an unresolvable export database"
+        error_calls = _notify_calls_with_severity(window.app_instance.notify, "error")
+        assert error_calls, f"unresolvable ChaChaNotes database was not reported: {calls}"
+        assert not _notify_calls_with_severity(window.app_instance.notify, "success"), (
+            f"export falsely reported success despite an unresolvable database: {calls}"
+        )
+        # Must be the deliberate "cannot resolve" guard, not an unhandled
+        # AttributeError from calling .exists() on a None path that
+        # happens to be caught by the outer generic exception handler --
+        # that would report an error for the wrong reason and would not
+        # catch a regression that replaces the guard with, say, a
+        # different unguarded None dereference.
+        assert any("no resolvable path" in str(c) for c in error_calls), error_calls
+        assert not any("NoneType" in str(c) for c in error_calls), error_calls
+
+
+@pytest.mark.asyncio
+async def test_compose_database_config_form_shows_resolved_default_not_hardcoded_literal(
+    monkeypatch, temp_config_path
+):
+    """The Database Config form's path Inputs must display the actual
+    resolved (profile-aware) path the app will use, not the old hardcoded,
+    profile-unaware literal (TASK-927). Saving the form unmodified right
+    after opening it must therefore persist the real path, not a value that
+    would make even the fixed resolver disagree with the app on the next
+    read."""
+    from tldw_chatbook.config import (
+        get_chachanotes_db_path,
+        get_prompts_db_path,
+        get_media_db_path,
+    )
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        chachanotes_input = window.query_one("#config-db-chachanotes-path", Input)
+        prompts_input = window.query_one("#config-db-prompts-path", Input)
+        media_input = window.query_one("#config-db-media-path", Input)
+
+        assert chachanotes_input.value == str(get_chachanotes_db_path())
+        assert prompts_input.value == str(get_prompts_db_path())
+        assert media_input.value == str(get_media_db_path())
+
+        # The old, wrong, pre-fix literals must be gone.
+        assert (
+            chachanotes_input.value
+            != "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"
+        )
+        assert prompts_input.value != "~/.local/share/tldw_cli/tldw_cli_prompts.db"
+        assert media_input.value != "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
+
+
+@pytest.mark.asyncio
+async def test_reset_database_config_form_shows_resolved_default_not_hardcoded_literal(
+    monkeypatch, temp_config_path
+):
+    """'Reset Section' on the Database Config form must repopulate the same
+    resolved (profile-aware) defaults as the initial composition, not the
+    old hardcoded literals (TASK-927)."""
+    from tldw_chatbook.config import (
+        get_chachanotes_db_path,
+        get_prompts_db_path,
+        get_media_db_path,
+    )
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        chachanotes_input = window.query_one("#config-db-chachanotes-path", Input)
+        prompts_input = window.query_one("#config-db-prompts-path", Input)
+        media_input = window.query_one("#config-db-media-path", Input)
+
+        # Dirty the fields first, as a user editing them would.
+        chachanotes_input.value = "/tmp/not-the-real-path.db"
+        prompts_input.value = "/tmp/not-the-real-path-2.db"
+        media_input.value = "/tmp/not-the-real-path-3.db"
+
+        await window._reset_database_config_form()
+
+        assert chachanotes_input.value == str(get_chachanotes_db_path())
+        assert prompts_input.value == str(get_prompts_db_path())
+        assert media_input.value == str(get_media_db_path())
+        assert (
+            chachanotes_input.value
+            != "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"
+        )
+        assert prompts_input.value != "~/.local/share/tldw_cli/tldw_cli_prompts.db"
+        assert media_input.value != "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
+
+
+@pytest.mark.asyncio
+async def test_resolved_db_path_display_preserves_an_explicit_custom_override(
+    monkeypatch, temp_config_path
+):
+    """Fixing the wrong-default display must not break a genuine
+    already-configured custom override: _resolved_db_path_display (used by
+    both _compose_database_config_form and _reset_database_config_form)
+    must show that override unchanged, not silently replace it with the
+    computed profile default (TASK-927).
+
+    The per-test TLDW_CONFIG_PATH env var set by the isolate_test_environment
+    autouse fixture always wins over a config-file-based override in this
+    test app (see test_restore_creates_missing_target_directory_for_a_custom_db_path
+    above for the same constraint), so the override is simulated the same
+    way that test does: shadowing _DB_PATH_RESOLVERS at the instance level.
+    This still exercises the exact code _resolved_db_path_display calls."""
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        custom_path = Path("/tmp/a-real-custom-chachanotes-override.db")
+        window._DB_PATH_RESOLVERS = dict(window._DB_PATH_RESOLVERS)
+        window._DB_PATH_RESOLVERS["chachanotes"] = lambda: custom_path
+
+        assert window._resolved_db_path_display("chachanotes") == str(custom_path)
+
+
+@pytest.mark.asyncio
+async def test_reset_discards_a_configured_custom_override_while_compose_reflects_it(
+    monkeypatch, temp_config_path
+):
+    """Coordinator follow-up (TASK-927): before this fix, Reset called the
+    same override-aware _resolved_db_path_display as Compose, so for a user
+    who had genuinely customized a database path -- the one case someone
+    actually reaches for the "Reset" button -- clicking it did nothing at
+    all. Reset must discard the override and restore the pure
+    profile-aware default; Compose must keep reflecting the override (what
+    the app will actually use). The two must differ whenever an override
+    is configured.
+
+    A real override is simulated by monkeypatching config.get_cli_setting
+    itself (special-cased to the one key under test, delegating to the
+    real implementation otherwise) rather than the config file, because the
+    per-test TLDW_CONFIG_PATH env var always wins over a config-file-based
+    override in this test app (see
+    test_resolved_db_path_display_preserves_an_explicit_custom_override
+    above for the same constraint). get_chachanotes_db_path's internal call
+    to get_cli_setting resolves via config.py's own module globals at call
+    time, so this reaches the real resolver logic -- unlike shadowing
+    _DB_PATH_RESOLVERS, which would replace that logic instead of
+    exercising it."""
+    import tldw_chatbook.config as config_module
+
+    custom_override = "/tmp/a-genuinely-custom-chachanotes-override-927.db"
+    real_get_cli_setting = config_module.get_cli_setting
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section == "database" and key == "chachanotes_db_path":
+            return custom_override
+        return real_get_cli_setting(section, key, default)
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+
+        # NOTE: previously computed as
+        # ``str(Path(custom_override).expanduser().resolve())``. The
+        # private-storage-boundary rework (dev, ADR-029) made custom-path
+        # resolution deliberately lexical -- it preserves the user's
+        # spelling (e.g. an unresolved ``/tmp`` symlink) instead of
+        # following symlinks, so a later no-follow boundary owns link
+        # validation. Delegating to the real resolver (as
+        # ``expected_default`` below already does) keeps this test honest
+        # against that single source of truth instead of re-deriving a
+        # now-stale expectation.
+        expected_override = str(config_module.get_chachanotes_db_path())
+        expected_default = str(
+            config_module.get_chachanotes_db_path(ignore_override=True)
+        )
+        assert expected_override != expected_default, (
+            "test setup bug: override and default must differ to prove anything"
+        )
+
+        # Compose's mechanism: reflects the currently-effective (override) value.
+        compose_value = window._resolved_db_path_display("chachanotes")
+        assert compose_value == expected_override
+
+        # Reset's mechanism: discards the override, shows the pure default.
+        reset_value = window._resolved_db_path_display(
+            "chachanotes", ignore_override=True
+        )
+        assert reset_value == expected_default
+        assert reset_value != compose_value
+
+        # Exercise the real Reset code path end-to-end too, not just the
+        # helper: dirty the field the way a user's stale view would look,
+        # then confirm _reset_database_config_form() lands on the default,
+        # never the override.
+        chachanotes_input = window.query_one("#config-db-chachanotes-path", Input)
+        chachanotes_input.value = "/tmp/whatever-the-user-was-looking-at.db"
+        await window._reset_database_config_form()
+        assert chachanotes_input.value == expected_default
+        assert chachanotes_input.value != expected_override
+
+
+def test_compose_and_reset_database_config_form_reuse_the_resolver_helper():
+    """Source-scan guard: both functions must go through
+    _resolved_db_path_display (and therefore _DB_PATH_RESOLVERS) rather than
+    a hardcoded literal or some second, parallel mechanism (TASK-927).
+    Reset must specifically pass ignore_override=True so it discards a
+    configured custom override instead of reflecting it back unchanged
+    (TASK-927 follow-up)."""
+    import inspect
+
+    compose_source = inspect.getsource(
+        ToolsSettingsWindow._compose_database_config_form
+    )
+    reset_source = inspect.getsource(ToolsSettingsWindow._reset_database_config_form)
+
+    disagreeing_literals = [
+        "tldw_chatbook_ChaChaNotes.db",
+        "tldw_cli_prompts.db",
+        "tldw_cli_media_v2.db",
+    ]
+    for source, label in ((compose_source, "compose"), (reset_source, "reset")):
+        assert "_resolved_db_path_display" in source, (
+            f"_{label}_database_config_form no longer reuses "
+            "_resolved_db_path_display"
+        )
+        for literal in disagreeing_literals:
+            assert literal not in source, (
+                f"stale hardcoded literal {literal!r} still present in "
+                f"{label} form"
+            )
+
+    # Strip comment-only lines first: a stale explanatory comment mentioning
+    # "ignore_override=True" (e.g. left behind by a careless revert) must
+    # not make this check pass when the actual call no longer passes it --
+    # confirmed to matter empirically while revert-checking this test.
+    def _code_lines(source: str) -> str:
+        return "\n".join(
+            line for line in source.splitlines() if not line.strip().startswith("#")
+        )
+
+    reset_code = _code_lines(reset_source)
+    compose_code = _code_lines(compose_source)
+
+    assert "ignore_override=True" in reset_code, (
+        "_reset_database_config_form must pass ignore_override=True so it "
+        "discards a configured custom override instead of reflecting it "
+        "back unchanged"
+    )
+    assert "ignore_override=True" not in compose_code, (
+        "_compose_database_config_form must keep reflecting the "
+        "currently-effective (override-aware) value, not the pure default"
+    )
+
+
+def _read_raw_effective_database_section() -> dict:
+    """Read the ``[database]`` table straight off the on-disk effective
+    config file, bypassing ``load_cli_config_and_ensure_existence``'s
+    deep-merge with ``DEFAULT_CONFIG_FROM_TOML``.
+
+    That merge means ``get_cli_setting("database", "prompts_db_path", None)``
+    can NEVER observe "key absent from the file" for a *_db_path key --
+    DEFAULT_CONFIG_FROM_TOML always defines a literal for it, so the merged
+    view always has a value. Reading the raw file is the only way to prove
+    Save genuinely did or did not write/remove a key on disk (TASK-927
+    follow-up)."""
+    import tomllib
+
+    effective_path = tldw_chatbook.config._get_effective_config_path()
+    if not effective_path.exists():
+        return {}
+    with open(effective_path, "rb") as f:
+        return tomllib.load(f).get("database", {})
+
+
+@pytest.mark.asyncio
+async def test_save_database_config_form_without_editing_does_not_pin_an_override(
+    monkeypatch, temp_config_path
+):
+    """_compose_database_config_form shows the fully resolved, profile-aware
+    path (TASK-927), so an untouched Input already looks like a custom
+    path. If Save always wrote it verbatim, merely opening Settings and
+    pressing Save -- without editing anything -- would permanently pin the
+    current profile's resolved path as an explicit override, silently
+    reintroducing the profile-isolation failure TASK-860 fixed, from the
+    opposite direction (TASK-927 follow-up)."""
+    from tldw_chatbook.config import (
+        get_chachanotes_db_path,
+        get_prompts_db_path,
+        get_media_db_path,
+    )
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        await window._save_database_config_form()
+
+        assert not _notify_calls_with_severity(window.app_instance.notify, "error"), (
+            window.app_instance.notify.call_args_list
+        )
+
+        raw_database_section = _read_raw_effective_database_section()
+        for key in ("chachanotes_db_path", "prompts_db_path", "media_db_path"):
+            assert key not in raw_database_section, (
+                f"no-edit Save must not write a {key} override to the config "
+                f"file (raw section: {raw_database_section})"
+            )
+
+        # The resolver landing on the profile-aware default is what
+        # actually matters -- not merely "no key was written".
+        assert get_chachanotes_db_path() == get_chachanotes_db_path(
+            ignore_override=True
+        )
+        assert get_prompts_db_path() == get_prompts_db_path(ignore_override=True)
+        assert get_media_db_path() == get_media_db_path(ignore_override=True)
+
+
+@pytest.mark.asyncio
+async def test_reset_then_save_discards_a_previously_configured_override(
+    monkeypatch, temp_config_path, tmp_path
+):
+    """Pressing Reset then Save must actually discard a previously
+    configured custom override, not silently re-pin the resolved default
+    as a brand-new override (TASK-927 follow-up). Uses the real
+    save_setting_to_cli_config/get_cli_setting round trip (not a
+    _DB_PATH_RESOLVERS shadow) because both the write under test and the
+    read-back here go through the same TLDW_CONFIG_PATH-controlled
+    effective config path -- unlike the compose-time config_dict seeding
+    in mount_settings_window, this is not shadowed by that env var."""
+    from tldw_chatbook.config import (
+        save_setting_to_cli_config,
+        get_chachanotes_db_path,
+    )
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        custom_override = str(tmp_path / "genuinely-custom-chachanotes-927.db")
+        assert save_setting_to_cli_config(
+            "database", "chachanotes_db_path", custom_override
+        )
+        assert get_chachanotes_db_path() == Path(custom_override).expanduser().resolve()
+        assert (
+            _read_raw_effective_database_section().get("chachanotes_db_path")
+            == custom_override
+        ), "test setup bug: override was not actually written to disk"
+
+        await window._reset_database_config_form()
+        await window._save_database_config_form()
+
+        assert not _notify_calls_with_severity(window.app_instance.notify, "error"), (
+            window.app_instance.notify.call_args_list
+        )
+        assert (
+            "chachanotes_db_path" not in _read_raw_effective_database_section()
+        ), (
+            "Reset then Save must clear the previously configured override, "
+            "not reinstate it"
+        )
+        assert get_chachanotes_db_path() == get_chachanotes_db_path(
+            ignore_override=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_save_database_config_form_persists_a_genuine_custom_path(
+    monkeypatch, temp_config_path, tmp_path
+):
+    """A real, deliberately different path entered by the user must still
+    be persisted as an explicit override -- the no-edit-Save fix must not
+    become over-eager and swallow legitimate customization (TASK-927
+    follow-up)."""
+    from tldw_chatbook.config import get_prompts_db_path
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        custom_path = tmp_path / "a-genuinely-custom-prompts-927.db"
+        prompts_input = window.query_one("#config-db-prompts-path", Input)
+        prompts_input.value = str(custom_path)
+
+        await window._save_database_config_form()
+
+        assert not _notify_calls_with_severity(window.app_instance.notify, "error"), (
+            window.app_instance.notify.call_args_list
+        )
+        stored = _read_raw_effective_database_section().get("prompts_db_path")
+        assert stored == str(custom_path), (
+            "a genuine custom path must be persisted verbatim on disk, got "
+            f"{stored!r}"
+        )
+        assert get_prompts_db_path() == custom_path.expanduser().resolve()
+
+
+@pytest.mark.asyncio
+async def test_save_without_editing_then_switching_profile_still_moves_resolved_path(
+    monkeypatch, temp_config_path
+):
+    """The assertion that actually captures why the bug matters. A fix that
+    merely avoids writing an override-shaped key, but still writes
+    *something* that happens to pin the current profile's resolved path,
+    would pass a narrower 'no key written' check yet still break profile
+    switching. Prove the resolved prompts path genuinely moves when the
+    profile changes, after a no-edit Save (TASK-927 follow-up)."""
+    from tldw_chatbook.config import (
+        save_setting_to_cli_config,
+        get_prompts_db_path,
+        get_user_folder_name,
+    )
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        original_profile = get_user_folder_name()
+        original_path = get_prompts_db_path()
+        assert original_path.parent.name == original_profile
+
+        await window._save_database_config_form()
+        assert not _notify_calls_with_severity(window.app_instance.notify, "error"), (
+            window.app_instance.notify.call_args_list
+        )
+
+        assert save_setting_to_cli_config(
+            "general", "users_name", "second_profile_927"
+        )
+        assert get_user_folder_name() == "second_profile_927"
+        assert get_user_folder_name() != original_profile
+
+        new_path = get_prompts_db_path()
+        assert new_path != original_path, (
+            "switching profile after a no-edit Save must still move the "
+            "resolved prompts db path -- an override was left pinned"
+        )
+        assert new_path.parent.name == "second_profile_927"

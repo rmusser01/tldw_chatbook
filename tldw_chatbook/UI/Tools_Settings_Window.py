@@ -44,6 +44,7 @@ from textual import on
 from tldw_chatbook.config import (
     load_cli_config_and_ensure_existence,
     save_setting_to_cli_config,
+    delete_settings_from_cli_config,
     replace_cli_config,
     export_cli_config_snapshot,
     API_MODELS_BY_PROVIDER,
@@ -1717,24 +1718,20 @@ class ToolsSettingsWindow(Container):
         yield Container(
             Label("ChaChaNotes Database Path:", classes="form-label"),
             Input(
-                value=db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                ),
+                # Resolved through _DB_PATH_RESOLVERS -- the same
+                # profile-aware resolver the vacuum/backup/check workers
+                # use -- not a hardcoded literal (TASK-927).
+                value=self._resolved_db_path_display("chachanotes"),
                 id="config-db-chachanotes-path",
             ),
             Label("Prompts Database Path:", classes="form-label"),
             Input(
-                value=db_config.get(
-                    "prompts_db_path", "~/.local/share/tldw_cli/tldw_cli_prompts.db"
-                ),
+                value=self._resolved_db_path_display("prompts"),
                 id="config-db-prompts-path",
             ),
             Label("Media Database Path:", classes="form-label"),
             Input(
-                value=db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-                ),
+                value=self._resolved_db_path_display("media"),
                 id="config-db-media-path",
             ),
             Label("User Database Base Directory:", classes="form-label"),
@@ -4746,23 +4743,72 @@ Thank you for using tldw-chatbook! 🎉
                 f"Error resetting API config: {e}", severity="error"
             )
 
+    @staticmethod
+    def _db_paths_equivalent(a: str, b: str) -> bool:
+        """True when two path strings resolve to the same location.
+
+        Compares raw strings first, then falls back to an
+        expanduser+resolve-normalised comparison so a ``~``-form or a
+        non-normalised-but-equivalent path is still recognised as
+        "unchanged" (TASK-927 follow-up: see ``_save_db_path_field``).
+        """
+        if a == b:
+            return True
+        try:
+            return Path(a).expanduser().resolve() == Path(b).expanduser().resolve()
+        except Exception:
+            return False
+
+    def _save_db_path_field(self, *, input_id: str, db_name: str, key: str) -> None:
+        """Persist one database-path Input as an override only if it truly is one.
+
+        ``_compose_database_config_form`` deliberately displays the fully
+        resolved, profile-aware path (TASK-927) so the form always shows
+        what the app will actually use. But that means an *untouched*
+        Input already contains a value that looks like a custom path --
+        if Save always wrote it verbatim, merely opening Settings and
+        pressing Save (or pressing Reset then Save) would silently pin the
+        current profile's resolved path as a permanent override, breaking
+        profile switching the same way TASK-860 did, just from the
+        opposite direction (TASK-927 follow-up). So Save must recognise
+        "the Input still matches the profile-aware default" and clear any
+        stored override instead of writing one.
+        """
+        value = self.query_one(f"#{input_id}", Input).value
+        default_value = self._resolved_db_path_display(db_name, ignore_override=True)
+
+        if self._db_paths_equivalent(value, default_value):
+            # Unmodified (or Reset-then-Save): discard any previously
+            # configured override rather than pinning the currently
+            # resolved path. delete_settings_from_cli_config is a no-op
+            # (returns True) when the key was never present.
+            if not delete_settings_from_cli_config("database", [key]):
+                logger.error(
+                    "Failed to clear stale {} override while saving database config",
+                    key,
+                )
+            return
+
+        # A genuine custom path -- persist it as an explicit override.
+        save_setting_to_cli_config("database", key, value)
+
     async def _save_database_config_form(self) -> None:
         """Save database configuration form."""
         try:
-            save_setting_to_cli_config(
-                "database",
-                "chachanotes_db_path",
-                self.query_one("#config-db-chachanotes-path", Input).value,
+            self._save_db_path_field(
+                input_id="config-db-chachanotes-path",
+                db_name="chachanotes",
+                key="chachanotes_db_path",
             )
-            save_setting_to_cli_config(
-                "database",
-                "prompts_db_path",
-                self.query_one("#config-db-prompts-path", Input).value,
+            self._save_db_path_field(
+                input_id="config-db-prompts-path",
+                db_name="prompts",
+                key="prompts_db_path",
             )
-            save_setting_to_cli_config(
-                "database",
-                "media_db_path",
-                self.query_one("#config-db-media-path", Input).value,
+            self._save_db_path_field(
+                input_id="config-db-media-path",
+                db_name="media",
+                key="media_db_path",
             )
             save_setting_to_cli_config(
                 "database",
@@ -4801,15 +4847,23 @@ Thank you for using tldw-chatbook! 🎉
     async def _reset_database_config_form(self) -> None:
         """Reset database configuration form to defaults."""
         try:
+            # Resolved through the same _DB_PATH_RESOLVERS the vacuum/
+            # backup/check workers use, not hardcoded literals (TASK-927).
+            # ignore_override=True discards any explicitly-configured
+            # custom path so "Reset" restores the pure profile-aware
+            # default, matching what Reset has always meant -- see
+            # _resolved_db_path_display (TASK-927 follow-up).
             self.query_one(
                 "#config-db-chachanotes-path", Input
-            ).value = "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"
+            ).value = self._resolved_db_path_display(
+                "chachanotes", ignore_override=True
+            )
             self.query_one(
                 "#config-db-prompts-path", Input
-            ).value = "~/.local/share/tldw_cli/tldw_cli_prompts.db"
+            ).value = self._resolved_db_path_display("prompts", ignore_override=True)
             self.query_one(
                 "#config-db-media-path", Input
-            ).value = "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
+            ).value = self._resolved_db_path_display("media", ignore_override=True)
             self.query_one(
                 "#config-db-base-dir", Input
             ).value = "~/.local/share/tldw_cli/"
@@ -5761,10 +5815,19 @@ Thank you for using tldw-chatbook! 🎉
         try:
             db_config = self.config_data.get("database", {})
             vacuumed = []
+            unresolved = []
 
             for db_name, display_name, _backup_stem in SETTINGS_DATABASES:
                 db_path = self._get_database_path(db_name, db_config)
-                if not db_path or not db_path.exists():
+                if db_path is None:
+                    unresolved.append(display_name)
+                    self.app.call_from_thread(
+                        self.app_instance.notify,
+                        f"Cannot vacuum {display_name} database: no resolvable path is configured for it",
+                        severity="error",
+                    )
+                    continue
+                if not db_path.exists():
                     continue
                 conn = connect_private_sqlite("settings.vacuum", db_path)
                 try:
@@ -5775,11 +5838,18 @@ Thank you for using tldw-chatbook! 🎉
                 vacuumed.append(display_name)
 
             # Update UI from worker thread
-            self.app.call_from_thread(
-                self.app_instance.notify,
-                f"Successfully vacuumed databases: {', '.join(vacuumed)}",
-                severity="success",
-            )
+            if vacuumed:
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"Successfully vacuumed databases: {', '.join(vacuumed)}",
+                    severity="success",
+                )
+            elif not unresolved:
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    "No databases found to vacuum",
+                    severity="warning",
+                )
 
             # Update database sizes
             self.app.call_from_thread(self._update_database_sizes)
@@ -5996,7 +6066,11 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            backup_root = Path.home() / ".local" / "share" / "tldw_cli" / "backups"
+            # Profile-scoped, matching _backup_single_worker/_restore_single_database
+            # and every export directory in this file (TASK-927 follow-up: the
+            # legacy bulk backup was the one remaining backup root that still
+            # used the flat, non-profile-aware literal).
+            backup_root = get_user_data_dir() / "backups"
             secure_private_directory(
                 backup_root,
                 create=True,
@@ -6009,18 +6083,31 @@ Thank you for using tldw-chatbook! 🎉
                 )
             )
 
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
+            # Resolved through the same _DB_PATH_RESOLVERS mechanism the
+            # vacuum/integrity workers use, not hardcoded literals
+            # (TASK-927 follow-up).
+            chachanotes_path = self._get_database_path("chachanotes", db_config)
             prompts_path = get_prompts_db_path()
-            media_path = Path(
-                db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
+            media_path = self._get_database_path("media", db_config)
+
+            # Unlike vacuum/integrity (which silently skip a database that
+            # can't be resolved), a *backup* must never start copying a
+            # partial set while claiming success -- an unresolvable
+            # database here fails the whole legacy backup phase loudly
+            # instead (falls through to the generic "Database backup
+            # failed." notification in _backup_databases()).
+            unresolved = [
+                name
+                for name, path in (
+                    ("ChaChaNotes", chachanotes_path),
+                    ("Media", media_path),
                 )
-            ).expanduser()
+                if path is None
+            ]
+            if unresolved:
+                raise RuntimeError(
+                    f"unresolvable database paths: {', '.join(unresolved)}"
+                )
 
             candidates = (
                 (
@@ -6158,7 +6245,12 @@ Thank you for using tldw-chatbook! 🎉
 
             for db_name, display_name, _backup_stem in SETTINGS_DATABASES:
                 db_path = self._get_database_path(db_name, db_config)
-                if not db_path or not db_path.exists():
+                if db_path is None:
+                    results.append(
+                        f"{display_name}: UNRESOLVED (no resolvable path configured)"
+                    )
+                    continue
+                if not db_path.exists():
                     continue
                 conn = connect_private_sqlite(
                     "settings.integrity",
@@ -6173,9 +6265,11 @@ Thank you for using tldw-chatbook! 🎉
                 results.append(f"{display_name}: {'OK' if result else 'FAILED'}")
 
             # Report results
-            all_ok = all("OK" in r for r in results)
+            all_ok = bool(results) and all(r.endswith("OK") for r in results)
             severity = "success" if all_ok else "error"
-            message = "Integrity check results:\n" + "\n".join(results)
+            message = "Integrity check results:\n" + "\n".join(results) if results else (
+                "No databases found to check"
+            )
 
             self.app.call_from_thread(
                 self.app_instance.notify, message, severity=severity
@@ -6223,7 +6317,16 @@ Thank you for using tldw-chatbook! 🎉
 
             # Export from ChaChaNotes database
             chachanotes_path = self._get_database_path("chachanotes", db_config)
-            if chachanotes_path and chachanotes_path.exists():
+            if chachanotes_path is None:
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    "Cannot export conversations: no resolvable path is configured "
+                    "for the ChaChaNotes database",
+                    severity="error",
+                )
+                return
+
+            if chachanotes_path.exists():
                 db = CharactersRAGDB(str(chachanotes_path), "export_operation")
                 conversations = db.list_all_active_conversations(limit=10000)
 
@@ -6706,16 +6809,48 @@ Thank you for using tldw-chatbook! 🎉
                 return
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            pre_restore_backup = (
-                db_path.parent / f"{db_path.stem}_pre_restore_{timestamp}.db"
-            )
-            restore_private_sqlite(
-                "settings.restore",
-                "settings.pre_restore_backup",
-                backup_path,
-                db_path,
-                pre_restore_backup,
-            )
+
+            if not db_path.exists():
+                # A configured custom database path is a legitimate restore
+                # target even when it has never been opened before --
+                # DB/base_db.py creates a database's parent directory as a
+                # side effect of opening it, so restore must behave
+                # consistently rather than refusing outright (TASK-899
+                # finding 4). There is no live database here to quiesce or
+                # snapshot, so this is a plain copy into a fresh private
+                # target rather than a guarded live restore.
+                try:
+                    db_path.parent.mkdir(parents=True, exist_ok=True)
+                except OSError as e:
+                    logger.error(
+                        "Could not create restore target directory {} for {}: {}",
+                        db_path.parent,
+                        db_name,
+                        e,
+                    )
+                    self.app.call_from_thread(
+                        self.app_instance.notify,
+                        f"Cannot restore {db_name} database: could not create "
+                        f"target directory {db_path.parent}: {e}",
+                        severity="error",
+                    )
+                    return
+                copy_private_sqlite(
+                    "settings.restore",
+                    backup_path,
+                    db_path,
+                )
+            else:
+                pre_restore_backup = (
+                    db_path.parent / f"{db_path.stem}_pre_restore_{timestamp}.db"
+                )
+                restore_private_sqlite(
+                    "settings.restore",
+                    "settings.pre_restore_backup",
+                    backup_path,
+                    db_path,
+                    pre_restore_backup,
+                )
 
             self.app.call_from_thread(
                 self.app_instance.notify,
@@ -6846,6 +6981,46 @@ Thank you for using tldw-chatbook! 🎉
         """Return canonical paths using the Chatbook importer's key contract."""
 
         return get_chatbook_database_paths()
+
+    def _resolved_db_path_display(
+        self, db_name: str, *, ignore_override: bool = False
+    ) -> str:
+        """Return the display value for a database-path config Input.
+
+        This is the *actual resolved* path -- the same one
+        ``_DB_PATH_RESOLVERS`` (and therefore the vacuum/backup/check
+        workers) would use -- not a hardcoded literal (TASK-927).
+
+        By default (``ignore_override=False``, used by
+        ``_compose_database_config_form``) an explicitly-configured custom
+        override is returned unchanged, exactly matching what the app will
+        actually use.
+
+        With ``ignore_override=True`` (used by
+        ``_reset_database_config_form``) this instead returns the pure
+        profile-aware default, discarding any configured override --
+        restoring what "Reset" has always meant. The resolvers themselves
+        (e.g. ``get_chachanotes_db_path(ignore_override=True)``) already
+        compute this in their own ``else`` branch, so this reuses that
+        single source of truth for the per-database filename rather than
+        duplicating it here (TASK-927 follow-up).
+        """
+        resolver = self._DB_PATH_RESOLVERS.get(db_name)
+        if resolver is None:
+            return ""
+        try:
+            db_path = (
+                resolver(ignore_override=True) if ignore_override else resolver()
+            )
+        except Exception as e:
+            logger.error(
+                "Could not resolve {}display path for {} database: {}",
+                "default " if ignore_override else "",
+                db_name,
+                e,
+            )
+            return ""
+        return str(db_path)
 
     def _validate_maintenance_path(self, path: Path, *, label: str) -> Optional[Path]:
         """Validate a path immediately before a backup/restore worker passes
