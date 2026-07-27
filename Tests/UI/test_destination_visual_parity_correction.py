@@ -1895,7 +1895,7 @@ SOURCE_PREP_LOADING_CONTRACTS = [
     (
         "artifacts",
         artifacts_screen_module.ArtifactsScreen,
-        "_refresh_latest_chatbook_context",
+        "_start_chatbook_refresh",
         "#artifacts-loading-state",
         SOURCE_PREP_WORKBENCHES["artifacts"],
         "#artifacts-detail-pane",
@@ -1938,7 +1938,9 @@ async def test_source_prep_loading_states_preserve_workbench_geometry(
     contract,
     loading_container,
 ):
-    monkeypatch.setattr(screen_cls, refresh_method, lambda self: None)
+    monkeypatch.setattr(
+        screen_cls, refresh_method, lambda self, *_a, **_k: None
+    )
     app = _build_test_app()
     host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
@@ -2130,7 +2132,9 @@ async def test_operational_loading_states_preserve_workbench_geometry(
 
         monkeypatch.setattr(screen_cls, refresh_method, hold_initial_load)
     else:
-        monkeypatch.setattr(screen_cls, refresh_method, lambda self: None)
+        monkeypatch.setattr(
+            screen_cls, refresh_method, lambda self, *_a, **_k: None
+        )
     app = _build_test_app()
     host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:

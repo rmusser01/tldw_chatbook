@@ -42,7 +42,7 @@ Do not fix this by loosening the guard's symlink rejection wholesale — rejecti
 <!-- AC:BEGIN -->
 - [x] #1 A SQLite database can be opened under the system temp directory on macOS
 - [x] #2 The guard still rejects a symlinked component that is not part of the platform's own temp root
-- [ ] #3 `Tests/UI/test_destination_visual_parity_correction.py`, `Tests/UI/test_watchlists_destination_shell.py` and `Tests/Watchlists` all pass on macOS from a clean `dev` checkout — **NOT MET, see Implementation Notes**: two of 104 in `test_destination_visual_parity_correction.py` still fail on unrelated, pre-existing test/app drift that this bug was masking
+- [x] #3 `Tests/UI/test_destination_visual_parity_correction.py`, `Tests/UI/test_watchlists_destination_shell.py` and `Tests/Watchlists` all pass on macOS from a clean `dev` checkout — **NOT MET, see Implementation Notes**: two of 104 in `test_destination_visual_parity_correction.py` still fail on unrelated, pre-existing test/app drift that this bug was masking
 - [x] #4 A test covers the macOS `/var` → `/private/var` case specifically, and fails against the current code
 - [x] #5 `Tests/UI/test_screen_navigation.py` no longer assigns the read-only `current_runtime_backend` property, and is fixed only alongside #1 so it does not unmask this
 - [x] #6 The security intent of the guard is stated in its docstring, so the next person does not weaken it to make a test pass
@@ -199,3 +199,12 @@ untouched rather than guessed at:
 - `Tests/UI/test_screen_navigation.py` — seed `_runtime_policy_projection_snapshot`
   instead of assigning the read-only `current_runtime_backend` property.
 <!-- SECTION:NOTES:END -->
+
+### AC #3 closed by the controller
+
+The implementer left AC #3 unchecked with two survivors in `test_destination_visual_parity_correction.py`, correctly identifying them as pre-existing drift this bug had been masking rather than anything the guard fix caused. Both were test-side and small:
+
+- The parametrize patched `ArtifactsScreen._refresh_latest_chatbook_context`, which no longer exists — the screen renamed it to `_start_chatbook_refresh`.
+- Both stub sites used `lambda self: None`, but `_refresh_latest_console_context(self, has_recent_work)` takes an argument. Widened to `lambda self, *_a, **_k: None` so the stub tolerates whichever method the parametrize names.
+
+Suite now 104 passed, 0 failed.
