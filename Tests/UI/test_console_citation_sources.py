@@ -237,6 +237,7 @@ def _bare_screen(
     screen._console_citation_counts = {}
     screen._console_citation_resolved_signatures = {}
     screen._console_citation_input_signature = None
+    screen._console_citation_repository_token = None
     screen._console_citation_request_generation = 0
     screen._last_native_transcript_refresh_key = None
     screen.app_instance = SimpleNamespace(
@@ -338,7 +339,7 @@ async def test_discovery_requires_active_summary_and_repository_verification(
     assert screen._console_citation_counts == {"assistant": 0}
 
 
-def test_identical_sync_signature_dispatches_only_one_exclusive_worker() -> None:
+def test_stable_repository_and_identical_signature_dispatch_only_one_worker() -> None:
     repository = _FakeRepository(_active_result(_trace()))
     messages = [_message("assistant", persisted_message_id="persisted")]
     screen = _bare_screen(messages, repository)
@@ -529,6 +530,9 @@ def _seed_resolved_counts(
 ) -> None:
     signature = screen._console_citation_signature(messages)
     screen._console_citation_input_signature = signature
+    screen._console_citation_repository_token = (
+        screen._console_citation_repository_readiness()[0]
+    )
     screen._console_citation_counts = dict(counts)
     screen._console_citation_resolved_signatures = {
         item[0]: item for item in signature[1]
@@ -686,3 +690,93 @@ async def test_existing_focused_sources_row_stays_mounted_for_unrelated_new_entr
 
     assert len(dispatched) == 1
     dispatched[0].close()
+
+
+@pytest.mark.asyncio
+async def test_inflight_result_is_discarded_after_repository_becomes_missing() -> None:
+    app_db = object()
+    repository = _FakeRepository(_active_result(_trace()), db=app_db)
+    messages = [_message("assistant", persisted_message_id="persisted")]
+    screen = _bare_screen(messages, repository, app_db=app_db)
+    dispatched: list[object] = []
+    screen.run_worker = lambda coroutine, **_kwargs: dispatched.append(coroutine)
+
+    screen._sync_console_citation_count_discovery(messages)
+    assert len(dispatched) == 1
+
+    screen.app_instance.citation_trace_repository = None
+    await dispatched[0]
+
+    assert screen._console_citation_counts == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repository_change", ["db-mismatch", "replacement"])
+async def test_inflight_result_is_discarded_after_repository_identity_change(
+    repository_change: str,
+) -> None:
+    app_db = object()
+    repository = _FakeRepository(_active_result(_trace()), db=app_db)
+    messages = [_message("assistant", persisted_message_id="persisted")]
+    screen = _bare_screen(messages, repository, app_db=app_db)
+    dispatched: list[object] = []
+    screen.run_worker = lambda coroutine, **_kwargs: dispatched.append(coroutine)
+
+    screen._sync_console_citation_count_discovery(messages)
+    assert len(dispatched) == 1
+
+    if repository_change == "db-mismatch":
+        screen.app_instance.chachanotes_db = object()
+    else:
+        screen.app_instance.citation_trace_repository = _FakeRepository(
+            _active_result(_trace()),
+            db=app_db,
+        )
+    await dispatched[0]
+
+    assert screen._console_citation_counts == {}
+
+
+@pytest.mark.asyncio
+async def test_same_transcript_discovers_when_missing_repository_later_appears() -> None:
+    app_db = object()
+    messages = [_message("assistant", persisted_message_id="persisted")]
+    screen = _bare_screen(messages, None, app_db=app_db)
+    dispatched: list[object] = []
+    screen.run_worker = lambda coroutine, **_kwargs: dispatched.append(coroutine)
+
+    screen._sync_console_citation_count_discovery(messages)
+    assert dispatched == []
+
+    repository = _FakeRepository(_active_result(_trace()), db=app_db)
+    screen.app_instance.citation_trace_repository = repository
+    screen._sync_console_citation_count_discovery(messages)
+
+    assert len(dispatched) == 1
+    await dispatched[0]
+    assert repository.calls == [("persisted", "Answer [S1].")]
+    assert screen._console_citation_counts == {"assistant": 2}
+
+
+@pytest.mark.asyncio
+async def test_valid_repository_replacement_invalidates_and_requeries_same_transcript() -> None:
+    app_db = object()
+    first_repository = _FakeRepository(_active_result(_trace()), db=app_db)
+    messages = [_message("assistant", persisted_message_id="persisted")]
+    screen = _bare_screen(messages, first_repository, app_db=app_db)
+
+    await _dispatch_and_run(screen, messages)
+    assert screen._console_citation_counts == {"assistant": 2}
+
+    replacement = _FakeRepository(_active_result(_trace()), db=app_db)
+    screen.app_instance.citation_trace_repository = replacement
+    dispatched: list[object] = []
+    screen.run_worker = lambda coroutine, **_kwargs: dispatched.append(coroutine)
+    screen._sync_console_citation_count_discovery(messages)
+
+    assert screen._console_citation_counts == {}
+    assert screen._console_citation_resolved_signatures == {}
+    assert len(dispatched) == 1
+    await dispatched[0]
+    assert replacement.calls == [("persisted", "Answer [S1].")]
+    assert screen._console_citation_counts == {"assistant": 2}

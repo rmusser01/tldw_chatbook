@@ -2153,6 +2153,9 @@ class ChatScreen(BaseAppScreen):
         self._console_citation_resolved_signatures: dict[
             str, tuple[str, str, str, str]
         ] = {}
+        self._console_citation_repository_token: tuple[str, int, int, int] | None = (
+            None
+        )
         self._console_citation_input_signature: (
             tuple[str | None, tuple[tuple[str, str, str, str], ...]] | None
         ) = None
@@ -11029,27 +11032,70 @@ class ChatScreen(BaseAppScreen):
             )
         return (store.active_session_id, tuple(eligible))
 
-    def _console_citation_repository(self) -> Any | None:
-        """Return the active local repository, failing closed on DB mismatch."""
+    def _console_citation_repository_readiness(
+        self,
+    ) -> tuple[tuple[str, int, int, int], Any | None]:
+        """Return a bounded repository identity token and a valid repository."""
         repository = getattr(
             self.app_instance,
             "citation_trace_repository",
             None,
         )
         if repository is None:
-            return None
+            return (("missing", 0, 0, 0), None)
         app_db = getattr(self.app_instance, "chachanotes_db", None)
-        if (
-            app_db is not None
-            and getattr(repository, "db", None) is not app_db
-        ):
-            return None
-        return repository
+        repository_db = getattr(repository, "db", None)
+        if repository_db is not app_db:
+            return (
+                (
+                    "mismatch",
+                    id(repository),
+                    id(repository_db),
+                    id(app_db),
+                ),
+                None,
+            )
+        return (
+            (
+                "valid",
+                id(repository),
+                id(repository_db),
+                id(app_db),
+            ),
+            repository,
+        )
 
     def _sync_console_citation_count_discovery(self, messages: list[Any]) -> None:
         """Dispatch one count lookup worker when eligible inputs change."""
         signature = self._console_citation_signature(messages)
-        repository = self._console_citation_repository()
+        repository_token, repository = (
+            self._console_citation_repository_readiness()
+        )
+        repository_changed = (
+            repository_token != self._console_citation_repository_token
+        )
+        if repository_changed:
+            self._console_citation_repository_token = repository_token
+            self._console_citation_input_signature = signature
+            self._console_citation_request_generation += 1
+            self._console_citation_counts = {}
+            self._console_citation_resolved_signatures = {}
+            if repository is None or not signature[1]:
+                return
+            unresolved = signature[1]
+            generation = self._console_citation_request_generation
+            self.run_worker(
+                self._discover_console_citation_counts(
+                    repository,
+                    signature,
+                    generation,
+                    unresolved,
+                    repository_token,
+                ),
+                exclusive=True,
+                group="console-citation-counts",
+            )
+            return
         if repository is None:
             if signature != self._console_citation_input_signature:
                 self._console_citation_input_signature = signature
@@ -11101,6 +11147,7 @@ class ChatScreen(BaseAppScreen):
                 signature,
                 generation,
                 unresolved,
+                repository_token,
             ),
             exclusive=True,
             group="console-citation-counts",
@@ -11141,11 +11188,17 @@ class ChatScreen(BaseAppScreen):
         generation: int,
         counts: Mapping[str, int],
         eligible: tuple[tuple[str, str, str, str], ...] | None = None,
+        repository_token: tuple[str, int, int, int] | None = None,
     ) -> bool:
         """Apply count-only results when their full captured input is current."""
+        current_repository_token, current_repository = (
+            self._console_citation_repository_readiness()
+        )
         if (
             generation != self._console_citation_request_generation
             or signature != self._console_citation_input_signature
+            or current_repository is None
+            or repository_token != current_repository_token
             or signature
             != self._console_citation_signature(self._native_console_messages())
         ):
@@ -11168,8 +11221,15 @@ class ChatScreen(BaseAppScreen):
         signature: tuple[str | None, tuple[tuple[str, str, str, str], ...]],
         generation: int,
         eligible: tuple[tuple[str, str, str, str], ...] | None = None,
+        repository_token: tuple[str, int, int, int] | None = None,
     ) -> None:
         """Discover citation footer counts off-loop and refresh current rows."""
+        if repository_token is None:
+            repository_token, current_repository = (
+                self._console_citation_repository_readiness()
+            )
+            if current_repository is not repository:
+                return
         queried = signature[1] if eligible is None else eligible
         counts = await asyncio.to_thread(
             self._read_console_citation_counts,
@@ -11181,6 +11241,7 @@ class ChatScreen(BaseAppScreen):
             generation,
             counts,
             queried,
+            repository_token,
         ):
             return
         await self._sync_native_console_chat_ui()
