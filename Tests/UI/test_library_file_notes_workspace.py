@@ -408,6 +408,57 @@ async def test_failed_root_persistence_keeps_old_owner_log_and_service(
 
 
 @pytest.mark.asyncio
+async def test_false_root_persistence_keeps_old_owner_log_and_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_root = tmp_path / "old"
+    new_root = tmp_path / "new"
+    old_root.mkdir()
+    new_root.mkdir()
+    owner = FileNotesSessionOwner()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=old_root,
+        replica=replica,
+        session_owner=owner,
+        poll_interval=10,
+    )
+
+    monkeypatch.setattr(
+        workspace_module,
+        "save_setting_to_cli_config",
+        lambda *_args, **_kwargs: False,
+    )
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized,
+            "old workspace did not initialize",
+        )
+        old_service = workspace._service
+        old_binding = workspace._session_binding
+        assert old_service is not None
+        assert old_binding is not None
+        assert old_service.create_file("before.md", "before").status == "ok"
+
+        assert not await workspace.set_root(new_root)
+
+        assert workspace.root == old_root.resolve()
+        assert workspace._service is old_service
+        assert workspace._session_binding == old_binding
+        assert old_service.create_file("after.md", "after").status == "ok"
+        assert [
+            item.change.relative_path
+            for item in owner.snapshot(old_binding).changes
+        ] == ["before.md", "after.md"]
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_stale_candidate_scan_keeps_old_owner_log_and_service(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -920,12 +920,14 @@ class LibraryFileNotesWorkspace(Vertical):
             if not self._active or generation != self._root_generation:
                 return False
             if persist:
-                await asyncio.to_thread(
+                persisted = await asyncio.to_thread(
                     save_setting_to_cli_config,
                     "file_notes",
                     "root",
                     str(canonical),
                 )
+                if not persisted:
+                    return False
                 if not self._active or generation != self._root_generation:
                     return False
             if not self._commit_root_candidate(
