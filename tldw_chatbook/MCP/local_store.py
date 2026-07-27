@@ -8,9 +8,32 @@ from pathlib import Path
 from typing import Any, Mapping
 from uuid import uuid4
 
-from tldw_chatbook.config import DEFAULT_CONFIG_PATH
+_LOCAL_MCP_STORE_FILENAME = "local_mcp_store.json"
 
-DEFAULT_LOCAL_MCP_STORE_PATH = DEFAULT_CONFIG_PATH.parent / "local_mcp_store.json"
+
+def _default_local_mcp_store_path() -> Path:
+    """Return this store's path when constructed with no explicit argument.
+
+    Derives from ``config.get_user_data_dir()`` -- the same directory every
+    real construction site (``app.py``) already passes explicitly -- rather
+    than a stale, eagerly-computed module constant. Resolution happens
+    lazily, at call time, because ``get_user_data_dir()`` reads the active
+    profile/config: baking a value in at import time would freeze whichever
+    profile happened to be active the first time this module loaded, which
+    is exactly the kind of latent drift TASK-855 exists to close (see
+    ``MCP.unified_control_plane_service``'s ``permission_store``/
+    ``execution_log`` properties, which derive the permission store and
+    execution log paths from this store's own ``.path`` via
+    ``Path(store.path).with_name(...)`` -- a store built with no argument
+    anywhere would silently place both outside
+    ``Utils.sensitive_paths``' denylist coverage).
+
+    Returns:
+        ``get_user_data_dir() / "local_mcp_store.json"``.
+    """
+    from tldw_chatbook.config import get_user_data_dir
+
+    return get_user_data_dir() / _LOCAL_MCP_STORE_FILENAME
 
 _ENV_PLACEHOLDER_PATTERN = re.compile(
     r"^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$"
@@ -682,7 +705,7 @@ class LocalMCPStoreState:
 
 class LocalMCPStore:
     def __init__(self, path: str | Path | None = None) -> None:
-        self.path = Path(path or DEFAULT_LOCAL_MCP_STORE_PATH)
+        self.path = Path(path) if path else _default_local_mcp_store_path()
 
     def load(self) -> LocalMCPStoreState:
         payload = self._read_payload()

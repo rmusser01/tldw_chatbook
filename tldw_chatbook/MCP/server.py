@@ -136,8 +136,8 @@ class TldwMCPServer:
         """Initialize database connections."""
         try:
             from ..config import (
-                get_cli_setting,
                 get_chachanotes_db_path,
+                get_media_db_path,
                 CLI_APP_CLIENT_ID,
             )
             from ..DB.ChaChaNotes_DB import CharactersRAGDB
@@ -150,9 +150,15 @@ class TldwMCPServer:
                 db_path=get_chachanotes_db_path(), client_id=CLI_APP_CLIENT_ID
             )
 
-            # Initialize media database
-            media_db_path = get_cli_setting("database", "media_db", "media_library.db")
-            self.media_db = MediaDatabase(media_db_path)
+            # Initialize media database. Uses the same resolver the rest of
+            # the app opens the media DB through -- ``get_cli_setting("database",
+            # "media_db", ...)`` used to read a config key ("media_db") that
+            # was never declared anywhere; the real key is "media_db_path"
+            # and get_media_db_path() is its accessor (see TASK-854).
+            media_db_path = get_media_db_path()
+            self.media_db = MediaDatabase(
+                db_path=media_db_path, client_id=CLI_APP_CLIENT_ID
+            )
 
             # Initialize services
             self.notes_service = NotesInteropService(self.chachanotes_db)

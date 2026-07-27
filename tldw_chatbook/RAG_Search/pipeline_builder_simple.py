@@ -519,8 +519,10 @@ def load_pipelines_from_toml():
 
     _TOML_PIPELINES = {}
 
+    from tldw_chatbook.config import _get_effective_config_path
+
     # Check user config directory first
-    user_config_dir = Path.home() / ".config" / "tldw_cli"
+    user_config_dir = _get_effective_config_path().parent
     user_config_file = user_config_dir / "rag_pipelines.toml"
 
     # Fall back to default location

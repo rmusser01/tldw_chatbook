@@ -24,8 +24,15 @@ class EvalDBOperations:
     def __init__(self, db_path: Optional[Path] = None):
         """Initialize with database path."""
         if db_path is None:
-            # Use default evals database location
-            db_path = Path.home() / ".config" / "tldw_cli" / "evals.db"
+            # Single source of truth for where the Evals database lives --
+            # the same accessor Evals/eval_orchestrator.py's
+            # EvaluationOrchestrator delegates to for its own default
+            # (db_path=None) case, so this and the orchestrator always agree
+            # (TASK-858; the previous ``~/.config/tldw_cli/evals.db`` literal
+            # named a different, profile-unaware file the app never opens).
+            from ..config import get_evals_db_path
+
+            db_path = get_evals_db_path()
 
         self.db = EvalsDB(db_path)
 

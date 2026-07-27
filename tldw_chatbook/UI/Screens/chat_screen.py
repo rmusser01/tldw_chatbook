@@ -236,6 +236,7 @@ from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    _get_effective_config_path,
     coerce_bool_setting,
     coerce_int_setting,
     delete_settings_from_cli_config,
@@ -16270,7 +16271,7 @@ class ChatScreen(BaseAppScreen):
 
     def _load_sidebar_state(self) -> None:
         """Load sidebar state from config file."""
-        config_path = Path.home() / ".config" / "tldw_cli" / "ui_state.toml"
+        config_path = _get_effective_config_path().parent / "ui_state.toml"
 
         try:
             if config_path.exists():
@@ -16301,7 +16302,7 @@ class ChatScreen(BaseAppScreen):
 
     def _save_sidebar_state(self) -> None:
         """Save sidebar state to config file."""
-        config_path = Path.home() / ".config" / "tldw_cli" / "ui_state.toml"
+        config_path = _get_effective_config_path().parent / "ui_state.toml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:

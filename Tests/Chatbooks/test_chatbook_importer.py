@@ -302,6 +302,32 @@ Keywords: test, sample"""
         assert chatbook_importer.temp_dir.exists()
         assert chatbook_importer.conflict_resolver is not None
 
+    def test_temp_dir_derives_from_get_user_data_dir(
+        self, chatbook_importer, temp_db_paths
+    ):
+        """TASK-865: the extraction root must derive from
+        ``get_user_data_dir()`` -- not a ``Path.home()/".local"/"share"/
+        "tldw_cli"`` literal that omits the per-profile user-folder
+        segment. Before the fix, imports silently extracted outside the
+        per-user tree (a location a live reproduction confirmed already
+        existed on disk in production)."""
+        from tldw_chatbook.config import get_user_data_dir
+
+        assert chatbook_importer.temp_dir == get_user_data_dir() / "temp" / "imports"
+
+    def test_temp_dir_shares_a_parent_with_the_chatbook_creators_temp_root(
+        self, chatbook_importer
+    ):
+        """AC #3: the importer's extraction root and the creator's temp
+        root must derive to the same parent (``get_user_data_dir() /
+        "temp"``), not two different, disagreeing directories."""
+        from tldw_chatbook.Chatbooks.chatbook_creator import ChatbookCreator
+
+        creator = ChatbookCreator(db_paths={})
+
+        assert chatbook_importer.temp_dir.parent == creator.temp_dir.parent
+        assert chatbook_importer.temp_dir.parent.name == "temp"
+
     def test_preview_chatbook_valid(self, chatbook_importer, sample_chatbook_path):
         """Test previewing a valid chatbook."""
         manifest, error = chatbook_importer.preview_chatbook(sample_chatbook_path)

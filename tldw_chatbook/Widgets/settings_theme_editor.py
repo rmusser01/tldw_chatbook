@@ -63,7 +63,9 @@ class SettingsThemeEditor(Vertical):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.custom_themes_path = Path.home() / ".config" / "tldw_cli" / "themes"
+        from ..config import _get_effective_config_path
+
+        self.custom_themes_path = _get_effective_config_path().parent / "themes"
         self.custom_themes_path.mkdir(parents=True, exist_ok=True)
         self.color_inputs: dict[str, Input] = {}
         self.color_swatches: dict[str, Static] = {}

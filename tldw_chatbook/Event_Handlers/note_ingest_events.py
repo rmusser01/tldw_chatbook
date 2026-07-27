@@ -347,7 +347,9 @@ async def handle_ingest_notes_import_now_button_pressed(
         if import_as_templates:
             # Import as templates
             # Load existing templates
-            user_config_dir = Path.home() / ".config" / "tldw_cli"
+            from ..config import _get_effective_config_path
+
+            user_config_dir = _get_effective_config_path().parent
             user_templates_path = user_config_dir / "note_templates.json"
 
             # Create directory if needed

@@ -554,16 +554,25 @@ def make_trust_service(tmp_path):
         bound to the same on-disk `skills_dir`/`trust_dir`, so repeated calls
         simulate a fresh process re-reading persisted state.
     """
+    from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
     from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
     from tldw_chatbook.Skills_Interop.skill_trust_store import (
         FileSkillTrustGenerationMarkerStore,
         SkillTrustStore,
+        default_trust_store_dir,
     )
 
-    skills_dir = tmp_path / "skills"
-    trust_dir = tmp_path / "trust"
-    skills_dir.mkdir(exist_ok=True)
-    trust_dir.mkdir(exist_ok=True)
+    # Derived from the real accessors/objects rather than re-spelled
+    # "skills"/"trust" literals (TASK-866): `LocalSkillsService` computes
+    # its own `skills_dir` from `_SKILLS_DIRNAME`, and
+    # `default_trust_store_dir()` is the same function `app.py` calls to
+    # build the live `SkillTrustStore`. If either constant's name ever
+    # changed, a hardcoded literal here would silently keep matching
+    # nothing -- the exact class of drift this task closes.
+    skills_dir = LocalSkillsService(store_dir=tmp_path).skills_dir
+    trust_dir = default_trust_store_dir(tmp_path)
+    skills_dir.mkdir(exist_ok=True, parents=True)
+    trust_dir.mkdir(exist_ok=True, parents=True)
 
     def _make() -> "SkillTrustService":
         marker_path = trust_dir / "marker.json"

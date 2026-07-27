@@ -1271,7 +1271,9 @@ def extract_json_from_image_file(
             # Validate the file path to prevent directory traversal
             if base_directory is None:
                 # Default to user data directory for character cards
-                base_directory = os.path.expanduser("~/.local/share/tldw_cli/")
+                from tldw_chatbook.config import get_user_data_dir
+
+                base_directory = str(get_user_data_dir())
 
             try:
                 validated_path = validate_path(image_file_input, base_directory)
@@ -2787,7 +2789,9 @@ def load_chat_history_from_file_and_save_to_db(
             # Validate the file path to prevent directory traversal
             if base_directory is None:
                 # Default to user data directory for chat history files
-                base_directory = os.path.expanduser("~/.local/share/tldw_cli/")
+                from tldw_chatbook.config import get_user_data_dir
+
+                base_directory = str(get_user_data_dir())
 
             try:
                 validated_path = validate_path(file_path_or_obj, base_directory)
@@ -3853,7 +3857,9 @@ def export_character_card_to_png(
 
         # Validate output path
         if base_directory is None:
-            base_directory = os.path.expanduser("~/.local/share/tldw_cli/exports/")
+            from tldw_chatbook.config import get_user_data_dir
+
+            base_directory = str(get_user_data_dir() / "exports")
             os.makedirs(base_directory, exist_ok=True)
 
         try:
