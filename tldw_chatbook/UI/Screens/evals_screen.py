@@ -71,12 +71,17 @@ class EvalsScreen(BaseAppScreen):
         self._sample_bench_client_factory: Optional[
             Callable[[WordBenchTarget], CaptureClientLike]
         ] = None
-        #: True for the duration of one create-and-run flow. The PRIMARY
-        #: guard against a second click starting a second worker (the
-        #: button is also disabled live -- see ``_set_sample_bench_
-        #: running_ui`` -- but a disabled widget not yet re-rendered, or a
-        #: message posted directly as this screen's own tests do, must not
-        #: be able to race past a disabled button and start two runs).
+        #: True for the duration of one create-and-run flow. Guards against
+        #: a second click starting a second worker once a run is genuinely
+        #: in flight -- the button is also disabled live (see
+        #: ``_set_sample_bench_running_ui``), but a disabled widget not yet
+        #: re-rendered, or a message posted directly as this screen's own
+        #: tests do, must not be able to race past it. For the tighter
+        #: race -- two requests already queued before either dispatches --
+        #: it is ``exclusive=True`` on the worker (below), not this flag,
+        #: that actually protects: Textual cancels the second worker's Task
+        #: before its first step, so the first worker's body (including its
+        #: flag-set line) never runs.
         self._sample_bench_running: bool = False
         #: The active run's cooperative cancel token, or ``None`` when no
         #: run is in flight. Not currently triggered by anything in this
@@ -178,18 +183,19 @@ class EvalsScreen(BaseAppScreen):
         production) -- run as a worker, never inline in a message handler,
         per CLAUDE.md's "Workers for operations >100ms" rule.
 
-        ``_sample_bench_running`` is checked FIRST and unconditionally: the
-        button is disabled for the run's duration (``_set_sample_bench_
-        running_ui``), but a disabled widget mid-recompose, or a message
-        posted directly (as this screen's own tests do to simulate a race),
-        must not be able to start a SECOND worker in the same
-        ``exclusive=True`` group -- that is exactly what previously let a
-        second click hard-cancel the first run via ``asyncio.
-        CancelledError`` and abandon its DB rows mid-flight (see
-        ``sample_bench._mark_orphaned_runs_cancelled`` for the cleanup this
-        guard makes almost always unnecessary in practice, kept anyway as a
-        second line of defence for whatever OTHER path might cancel this
-        worker, e.g. the screen itself unmounting mid-run).
+        Two guards cover two different race windows. If two requests are
+        already queued before either dispatches, both see
+        ``_sample_bench_running`` as ``False`` and both reach
+        ``run_worker(exclusive=True, ...)``; it is ``exclusive=True`` that
+        protects there, cancelling the second worker's Task before it takes
+        its first step, so only one worker body (and one flag-set) ever
+        runs. Once a worker IS running and has set the flag, THIS check is
+        what stops a later request from calling ``run_worker`` again --
+        without it, that call would cancel the already-running worker via
+        the same ``exclusive`` group after it has done real work, abandoning
+        its in-flight DB rows (see
+        ``sample_bench._mark_orphaned_runs_cancelled`` for the cleanup that
+        path needs).
         """
         event.stop()
         if self._sample_bench_running:

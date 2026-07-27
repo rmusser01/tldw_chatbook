@@ -574,7 +574,13 @@ async def test_a_second_click_while_running_does_not_start_a_second_run(configur
         await _wait_until(pilot, lambda: not screen._sample_bench_running)
         await pilot.pause()
 
-        assert len(calls) == 4  # not 8 -- the second request was a no-op
+        assert len(calls) == 4  # sanity check -- holds even without the guard
+        # These are the assertions that actually discriminate: dropping the
+        # `if self._sample_bench_running: return` guard (while keeping
+        # `exclusive=True`) makes both go to 2, because the second
+        # `run_worker` call cancels the already-running worker via the
+        # shared exclusive group AFTER it created its own bench/run group,
+        # then a fresh worker creates a second one.
         assert len(screen._view_model.benches()) == 1
         assert len(screen._view_model.run_groups()) == 1
 
