@@ -4913,7 +4913,14 @@ def _get_custom_database_path(
     *,
     expand_before_validation: bool = True,
 ) -> Path | None:
-    """Return a validated lexical custom DB path, if explicitly configured."""
+    """Return a validated lexical custom DB path, if explicitly configured.
+
+    This is a non-mutating selection boundary: it intentionally does not
+    probe, create, resolve, or chmod the user-selected parent. The consuming
+    private SQLite owner must verify that the parent already satisfies the
+    trusted-namespace contract before opening the database. Keeping the
+    lexical spelling here preserves symlink evidence for that no-follow check.
+    """
     custom_path = get_cli_setting("database", setting_name, None)
     default_path = DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(setting_name)
     if not custom_path or custom_path == default_path:
@@ -4924,6 +4931,8 @@ def _get_custom_database_path(
     validated = validate_path_simple(
         selected_input,
         require_exists=False,
+        # Preserve lexical evidence and defer filesystem authority to the
+        # private SQLite owner; see ADR-029.
         probe_existing=False,
     )
     return lexical_path(validated)

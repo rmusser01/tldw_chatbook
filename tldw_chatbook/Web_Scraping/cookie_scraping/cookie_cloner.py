@@ -45,9 +45,6 @@ Example:
     ]
 """
 
-# Imports
-from Cryptodome.Cipher import AES
-from Cryptodome.Protocol.KDF import PBKDF2
 import base64
 from contextlib import contextmanager
 import datetime
@@ -61,17 +58,14 @@ import tempfile
 import time
 from typing import Iterator
 
-#
-# Third-Party Imports
+from Cryptodome.Cipher import AES
+from Cryptodome.Protocol.KDF import PBKDF2
 from loguru import logger
 
-#
-# Local Imports
 from ...DB.private_sqlite import connect_private_sqlite
 from ...Metrics.metrics_logger import log_counter, log_histogram
 from ...Utils.private_paths import secure_private_directory
 
-#
 ########################################################################################################################
 #
 # Helper functions for SQL safety

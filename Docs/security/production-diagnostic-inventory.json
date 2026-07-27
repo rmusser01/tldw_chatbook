@@ -2428,7 +2428,7 @@
     },
     {
       "call_count": 7,
-      "diagnostic_digest": "82cff61e83d3b53ecd26",
+      "diagnostic_digest": "d437278e7221ee7ed548",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2813,7 +2813,7 @@
     },
     {
       "call_count": 79,
-      "diagnostic_digest": "70208e7fed53f592a780",
+      "diagnostic_digest": "58d29adb246afe51a57c",
       "owner": "TASK-494",
       "path": "tldw_chatbook/config.py",
       "reason": "remaining Chatbook production diagnostic owner"
