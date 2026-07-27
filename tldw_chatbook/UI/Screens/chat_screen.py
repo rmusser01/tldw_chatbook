@@ -127,7 +127,6 @@ from ...Chat.console_chat_models import (
     ConsoleContextSnapshot,
     ConsoleMessageRole,
     ConsoleProviderSelection,
-    ConsoleRunMarker,
     ConsoleRunStatus,
     ConsoleVariant,
     ConsoleVariantSet,
