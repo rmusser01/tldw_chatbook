@@ -25,8 +25,15 @@ re-check at merge time — dev moves under you. Never trust the CLI's auto-assig
 ```bash
 git for-each-ref --format='%(refname)' refs/remotes/ | while read -r b; do
   git ls-tree -r -z --name-only "$b" backlog/ | tr '\0' '\n'
-done | grep -oE 'task-[0-9]+' | sort -u | tail -5
+done | grep -oE 'task-[0-9]+' | cut -d- -f2 | sort -n -u | tail -5
 ```
+
+Note `sort -n`, not `sort -u` alone. Lexicographic order puts `task-100` before
+`task-99`, so a plain sort reports the wrong maximum. This is not theoretical: run
+against this repo, the lexicographic version reports **99** as the highest task ID
+while the numeric version reports **838** -- it would have collided on essentially
+every filing. That mistake was in the first draft of this very file, which is a fair
+illustration of why these entries carry their evidence.
 
 ---
 

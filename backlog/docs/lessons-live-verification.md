@@ -48,9 +48,22 @@ offered, the user could select it, and every submission failed with
 button rendered *above* its own status line, so the screen read as a contradiction
 top-to-bottom — no unit test would ever say so.
 
-**What to do.** For anything user-facing, run the app (see the `verify` skill's tmux
-recipe). Ask: does the screen read correctly top-to-bottom, and does the affordance
-actually lead somewhere?
+**What to do.** For anything user-facing, run the app and look at it. Ask: does the
+screen read correctly top-to-bottom, and does the affordance actually lead somewhere?
+
+Headless recipe (no repo tooling required):
+
+```bash
+tmux -L verify new-session -d -x 235 -y 52 '.venv/bin/python -m tldw_chatbook.app'
+sleep 12                                    # cold start is ~10s, import-dominated
+tmux -L verify capture-pane -p | head -8    # pane as text
+tmux -L verify send-keys C-p                # command palette
+tmux -L verify kill-server                  # done
+```
+
+Use `TLDW_CONFIG_PATH=<scratch>/config.toml` so the run cannot touch real state (see
+the profile-isolation entry below). Ctrl+digit hotkeys cannot be sent through tmux --
+verify those bindings by reading `BINDINGS` in the code instead.
 
 ---
 
@@ -92,4 +105,3 @@ confirm `git diff | grep -c "<key-fragment>"` is `0`. Advise rotation afterwards
 ## Related
 
 - `lessons-testing-evidence.md` — why the green suite was not evidence
-- `.claude/skills/verify/` — the tmux recipe for driving the real TUI

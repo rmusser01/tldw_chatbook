@@ -435,7 +435,7 @@ A task is **Done** only when **ALL** of the following are complete:
    just the rule**: a lesson without the evidence that produced it decays into folklore
    and gets ignored. Most tasks produce nothing here, and that is fine; do not invent
    one to fill the slot.
-9. **ADR hygiene**: ADR check completed; any new or superseded ADRs are linked from the task Implementation Plan and Implementation Notes.
+10. **ADR hygiene**: ADR check completed; any new or superseded ADRs are linked from the task Implementation Plan and Implementation Notes.
 
 ⚠️ **IMPORTANT**: Never mark a task as Done without completing ALL items above.
 
