@@ -1175,9 +1175,11 @@ async def test_console_workbench_send_action_disables_during_active_run():
         await pilot.pause()
 
         controller = console._ensure_console_chat_controller()
-        controller.run_state = ConsoleRunState(
-            ConsoleRunStatus.STREAMING,
-            "Streaming response.",
+        controller._set_run_state(
+            ConsoleRunState(
+                ConsoleRunStatus.STREAMING,
+                "Streaming response.",
+            )
         )
         console._sync_console_control_bar()
         await pilot.pause()
@@ -1205,9 +1207,11 @@ async def test_console_active_stream_sync_skips_unchanged_chrome_and_inspector(
         await _wait_for_selector(console, pilot, "#console-shell")
 
         controller = console._ensure_console_chat_controller()
-        controller.run_state = ConsoleRunState(
-            ConsoleRunStatus.STREAMING,
-            "Streaming response.",
+        controller._set_run_state(
+            ConsoleRunState(
+                ConsoleRunStatus.STREAMING,
+                "Streaming response.",
+            )
         )
         control_state = console._build_console_control_state(
             console._pending_console_launch_context

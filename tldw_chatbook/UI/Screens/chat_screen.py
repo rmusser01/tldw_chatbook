@@ -370,7 +370,6 @@ if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 logger = logger.bind(module="ChatScreen")
-CONSOLE_RUN_ALREADY_RUNNING_COPY = "A Console run is already running."
 CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = ("notes", "media", "conversations")
 CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
 CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
@@ -2031,8 +2030,31 @@ class ChatScreen(BaseAppScreen):
         self._console_effective_scope_cache: Dict[str, ConsoleRetrievalScopeState] = {}
         # TASK-340: keyboard-send draft stashes — keypress->handler handoff,
         # then the queued submit's accept/refuse consumption slot.
+        # `_console_pending_send_stash` stays a single slot: it is consumed
+        # within the same keypress -> Button.press() handoff for whichever
+        # composer currently has focus (bounded to one UI action, never
+        # spans a provider round-trip), unlike the map below.
         self._console_pending_send_stash: ConsoleDraftStash | None = None
-        self._console_inflight_send_stash: ConsoleDraftStash | None = None
+        # Task 3b: PER-SESSION -- a keyboard send's stash is written at
+        # dispatch (keyed by the dispatching session) and read/cleared much
+        # later, at that SAME session's own accept/refuse (`_notify_
+        # submission_accepted` fires only after the provider-readiness
+        # probe/skill-substitution awaits, which can run for seconds). A
+        # single shared slot let a DIFFERENT session's concurrent dispatch
+        # clobber this one's entry mid-flight (Task 3 made that genuinely
+        # concurrent) -- e.g. session A's still-pending stash getting
+        # silently replaced by session B's `None`, or a stale entry
+        # restoring/clearing the WRONG session's composer. See
+        # `_console_submit_session_by_task` for how the no-arg
+        # `on_submission_accepted` hook still resolves its own session.
+        self._console_inflight_send_stashes: dict[str, ConsoleDraftStash] = {}
+        #: `asyncio.Task -> owning session id`, registered for the duration
+        #: of `_submit_console_native_draft`'s own `await controller.
+        #: submit_draft(...)` call so the no-arg `on_submission_accepted`
+        #: callback (fired synchronously from deep inside that same await,
+        #: on the SAME task) can resolve which session's stash entry above
+        #: is its own, without changing that hook's public no-arg contract.
+        self._console_submit_session_by_task: dict[asyncio.Task, str] = {}
         # TASK-339: (visible session id, draft text, edit serial) captured at
         # switch initiation; consumed by the deferred draft swap.
         self._console_draft_switch_snapshot: tuple[str | None, str, int] | None = None
@@ -10977,20 +10999,55 @@ class ChatScreen(BaseAppScreen):
             streaming_session_id=streaming_session_id,
         )
 
-    async def _append_native_console_system_message(self, message: str) -> None:
-        """Append a system message to native Console state and refresh the bridge."""
+    async def _append_native_console_system_message(
+        self, message: str, *, session_id: str | None = None
+    ) -> None:
+        """Append a system message to native Console state and refresh the bridge.
+
+        Task 4 (background-write audit): most callers are synchronous
+        command handlers with no ``await`` between "the user's intended
+        session" and this call, so the default (``session_id=None``,
+        resolving whichever session is active RIGHT NOW via
+        ``store.ensure_session``) is safe -- there is no gap in which the
+        active session could have changed underneath them.
+
+        A handler that spans a real await gap while already anchored to a
+        specific session (e.g. `/generate-image`'s in-flight batch, tracked
+        per session in ``_console_imagegen_inflight_sessions``) must pass
+        that session's id explicitly instead -- re-resolving "active" at
+        append time would let a session switch during the awaited work
+        misattribute the row to whatever the user is looking at NOW rather
+        than the session that actually produced it. The resync below is
+        unconditional either way and stays harmless: it only ever renders
+        the store's CURRENTLY active session, so a background session's
+        just-appended row simply doesn't show until the user visits it
+        (store-first discipline; no view write needs gating here beyond
+        that existing pull-based rebuild).
+        """
         store = self._ensure_console_chat_store()
-        session = store.ensure_session(
-            title=self._console_initial_session_title_for_workspace(
-                store.workspace_context.active_workspace_id
-            ),
-            workspace_id=store.workspace_context.active_workspace_id,
-        )
-        store.append_message(
-            session.id,
-            role=ConsoleMessageRole.SYSTEM,
-            content=message,
-        )
+        if session_id is not None:
+            try:
+                store.append_message(
+                    session_id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content=message,
+                )
+            except KeyError:
+                # Session vanished (closed) before its background operation's
+                # outcome could be attributed to it -- nothing to append to.
+                pass
+        else:
+            session = store.ensure_session(
+                title=self._console_initial_session_title_for_workspace(
+                    store.workspace_context.active_workspace_id
+                ),
+                workspace_id=store.workspace_context.active_workspace_id,
+            )
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.SYSTEM,
+                content=message,
+            )
         await self._sync_native_console_chat_ui()
 
     def _start_console_transcript_sync_timer(self) -> None:
@@ -11022,22 +11079,44 @@ class ChatScreen(BaseAppScreen):
             self._record_ui_timer_stopped("console-transcript-sync")
             self._console_transcript_sync_timer = None
 
-    async def _submit_console_native_draft(self, draft: str) -> None:
+    async def _submit_console_native_draft(
+        self, draft: str, session_id: str | None = None
+    ) -> None:
         controller = self._ensure_console_chat_controller()
         self._start_console_transcript_sync_timer()
+        # Task 3b: `session_id` is the session THIS worker was dispatched
+        # for (`_dispatch_console_draft_send` already resolved it via the
+        # `console-run-{session_id}` group). Defaulted to the currently
+        # active session only for direct-call test idioms that predate the
+        # per-session stash map -- equivalent to the old singular-slot
+        # behavior for the (overwhelmingly common) single-session case.
+        if session_id is None:
+            session_id = controller.store.active_session_id or ""
+        task = asyncio.current_task()
+        if task is not None:
+            # See `_on_console_submission_accepted`: it fires synchronously
+            # from deep inside the `submit_draft` await below, on this SAME
+            # task, and has no session id of its own to key by.
+            self._console_submit_session_by_task[task] = session_id
         # TASK-340: a keyboard send already cleared the composer at the Enter
         # keypress. The accepted-hook consumes this slot; a refusal below
         # restores it instead. Snapshot before submit_draft so the hook's
         # consumption is observable here.
-        inflight_stash = self._console_inflight_send_stash
+        inflight_stash = self._console_inflight_send_stashes.get(session_id)
         try:
-            result = await controller.submit_draft(draft)
+            # F4 fix (Qodo wave): thread the session THIS worker was
+            # dispatched for all the way into the controller -- previously
+            # `submit_draft` re-resolved "the session to submit into" via
+            # `store.active_session_id` at execution time, so a tab switch
+            # racing the scheduling gap between `run_worker(...)` and this
+            # coroutine body actually running could submit into whichever
+            # session the user switched TO instead of the dispatching one.
+            result = await controller.submit_draft(draft, session_id=session_id)
         except Exception:
             # An unexpected submit crash must not eat the keypress-cleared
             # draft — and must not escape the worker (exit_on_error would
             # take the whole app down with it).
-            leaked_stash = self._console_inflight_send_stash
-            self._console_inflight_send_stash = None
+            leaked_stash = self._console_inflight_send_stashes.pop(session_id, None)
             if leaked_stash is not None:
                 self._restore_console_send_stash(leaked_stash)
             logger.exception("Console submit failed unexpectedly")
@@ -11046,6 +11125,9 @@ class ChatScreen(BaseAppScreen):
                 severity="error",
             )
             return
+        finally:
+            if task is not None:
+                self._console_submit_session_by_task.pop(task, None)
         # TASK-251: a submit may have created/updated a persisted
         # conversation (title, updated_at) -- invalidate so the browser
         # reflects it on the very next sync instead of the TTL window.
@@ -11054,18 +11136,22 @@ class ChatScreen(BaseAppScreen):
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             composer = None
-        if not result.accepted and self._console_inflight_send_stash is not None:
+        # Task 3b: only the composer that STILL SHOWS this session gets
+        # mutated on its behalf. A background session's dispatch can
+        # complete long after the user switched away -- restoring an
+        # abandoned draft (or clearing should_clear_draft below) into
+        # whatever composer happens to be visible would leak this
+        # session's text into a DIFFERENT session's tab.
+        composer_reflects_session = (
+            composer is not None and controller.store.active_session_id == session_id
+        )
+        stash = self._console_inflight_send_stashes.pop(session_id, None)
+        if not result.accepted and stash is not None and composer_reflects_session:
             # Controller-level refusal of a keyboard send: the composer was
             # cleared at the keypress, so hand the draft back (ahead of any
             # keystrokes typed since).
-            if composer is not None:
-                composer.restore_stashed_draft(self._console_inflight_send_stash)
-        self._console_inflight_send_stash = None
-        if (
-            result.should_clear_draft
-            and composer is not None
-            and inflight_stash is None
-        ):
+            composer.restore_stashed_draft(stash)
+        if result.should_clear_draft and composer_reflects_session and inflight_stash is None:
             # Stashed sends were cleared at the keypress — clearing again
             # here would eat keystrokes typed after Enter (the next draft).
             composer.clear_draft()
@@ -11092,17 +11178,35 @@ class ChatScreen(BaseAppScreen):
         actually proceeds (Qodo finding 3, PR #636 bot review) -- a
         substitution refusal, like any other blocked submit, never reaches
         it, so a refused draft stays in the composer too.
+
+        Task 3b: this fires synchronously from deep inside ``submit_draft``,
+        on the SAME task as the ``_submit_console_native_draft`` worker that
+        awaited it -- ``_console_submit_session_by_task`` resolves which
+        session's stash entry (if any) is this call's own, without changing
+        this hook's public no-arg ``Callable[[], None]`` contract (still
+        assignable via ``controller.on_submission_accepted = ...`` exactly
+        as before). A lookup miss (direct-call test idioms, or no wrapping
+        task) falls back to the active session -- the pre-Task-3b behavior.
         """
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             composer = None
-        if self._console_inflight_send_stash is not None:
+        task = asyncio.current_task()
+        session_id = (
+            self._console_submit_session_by_task.get(task)
+            if task is not None
+            else None
+        )
+        active_session_id = self._ensure_console_chat_store().active_session_id or ""
+        if session_id is None:
+            session_id = active_session_id
+        if session_id in self._console_inflight_send_stashes:
             # TASK-340: this submit's draft was captured and cleared at the
             # Enter keypress — clearing now would eat keystrokes typed since
             # (they are the NEXT draft). Consume the stash instead.
-            self._console_inflight_send_stash = None
-        elif composer is not None:
+            self._console_inflight_send_stashes.pop(session_id, None)
+        elif composer is not None and active_session_id == session_id:
             composer.clear_draft()
         # task-351(a): echo the just-appended USER message immediately rather
         # than waiting up to a full 0.2s transcript-poll cycle (and a heavy
@@ -11308,26 +11412,53 @@ class ChatScreen(BaseAppScreen):
             self._focus_console_composer_if_needed(force=True)
             return False
         controller = self._ensure_console_chat_controller()
-        if not controller.run_state.is_send_allowed:
+        # Fix round 1 (minor): normalize the same way the controller side
+        # already does (`store.active_session_id or ""`) -- `None` is a
+        # valid (if unlikely, post-mount) dict key, but every other
+        # per-session map in this train keys on the normalized string, so
+        # a stray `None` here would silently start a SEPARATE bucket for
+        # "no session" instead of colliding predictably.
+        target_session_id = controller.store.active_session_id or ""
+        refusal = controller.send_refusal_copy(target_session_id)
+        if refusal:
             self._restore_console_send_stash(stash)
-            self.app_instance.notify(
-                CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning"
-            )
+            self.app_instance.notify(refusal, severity="warning")
             return False
-        self._console_inflight_send_stash = stash
+        # Task 3b: keyed by THIS dispatch's own session -- a bare `= stash`
+        # assignment (the old singular slot) would let a DIFFERENT
+        # session's concurrent dispatch either clobber this entry with its
+        # own stash, or wipe it to None before this session's worker ever
+        # reads it (Task 3 made two dispatches genuinely interleave).
+        if stash is not None:
+            self._console_inflight_send_stashes[target_session_id] = stash
+        else:
+            self._console_inflight_send_stashes.pop(target_session_id, None)
         self._note_console_follow_intent()
-        # group="console-run": a dedicated group so UI-sync kicks can never
-        # cancel an in-flight run (TASK-228 — ungrouped exclusive workers all
-        # share Textual's default group and cancel each other).
+        # group=f"console-run-{session_id}": a PER-SESSION group (parallel-
+        # agents spec Sec2) so UI-sync kicks -- and sends in OTHER sessions --
+        # can never cancel this session's in-flight run (TASK-228 originated
+        # the dedicated group; scoping it per session keeps concurrent
+        # sessions' exclusive workers from cancelling each other).
         self.run_worker(
-            self._submit_console_native_draft(draft),
+            self._submit_console_native_draft(draft, target_session_id),
             exclusive=True,
-            group="console-run",
+            group=f"console-run-{target_session_id}",
         )
         return True
 
     def _note_console_follow_intent(self) -> None:
-        """Stamp a programmatic jump-to-tail intent on the transcript (TASK-336)."""
+        """Stamp a programmatic jump-to-tail intent on the transcript (TASK-336).
+
+        Task 3b audit: stays singular/view-only on purpose. Unlike the
+        stash maps above, this never carries session-owned DATA across a
+        send's lifetime -- it is a one-shot directive consumed by whichever
+        session's transcript happens to be `#console-native-transcript`
+        (a single widget instance reflecting the ACTIVE session) at the
+        next render. A background session's send stamping this while a
+        different session is viewed just requests an extra, harmless
+        tail-follow on whatever the transcript renders next; there is no
+        cross-session data to leak or clobber.
+        """
         try:
             transcript = self.query_one(
                 "#console-native-transcript", ConsoleTranscript
@@ -11986,14 +12117,24 @@ class ChatScreen(BaseAppScreen):
             prepare_generation_request, args, conversation_pairs, llm_context
         )
         if isinstance(prepared, GenerationRefusal):
-            await self._append_native_console_system_message(prepared.reason)
+            # Task 4 (background-write audit): every append below threads
+            # `session_id=session.id` explicitly -- this handler already
+            # spans real await gaps (the two `asyncio.to_thread` calls
+            # above/below), and `session` is this batch's owning session,
+            # captured once at the top. Re-resolving "active" implicitly
+            # (the old behavior) would misattribute the outcome to whatever
+            # session the user switched to while the batch was running.
+            await self._append_native_console_system_message(
+                prepared.reason, session_id=session.id
+            )
             return
         backend = args.backend or cfg.default_backend
         if not backend:
             await self._append_native_console_system_message(
                 "No image generation backend configured. Set "
                 "[image_generation].default_backend, or use "
-                "/generate-image :backend <prompt>."
+                "/generate-image :backend <prompt>.",
+                session_id=session.id,
             )
             return
         catalog = list_image_models_for_catalog()
@@ -12003,13 +12144,15 @@ class ChatScreen(BaseAppScreen):
         if entry is None or not entry.get("is_configured"):
             await self._append_native_console_system_message(
                 f"Image backend '{backend}' is not enabled/configured. "
-                "Check [image_generation] settings."
+                "Check [image_generation] settings.",
+                session_id=session.id,
             )
             return
         inflight = self._console_imagegen_inflight_sessions()
         if session.id in inflight:
             await self._append_native_console_system_message(
-                "An image generation is already running for this session."
+                "An image generation is already running for this session.",
+                session_id=session.id,
             )
             return
         inflight.add(session.id)
@@ -12039,7 +12182,7 @@ class ChatScreen(BaseAppScreen):
                     composer.insert_text_as_paste(saved_draft)
                 detail = "; ".join(batch.errors) or "unknown error"
                 await self._append_native_console_system_message(
-                    f"Image generation failed: {detail}"
+                    f"Image generation failed: {detail}", session_id=session.id
                 )
                 return
             store.append_generation_message(
@@ -12072,7 +12215,7 @@ class ChatScreen(BaseAppScreen):
                 f"Image generation batch raised for session {session.id}: {exc}"
             )
             await self._append_native_console_system_message(
-                f"Image generation failed: {exc}"
+                f"Image generation failed: {exc}", session_id=session.id
             )
         finally:
             inflight.discard(session.id)
@@ -12239,8 +12382,8 @@ class ChatScreen(BaseAppScreen):
         selected prompt's own text is written back into the composer via the
         same paste-semantics seam `/prompt` uses.
         `"summarize-up-to"` runs the boundary-summary flow (SP2 Task 3) on an
-        exclusive `console-run` worker, gated on `is_send_allowed` the same way
-        restore is (never mutates while a run is streaming).
+        exclusive `console-run-{session_id}` worker, gated on `is_send_allowed`
+        the same way restore is (never mutates while a run is streaming).
 
         A `ModalScreen` blocks session switching while the rewind modal is up,
         so today this is theoretical -- but the callback still re-checks the
@@ -12269,24 +12412,23 @@ class ChatScreen(BaseAppScreen):
             # Gate BEFORE spawning: an exclusive console-run worker cancels any
             # in-flight run at creation time, before the controller's own
             # rejection can run -- refuse first, like the regenerate path.
-            if not controller.run_state.is_send_allowed:
-                self.app_instance.notify(
-                    CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning"
-                )
+            target_session_id = controller.store.active_session_id
+            refusal = controller.send_refusal_copy(target_session_id)
+            if refusal:
+                self.app_instance.notify(refusal, severity="warning")
                 return
             self.run_worker(
                 self._summarize_console_up_to(controller, choice.message_id),
                 exclusive=True,
-                group="console-run",
+                group=f"console-run-{target_session_id}",
             )
             return
         if choice.kind != "restore":
             return
         controller = self._ensure_console_chat_controller()
-        if not controller.run_state.is_send_allowed:
-            self.app_instance.notify(
-                CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning"
-            )
+        refusal = controller.send_refusal_copy(controller.store.active_session_id)
+        if refusal:
+            self.app_instance.notify(refusal, severity="warning")
             return
         try:
             path = store.active_path_message_ids(session_id)
@@ -13291,15 +13433,15 @@ class ChatScreen(BaseAppScreen):
             # Gate BEFORE spawning: an exclusive console-run worker cancels the
             # in-flight run at creation time, before the controller's own
             # rejection can run — the screen must refuse, like the submit path.
-            if not controller.run_state.is_send_allowed:
-                self.app_instance.notify(
-                    CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning"
-                )
+            target_session_id = controller.store.active_session_id
+            refusal = controller.send_refusal_copy(target_session_id)
+            if refusal:
+                self.app_instance.notify(refusal, severity="warning")
                 return True
             self.run_worker(
                 self._retry_console_message(controller, message_id),
                 exclusive=True,
-                group="console-run",
+                group=f"console-run-{target_session_id}",
             )
             return True
         if action_id == "regenerate" and result.status == "wip":
@@ -13312,15 +13454,15 @@ class ChatScreen(BaseAppScreen):
                 await self._regenerate_console_generation_variant(message_id)
                 return True
             controller = self._ensure_console_chat_controller()
-            if not controller.run_state.is_send_allowed:
-                self.app_instance.notify(
-                    CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning"
-                )
+            target_session_id = controller.store.active_session_id
+            refusal = controller.send_refusal_copy(target_session_id)
+            if refusal:
+                self.app_instance.notify(refusal, severity="warning")
                 return True
             self.run_worker(
                 self._regenerate_console_message(controller, message_id),
                 exclusive=True,
-                group="console-run",
+                group=f"console-run-{target_session_id}",
             )
             return True
         if (
@@ -13401,15 +13543,15 @@ class ChatScreen(BaseAppScreen):
             return True
         if action_id == "continue" and result.status == "continue_requested":
             controller = self._ensure_console_chat_controller()
-            if not controller.run_state.is_send_allowed:
-                self.app_instance.notify(
-                    CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning"
-                )
+            target_session_id = controller.store.active_session_id
+            refusal = controller.send_refusal_copy(target_session_id)
+            if refusal:
+                self.app_instance.notify(refusal, severity="warning")
                 return True
             self.run_worker(
                 self._continue_console_message(controller, message_id),
                 exclusive=True,
-                group="console-run",
+                group=f"console-run-{target_session_id}",
             )
             return True
         severity = "information" if result.status in {"completed", "wip"} else "warning"
@@ -13945,17 +14087,17 @@ class ChatScreen(BaseAppScreen):
             # Gate BEFORE spawning: an exclusive console-run worker cancels the
             # in-flight run at creation time, before the controller's own
             # rejection can run -- the screen must refuse, like the submit path.
-            if not controller.run_state.is_send_allowed:
-                self.app_instance.notify(
-                    CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning"
-                )
+            target_session_id = controller.store.active_session_id
+            refusal = controller.send_refusal_copy(target_session_id)
+            if refusal:
+                self.app_instance.notify(refusal, severity="warning")
                 return
             self.run_worker(
                 self._edit_resend_console_message(
                     controller, message_id, result.text
                 ),
                 exclusive=True,
-                group="console-run",
+                group=f"console-run-{target_session_id}",
             )
 
         await self.app.push_screen(

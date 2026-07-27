@@ -739,6 +739,14 @@ def test_request_mcp_approvals_timeout_denies_with_timeout_for_all_undecided():
 
 
 def test_request_mcp_approvals_cancellation_denies_undecided():
+    """F5 fix (Qodo wave): this test's INTENT is "global stop denies every
+    in-flight approval round" -- real process teardown, not a single
+    session's Stop. It used to flip the bare, session-agnostic
+    `_stop_requested` flag to exercise that; F5 removed `_stop_requested`
+    from the bridge's poll (a single session's Stop must not cross-cancel
+    an unrelated session's approval round any more), so the equivalent
+    "global" signal is now the never-reset `_shutdown_requested` (set only
+    by `shutdown()`)."""
     controller, _ = _build_controller()
     received: list[dict | None] = []
     controller.app = _FakeApp()
@@ -747,7 +755,7 @@ def test_request_mcp_approvals_cancellation_denies_undecided():
 
     def _cancel_soon() -> None:
         time.sleep(0.05)
-        controller._stop_requested = True
+        controller._shutdown_requested.set()
 
     canceller = threading.Thread(target=_cancel_soon)
     canceller.start()
@@ -759,13 +767,19 @@ def test_request_mcp_approvals_cancellation_denies_undecided():
 
 
 def test_request_mcp_approvals_active_cancel_event_denies_undecided():
-    """The per-run `_active_cancel_event` (stop/close_session/shutdown's
+    """The per-run cancel event (stop/close_session/shutdown's
     `_signal_stop`) is observed even when `_stop_requested` has already
-    been reset by the coroutine side (task-227's own documented race)."""
+    been reset by the coroutine side (task-227's own documented race).
+    Task 3b: registered under the ACTIVE session's key -- `request_mcp_
+    approvals` has no session id of its own to key by (see
+    `_is_active_session_cancelled`'s docstring), so it falls back to
+    whatever session is currently active, same as `stop_active_run`."""
     controller, _ = _build_controller()
     controller.mcp_approval_timeout_seconds = lambda: 30.0
     cancel_event = threading.Event()
-    controller._active_cancel_event = cancel_event
+    controller._active_cancel_events[controller.store.active_session_id or ""] = (
+        cancel_event
+    )
 
     def _cancel_soon() -> None:
         time.sleep(0.05)
@@ -777,6 +791,44 @@ def test_request_mcp_approvals_active_cancel_event_denies_undecided():
     canceller.join()
 
     assert decisions == {"mcp__srv__tool": "deny"}
+
+
+def test_request_mcp_approvals_unrelated_session_stop_does_not_cross_cancel():
+    """F5 fix (Qodo wave): stopping a DIFFERENT session must not deny THIS
+    session's in-flight approval round. Before the fix, `_stop_requested`
+    (set globally by `_signal_stop` for ANY session's Stop/Close) was OR'd
+    into the bridge's own poll check, so any session's Stop denied every
+    session's in-flight approval round -- a narrower, approval-round-only
+    echo of the stream cross-cancellation Critical-1 already fixed for
+    the stream itself. `_signal_stop` still flips the (now bridge-inert)
+    `_stop_requested` flag here; only the UNRELATED session's own cancel
+    event is registered, and the store has no active session at all
+    (fresh `ConsoleChatStore()`), so `_is_active_session_cancelled` cannot
+    match it either -- the round must resolve via the real, explicit
+    decision below, not get denied out from under it."""
+    controller, _ = _build_controller()
+    received: list[dict | None] = []
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    def _stop_unrelated_session_soon() -> None:
+        time.sleep(0.05)
+        controller._signal_stop(session_id="unrelated-session-id")
+
+    def _resolve_soon() -> None:
+        time.sleep(0.2)
+        controller.resolve_pending_approval({"mcp__srv__tool": "approve_once"})
+
+    stopper = threading.Thread(target=_stop_unrelated_session_soon)
+    resolver = threading.Thread(target=_resolve_soon)
+    stopper.start()
+    resolver.start()
+    decisions = controller.request_mcp_approvals([_pending()])
+    stopper.join()
+    resolver.join()
+
+    assert decisions == {"mcp__srv__tool": "approve_once"}
 
 
 def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution_log(
@@ -793,7 +845,11 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
     logged there, since a timeout is not a cancellation). Uses the REAL
     `UnifiedMCPControlPlaneService` + JSONL-backed execution log (not the
     lighter `FakeMCPService`) so this proves the fix end-to-end through
-    the actual persistence path."""
+    the actual persistence path.
+
+    F5 fix (Qodo wave): flips `_shutdown_requested` rather than the bare
+    `_stop_requested` -- see `test_request_mcp_approvals_cancellation_
+    denies_undecided`'s own docstring for why."""
     from types import SimpleNamespace
 
     from tldw_chatbook.MCP.execution_log import MCPExecutionLog
@@ -824,7 +880,7 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
 
     def _cancel_soon() -> None:
         time.sleep(0.05)
-        controller._stop_requested = True
+        controller._shutdown_requested.set()
 
     canceller = threading.Thread(target=_cancel_soon)
     canceller.start()

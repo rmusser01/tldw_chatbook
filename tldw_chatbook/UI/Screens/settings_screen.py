@@ -37,6 +37,7 @@ from textual.widgets import (
     TextArea,
 )
 
+from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
 from ...Chat.console_provider_endpoints import URL_BASED_PROVIDER_KEYS
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.console_provider_support import (
@@ -293,8 +294,17 @@ CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
     {
         "collapse_large_pastes",
         "paste_collapse_threshold",
+        "max_parallel_runs",
     }
 )
+# Parallel-agents spec S4 (task-5): user-adjustable global cap on
+# simultaneous Console runs. Aliases console_chat_models' single source of
+# truth so the settings UI and ConsoleChatController.max_parallel_runs
+# (which reads [console] max_parallel_runs via get_cli_setting with the
+# same default and floor) can never drift apart. No upper bound is
+# deliberate (user-owned trade-off).
+DEFAULT_CONSOLE_MAX_PARALLEL_RUNS = CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
+MIN_CONSOLE_MAX_PARALLEL_RUNS = 1
 CONSOLE_BACKGROUND_EFFECT_KEYS = frozenset(
     {
         "background_effects.enabled",
@@ -348,6 +358,7 @@ CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
 CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "collapse_large_pastes",
     "paste_collapse_threshold",
+    "max_parallel_runs",
     "streaming",
     "temperature",
     "top_p",
@@ -1480,6 +1491,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_manual = False
         self._syncing_provider_selection = False
         self._syncing_console_threshold = False
+        self._syncing_console_max_parallel_runs = False
         self._syncing_console_defaults = False
         self._syncing_console_background_effects = False
         self._syncing_library_rag_defaults = False
@@ -2356,6 +2368,7 @@ class SettingsScreen(BaseAppScreen):
                 owns_config_sections=(
                     "console.collapse_large_pastes",
                     "console.paste_collapse_threshold",
+                    "console.max_parallel_runs",
                     "console.background_effects.*",
                     "chat_defaults.streaming",
                     "chat_defaults.temperature",
@@ -2495,6 +2508,18 @@ class SettingsScreen(BaseAppScreen):
             maximum=MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
         )
 
+    def _loaded_console_max_parallel_runs(self) -> int:
+        # No maximum -- deliberately unbounded (user-owned trade-off), see
+        # DEFAULT_CONSOLE_MAX_PARALLEL_RUNS's docstring.
+        return coerce_int_setting(
+            self._console_settings().get(
+                "max_parallel_runs",
+                DEFAULT_CONSOLE_MAX_PARALLEL_RUNS,
+            ),
+            DEFAULT_CONSOLE_MAX_PARALLEL_RUNS,
+            minimum=MIN_CONSOLE_MAX_PARALLEL_RUNS,
+        )
+
     @staticmethod
     def _coerce_float_default(
         value: object,
@@ -2598,6 +2623,7 @@ class SettingsScreen(BaseAppScreen):
         return {
             "collapse_large_pastes": self._loaded_collapse_large_pastes_enabled(),
             "paste_collapse_threshold": self._loaded_paste_collapse_threshold(),
+            "max_parallel_runs": self._loaded_console_max_parallel_runs(),
             "streaming": self._loaded_console_default_streaming(),
             "temperature": self._loaded_console_default_temperature(),
             "top_p": self._loaded_console_default_top_p(),
@@ -2747,6 +2773,12 @@ class SettingsScreen(BaseAppScreen):
         except ValueError:
             return f"Invalid threshold: {value}"
         return f"{threshold} characters"
+
+    def _console_max_parallel_runs_value(self) -> int | str:
+        draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        if draft is not None and "max_parallel_runs" in draft.values:
+            return draft.values["max_parallel_runs"]
+        return self._loaded_console_max_parallel_runs()
 
     def _update_console_paste_summary(self) -> None:
         try:
@@ -4000,6 +4032,82 @@ class SettingsScreen(BaseAppScreen):
         )
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
+
+    def _normalise_console_max_parallel_runs(self, value: object) -> int:
+        # Parallel-agents spec S4 (task-5): integer, >= 1, no upper bound --
+        # mirrors ConsoleChatController.max_parallel_runs' own floor.
+        text_value = str(value).strip()
+        if not text_value.isdigit() or int(text_value) < MIN_CONSOLE_MAX_PARALLEL_RUNS:
+            raise ValueError(
+                "Max parallel agent runs must be an integer of at least "
+                f"{MIN_CONSOLE_MAX_PARALLEL_RUNS}."
+            )
+        return int(text_value)
+
+    def _stage_console_max_parallel_runs_value(self, value: object) -> None:
+        category = SettingsCategoryId.CONSOLE_BEHAVIOR
+        draft = self._settings_drafts.setdefault(
+            category, SettingsDraft(category=category)
+        )
+        try:
+            staged_value: object = self._normalise_console_max_parallel_runs(value)
+        except ValueError:
+            staged_value = str(value)
+        draft.set_value(
+            "max_parallel_runs",
+            self._loaded_console_max_parallel_runs(),
+            staged_value,
+        )
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+
+    def _console_behavior_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
+        """Focused-field guidance for Console Behavior (task-5).
+
+        Only the "Max parallel agent runs" field has dedicated guidance
+        today; other Console Behavior fields keep the always-visible
+        "Control guide" static block rendered in
+        `_render_category_impact_pane` instead of per-field guidance.
+        """
+        if self._active_settings_field_id == "settings-console-max-parallel-runs":
+            return (
+                (
+                    "Purpose",
+                    "How many agent runs may be in flight at once, across all tabs.",
+                ),
+                (
+                    "Consequences",
+                    "Each concurrent run holds a provider generation, its own tool "
+                    "activity, and memory for its transcript. Local providers "
+                    "(llama.cpp) typically serialize or slow under concurrent "
+                    "generations; high values can exhaust provider slots, rate "
+                    "limits, or RAM. Raise it as far as you like - the app "
+                    "enforces no ceiling.",
+                ),
+                ("Saved as", "console.max_parallel_runs"),
+                (
+                    "Applies",
+                    "Applies to new sends on save; running agents are never "
+                    "stopped by lowering it.",
+                ),
+            )
+        return (
+            ("Purpose", "Focus a Console Behavior field for setting-specific guidance."),
+            ("Consequences", "No field-specific guidance is active right now."),
+            ("Saved as", "varies by field"),
+            ("Applies", "varies by field"),
+        )
+
+    def _refresh_console_behavior_field_guidance(self) -> None:
+        if self._active_category_id() is not SettingsCategoryId.CONSOLE_BEHAVIOR:
+            return
+        for index, (label, value) in enumerate(
+            self._console_behavior_field_guidance_rows()
+        ):
+            self._set_static_text(
+                f"#settings-console-behavior-field-guide-{index}",
+                f"{label}: {value}",
+            )
 
     @staticmethod
     def _normalise_library_rag_int(value: object) -> int | str:
@@ -8679,6 +8787,18 @@ class SettingsScreen(BaseAppScreen):
                 "Normal typing stays literal. The canonical message payload is preserved.",
                 id="settings-console-collapse-large-pastes-help",
             )
+            yield Static("Parallel agent runs", classes="destination-section")
+            with Horizontal(classes="settings-input-row"):
+                yield Static(
+                    "Max parallel agent runs", classes="settings-input-label"
+                )
+                yield Input(
+                    value=str(self._console_max_parallel_runs_value()),
+                    id="settings-console-max-parallel-runs",
+                    classes="settings-compact-input",
+                    placeholder=str(DEFAULT_CONSOLE_MAX_PARALLEL_RUNS),
+                    restrict=r"^[0-9]*$",
+                )
             yield Static("Global fallback defaults", classes="destination-section")
             yield Static(
                 "Used when no provider+model profile or active Console session overrides them.",
@@ -10869,6 +10989,15 @@ class SettingsScreen(BaseAppScreen):
                 "Threshold",
                 "Minimum pasted chunk size before collapse",
             )
+            yield Static("Focused field guide", classes="destination-section")
+            for index, (label, value) in enumerate(
+                self._console_behavior_field_guidance_rows()
+            ):
+                yield self._detail_row(
+                    label,
+                    value,
+                    identifier=f"settings-console-behavior-field-guide-{index}",
+                )
             yield Static("Override rules", classes="destination-section")
             yield self._detail_row(
                 "Priority",
@@ -11432,6 +11561,16 @@ class SettingsScreen(BaseAppScreen):
             )
             self._refresh_rag_field_guidance()
             return
+        if active_category is SettingsCategoryId.CONSOLE_BEHAVIOR:
+            # task-5: only the "Max parallel agent runs" field has dedicated
+            # focused-field guidance today; other Console Behavior fields
+            # keep the always-visible "Control guide" static block.
+            console_behavior_field_ids = {"settings-console-max-parallel-runs"}
+            self._active_settings_field_id = (
+                widget_id if widget_id in console_behavior_field_ids else None
+            )
+            self._refresh_console_behavior_field_guidance()
+            return
         if active_category is not SettingsCategoryId.PROVIDERS_MODELS:
             self._active_settings_field_id = None
             return
@@ -11990,6 +12129,17 @@ class SettingsScreen(BaseAppScreen):
             "#settings-console-behavior-result", self._console_behavior_result_text()
         )
         self._update_console_paste_summary()
+        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Input.Changed, "#settings-console-max-parallel-runs")
+    def handle_console_max_parallel_runs_changed(self, event: Input.Changed) -> None:
+        if self._syncing_console_max_parallel_runs:
+            return
+        self._stage_console_max_parallel_runs_value(event.value)
+        self._console_behavior_result = "Console behavior settings staged."
+        self._set_static_text(
+            "#settings-console-behavior-result", self._console_behavior_result_text()
+        )
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
     @on(Input.Changed, "#settings-console-default-streaming")
@@ -13789,6 +13939,12 @@ class SettingsScreen(BaseAppScreen):
                             dirty_values["paste_collapse_threshold"]
                         )
                     )
+                if "max_parallel_runs" in dirty_values:
+                    dirty_values["max_parallel_runs"] = (
+                        self._normalise_console_max_parallel_runs(
+                            dirty_values["max_parallel_runs"]
+                        )
+                    )
                 if "streaming" in dirty_values:
                     dirty_values["streaming"] = (
                         self._normalise_console_default_streaming(
@@ -14594,6 +14750,16 @@ class SettingsScreen(BaseAppScreen):
                 ).value = str(self._paste_collapse_threshold_value())
             finally:
                 self._syncing_console_threshold = False
+        except QueryError:
+            pass
+        try:
+            self._syncing_console_max_parallel_runs = True
+            try:
+                self.query_one(
+                    "#settings-console-max-parallel-runs", Input
+                ).value = str(self._console_max_parallel_runs_value())
+            finally:
+                self._syncing_console_max_parallel_runs = False
         except QueryError:
             pass
         input_values = {
