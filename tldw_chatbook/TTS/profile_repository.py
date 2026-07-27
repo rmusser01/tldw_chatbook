@@ -77,10 +77,11 @@ class _OperationAdmission(Generic[_T]):
 
 @dataclass(slots=True)
 class _IntegrityEvidence:
-    """Exact schema-owned values permitted to support one conflict."""
+    """Exact schema-owned values and statement error for one mutation."""
 
     profile_id: UUID | None
     normalized_name: str | None = None
+    statement_error: sqlite3.IntegrityError | None = None
 
 
 def _repository_error(code: str) -> ProfileRepositoryError:
@@ -841,38 +842,43 @@ class TTSProfileRepository:
                 created_at=timestamp,
                 updated_at=timestamp,
             )
-            connection.execute(
-                """
-                INSERT INTO tts_generation_profiles (
-                    profile_id,
-                    display_name,
-                    normalized_name,
-                    provider_id,
-                    model_id,
-                    voice_id,
-                    response_format,
-                    speed,
-                    options_json,
-                    revision,
-                    created_at,
-                    updated_at
-                ) VALUES (
-                    :profile_id,
-                    :display_name,
-                    :normalized_name,
-                    :provider_id,
-                    :model_id,
-                    :voice_id,
-                    :response_format,
-                    :speed,
-                    :options_json,
-                    :revision,
-                    :created_at,
-                    :updated_at
+            parameters = encode_profile(profile)
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO tts_generation_profiles (
+                        profile_id,
+                        display_name,
+                        normalized_name,
+                        provider_id,
+                        model_id,
+                        voice_id,
+                        response_format,
+                        speed,
+                        options_json,
+                        revision,
+                        created_at,
+                        updated_at
+                    ) VALUES (
+                        :profile_id,
+                        :display_name,
+                        :normalized_name,
+                        :provider_id,
+                        :model_id,
+                        :voice_id,
+                        :response_format,
+                        :speed,
+                        :options_json,
+                        :revision,
+                        :created_at,
+                        :updated_at
+                    )
+                    """,
+                    parameters,
                 )
-                """,
-                encode_profile(profile),
-            )
+            except sqlite3.IntegrityError as error:
+                evidence.statement_error = error
+                raise
             return self._worker_require_round_trip(
                 connection,
                 persisted_id,
@@ -952,6 +958,11 @@ class TTSProfileRepository:
         expected_revision: int,
         draft: TTSProfileDraft,
     ) -> TTSGenerationProfile:
+        evidence = _IntegrityEvidence(
+            profile_id=profile_id,
+            normalized_name=draft.normalized_name,
+        )
+
         def update() -> TTSGenerationProfile:
             stored = self._worker_get_profile(connection, profile_id)
             if stored.revision != expected_revision:
@@ -972,25 +983,29 @@ class TTSProfileRepository:
             )
             parameters = encode_profile(updated)
             parameters["expected_revision"] = expected_revision
-            cursor = connection.execute(
-                """
-                UPDATE tts_generation_profiles
-                SET
-                    display_name = :display_name,
-                    normalized_name = :normalized_name,
-                    provider_id = :provider_id,
-                    model_id = :model_id,
-                    voice_id = :voice_id,
-                    response_format = :response_format,
-                    speed = :speed,
-                    options_json = :options_json,
-                    revision = :revision,
-                    updated_at = :updated_at
-                WHERE profile_id = :profile_id
-                    AND revision = :expected_revision
-                """,
-                parameters,
-            )
+            try:
+                cursor = connection.execute(
+                    """
+                    UPDATE tts_generation_profiles
+                    SET
+                        display_name = :display_name,
+                        normalized_name = :normalized_name,
+                        provider_id = :provider_id,
+                        model_id = :model_id,
+                        voice_id = :voice_id,
+                        response_format = :response_format,
+                        speed = :speed,
+                        options_json = :options_json,
+                        revision = :revision,
+                        updated_at = :updated_at
+                    WHERE profile_id = :profile_id
+                        AND revision = :expected_revision
+                    """,
+                    parameters,
+                )
+            except sqlite3.IntegrityError as error:
+                evidence.statement_error = error
+                raise
             if cursor.rowcount != 1:
                 raise _repository_error("conflict")
             return self._worker_require_round_trip(
@@ -1004,10 +1019,7 @@ class TTSProfileRepository:
             update,
             operation_kind="update",
             immediate=True,
-            integrity_evidence=_IntegrityEvidence(
-                profile_id=profile_id,
-                normalized_name=draft.normalized_name,
-            ),
+            integrity_evidence=evidence,
         )
 
     def _worker_delete_profile(
@@ -1015,12 +1027,19 @@ class TTSProfileRepository:
         connection: sqlite3.Connection,
         profile_id: UUID,
     ) -> None:
+        evidence = _IntegrityEvidence(profile_id=profile_id)
+
         def delete() -> None:
             self._worker_get_profile(connection, profile_id)
-            cursor = connection.execute(
-                "DELETE FROM tts_generation_profiles WHERE profile_id = ?",
-                (encode_uuid(profile_id),),
-            )
+            encoded_profile_id = encode_uuid(profile_id)
+            try:
+                cursor = connection.execute(
+                    "DELETE FROM tts_generation_profiles WHERE profile_id = ?",
+                    (encoded_profile_id,),
+                )
+            except sqlite3.IntegrityError as error:
+                evidence.statement_error = error
+                raise
             if cursor.rowcount == 0:
                 raise _repository_error("missing")
             if cursor.rowcount != 1:
@@ -1031,7 +1050,7 @@ class TTSProfileRepository:
             delete,
             operation_kind="delete",
             immediate=True,
-            integrity_evidence=_IntegrityEvidence(profile_id=profile_id),
+            integrity_evidence=evidence,
         )
 
     def _worker_require_round_trip(
@@ -1074,7 +1093,11 @@ class TTSProfileRepository:
 
         integrity_conflict = False
         classification_error: BaseException | None = None
-        if isinstance(body_error, sqlite3.IntegrityError):
+        if (
+            isinstance(body_error, sqlite3.IntegrityError)
+            and integrity_evidence is not None
+            and integrity_evidence.statement_error is body_error
+        ):
             try:
                 integrity_conflict = _has_integrity_conflict_evidence(
                     connection,

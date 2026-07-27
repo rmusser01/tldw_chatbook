@@ -83,6 +83,22 @@ class _FalseyCallable:
         raise AssertionError("constructor inspected callable truthiness")
 
 
+class _BeginIntegrityConnection:
+    """Minimal transaction connection that fails before its body can run."""
+
+    def __init__(self, error: sqlite3.IntegrityError) -> None:
+        self.error = error
+        self.in_transaction = False
+        self.rollback_attempted = False
+
+    def execute(self, statement: str) -> None:
+        assert statement in {"BEGIN", "BEGIN IMMEDIATE"}
+        raise self.error
+
+    def rollback(self) -> None:
+        self.rollback_attempted = True
+
+
 def _draft(
     display_name: str = "Narrator",
     *,
@@ -502,6 +518,65 @@ def _fail_next_commit(
 
     monkeypatch.setattr(repository, "_commit_transaction", fail_once)
     return attempted
+
+
+def _fail_next_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+    repository: profile_repository.TTSProfileRepository,
+    error: BaseException,
+) -> threading.Event:
+    original_round_trip = repository._worker_require_round_trip
+    failed = False
+    attempted = threading.Event()
+
+    def fail_once(
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+        expected: TTSGenerationProfile,
+    ) -> TTSGenerationProfile:
+        nonlocal failed
+        if not failed:
+            failed = True
+            attempted.set()
+            raise error
+        return original_round_trip(connection, profile_id, expected)
+
+    monkeypatch.setattr(repository, "_worker_require_round_trip", fail_once)
+    return attempted
+
+
+def _expected_integrity_error(code: int, secret: str) -> sqlite3.IntegrityError:
+    error = sqlite3.IntegrityError(secret)
+    setattr(error, "sqlite_errorcode", code)
+    return error
+
+
+def _record_integrity_classification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[str]:
+    original_classification = profile_repository._has_integrity_conflict_evidence
+    operations: list[str] = []
+
+    def record(
+        connection: sqlite3.Connection,
+        error: sqlite3.IntegrityError,
+        operation_kind: Any,
+        evidence: Any,
+    ) -> bool:
+        operations.append(cast(str, operation_kind))
+        return original_classification(
+            connection,
+            error,
+            operation_kind,
+            evidence,
+        )
+
+    monkeypatch.setattr(
+        profile_repository,
+        "_has_integrity_conflict_evidence",
+        record,
+    )
+    return operations
 
 
 def _pause_next_rollback(
@@ -1206,28 +1281,37 @@ async def test_integrity_error_code_control_flow_is_preserved_after_rollback(
 ) -> None:
     database_path = tmp_path / "profiles.sqlite3"
     signal = _ControlFlow()
-    error = _HostileSQLiteErrorCode(signal)
 
     async with _opened_repository(database_path) as repository:
+        original = (
+            await repository.create_profile(
+                _draft("Control Flow Code"),
+                profile_id=GENERATED_ID,
+            )
+        ).value
 
-        def fail_encode(_profile: TTSGenerationProfile) -> dict[str, object]:
-            raise error
+        def raise_signal(_error: sqlite3.IntegrityError) -> int | None:
+            raise signal
 
         with monkeypatch.context() as patch:
-            patch.setattr(profile_repository, "encode_profile", fail_encode)
+            patch.setattr(
+                profile_repository,
+                "_read_sqlite_errorcode",
+                raise_signal,
+            )
             with pytest.raises(_ControlFlow) as caught:
                 await repository.create_profile(
                     _draft("Control Flow Code"),
-                    profile_id=GENERATED_ID,
+                    profile_id=CALLER_ID,
                 )
 
         assert caught.value is signal
-        assert (await repository.list_profiles()).value.total == 0
+        assert (await repository.list_profiles()).value.profiles == (original,)
         recovered = await repository.create_profile(
-            _draft("Control Flow Code"),
-            profile_id=GENERATED_ID,
+            _draft("Control Flow Recovered"),
+            profile_id=CALLER_ID,
         )
-        assert recovered.value.profile_id == GENERATED_ID
+        assert recovered.value.profile_id == CALLER_ID
 
 
 @pytest.mark.asyncio
@@ -1875,6 +1959,206 @@ async def test_delete_trigger_post_check_failure_maps_safely_to_operation_failed
             str(database_path),
         )
         assert (await repository.get_profile(profile_id)).value == profile
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create", "update", "delete"])
+@pytest.mark.parametrize("sqlite_errorcode", [2067, 1555])
+async def test_expected_integrity_from_commit_never_classifies_as_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    sqlite_errorcode: int,
+) -> None:
+    database_path = tmp_path / (
+        f"commit-integrity-{operation}-{sqlite_errorcode}.sqlite3"
+    )
+    profile_id = UUID("a0000000-0000-4000-8000-00000000000a")
+    secret = f"secret-{operation}-commit-integrity-{sqlite_errorcode}"
+    original: TTSGenerationProfile | None = None
+
+    async with _opened_repository(database_path) as repository:
+        if operation != "create":
+            original = (
+                await repository.create_profile(
+                    _draft("Commit Original"),
+                    profile_id=profile_id,
+                )
+            ).value
+
+        classifications = _record_integrity_classification(monkeypatch)
+        attempted = _fail_next_commit(
+            monkeypatch,
+            repository,
+            _expected_integrity_error(sqlite_errorcode, secret),
+        )
+
+        with pytest.raises(ProfileRepositoryError) as failed:
+            if operation == "create":
+                await repository.create_profile(
+                    _draft("Commit Create"),
+                    profile_id=profile_id,
+                )
+            elif operation == "update":
+                await repository.update_profile(
+                    profile_id,
+                    1,
+                    _draft("Commit Updated"),
+                )
+            else:
+                await repository.delete_profile(profile_id)
+
+        _assert_safe_error(
+            failed.value,
+            "operation_failed",
+            secret,
+            str(database_path),
+        )
+        assert attempted.is_set()
+        assert classifications == []
+
+        if operation == "create":
+            assert (await repository.list_profiles()).value.total == 0
+            recovered = await repository.create_profile(
+                _draft("Commit Create"),
+                profile_id=profile_id,
+            )
+            assert recovered.value.profile_id == profile_id
+        elif operation == "update":
+            assert original is not None
+            assert (await repository.get_profile(profile_id)).value == original
+            recovered = await repository.update_profile(
+                profile_id,
+                original.revision,
+                _draft("Commit Recovered"),
+            )
+            assert recovered.value.revision == original.revision + 1
+        else:
+            assert original is not None
+            assert (await repository.get_profile(profile_id)).value == original
+            assert (await repository.delete_profile(profile_id)).value is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create", "update"])
+@pytest.mark.parametrize("sqlite_errorcode", [2067, 1555])
+async def test_expected_integrity_from_round_trip_never_classifies_as_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    sqlite_errorcode: int,
+) -> None:
+    database_path = tmp_path / (
+        f"round-trip-integrity-{operation}-{sqlite_errorcode}.sqlite3"
+    )
+    profile_id = UUID("a1000000-0000-4000-8000-00000000000a")
+    secret = f"secret-{operation}-round-trip-integrity-{sqlite_errorcode}"
+    original: TTSGenerationProfile | None = None
+
+    async with _opened_repository(database_path) as repository:
+        if operation == "update":
+            original = (
+                await repository.create_profile(
+                    _draft("Round Trip Original"),
+                    profile_id=profile_id,
+                )
+            ).value
+
+        classifications = _record_integrity_classification(monkeypatch)
+        attempted = _fail_next_round_trip(
+            monkeypatch,
+            repository,
+            _expected_integrity_error(sqlite_errorcode, secret),
+        )
+
+        with pytest.raises(ProfileRepositoryError) as failed:
+            if operation == "create":
+                await repository.create_profile(
+                    _draft("Round Trip Create"),
+                    profile_id=profile_id,
+                )
+            else:
+                await repository.update_profile(
+                    profile_id,
+                    1,
+                    _draft("Round Trip Updated"),
+                )
+
+        _assert_safe_error(
+            failed.value,
+            "operation_failed",
+            secret,
+            str(database_path),
+        )
+        assert attempted.is_set()
+        assert classifications == []
+
+        if operation == "create":
+            assert (await repository.list_profiles()).value.total == 0
+            recovered = await repository.create_profile(
+                _draft("Round Trip Create"),
+                profile_id=profile_id,
+            )
+            assert recovered.value.profile_id == profile_id
+        else:
+            assert original is not None
+            assert (await repository.get_profile(profile_id)).value == original
+            recovered = await repository.update_profile(
+                profile_id,
+                original.revision,
+                _draft("Round Trip Recovered"),
+            )
+            assert recovered.value.revision == original.revision + 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create", "update", "delete"])
+@pytest.mark.parametrize("sqlite_errorcode", [2067, 1555])
+async def test_expected_integrity_from_begin_never_classifies_as_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    sqlite_errorcode: int,
+) -> None:
+    database_path = tmp_path / (
+        f"begin-integrity-{operation}-{sqlite_errorcode}.sqlite3"
+    )
+    secret = f"secret-{operation}-begin-integrity-{sqlite_errorcode}"
+    failed_connection = _BeginIntegrityConnection(
+        _expected_integrity_error(sqlite_errorcode, secret)
+    )
+    mutation_attempted = False
+
+    def mutation() -> None:
+        nonlocal mutation_attempted
+        mutation_attempted = True
+
+    async with _opened_repository(database_path) as repository:
+        classifications = _record_integrity_classification(monkeypatch)
+
+        with pytest.raises(ProfileRepositoryError) as failed:
+            repository._worker_transaction(
+                cast(sqlite3.Connection, cast(Any, failed_connection)),
+                mutation,
+                operation_kind=cast(Any, operation),
+                immediate=True,
+            )
+
+        _assert_safe_error(
+            failed.value,
+            "operation_failed",
+            secret,
+            str(database_path),
+        )
+        assert not mutation_attempted
+        assert failed_connection.rollback_attempted
+        assert classifications == []
+
+        recovered = await repository.create_profile(
+            _draft(f"After {operation} Begin"),
+            profile_id=GENERATED_ID,
+        )
+        assert recovered.value.profile_id == GENERATED_ID
 
 
 @pytest.mark.asyncio
