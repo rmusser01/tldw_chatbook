@@ -68,8 +68,84 @@ def test_add_folder_binding_validation_matrix(
         service.add_folder_binding("ws-a", Path("/"))
     with pytest.raises(WorkspaceRegistryServiceError):
         service.add_folder_binding("ws-a", Path.home())
+    # TASK-857: an ordinary subdirectory, not `tmp_path` itself -- this
+    # suite's own autouse HOME-redirection fixture (Tests/conftest.py)
+    # nests the test's effective config directory under `tmp_path`
+    # (`tmp_path/test_data/config`), so `tmp_path` is now correctly
+    # rejected as a folder-binding root in its own right; that is not what
+    # this assertion is testing (unknown-workspace precedence), so use an
+    # ordinary carved-out folder instead.
+    ok_folder = tmp_path / "ok"
+    ok_folder.mkdir()
     with pytest.raises(WorkspaceNotFound):
-        service.add_folder_binding("ws-missing", tmp_path)
+        service.add_folder_binding("ws-missing", ok_folder)
+
+
+def test_add_folder_binding_rejects_sensitive_paths(
+    service: LocalWorkspaceRegistryService,
+) -> None:
+    """TASK-857: folder binding must consult the sensitive-path denylist,
+    not just the filesystem root and home directory. Every candidate here
+    is derived from the app's own accessors (never a re-spelled literal),
+    per the AC, so this can't silently drift the way the read-time
+    denylist's own literals once did.
+    """
+    from tldw_chatbook import config as app_config
+
+    # Case 1: root IS a protected directory (this app's own config dir).
+    config_dir = app_config._get_effective_config_path().parent
+    config_dir.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.add_folder_binding("ws-a", config_dir)
+
+    # Case 2: root IS a protected directory (this app's own data dir).
+    user_data_dir = app_config.get_user_data_dir()
+    user_data_dir.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.add_folder_binding("ws-a", user_data_dir)
+
+    # Case 3: root is NESTED INSIDE a protected directory -- a subdirectory
+    # of get_user_data_dir() must be refused too, even though it doesn't
+    # look sensitive by name alone.
+    nested = user_data_dir / "some_subdir"
+    nested.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.add_folder_binding("ws-a", nested)
+
+    # Case 4: root is coarse enough to CONTAIN a protected directory --
+    # the reverse direction, where the root itself doesn't look sensitive.
+    ancestor_of_user_data_dir = user_data_dir.parent
+    with pytest.raises(WorkspaceRegistryServiceError):
+        service.add_folder_binding("ws-a", ancestor_of_user_data_dir)
+
+
+def test_add_folder_binding_rejection_names_the_protected_path(
+    service: LocalWorkspaceRegistryService,
+) -> None:
+    """The rejection must be actionable -- name what was protected -- not a
+    silent failure or a bare/opaque exception."""
+    from tldw_chatbook import config as app_config
+
+    user_data_dir = app_config.get_user_data_dir()
+    user_data_dir.mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(WorkspaceRegistryServiceError) as excinfo:
+        service.add_folder_binding("ws-a", user_data_dir)
+
+    assert str(user_data_dir) in str(excinfo.value)
+
+
+def test_add_folder_binding_still_binds_an_ordinary_project_folder(
+    service: LocalWorkspaceRegistryService, tmp_path: Path
+) -> None:
+    """TASK-857 AC#3: no regression on the common case -- an ordinary
+    project folder unrelated to any of this app's own state still binds."""
+    folder = tmp_path / "ordinary-project"
+    folder.mkdir()
+
+    binding = service.add_folder_binding("ws-a", folder)
+
+    assert binding.locator == str(folder.resolve())
 
 
 def test_add_folder_binding_rejects_default_workspace(

@@ -576,6 +576,107 @@ def is_sensitive_path(
     return False
 
 
+def find_root_binding_conflict(
+    root: Path, context: SensitivePathContext | None = None
+) -> Path | None:
+    """Whether granting recursive access under ``root`` would reach a protected path.
+
+    TASK-857: consulted by ``Workspaces.registry_service.add_folder_binding``,
+    the gate that decides whether a folder root may be bound as an
+    additional file-tool access root (``Tools/workspace_file_roots.py``
+    layers every bound folder on top of the sandbox root, and the file
+    tools then trust any path under any of them, subject only to the
+    the per-path checks below). That is a fundamentally different question
+    from ``is_sensitive_path``'s: that function asks whether one candidate
+    READ/WRITE target falls inside a denied area; this asks whether an
+    entire subtree about to be granted blanket, recursive reachability
+    conflicts with one, which matters in BOTH directions:
+
+    1. ``root`` itself resolves to, or under, one of the fixed sensitive
+       directories (``~/.ssh``, ``~/.aws``, ..., the skill-trust subtree)
+       or one of this app's own state-container directories
+       (``get_user_data_dir()``, the effective config directory, the
+       ChromaDB persist directory, the RAG-profile directory). Binding a
+       root already inside one of these would make everything else in
+       there reachable too -- including subdirectories
+       ``is_sensitive_path``'s direct-child-file rule deliberately leaves
+       alone for per-path reads (e.g. ``tool_sandbox`` nested under
+       ``get_user_data_dir()``), because that rule was designed to catch
+       stray loose files in an otherwise-normal directory, not to make an
+       entire application-state directory safe to use as a binding root.
+       Nothing legitimate needs to bind these directly: the sandbox root
+       is already included automatically by
+       ``Tools.workspace_file_roots.allowed_file_roots`` without ever
+       going through this gate.
+    2. ``root`` is coarse enough to CONTAIN one of those same directories
+       or one of this app's sensitive single files/database paths -- e.g.
+       binding ``~/.local/share`` (which contains ``get_user_data_dir()``
+       on a typical Linux install) or ``~/.config`` (which contains
+       ``~/.config/tldw_cli``). ``root`` need not itself look sensitive
+       for this direction to matter.
+
+    Args:
+        root: The already-resolved candidate folder-binding root.
+        context: Optional pre-resolved ``SensitivePathContext``; see
+            ``resolve_sensitive_context``.
+
+    Returns:
+        The protected path ``root`` conflicts with, or ``None`` if it
+        conflicts with nothing this module tracks. The returned path is
+        meant to be named directly in the caller's rejection message, so
+        the user can see exactly what stood in the way. When more than one
+        protected path would match, the most specific/direct relationship
+        wins, in this priority order: (1) ``root`` IS the protected path
+        itself, (2) ``root`` is nested INSIDE a protected directory --
+        ties broken toward the DEEPEST (closest, most specific) enclosing
+        directory, (3) ``root`` CONTAINS a protected directory or file --
+        ties broken toward the SHALLOWEST (closest, most immediate)
+        contained path. E.g. binding ``get_user_data_dir()`` itself is
+        reported as case (1) even though it also technically contains the
+        skill-trust subtree several levels down (case (3)); binding
+        ``get_user_data_dir()``'s own PARENT is reported as containing
+        ``get_user_data_dir()`` itself (the nearest contained protected
+        directory), not the more deeply nested skill-trust subtree beneath
+        it -- naming the closest conflict is more actionable than naming
+        an obscure one several levels further away.
+    """
+    ctx = context if context is not None else resolve_sensitive_context()
+
+    protected_dirs = ctx.dirs + ctx.direct_child_denied_dirs
+    protected_files: list[Path] = list(ctx.files)
+    for db_path in ctx.db_paths:
+        protected_files.append(db_path)
+        protected_files.extend(_db_sidecar_paths(db_path))
+
+    # (1) `root` IS a protected path itself -- the most direct, most
+    # actionable case, checked before either containment direction so it
+    # always wins when several apply at once.
+    for protected in tuple(protected_dirs) + tuple(protected_files):
+        if root == protected:
+            return protected
+
+    # (2) `root` is nested INSIDE a protected directory. Several enclosing
+    # directories can match at once (e.g. the skill-trust subtree nested
+    # inside `get_user_data_dir()`); the one with the MOST path parts is
+    # the deepest/closest enclosing directory, hence the most specific.
+    nested_inside = [protected for protected in protected_dirs if protected in root.parents]
+    if nested_inside:
+        return max(nested_inside, key=lambda candidate: len(candidate.parts))
+
+    # (3) `root` is coarse enough to CONTAIN a protected directory or
+    # file. Several contained paths can match at once (e.g. an ancestor of
+    # `get_user_data_dir()` also contains the skill-trust subtree nested
+    # inside it); the one with the FEWEST path parts is the shallowest/
+    # nearest contained path, hence the most immediate, least obscure one
+    # to report.
+    contains = [protected for protected in protected_dirs if root in protected.parents]
+    contains.extend(protected for protected in protected_files if root in protected.parents)
+    if contains:
+        return min(contains, key=lambda candidate: len(candidate.parts))
+
+    return None
+
+
 def refuses_new_directory_chain(
     target_dir: Path, context: SensitivePathContext | None = None
 ) -> bool:
