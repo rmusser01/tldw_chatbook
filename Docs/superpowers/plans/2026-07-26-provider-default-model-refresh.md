@@ -63,7 +63,7 @@ begins.
 - Modify: `Tests/test_config_model_catalog_defaults.py`
 - Test: `Tests/test_config_model_catalog_defaults.py`
 
-- [ ] **Step 1: Add failing configuration assertions**
+- [x] **Step 1: Add failing configuration assertions**
 
 Extend `Tests/test_config_model_catalog_defaults.py` to import
 `API_MODELS_BY_PROVIDER` alongside `CONFIG_TOML_CONTENT`, then add one focused
@@ -101,7 +101,7 @@ def test_recommended_provider_defaults_and_catalogs_are_current():
     assert API_MODELS_BY_PROVIDER["OpenAI"] == parsed["providers"]["OpenAI"]
 ```
 
-- [ ] **Step 2: Run the test and verify it fails**
+- [x] **Step 2: Run the test and verify it fails**
 
 Run:
 
@@ -112,7 +112,7 @@ Run:
 Expected: FAIL because the embedded provider catalogs and defaults still contain
 the previous model IDs.
 
-- [ ] **Step 3: Update active configuration defaults**
+- [x] **Step 3: Update active configuration defaults**
 
 In `tldw_chatbook/config.py`:
 
@@ -134,7 +134,7 @@ In `tldw_chatbook/config.py`:
 - Do not change `[character_defaults]`, `[analysis_defaults]`, or specialized
   model settings.
 
-- [ ] **Step 4: Run the configuration tests**
+- [x] **Step 4: Run the configuration tests**
 
 Run:
 
@@ -144,7 +144,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/config.py Tests/test_config_model_catalog_defaults.py
@@ -161,7 +161,7 @@ git commit -m "config: refresh provider default models"
 - Modify: `Tests/Chat/test_chat_functions.py`
 - Test: `Tests/Chat/test_chat_functions.py`
 
-- [ ] **Step 1: Add failing GPT-5.6 payload tests**
+- [x] **Step 1: Add failing GPT-5.6 payload tests**
 
 In `TestProviderRequestPayloads`, add tests using `_CapturedSession`:
 
@@ -239,7 +239,7 @@ Retain the existing `o3` Responses and streaming tests as regression coverage.
 Calling the default-contract test with `model=None` also verifies the OpenAI
 handler fallback.
 
-- [ ] **Step 2: Run the new tests and verify they fail**
+- [x] **Step 2: Run the new tests and verify they fail**
 
 Run:
 
@@ -250,7 +250,7 @@ Run:
 Expected: FAIL because ordinary GPT-5.6 requests currently use `max_tokens`,
 omit `reasoning_effort`, and explicit `"none"` selects Responses.
 
-- [ ] **Step 3: Implement narrowly scoped OpenAI model routing**
+- [x] **Step 3: Implement narrowly scoped OpenAI model routing**
 
 In `LLM_API_Calls.py`:
 
@@ -272,7 +272,7 @@ In `LLM_API_Calls.py`:
 - Change the handler fallback used when the OpenAI config has no model to
   `gpt-5.6-terra`.
 
-- [ ] **Step 4: Run focused OpenAI tests**
+- [x] **Step 4: Run focused OpenAI tests**
 
 Run:
 
@@ -282,7 +282,7 @@ Run:
 
 Expected: PASS, including the existing Responses normalization tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/LLM_Calls/LLM_API_Calls.py Tests/Chat/test_chat_functions.py
@@ -299,7 +299,7 @@ git commit -m "fix: shape GPT-5.6 requests compatibly"
 - Modify: `Tests/Chat/test_chat_functions.py`
 - Test: `Tests/Chat/test_chat_functions.py`
 
-- [ ] **Step 1: Add failing Sonnet 5 and adaptive-effort tests**
+- [x] **Step 1: Add failing Sonnet 5 and adaptive-effort tests**
 
 Add four captured-payload tests:
 
@@ -344,7 +344,7 @@ In the Sonnet 5 effort case, also pass `thinking_budget_tokens=4096` and assert
 that no `budget_tokens` field is emitted. In every Sonnet 5 test, assert sampling
 fields are absent.
 
-- [ ] **Step 2: Run the new tests and verify they fail**
+- [x] **Step 2: Run the new tests and verify they fail**
 
 Run:
 
@@ -355,7 +355,7 @@ Run:
 Expected: FAIL because Sonnet 5 is not recognized and adaptive effort is
 currently nested inside `thinking`.
 
-- [ ] **Step 3: Separate Anthropic thinking mode from output effort**
+- [x] **Step 3: Separate Anthropic thinking mode from output effort**
 
 In `LLM_API_Calls.py`:
 
@@ -379,7 +379,7 @@ In `LLM_API_Calls.py`:
 - Change the handler fallback used when Anthropic config has no model to
   `claude-sonnet-5`.
 
-- [ ] **Step 4: Update old adaptive assertions**
+- [x] **Step 4: Update old adaptive assertions**
 
 Change the two existing adaptive-model tests from:
 
@@ -396,7 +396,7 @@ assert captured["json"]["output_config"] == {"effort": "high"}
 
 Keep the legacy Sonnet 4 fixed-budget tests unchanged.
 
-- [ ] **Step 5: Run focused Anthropic tests**
+- [x] **Step 5: Run focused Anthropic tests**
 
 Run:
 
@@ -406,7 +406,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add tldw_chatbook/LLM_Calls/LLM_API_Calls.py Tests/Chat/test_chat_functions.py
@@ -423,7 +423,7 @@ git commit -m "fix: shape Claude Sonnet 5 requests compatibly"
 - Modify: `Tests/Chat/test_chat_functions.py`
 - Test: `Tests/Chat/test_chat_functions.py`
 
-- [ ] **Step 1: Add a failing DeepSeek fallback request test**
+- [x] **Step 1: Add a failing DeepSeek fallback request test**
 
 Use `_CapturedSession`, monkeypatch the module-level `settings` to contain a
 DeepSeek API key/base URL but no model, call `chat_with_deepseek(model=None)`,
@@ -439,7 +439,7 @@ assert captured["json"]["max_tokens"] == 128
 This test verifies that only the model choice changes; the existing endpoint and
 Chat Completions payload stay intact.
 
-- [ ] **Step 2: Run the test and verify it fails**
+- [x] **Step 2: Run the test and verify it fails**
 
 Run:
 
@@ -449,12 +449,12 @@ Run:
 
 Expected: FAIL because the handler fallback remains `deepseek-chat`.
 
-- [ ] **Step 3: Change the DeepSeek handler fallback**
+- [x] **Step 3: Change the DeepSeek handler fallback**
 
 In `chat_with_deepseek()`, replace only its fallback model ID with
 `deepseek-v4-flash`. Do not add new reasoning or endpoint behavior.
 
-- [ ] **Step 4: Run focused DeepSeek tests**
+- [x] **Step 4: Run focused DeepSeek tests**
 
 Run:
 
@@ -464,7 +464,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/LLM_Calls/LLM_API_Calls.py Tests/Chat/test_chat_functions.py
@@ -484,7 +484,7 @@ git commit -m "fix: refresh DeepSeek handler fallback"
 - Test: `Tests/test_config_model_catalog_defaults.py`
 - Test: `Tests/test_model_capabilities.py`
 
-- [ ] **Step 1: Add failing capability tests**
+- [x] **Step 1: Add failing capability tests**
 
 In `Tests/test_model_capabilities.py`, extend `TestDefaultModels`:
 
@@ -508,7 +508,7 @@ assert models["gpt-5.6-terra"]["vision"] is True
 assert models["claude-sonnet-5"]["vision"] is True
 ```
 
-- [ ] **Step 2: Run the capability tests and verify they fail**
+- [x] **Step 2: Run the capability tests and verify they fail**
 
 Run:
 
@@ -519,7 +519,7 @@ Run:
 Expected: FAIL because neither new default is in the current direct maps or
 patterns.
 
-- [ ] **Step 3: Add matching capability metadata**
+- [x] **Step 3: Add matching capability metadata**
 
 In both the embedded `[model_capabilities.models]` table in `config.py` and
 `DEFAULT_MODEL_CAPABILITIES` in `model_capabilities.py`, add:
@@ -533,7 +533,7 @@ Use TOML inline-table syntax in the embedded config. Direct mappings are
 sufficient for the selected defaults; do not broaden family patterns or add
 DeepSeek V4 vision metadata without separate vendor evidence.
 
-- [ ] **Step 4: Run capability and configuration tests**
+- [x] **Step 4: Run capability and configuration tests**
 
 Run:
 
@@ -543,7 +543,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/config.py tldw_chatbook/model_capabilities.py Tests/test_config_model_catalog_defaults.py Tests/test_model_capabilities.py
@@ -559,7 +559,7 @@ git commit -m "config: recognize new default model capabilities"
 - Modify: `backlog/tasks/task-519 - Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md` (via Backlog CLI)
 - Verify: all files changed in Tasks 1–5
 
-- [ ] **Step 1: Run the complete targeted suite**
+- [x] **Step 1: Run the complete targeted suite**
 
 ```bash
 .venv/bin/python -m pytest Tests/test_config_model_catalog_defaults.py Tests/Chat/test_chat_functions.py Tests/test_model_capabilities.py -q
@@ -567,7 +567,7 @@ git commit -m "config: recognize new default model capabilities"
 
 Expected: all tests pass.
 
-- [ ] **Step 2: Run lint, format, and static checks for changed Python files**
+- [x] **Step 2: Run lint, format, and static checks for changed Python files**
 
 ```bash
 .venv/bin/ruff check --select E9,F63,F7,F82 tldw_chatbook/config.py tldw_chatbook/LLM_Calls/LLM_API_Calls.py tldw_chatbook/model_capabilities.py Tests/test_config_model_catalog_defaults.py Tests/Chat/test_chat_functions.py Tests/test_model_capabilities.py
@@ -582,7 +582,7 @@ whole-file format check because the unchanged baseline file is not Ruff-formatte
 and would require a large out-of-scope rewrite. The other five touched Python
 files pass Ruff's formatter check.
 
-- [ ] **Step 3: Audit the diff against the approved scope**
+- [x] **Step 3: Audit the diff against the approved scope**
 
 Run:
 
@@ -600,7 +600,7 @@ Confirm:
   fallback defaults;
 - Responses API normalization and older-model payload behavior remain covered.
 
-- [ ] **Step 4: Update TASK-519 through Backlog CLI**
+- [x] **Step 4: Update TASK-519 through Backlog CLI**
 
 Add concise implementation notes that list the changed files, model-aware
 compatibility rules, ADR-020/design links, and exact verification results. Mark
@@ -613,7 +613,7 @@ backlog task edit 519 --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --chec
 backlog task edit 519 -s Done
 ```
 
-- [ ] **Step 5: Commit task closeout**
+- [x] **Step 5: Commit task closeout**
 
 ```bash
 git add "backlog/tasks/task-519 - Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md"
