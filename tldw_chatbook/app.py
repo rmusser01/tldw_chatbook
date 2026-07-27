@@ -3379,9 +3379,6 @@ class TldwCli(
     # User ID for notes, will be initialized in __init__
     current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
 
-    # Shared state for tldw API requests
-    _last_tldw_api_request_context: Dict[str, Any] = {}
-
     def __init__(self):
         # Track startup timing
         self._startup_start_time = time.perf_counter()

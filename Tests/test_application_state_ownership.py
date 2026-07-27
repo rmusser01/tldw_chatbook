@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from functools import cache
 from pathlib import Path
+import re
 import warnings
 
 import pytest
@@ -197,6 +198,10 @@ RETIRED_TAB_INITIALIZERS_MODULE = "tldw_chatbook.Event_Handlers.tab_initializers
 INGEST_EVENTS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "ingest_events.py"
 INGEST_UTILS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "ingest_utils.py"
 WORKER_EVENTS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "worker_events.py"
+MEDIA_INGEST_WORKERS_PATH = (
+    PRODUCTION_ROOT / "Event_Handlers" / "media_ingest_workers.py"
+)
+TLDW_API_EVENTS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "tldw_api_events.py"
 STUDY_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "study_screen.py"
 ARTIFACTS_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "artifacts_screen.py"
 ACP_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "acp_screen.py"
@@ -1010,6 +1015,61 @@ def test_retired_destination_root_companions_are_absent() -> None:
     }
 
     assert violations == {}
+
+
+def test_retired_tldw_api_worker_context_and_pipeline_are_absent() -> None:
+    """Keep the unproducible pre-Library ingest completion graph deleted."""
+    context_name = "_last_tldw_api_request_context"
+    context_occurrences = _production_occurrences(context_name)
+
+    retired_paths = [
+        str(path.relative_to(PROJECT_ROOT))
+        for path in (MEDIA_INGEST_WORKERS_PATH, TLDW_API_EVENTS_PATH)
+        if path.exists()
+    ]
+    retired_screen_paths = [
+        str(path.relative_to(PROJECT_ROOT))
+        for path in sorted(PRODUCTION_ROOT.rglob("*.py"))
+        if path.stem.casefold() in {"mediaingestscreen", "media_ingest_screen"}
+    ]
+
+    graph_violations: list[tuple[str, str, int]] = []
+    exact_api_calls = re.compile(r"""(["'])api_calls\1""")
+    for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
+        relative = str(path.relative_to(PROJECT_ROOT))
+        source = path.read_text(encoding="utf-8")
+        for line_number, line in enumerate(source.splitlines(), start=1):
+            if exact_api_calls.search(line):
+                graph_violations.append(
+                    (relative, "worker_group:api_calls", line_number)
+                )
+            if "media_ingest_workers" in line:
+                graph_violations.append(
+                    (relative, "module:media_ingest_workers", line_number)
+                )
+            if "#tldw-api-" in line:
+                graph_violations.append((relative, "selector:#tldw-api-*", line_number))
+            if "tldw_api_events" in line:
+                graph_violations.append(
+                    (relative, "module:tldw_api_events", line_number)
+                )
+
+    retired_symbols = {
+        name: _production_occurrences(name)
+        for name in (
+            "MediaIngestScreen",
+            "handle_tldw_api_worker_failure",
+            "handle_tldw_api_worker_success",
+            "_handle_api_calls",
+        )
+        if _production_occurrences(name)
+    }
+
+    assert context_occurrences == []
+    assert retired_paths == []
+    assert retired_screen_paths == []
+    assert graph_violations == []
+    assert retired_symbols == {}
 
 
 def test_retired_tab_initializer_package_and_imports_stay_absent() -> None:
