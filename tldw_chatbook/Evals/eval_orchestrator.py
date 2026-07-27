@@ -102,6 +102,33 @@ class EvaluationOrchestrator:
         return EvalsDB(db_path=str(db_path), client_id=client_id)
 
     @staticmethod
+    def _safe_validate_existence_check_path(
+        path: Path, purpose: str
+    ) -> Optional[Path]:
+        """Validate a path through validate_path_simple before an existence check.
+
+        This exists solely to decide whether to emit an informational warning
+        about legacy Evals data -- it must never turn into a startup failure.
+        validate_path_simple can raise on paths it has no business rejecting
+        here (see TASK-838: its raw-string scan for parent-directory patterns
+        runs before normalization and over-rejects some legitimate Windows
+        paths, e.g. drive-relative paths containing "..\\" style segments).
+        If validation raises for any reason, log why at debug level and
+        return None so the caller degrades to "skip the warning" instead of
+        propagating the error into _initialize_database.
+        """
+        try:
+            return validate_path_simple(path)
+        except Exception as e:
+            logger.debug(
+                "Skipping legacy-Evals-data check for {} path {}: {}",
+                purpose,
+                path,
+                e,
+            )
+            return None
+
+    @staticmethod
     def _warn_if_legacy_data_exists(resolved_path: Path) -> None:
         """Warn once if the profile-resolved evals.db is missing but legacy data exists.
 
@@ -126,6 +153,24 @@ class EvaluationOrchestrator:
         legacy_path = (
             Path("~/.local/share/tldw_cli").expanduser() / "default_user" / "evals.db"
         )
+
+        validated_resolved_path = EvaluationOrchestrator._safe_validate_existence_check_path(
+            resolved_path, "resolved Evals database"
+        )
+        if validated_resolved_path is None:
+            # Validation failed (e.g. TASK-838 over-rejection). This function
+            # only ever emits an informational warning, so degrade to
+            # "nothing to warn about" rather than risk breaking Evals
+            # startup over a path we can't safely check.
+            return
+        resolved_path = validated_resolved_path
+
+        validated_legacy_path = EvaluationOrchestrator._safe_validate_existence_check_path(
+            legacy_path, "legacy Evals database"
+        )
+        if validated_legacy_path is None:
+            return
+        legacy_path = validated_legacy_path
 
         if resolved_path == legacy_path:
             # The configured profile IS "default_user" (with no custom data

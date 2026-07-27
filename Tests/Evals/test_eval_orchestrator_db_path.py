@@ -248,3 +248,100 @@ def test_legacy_notice_uses_the_hardcoded_legacy_location_even_with_custom_data_
     joined = "\n".join(messages)
     assert str(legacy_db) in joined, messages
     assert legacy_db.read_bytes() == b"pretend-legacy-sqlite-bytes"
+
+
+def test_legacy_notice_still_fires_once_routed_through_path_validation(
+    monkeypatch, tmp_path
+):
+    """Qodo (PR #959) flagged that _warn_if_legacy_data_exists() checked
+    .exists() on config/env-derived paths without validating them through
+    path_validation.py, unlike the rest of this file. This confirms both
+    that validate_path_simple() is actually consulted (a spy wraps the
+    real implementation) and that doing so still lets the notice fire for
+    an ordinary, legitimate legacy path -- the validation step must not
+    silently swallow the happy path."""
+    home_dir = tmp_path / "home_validated_happy_path"
+    home_dir.mkdir()
+    legacy_dir = home_dir / ".local" / "share" / "tldw_cli" / "default_user"
+    legacy_dir.mkdir(parents=True)
+    legacy_db = legacy_dir / "evals.db"
+    legacy_db.write_bytes(b"pretend-legacy-sqlite-bytes")
+
+    _isolate_profile(monkeypatch, tmp_path, "zeta_profile", home_dir=home_dir)
+
+    from tldw_chatbook.Utils.path_validation import (
+        validate_path_simple as real_validate_path_simple,
+    )
+
+    validated_paths: list[Path] = []
+
+    def _spy_validate_path_simple(path, require_exists=False):
+        validated_paths.append(Path(path))
+        return real_validate_path_simple(path, require_exists=require_exists)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Evals.eval_orchestrator.validate_path_simple",
+        _spy_validate_path_simple,
+    )
+
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        orchestrator = EvaluationOrchestrator(client_id="test_zeta")
+    finally:
+        loguru_logger.remove(sink_id)
+
+    resolved_path = Path(orchestrator.db.db_path)
+    joined = "\n".join(messages)
+    assert str(resolved_path) in joined, messages
+    assert str(legacy_db) in joined, messages
+
+    # The notice's paths must actually have been routed through
+    # validate_path_simple(), not just checked with .exists() directly.
+    assert resolved_path in validated_paths, validated_paths
+    assert legacy_db in validated_paths, validated_paths
+
+
+def test_legacy_notice_does_not_raise_when_path_validation_fails(
+    monkeypatch, tmp_path
+):
+    """validate_path_simple() can over-reject legitimate paths (TASK-838:
+    its raw-string scan for parent-directory patterns runs before
+    normalization and can misfire on legitimate Windows-style paths).
+    _warn_if_legacy_data_exists() only ever emits an informational
+    warning about pre-existing data, so a validation failure must degrade
+    to "skip the warning" -- it must never raise into
+    _initialize_database and break Evals startup."""
+    home_dir = tmp_path / "home_validation_fails"
+    home_dir.mkdir()
+    legacy_dir = home_dir / ".local" / "share" / "tldw_cli" / "default_user"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "evals.db").write_bytes(b"pretend-legacy-sqlite-bytes")
+
+    _isolate_profile(monkeypatch, tmp_path, "eta_profile", home_dir=home_dir)
+
+    def _always_reject(path, require_exists=False):
+        raise ValueError("simulated TASK-838-style over-rejection")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Evals.eval_orchestrator.validate_path_simple",
+        _always_reject,
+    )
+
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        # Must not raise even though validate_path_simple() always rejects.
+        orchestrator = EvaluationOrchestrator(client_id="test_eta")
+    finally:
+        loguru_logger.remove(sink_id)
+
+    # The DB itself still initializes normally -- only the legacy-data
+    # notice is affected by validation failing.
+    resolved_path = Path(orchestrator.db.db_path)
+    assert resolved_path.parent.name == "eta_profile"
+    assert resolved_path.exists()
+
+    # No legacy-data warning is emitted when validation can't vouch for the
+    # paths, even though legacy data genuinely exists on disk.
+    assert not any("default_user" in message for message in messages), messages
