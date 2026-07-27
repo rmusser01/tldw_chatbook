@@ -625,9 +625,9 @@ def test_reusing_source_after_failed_move_preserves_later_deletion(
 
     monkeypatch.setattr(replica, "move_file", fail_move)
     assert service.move_file("source.md", "moved.md").status == "ok"
+    monkeypatch.setattr(replica, "move_file", real_move)
     assert service.create_file("source.md", "replacement").status == "ok"
     (root / "source.md").unlink()
-    monkeypatch.setattr(replica, "move_file", real_move)
 
     result = service.reconcile()
 
@@ -636,6 +636,38 @@ def test_reusing_source_after_failed_move_preserves_later_deletion(
     assert replica.list_deleted(root_key) == ["source.md"]
     assert replica.get_restore_bytes(root_key, "source.md") == b"replacement"
     assert replica.get_bytes(root_key, "moved.md") == b"original"
+
+
+def test_reusing_source_materializes_destination_before_it_can_be_deleted(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "source.md").write_bytes(b"original")
+    service = FileNotesService(root, replica)
+    service.scan()
+    real_move = replica.move_file
+
+    def fail_move(*args: object, **kwargs: object) -> None:
+        raise sqlite3.OperationalError("forced replica failure")
+
+    monkeypatch.setattr(replica, "move_file", fail_move)
+    assert service.move_file("source.md", "moved.md").status == "ok"
+    monkeypatch.setattr(replica, "move_file", real_move)
+    created = service.create_file("source.md", "replacement")
+    assert created.status == "ok"
+    assert created.replica_warning is None
+    (root / "moved.md").unlink()
+
+    result = service.reconcile()
+
+    root_key = str(root.resolve())
+    assert result.deleted == ("moved.md",)
+    assert replica.list_deleted(root_key) == ["moved.md"]
+    assert replica.get_restore_bytes(root_key, "moved.md") == b"original"
+    assert replica.get_bytes(root_key, "source.md") == b"replacement"
 
 
 def test_deleted_destination_after_failed_move_uses_destination_tombstone(
