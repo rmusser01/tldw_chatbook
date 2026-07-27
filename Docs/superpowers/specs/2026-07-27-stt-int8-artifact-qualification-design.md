@@ -49,7 +49,8 @@ matrix:
 - Parakeet v3 INT8 and F32 plus faster-whisper base/int8 cover every required
   population for all 24 proposed non-English routing candidates; and
 - required silence, timestamp, long-form, throughput, memory, and batch-reuse
-  cells are enumerated for every applicable variant.
+  cells are enumerated for every applicable variant using separate quality,
+  throughput, and memory/reuse measurement profiles.
 
 Every matrix cell has predeclared minimum sample, reference-unit, and audio
 duration requirements. The task cannot complete with a missing or incomplete
@@ -181,9 +182,9 @@ An experiment fingerprint is the SHA-256 of canonical JSON containing:
 - harness source revision.
 
 Every variant run also has a run fingerprint computed from the experiment
-fingerprint plus the selected model variant and its effective execution
-settings. INT8, F32, and faster-whisper runs therefore share one experiment
-fingerprint but retain different run fingerprints.
+fingerprint plus the selected model variant, measurement profile, and its
+effective execution settings. INT8, F32, and faster-whisper runs therefore
+share one experiment fingerprint but retain different run fingerprints.
 
 A report compares runs only when their experiment fingerprints match, their
 variant identities fill the closed comparison matrix, and every non-variant
@@ -199,9 +200,12 @@ combined.
    local inputs, destination, and available space.
 3. Require an explicit preparation command before any transfer or extraction.
 4. Verify source archive/shard size and digest.
-5. Extract only declared contained regular files without following symlinks.
-6. Normalize audio and build deterministic derived fixtures in staging.
-7. Verify every prepared output before atomically publishing the prepared
+5. Reject unknown or duplicate archive members, symlinks, and irregular files,
+   and enforce declared member-count, per-file-size, cumulative uncompressed
+   byte, and staging-space limits before and during extraction.
+6. Extract only declared contained regular files without following symlinks.
+7. Normalize audio and build deterministic derived fixtures in staging.
+8. Verify every prepared output before atomically publishing the prepared
    corpus.
 
 Preparation failure leaves no usable partial corpus.
@@ -210,12 +214,15 @@ Preparation failure leaves no usable partial corpus.
 
 1. Validate the prepared corpus, selected model files, experiment fingerprint,
    and variant run fingerprint.
-2. Spawn one isolated child process for one model variant.
+2. Spawn one isolated child process for one model variant and declared
+   measurement profile.
 3. Load that variant once and process the fixed ordered sample population.
-4. Emit one result record per sample with the exact reference, hypothesis,
+4. Emit one raw result record per sample with the exact reference, hypothesis,
    timings, timestamps, warnings, model/runtime identity, resampling cluster,
    and requested/effective VAD settings.
-5. Record child OS high-water RSS and parent-sampled process-tree RSS.
+5. Record the evidence required by the declared measurement profile. Only the
+   `memory_reuse` profile enables child high-water and parent process-tree RSS
+   sampling.
 6. Finish with one terminal run record containing counts and completeness.
 7. Publish raw JSONL atomically; a partial temporary file is not reportable.
 
@@ -231,7 +238,10 @@ engine or precision.
 4. Aggregate WER and CER populations separately.
 5. Compute fixed-seed paired-bootstrap confidence intervals.
 6. Validate timestamp, silence, throughput, memory, and reuse gates.
-7. Write deterministic machine-readable and human-readable reports atomically.
+7. Emit scored per-sample records preserving raw and normalized references and
+   hypotheses, normalizer identity and hash, reference-unit and edit counts,
+   and gate-population membership.
+8. Write deterministic machine-readable and human-readable reports atomically.
 
 ## Metrics and confidence intervals
 
@@ -285,30 +295,40 @@ fabricated or treated as observed timestamp evidence.
 
 ### Performance protocol
 
-Every INT8, F32, and faster-whisper variant reports throughput and memory using
-the same fixed performance populations. The task-specific throughput and 3 GiB
-gates apply to Parakeet INT8; F32 and faster-whisper measurements remain
-required comparison evidence.
+Every INT8, F32, and faster-whisper variant uses three declared measurement
+profiles under the same experiment fingerprint:
 
-One untimed warm-up sample runs after model load. Timed recognition begins when
-the already-decoded, normalized 16 kHz mono waveform is submitted and ends when
-the complete recognition result has been materialized. Model load, corpus
-preparation, download, and audio decoding are excluded. Runtime preprocessing,
-VAD segmentation, and ASR inference are included. Long-form timing therefore
-includes the pinned VAD path.
+- `quality` processes the complete corpus without a high-frequency resource
+  sampler;
+- `throughput` performs one untimed warm-up followed by three timed passes over
+  the fixed performance population without process-tree RSS polling; and
+- `memory_reuse` records high-water and process-tree RSS while exercising the
+  fixed memory population and 100-file reuse sequence. Timing from this profile
+  is diagnostic only and never feeds the throughput gate.
 
-Warm inverse real-time factor is:
+The task-specific throughput and 3 GiB gates apply to Parakeet INT8; F32 and
+faster-whisper measurements remain required comparison evidence.
+
+For each throughput pass, timed recognition begins when the already-decoded,
+normalized 16 kHz mono waveform is submitted and ends when the complete
+recognition result has been materialized. Model load, corpus preparation,
+download, audio decoding, and resource-sampler overhead are excluded. Runtime
+preprocessing, VAD segmentation, and ASR inference are included. Long-form
+timing therefore includes the pinned VAD path.
+
+Warm inverse real-time factor for each pass is:
 
 `sum(audio_duration_seconds) / sum(recognition_wall_seconds)`
 
-over the fixed performance population. The Parakeet INT8 gate requires an
-aggregate value greater than one.
+over the fixed performance population. All three pass values are preserved.
+The predeclared aggregate is their median, and the Parakeet INT8 gate requires
+that median to be greater than one.
 
 ## Memory measurement
 
-The child records the operating system's process high-water RSS using an
-OS-specific normalized probe. The parent samples RSS for the child process tree
-through `psutil` during model load and inference.
+In the `memory_reuse` profile, the child records the operating system's process
+high-water RSS using an OS-specific normalized probe. The parent samples RSS
+for the child process tree through `psutil` during model load and inference.
 
 The parent samples the complete process tree at a fixed 10 ms monotonic
 interval, rediscovering descendants at every sample. Both peak values are
@@ -396,6 +416,9 @@ task open.
 - Archive members and manifest filenames are untrusted data and cannot escape
   staging.
 - Symlinks and irregular files are rejected.
+- The declared archive-member set, member count, per-member size, cumulative
+  uncompressed bytes, and available staging space are bounded and enforced
+  while streaming extraction, not only during preflight.
 - Digests are verified before prepared data or model files become runnable.
 - External credentials are never stored in manifests, results, or logs.
 - Logs prefer sample/model IDs and do not expose unnecessary local paths.
@@ -411,9 +434,12 @@ Tests cover:
 
 - strict manifest validation, experiment fingerprints, and variant run
   fingerprints;
-- size, digest, path-containment, symlink, staging, and atomic-publish failures;
+- size, digest, path-containment, unknown/duplicate member, symlink, irregular
+  file, member-count, per-file, cumulative-uncompressed-byte, staging-space,
+  and atomic-publish failures;
 - deterministic fixture generation;
-- language normalization and edit counts;
+- golden normalization fixtures for every evaluated language covering case,
+  punctuation, whitespace, Unicode normalization, unitization, and edit counts;
 - corpus WER/CER aggregation;
 - paired clustered-bootstrap determinism, derivative/speaker clustering, model
   pairing, delta direction, macro-family intervals, and adverse-bound gates;
@@ -427,7 +453,10 @@ Tests cover:
 - one model load across a batch;
 - child crash, timeout, malformed output, and incomplete runs;
 - high-water and process-tree RSS normalization;
-- throughput and 100-file reuse gates;
+- isolated quality, three-pass throughput, and memory/reuse profiles, including
+  the predeclared throughput median and 100-file reuse gates;
+- scored-sample audit fields for raw and normalized text, normalizer identity
+  and hash, units, edit counts, and gate-population membership;
 - deterministic JSONL and summary output; and
 - explicit macOS-only evidence labeling.
 
