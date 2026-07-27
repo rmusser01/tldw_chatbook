@@ -445,3 +445,24 @@
     width: 100%;
     color: $ds-text-muted;
 }
+
+/* TASK-897. `#sources-toolbar` is a bare `Vertical` wrapping several
+ * `.destination-filter-strip` rows, and had no height rule anywhere -- so it
+ * inherited Textual's `height: 1fr` default and its size came from whatever
+ * its sibling `#sources-table` was not using, rather than from its own
+ * controls.
+ *
+ * With rows in the table that looked fine (measured 160x42: toolbar 3, table
+ * 13). With an EMPTY table -- the first thing a new user sees -- the table
+ * collapsed to 1 row and the toolbar swallowed the rest: toolbar 15 of a
+ * 16-row pane, and 25 of 26 at 235x52. Growing the terminal did not help,
+ * because `1fr` grows with it.
+ *
+ * The four sibling toolbars (runs/items/rules/notifications) are `Horizontal`
+ * with `.destination-filter-strip`, which pins `height: 1` in
+ * layout/_panes.tcss, so they were never affected. This one is the only
+ * wrapper, and so the only one that needed its own rule.
+ */
+#sources-toolbar {
+    height: auto;
+}

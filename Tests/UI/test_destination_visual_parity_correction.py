@@ -3104,3 +3104,65 @@ async def test_watchlists_right_rail_says_inspector_exactly_once():
         assert "Inspector" in _visible_static_text(screen), (
             "dropping the duplicate must not drop the heading entirely"
         )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_sources_toolbar_does_not_starve_its_table(size):
+    """TASK-897: `#sources-toolbar` took every row its pane had.
+
+    It is a bare `Vertical` with no height rule anywhere in the stylesheet,
+    so it inherited Textual's `height: 1fr` default and claimed all the
+    space in `SourcesPane`, leaving `#sources-table` a single visible row --
+    at any terminal size, because `1fr` grows with the pane. The Sources
+    section is the screen's main list of what a user is monitoring, so it
+    showed one source at a time.
+
+    Same shape as the FEEDS clipping bug: a height that is fine in
+    isolation and wrong once the widget is nested in the real layout. Which
+    is why this runs in the full shell under the production stylesheet -- a
+    bare `App` with no CSS cannot see it, and on this screen that blind spot
+    has now shipped three separate defects.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+
+        sources_pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        # The empty state is where this bites, and it is the first thing a
+        # new user sees: with no rows the table collapses to 1 and the
+        # elastic toolbar swallows the rest of the pane. Measured pre-fix at
+        # 160x42: toolbar=15, table=1 inside a 16-row pane.
+        toolbar = sources_pane.query_one("#sources-toolbar")
+        table = sources_pane.query_one("#sources-table", DataTable)
+        assert toolbar.region.height <= 6, (
+            f"the toolbar must take only what its own controls need, not "
+            f"whatever the table is not using: toolbar={toolbar.region} "
+            f"table={table.region} pane={sources_pane.region}"
+        )
+
+        sources_pane.sources = [
+            {"id": i, "name": f"feed-{i:02d}", "source_type": "rss", "active": True}
+            for i in range(1, 13)
+        ]
+        await pilot.pause()
+
+        toolbar = sources_pane.query_one("#sources-toolbar")
+        table = sources_pane.query_one("#sources-table", DataTable)
+
+        assert table.region.height > 1, (
+            f"the sources table must show more than one row; the toolbar is "
+            f"eating the pane: toolbar={toolbar.region} table={table.region} "
+            f"pane={sources_pane.region}"
+        )
+        assert table.region.height >= toolbar.region.height, (
+            f"the table is the point of this pane and must not be shorter "
+            f"than its own toolbar: toolbar={toolbar.region} "
+            f"table={table.region}"
+        )
+
