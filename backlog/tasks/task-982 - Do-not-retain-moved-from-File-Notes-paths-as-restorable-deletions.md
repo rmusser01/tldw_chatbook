@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-27 18:50'
-updated_date: '2026-07-27 18:52'
+updated_date: '2026-07-27 18:58'
 labels:
   - bug
   - notes
@@ -31,8 +31,8 @@ A Chatbook-initiated File Notes move currently tombstones the source path after 
 
 <!-- SECTION:PLAN:BEGIN -->
 1. Add focused failing replica, service, and mounted-workspace regressions showing a successful Chatbook move does not create a source tombstone while the destination remains active/searchable and the session action remains `moved`.
-2. Add one transactional replica operation that removes a moved-from current row and FTS projection without touching revisions or recording a tombstone.
-3. Call that operation only after the moved destination has been successfully published to the replica; preserve the existing warning and recovery behavior when replica refresh fails.
+2. Add one atomic replica operation that publishes the destination row/FTS and removes only the active moved-from row/FTS in the same transaction, without touching revisions or genuine tombstones.
+3. Route the service move through that single operation so a replica failure rolls back destination publication and preserves the source recovery copy.
 4. Run the focused File Notes replica, service, and mounted-workspace tests plus targeted Ruff and diff checks, then self-review.
 
 ADR required: no

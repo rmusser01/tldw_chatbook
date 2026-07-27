@@ -541,6 +541,30 @@ def test_move_replaces_replica_path_without_tombstoning_source(
     assert change.destination_path == "folder/moved.md"
 
 
+def test_recreated_source_path_is_tombstoned_after_a_later_external_delete(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    original = b"original move content"
+    (root / "source.md").write_bytes(original)
+    service = FileNotesService(root, replica)
+    service.scan()
+
+    assert service.move_file("source.md", "moved.md").status == "ok"
+    assert service.create_file("source.md", "replacement").status == "ok"
+    (root / "source.md").unlink()
+
+    result = service.reconcile()
+
+    root_key = str(root.resolve())
+    assert result.deleted == ("source.md",)
+    assert replica.list_deleted(root_key) == ["source.md"]
+    assert replica.get_restore_bytes(root_key, "source.md") == b"replacement"
+    assert replica.get_bytes(root_key, "moved.md") == original
+
+
 def test_move_retains_source_replica_when_destination_refresh_fails(
     tmp_path: Path,
     replica: FileNotesReplica,
@@ -552,11 +576,12 @@ def test_move_retains_source_replica_when_destination_refresh_fails(
     source.write_bytes(b"last recovery copy")
     service = FileNotesService(root, replica)
     service.scan()
+    real_move = replica.move_file
 
-    def fail_upsert(*args: object, **kwargs: object) -> None:
+    def fail_move(*args: object, **kwargs: object) -> None:
         raise sqlite3.OperationalError("forced replica failure")
 
-    monkeypatch.setattr(replica, "upsert_file", fail_upsert)
+    monkeypatch.setattr(replica, "move_file", fail_move)
     result = service.move_file("source.md", "moved.md")
 
     assert result.status == "ok"
@@ -567,6 +592,80 @@ def test_move_retains_source_replica_when_destination_refresh_fails(
     assert replica.get_bytes(root_key, "source.md") == b"last recovery copy"
     assert replica.get_bytes(root_key, "moved.md") is None
     assert replica.list_deleted(root_key) == []
+
+    failed_retry = service.reconcile()
+    assert failed_retry.deleted == ()
+    assert failed_retry.replica_warning is not None
+    assert replica.list_deleted(root_key) == []
+    assert replica.get_bytes(root_key, "source.md") == b"last recovery copy"
+
+    monkeypatch.setattr(replica, "move_file", real_move)
+    completed_retry = service.reconcile()
+    assert completed_retry.created == ()
+    assert completed_retry.deleted == ()
+    assert replica.get_bytes(root_key, "source.md") is None
+    assert replica.get_bytes(root_key, "moved.md") == b"last recovery copy"
+    assert replica.list_deleted(root_key) == []
+
+
+def test_reusing_source_after_failed_move_preserves_later_deletion(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "source.md").write_bytes(b"original")
+    service = FileNotesService(root, replica)
+    service.scan()
+    real_move = replica.move_file
+
+    def fail_move(*args: object, **kwargs: object) -> None:
+        raise sqlite3.OperationalError("forced replica failure")
+
+    monkeypatch.setattr(replica, "move_file", fail_move)
+    assert service.move_file("source.md", "moved.md").status == "ok"
+    assert service.create_file("source.md", "replacement").status == "ok"
+    (root / "source.md").unlink()
+    monkeypatch.setattr(replica, "move_file", real_move)
+
+    result = service.reconcile()
+
+    root_key = str(root.resolve())
+    assert result.deleted == ("source.md",)
+    assert replica.list_deleted(root_key) == ["source.md"]
+    assert replica.get_restore_bytes(root_key, "source.md") == b"replacement"
+    assert replica.get_bytes(root_key, "moved.md") == b"original"
+
+
+def test_deleted_destination_after_failed_move_uses_destination_tombstone(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    original = b"destination recovery bytes"
+    (root / "source.md").write_bytes(original)
+    service = FileNotesService(root, replica)
+    service.scan()
+    real_move = replica.move_file
+
+    def fail_move(*args: object, **kwargs: object) -> None:
+        raise sqlite3.OperationalError("forced replica failure")
+
+    monkeypatch.setattr(replica, "move_file", fail_move)
+    assert service.move_file("source.md", "moved.md").status == "ok"
+    monkeypatch.setattr(replica, "move_file", real_move)
+    (root / "moved.md").unlink()
+
+    result = service.reconcile()
+
+    root_key = str(root.resolve())
+    assert result.deleted == ("moved.md",)
+    assert replica.list_deleted(root_key) == ["moved.md"]
+    assert replica.get_bytes(root_key, "source.md") is None
+    assert replica.get_restore_bytes(root_key, "moved.md") == original
 
 
 def test_delete_rechecks_after_tombstone_and_restore_requires_absent_destination(
