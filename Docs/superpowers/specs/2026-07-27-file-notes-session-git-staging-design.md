@@ -1,7 +1,7 @@
 # File Notes Session Git Staging Design
 
 Date: 2026-07-27
-Task: [TASK-985](../../../backlog/tasks/task-985%20-%20Add-session-scoped-Git-status-and-staging-to-File-Notes.md)
+Task: [TASK-1023](../../../backlog/tasks/task-1023%20-%20Add-session-scoped-Git-status-and-staging-to-File-Notes.md)
 Decision: [ADR-034](../../../backlog/decisions/034-file-notes-session-git-index-controls.md)
 
 ## Goal

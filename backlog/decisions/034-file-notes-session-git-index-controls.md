@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-27
-Related Task: [TASK-985](../tasks/task-985%20-%20Add-session-scoped-Git-status-and-staging-to-File-Notes.md)
+Related Task: [TASK-1023](../tasks/task-1023%20-%20Add-session-scoped-Git-status-and-staging-to-File-Notes.md)
 Amends: [ADR-029 File Notes disk authority](029-file-notes-disk-authority.md)
 
 ## Context
@@ -99,4 +99,4 @@ unless Chatbook can prove it is reversing its own index action.
 
 - [Design specification](../../Docs/superpowers/specs/2026-07-27-file-notes-session-git-staging-design.md)
 - [ADR-029](029-file-notes-disk-authority.md)
-- [TASK-985](../tasks/task-985%20-%20Add-session-scoped-Git-status-and-staging-to-File-Notes.md)
+- [TASK-1023](../tasks/task-1023%20-%20Add-session-scoped-Git-status-and-staging-to-File-Notes.md)
