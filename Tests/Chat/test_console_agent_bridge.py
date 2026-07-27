@@ -5,6 +5,7 @@ import contextlib
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 from tldw_chatbook.Chat.console_agent_bridge import (
     CONSOLE_AGENT_OPERATING_PROMPT,
@@ -16,6 +17,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     _compose_run_allowed_tools,
     _compose_run_registry_and_allowed,
     _non_colliding_mcp_names,
+    _WARNED_SHADOWED_MCP_NAMES,
     shadowed_mcp_names,
 )
 from tldw_chatbook.Chat.console_chat_models import (
@@ -46,6 +48,23 @@ from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 
 
+@pytest.fixture(autouse=True)
+def _reset_shadowed_mcp_warning_dedup():
+    """Reset the shadowed-MCP-name log-once set so tests are order-independent.
+
+    Mirrors ``Tests/Internal_Prompts/conftest.py``'s
+    ``resolver._warned_ids.clear()`` idiom for the identical reason:
+    ``_compose_run_registry_and_allowed``'s shadowed-name warning is now
+    deduped per name for the life of the process (finding 8, substrate
+    review). Without this reset, whichever test in this file runs FIRST
+    for a given shadowed name would win, and every later test asserting
+    the same warning would silently observe nothing logged.
+    """
+    _WARNED_SHADOWED_MCP_NAMES.clear()
+    yield
+    _WARNED_SHADOWED_MCP_NAMES.clear()
+
+
 class _FakeMCPProvider:
     """Minimal ``ToolProvider`` double standing in for a composed
     ``MCPToolProvider`` (T3) -- these bridge-level tests only need the
@@ -56,8 +75,10 @@ class _FakeMCPProvider:
         self._entries = list(entries)
         self.invoke_calls: list[tuple[str, dict]] = []
         self.stamp_scope_calls = 0
+        self.list_catalog_calls = 0
 
     def list_catalog(self):
+        self.list_catalog_calls += 1
         return [
             ToolCatalogEntry(
                 id=name, name=name, one_line_description=desc, source="mcp"
@@ -1858,6 +1879,73 @@ def test_compose_run_registry_and_allowed_no_warning_without_mcp_collisions():
         loguru_logger.remove(sink_id)
 
     assert messages == []
+
+
+def test_compose_run_registry_and_allowed_walks_mcp_catalog_only_once():
+    """Finding 8 (substrate review): ``_partition_mcp_catalog_by_collision``
+    already computes both the non-colliding and shadowed sides in a single
+    walk of ``mcp_provider.list_catalog()``, but the composition function
+    used to call the two PUBLIC wrapper functions separately
+    (``_non_colliding_mcp_names`` then ``shadowed_mcp_names``), each of
+    which re-invoked the partition -- walking the catalog twice per run.
+    """
+    mcp_provider = _FakeMCPProvider(
+        [("calculator", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
+    )
+
+    _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+
+    assert mcp_provider.list_catalog_calls == 1
+
+
+def test_compose_run_registry_and_allowed_warns_about_a_shadowed_name_only_once():
+    """Finding 8 (substrate review): ``_compose_run_registry_and_allowed``
+    runs once per Console message, so a naive per-call warning re-logs the
+    identical shadowed-name message on every single turn of a long-running
+    session. The warning must fire at most once per name for the life of
+    the process.
+    """
+    from loguru import logger as loguru_logger
+
+    mcp_provider = _FakeMCPProvider(
+        [("calculator", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
+    )
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        # Simulate three Console messages in the same session, each
+        # re-composing the run registry.
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    calculator_warnings = [m for m in messages if "calculator" in m]
+    assert len(calculator_warnings) == 1, messages
+
+
+def test_compose_run_registry_and_allowed_warns_once_per_distinct_shadowed_name():
+    """A dedup keyed on the wrong thing (e.g. "has anything ever been
+    warned") would silently suppress a DIFFERENT shadowed name's very
+    first warning -- this pins that the dedup is per-name. Both
+    ``calculator`` and ``get_current_datetime`` are always-on builtins
+    (see ``Tools.tool_executor``), so both genuinely collide.
+    """
+    from loguru import logger as loguru_logger
+
+    first_provider = _FakeMCPProvider([("calculator", "x")])
+    second_provider = _FakeMCPProvider([("get_current_datetime", "y")])
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        _compose_run_registry_and_allowed({}, mcp_provider=first_provider)
+        _compose_run_registry_and_allowed({}, mcp_provider=second_provider)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert any("calculator" in m for m in messages)
+    assert any("get_current_datetime" in m for m in messages)
 
 
 def test_run_reply_routes_fence_call_to_mcp_provider(tmp_path):

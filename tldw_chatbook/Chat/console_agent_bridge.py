@@ -109,9 +109,15 @@ _KNOWN_SUBAGENT_PREFIXES: set[str] = {SUBAGENT_SYSTEM_PROMPT}
 #   * max_total_tokens=1_000_000: Sub-agents inherit the turn and step budget
 #     (agent_models.clamp_child_budget, operator decision 2026-07-25), so one
 #     message can reach 30 * (1 + max_subagents) = 90 provider turns. The wall
-#     clock bounds that in TIME but not in SPEND; at a ~20k-token working
-#     prompt a runaway approaches ~1.8M tokens. This ceiling stops that while
-#     sitting far above any normal 30-turn run.
+#     clock bounds that in TIME but not in SPEND. This ceiling is a PER-RUN
+#     bound, not a shared one: `agent_runtime.run_agent_loop`'s
+#     `total_tokens` is a local to each run, and `clamp_child_budget` passes
+#     `max_total_tokens` through to a child UNCHANGED rather than dividing
+#     it -- so the parent and each of up to max_subagents=2 children can
+#     independently spend up to this ceiling. The real worst-case aggregate
+#     across one Console message is therefore roughly 3x this value
+#     (~3M tokens), not a value bounded BY it directly. It still sits far
+#     above any normal 30-turn run.
 # The engine's own RunBudget defaults (agent_models.RunBudget) keep the
 # bare max_steps=8, so this override applies only at the Console bridge's
 # own config-assembly site (run_reply below); other callers of
@@ -133,12 +139,17 @@ CONSOLE_MAX_STEPS = 96
 #: (25-50s per turn x CONSOLE_MAX_MODEL_TURNS = 750-1500s at N=30).
 CONSOLE_MAX_WALL_SECONDS = 1800.0
 
-#: Cumulative prompt+completion spend ceiling. Sub-agents INHERIT the turn
-#: and step budget (agent_models.clamp_child_budget, operator decision
-#: 2026-07-25), so one message can reach 30 * (1 + max_subagents) = 90
-#: provider turns. The wall clock bounds that in time but not in spend; at a
-#: ~20k-token working prompt a runaway approaches ~1.8M tokens. This stops
-#: that while sitting far above any normal 30-turn run.
+#: Cumulative prompt+completion spend ceiling -- but a PER-RUN one:
+#: `agent_runtime.run_agent_loop`'s `total_tokens` is a per-run local, and
+#: `clamp_child_budget` passes this value through to each sub-agent
+#: UNCHANGED rather than dividing it among children. Sub-agents also
+#: inherit the turn and step budget (agent_models.clamp_child_budget,
+#: operator decision 2026-07-25), so one message can reach
+#: 30 * (1 + max_subagents) = 90 provider turns across the parent and up to
+#: max_subagents=2 children -- each independently able to spend up to this
+#: ceiling, for a real worst-case aggregate of roughly 3x this value
+#: (~3M tokens), not a value THIS constant bounds directly. It still sits
+#: far above any normal 30-turn run.
 CONSOLE_MAX_TOTAL_TOKENS = 1_000_000
 
 CONSOLE_RUN_BUDGET = RunBudget(
@@ -849,6 +860,36 @@ def _partition_mcp_catalog_by_collision(
     return tuple(non_colliding), tuple(shadowed)
 
 
+# Names already warned about being shadowed by a built-in, this process --
+# mirrors `Internal_Prompts.resolver`'s `_warn_once` idiom (a module-level
+# dedup set plus a guard function), kept as THIS module's own set rather
+# than sharing resolver's: `_compose_run_registry_and_allowed` runs once per
+# Console message (finding 8, substrate review), so without this a long
+# session re-logs the identical warning every single turn. Tests that need
+# a fresh warning must clear this between cases -- see
+# `Tests/Chat/test_console_agent_bridge.py`'s reset fixture, mirroring
+# `Tests/Internal_Prompts/conftest.py`'s `resolver._warned_ids.clear()`.
+_WARNED_SHADOWED_MCP_NAMES: set[str] = set()
+
+
+def _warn_shadowed_mcp_name_once(name: str) -> None:
+    """Log the shadowed-MCP-tool warning for ``name`` at most once per process.
+
+    Args:
+        name: An MCP tool name dropped because a built-in owns it (one
+            entry of ``_partition_mcp_catalog_by_collision``'s ``shadowed``
+            side).
+    """
+    if name in _WARNED_SHADOWED_MCP_NAMES:
+        return
+    _WARNED_SHADOWED_MCP_NAMES.add(name)
+    logger.warning(
+        "MCP tool {name} is shadowed by a built-in of the same name "
+        "and is not offered this run",
+        name=name,
+    )
+
+
 def _compose_run_registry_and_allowed(
     context: Mapping[str, Any],
     *,
@@ -912,13 +953,18 @@ def _compose_run_registry_and_allowed(
     allowed_tools = tuple(builtin_names) + skill_names
     if mcp_provider is not None:
         collision_names = set(builtin_names) | set(skill_names) | RUNTIME_TOOL_NAMES
-        mcp_names = _non_colliding_mcp_names(mcp_provider, collision_names)
-        for shadowed in shadowed_mcp_names(mcp_provider, collision_names):
-            logger.warning(
-                "MCP tool {name} is shadowed by a built-in of the same name "
-                "and is not offered this run",
-                name=shadowed,
-            )
+        # Single partition call (finding 8, substrate review): the two
+        # public wrappers (`_non_colliding_mcp_names`, `shadowed_mcp_names`)
+        # each independently call `_partition_mcp_catalog_by_collision`,
+        # which walks `mcp_provider.list_catalog()` -- so calling BOTH
+        # wrappers here walked the catalog twice per run. Calling the
+        # partition directly gets both sides from the one walk it already
+        # does internally.
+        mcp_names, shadowed_names = _partition_mcp_catalog_by_collision(
+            mcp_provider, collision_names
+        )
+        for shadowed in shadowed_names:
+            _warn_shadowed_mcp_name_once(shadowed)
         if mcp_names:
             registry.register_provider(
                 _CollisionFilteredMCPProvider(mcp_provider, frozenset(mcp_names))

@@ -245,11 +245,16 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
     ``max_model_turns * (1 + max_subagents)`` provider turns in the worst
     case — 90 at the Console's current 30/2. That worst case is bounded in
     TIME by the wall-clock clamp below (a child can never outlive its
-    parent's remaining budget). It is bounded in SPEND by
-    ``max_total_tokens``, which the Console sets non-zero for exactly this
-    reason (``console_agent_bridge.CONSOLE_MAX_TOTAL_TOKENS``) — that
-    ceiling is the deliberate alternative to clamping turns here. Do not
-    "fix" this by clamping turns without checking that decision.
+    parent's remaining budget). ``max_total_tokens`` is passed through
+    UNCHANGED below, not divided among children, so it bounds each run's
+    OWN spend independently, not the aggregate: the parent and each of up
+    to ``max_subagents`` children can each spend up to that ceiling, for a
+    real worst-case aggregate of roughly ``(1 + max_subagents)x`` it — not
+    a value it bounds directly (the Console sets it non-zero for exactly
+    this containment reason regardless — see
+    ``console_agent_bridge.CONSOLE_MAX_TOTAL_TOKENS`` for its concrete
+    numbers). Do not "fix" this by clamping turns without checking the
+    inherit-turns decision above.
 
     Wall-clock is clamped to the parent's remainder (floored at 1s);
     ``max_subagents`` is zeroed — depth-1 sub-agents never spawn.
