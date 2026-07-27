@@ -159,6 +159,148 @@ def test_parakeet_onnx_non_english_selects_v3_without_decoder_language(
 
 
 @pytest.mark.parametrize(
+    ("source_lang", "language", "expected_model", "expected_language"),
+    [
+        pytest.param(
+            None,
+            "de",
+            PARAKEET_V3_MODEL,
+            "de",
+            id="explicit-language",
+        ),
+        pytest.param(
+            "de",
+            "en",
+            PARAKEET_V3_MODEL,
+            "de",
+            id="explicit-source-language",
+        ),
+        pytest.param(
+            None,
+            None,
+            PARAKEET_V2_MODEL,
+            "en",
+            id="missing-language-defaults-to-english",
+        ),
+    ],
+)
+def test_parakeet_onnx_request_ignores_configured_language_defaults(
+    tmp_path,
+    monkeypatch,
+    source_lang,
+    language,
+    expected_model,
+    expected_language,
+) -> None:
+    audio_path = tmp_path / "speech.wav"
+    model_dir = tmp_path / "model"
+    _write_model_bundle(model_dir)
+    _write_silent_wav(audio_path)
+    load_calls = []
+
+    class FakeModel:
+        def recognize(self, path):
+            assert path == str(audio_path)
+            return "Eine lokale Transkription."
+
+    def fake_load_model(name, **kwargs):
+        load_calls.append((name, kwargs))
+        return FakeModel()
+
+    monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
+    monkeypatch.setitem(
+        sys.modules, "onnx_asr", SimpleNamespace(load_model=fake_load_model)
+    )
+    service = TranscriptionService()
+    service.config["default_source_language"] = "fr"
+    service.config["default_target_language"] = "es"
+
+    result = service.transcribe(
+        str(audio_path),
+        provider="parakeet-onnx",
+        source_lang=source_lang,
+        language=language,
+        model_dir=str(model_dir),
+    )
+
+    assert load_calls[0][0] == expected_model
+    assert "language" not in load_calls[0][1]
+    assert result["requested_language"] == expected_language
+    if expected_model == PARAKEET_V3_MODEL:
+        assert result["effective_language"] == "auto"
+        assert result["warnings"] == ["requested_language_not_enforced"]
+    else:
+        assert result["effective_language"] == "en"
+        assert result["warnings"] == []
+
+
+def test_parakeet_onnx_file_target_language_alias_rejects_before_model_load(
+    tmp_path, monkeypatch
+) -> None:
+    audio_path = tmp_path / "speech.wav"
+    model_dir = tmp_path / "model"
+    _write_model_bundle(model_dir)
+    _write_silent_wav(audio_path)
+    load_calls = []
+
+    def unexpected_load(*args, **kwargs):
+        load_calls.append((args, kwargs))
+        raise AssertionError("load_model must not run for a translation request")
+
+    monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
+    monkeypatch.setitem(
+        sys.modules, "onnx_asr", SimpleNamespace(load_model=unexpected_load)
+    )
+
+    with pytest.raises(TranscriptionError, match="Retry with faster-whisper"):
+        TranscriptionService().transcribe(
+            str(audio_path),
+            provider="parakeet-onnx",
+            language="en",
+            target_language="fr",
+            model_dir=str(model_dir),
+        )
+
+    assert load_calls == []
+
+
+def test_parakeet_onnx_target_lang_argument_wins_over_alias(
+    tmp_path, monkeypatch
+) -> None:
+    audio_path = tmp_path / "speech.wav"
+    model_dir = tmp_path / "model"
+    _write_model_bundle(model_dir)
+    _write_silent_wav(audio_path)
+    load_calls = []
+
+    class FakeModel:
+        def recognize(self, path):
+            assert path == str(audio_path)
+            return "English transcription."
+
+    def fake_load_model(name, **kwargs):
+        load_calls.append((name, kwargs))
+        return FakeModel()
+
+    monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
+    monkeypatch.setitem(
+        sys.modules, "onnx_asr", SimpleNamespace(load_model=fake_load_model)
+    )
+
+    result = TranscriptionService().transcribe(
+        str(audio_path),
+        provider="parakeet-onnx",
+        language="en",
+        target_lang="",
+        target_language="fr",
+        model_dir=str(model_dir),
+    )
+
+    assert load_calls[0][0] == PARAKEET_V2_MODEL
+    assert result["requested_language"] == "en"
+
+
+@pytest.mark.parametrize(
     ("language", "target_lang", "model"),
     [
         pytest.param("auto", None, PARAKEET_V3_MODEL, id="auto"),
@@ -269,3 +411,60 @@ def test_parakeet_onnx_transcribes_pcm_buffer_without_staging_a_file(
     )
     assert result["text"] == "Memory only."
     assert result["segments"][0]["end"] == pytest.approx(4 / 8_000)
+
+
+def test_parakeet_onnx_v3_transcribes_pcm_buffer_with_transparent_language_result(
+    tmp_path, monkeypatch
+) -> None:
+    model_dir = tmp_path / "model"
+    _write_model_bundle(model_dir)
+    load_calls = []
+
+    class FakeModel:
+        def recognize(self, waveform, *, sample_rate):
+            assert waveform.dtype == np.float32
+            assert sample_rate == 16_000
+            return " Deutsche Aufnahme. "
+
+    def fake_load_model(name, **kwargs):
+        load_calls.append((name, kwargs))
+        return FakeModel()
+
+    monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
+    monkeypatch.setitem(
+        sys.modules, "onnx_asr", SimpleNamespace(load_model=fake_load_model)
+    )
+
+    result = TranscriptionService().transcribe_buffer(
+        np.array([0, 16384], dtype=np.int16).tobytes(),
+        sample_rate=16_000,
+        channels=1,
+        sample_width=2,
+        provider="parakeet-onnx",
+        language="de",
+        model_dir=str(model_dir),
+    )
+
+    assert load_calls == [
+        (
+            PARAKEET_V3_MODEL,
+            {
+                "path": str(model_dir),
+                "quantization": "int8",
+                "providers": ["CPUExecutionProvider"],
+                "preprocessor_config": {
+                    "use_numpy_preprocessors": True,
+                    "max_concurrent_workers": 1,
+                },
+            },
+        )
+    ]
+    assert result["text"] == "Deutsche Aufnahme."
+    assert result["language"] is None
+    assert result["requested_language"] == "de"
+    assert result["effective_language"] == "auto"
+    assert result["detected_language"] is None
+    assert result["warnings"] == ["requested_language_not_enforced"]
+    assert result["model"] == PARAKEET_V3_MODEL
+    assert result["segments"][0]["text"] == "Deutsche Aufnahme."
+    assert result["segments"][0]["end"] == pytest.approx(2 / 16_000)

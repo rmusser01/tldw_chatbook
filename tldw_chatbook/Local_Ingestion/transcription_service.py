@@ -432,15 +432,22 @@ class TranscriptionService:
                 model = "Qwen2-Audio-7B-Instruct"
             else:
                 model = self.config["default_model"]
-        # Handle source language - prefer explicit source_lang over language param
-        source_lang = (
-            source_lang
-            or self.config["default_source_language"]
-            or language
-            or self.config["default_language"]
-        )
-        # Handle target language
-        target_lang = target_lang or self.config["default_target_language"] or None
+        if provider == "parakeet-onnx":
+            target_language_alias = kwargs.pop("target_language", None)
+            source_lang = source_lang or language or "en"
+            target_lang = (
+                target_lang if target_lang is not None else target_language_alias
+            )
+        else:
+            # Handle source language - prefer explicit source_lang over language param
+            source_lang = (
+                source_lang
+                or self.config["default_source_language"]
+                or language
+                or self.config["default_language"]
+            )
+            # Handle target language
+            target_lang = target_lang or self.config["default_target_language"] or None
         # For backward compatibility, set language to source_lang if not specified
         language = language or source_lang
 
